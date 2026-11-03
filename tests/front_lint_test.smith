@@ -1,0 +1,185 @@
+// Tests of smith's own lint checks on the new checker (#1976, part of #1631 and #1964): smith-unsafe, smith-mem and
+// smith-bounded-loop, with the message text of the clang-tidy checks they replace (tests/lint-smith/*.expected).
+// Each scenario is source text in smith's own syntax, parsed by front::parser and checked by front::types_decl.
+module front_lint_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::lint;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+// The errors of `source`, one per line.
+static Str errors_of(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    Str text = "";
+    for (Usize i = 0; i < r.error_count; i++) {
+        text = join(text, join(r.errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` reports `needle` among its errors.
+static void reports(Str source, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(has(errors_of(source), needle));
+}
+
+// `source` reports none of the lint messages (`needle` is the start of one).
+static void quiet(Str source, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(!has(errors_of(source), needle));
+}
+
+export void test_front_lint_longjmp_skips_defer() {
+    reports("fn f(b: *i32):\n    c::longjmp(b, 1)\n", "`longjmp` skips every `defer` and `errdefer` on the way");
+}
+
+export void test_front_lint_setjmp_skips_defer() {
+    reports("fn f(b: *i32) -> i32:\n    return c::setjmp(b)\n",
+            "`setjmp` skips every `defer` and `errdefer` on the way, so cleanup silently does not run");
+}
+
+export void test_front_lint_alloca() {
+    reports("fn f(n: usize) -> *u8:\n    return c::alloca(n)\n", "the stack cannot hold a size known only at run time");
+}
+
+export void test_front_lint_malloc_is_unchecked() {
+    reports("fn f(n: usize) -> *u8:\n    return c::malloc(n)\n",
+            "`malloc` is unchecked, since it returns an untyped block that may be null: use `mem::alloc(T)`");
+}
+
+export void test_front_lint_memcpy_is_unchecked() {
+    reports("fn f(a: *u8, b: *u8, n: usize):\n    c::memcpy(a, b, n)\n",
+            "`memcpy` is unchecked, since its type and its length travel apart from the data: use `mem::copy");
+}
+
+export void test_front_lint_free_is_unchecked() {
+    reports("fn f(a: *u8):\n    c::free(a)\n", "`free` is unchecked");
+}
+
+export void test_front_lint_a_modules_own_free_is_not_c() {
+    quiet("fn free(a: *u8):\n    pass\nfn f(a: *u8):\n    free(a)\n", "is unchecked");
+}
+
+export void test_front_lint_a_trusted_function_may_use_c() {
+    quiet("fn f(a: *u8):\n    contract::trusted()\n    c::free(a)\n", "is unchecked");
+}
+
+export void test_front_lint_while_true_never_ends() {
+    reports("fn f():\n    while true:\n        pass\n",
+            "a `while` with a constant condition never ends on its own: bound the loop by a count");
+}
+
+export void test_front_lint_main_may_run_forever() {
+    quiet("fn main():\n    while true:\n        pass\n", "never ends on its own");
+}
+
+export void test_front_lint_a_bounded_loop_is_fine() {
+    quiet("fn f(n: u32):\n    let mut i: u32 = 0\n    while i < n:\n        i = i + 1\n", "never ends on its own");
+}
+
+// A header that is a module, as the generated header of std::arena and std::test open.
+export Str header_of(Str name, Bool angled) {
+    if (angled && has(name, "smith/arena.h")) {
+        return "// Generated.\n// smith-module: std::arena\n// smith-imports:\n// smith-names: Arena=SmithArena "
+               "push_raw="
+               "smith_arena_push\n";
+    }
+    if (angled && has(name, "smith/test.h")) {
+        return "// Generated.\n// smith-module: std::test\n// smith-imports:\n// smith-names: check=smith_check "
+               "check_equal_i32=smith_check_equal_i32\n// smith-generic: std::test check_equal\n";
+    }
+    return "";
+}
+
+// `source` checked with the library headers readable.
+static Str library_errors(Str source) {
+    lint::set_header_text(header_of);
+    Str text = errors_of(source);
+    lint::set_header_text(nullptr);
+    return text;
+}
+
+export void test_front_lint_a_library_header_is_a_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/arena.h>\n");
+    test::check_condition(has(text, "`import <smith/arena.h>;` reads std::arena, a module, through its C header: write "
+                                    "`import std::arena;` and call it as `arena::name(...)` (a typed push is "
+                                    "`arena::push(&a, T)`)"));
+}
+
+export void test_front_lint_a_library_name_is_the_modules() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/arena.h>\nfn f(a: *c::SmithArena, n: usize) -> *u8:\n    return "
+                              "c::smith_arena_push(a, n)\n");
+    test::check_condition(has(text, "`c::SmithArena` is `arena::Arena` of the module std::arena, reached through its C "
+                                    "header: write `import std::arena;` and `arena::Arena`"));
+    test::check_condition(has(text, "`c::smith_arena_push` is `arena::push_raw` of the module std::arena"));
+}
+
+export void test_front_lint_a_library_generic_is_named() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/test.h>\nfn f(a: i32):\n    c::smith_check_equal_i32(a, 1)\n");
+    test::check_condition(has(text, "(or, better, the generic `test::check_equal(a, b)`, which takes the type from its "
+                                    "first argument)"));
+}
+
+export void test_front_lint_a_plain_header_is_not_a_library() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(!has(library_errors("import c <stdio.h>\nfn f():\n    c::puts(\"x\")\n"), "a module"));
+}

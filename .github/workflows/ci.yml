@@ -165,11 +165,16 @@ jobs:
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
     needs: [changes, pack]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
+    # Not on a pull request (owner, 2026-11-03: "we need to get CI moving"): macOS runs in the merge queue only. A pull
+    # request's runs filled the free plan's 5 hosted macOS slots (133 of 287 hosted minutes in 90 minutes), and jobs
+    # queued behind them were cancelled with no step run.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
-    # does all of it in about 4 (#1709)
-    timeout-minutes: 30
+    # does all of it in about 4 (#1709). The job's limit counts time spent queued for a slot: at 30 minutes, jobs waiting
+    # for a full hosted pool were cancelled before their first step (2026-11-03). So the job allows 90, and each step has
+    # its own limit to catch a hang.
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: ${{ needs.changes.outputs.cores }}
@@ -180,6 +185,7 @@ jobs:
     steps:
       - name: Tools some tests need
         if: needs.changes.outputs.scope == 'full'
+        timeout-minutes: 5
         # the editor tests do nothing without nvim; some tests bound a command with coreutils' `timeout`. It runs
         # while smith builds: the macOS test stage waits for it
         shell: bash
@@ -190,12 +196,15 @@ jobs:
           fi
           echo $! >"$RUNNER_TEMP/brew.pid"
       - uses: actions/checkout@v4
+        timeout-minutes: 10
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
+        timeout-minutes: 20
         with:
           tests: "true"
       - name: Checks
+        timeout-minutes: 30
         shell: bash
         run: |
           # each stage's output goes to its own log; each prints `took <stage> <n>s (exit <code>)` in the job summary,
@@ -375,6 +384,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           TEST_LINUX: ${{ needs.test-linux.result }}
         run: |
@@ -395,6 +405,8 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
+          # a pull request owes no macOS: the merge queue runs it (2026-11-03)
+          [ "$EVENT" = pull_request ] && owed="${owed/MACOS/}"
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
