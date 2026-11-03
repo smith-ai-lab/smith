@@ -392,9 +392,12 @@ export void test_lex_integers_and_floating_constants() {
     expect_one("0x1.8p3", lex::floating);
     expect_one("0x1p-2", lex::floating);
     expect_one("0x.8p1", lex::floating);
+    expect_one("0x1.fffffep+127F", lex::floating);
+    expect_one("0x1.fffffep+127", lex::floating);
     expect_one("3.14f16", lex::floating);
     expect_one("1e5L", lex::floating);
     expect_one("1.e5", lex::floating);
+    expect_dump("0x1.to", "1:1 integer 0x1\n1:4 dot .\n1:5 name to\n1:7 end_of_file\n");
     expect_dump("3.to", "1:1 integer 3\n1:2 dot .\n1:3 name to\n1:5 end_of_file\n");
     expect_dump("0o7.wrap", "1:1 integer 0o7\n1:4 dot .\n1:5 name wrap\n1:9 end_of_file\n");
     expect_dump("1+2", "1:1 integer 1\n1:2 plus +\n1:3 integer 2\n1:4 end_of_file\n");

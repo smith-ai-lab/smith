@@ -202,7 +202,7 @@ static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
     for (Usize k = 0; k < countof(params); k++) {
         const ast::Param *param = &params[k];
         if (param->default_value == nullptr) {
-            if (had_default && param->is_new && !param->is_rest) {
+            if (had_default && param->is_new && !param->is_rest && !param->is_keyword) {
                 types::failf(r, param->span, "the parameter `", param->name,
                              "` has no default but follows one that has; give it a default, or move it before the "
                              "parameters with defaults");

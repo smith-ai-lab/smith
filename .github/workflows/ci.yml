@@ -107,8 +107,8 @@ jobs:
 
       - name: Does the change undo a commit already on main
         # a stale working tree squashed onto a moved main deletes merged work with every test green (#1455, #1473):
-        # scripts/revert_check.c fails a change that removes the lines of a recent commit; `Reverts #N` in the body
-        # (or the queue entry's commit message) says a revert is meant
+        # scripts/revert_check.c fails a change that removes the lines of a recent commit; `Reverts #N` or
+        # `Rewrites #N` in the body (or the queue entry's commit message) says a revert or a rewrite is meant
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}

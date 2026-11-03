@@ -16,6 +16,7 @@
 module front::lsp_server;
 
 import front::compile;
+import front::lsp_hover;
 import front::roots;
 import std::arena;
 import std::format;
@@ -139,6 +140,71 @@ static Str cleared(Str uri) {
                      escape(uri), "\",\"diagnostics\":[]}}")));
 }
 
+// The open documents, by uri: a request such as hover names a document by its uri and position only. Fixed sizes keep
+// the text out of the arena that `run` resets after each message; a document past the limits is not kept.
+constexpr Usize max_documents = 8;
+constexpr Usize max_uri = 512;
+constexpr Usize max_text = 1 << 18;
+
+struct Document {
+    Bool used;
+    Usize uri_length;
+    Usize text_length;
+    char uri[512];
+    char text[262144];
+};
+
+static Document documents[max_documents];
+
+static Document *find_document(Str uri) {
+    for (Usize i = 0; i < max_documents; i++) {
+        if (!documents[i].used || documents[i].uri_length != countof(uri)) continue;
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(uri); k++)
+            same = documents[i].uri[k] == uri[k];
+        if (same) return &documents[i];
+    }
+    return nullptr;
+}
+
+// Keeps `text` as the text of `uri`, in its slot or a free one.
+static void store_document(Str uri, Str text) {
+    if (countof(uri) > max_uri || countof(text) > max_text) return;
+    Document *slot = find_document(uri);
+    for (Usize i = 0; slot == nullptr && i < max_documents; i++)
+        if (!documents[i].used) slot = &documents[i];
+    if (slot == nullptr) return;
+    slot->used = true;
+    slot->uri_length = countof(uri);
+    slot->text_length = countof(text);
+    for (Usize i = 0; i < countof(uri); i++)
+        slot->uri[i] = uri[i];
+    for (Usize i = 0; i < countof(text); i++)
+        slot->text[i] = text[i];
+}
+
+static void forget_document(Str uri) {
+    Document *slot = find_document(uri);
+    if (slot != nullptr) slot->used = false;
+}
+
+// The `result` of a `textDocument/hover` request: null for a document that is not open.
+static Str hover_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr || position_param == nullptr) return "null";
+    const c::SmithJsonValue *line = c::smith_json_member(position_param, "line");
+    const c::SmithJsonValue *character = c::smith_json_member(position_param, "character");
+    if (line == nullptr || character == nullptr) return "null";
+    U64 l = 0;
+    U64 ch = 0;
+    for (Usize i = 0; i < countof(line->text); i++)
+        if (line->text[i] >= '0' && line->text[i] <= '9') l = l * 10 + (U64)(line->text[i] - '0');
+    for (Usize i = 0; i < countof(character->text); i++)
+        if (character->text[i] >= '0' && character->text[i] <= '9') ch = ch * 10 + (U64)(character->text[i] - '0');
+    Str source = as_str(slot->text[0:slot->text_length]);
+    return lsp_hover::result(path_of(uri), source, l, ch);
+}
+
 // The text of the last change of a `didChange` (full sync: it is the whole document).
 static Str last_change(const c::SmithJsonValue *params) {
     const c::SmithJsonValue *changes = c::smith_json_member(params, "contentChanges");
@@ -158,7 +224,8 @@ export Str handle(Str body) {
     const c::SmithJsonValue *params = c::smith_json_member(message, "params");
     const c::SmithJsonValue *document = params == nullptr ? nullptr : c::smith_json_member(params, "textDocument");
     if (roots::same(method, "initialize")) {
-        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1},\"serverInfo\":{\"name\":\"smith lsp\"}}");
+        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true},\"serverInfo\":{\"name\":"
+                         "\"smith lsp\"}}");
     }
     if (roots::same(method, "shutdown")) {
         shut_down = true;
@@ -168,11 +235,22 @@ export Str handle(Str body) {
         exiting = true;
         return "";
     }
-    if (roots::same(method, "textDocument/didOpen"))
+    if (roots::same(method, "textDocument/didOpen")) {
+        store_document(string_of(document, "uri"), string_of(document, "text"));
         return diagnostics(string_of(document, "uri"), string_of(document, "text"));
-    if (roots::same(method, "textDocument/didChange"))
+    }
+    if (roots::same(method, "textDocument/didChange")) {
+        store_document(string_of(document, "uri"), last_change(params));
         return diagnostics(string_of(document, "uri"), last_change(params));
-    if (roots::same(method, "textDocument/didClose")) return cleared(string_of(document, "uri"));
+    }
+    if (roots::same(method, "textDocument/didClose")) {
+        forget_document(string_of(document, "uri"));
+        return cleared(string_of(document, "uri"));
+    }
+    if (roots::same(method, "textDocument/hover")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, hover_result(string_of(document, "uri"), at));
+    }
     if (countof(id) == 0) return "";
     return failure(id, "-32601", as_str(format::push("method not found: ", method)));
 }
