@@ -2416,6 +2416,12 @@ static void member_after(types::Checked *c, Frame f) {
     if (base->kind == .tuple && !e->kind.member.arrow) {
         const types::Slot *element = types::member(base, name);
         if (element == nullptr) {
+            if (countof(base->slots) > 0 && !types::is_position(base->slots[0].name)) {
+                types::failf(c, e->span, "`", types::show(base), "` has no element `", name,
+                             "`; write one of its names, such as `.", base->slots[0].name, "`");
+                poison(c, e);
+                return;
+            }
             types::failf(c, e->span, "`", types::show(base), "` has ", countof(base->slots),
                          " elements, so there is no `.", name, "`; write an element from `.0` to `.",
                          countof(base->slots) - 1, "`");
@@ -3505,7 +3511,9 @@ static void tuple_before(Work *w, Frame f) {
         if (shape != nullptr) {
             wanted = shape->slots[i - 1].type;
         }
-        push(w, items[i - 1], wanted, 0);
+        const ast::Expr *item = items[i - 1];
+        if (item->kind == .named_arg) item = item->kind.named_arg.value;
+        push(w, item, wanted, 0);
     }
 }
 
@@ -3517,7 +3525,12 @@ static void tuple_after(types::Checked *c, Frame f) {
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(items));
     for (Usize i = 0; i < countof(items); i++) {
-        elements[i].type = typ(c, items[i]);
+        const ast::Expr *item = items[i];
+        if (item->kind == .named_arg) {
+            elements[i].name = item->kind.named_arg.name;
+            item = item->kind.named_arg.value;
+        }
+        elements[i].type = typ(c, item);
         if (elements[i].type == invalid(c)) {
             poison(c, e);
             return;
