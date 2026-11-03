@@ -2056,6 +2056,10 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     if (base->kind == .slice) {
         return base->element;
     }
+    if (base->kind == .block) { // a row: a block of one dimension fewer, a slice for the last two
+        if (base->count == 2) return types::slice_of(&c->table, base->element, false);
+        return types::block_of(&c->table, base->element, base->count - 1);
+    }
     if (base->kind == .text) {
         return types::builtin(&c->table, "U8");
     }
@@ -2234,7 +2238,7 @@ static void cast_after(types::Checked *c, Frame f) {
 }
 
 static Bool countable(types::TypeRef t) {
-    return t->kind == .array || t->kind == .slice || t->kind == .text;
+    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block;
 }
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {

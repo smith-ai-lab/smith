@@ -1435,6 +1435,18 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
 }
 
+// `xs[i, j, k]` of a block: the same as `xs[i][j][k]`, one index node per position. The position is at the first comma.
+static ast::Expr *block_index(parse::Parser *p, ast::Expr *base, ast::Expr *first) {
+    ast::Expr *result = make(parse::span_from(p, base->span.start), {.index = {.base = base, .index = first}});
+    while (parse::accept(p, lex::comma)) {
+        ast::Expr *next = parse::expression(p);
+        if (next == nullptr) return nullptr;
+        result = make(parse::span_from(p, base->span.start), {.index = {.base = result, .index = next}});
+    }
+    parse::expect(p, lex::right_bracket, "`]` to end the index");
+    return result;
+}
+
 // `xs[i]`, `xs[a:b]`, `xs[a:]`, `xs[:b]`, `xs[:]`: the position is at the bracket.
 static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     parse::advance(p);
@@ -1443,7 +1455,9 @@ static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     Bool is_slice = false;
     if (!parse::at(p, lex::colon)) {
         first = parse::expression(p);
-        if (first == nullptr || comma_operator(p)) return nullptr;
+        if (first == nullptr) return nullptr;
+        if (p->new_syntax && parse::at(p, lex::comma)) return block_index(p, base, first);
+        if (comma_operator(p)) return nullptr;
     }
     if (parse::accept(p, lex::colon)) {
         is_slice = true;
