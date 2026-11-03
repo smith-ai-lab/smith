@@ -7,12 +7,6 @@ module front_emit_method_test;
 import front::ast;
 import front::emit;
 import front::emit_jit;
-import front::lex;
-import front::parse;
-import front::parse_decl;
-import front::parse_expr;
-import front::parse_stmt;
-import front::parse_type;
 import front::parser;
 import front::types;
 import front::types_decl;
@@ -22,25 +16,7 @@ import std::test;
 import <llvm-c/Core.h>;
 
 static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
+    return parser::parse_new("t.smith", source);
 }
 
 typedef I32 (*Run)();
@@ -80,23 +56,43 @@ static I32 run(Str source, Str symbol) {
 }
 
 export void test_front_emit_method_a_function_of_this_module() {
-    Str source = "struct Box {\n    n: i32\n}\n\n"
-                 "fn total(b: Box) -> i32 {\n    b.n * 2\n}\n\n"
-                 "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
-                 "pub fn run() -> i32 {\n    let mut b = Box(n = 1)\n    b.grow(3)\n    b.total()\n}\n";
+    Str source = "struct Box:\n"
+                 "    n: i32\n"
+                 "\n"
+                 "fn total(b: Box) -> i32:\n"
+                 "    b.n * 2\n"
+                 "\n"
+                 "fn grow(b: *mut Box, by: i32):\n"
+                 "    b.n += by\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let mut b = Box(n = 1)\n"
+                 "    b.grow(3)\n"
+                 "    b.total()\n";
     test::check_equal(run(source, "front::test::run"), (I32)8);
 }
 
 export void test_front_emit_method_on_an_array_literal() {
-    Str source = "fn sum(xs: [3]i32) -> i32 {\n    xs[0] + xs[1] + xs[2]\n}\n\n"
-                 "pub fn run() -> i32 {\n    [1, 2, 3].sum()\n}\n";
+    Str source = "fn sum(xs: [3]i32) -> i32:\n"
+                 "    xs[0] + xs[1] + xs[2]\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    [1, 2, 3].sum()\n";
     test::check_equal(run(source, "front::test::run"), (I32)6);
 }
 
 export void test_front_emit_method_is_the_written_out_call() {
-    Str source = "struct Box {\n    n: i32\n}\n\n"
-                 "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
-                 "pub fn run() -> i32 {\n    let mut a = Box(n = 1)\n    let mut b = Box(n = 1)\n    grow(&a, 3)\n    "
-                 "b.grow(3)\n    a.n * 10 + b.n\n}\n";
+    Str source = "struct Box:\n"
+                 "    n: i32\n"
+                 "\n"
+                 "fn grow(b: *mut Box, by: i32):\n"
+                 "    b.n += by\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let mut a = Box(n = 1)\n"
+                 "    let mut b = Box(n = 1)\n"
+                 "    grow(&a, 3)\n"
+                 "    b.grow(3)\n"
+                 "    a.n * 10 + b.n\n";
     test::check_equal(run(source, "front::test::run"), (I32)44);
 }
