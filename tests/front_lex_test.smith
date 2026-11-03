@@ -258,9 +258,9 @@ export void test_lex_golden_the_new_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source =
-        "pub fn main() -> I32 {\n    mut x := 1\n    y := p.* as I32\n    match x {\n        1 => return 0\n    }\n"
-        "    for (i in xs) f(@i)\n    return y\n}\ntype Point = struct { I32 x }\nfn_once g\n";
+    Str source = "pub fn main() -> I32 {\n    let mut x = 1\n    let y = p.* as I32\n    match x {\n        1 => "
+                 "return 0\n    }\n"
+                 "    for (i in xs) f(@i)\n    return y\n}\ntype Point = struct { I32 x }\nfn_once g\n";
     lex::Tokens tokens = new_tokens_of(source);
     test::golden("tests/front/lex/new-syntax.tokens", lex::dump_lines(tokens, source));
 }

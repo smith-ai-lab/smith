@@ -11,7 +11,7 @@
 //   check_module_with(module, target, load)
 //                                  check_module that also reads the modules the file imports (`import a.b as m`),
 //                                  `load` giving the tree of a dotted path (#1677): `m.name` is then a public
-//                                  declaration of that module, and `sin := m.sin` a name for it. Without `load`,
+//                                  declaration of that module, and `let sin = m.sin` a name for it. Without `load`,
 //                                  an import binds a name and reads nothing.
 //   options(target)                The `types::Options` that make `types::check` call `check_body` for every function
 //                                  with a body, after wiring the hooks below. For a caller that wants `types::check`
@@ -33,14 +33,14 @@
 //                  label's statement, `break`, `continue`, `goto`. A condition is checked against `Bool`; a `return`
 //                  value against the function's result type (a plain `return;` in a function that returns a value is
 //                  an error, a value in a `Void` function too).
-//   Constants      `const X := v` (and `constexpr`), local or of the module, is an error when `v` names a variable
+//   Constants      `const X = v` (and `constexpr`), local or of the module, is an error when `v` names a variable
 //                  that is not constant (spec "Modules and declarations"). In smith's own syntax (`is_new`): a
 //                  binding is constant unless `mut` (writes are refused by types_expr), shadowing is an error (the
-//                  earlier declaration is named by its byte offset: the checker has no line table), `_ := f()`
+//                  earlier declaration is named by its byte offset: the checker has no line table), `let _ = f()`
 //                  discards, and a call whose result is not `Void` and is not used is an error, once the function has a
-//                  parameter or an earlier local in that syntax (a function has no marker of its own). `(q, r) := f()`
-//                  and `mut (q, r) := f()` split a tuple: one binding per element, `_` discards one, a wrong count
-//                  is an error naming both. Nested patterns are not parsed yet.
+//                  parameter or an earlier local in that syntax (a function has no marker of its own). `let (q, r) =
+//                  f()` and `let (mut q, mut r) = f()` split a tuple: one binding per element, `_` discards one, a
+//                  wrong count is an error naming both. Nested patterns are not parsed yet.
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -260,7 +260,7 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         state.new_body = true;
     }
     if (is_discard(name) && is_new_variable(d)) {
-        return; // `_ := f()` discards the value: nothing is declared
+        return; // `let _ = f()` discards the value: nothing is declared
     }
     if (shadows(r, d, name)) {
         return;
@@ -269,6 +269,7 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
     if (d->kind == .variable && d->kind.variable.is_new) {
         symbol.at = d->span;
+        symbol.at.start += 4; // past `let `: a fix writes `mut ` before the name
         symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
         symbol.written = d->kind.variable.type;
         symbol.init = d->kind.variable.init;
@@ -357,8 +358,8 @@ static void require_constant(types::Checked *r, Str name, const ast::Expr *init)
     const ast::Expr *bad = not_constant(r, init);
     if (bad != nullptr) {
         types::failf(r, bad->span, "`const ", name,
-                     "` is known at compile time, but this is not; use a constant here, or write `", name,
-                     " := ...` without `const`");
+                     "` is known at compile time, but this is not; use a constant here, or write `let ", name,
+                     " = ...` without `const`");
     }
 }
 
@@ -376,10 +377,14 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     if (!(written->kind == .auto_type)) {
         type = types::resolve(r, written);
     }
-    if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
+    if (init == nullptr) {
+        types::failf(r, d->span, "`", name, "` needs a value: give one, or write `= undefined`");
+        type = r->table.invalid;
+    } else if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
         if (is_auto(type)) {
-            types::failf(r, init->span, "`Auto ", name,
-                         " = undefined;` has no type to take; write the type, e.g. `I32 ", name, " = undefined;`");
+            types::failf(r, init->span, "`let mut ", name,
+                         " = undefined` has no type to take; write the type, e.g. `let mut ", name,
+                         ": i32 = undefined`");
             type = r->table.invalid;
         }
     } else if (is_auto(type)) {
@@ -406,8 +411,8 @@ static void local_declaration(types::Checked *r, const ast::Decl *d) {
                  "of the module");
 }
 
-// `(q, r) := f()` and `mut (q, r) := f()`: one constant (or variable) per element of the tuple the initializer
-// returns; `_` discards an element. The count must match the tuple's length.
+// `let (q, r) = f()` and `let (mut q, mut r) = f()`: one constant (or variable) per element of the tuple the
+// initializer returns; `_` discards an element. The count must match the tuple's length.
 static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .destructure)) {
         return;
@@ -420,7 +425,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (found->kind != .tuple) {
-        types::failf(r, s->span, "`(", countof(names), " names) := ...` splits a tuple, but this is a `",
+        types::failf(r, s->span, "`let (", countof(names), " names) = ...` splits a tuple, but this is a `",
                      types::show(found), "`; write a single name, or call something that returns a tuple");
         return;
     }
@@ -442,7 +447,8 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
             continue;
         }
         types::TypeRef type = found->slots[i].type;
-        types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_const = !is_mut, .is_new = true};
+        types::Symbol symbol = {
+            .name = name, .kind = .variable, .type = type, .is_const = !(is_mut || names[i].is_mut), .is_new = true};
         if (!types::declare(&r->scopes, symbol)) {
             types::failf(r, names[i].span, "`", name, "` is already declared in this scope; choose another name");
             continue;
@@ -640,7 +646,7 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types::failf(r, s->span, "the result of this call, a `", types::show(type),
-                 "`, is not used; use it, or write `_ := ...` to discard it");
+                 "`, is not used; use it, or write `let _ = ...` to discard it");
 }
 
 // Reads one statement: does what needs no children now, and pushes the children.
@@ -841,7 +847,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
         return;
     }
     if (d->kind.variable.init->kind == .type_value) {
-        return; // `Point := m.Point`: an alias of a type, resolved with the declarations
+        return; // `let Point = m.Point`: an alias of a type, resolved with the declarations
     }
     Str name = d->kind.variable.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);

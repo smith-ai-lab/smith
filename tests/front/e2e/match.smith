@@ -27,12 +27,12 @@ pub fn check() -> i32 {
     if score(.red) != 1 || score(.blue) != 2 {
         return 1
     }
-    top: Level = .high
+    let top: Level = .high
     if top.to(u8) != 9 {
         return 2
     }
-    mut seen := 0
-    c: Color = .green
+    let mut seen = 0
+    let c: Color = .green
     match c {
         .red => seen = 1
         .green => seen = 2

@@ -13,7 +13,7 @@ fn or_zero(o: ?i64) -> i64 {
 }
 
 pub fn check() -> i32 {
-    mut found: ?i32
+    let mut found: ?i32 = .none
     if let .some(_) = found {
         return 1
     }

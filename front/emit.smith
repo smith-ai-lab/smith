@@ -42,8 +42,8 @@
 // path and its name joined by `::` (`front::test::add`), the label the generated headers give, unless the function has
 // `@c_name("x")` (then `x`) or is `main` (then `main`); `pub`, exported, a c_name and `main` are external linkage, the
 // rest internal. `@inline`, `@noinline` and `@cold` (or `[[std::...]]`) are LLVM attributes. The last line of a body
-// that is an expression is its value, `_ := f()` drops the value, and a local `const X := v` is a constant slot. At the
-// end it runs the verifier; its message becomes an `Error`.
+// that is an expression is its value, `let _ = f()` drops the value, and a local `const X = v` is a constant slot. At
+// the end it runs the verifier; its message becomes an `Error`.
 //
 // THE WALK has no recursion (a compile error in a module): an explicit work stack and a value stack, both in the
 // `Emitter` (emit_state.smith, with every field the later tickets need; one that is missing is an escalation, not an
@@ -446,13 +446,14 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
-// `T t;` is the zero value of `T`, stored where the declaration stands (a loop zeroes it again each iteration).
-static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Span span, Bool zero) {
+// `let mut x: T = undefined`: the slot, and no store, except that with `Options.fill_undefined` (a debug build) the
+// slot is filled with the byte 0xAA so that a read before a write shows. There is no zero value (#1428).
+static state::Status declare_undefined(state::Emitter *e, const ast::Decl *d, ast::Span span) {
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
     }
     const ast::TypeExpr *type = d->kind.variable.type;
-    if (type->kind == .auto_type) return state::fail("`auto` needs an initializer", span);
+    if (type->kind == .auto_type) return state::fail("`undefined` has no type to take: write the type", span);
     state::TyResult made = type_of(e, type);
     if (made == .error) {
         return {.error = made.error};
@@ -460,14 +461,16 @@ static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Sp
     state::Ty ty = made.ok;
     Str name = d->kind.variable.name;
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
-    if (zero) c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
+    if (e->options.fill_undefined) {
+        c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
+        c::LLVMBuildMemSet(e->builder, slot, c::LLVMConstInt(byte, 0xAA, 0), c::LLVMSizeOf(ty.llvm), 1);
+    }
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
     try debug::declare_local(e, name, ty, slot, span);
     return state::success();
 }
 
-// `T x = undefined;` (K3b, #1334): the slot and no store. The emitter has no debug/release switch (`debug_info` is
-// only the DWARF flag), so there is no fill pattern.
+// `x = undefined`: the word, unless a local of that name hides it.
 static Bool is_undefined(const ast::Expr *init) {
     if (init == nullptr || !(init->kind == .name)) return false;
     ast::Path path = init->kind.name.path;
@@ -480,7 +483,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     }
     const ast::TypeExpr *type = d->kind.variable.type;
     if (state::same_text(d->kind.variable.name, "_") && d->kind.variable.init != nullptr) {
-        // `_ := f()`: the value is computed and dropped; no slot, no local.
+        // `let _ = f()`: the value is computed and dropped; no slot, no local.
         state::Hint dropped = state::no_hint();
         if (type->kind != .auto_type) {
             state::TyResult made = type_of(e, type);
@@ -493,7 +496,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
         state::push_eval(e, d->kind.variable.init, dropped);
         return state::success();
     }
-    // A local `const X := v` is a constant local; today's `constexpr T x` is not emitted yet.
+    // A local `const X = v` is a constant local; today's `constexpr T x` is not emitted yet.
     Bool is_const_local = d->kind.variable.is_constexpr && d->kind.variable.is_new;
     if ((d->kind.variable.is_constexpr && !is_const_local) || d->kind.variable.is_thread_local || d->is_static ||
         d->is_extern)
@@ -503,10 +506,11 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
             return state::failf(span, d->kind.variable.name, " is declared twice in one scope");
     }
     Bool is_auto = type->kind == .auto_type;
-    if (d->kind.variable.init == nullptr) return declare_zero(e, d, span, true);
+    if (d->kind.variable.init == nullptr)
+        return state::failf(span, "`", d->kind.variable.name, "` needs a value: give one, or write `= undefined`");
     state::Local shadow = {};
     if (is_undefined(d->kind.variable.init) && !state::find_local(e, "undefined", &shadow))
-        return declare_zero(e, d, span, false);
+        return declare_undefined(e, d, span);
     state::Ty ty = {};
     state::Hint hint = state::no_hint();
     if (!is_auto) {
@@ -1203,8 +1207,8 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 // ---------------------------------------------------------------------------------------------------------------
 // The module
 
-// `sin := m.sin` or `Point := m.Point`: a name for a declaration of an imported module (#1714). The checker has typed
-// it; there is nothing to emit, a call through it reaches the function itself.
+// `let sin = m.sin` or `let Point = m.Point`: a name for a declaration of an imported module (#1714). The checker has
+// typed it; there is nothing to emit, a call through it reaches the function itself.
 static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     const ast::Expr *init = d->kind.variable.init;

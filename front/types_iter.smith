@@ -15,7 +15,7 @@
 //               knows these four by name when nothing in scope has that name.
 //   zip         `zip` of arguments of different lengths is a checked failure at run time, not a compile error. This is
 //               the lead's recommendation, not yet the owner's word (#1514).
-//   not yet     A `for` that builds a value (`xs := for ...`), `continue` as a filter and `sum(for ...)` fusing need
+//   not yet     A `for` that builds a value (`let xs = for ...`), `continue` as a filter and `sum(for ...)` fusing need
 //   the
 //               stream type; they are typed with the value statements (types_expr), not here.
 //

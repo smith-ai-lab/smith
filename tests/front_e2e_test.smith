@@ -204,7 +204,7 @@ export void test_front_e2e_a_warning_line_says_warning() {
     test::check_equal(has(line, "error"), false);
 }
 
-// Two files (#1714): `app` calls `m.scale` and `mul := m.scale` of the module `mathlib` (a file under the library
+// Two files (#1714): `app` calls `m.scale` and `let mul = m.scale` of the module `mathlib` (a file under the library
 // root), the two objects link, and the program runs. The importer's object leaves `mathlib::scale` undefined and
 // the importer's object defines it.
 export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
@@ -214,8 +214,8 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     Str library = as_str(format::push(folder, "/lib/mathlib.smith"));
     write_text(library, "pub fn scale(x: f64, k: f64) -> f64 {\n    x * k\n}\n");
     Str app = as_str(format::push(folder, "/src/app.smith"));
-    write_text(app, "import mathlib as m\nmul := m.scale\n\n"
-                    "pub fn check() -> i32 {\n    a := m.scale(2.0, 3.0)\n    b := mul(k = 3.0, x = 2.0)\n"
+    write_text(app, "import mathlib as m\nlet mul = m.scale\n\n"
+                    "pub fn check() -> i32 {\n    let a = m.scale(2.0, 3.0)\n    let b = mul(k = 3.0, x = 2.0)\n"
                     "    if a != 6.0 {\n        return 1\n    }\n    if b != a {\n        return 2\n    }\n    0\n}\n");
     roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
                             .library = as_str(format::push(folder, "/lib"))};
@@ -301,13 +301,13 @@ export void test_front_e2e_c_function_and_constant_macro() {
 }
 
 export void test_front_e2e_c_struct_typedef_and_constant() {
-    Str body = "    mut p: c::point_t = c::point(x = 3, y = 4)\n    if c::sum(&p) != 7 {\n        return 1\n    }\n"
+    Str body = "    let mut p: c::point_t = c::point(x = 3, y = 4)\n    if c::sum(&p) != 7 {\n        return 1\n    }\n"
                "    if c::answer != 42 {\n        return 2\n    }\n    0\n";
     test::check_equal(run_with_header("c_struct", body), 0);
 }
 
 export void test_front_e2e_c_enum() {
-    Str body = "    k: c::color = c::blue\n    if k != c::blue {\n        return 1\n    }\n"
+    Str body = "    let k: c::color = c::blue\n    if k != c::blue {\n        return 1\n    }\n"
                "    if c::green == c::blue {\n        return 2\n    }\n    0\n";
     test::check_equal(run_with_header("c_enum", body), 0);
 }
@@ -317,7 +317,7 @@ export void test_front_e2e_c_printf_prints() {
     use_header_flags();
     Str folder = folder_for("c_print");
     Str source = "import <stdio.h>;\n\npub fn main() -> i32 {\n"
-                 "    _ := c::printf(\"hello %d %s\\n\", 42, \"world\")\n    0\n}\n";
+                 "    let _ = c::printf(\"hello %d %s\\n\", 42, \"world\")\n    0\n}\n";
     compile::Report report = compile_module(folder, "hello", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     if (report.ok) {

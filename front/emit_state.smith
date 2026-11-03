@@ -35,6 +35,7 @@ export struct Options {
     Target target;
     Str source; // the file's text, for debug info's lines (B5)
     Bool debug_info;
+    Bool fill_undefined;           // a debug build fills an `undefined` local with the byte 0xAA
     const types::Checked *checked; // the checker's result for the module; null: no cast is checked (K2, #1329)
 };
 
@@ -178,6 +179,7 @@ export struct EnumType {
 export struct FieldInfo {
     Str name;
     Ty ty;
+    ast::Expr *default_value; // `x: T = 3`: written for a construction that leaves the field out (null: none)
 };
 
 export struct RecordType {

@@ -450,16 +450,12 @@ static ast::Stmt *declaration_statement(parse::Parser *p) {
     return settle(p, start, before, new_stmt({.declaration = {.decl = decl}}));
 }
 
-// Whether the statement is a binding in smith's own syntax: `a := v` in any source, and `a: T = v` where the tokens
-// are the new ones (there `name:` is no label), with `mut` and `const` before either.
+// Whether the statement is a binding in smith's own syntax: `let a = v`, `let mut a: T = v` or `const A = v`.
 static Bool new_binding(const parse::Parser *p) {
-    if (!parse_decl::starts_binding(p)) return false;
-    lex::TokenKind kind = parse::peek(p).kind;
-    if (kind == lex::kw_mut || kind == lex::kw_const) return true;
-    return p->new_syntax || parse::peek_at(p, 1).kind == lex::colon_equal;
+    return parse_decl::starts_binding(p);
 }
 
-// `(q, r) := f()`: the declaration parser reads it, whole.
+// `let (q, mut r) = f()`: the declaration parser reads it, whole.
 static ast::Stmt *destructure_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);

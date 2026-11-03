@@ -2,5 +2,5 @@
   (function run
     (result (named Void))
     (block
-      (destructure q r (name divmod))
+      (destructure q mut r (name divmod))
       (destructure mut a b (name pair)))))

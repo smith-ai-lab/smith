@@ -108,7 +108,7 @@ static void stops_at(Str source, Bool with_checker, Str what, Str at) {
 }
 
 export void test_front_emit_wave3_for_in_over_something_unbuilt_reaches_its_stub() {
-    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        _ := x\n    }\n    0\n}\n", false,
+    stops_at("fn f(xs: i32) -> i32 {\n    for x in xs {\n        let _ = x\n    }\n    0\n}\n", false,
              "a loop over a block or a stream", "xs");
 }
 
@@ -148,10 +148,10 @@ export void test_front_emit_wave3_a_narrower_integer_is_widened_where_the_types_
     Scenario s = {};
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("pub fn widen(n: i32) -> i64 {\n    n\n}\n"
-                     "pub fn via_local(n: i32) -> i64 {\n    x: i64 = n\n    x\n}\n"
+                     "pub fn via_local(n: i32) -> i64 {\n    let x: i64 = n\n    x\n}\n"
                      "pub fn byte_up(b: u8) -> u32 {\n    return b\n}\n"
                      "pub fn u32_up(u: u32) -> i64 {\n    return u\n}\n"
-                     "pub fn via_assign(n: i32) -> i64 {\n    mut wide: i64 = 0\n    wide = n\n    wide\n}\n",
+                     "pub fn via_assign(n: i32) -> i64 {\n    let mut wide: i64 = 0\n    wide = n\n    wide\n}\n",
                      &host, &s);
     test::check_equal(contains(ir, "sext i32 "), true);
     test::check_equal(contains(ir, "zext i8 "), true);

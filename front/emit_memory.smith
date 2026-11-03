@@ -1276,7 +1276,7 @@ static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize 
         if (holds(made.ok, e->records[at].ty.llvm)) {
             return state::failf(field.span, e->records[at].name, " contains itself; use a pointer");
         }
-        infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok};
+        infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok, .default_value = field.default_value};
         types[i] = made.ok.llvm;
     }
     return state::success();

@@ -435,7 +435,7 @@ export void test_front_types_an_alias_is_plain_substitution() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    // Line := []u8
+    // let Line = []u8
     ast::ExprKind value_kind = {.type_value = {.type = slice_type(ast::named("u8"))}};
     ast::Expr *line_value = ast::expr(value_kind);
     ast::Decl *line = ast::variable("Line", ast::make_type(.auto_type), line_value);

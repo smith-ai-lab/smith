@@ -83,7 +83,7 @@ export void test_front_emit_method_a_function_of_this_module() {
     Str source = "struct Box {\n    n: i32\n}\n\n"
                  "fn total(b: Box) -> i32 {\n    b.n * 2\n}\n\n"
                  "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
-                 "pub fn run() -> i32 {\n    mut b := Box(n = 1)\n    b.grow(3)\n    b.total()\n}\n";
+                 "pub fn run() -> i32 {\n    let mut b = Box(n = 1)\n    b.grow(3)\n    b.total()\n}\n";
     test::check_equal(run(source, "front::test::run"), (I32)8);
 }
 
@@ -96,7 +96,7 @@ export void test_front_emit_method_on_an_array_literal() {
 export void test_front_emit_method_is_the_written_out_call() {
     Str source = "struct Box {\n    n: i32\n}\n\n"
                  "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
-                 "pub fn run() -> i32 {\n    mut a := Box(n = 1)\n    mut b := Box(n = 1)\n    grow(&a, 3)\n    "
+                 "pub fn run() -> i32 {\n    let mut a = Box(n = 1)\n    let mut b = Box(n = 1)\n    grow(&a, 3)\n    "
                  "b.grow(3)\n    a.n * 10 + b.n\n}\n";
     test::check_equal(run(source, "front::test::run"), (I32)44);
 }

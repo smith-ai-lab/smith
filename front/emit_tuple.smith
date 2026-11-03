@@ -1,4 +1,4 @@
-// front::emit_tuple: tuples: types, literals, `t.0` and `(q, r) := f()` (#1619 of #1428).
+// front::emit_tuple: tuples: types, literals, `t.0` and `let (q, r) = f()` (#1619 of #1428).
 //
 // Layout. `(A, B)` is the LLVM literal (unnamed, not packed) struct `{ A, B }` of its elements' types in order, with
 // the data layout's padding. `(T,)` is a one-field struct and `()` the empty struct `{}`. The `Ty` is kind `tuple`,
@@ -14,7 +14,7 @@
 //                  element type and inserted into the zero struct.
 //   `member`       `t.0` as a value (`extractvalue`); `t.0.1` runs from the inside out through the work stack.
 //   `place_member` `t.0` as an address (a struct GEP), so `t.0 = v` works for a `mut t`.
-//   `destructure`  `(q, r) := f()`: the value is made once, then one local per name (`_` binds nothing).
+//   `destructure`  `let (q, r) = f()`: the value is made once, then one local per name (`_` binds nothing).
 //
 // Left: `==` between tuples, tuples of slices or `fn` values, and `for (i, x) in ...` (emit_iter).
 module front::emit_tuple;
@@ -302,7 +302,7 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// `(q, r) := f()`
+// `let (q, r) = f()`
 
 static state::Status destructure_finish(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;

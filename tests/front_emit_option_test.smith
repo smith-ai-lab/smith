@@ -150,14 +150,17 @@ export void test_front_emit_option_some_none_and_if_let_read_back() {
     emit_jit::Jit host = start_jit();
     char *ir = ir_of(
         "fn half(n: i32) -> ?i32 {\n    if n % 2 != 0 {\n        return .none\n    }\n    n / 2\n}\n"
-        "pub fn zeroed() -> i32 {\n    mut o: ?i32\n    if let .some(_) = o {\n        return 1\n    }\n    0\n}\n"
-        "pub fn some_three() -> i32 {\n    o: ?i32 = .some(3)\n    if let .some(v) = o {\n        return v\n    }\n    "
+        "pub fn zeroed() -> i32 {\n    let o: ?i32 = .none\n    if let .some(_) = o {\n        return 1\n    }\n    "
+        "0\n}\n"
+        "pub fn some_three() -> i32 {\n    let o: ?i32 = .some(3)\n    if let .some(v) = o {\n        return v\n    "
+        "}\n    "
         "-1\n}\n"
-        "pub fn none_value() -> i32 {\n    o: ?i32 = .none\n    if let .none = o {\n        return 7\n    }\n    "
+        "pub fn none_value() -> i32 {\n    let o: ?i32 = .none\n    if let .none = o {\n        return 7\n    }\n    "
         "-1\n}\n"
-        "pub fn wrapped(n: i32) -> i32 {\n    o: ?i32 = n\n    if let .some(v) = o {\n        return v\n    } else {\n "
+        "pub fn wrapped(n: i32) -> i32 {\n    let o: ?i32 = n\n    if let .some(v) = o {\n        return v\n    } else "
+        "{\n "
         "       return -1\n    }\n}\n"
-        "pub fn widened(n: i32) -> i32 {\n    o: ?i64 = n\n    if let .some(v) = o {\n        return 9\n    }\n    "
+        "pub fn widened(n: i32) -> i32 {\n    let o: ?i64 = n\n    if let .some(v) = o {\n        return 9\n    }\n    "
         "0\n}\n"
         "pub fn halved(n: i32) -> i32 {\n    if let .some(h) = half(n) {\n        return h\n    }\n    -1\n}\n",
         &host, &s);

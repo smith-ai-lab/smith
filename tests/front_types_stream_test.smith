@@ -84,7 +84,8 @@ static void fails(Str source, Str first, Str second) {
 }
 
 export void test_front_types_stream_yield_in_a_generator_is_accepted() {
-    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n        yield n\n   "
+    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n    while n > 0 {\n        yield "
+          "n\n   "
           "     n -= 1\n    }\n}\n");
 }
 
@@ -108,7 +109,7 @@ export void test_front_types_stream_plain_return_ends_the_stream() {
 
 export void test_front_types_stream_last_line_value_is_refused() {
     fails("fn one() -> i32 {\n    1\n}\n\nfn g(n: i32) -> stream::Stream(i32) {\n    yield n\n    one()\n}\n",
-          "is not used", "_ := ...");
+          "is not used", "let _ = ...");
 }
 
 export void test_front_types_stream_returning_a_stream_without_yield_is_ordinary() {
@@ -116,13 +117,14 @@ export void test_front_types_stream_returning_a_stream_without_yield_is_ordinary
 }
 
 export void test_front_types_stream_next_and_close_on_a_local() {
-    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    mut n := from\n    while n > 0 {\n        yield n\n   "
-          "     n -= 1\n    }\n}\n\nfn drain() {\n    s := countdown(3)\n    mut go := true\n    while go {\n"
-          "        next: ?i32 = stream::next(s)\n        go = false\n    }\n    stream::close(s)\n}\n");
+    clean("fn countdown(from: i32) -> stream::Stream(i32) {\n    let mut n = from\n    while n > 0 {\n        yield "
+          "n\n   "
+          "     n -= 1\n    }\n}\n\nfn drain() {\n    let s = countdown(3)\n    let mut go = true\n    while go {\n"
+          "        let next: ?i32 = stream::next(s)\n        go = false\n    }\n    stream::close(s)\n}\n");
 }
 
 export void test_front_types_stream_next_of_a_non_stream_is_refused() {
-    fails("fn f(n: i32) {\n    _ := stream::next(n)\n}\n", "`stream::next` got a `I32`",
+    fails("fn f(n: i32) {\n    let _ = stream::next(n)\n}\n", "`stream::next` got a `I32`",
           "`stream::Stream(T)` is expected");
 }
 
@@ -132,7 +134,7 @@ export void test_front_types_stream_close_of_a_non_stream_is_refused() {
 }
 
 export void test_front_types_stream_next_is_an_optional_of_the_element() {
-    fails("fn countdown() -> stream::Stream(i32) {\n    yield 1\n}\n\nfn f() {\n    s := countdown()\n"
-          "    n: i32 = stream::next(s)\n}\n",
+    fails("fn countdown() -> stream::Stream(i32) {\n    yield 1\n}\n\nfn f() {\n    let s = countdown()\n"
+          "    let n: i32 = stream::next(s)\n}\n",
           "found Option(I32)", "expected I32");
 }

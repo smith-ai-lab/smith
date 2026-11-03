@@ -182,7 +182,7 @@ export void test_front_attr_arguments_are_a_construction_of_the_struct() {
 export void test_front_attr_arguments_are_computed_at_compile_time() {
     fails(join(attribute_struct(), "fn name() -> str {\n    \"x\"\n}\n@Rename(to = name())\nfn f() {\n}\n"),
           "an attribute's arguments are computed at compile time", "compile time");
-    clean(join(attribute_struct(), "const label := \"x\"\n@Rename(to = label)\nfn f() {\n}\n"));
+    clean(join(attribute_struct(), "const label = \"x\"\n@Rename(to = label)\nfn f() {\n}\n"));
 }
 
 // A positional argument fills the field at its place, as it does in a construction (#1813).
