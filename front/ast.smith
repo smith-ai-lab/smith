@@ -148,7 +148,8 @@ export typedef enum {
     } record; // an anonymous struct or union used as a type: a payload variant `struct { I32 a; } one;`
     struct {
         TypeRef elements[:];
-    } tuple; // `struct { I32, F32 }`: types with no field names, in order
+        Identifier names[:]; // `(count: i32, ms: f64)`: one name per element, or none for `(i32, f64)`
+    } tuple;                 // `struct { I32, F32 }`: types with no field names, in order
     struct {
         TypeExpr *inner;
     } option; // `?T`
@@ -251,6 +252,7 @@ export struct Param {
     Bool is_mut;         // `mut x: T`
     Bool is_new;         // written in smith's own syntax (`x: T`), not today's `T x`
     Bool is_const;       // `const n: usize`: known at compile time
+    Bool is_keyword;     // after the `;` of the parameter list: a call can only pass it by name
     Expr *default_value; // `port: u16 = 443`: what a call that leaves the argument out passes (null when none)
     Attribute attributes[:];
     Span span;
@@ -1948,6 +1950,10 @@ static void type_head(Output *text, TypeExpr *t) {
         break;
     case .tuple:
         put(text, "tuple");
+        for (Usize i = 0; i < countof(t->kind.tuple.names); i++) {
+            put(text, " ");
+            put(text, t->kind.tuple.names[i].text);
+        }
         break;
     case .option:
         put(text, "option");
@@ -2098,6 +2104,7 @@ static void other_head(Output *text, Node node) {
         put_flag(text, node.param->is_mut, "mut");
         put_flag(text, node.param->is_new, "new");
         put_flag(text, node.param->is_const, "const");
+        put_flag(text, node.param->is_keyword, "keyword");
         break;
     case .field:
         put(text, "field ");
@@ -2246,4 +2253,26 @@ export Str dump(const Module *m) {
     render(&text, items.data, items.length);
     put_char(&text, '\n');
     return text.data[0:text.length];
+}
+
+// The innermost expression of `m` whose bytes cover `offset`, or null when there is none (the language server's hover,
+// #1892). Of two that cover it, the one with the shorter span wins; a later one wins a tie.
+export const Expr *expr_at(const Module *m, U32 offset) {
+    Items items = {};
+    add(&items, {.module = m});
+    const Expr *best = nullptr;
+    for (Usize at = 0; at < items.length; at++) {
+        Node node = items.data[at].node;
+        if (node == .expr) {
+            const Expr *e = node.expr;
+            Bool covers = e->span.start <= offset && offset < e->span.end;
+            Bool tighter = best == nullptr || e->span.end - e->span.start <= best->span.end - best->span.start;
+            if (covers && tighter) best = e;
+        }
+        Usize before = items.length;
+        other_children(&items, node);
+        items.data[at].first = before;
+        items.data[at].count = items.length - before;
+    }
+    return best;
 }

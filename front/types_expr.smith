@@ -53,7 +53,7 @@
 // constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through
 // `*T` is an error naming `*mut T`.
 //
-// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
+// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
 // LITERALS NEXT TO A TYPED OPERAND: in `x + 1` and `x < 10` an unsuffixed literal takes the type of the other operand
@@ -1655,10 +1655,16 @@ static void type_named_arguments(types::Checked *c, ast::ExprRef args[:]) {
 static Usize required_arguments(ast::Param params[:], Usize wanted) {
     if (countof(params) != wanted) return wanted;
     Usize required = 0;
+    Usize keywords = 0;
     for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].default_value == nullptr) required = i + 1;
+        if (params[i].default_value != nullptr) continue;
+        if (params[i].is_keyword) {
+            keywords += 1;
+        } else {
+            required = i + 1;
+        }
     }
-    return required;
+    return required + keywords;
 }
 
 // Reports a wrong argument count; true when the count is right. A parameter with a default may be left out.
@@ -1751,6 +1757,35 @@ static void push_named_arguments(types::Checked *c, Work *w, ast::ExprRef args[:
     }
 }
 
+// Whether some argument of the call is written `name = ...`.
+static Bool names_argument(ast::ExprRef args[:], Str name) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) {
+            if (same_text(arg->kind.named_arg.name, name)) return true;
+        }
+    }
+    return false;
+}
+
+// A positional argument for a keyword-only parameter (one after the `;` of the declaration) is an error, and so is
+// leaving out a keyword-only parameter that has no default.
+static void check_keyword_only(types::Checked *c, const ast::Expr *e, ast::ExprRef args[:], ast::Param params[:]) {
+    for (Usize i = 0; i < countof(args) && i < countof(params); i++) {
+        if (!is_named(args[i]) && params[i].is_keyword) {
+            types::failf(c, args[i]->span, "`", params[i].name, "` is keyword-only; write `", params[i].name,
+                         " = ...`");
+        }
+    }
+    for (Usize i = 0; i < countof(params); i++) {
+        const ast::Param *param = &params[i];
+        if (param->is_keyword && param->default_value == nullptr && !names_argument(args, param->name)) {
+            types::failf(c, e->span, "`", param->name, "` is keyword-only and has no default; write `", param->name,
+                         " = ...` in the call");
+        }
+    }
+}
+
 static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -1780,6 +1815,7 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     if (!arity_ok(c, e, signature, params, countof(args))) {
         signature = nullptr;
     }
+    if (signature != nullptr) check_keyword_only(c, e, args, params);
     if (has_named(args) && signature != nullptr) {
         if (countof(params) != countof(signature->slots)) {
             types::failf(c, e->span,
@@ -2416,6 +2452,12 @@ static void member_after(types::Checked *c, Frame f) {
     if (base->kind == .tuple && !e->kind.member.arrow) {
         const types::Slot *element = types::member(base, name);
         if (element == nullptr) {
+            if (countof(base->slots) > 0 && !types::is_position(base->slots[0].name)) {
+                types::failf(c, e->span, "`", types::show(base), "` has no element `", name,
+                             "`; write one of its names, such as `.", base->slots[0].name, "`");
+                poison(c, e);
+                return;
+            }
             types::failf(c, e->span, "`", types::show(base), "` has ", countof(base->slots),
                          " elements, so there is no `.", name, "`; write an element from `.0` to `.",
                          countof(base->slots) - 1, "`");
@@ -2488,7 +2530,8 @@ static Bool countable(types::TypeRef t) {
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
     types::TypeRef bad = invalid(c);
-    if (t == bad || countable(t)) {
+    // `Auto` is a generic parameter or a pack not yet instantiated (#1916): its count is known at the instance.
+    if (t == bad || t == c->table.automatic || countable(t)) {
         return;
     }
     types::failf(c, e->span, "countof takes an array or a slice, found `", types::show(t),
@@ -3438,7 +3481,9 @@ static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
 static void type_value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *call = type_value_call(c, f.node);
     if (call == nullptr) {
-        not_yet(c, f.node, "a type used as a value");
+        // A type passed to a `Type` parameter (`choose(U8)`, `Pair(T)`): a compile-time value whose type the instance
+        // decides, so it is `Auto` here, as the parameter that takes it is (#1916).
+        types::set_type(c, f.node, c->table.automatic);
         return;
     }
     push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
@@ -3505,7 +3550,9 @@ static void tuple_before(Work *w, Frame f) {
         if (shape != nullptr) {
             wanted = shape->slots[i - 1].type;
         }
-        push(w, items[i - 1], wanted, 0);
+        const ast::Expr *item = items[i - 1];
+        if (item->kind == .named_arg) item = item->kind.named_arg.value;
+        push(w, item, wanted, 0);
     }
 }
 
@@ -3517,7 +3564,12 @@ static void tuple_after(types::Checked *c, Frame f) {
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(items));
     for (Usize i = 0; i < countof(items); i++) {
-        elements[i].type = typ(c, items[i]);
+        const ast::Expr *item = items[i];
+        if (item->kind == .named_arg) {
+            elements[i].name = item->kind.named_arg.name;
+            item = item->kind.named_arg.value;
+        }
+        elements[i].type = typ(c, item);
         if (elements[i].type == invalid(c)) {
             poison(c, e);
             return;

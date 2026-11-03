@@ -191,6 +191,7 @@ static Bool same_slots(Slot a[:], Slot b[:]) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
         if (a[i].type != b[i].type) return false;
+        if (!same_text(a[i].name, b[i].name)) return false;
     }
     return true;
 }
@@ -246,6 +247,11 @@ static Bool same_kind(Kind a, Kind b) {
         return b == .vector;
     }
     return false;
+}
+
+// Whether a tuple slot's name is its position (`0`, `1`) and not a written name.
+export Bool is_position(Str name) {
+    return countof(name) > 0 && name[0] >= '0' && name[0] <= '9';
 }
 
 // Whether two structural types are the same type (a record and an enumeration are compared by address, not here).
@@ -392,11 +398,13 @@ export TypeRef result_of(Table *t, TypeRef ok, TypeRef error) {
     return intern(t, (Ty){.kind = .result_type, .element = ok, .error = error});
 }
 
-// The type `(A, B)`: the elements in order (their types; names are ignored), each made a slot named by its position.
+// The type `(A, B)`: the elements in order, each made a slot named by its position. A named tuple
+// `(count: A, ms: B)` has elements whose `name` is not empty: the name is part of the type.
 export TypeRef tuple_of(Table *t, Slot elements[:]) {
     Slot slots[:] = mem::alloc_slice(Slot, countof(elements));
     for (Usize i = 0; i < countof(elements); i++) {
-        slots[i].name = msg(format::push(i));
+        Str given = elements[i].name;
+        slots[i].name = countof(given) > 0 ? given : msg(format::push(i));
         slots[i].type = elements[i].type;
     }
     return intern(t, (Ty){.kind = .tuple, .slots = slots});
@@ -653,6 +661,8 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
             push_piece(stack, top, word(")"));
         for (Usize i = countof(t->slots); i > 0; i--) {
             push_piece(stack, top, of(t->slots[i - 1].type));
+            if (!is_position(t->slots[i - 1].name))
+                push_piece(stack, top, word(msg(format::push(t->slots[i - 1].name, ": "))));
             if (i > 1) push_piece(stack, top, word(", "));
         }
         put(text, "(");
@@ -1293,7 +1303,7 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
     Str name = path_text(applied_name);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
-    if (same_text(name, "Checked") && args == 2 && n == 2)
+    if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
     if (same_text(name, "Fn") && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;
@@ -1364,8 +1374,10 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .tuple) {
         Slot elements[:] = mem::alloc_slice(Slot, n);
-        for (Usize i = 0; i < n; i++)
+        for (Usize i = 0; i < n; i++) {
             elements[i].type = w->values[base + i].type;
+            if (i < countof(node->kind.tuple.names)) elements[i].name = node->kind.tuple.names[i].text;
+        }
         return tuple_of(&r->table, elements);
     }
     if (node->kind == .applied) {

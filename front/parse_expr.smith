@@ -80,6 +80,9 @@ static Number decode_integer(Str t) {
         } else if (c == 'b' || c == 'B') {
             base = 2;
             i = 2;
+        } else if (c == 'o' || c == 'O') {
+            base = 8;
+            i = 2;
         } else {
             base = 8;
             i = 1;
@@ -401,7 +404,7 @@ static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
 static ast::Expr *variant_value(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     lex::Token name = parse::peek(p);
-    if (name.kind != lex::name && name.kind != lex::type_name) {
+    if (name.kind != lex::name && name.kind != lex::type_name && !(p->new_syntax && lex::is_keyword(name.kind))) {
         parse::expect(p, lex::name, "a variant name after `.`");
         return nullptr;
     }
@@ -1770,14 +1773,24 @@ static Bool type_value_cast(const parse::Parser *p) {
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     ast::ExprRef items[:] = {};
     Bool is_tuple = parse::at(p, lex::right_paren);
+    Usize named_count = 0;
     for (Usize i = 0; i <= countof(p->tokens) && !parse::at(p, lex::right_paren); i += 1) {
-        ast::Expr *item = parse::expression(p);
+        Bool named = parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::equal;
+        ast::Expr *item = named ? argument(p) : parse::expression(p);
         if (item == nullptr) return .failed;
         items = parse_type::with_expr(items, item);
+        if (named) {
+            is_tuple = true;
+            named_count += 1;
+        }
         if (!parse::accept(p, lex::comma)) break;
         is_tuple = true;
     }
     if (!expect_ok(p, lex::right_paren, "`)` to close the `(`")) return .failed;
+    if (named_count > 0 && named_count != countof(items)) {
+        parse::error(p, parse::span_from(p, start), "a tuple names all its elements or none: `(count = 3, ms = 1.5)`");
+        return .failed;
+    }
     ast::Span span = parse::span_from(p, start);
     if (is_tuple) {
         push_value(st, make(span, {.tuple_lit = {.items = items}}));

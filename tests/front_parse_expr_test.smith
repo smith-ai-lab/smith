@@ -262,6 +262,11 @@ export void test_parse_expr_new_calls_variants_and_tuples() {
                     true);
 }
 
+// A keyword is a variant name after the dot: `.type` (the checker's own enums name a variant `type`).
+export void test_parse_expr_new_keyword_variant() {
+    check_golden_in("tests/front/parse_expr/new_keyword_variant.txt", ".type\n.type(x)\n.fn", true);
+}
+
 export void test_parse_expr_new_dereference_and_casts() {
     check_golden_in("tests/front/parse_expr/new_operators.txt",
                     "p.*\np.x.*\np.*.x\n&x\nx.to(f64)\n(-x).to(f64)\na + b.to(f64)\nx.to(u8).to(i32)\na * b.to(f64)\n"

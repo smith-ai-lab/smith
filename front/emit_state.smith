@@ -301,6 +301,7 @@ export struct Emitter {
     SavedFunction lambda_frames[:]; // the enclosing functions of the lambda being emitted, innermost last (#1620)
     Usize lambda_frame_count;
 
+    Str import_scope; // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)

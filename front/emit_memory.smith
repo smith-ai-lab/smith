@@ -157,6 +157,100 @@ export state::Ty block_type(state::Emitter *e, state::Ty cell, U64 dimensions) {
 
 export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t);
 
+export void add_record(state::Emitter *e, state::RecordType record) {
+    if (e->record_count == countof(e->records)) {
+        Usize capacity = countof(e->records) * 2;
+        if (capacity < 8) capacity = 8;
+        e->records = mem::realloc(e->records, capacity);
+    }
+    e->records[e->record_count] = record;
+    e->record_count += 1;
+}
+
+// Does a field of type `ty` hold the record `self` by value (directly or in an array)?
+static Bool holds(state::Ty ty, c::LLVMTypeRef self) {
+    state::Ty inner = ty;
+    while (inner.kind == .array)
+        inner = *inner.element;
+    return inner.kind == .record && inner.llvm == self;
+}
+
+// The fields of a record, resolved in order; the record itself is already in the table so a field can point to it.
+static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize at, state::FieldInfo infos[:],
+                                   c::LLVMTypeRef *types) {
+    if (d->kind != .record) {
+        return state::fail("not a record", d->span);
+    }
+    ast::FieldDecl fields[:] = d->kind.record.fields;
+    for (Usize i = 0; i < countof(fields); i++) {
+        ast::FieldDecl field = fields[i];
+        if (field.bit_width != nullptr) return state::not_emitted("bit-field", field.span);
+        for (Usize j = 0; j < i; j++) {
+            if (state::same_text(infos[j].name, field.name))
+                return state::failf(field.span, field.name, " is declared twice");
+        }
+        // Through the emitter's hook, not `resolve`: a field of an imported record may itself name a type, and a call
+        // back into `leaf_type` would be a recursion in the module.
+        state::TyResult made = state::type_of(e, field.type);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        if (holds(made.ok, e->records[at].ty.llvm)) {
+            return state::failf(field.span, e->records[at].name, " contains itself; use a pointer");
+        }
+        infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok, .default_value = field.default_value};
+        types[i] = made.ok.llvm;
+    }
+    return state::success();
+}
+
+// The record `d` under `name` in the table and `label` as its IR name.
+static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str name, Str label) {
+    if (d->kind != .record) {
+        return state::fail("not a record", d->span);
+    }
+    Bool opaque = d->kind.record.opaque;
+    Usize count = countof(d->kind.record.fields);
+    if (d->kind.record.is_union) return state::not_emitted("union", d->span);
+    Usize at = 0;
+    if (find_record_named(e, name, &at)) return state::failf(d->span, name, " is declared twice");
+    const char *text = label.data;
+    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, text);
+    state::Ty ty = {.kind = .record, .llvm = named, .name = name};
+    at = e->record_count;
+    add_record(e, (state::RecordType){.name = name, .ty = ty});
+    if (opaque) {
+        return state::success();
+    }
+    if (count > 64) {
+        return state::not_emitted("record with more than 64 fields", d->span);
+    }
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count + 1);
+    c::LLVMTypeRef types[64];
+    state::Status status = record_fields(e, d, at, infos, types);
+    if (status == .error) {
+        mem::free(infos.data);
+        return status;
+    }
+    c::LLVMStructSetBody(named, types, (U32)count, 0);
+    e->records[at].fields = infos[0:count];
+    return state::success();
+}
+
+// The record `decl` of an imported module (`v.Vec`), under the name the checker declared it by (`geom::vec::Vec`,
+// which names the type in the IR too), declared when the first use needs it. Its fields are read in this module's
+// scope, so a field that names another record of that module is not emitted yet.
+export state::TyResult imported_record(state::Emitter *e, const ast::Decl *decl, Str name) {
+    Usize index = 0;
+    if (!find_record_named(e, name, &index)) {
+        state::Status made = declare_record(e, decl, name, name);
+        if (made == .error) return {.error = made.error};
+        find_record_named(e, name, &index);
+    }
+    state::Ty ty = e->records[index].ty;
+    return ty;
+}
+
 // The type at the bottom of a chain of pointers and arrays: a scalar, an enumeration, a record, `str` or a slice.
 static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .slice) {
@@ -169,6 +263,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .block_type) return type_block(e, base);
     if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
     ast::Path path = base->kind.named.path;
+    if (countof(path.segments) == 2) return state::type_of(e, base); // `v.Vec`: front::emit's type_of reads the import
     if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");
     Str name = path.segments[0].text;
     state::Ty ty = {};
@@ -282,12 +377,25 @@ static const ast::Decl *find_global(state::Emitter *e, Str name) {
     return nullptr;
 }
 
+// The type of a global: the written one, or for an untyped `const LIMIT = 10;` the type of its literal (i32, or bool).
+static state::TyResult global_type(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .variable) return state::ty_fail("not a variable", d->span);
+    const ast::TypeExpr *type = d->kind.variable.type;
+    if (type->kind != .auto_type) return resolve(e, type);
+    const ast::Expr *init = d->kind.variable.init;
+    state::Ty ty = {};
+    Str spelling = "i32";
+    if (init != nullptr && init->kind == .boolean) spelling = "bool";
+    if (!d->kind.variable.is_constexpr || init == nullptr || !state::scalar_type(e, spelling, &ty))
+        return state::ty_fail("a global needs a written type", d->span);
+    return {.ok = ty};
+}
+
 // The global `name` as a place.
 static state::Status global_place_of(state::Emitter *e, Str name, ast::Span span, state::Value *place) {
     const ast::Decl *d = find_global(e, name);
     if (d == nullptr || d->kind != .variable) return state::failf(span, "unknown name ", name);
-    const ast::TypeExpr *type = d->kind.variable.type;
-    state::TyResult made = resolve(e, type);
+    state::TyResult made = global_type(e, d);
     if (made == .error) {
         return {.error = made.error};
     }
@@ -1237,85 +1345,16 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
 // ---------------------------------------------------------------------------------------------------------------
 // Declarations
 
-export void add_record(state::Emitter *e, state::RecordType record) {
-    if (e->record_count == countof(e->records)) {
-        Usize capacity = countof(e->records) * 2;
-        if (capacity < 8) capacity = 8;
-        e->records = mem::realloc(e->records, capacity);
-    }
-    e->records[e->record_count] = record;
-    e->record_count += 1;
-}
-
-// Does a field of type `ty` hold the record `self` by value (directly or in an array)?
-static Bool holds(state::Ty ty, c::LLVMTypeRef self) {
-    state::Ty inner = ty;
-    while (inner.kind == .array)
-        inner = *inner.element;
-    return inner.kind == .record && inner.llvm == self;
-}
-
-// The fields of a record, resolved in order; the record itself is already in the table so a field can point to it.
-static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize at, state::FieldInfo infos[:],
-                                   c::LLVMTypeRef *types) {
-    if (d->kind != .record) {
-        return state::fail("not a record", d->span);
-    }
-    ast::FieldDecl fields[:] = d->kind.record.fields;
-    for (Usize i = 0; i < countof(fields); i++) {
-        ast::FieldDecl field = fields[i];
-        if (field.bit_width != nullptr) return state::not_emitted("bit-field", field.span);
-        for (Usize j = 0; j < i; j++) {
-            if (state::same_text(infos[j].name, field.name))
-                return state::failf(field.span, field.name, " is declared twice");
-        }
-        state::TyResult made = resolve(e, field.type);
-        if (made == .error) {
-            return {.error = made.error};
-        }
-        if (holds(made.ok, e->records[at].ty.llvm)) {
-            return state::failf(field.span, e->records[at].name, " contains itself; use a pointer");
-        }
-        infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok, .default_value = field.default_value};
-        types[i] = made.ok.llvm;
-    }
-    return state::success();
-}
-
 // `Decl.record` (file scope or a block).
 export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .record) {
         return state::fail("not a record", d->span);
     }
     Str name = d->kind.record.name;
-    Bool opaque = d->kind.record.opaque;
-    Usize count = countof(d->kind.record.fields);
-    if (d->kind.record.is_union) return state::not_emitted("union", d->span);
-    Usize at = 0;
-    if (find_record_named(e, name, &at)) return state::failf(d->span, name, " is declared twice");
     Str label = qualified(e->tree, name);
-    const char *text = label.data;
-    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, text);
+    state::Status made = declare_record(e, d, name, label);
     state::free_text(label);
-    state::Ty ty = {.kind = .record, .llvm = named, .name = name};
-    at = e->record_count;
-    add_record(e, (state::RecordType){.name = name, .ty = ty});
-    if (opaque) {
-        return state::success();
-    }
-    if (count > 64) {
-        return state::not_emitted("record with more than 64 fields", d->span);
-    }
-    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count + 1);
-    c::LLVMTypeRef types[64];
-    state::Status status = record_fields(e, d, at, infos, types);
-    if (status == .error) {
-        mem::free(infos.data);
-        return status;
-    }
-    c::LLVMStructSetBody(named, types, (U32)count, 0);
-    e->records[at].fields = infos[0:count];
-    return state::success();
+    return made;
 }
 
 // An integer constant of type `ty`; `negative` for `-literal`.
@@ -1387,18 +1426,16 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
         return state::fail("not a variable", d->span);
     }
     Str name = d->kind.variable.name;
-    const ast::TypeExpr *type = d->kind.variable.type;
     const ast::Expr *init = d->kind.variable.init;
-    if (d->kind.variable.is_constexpr || d->kind.variable.is_thread_local || d->is_extern)
-        return state::not_emitted("this kind of global", d->span);
-    if (type->kind == .auto_type) return state::fail("a global needs a written type", d->span);
-    state::TyResult made = resolve(e, type);
+    if (d->kind.variable.is_thread_local) return state::not_emitted("this kind of global", d->span);
+    Bool constant = d->kind.variable.is_constexpr;
+    state::TyResult made = global_type(e, d);
     if (made == .error) {
         return {.error = made.error};
     }
     state::Ty ty = made.ok;
     c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
-    if (init != nullptr) try compound_constant(e, ty, init, &initial);
+    if (init != nullptr && !d->is_extern) try compound_constant(e, ty, init, &initial);
     Str symbol = qualified(e->tree, name);
     const char *label = symbol.data; // the text of `qualified` ends with a terminator
     state::Status result = state::success();
@@ -1406,8 +1443,10 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
         result = state::failf(d->span, name, " is declared twice");
     } else {
         c::LLVMValueRef global = c::LLVMAddGlobal(e->module, ty.llvm, label);
-        c::LLVMSetInitializer(global, initial);
-        if (d->exported && !d->is_static)
+        // `extern` declares: the definition is in another module, so no initializer and external linkage.
+        if (!d->is_extern) c::LLVMSetInitializer(global, initial);
+        if (constant && !d->is_extern) c::LLVMSetGlobalConstant(global, 1);
+        if (d->is_extern || (d->exported && !d->is_static))
             c::LLVMSetLinkage(global, c::LLVMExternalLinkage);
         else
             c::LLVMSetLinkage(global, c::LLVMInternalLinkage);
