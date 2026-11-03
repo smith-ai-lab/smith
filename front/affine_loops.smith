@@ -1,0 +1,214 @@
+// front::affine_loops: the loop rules of front::affine (#1987, piece 2 of #1972, part of #1631).
+//
+//   enter, declare, assigned, used, leave   The loops being read, innermost last: what each declares, what it
+//                                           assigns, and the uses of values from outside it that wait for its end.
+//   plain_counter                           Whether a name is the counter of a plain loop over an array.
+//
+// THE RULES (shim/affine.cpp is the old implementation; the messages are its messages)
+//
+//   in a loop   A use inside a loop of a value declared outside it would be a use per turn: an error at the use, unless
+//               the loop assigns the value (`key = next[0]`), which makes it fresh each turn. Reading the loop once is
+//               enough: its body is straight-line code to front::affine.
+//   plain loop  `for i in range(countof(keys))`: the counter `i` is one element of `keys` per turn. `keys[i]` is the
+//               element's own place, used at most once per turn, and is not a use of a value from outside.
+//   element     `keys[0]` is a place of its own, for an array or a slice; `keys[j]` and `keys[i + 1]` are not (an error
+//               at the use). The loop's names are immutable in smith's syntax, so the old rule that the body must not
+//               change the counter has nothing left to check.
+//   range for   `for k in keys` hands out one element per turn: `k` is declared in the loop, so it is fresh each turn.
+//
+// No recursion: the frames are a stack in a slice that grows.
+module front::affine_loops;
+
+import front::ast;
+import front::types;
+import std::format;
+import std::mem;
+
+// A text in a list: a slice of `Str` would be two-dimensional.
+export struct Word {
+    Str text;
+};
+
+// A use of a value from outside the loop; reported when the loop ends, unless the loop assigns the value.
+export struct Pending {
+    Str root;
+    Str path;
+    ast::Span at;
+};
+
+export struct Frame {
+    Str counter; // `for i in range(countof(array))`: the name of the counter, else empty
+    Str array;   // and the place of the array it counts over
+    Word declared[:];
+    Usize declared_count;
+    Word assigned[:];
+    Usize assigned_count;
+    Pending pending[:];
+    Usize pending_count;
+};
+
+export struct Loops {
+    Frame frames[:];
+    Usize depth;
+};
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static Str text_of(char chars[:]) {
+    return chars;
+}
+
+// The name a place starts with: `keys` for `keys[0].key`.
+export Str root_of(Str path) {
+    for (Usize i = 0; i < countof(path); i++) {
+        if (path[i] == '.' || path[i] == '[') {
+            return path[0:i];
+        }
+    }
+    return path;
+}
+
+// Whether `path` indexes an array by the counter `counter` (`keys[i]` for `i`).
+export Bool indexed_by(Str path, Str counter) {
+    if (countof(counter) == 0) {
+        return false;
+    }
+    for (Usize i = 0; i + countof(counter) + 2 <= countof(path); i++) {
+        if (path[i] != '[' || path[i + 1 + countof(counter)] != ']') {
+            continue;
+        }
+        if (same(path[i + 1:i + 1 + countof(counter)], counter)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool has(Word list[:], Usize count, Str name) {
+    for (Usize i = 0; i < count; i++) {
+        if (same(list[i].text, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Starts reading a loop. `counter` and `array` say it is a plain loop over `array` (both empty when it is not).
+export void enter(Loops *l, Str counter, Str array) {
+    if (l->depth == countof(l->frames)) {
+        Usize capacity = countof(l->frames) * 2;
+        if (capacity < 4) {
+            capacity = 4;
+        }
+        l->frames = mem::realloc(l->frames, capacity);
+    }
+    Frame f = {};
+    f.counter = counter;
+    f.array = array;
+    l->frames[l->depth] = f;
+    l->depth += 1;
+}
+
+// The innermost loop declares `name`: a value of the loop, fresh each turn.
+export void declare(Loops *l, Str name) {
+    if (l->depth == 0) {
+        return;
+    }
+    Frame *f = &l->frames[l->depth - 1];
+    if (has(f->declared, f->declared_count, name)) {
+        return;
+    }
+    if (f->declared_count == countof(f->declared)) {
+        f->declared = mem::realloc(f->declared, f->declared_count < 4 ? 8 : f->declared_count * 2);
+    }
+    f->declared[f->declared_count].text = name;
+    f->declared_count += 1;
+}
+
+// The innermost loop gives `name` a new value.
+export void assigned(Loops *l, Str name) {
+    if (l->depth == 0) {
+        return;
+    }
+    Frame *f = &l->frames[l->depth - 1];
+    if (has(f->assigned, f->assigned_count, name)) {
+        return;
+    }
+    if (f->assigned_count == countof(f->assigned)) {
+        f->assigned = mem::realloc(f->assigned, f->assigned_count < 4 ? 8 : f->assigned_count * 2);
+    }
+    f->assigned[f->assigned_count].text = name;
+    f->assigned_count += 1;
+}
+
+// `path` is used at `at`. Inside a loop, a value the loop did not declare, and that is not an element picked by the
+// loop's counter, is used once per turn, unless the loop assigns it (known when the loop ends).
+export void used(Loops *l, Str path, ast::Span at) {
+    if (l->depth == 0) {
+        return;
+    }
+    Frame *f = &l->frames[l->depth - 1];
+    Str root = root_of(path);
+    if (has(f->declared, f->declared_count, root) || indexed_by(path, f->counter)) {
+        return;
+    }
+    if (f->pending_count == countof(f->pending)) {
+        Usize capacity = countof(f->pending) * 2;
+        if (capacity < 4) {
+            capacity = 4;
+        }
+        f->pending = mem::realloc(f->pending, capacity);
+    }
+    f->pending[f->pending_count] = (Pending){.root = root, .path = path, .at = at};
+    f->pending_count += 1;
+}
+
+// Whether `name` is the counter of a loop being read that counts over the array at `array`.
+export Bool plain_counter(const Loops *l, Str name, Str array) {
+    for (Usize i = l->depth; i > 0; i--) {
+        const Frame *f = &l->frames[i - 1];
+        if (countof(f->counter) > 0 && same(f->counter, name) && same(f->array, array)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The way out of both errors, in smith's syntax.
+export Str advice() {
+    return "write the loop `for i in range(countof(keys)):` and use `keys[i]` once in its body, or reassign the value "
+           "in the loop (`key = next[0]`)";
+}
+
+export void bad_index(types::Checked *r, ast::Span at, Str place) {
+    Str message = text_of(format::push("smith-affine: '", place,
+                                       "': an element of an array of affine values is used through a constant index "
+                                       "or the counter of a plain loop"));
+    types::fail_related(r, at, message, at, advice());
+}
+
+// The loop ends: the uses of values from outside that it does not assign are errors. Returns the counter.
+export Str leave(Loops *l, types::Checked *r) {
+    l->depth -= 1;
+    Frame *f = &l->frames[l->depth];
+    for (Usize i = 0; i < f->pending_count; i++) {
+        Pending u = f->pending[i];
+        if (has(f->assigned, f->assigned_count, u.root)) {
+            continue;
+        }
+        Str message = text_of(
+            format::push("smith-affine: '", u.path, "' is used in a loop, so it would be used once per iteration"));
+        types::fail_related(r, u.at, message, u.at, advice());
+    }
+    return f->counter;
+}
