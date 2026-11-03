@@ -9,6 +9,7 @@ import front::parser;
 import std::arena;
 import std::files;
 import std::mem;
+import std::slice;
 import std::test;
 
 // The name of the file in a test that needs none, and the first place the type `Str` is written, which defines it at
@@ -268,6 +269,63 @@ export void test_an_empty_compound_literal_is_rewritten_to_a_call() {
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node make(void) { return (Node){}; }\n");
     check_text(fixed.text, "struct Node { a: i32 }\nstatic fn make() -> Node { return Node() }\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+// `typedef void (*Callback)(void);` is `Callback := fn()`: the capitalized name of the alias stays, `(void)` is no
+// parameters, and the text reads in the new syntax (#1769).
+export void test_a_typedef_of_a_function_pointer_keeps_its_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef void (*Callback)(void);\n"
+                                                "typedef int (*Binary)(int, int);\n");
+    check_text(fixed.text, "Callback := fn()\nBinary := fn(i32, i32) -> i32\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+// C's three-part `for` is a `while` (the spec removes it): the init goes before it in a block, the step ends the body,
+// and the result reads in smith's own syntax. A body with a `continue` would skip the step: that `for` has no fix.
+export void test_a_three_part_for_is_rewritten_to_while() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith",
+        "module m;\nstatic void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+    check_text(
+        fixed.text,
+        "static fn f(mut n: i32) {\n    { mut i: i32 = 0\nwhile i * 2 < n {\n        n -= 1\n    i += 3\n}\n}\n}\n");
+}
+
+export void test_a_for_with_a_continue_gets_no_while() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "static void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        continue;\n    }\n}\n");
+    Str word = "while";
+    check_flag(slice::find_slice(fixed.text, word) == .some, false);
+}
+
+// `Node n = {.a = 1};` is `n := Node(a = 1)`: a variable of a named type whose untyped list only has
+// field designators, and the text reads in the new syntax (#1767).
+export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node "
+                                                "make(void) {\n    Node n = {.a = 1};\n    return n;\n}\n");
+    check_text(fixed.text,
+               "struct Node { a: i32 }\nstatic fn make() -> Node {\n    n := Node(a = 1)\n    return n\n}\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
