@@ -396,6 +396,13 @@ Declarations read from C headers become `front::ast` nodes with `from_c` set; th
 - Slice 1 serves `initialize` (full sync), `shutdown`, `exit`, `didOpen`, `didChange` and `didClose`; each open or change answers with `textDocument/publishDiagnostics` from `compile::diagnose(path, source, roots)`: the parser's errors (and, in smith's own syntax, its warnings as severity 2), or the checker's errors when it parsed. Any other request gets -32601.
 - Columns are bytes in the line (LSP counts UTF-16 units). Hover (#1892, `front/lsp_hover.smith`): `textDocument/hover` returns the type of the innermost checked expression under the position (`ast::expr_at`, `compile::hover_at`) as markdown with its range; the server keeps the open documents' text by uri (fixed slots) for it. The next slices (#1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
 
+## The formatter (`front/format_space.smith`, `front/format.smith`, #1886)
+
+`smith fmt` on smith's own front end, one style and no clang-format (the plan: #1886, with #1377's zero patches). Not wired into `smith fmt` yet (#1890).
+- `format_space::space_between(prev, next, context)` is the space inside a line, a pure function of two token kinds (#1888).
+- `format::format(source)` lexes with `tokenize_new`, adds the layout tokens and writes the file back: 4 spaces a level from `indent`/`dedent`, one statement a line, the space by `space_between`, `#` and `##` comments kept as written (taken from the gap between two tokens, trailing or on their own line, a comment before a dedent is written at the new level), at most one blank line in a row, none at the start or end, one final newline. A line that goes on inside a bracket or after a binary operator keeps its break and is indented two levels deeper than its statement. Lines over 100 columns are left as written. It is idempotent; an error of the lexer or the layout is its result.
+- Tests: `tests/front_format_test.smith` reads the pairs `tests/front/format/<name>.smith` and `.expected` and checks that formatting twice changes nothing over `tests/front/e2e/`.
+
 ## Tests
 
 The front end has its own runner (`tests/front_units/build.c`, `front-project`), because its tests link LLVM's C API ([build-tests](build-tests.md)).
