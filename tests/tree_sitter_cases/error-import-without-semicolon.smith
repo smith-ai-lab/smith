@@ -1,2 +1,2 @@
-import lib::text
-int x;
+import lib.text as
+let x = 1
