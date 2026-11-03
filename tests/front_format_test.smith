@@ -1,7 +1,8 @@
-// Tests of front::format (#1889, part of #1886), the driver of `smith fmt` on smith's own front end: the golden pairs of
-// tests/front/format/ (`<name>.smith` before, `<name>.expected` after), the properties that make a formatter safe
-// (formatting twice changes nothing, comments survive) and the sources of tests/front/e2e/ that format without error.
-// Add a case by adding a pair of files.
+// Tests of front::format (#1889, part of #1886), the driver of `smith fmt` on smith's own front
+// end: the golden pairs of tests/front/format/ (`<name>.smith` before, `<name>.expected` after),
+// the properties that make a formatter safe (formatting twice changes nothing, comments survive)
+// and the sources of tests/front/e2e/ that format without error. Add a case by adding a pair of
+// files.
 module front_format_test;
 
 import front::format;

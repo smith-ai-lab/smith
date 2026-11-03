@@ -1,5 +1,6 @@
-// front::format: the driver of `smith fmt` on smith's own front end (#1889, part of #1886). It lexes a file with the new
-// syntax, adds the layout tokens and writes every statement back on its own line in the one style of the syntax tour:
+// front::format: the driver of `smith fmt` on smith's own front end (#1889, part of #1886). It lexes a file with the
+// new syntax, adds the layout tokens and writes every statement back on its own line in the one style of the syntax
+// tour:
 //
 //   format(source)   The source formatted, or the first error of the lexer or the layout.
 //
@@ -250,8 +251,8 @@ static void walk(Writer *w, Str source, lex::Tokens tokens) {
     }
 }
 
-// The source in the style of the syntax tour, allocated by the current allocator; or the first error of the lexer or the
-// layout (a tab in the indentation, a character that is no token).
+// The source in the style of the syntax tour, allocated by the current allocator; or the first error of the lexer or
+// the layout (a tab in the indentation, a character that is no token).
 export Formatted format(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
     if (lexed == .error) return {.error = format_error(lexed.error)};
