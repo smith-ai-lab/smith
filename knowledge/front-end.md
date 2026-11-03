@@ -139,7 +139,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `parse_decl::at_destructure(p)` and `destructure(p)` read `let (q, mut r) = f()` for the statement parser; `declaration` on one is an error.
 - Old declaration forms are warnings with fixes (F2, #1507): `module a::b;` removed, `export` to `pub`, `I32 a = 3;` to `a: I32 = 3`, `R f(A a) {...}` to `fn f(a: A) -> R {...}`.
 - Likewise fields and enum members to one per line, `typedef struct {...} N;` to `struct N {...}`, and `[[gnu::x]]` or `[[std::x]]` attributes to `@name`.
-- No mechanical fix, so a warning with no edits: a prototype, a parameter with no name, an array suffix, a bit-field, `extern`, a typedef whose tag has another name.
+- No mechanical fix, so a warning with no edits: a prototype, a parameter with no name, an array suffix of `[]` or `[const :]`, a file-level array with no value or a `{...}` list (#1898), a bit-field, `extern`, a typedef whose tag has another name. An array suffix on a variable, field, parameter or alias moves in front of the type (`I32 xs[3]` is `xs: [3]i32`).
 - Errors that name the fix: several names in one declaration, a function-pointer declarator, K&R parameters, implicit `int`, an array with no size, a C keyword that names a parameter (A7q, #1361).
 - `__attribute__` is an error at each name (#1348, A7j): `[[std::x]]` where the std set has one (`gnu_to_std`), else "there is no Smith spelling of `format` yet".
 - `[[std::inline]]`, `[[std::noinline]]`, `[[std::cold]]` (#1420) are ordinary attributes; `emit` turns them into `alwaysinline`, `noinline` and `cold`.
