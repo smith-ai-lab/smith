@@ -347,11 +347,11 @@ Iteration in the checker; the rules are the top comment of the file.
 
 **Calls** (`emit_call.smith`, #1132): `f(a, b)` names a function or a prototype (a `Decl.function` with no body) of the module; a path is joined by `::` and a prototype named with `::` is its own symbol. A method call `x.f(a)` (#1796 of #1793) is emitted as the call the checker recorded (`types::method_of`): `f(x, a)` or `f(&x, a)`; `f` of the type's module links as `lib::list::f`, as `m.f` does. A record of another module is emitted as in the modules paragraph above (#1935). Tests: `tests/front_emit_method_test.smith`.
 - Arguments run left to right with the parameter as hint; count and types must match (an Error at the argument), after `state::convert`.
-- `Void` is an LLVM `void`; a `Void` function's reachable end emits `ret void`, any other function's traps. Not yet: extern C, variadic.
+- `Void` is an LLVM `void`; a `Void` function's reachable end emits `ret void`, any other function's traps. A bodiless function may be variadic (`...`, extra arguments after C's default promotions) and `extern`; a variadic function with a body is not yet emitted.
 - Named arguments (#1579): `name = value` fills the parameter of that name (the checker's `argument_slot`), evaluated in written order; unknown or doubled names are Errors.
 - A call whose callee is a record builds it, `Point(x = 1, y = 2)`: a field left out takes its default, written as one more named argument (`insertvalue` per argument), and a parameter left out takes its default the same way; a positional, unknown or doubled field is an Error.
 
-**Functions in smith's own syntax** (`emit.smith`, #1577): `pub` is external linkage; `@inline`, `@noinline`, `@cold` are `alwaysinline`, `noinline`, `cold`; `@c_name("x")` makes `x` the symbol.
+**Functions in smith's own syntax** (`emit.smith`, #1577): `pub` is external linkage; `@inline`, `@noinline`, `@cold` are `alwaysinline`, `noinline`, `cold`; `@c_name("x")` makes `x` the symbol, for a function, a prototype (also one of an imported module) and an `extern` global: how `std::autodiff`'s `__enzyme_autodiff` and `enzyme_out` are declared (#1975, tests: `tests/front_emit_autodiff_test.smith`). Not yet: a reference to a global of an imported module (`autodiff.out`).
 - A function named `main` has the symbol `main`. The last line of a body, an expression statement with a non-`Void` result, is returned as `return <expression>`.
 - `let _ = f()` evaluates and drops the value; a local `const X = v` is an ordinary slot stored once. Tests: `tests/front_emit_fn_test.smith`.
 
