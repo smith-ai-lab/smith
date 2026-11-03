@@ -112,6 +112,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `yield x` (#1544) is `ast::yield_stmt`, dumped `(yield <value>)`; whether it stands in a generator is the checker's (#1545).
 - `errdefer <statement>` is `errdefer_stmt` (A7l, #1356), read like `defer`; that it needs a function returning a `result` or `option` is the checker's rule.
 - Old statement forms are warnings with fixes (F3, #1508): a `;` before a line break or `}` is removed; `if (c) s` and `while (c) s` lose parentheses and gain braces.
+- C's three-part `for (init; cond; step) { body }` that is not a counting loop is `{ init; while cond { body step; } }` (#1768): the whole `for` is one edit, so the init's own fix runs in the next pass. A body with a `continue` (the step would be skipped), a body without braces and `for constexpr` get a warning with no edits.
 - `for (T i = a; i < b; i++)` becomes `for i in range(a, b)`, `for (T x : xs)` becomes `for x in xs`; a fix's edits all apply or none.
 - A `switch` whose labels are all `case .name:` with one expression statement and `break` each becomes `match` (#1569); any other `switch`, `goto` and labels keep a warning with no fix.
 - `impl`, `&mut` and Rust's `?` at the start of a statement are warnings naming the smith form. A postfix `.` that starts a line after a finished statement does not continue it.
@@ -184,7 +185,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - The concepts `int float num signed unsigned pointer` are `concept_type` types (an error as a field type). In today's syntax `char`, `bool` and C type names are errors.
 - `[5,3]T` equals `[5][3]T`, `[,3]T` is a slice of `[3]T`, `[,]T` is a `block`, `?T` is the option type, and `Line := []u8` is an alias by substitution.
 - A module-level `a := 3` takes `i32` (`f64` for a float literal) from a literal initializer. A field's `is_new` is not read yet (#1531): a field always counts as new.
-- Not yet typed: `typeof`, a bit-field, a payload enumeration, `if constexpr`, a compile-time or rest parameter, a non-literal array length.
+- Not yet typed: `typeof`, a bit-field, `if constexpr`, a compile-time or rest parameter, a non-literal array length.
 - No recursion: `resolve`, `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
 ### front::types_expr (`front/types_expr.smith`, #1220 J1b)
@@ -194,7 +195,8 @@ The types of the front end and the checker's entry point; the API is the top com
 - Down: `expected` types an unsuffixed literal when it fits (`U8 big = 300;` is an error naming the range), `null`, `.none`, `.red`, a `{...}` list, a lambda and both sides of `?:`.
 - Next to a typed operand (`x + 1`) a literal takes the operand's type; any other pair of different types is an error that names the cast to write.
 - Typed: literals, names, operators, assignment, `.` and `->`, `a[i]`, `a[i:j]`, calls (count checked), casts, `sizeof`, `alignof`, `countof`, `?:`.
-- Not yet (`not yet typed: <kind>`): `try`, a type as a value, nested designators, a payload enumeration. A name from another module is typed only when the checker is given a loader (next bullet); without one it stays `not yet typed`.
+- A payload enumeration (#1774) is an `enumeration` whose `has_payload` is set: each slot's type is what the enumerator carries (`void` for a bare one). `.circle(x)` checks `x` against it (`.circle` alone or `.empty(x)` is an error), a `match` arm `.circle(c)` binds `c` as that type, and coverage is by enumerator. The emitter still says `not emitted yet: a payload enumeration`.
+- Not yet (`not yet typed: <kind>`): `try`, a type as a value, nested designators. A name from another module is typed only when the checker is given a loader (next bullet); without one it stays `not yet typed`.
 - Modules are values (#1677): `types::Options.load` (`check_module_with(m, target, load)`) gives the tree of a dotted path (`std.math`). `m := import a.b` binds a `module_name` symbol, and the declarations of `a.b` (and of the modules it imports, once each, so a cycle ends) are declared in the same table under the prefix `a::b::`; `m.name`, `m.b.name` and a type path `m.T` read through the module symbols (`types::through_modules`), and only a `pub` name is found. A missing name is "`a.b` has no public `x`" with the closest name. `sin := m.sin` and `Arena := m.Arena` are a second symbol for the same declaration (a direct alias, no copy). A module name used as a value (`mut x := m`, passed, compared) and a local named like a module are errors. Generic functions of an imported module are not declared yet. The driver (#1714) gives the checker a loader (`compile::load_module`: `a/b.smith` under the source folder, then the library folder, named by its path) and emit calls a function through a module value (`m.sin(x)`, `m.re.sin(x)`, `sin := m.sin` then `sin(x)`): it declares an external prototype named by the module's path and the function (`a::b::sin`, the symbol the old pipeline uses) when the first call needs it, and a module alias is not emitted as a global. Not yet: a record or enumeration of an imported module in a signature, and aliases of types.
 - `Hooks.convert` (set with `set_hooks`) is asked whenever a value of type `from` meets `to`; unset, the default is exact equality. `types_decl::install` wires `types_convert::convert` in.
 - Values (#1511, C2a): `if`, `if let`, `match` and a block used as a value (`stmt_expr`) are typed here; the last line of a block is its value.
@@ -281,6 +283,7 @@ Iteration in the checker; the rules are the top comment of the file.
 
 **Files**: `emit.smith` (passes, the walk, routing), `emit_state.smith` (shared types, `Emitter`, hooks; its own file to break an import cycle), then one file per area, no two tickets sharing one.
 - Slices `[]T` and `str` are `{ data, count }` (#1623): a string literal is a constant `str`, `s[i]` checks the index against the count in every build, `s[a:b]` and `countof(s)` read the pair, and `for x in s` walks it.
+- Multi-dimensional arrays (#1710): `[5,3]T` is `[5][3]T`, `[,3]T` a slice of `[3]T`, and `[,]T`/`[,,]T` (up to 8) a block `{ ptr, [N x usize] }`, one count per run-time dimension, row-major, strides derived. `x[i, j]` is `x[i][j]`; a row of a block is a block of one dimension fewer (a slice for the last two) sharing the elements, checked per dimension; a fixed `[N][M]T` converts to a block; `countof(x)` is the first count.
 - `emit_vector` (`vec(T, N)`), `emit_arith` (integer expressions), `emit_control`, `emit_call`, `emit_memory`, `emit_debug`, `emit_option`, `emit_iter`, `emit_match`, `emit_value`, `emit_tuple`, `emit_lambda`, `emit_jit` (test helper).
 - Three hooks in `Emitter`, set by `emit::module`, let a handler reach `emit.smith` without importing it: `state::type_of` (a type expression), `state::type_of_node` (the checker's type of a node) and `state::convert`.
 - `state::convert(e, value, to, span, site)` pushes `value` as a `to`: as is, widened by the checker's rules, or wrapped for an option; else the site's error (`initializing X with Y`).
@@ -365,7 +368,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - The target is the driver's (`--target=` or LLVM's default triple); the checker's pointer width follows the triple. Casts are checked (`Options.checked`).
 - Modules are named by path (`front::roots`; owner, 2026-10-31): `src/game/replay.smith` is `game::replay`, `lib/std/ascii.smith` is `std::ascii`. Roots are `src` and `lib`; roots from `build.smith` are later.
 - A `module` line that disagrees with the path is an error naming both; two files with one name are an error naming both; a file under no root takes its `module` line.
-- `build.c` compiles `front/*.smith` (all but `emit_jit` and `cimport`) into smith, with `ascii`, `format` and `clock` as plain compile steps. The units runner (`SMITH_CORE`) has no front end.
+- `build.c` compiles `front/*.smith` (all but `emit_jit` and `cimport_cache`) into smith, with `shim/cimport.cpp` and `shim/cimport_deps.cpp` linked beside the other shims, with `ascii`, `format` and `clock` as plain compile steps. The units runner (`SMITH_CORE`) has no front end.
 - Gaps: the temporary objects of a link (`<TMPDIR>/<name>.front.o`) are not removed yet; the header cache and `import <header.h>;` are not called by `compile`.
 - Tests: `tests/front_join_test.smith` (in process and through `$SMITH_SELF`, goldens `tests/front/join/`) and `tests/front_roots_test.smith`.
 
@@ -373,7 +376,8 @@ Iteration in the checker; the rules are the top comment of the file.
 
 Declarations read from C headers become `front::ast` nodes with `from_c` set; the design is [c-header-import](c-header-import.md).
 - `cimport::read` parses a header through clang's C++ libraries at the edge file `shim/cimport.cpp`; what it cannot express is listed with a reason in `not_imported`.
-- `cimport_cache` caches the result. Neither is linked into smith or called by `compile` yet; tests: `tests/front_cimport_test.smith`, `tests/front_cimport_cache_test.smith`.
+- `cimport_cache` caches the result and is not linked into smith (it needs `std::process`, which `smith prove` would then prove); tests: `tests/front_cimport_test.smith`, `tests/front_cimport_cache_test.smith`. `compile` calls `cimport::read` directly for now: the cache's dependency pass (`shim/cimport_deps.cpp`) crashes in the smith binary (a null vtable in clang's `EndOfMainFile` callback), so it is not used there yet.
+- `c::` names (#1762): `import <h>;` or `import "h";` makes `compile` read the header (flags from `$SMITH_FRONT_CIMPORT_FLAGS`, which `smith cc --front-end=new` sets to the resource directory and the SDK) and the checker (`types::Options.headers`, `types_decl::check_module_headers`) declares each declaration as `c::name`, a type of the header naming another by `c::` too. A declaration the checker cannot type is left out, so its use says `` `c::x` is not declared by any C header this file imports``. The enumerators of an enumeration are constants `c::red` of the enumeration's type. The emitter calls a `c::` function through the checker's type of it (`emit_call::c_function`; variadic calls pass their extra arguments after C's default promotions), emits a constant by its initializer, makes a record the first time a type names it (fields the emitter has no type for leave it opaque), and a string literal given to `const char *` is the address of its bytes. Not yet: a typedef or enum no declaration uses (cimport reads the types the declarations name), a union, a bit-field, a function pointer, a struct that holds another by value, and the namespace spelling `stdio := import <stdio.h>` (#1678).
 
 ## Tests
 
