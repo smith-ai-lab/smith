@@ -129,7 +129,7 @@ export void test_front_attr_own_line_before_a_function() {
 
 export void test_front_attr_own_line_before_a_field() {
     attached("struct User {\n    @cold\n    id: u64\n}\n", 1);
-    attached("struct User {\n    @cold\n    @pure\n    id: u64\n    name: str\n}\n", 2);
+    attached("struct User:\n    @cold\n    @pure\n    id: u64\n    name: str\n", 2);
 }
 
 export void test_front_attr_own_line_before_an_enumerator() {
@@ -140,8 +140,9 @@ export void test_front_attr_needs_a_declaration_on_the_next_line() {
     Str message = "an attribute marks the declaration on the next line";
     test::check_equal(parse_error_of("@inline\n\nfn f() {\n}\n"), message);
     test::check_equal(parse_error_of("@inline\n# why\nfn f() {\n}\n"), message);
-    test::check_equal(parse_error_of("struct A {\n    x: i32\n    @cold\n}\n"), message);
+    test::check_equal(parse_error_of("struct A:\n    x: i32\n    @cold\n"), message);
     test::check_equal(parse_error_of("@inline\n"), message);
+    test::check_equal(parse_error_of("struct A:\n    @cold\n\n    x: i32\n"), message);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -156,7 +157,7 @@ export void test_front_attr_user_attribute_names_its_fields() {
 }
 
 export void test_front_attr_two_attributes_on_two_lines_before_a_field() {
-    clean(join(attribute_struct(), "struct User {\n    @Rename(to = \"a\")\n    @cold\n    id: u64\n}\n"));
+    clean(join(attribute_struct(), "struct User:\n    @Rename(to = \"a\")\n    @cold\n    id: u64\n"));
 }
 
 export void test_front_attr_built_ins_stay_unqualified() {
