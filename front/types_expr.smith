@@ -3388,18 +3388,19 @@ static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
     callee->kind = {.name = {.path = t->kind.applied.name}};
     if (constructed_record(c, callee) == nullptr) return nullptr;
     Usize count = countof(t->kind.applied.args);
-    ast::ExprRef args[:] = mem::alloc_slice(ast::ExprRef, count);
+    ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), count, alignof(ast::ExprRef));
+    ast::ExprRef args[:] = block[0:count];
     for (Usize i = 0; i < count; i++) {
         const ast::TypeArg *arg = &t->kind.applied.args[i];
         if (*arg == .value) {
-            args[i] = arg->value.value;
+            block[i] = arg->value.value;
             continue;
         }
         if (arg->type.type->kind != .named) return nullptr;
         ast::Expr *value = mem::alloc(ast::Expr);
         value->span = arg->type.type->span;
         value->kind = {.name = {.path = arg->type.type->kind.named.path}};
-        args[i] = value;
+        block[i] = value;
     }
     ast::Expr *call = mem::alloc(ast::Expr);
     call->span = e->span;
