@@ -404,7 +404,7 @@ static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
 static ast::Expr *variant_value(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     lex::Token name = parse::peek(p);
-    if (name.kind != lex::name && name.kind != lex::type_name) {
+    if (name.kind != lex::name && name.kind != lex::type_name && !(p->new_syntax && lex::is_keyword(name.kind))) {
         parse::expect(p, lex::name, "a variant name after `.`");
         return nullptr;
     }
