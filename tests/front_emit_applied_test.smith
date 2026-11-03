@@ -1,5 +1,6 @@
-// Tests of the applied types `Option(T)` and `Result(T, E)` in the emitter (#1936 of #1917). Each scenario is source text in smith's
-// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+// Tests of the applied types `Option(T)` and `Result(T, E)` in the emitter (#1936 of #1917). Each scenario is source
+// text in smith's own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through
+// the JIT.
 module front_emit_applied_test;
 
 import front::ast;
