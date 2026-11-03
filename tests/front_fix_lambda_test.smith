@@ -35,3 +35,8 @@ export void test_front_fix_lambda_a_capture_and_a_typed_parameter() {
 export void test_front_fix_lambda_no_parameters() {
     expect_fixed("module m;\nvoid f() {\n    run([] { work(); });\n}\n", "fn f() {\n    run(fn() { work() })\n}\n");
 }
+
+export void test_front_fix_lambda_function_pointer_local_with_a_result() {
+    expect_fixed("module m;\nI32 main() {\n    I32 (*f)(I32) = [](I32 a) { return a; };\n}\n",
+                 "fn main() -> i32 {\n    f: fn(i32) -> i32 = fn(a: i32) { return a }\n}\n");
+}
