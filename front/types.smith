@@ -814,8 +814,9 @@ export struct Error {
 export struct NodeType {
     const ast::Expr *node;
     TypeRef type;
-    Bool cast_checked; // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
-    TypeRef cast_from; // the operand's type, when `cast_checked`
+    Bool cast_checked;       // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
+    TypeRef cast_from;       // the operand's type, when `cast_checked`
+    const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
 };
 
 export struct Checked;
@@ -945,6 +946,24 @@ static NodeType *entry_of(Checked *r, const ast::Expr *node) {
     Usize at = slot_of(node, capacity);
     while (r->nodes[at].node != nullptr) {
         if (r->nodes[at].node == node) return &r->nodes[at];
+        at = (at + 1) & (capacity - 1);
+    }
+    return nullptr;
+}
+
+// Records that the call `node`, written `x.f(args)`, is the call `rewritten`, `f(x, args)` or `f(&x, args)`.
+export void set_method(Checked *r, const ast::Expr *node, const ast::Expr *rewritten) {
+    NodeType *entry = entry_of(r, node);
+    if (entry != nullptr) entry->method = rewritten;
+}
+
+// The call a method call stands for, or null when `node` is not a method call.
+export const ast::Expr *method_of(const Checked *r, const ast::Expr *node) {
+    Usize capacity = countof(r->nodes);
+    if (capacity == 0) return nullptr;
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr) {
+        if (r->nodes[at].node == node) return r->nodes[at].method;
         at = (at + 1) & (capacity - 1);
     }
     return nullptr;

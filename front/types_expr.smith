@@ -1788,6 +1788,183 @@ static void call_after(types::Checked *c, Frame f) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Method calls: `x.f(args)` is `f(x, args)` or `f(&x, args)` (#1793, #1795 of #1428)
+
+// Whether a call's callee `x.f` may be a method: a `.member` whose chain of names does not start at a module (that is
+// `m.f`, read through the module).
+static Bool method_shaped(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .member || callee->kind.member.arrow) {
+        return false;
+    }
+    types::Names names = types::member_names(callee);
+    if (names.count >= 2 && c->options.load != nullptr) {
+        const types::Symbol *first = types::scoped(c, names.items[0]);
+        if (first != nullptr && first->kind == .module_name) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// `lib::list::` of the type `lib::list::List`: the prefix of the names of its module; empty for the current module.
+static Str module_prefix(Str type_name) {
+    for (Usize i = countof(type_name); i >= 2; i--) {
+        if (type_name[i - 1] == ':' && type_name[i - 2] == ':') {
+            return type_name[0:i];
+        }
+    }
+    return "";
+}
+
+static const types::Symbol *function_named(const types::Checked *c, Str name, Bool public_only) {
+    const types::Symbol *s = types::lookup(&c->scopes, name);
+    if (s == nullptr || s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) {
+        return nullptr;
+    }
+    if (public_only && !types::is_public(s)) {
+        return nullptr;
+    }
+    return s;
+}
+
+// The type a function's first parameter takes, seen through one pointer.
+static types::TypeRef first_parameter(const types::Symbol *s) {
+    if (countof(s->type->slots) == 0) {
+        return nullptr;
+    }
+    types::TypeRef t = s->type->slots[0].type;
+    if (t->kind == .pointer) {
+        return t->element;
+    }
+    return t;
+}
+
+// The call `f(x, args)`; `f(&x, args)` when `f` takes a pointer and `x` is not one, `f(x.*, args)` for the reverse.
+static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn, types::TypeRef base_type) {
+    if (!(e->kind == .call)) {
+        return e;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    if (!(callee->kind == .member)) {
+        return e;
+    }
+    ast::ExprRef given[:] = e->kind.call.args;
+    // Not mem::alloc_slice: its instance for a pointer element draws the lint of a multilevel conversion.
+    ast::ExprRef *block =
+        (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), countof(given) + 1, alignof(ast::ExprRef));
+    ast::ExprRef all[:] = block[0:countof(given) + 1];
+    ast::Expr *self = (ast::Expr *)callee->kind.member.base;
+    types::TypeRef takes = fn->type->slots[0].type;
+    if (takes->kind == .pointer && base_type->kind != .pointer) {
+        ast::UnaryOp op = .address_of;
+        ast::ExprKind address = {.unary = {.op = op, .operand = self}};
+        self = ast::expr(address);
+        self->span = callee->kind.member.base->span;
+    } else if (takes->kind != .pointer && base_type->kind == .pointer) {
+        self = ast::deref(self);
+        self->span = callee->kind.member.base->span;
+    }
+    all[0] = self;
+    for (Usize i = 0; i < countof(given); i++) {
+        all[i + 1] = given[i];
+    }
+    ast::Expr *name = ast::name(fn->name);
+    name->span = callee->span;
+    ast::Expr *made = ast::call(name, all);
+    made->span = e->span;
+    return made;
+}
+
+// Stage 7: the base of `x.f(args)` is typed. A field `f` of a record is called as a value; else `f` is a function of
+// the module that defines the type of `x` or of this module, and the call is the one written with `x` first.
+// Reports a method call whose function is missing or does not take the receiver first.
+static void method_missing(types::Checked *c, const ast::Expr *e, const types::Symbol *fn, types::TypeRef bt) {
+    if (!(e->kind == .call)) {
+        return;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    if (!(callee->kind == .member)) {
+        return;
+    }
+    Str name = callee->kind.member.name;
+    Str shown = types::show(bt);
+    if (fn == nullptr) {
+        types::failf(c, callee->span, "`", shown, "` has no method `", name, "`; write a function `", name,
+                     "` whose first parameter is a `", shown, "`, in this module or in the module that defines `",
+                     shown, "`");
+    } else {
+        types::failf(c, callee->span, "the function `", name, "` does not take a `", shown,
+                     "` first, so it is not a method of it; write `", name, "(...)` with the right arguments");
+    }
+    poison(c, e);
+}
+
+static void method_resolved(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    if (!(callee->kind == .member)) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    const ast::Expr *base = callee->kind.member.base;
+    Str name = callee->kind.member.name;
+    types::TypeRef bt = typ(c, base);
+    if (bt == invalid(c)) {
+        poison(c, e);
+        push_arguments(w, args, nullptr);
+        return;
+    }
+    types::TypeRef record = bt;
+    if (bt->kind == .pointer && bt->element->kind == .record) {
+        record = bt->element;
+    }
+    Str prefix = "";
+    if (record->kind == .record) {
+        prefix = module_prefix(record->name);
+    }
+    const types::Symbol *own = nullptr;
+    if (countof(prefix) > 0) {
+        own = function_named(c, msg(format::push(prefix, name)), true);
+    }
+    const types::Symbol *local = function_named(c, name, false);
+    if (record->kind == .record && types::member(record, name) != nullptr) {
+        if (own != nullptr || local != nullptr) {
+            types::failf(c, e->span, "`", types::show(record), "` has a field `", name, "` and a function `", name,
+                         "`; rename one, a field and a method of one type cannot share a name");
+            poison(c, e);
+            push_arguments(w, args, nullptr);
+            return;
+        }
+        push(w, e, f.expected, 1);
+        push(w, callee, nullptr, 0);
+        return;
+    }
+    const types::Symbol *fn = own != nullptr ? own : local;
+    types::TypeRef self_type = bt->kind == .pointer ? bt->element : bt;
+    if (own != nullptr && local != nullptr && local != own && first_parameter(own) != nullptr &&
+        first_parameter(own) == first_parameter(local)) {
+        ast::Span at = local->decl != nullptr ? local->decl->span : e->span;
+        types::failf(c, at, "`", name, "` takes a `", types::show(first_parameter(local)), "` as `", prefix, name,
+                     "` does, so `x.", name, "()` would be ambiguous; rename this function");
+        poison(c, e);
+        push_arguments(w, args, nullptr);
+        return;
+    }
+    if (fn == nullptr || first_parameter(fn) == nullptr || first_parameter(fn) != self_type) {
+        method_missing(c, e, fn, bt);
+        push_arguments(w, args, nullptr);
+        return;
+    }
+    const ast::Expr *made = method_call(e, fn, bt);
+    types::set_method(c, e, made);
+    push(w, e, nullptr, 8);
+    push(w, made, f.expected, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Streams: `stream::next(s)` and `stream::close(s)` on a local `stream::Stream(T)` (#1723; the yield rules are in
 // types_stream, which imports this module, so the call rule lives here)
 
@@ -3258,6 +3435,34 @@ static void tuple_after(types::Checked *c, Frame f) {
 }
 
 // Stage 0 of a node with children: decides what is pushed.
+static void call_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    if (is_vector_callee(c, callee)) {
+        vector_before(c, w, f);
+        return;
+    }
+    if (countof(stream_callee(c, callee)) > 0) {
+        stream_before(w, f);
+        return;
+    }
+    types::TypeRef record = constructed_record(c, callee);
+    if (record != nullptr) {
+        construct_before(w, f, record);
+        return;
+    }
+    if (method_shaped(c, callee) && callee->kind == .member) {
+        push(w, e, f.expected, 7);
+        push(w, callee->kind.member.base, nullptr, 0);
+        return;
+    }
+    push(w, e, f.expected, 1);
+    push(w, callee, nullptr, 0);
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .unary) {
@@ -3279,22 +3484,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .stmt_expr) {
         value_before(c, w, f);
     } else if (e->kind == .call) {
-        const ast::Expr *callee = e->kind.call.callee;
-        if (is_vector_callee(c, callee)) {
-            vector_before(c, w, f);
-            return;
-        }
-        if (countof(stream_callee(c, callee)) > 0) {
-            stream_before(w, f);
-            return;
-        }
-        types::TypeRef record = constructed_record(c, callee);
-        if (record != nullptr) {
-            construct_before(w, f, record);
-            return;
-        }
-        push(w, e, f.expected, 1);
-        push(w, callee, nullptr, 0);
+        call_before(c, w, f);
     } else if (e->kind == .index) {
         const ast::Expr *index = e->kind.index.index;
         const ast::Expr *base = e->kind.index.base;
@@ -3357,6 +3547,10 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 7) {
+            method_resolved(c, w, f);
+        } else if (f.stage == 8) {
+            types::set_type(c, e, typ(c, types::method_of(c, e)));
         } else if (f.stage == 6) {
             stream_after(c, f);
         } else if (f.stage == 5) {
