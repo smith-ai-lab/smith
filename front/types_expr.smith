@@ -1861,6 +1861,9 @@ static Bool method_shaped(const types::Checked *c, const ast::Expr *callee) {
     if (callee->kind != .member || callee->kind.member.arrow) {
         return false;
     }
+    if (types::c_member(c, callee) != nullptr) {
+        return false; // `c.f(x)` is the C function `c::f`
+    }
     types::Names names = types::member_names(callee);
     if (names.count >= 2 && c->options.load != nullptr) {
         const types::Symbol *first = types::scoped(c, names.items[0]);
@@ -3586,6 +3589,152 @@ static void tuple_after(types::Checked *c, Frame f) {
     finish(c, e, types::tuple_of(&c->table, elements), f.expected);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Calls of a generic function (#1908, part of #1700): `alloc(i32, 10)`, `table(64)`. The arguments of the compile-time
+// parameters are a type and a constant; the call is to the instance for them, made once and found after.
+
+// The template a call names, when the callee is a plain name of a function with compile-time parameters.
+static const types::Symbol *generic_callee(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind != .name) {
+        return nullptr;
+    }
+    const types::Symbol *s = types::lookup_path(&c->scopes, callee->kind.name.path);
+    if (s != nullptr && s->kind == .function_symbol && s->generic && s->decl != nullptr) {
+        return s;
+    }
+    return nullptr;
+}
+
+// The type a name with no symbol stands for when it is a builtin (`i32`, `f64`), else null with no error.
+static types::TypeRef builtin_named(types::Checked *c, const ast::Expr *arg) {
+    if (!(arg->kind == .name)) {
+        return nullptr;
+    }
+    ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
+    written->span = arg->span;
+    written->kind = {.named = {.path = arg->kind.name.path}};
+    Usize errors = c->error_count;
+    c->new_syntax = true;
+    types::TypeRef t = types::resolve(c, written);
+    c->new_syntax = false;
+    c->error_count = errors;
+    if (t == invalid(c)) {
+        return nullptr;
+    }
+    return t;
+}
+
+// The type an argument of a `T: type` parameter stands for; null, with the error, when it is not a type.
+static types::TypeRef type_argument(types::Checked *c, const ast::Param *p, const ast::Expr *arg) {
+    if (arg->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
+        if (s != nullptr && s->kind == .type_name) {
+            return s->type;
+        }
+        if (s == nullptr) {
+            types::TypeRef t = builtin_named(c, arg);
+            if (t != nullptr) {
+                return t;
+            }
+        }
+    } else if (arg->kind == .type_value) {
+        c->new_syntax = true;
+        types::TypeRef t = types::resolve(c, arg->kind.type_value.type);
+        c->new_syntax = false;
+        if (t != invalid(c)) {
+            return t;
+        }
+        return nullptr;
+    }
+    types::failf(c, arg->span, "`", p->name, "` is a type argument, but this is a value; write a type such as `i32`");
+    return nullptr;
+}
+
+// The constant an argument of a `const n: T` parameter stands for; false, with the error, when it is not one.
+static Bool value_argument(types::Checked *c, const ast::Param *p, const ast::Expr *arg, U64 *value) {
+    if (arg->kind == .integer) {
+        *value = arg->kind.integer.value;
+        return true;
+    }
+    if (arg->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
+        if ((s != nullptr && s->kind == .type_name) || (s == nullptr && builtin_named(c, arg) != nullptr)) {
+            types::failf(c, arg->span, "`", p->name, "` is a value argument, but this is a type; write a constant");
+            return false;
+        }
+        if (s != nullptr && s->has_value) {
+            *value = s->value;
+            return true;
+        }
+    }
+    types::failf(c, arg->span, "`", p->name, "` must be known at compile time; write an integer literal or a ",
+                 "compile-time parameter of the enclosing function");
+    return false;
+}
+
+// Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
+static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || template->decl->kind != .function) {
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    if (countof(args) != countof(params)) {
+        types::failf(c, e->span, "this call passes ", countof(args), " argument", countof(args) == 1 ? "" : "s",
+                     " but `", template->name, "` takes ", countof(params), "; give a type or a constant for each ",
+                     "compile-time parameter, then the others");
+        poison(c, e);
+        return;
+    }
+    types::Binding given[:] = mem::alloc_slice(types::Binding, countof(params));
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (!types::is_compile_time(&params[i])) continue;
+        const ast::Expr *arg = argument_value(args[i]);
+        if (types::is_type_parameter(&params[i])) {
+            types::TypeRef t = type_argument(c, &params[i], arg);
+            if (t == nullptr) {
+                poison(c, e);
+                return;
+            }
+            given[bound] = (types::Binding){.is_type = true, .type = t};
+        } else {
+            U64 value = 0;
+            if (!value_argument(c, &params[i], arg, &value)) {
+                poison(c, e);
+                return;
+            }
+            given[bound] = (types::Binding){.value = value};
+        }
+        bound += 1;
+    }
+    Usize at = types::instance_of(c, template->decl, given[0:bound]);
+    if (at >= c->instance_count) {
+        poison(c, e);
+        return;
+    }
+    types::TypeRef signature = c->instances[at].signature;
+    types::set_type(c, e->kind.call.callee, signature);
+    push(w, e, f.expected, 2);
+    Usize runtime = countof(signature->slots);
+    types::Binding bound_list[:] = c->instances[at].bindings;
+    Usize values = countof(bound_list);
+    for (Usize i = countof(params); i > 0; i--) {
+        const ast::Expr *arg = argument_value(args[i - 1]);
+        if (!types::is_compile_time(&params[i - 1])) {
+            runtime -= 1;
+            push(w, arg, signature->slots[runtime].type, 0);
+        } else if (types::is_type_parameter(&params[i - 1])) {
+            types::set_type(c, arg, types::builtin(&c->table, "type"));
+            values -= 1;
+        } else {
+            values -= 1;
+            push(w, arg, bound_list[values].type, 0);
+        }
+    }
+}
+
 // Stage 0 of a node with children: decides what is pushed.
 // ---------------------------------------------------------------------------------------------------------------
 // Spread: `f(x; s...)` passes each field of the struct or named tuple `s` as the named argument of that name (#1914)
@@ -3688,6 +3837,11 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     const ast::Expr *callee = e->kind.call.callee;
+    const types::Symbol *template = generic_callee(c, callee);
+    if (template != nullptr) {
+        generic_before(c, w, f, template);
+        return;
+    }
     if (is_vector_callee(c, callee)) {
         vector_before(c, w, f);
         return;
@@ -3759,6 +3913,11 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, base, nullptr, 0);
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
+        const types::Symbol *header = types::c_member(c, e);
+        if (header != nullptr) { // `c.name` after `import c <h>`: the header's declaration
+            finish(c, e, header->type, f.expected);
+            return;
+        }
         if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
