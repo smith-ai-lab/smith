@@ -43,8 +43,8 @@ log.warn("request failed"; req...)                 # ; x... spreads a struct or 
 ```smith
 let scaled = apply(xs, fn(x): x * factor)       # types from the expected fn(i32) -> i32
 sort(people) fn(a, b): a.age < b.age            # a trailing lambda: the last argument
-gpu.each(&q, n) fn(i):
-    out[i] = a[i] * 2 + b[i]
+gpu.each(&q, out, a, b) fn(o, a, b):            # one element of each per GPU thread
+    o.* = a * 2 + b
 retry(times = 3): fetch(url)                    # no parameters: f(x): ...
 let page = html:                                # and no other argument: no parentheses
     body:
