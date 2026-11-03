@@ -875,7 +875,7 @@ static Bool is_template(const ast::Decl *d) {
     if (d->kind != .function) return false;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(params); i++) {
-        if (types::is_compile_time(&params[i])) return true;
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) return true;
     }
     return false;
 }
