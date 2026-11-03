@@ -65,7 +65,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - The tokenizer checks the form of a literal (separators, suffixes, prefixes, escapes) and the parser decodes the value.
 - Punctuators are C's without `#` and `##`, plus `::`, `:=`, `=>`, `@` and `.*` (one token). `[:]` is three tokens, `[[` and `]]` two each; no trigraphs or digraphs.
 - The keywords `fn pub mut match in as fn_once type yield` exist only through `tokenize_new`; `tokenize` keeps them names, because today's code uses them as names.
-- Each `Token` has `line_break`, recorded only. `lex::ends_statement(token)` is Go's rule: a break ends a statement after a name, literal, `)`, `]`, `}`, `return`, `break`, `continue` or a type keyword (`void`, `int`...), so `f(x) as void` ends a statement (#1775).
+- Each `Token` has `line_break`, recorded only. `lex::ends_statement(token)` is Go's rule: a break ends a statement after a name, literal, `)`, `]`, `}`, `return`, `break` or `continue`.
 - `lex::dump_lines` is `dump` with ` [eol]` after such a token (`tests/front/lex/new-syntax.tokens`).
 - Errors: an unterminated string, character or block comment, a malformed number, a byte that starts no token, and any `#` (the message names `constexpr` and `import`).
 

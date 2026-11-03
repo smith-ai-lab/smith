@@ -468,8 +468,8 @@ export Bool is_punctuator(TokenKind kind) {
 }
 
 // Whether a line break after this token ends a statement in the new syntax (Go's rule): it follows a name, a literal,
-// `)`, `]`, `}`, `return`, `break`, `continue` or a type keyword (`x as void`). The lexer only records the break; the
-// parser decides what to do.
+// `)`, `]`, `}`, `return`, `break`, `continue` or a C type word (`void`, `int`: `x as void`). The lexer only records
+// the break; the parser decides what to do.
 export Bool ends_statement(Token token) {
     if (!token.line_break) return false;
     switch (token.kind) {
@@ -482,22 +482,20 @@ export Bool ends_statement(Token token) {
     case kw_true:
     case kw_false:
     case kw_nullptr:
+    case kw_void:
+    case kw_bool:
+    case kw_char:
+    case kw_int:
+    case kw_long:
+    case kw_short:
+    case kw_float:
+    case kw_double:
     case right_paren:
     case right_bracket:
     case right_brace:
     case kw_return:
     case kw_break:
     case kw_continue:
-    case kw_bool:
-    case kw_char:
-    case kw_double:
-    case kw_float:
-    case kw_int:
-    case kw_long:
-    case kw_short:
-    case kw_signed:
-    case kw_unsigned:
-    case kw_void:
         return true;
     default:
         return false;

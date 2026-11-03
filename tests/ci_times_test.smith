@@ -1,0 +1,60 @@
+// ci/times/main.smith (#1670), the tool of `smith build ci-times`: its report on two fixed runs and one with no logs.
+// The tool is a project of its own in a scratch folder, run by the smith under test; no network and no real CI run is
+// read. smith-covers: ci/times/main.smith
+module ci_times_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+export void test_ci_times_reports_the_steps_the_parts_and_the_heavy_tests_by_median() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "ci/times/main.smith", "main.smith");
+    scratch::Run folders = scratch::sh(&p, "mkdir -p runs/1/test-log-a runs/1/test-log-b runs/2/test-log-a runs/3");
+    scratch::expect_status("ci_times: the folders of the runs are made", 0, &folders);
+    scratch::write(&p, "runs/1/steps.tsv", "test / queued\t12\ntest / job\t300\ntest / build\t100.5\nlint / job\t60\n");
+    scratch::write(&p, "runs/2/steps.tsv", "test / queued\t20\ntest / job\t340\ntest / build\t90\nlint / job\t70\n");
+    scratch::write(&p, "runs/1/test-log-a/test.log",
+                   "cpu\t3.5\ttests/a_test\ncpu\t1.0\ttests/small\ncpu\t10\ttests/big_test extra\nnoise\n");
+    scratch::write(&p, "runs/1/test-log-b/test.log", "cpu\t2.5\ttests/a_test\ncpu\t4\ttests/b\n");
+    scratch::write(&p, "runs/2/test-log-a/test.log", "cpu\t5.5\ttests/a_test\n");
+    scratch::write(&p, "runs/3/steps.tsv", "");
+    scratch::Run run = scratch::sh(&p, "smith run -- runs 1 2 3");
+    scratch::expect_status("ci_times: the report is made", 0, &run);
+    scratch::expect_contains("ci_times: the runs with and without test logs", run.out,
+                             "ci-times: 2 runs with test logs, 1 without");
+    scratch::expect_contains("ci_times: a step by its median and its maximum", run.out,
+                             "test / build                                                               2     95.2s "
+                             "   100.5s\n");
+    scratch::expect_contains("ci_times: the steps' sum", run.out, "sum of medians: wall 496.2 s\n");
+    scratch::expect_contains("ci_times: a part's CPU by its median, the heaviest first", run.out,
+                             "test-log-a                                                                 2     10.0s "
+                             "    14.5s     10.0s     14.5s\n"
+                             "  test-log-b");
+    scratch::expect_contains("ci_times: a test's name is its first word", run.out, "tests/big_test    ");
+    scratch::expect_contains("ci_times: the tests' sums", run.out, "sum of medians: wall 17.5 s, cpu 17.5 s\n");
+    scratch::expect_lacks("ci_times: a test under the floor is not listed", run.out, "tests/small");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
+
+export void test_ci_times_stops_with_1_when_the_runs_have_nothing() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "ci/times/main.smith", "main.smith");
+    scratch::Run run = scratch::sh(&p, "mkdir -p runs/9 && smith run -- runs 9");
+    scratch::expect_status("ci_times: no steps and no logs is status 1", 1, &run);
+    scratch::expect_contains("ci_times: and the count says so", run.out, "ci-times: 0 runs with test logs, 1 without");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
