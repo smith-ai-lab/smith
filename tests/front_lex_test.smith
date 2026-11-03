@@ -257,6 +257,105 @@ export void test_lex_golden_the_new_syntax() {
     test::golden("tests/front/lex/new-syntax.tokens", lex::dump_lines(tokens, source));
 }
 
+// The layout of source as one line: a layout token by its name, any other by its text, and the first lexing error.
+static Str layout_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return lexed.error.message;
+    lex::Lexed laid = lex::layout(source, lexed.ok);
+    if (laid == .error) return laid.error.message;
+    char shown[:] = format::push("");
+    for (lex::Token token : laid.ok) {
+        Str piece = lex::text(source, token);
+        if (token.kind == lex::end_of_file) piece = "eof";
+        if (token.kind == lex::newline || token.kind == lex::indent || token.kind == lex::dedent) {
+            piece = lex::kind_name(token.kind);
+        }
+        shown = format::push(shown, piece, " ");
+    }
+    Str result = shown[0:countof(shown)];
+    return result;
+}
+
+static void expect_layout(Str source, Str expected) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(layout_of(source), expected);
+}
+
+export void test_lex_layout_a_line_ends_with_a_newline_and_a_colon_opens_a_block() {
+    expect_layout("", "eof ");
+    expect_layout("a\nb\n", "a newline b newline eof ");
+    expect_layout("a b", "a b newline eof ");
+    expect_layout("f:\n    a\nb", "f : newline indent a newline dedent b newline eof ");
+}
+
+export void test_lex_layout_each_level_dropped_is_a_newline_and_a_dedent() {
+    expect_layout("a:\n    b:\n        c\nd",
+                  "a : newline indent b : newline indent c newline dedent newline dedent d newline eof ");
+    expect_layout("a:\n    b:\n        c\n    d\ne",
+                  "a : newline indent b : newline indent c newline dedent d newline dedent e newline eof ");
+}
+
+export void test_lex_layout_the_end_of_the_file_closes_every_open_level() {
+    expect_layout("a:\n    b:\n        c\n",
+                  "a : newline indent b : newline indent c newline dedent newline dedent eof ");
+    expect_layout("a:\n    b", "a : newline indent b newline dedent eof ");
+}
+
+export void test_lex_layout_blank_and_comment_lines_are_ignored() {
+    expect_layout("a:\n\n    // note\n    b\n  /* x */\n\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a // end\n    // deeper note\nb", "a newline b newline eof ");
+}
+
+export void test_lex_layout_brackets_ignore_newlines_and_indentation() {
+    expect_layout("let cfg = Config{\n    host = 1,\n  port = 2,\n}\nx",
+                  "let cfg = Config { host = 1 , port = 2 , } newline x newline eof ");
+    expect_layout("f(a,\n        b)\n[1,\n 2]", "f ( a , b ) newline [ 1 , 2 ] newline eof ");
+}
+
+export void test_lex_layout_an_operator_at_the_end_of_a_line_continues_it() {
+    expect_layout("let total = price * count +\n    shipping\nx",
+                  "let total = price * count + shipping newline x newline eof ");
+    expect_layout("a =\n        b\nc", "a = b newline c newline eof ");
+}
+
+export void test_lex_layout_a_one_line_block_opens_no_level() {
+    expect_layout("fn sign(x: i32) -> i32:\n    if x < 0: -1 else: 1\ny",
+                  "fn sign ( x : i32 ) -> i32 : newline indent if x < 0 : - 1 else : 1 newline dedent y newline eof ");
+}
+
+export void test_lex_layout_error_a_tab_in_the_indentation() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "a:\n\tb";
+    lex::Lexed laid = lex::layout(source, new_tokens_of(source));
+    if (laid != .error) {
+        Str none = "an error";
+        Str got = "no error";
+        test::check_equal(got, none);
+        return;
+    }
+    Str message = "indent with 4 spaces, not a tab";
+    test::check_equal(laid.error.message, message);
+    test::check_equal(laid.error.span.start, 3);
+    test::check_equal(laid.error.span.end, 4);
+}
+
+export void test_lex_layout_error_a_level_that_is_not_a_multiple_of_four() {
+    expect_layout("a:\n  b", "indent with a multiple of 4 spaces");
+    expect_layout("a:\n    b:\n        c\n      d", "indent with a multiple of 4 spaces");
+}
+
+export void test_lex_layout_error_an_unexpected_indent() {
+    expect_layout("a\n    b", "unexpected indent");
+    expect_layout("    a", "unexpected indent");
+    expect_layout("a:\n        b", "unexpected indent");
+}
+
 export void test_lex_integers_and_floating_constants() {
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
