@@ -1,0 +1,1 @@
+<dir>/src/bad_dedent.smith:4:1: error: this line's indentation matches no open block

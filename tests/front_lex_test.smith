@@ -347,21 +347,32 @@ export void test_lex_layout_error_a_tab_in_the_indentation() {
         test::check_equal(got, none);
         return;
     }
-    Str message = "indent with 4 spaces, not a tab";
+    Str message = "indent with spaces, not a tab";
     test::check_equal(laid.error.message, message);
     test::check_equal(laid.error.span.start, 3);
     test::check_equal(laid.error.span.end, 4);
 }
 
-export void test_lex_layout_error_a_level_that_is_not_a_multiple_of_four() {
-    expect_layout("a:\n  b", "indent with a multiple of 4 spaces");
-    expect_layout("a:\n    b:\n        c\n      d", "indent with a multiple of 4 spaces");
+export void test_lex_layout_any_consistent_width_opens_a_block() {
+    expect_layout("a:\n  b\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a:\n   b\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a:\n        b\nc", "a : newline indent b newline dedent c newline eof ");
+}
+
+export void test_lex_layout_blocks_may_differ_in_width() {
+    expect_layout("a:\n  b:\n      c\n  d\ne",
+                  "a : newline indent b : newline indent c newline dedent d newline dedent e newline eof ");
+}
+
+export void test_lex_layout_error_a_dedent_that_matches_no_open_block() {
+    expect_layout("a:\n    b:\n        c\n      d", "this line's indentation matches no open block");
+    expect_layout("a:\n    b\n  c", "this line's indentation matches no open block");
 }
 
 export void test_lex_layout_error_an_unexpected_indent() {
     expect_layout("a\n    b", "unexpected indent");
     expect_layout("    a", "unexpected indent");
-    expect_layout("a:\n        b", "unexpected indent");
+    expect_layout("a:\n    b\n      c", "unexpected indent");
 }
 
 export void test_lex_integers_and_floating_constants() {
