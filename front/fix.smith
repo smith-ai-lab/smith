@@ -181,10 +181,11 @@ export Bool store(Str path, Str text) {
 static Str block_as_hashes(Str content) {
     Str out = "#";
     for (Usize k = 0; k < countof(content); k++) {
-        if (content[k] == '\n')
+        if (content[k] == '\n') {
             out = as_str(format::push(out, "\n#"));
-        else
+        } else {
             out = as_str(format::push(out, content[k:k + 1]));
+        }
     }
     return out;
 }
@@ -234,8 +235,9 @@ static Str hash_comments(Str source) {
             Str spaced = blank ? "#" : "# ";
             out = as_str(format::push(out, source[copied:i], spaced));
             copied = i + 2;
-            while (i < n && source[i] != '\n')
+            while (i < n && source[i] != '\n') {
                 i += 1;
+            }
             continue;
         }
         if (i + 1 < n && source[i] == '/' && source[i + 1] == '*') {
