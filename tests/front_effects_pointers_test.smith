@@ -1,0 +1,201 @@
+// Tests of function values in front::effects_pass and front::effects_ceiling (#2020, piece 3 of #1939): a generic
+// `map` is one IR function for each instantiation, a call through a parameter takes the set of what the call site
+// passes, a ceiling on the parameter judges every function passed there, and a pointer that went through memory takes
+// the union of the address-taken functions of its type.
+module front_effects_pointers_test;
+
+import <llvm-c/Core.h>;
+import <llvm-c/IRReader.h>;
+
+import front::effects_cache;
+import front::effects_ceiling;
+import front::effects_pass;
+import front::effects_table;
+import std::mem;
+import std::test;
+
+static const char *ir = "@hooks = internal global ptr null\n"
+                        "declare i32 @puts(ptr)\n"
+                        "declare ptr @malloc(i64)\n"
+                        "define void @print_it(float %x) {\n"
+                        "  %r = call i32 @puts(ptr null), !dbg !9\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @twice(float %x) {\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @grab_it(float %x) {\n"
+                        "  %p = call ptr @malloc(i64 8)\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @map(ptr %f) {\n"
+                        "  call void %f(float 1.0), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @map_pure(ptr %f) {\n"
+                        "  call void %f(float 1.0), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @wrap(ptr %g) {\n"
+                        "  call void @map(ptr %g), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @kernel_ok() {\n"
+                        "  call void @map(ptr @twice), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @kernel_bad() {\n"
+                        "  call void @map(ptr @print_it), !dbg !11\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @kernel_wrapped() {\n"
+                        "  call void @wrap(ptr @grab_it), !dbg !11\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @limited_ok() {\n"
+                        "  call void @map_pure(ptr @twice), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @limited_bad() {\n"
+                        "  call void @map_pure(ptr @print_it), !dbg !11\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @from_memory() {\n"
+                        "  %f = load ptr, ptr @hooks\n"
+                        "  call void %f(float 2.0), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @from_memory_no_match() {\n"
+                        "  %f = load ptr, ptr @hooks\n"
+                        "  call void %f(i64 2), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @store_hooks() {\n"
+                        "  store ptr @grab_it, ptr @hooks\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @passes_loaded() {\n"
+                        "  %f = load ptr, ptr @hooks\n"
+                        "  call void @map(ptr %f), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @to_unknown_callee() {\n"
+                        "  call void @external_each(ptr @print_it), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "declare void @external_each(ptr)\n"
+                        "!llvm.dbg.cu = !{!0}\n"
+                        "!llvm.module.flags = !{!5, !6}\n"
+                        "!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, producer: \"t\", "
+                        "isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)\n"
+                        "!1 = !DIFile(filename: \"map.c\", directory: \".\")\n"
+                        "!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+                        "!6 = !{i32 2, !\"Dwarf Version\", i32 5}\n"
+                        "!7 = distinct !DISubprogram(name: \"print_it\", scope: !1, file: !1, line: 1, type: !8, "
+                        "spFlags: DISPFlagDefinition, unit: !0)\n"
+                        "!8 = !DISubroutineType(types: !{})\n"
+                        "!9 = !DILocation(line: 3, scope: !7)\n"
+                        "!10 = !DILocation(line: 8, scope: !7)\n"
+                        "!11 = !DILocation(line: 20, scope: !7)\n";
+
+static c::LLVMModuleRef parse(c::LLVMContextRef context, const char *text, const char *name) {
+    c::LLVMMemoryBufferRef buffer = c::LLVMCreateMemoryBufferWithMemoryRangeCopy(text, c::strlen(text), name);
+    c::LLVMModuleRef module = nullptr;
+    char *problem = nullptr;
+    if (c::LLVMParseIRInContext(context, buffer, &module, &problem) != 0) {
+        c::LLVMDisposeMessage(problem);
+        test::check(false);
+    }
+    return module;
+}
+
+// The module with the ceiling on the parameter of `map_pure` that the checker would write for `f: fn(f32) @pure`.
+static c::LLVMModuleRef make(c::LLVMContextRef context) {
+    c::LLVMModuleRef module = parse(context, ir, "map.ll");
+    effects_ceiling::write_param(c::LLVMGetNamedFunction(module, "map_pure"), 0, 0);
+    return module;
+}
+
+export void test_front_effects_pointers_call_sites_substitute() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = make(context);
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    U32 printing = effects_pass::set_of(&g, "print_it"); // puts: console, and the table's other bits
+    test::check_equal(effects_pass::set_of(&g, "map"), 0u);
+    test::check_equal(effects_pass::set_of(&g, "kernel_ok"), 0u);
+    test::check_equal(effects_pass::set_of(&g, "kernel_bad"), printing);
+    test::check((printing & effects_table::console) != 0);
+    // wrap passes its parameter on: its callers decide.
+    test::check_equal(effects_pass::set_of(&g, "wrap"), 0u);
+    test::check_equal(effects_pass::set_of(&g, "kernel_wrapped"), effects_table::alloc);
+}
+
+export void test_front_effects_pointers_memory_takes_the_union_of_its_type() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = make(context);
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    // print_it, twice and grab_it have their address taken and the type void (float).
+    U32 printing = effects_pass::set_of(&g, "print_it");
+    test::check_equal(effects_pass::set_of(&g, "from_memory"), printing | effects_table::alloc);
+    // No function of the type (i64) has its address taken.
+    test::check_equal(effects_pass::set_of(&g, "from_memory_no_match"), effects_table::unknown);
+    // A loaded pointer passed to map is called there, so it is the same union.
+    test::check_equal(effects_pass::set_of(&g, "passes_loaded"), printing | effects_table::alloc);
+    // A callee the build does not define may call what it is given.
+    test::check_equal(effects_pass::set_of(&g, "to_unknown_callee") & printing, printing);
+}
+
+export void test_front_effects_pointers_ceiling_judges_what_is_passed() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = make(context);
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    effects_ceiling::Report report = {};
+    defer effects_ceiling::release(&report);
+    effects_ceiling::check(&g, module, &report);
+    test::check_equal(report.count, 1ul);
+    test::check_equal(report.items[0].line, 20u);
+    test::check_equal(report.items[0].excess, effects_pass::set_of(&g, "print_it"));
+    Str text = effects_ceiling::render(&report);
+    defer effects_cache::free_text(text);
+    Str want = "map.ll:20:1: error: smith-effect: `limited_bad` passes `print_it` to `map_pure`, whose parameter 1 is "
+               "[[std::pure]], but it has the effects console, globals: print_it -> puts (map.ll:3)\n"
+               "map.ll:20:1: note: this call is the first of the effects beyond the declared ones\n";
+    test::check(mem::equal(text, want));
+    // Inside map_pure the call through the parameter counts as its ceiling: nothing beyond pure.
+    test::check_equal(effects_pass::set_of(&g, "map_pure"), 0u);
+}
+
+export void test_front_effects_pointers_cache_keeps_the_values() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    effects_cache::Cache cache = {};
+    defer effects_cache::release(&cache);
+    for (Usize round = 0; round < 2; round++) {
+        c::LLVMModuleRef module = make(context);
+        effects_pass::Graph g = effects_pass::make();
+        effects_pass::add_module(&g, module, &cache);
+        effects_pass::solve(&g);
+        U32 printing = effects_pass::set_of(&g, "print_it");
+        test::check_equal(effects_pass::set_of(&g, "kernel_bad"), printing);
+        test::check_equal(effects_pass::set_of(&g, "kernel_wrapped"), effects_table::alloc);
+        test::check_equal(effects_pass::set_of(&g, "from_memory"), printing | effects_table::alloc);
+        effects_pass::release(&g);
+        c::LLVMDisposeModule(module);
+    }
+    test::check(cache.hits > 0);
+}
