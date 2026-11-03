@@ -37,7 +37,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - New types: `option { inner }` (`?T`), `block_type { element, dims }` (`[5,3]T`, a null size is `(absent)`), and `pointer.is_mut` (`*mut T`).
 - New expressions: `named_arg`, `variant.payload`, `tuple_lit`, `array_lit`, `stmt_expr` (an `if`, `match`, block or `for` as a value).
 - New statements: `match_stmt` (`MatchArm`, `Pattern`), `for_in`, `destructure`, `if_let`, `yield_stmt` (#1544), `errdefer_stmt`.
-- Reused, not new: `p.*` is `unary dereference`, `x as T` is `cast`, `fn[a](x) { }` is `lambda`, `@name(args)` is an `Attribute` in `Decl.attributes`.
+- Reused, not new: `p.*` is `unary dereference`, `x.to(T)`, `x.wrap(T)` and `p.cast(T)` are one `cast` node with a form (convert, wrapping, reinterpret) (#1811), `fn[a](x) { }` is `lambda`, `@name(args)` is an `Attribute` in `Decl.attributes`.
 - Goldens for the new nodes: `tests/front/ast/syntax_*.txt`.
 
 **Names that differ from the ticket**, forced by today's smith (accepted on #1136):
@@ -87,11 +87,11 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Reflection and packs (#1264): `x.[f]` and `x->[f]` are `reflect_member`; `pattern...` after a call argument or list item is `expand`; a second `...` is an error.
 - `_Generic(control, T: value, default: value)` is `generic_select` (#1285); `typeof(T.[f])` reads its argument as an expression (#1284).
 - New syntax (S5, #1446, with `Parser.new_syntax`): `named_arg` (`f(a = 1)`), a capitalized path called with named arguments is a construction (`Point(x = 1)`), `.name(payload)`, `(a, b)`, `[1, 2, 3]`, `p.*`.
-- `x as T` binds tighter than every binary operator and after prefix ones (`-x as T` is `(-x) as T`); `&x` is `address_of`.
+- `x.to(T)`, `x.wrap(T)` and `p.cast(T)` are method-call spellings of the built-in conversions (#1811): `to` checks (a conversion that can lose a value traps), `wrap` keeps the low bits of an integer and never traps, `cast` reinterprets a pointer. They are read in both modes and `T` is parsed as a type. `x as T` is an error whose fix writes `x.to(T)` (`p.cast(T)` for a pointer type, the operand in parentheses unless it is a postfix chain); `&x` is `address_of`.
 - `fn(x) { body }` and `fn[a](x: i32) -> R { body }` are lambdas; a `fn` with no body is a type (`fn_has_body` scans to the `{`). `if`, `match`, `for` and `{` start `stmt_expr`.
 - An old lambda `[x](I32 a) -> I32 { }` has a fix-it (#1771, `lambda_warning` in parse_expr): the bracket group becomes `fn` (`fn()` with no parameters) and each `T a` becomes `a: T`; the result type has its own fix. Without it the new parser read the brackets as an array called with `(I32 a)`.
 - A trailing block (#961): a `{` on the same line as a call's `)` is a lambda with no parameters, appended as the last argument; a condition head takes none at its top level (`Parser.head`).
-- Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x as T`, `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`. A variable of a named type with an untyped list of only `.field = value` items, `P p = {.x = 1};`, is `p := P(x = 1)` (#1767); a `{` followed by `.name =` is that list even in smith's own syntax, where a block never starts that way.
+- Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x.to(T)` (`x.cast(T)` for a pointer type), `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`. A variable of a named type with an untyped list of only `.field = value` items, `P p = {.x = 1};`, is `p := P(x = 1)` (#1767); a `{` followed by `.name =` is that list even in smith's own syntax, where a block never starts that way.
 - Forms with no mechanical fix stay warnings with no edits (a typed list with positional items, `++` as a value, a method chain). Two edits at one offset clash, so a nested fix lands on the next pass.
 - `{1, 2}` is read as an array even where it initializes a struct (`P p = {1, 2};`): the parser has no types, so that one needs the checker.
 - Types: qualifiers, paths, `auto`, `struct X`, `typeof`, `*`, `[:]`, `[N]`, applied types `Option(I32)`; `T[:][3]` is a slice of arrays. `Fn(R (P...))` is a function type.

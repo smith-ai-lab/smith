@@ -137,12 +137,13 @@ export void test_front_emit_match_enumerators_take_their_values_in_order_or_as_w
     char *ir = ir_of(
         "enum Color {\n    red\n    green\n    blue\n}\n"
         "enum Small: u8 {\n    low = 2\n    mid\n    high = 9\n    top\n}\n"
-        "pub fn green() -> i32 {\n    c: Color = .green\n    c as i32\n}\n"
-        "pub fn mid() -> i32 {\n    c: Small = .mid\n    c as i32\n}\n"
-        "pub fn top() -> i32 {\n    c: Small = .top\n    c as i32\n}\n"
+        "pub fn green() -> i32 {\n    c: Color = .green\n    c.to(i32)\n}\n"
+        "pub fn mid() -> i32 {\n    c: Small = .mid\n    c.to(i32)\n}\n"
+        "pub fn top() -> i32 {\n    c: Small = .top\n    c.to(i32)\n}\n"
         "pub fn eq(n: i32) -> i32 {\n    a: Color = .blue\n    b: Color = .blue\n    if a == b {\n        return 1\n   "
         " }\n    0\n}\n"
-        "pub fn back(n: i32) -> i32 {\n    c := n as Color\n    k: Color = .blue\n    if c == k {\n        return 1\n  "
+        "pub fn back(n: i32) -> i32 {\n    c := n.to(Color)\n    k: Color = .blue\n    if c == k {\n        return 1\n "
+        " "
         "  }\n    0\n}\n"
         "pub fn zero(n: i32) -> i32 {\n    mut c: Color\n    r: Color = .red\n    if c == r {\n        return 1\n    "
         "}\n    0\n}\n"
@@ -166,8 +167,8 @@ export void test_front_emit_match_over_an_enumeration_is_one_switch() {
     char *ir =
         ir_of("enum Color {\n    red\n    green\n    blue\n}\n"
               "fn score(c: Color) -> i32 {\n    match c {\n        .red => 1\n        .green, .blue => 2\n    }\n}\n"
-              "pub fn pick(n: i32) -> i32 {\n    score(n as Color)\n}\n"
-              "pub fn stmt(n: i32) -> i32 {\n    mut seen := 0\n    c := n as Color\n    match c {\n"
+              "pub fn pick(n: i32) -> i32 {\n    score(n.to(Color))\n}\n"
+              "pub fn stmt(n: i32) -> i32 {\n    mut seen := 0\n    c := n.to(Color)\n    match c {\n"
               "        .red => seen = 1\n        .green => seen = 2\n        .blue => seen = 3\n    }\n    seen\n}\n",
               &host, &s);
     test::check_equal(ir != nullptr, true);

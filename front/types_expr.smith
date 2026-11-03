@@ -516,7 +516,7 @@ static Bool conform(types::Checked *c, const ast::Expr *e, types::TypeRef from, 
     }
     Str want = types::show(to);
     types::failf(c, e->span, "expected `", want, "`, found `", types::show(from), "`; write a value of type `", want,
-                 "`, or convert it with a cast such as `(", want, ")value`");
+                 "`, or convert it with a conversion such as `value.to(", want, ")`");
     return false;
 }
 
@@ -1165,7 +1165,7 @@ static Bool same_operands(types::Checked *c, ast::Span span, ast::BinaryOp op, t
     }
     Str left = types::show(l);
     types::failf(c, span, "the operands of `", binary_text(op), "` have different types, `", left, "` and `",
-                 types::show(r), "`; make both `", left, "` with a cast, for example `(", left, ")y`");
+                 types::show(r), "`; make both `", left, "` with a conversion, for example `y.to(", left, ")`");
     return false;
 }
 
@@ -2725,8 +2725,8 @@ static void array_literal_after(types::Checked *c, Frame f) {
         } else if (t != element && !(expected != nullptr && expected->kind != .automatic && element != nullptr &&
                                      expected->element == element)) {
             types::failf(c, items[i]->span, "the elements of `[...]` have one type: element ", i + 1, " is `",
-                         types::show(t), "` but the first is `", types::show(element), "`; convert it with `as ",
-                         types::show(element), "`");
+                         types::show(t), "` but the first is `", types::show(element), "`; convert it with `.to(",
+                         types::show(element), ")`");
             ok = false;
         }
     }
@@ -3345,8 +3345,9 @@ static void value_join(types::Checked *c, Frame f) {
             first = t;
         } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
             types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
-                         "` and `", types::show(t), "`; give them one type, for example with a cast such as `(",
-                         types::show(first), ")value`");
+                         "` and `", types::show(t),
+                         "`; give them one type, for example with a conversion such as `value.to(", types::show(first),
+                         ")`");
             poison(c, e);
             return;
         }
