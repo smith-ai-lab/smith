@@ -374,6 +374,8 @@ export void test_lex_integers_and_floating_constants() {
     expect_one("0x1F", lex::integer);
     expect_one("0XdeadBEEF", lex::integer);
     expect_one("0b1010", lex::integer);
+    expect_one("0o755", lex::integer);
+    expect_one("0O17", lex::integer);
     expect_one("0777", lex::integer);
     expect_one("1'000'000", lex::integer);
     expect_one("0xFF'FF", lex::integer);
@@ -392,6 +394,9 @@ export void test_lex_integers_and_floating_constants() {
     expect_one("0x.8p1", lex::floating);
     expect_one("3.14f16", lex::floating);
     expect_one("1e5L", lex::floating);
+    expect_one("1.e5", lex::floating);
+    expect_dump("3.to", "1:1 integer 3\n1:2 dot .\n1:3 name to\n1:5 end_of_file\n");
+    expect_dump("0o7.wrap", "1:1 integer 0o7\n1:4 dot .\n1:5 name wrap\n1:9 end_of_file\n");
     expect_dump("1+2", "1:1 integer 1\n1:2 plus +\n1:3 integer 2\n1:4 end_of_file\n");
     expect_dump("p.x .5", "1:1 name p\n1:2 dot .\n1:3 name x\n1:5 floating .5\n1:7 end_of_file\n");
 }
@@ -523,6 +528,7 @@ export void test_lex_error_a_malformed_number() {
     expect_error("08", "an octal constant has no digit 8 or 9", 0, 2);
     expect_error("0x", "a number prefix needs digits after it", 0, 2);
     expect_error("0b2", "a number prefix needs digits after it", 0, 2);
+    expect_error("0o", "a number prefix needs digits after it", 0, 2);
     expect_error("1e+", "the exponent of a number has no digits", 0, 3);
     expect_error("0x1.8", "a hexadecimal floating constant needs an exponent", 0, 5);
     expect_error("12abc", "an integer constant has an invalid suffix", 0, 5);

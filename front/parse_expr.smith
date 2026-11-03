@@ -80,6 +80,9 @@ static Number decode_integer(Str t) {
         } else if (c == 'b' || c == 'B') {
             base = 2;
             i = 2;
+        } else if (c == 'o' || c == 'O') {
+            base = 8;
+            i = 2;
         } else {
             base = 8;
             i = 1;
