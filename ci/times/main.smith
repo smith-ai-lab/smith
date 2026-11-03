@@ -1,0 +1,269 @@
+// `smith build ci-times` (issue #360): where CI's time goes. It reads a folder with one subfolder per CI run (named by
+// the ids on its command line), each holding what `smith build ci-times` downloaded from ci.yml's run: `steps.tsv`, the
+// steps of every job in seconds (`<job> / <step>`, tab, seconds; `queued` is the wait for a runner, `job` the whole
+// job), and the `test-log-*` artifacts, one folder for each part of the test matrix, each with the `test.log` of
+// `smith test` (its `cpu<TAB>seconds<TAB>name` lines when the run set SMITH_TEST_STATS=1). It prints, for the runs
+// found: the steps of the jobs, the CPU seconds of each part of the test matrix (how balanced the split is), and the
+// tests of 2 CPU seconds or more by median. It replaces scripts/ci_times.c (#1670 of #1669); the tables are static.
+//
+// Usage: ci_times FOLDER RUN_ID...
+module main;
+
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import std::slice;
+import std::text;
+
+constexpr Usize max_runs = 64;
+constexpr Usize max_series = 400;
+constexpr Usize name_size = 160;
+constexpr Usize path_size = 512;
+constexpr F64 test_floor = 2.0; // a test under this many CPU seconds is not listed
+constexpr Usize name_width = 70;
+
+struct Series {
+    char name[name_size];
+    F64 wall[max_runs];
+    F64 cpu[max_runs];
+    Usize count;
+};
+
+struct Table {
+    struct Series items[max_series];
+    Usize count;
+};
+
+static struct Table steps;
+static struct Table parts;
+static struct Table tests;
+static Usize runs_read = 0;
+static Usize runs_without_log = 0;
+
+// The name of a series as text.
+static typeof(const char[:]) name_of(const struct Series *series) {
+    Usize length = 0;
+    while (length < name_size && series->name[length] != '\0') {
+        length += 1;
+    }
+    return series->name[0:length];
+}
+
+// The series called `name`, made when it is the first of its name; null when the table is full.
+static struct Series *series_of(struct Table *table, const char name[:]) {
+    for (Usize i = 0; i < table->count; i++) {
+        if (slice::equal(name_of(&table->items[i]), name)) return &table->items[i];
+    }
+    if (table->count == max_series) return nullptr;
+    struct Series *series = &table->items[table->count];
+    table->count += 1;
+    Usize length = countof(name) < name_size - 1 ? countof(name) : name_size - 1;
+    for (Usize i = 0; i < length; i++) {
+        series->name[i] = name[i];
+    }
+    series->name[length] = '\0';
+    series->count = 0;
+    return series;
+}
+
+static void add(struct Table *table, const char name[:], F64 wall, F64 cpu) {
+    struct Series *series = series_of(table, name);
+    if (series == nullptr || series->count == max_runs) return;
+    series->wall[series->count] = wall;
+    series->cpu[series->count] = cpu;
+    series->count += 1;
+}
+
+// The median of the values; the array is sorted in place (an insertion sort: at most max_runs values).
+static F64 median(F64 values[:]) {
+    Usize count = countof(values);
+    if (count == 0) return 0;
+    slice::sort(values);
+    if (count % 2 == 1) return values[count / 2];
+    return (values[count / 2 - 1] + values[count / 2]) / 2;
+}
+
+static F64 maximum(const F64 values[:]) {
+    F64 best = 0;
+    for (Usize i = 0; i < countof(values); i++) {
+        best = values[i] > best ? values[i] : best;
+    }
+    return best;
+}
+
+static F64 wall_median(struct Series *series) {
+    return median(series->wall[0:series->count]);
+}
+
+static F64 cpu_median(struct Series *series) {
+    return median(series->cpu[0:series->count]);
+}
+
+// The first position of `byte` in `text` from `from`, or the length of the text.
+static Usize find(const char text[:], char byte, Usize from) {
+    Usize i = from;
+    while (i < countof(text) && text[i] != byte) {
+        i += 1;
+    }
+    return i;
+}
+
+// Reads the first word of `text` as a number; false when there is none.
+static Bool take_number(const char text[:], F64 *value) {
+    typeof(const char[:]) rest = text;
+    typeof(const char[:]) word = {};
+    if (!text::take_word(&rest, &word)) return false;
+    return text::parse_f64(word, value);
+}
+
+// The steps of one `steps.tsv`: a line `name TAB seconds` for each step.
+static void read_steps(const char path[:]) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return;
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    defer mem::free(loaded.ok.data);
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        Usize tab = find(text, '\t', at);
+        F64 value = 0;
+        if (tab < end && take_number(text[tab + 1:end], &value)) add(&steps, text[at:tab], value, 0);
+        at = end + 1;
+    }
+}
+
+// The stats of one part's test.log: a line `cpu<TAB>seconds<TAB>name` for each test. Returns the CPU seconds of the
+// whole part, or a negative number when the log has none (the run did not set SMITH_TEST_STATS).
+static F64 read_test_log(const char path[:]) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return -1;
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    defer mem::free(loaded.ok.data);
+    F64 total = -1;
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) line = text[at:end];
+        at = end + 1;
+        if (countof(line) < 4 || !slice::starts_with(line, text::make("cpu\t"))) continue;
+        Usize tab = find(line, '\t', 4);
+        F64 seconds = 0;
+        if (tab >= countof(line) || !take_number(line[4:tab], &seconds)) continue;
+        total = (total < 0 ? 0 : total) + seconds;
+        typeof(const char[:]) rest = line[tab + 1:];
+        typeof(const char[:]) name = {};
+        Bool named = text::take_word(&rest, &name);
+        if (seconds >= test_floor && named) add(&tests, name, seconds, seconds);
+    }
+    return total;
+}
+
+// `a/b/c` as text in `buffer`.
+static typeof(const char[:]) join(char buffer[:], const char a[:], const char b[:], const char c[:]) {
+    format::Written made = format::to(buffer.data, countof(buffer), a, "/", b, "/", c);
+    return buffer[0:made.length];
+}
+
+// A run: its steps, and each `test-log-*` folder of its artifacts as one part of the matrix.
+static void read_run(const char folder[:], const char id[:]) {
+    char path[path_size];
+    read_steps(join(path[0:path_size], folder, id, "steps.tsv"));
+    format::Written made = format::to(path, sizeof path, folder, "/", id);
+    files::EntriesResult listed = files::list(path[0:made.length]);
+    Bool found = false;
+    if (listed == .ok) {
+        for (files::Entry entry : listed.ok) {
+            if (!slice::starts_with(entry.name, text::make("test-log-"))) continue;
+            char inner[path_size];
+            char log[path_size];
+            made = format::to(inner, sizeof inner, id, "/", entry.name);
+            F64 total = read_test_log(join(log[0:path_size], folder, inner[0:made.length], "test.log"));
+            if (total < 0) continue;
+            add(&parts, entry.name, total, total);
+            found = true;
+        }
+    }
+    if (found) {
+        runs_read += 1;
+    } else {
+        runs_without_log += 1;
+    }
+}
+
+// Sorting the series of a table by the median of one of its two columns, largest first (stable).
+static void sort_series(struct Table *table, Bool by_cpu) {
+    for (Usize i = 1; i < table->count; i++) {
+        struct Series held = table->items[i];
+        F64 key = by_cpu ? cpu_median(&held) : wall_median(&held);
+        Usize j = i;
+        while (j > 0) {
+            F64 before = by_cpu ? cpu_median(&table->items[j - 1]) : wall_median(&table->items[j - 1]);
+            if (before >= key) break;
+            table->items[j] = table->items[j - 1];
+            j -= 1;
+        }
+        table->items[j] = held;
+    }
+}
+
+// `%8.1fs`: a number of seconds with one place, in a field of 8 and an s after it.
+static void print_seconds(F64 value) {
+    console::print(format::pad(format::fixed(value, 1), 8), "s");
+}
+
+static void print_table(const char title[:], struct Table *table, Bool by_cpu, Usize limit, Bool show_cpu) {
+    sort_series(table, by_cpu);
+    console::print("\n", title, "\n  ", format::left("name", name_width), " ", format::pad("runs", 5), " ",
+                   format::pad("wall med", 9), " ", format::pad("wall max", 9));
+    if (show_cpu) {
+        console::print(" ", format::pad("cpu med", 9), " ", format::pad("cpu max", 9));
+    }
+    console::print("\n");
+    F64 wall_total = 0;
+    F64 cpu_total = 0;
+    for (Usize i = 0; i < table->count; i++) {
+        wall_total += wall_median(&table->items[i]);
+        cpu_total += cpu_median(&table->items[i]);
+    }
+    for (Usize i = 0; i < table->count && i < limit; i++) {
+        struct Series *s = &table->items[i];
+        typeof(const char[:]) name = name_of(s);
+        if (countof(name) > name_width) name = name[0:name_width];
+        console::print("  ", format::left(name, name_width), " ", format::pad(s->count, 5), " ");
+        print_seconds(wall_median(s));
+        console::print(" ");
+        print_seconds(maximum(s->wall[0:s->count]));
+        if (show_cpu) {
+            console::print(" ");
+            print_seconds(cpu_median(s));
+            console::print(" ");
+            print_seconds(maximum(s->cpu[0:s->count]));
+        }
+        console::print("\n");
+    }
+    console::print("  sum of medians: wall ", format::fixed(wall_total, 1), " s");
+    if (show_cpu) {
+        console::print(", cpu ", format::fixed(cpu_total, 1), " s");
+    }
+    console::print("\n");
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) < 3) {
+        console::print_error("usage: ci_times FOLDER RUN_ID...\n");
+        return 2;
+    }
+    for (Usize i = 2; i < countof(args); i++) {
+        read_run(args[1], args[i]);
+    }
+    console::print("ci-times: ", runs_read, " runs with test logs, ", runs_without_log,
+                   " without (no tests ran, the logs expired or SMITH_TEST_STATS was off)\n");
+    if (steps.count == 0 && runs_read == 0) return 1;
+    print_table("Job steps (seconds; `queued` is the wait for a runner, `job` the whole job)", &steps, false, 25,
+                false);
+    print_table("CPU seconds of each part of the test matrix (a balanced split has equal parts)", &parts, true, 10,
+                true);
+    print_table("Tests of 2 CPU seconds or more (what .github/shard-costs.tsv is made from)", &tests, true, 25, true);
+    return 0;
+}
