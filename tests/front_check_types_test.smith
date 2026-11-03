@@ -88,3 +88,41 @@ export void test_front_check_types_result_is_an_applied_type() {
 export void test_front_check_types_result_converts_to_its_value_type() {
     fails("fn f(r: Result(i32, u8)):\n    let n: str = r\n", "Result", "Str");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Array lengths
+
+// A function whose body declares `let mut buffer: [<length>]u8`, after the constants in `before`.
+static Str with_length(Str before, Str length) {
+    return join(before, join("fn run():\n    let mut buffer: [", join(length, "]u8 = undefined\n    buffer[0] = 1\n")));
+}
+
+export void test_front_check_types_array_length_literal() {
+    clean(with_length("", "4"));
+}
+
+export void test_front_check_types_array_length_named_constant() {
+    clean(with_length("const N = 4\n\n", "N"));
+}
+
+export void test_front_check_types_array_length_arithmetic() {
+    clean(with_length("const n = 8\n\n", "n + 1"));
+    clean(with_length("const n = 8\n\n", "n - 1"));
+    clean(with_length("", "1 << 3"));
+}
+
+export void test_front_check_types_array_length_in_a_struct_and_a_parameter() {
+    clean("const N = 4\n\nstruct Block:\n    bytes: [N]u8\n\nfn first(xs: [N]u8) -> u8:\n    return xs[0]\n");
+}
+
+export void test_front_check_types_array_length_variable_is_refused() {
+    fails(with_length("let mut n = 4\n\n", "n"), "an array length that is not a constant", "");
+}
+
+export void test_front_check_types_array_length_negative_is_refused() {
+    fails(with_length("const n = 2\n\n", "n - 3"), "an array length that is not a constant", "");
+}
+
+export void test_front_check_types_array_length_division_by_zero_is_refused() {
+    fails(with_length("", "4 / 0"), "an array length that is not a constant", "");
+}

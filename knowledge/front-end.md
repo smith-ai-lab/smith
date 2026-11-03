@@ -193,7 +193,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - The concepts `int float num signed unsigned pointer` are `concept_type` types (an error as a field type). In today's syntax `char`, `bool` and C type names are errors.
 - `[5,3]T` equals `[5][3]T`, `[,3]T` is a slice of `[3]T`, `[,]T` is a `block`, `?T` is the option type, and `Line := []u8` is an alias by substitution.
 - A module-level `a := 3` takes `i32` (`f64` for a float literal) from a literal initializer. A field's `is_new` is not read yet (#1531): a field always counts as new.
-- Not yet typed: `typeof`, a bit-field, `if constexpr`, a compile-time or rest parameter, a non-literal array length.
+- Not yet typed: `typeof`, a bit-field, `if constexpr`, a compile-time or rest parameter. An array length is typed when it is an integer literal, a constant (`const`, or a `let` that is not `mut`) whose initializer is one, or `+ - * / % << >>` of these (#1918); the emitter still wants a literal (#1917).
 - No recursion: `resolve`, `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
 ### front::types_expr (`front/types_expr.smith`, #1220 J1b)
@@ -301,7 +301,7 @@ Iteration in the checker; the rules are the top comment of the file.
 
 | File | Emits today | Left | Issue |
 | --- | --- | --- | --- |
-| `emit_option` | `?T` (`{ i8 tag, T payload }`, tag 0 is `.none`), `.some(x)`, `.none`, `if let`, `wrap`, `is_some`, `payload` | `?*T`, `match` over `?T`, `if let` as a value, `try`, `==` of options | #1584 (filled) |
+| `emit_option` | `?T` and `Option(T)` (`{ i8 tag, T payload }`, tag 0 is `.none`), `Result(T, E)` (`{ i8 tag, T, E }`, tag 0 is ok), `.some(x)`, `.none`, `if let`, `wrap`, `is_some`, `payload` | `?*T`, `match` over `?T`, `if let` as a value, `try`, `==` of options | #1584 (filled) |
 | `emit_iter` | `for x in xs` over a fixed array, `refs(xs)`, `range(n)`, `range(a, b)`, `range(a, b, step)` with a positive literal step | `enumerate`, `zip`, tuple pattern, slice, `str`, block, stream, array value, other steps: `not emitted yet` | #1586 (filled) |
 | `emit_match` | enumerations (an integer `Ty` of the underlying type, enumerators from 0 or as written; `emit_memory` and `emit_call` find one for `as` and parameters), `.red`, `match` over an enumeration (one `switch`, `unreachable` default) or `?T`, as statement and value | a payload enumeration, `match` over `Result`, `if let` over an enumeration | #1585 |
 | `emit_value` | an `if` with an `else` and a block used as a value: one alloca slot (the hint's type, else the join of the branches' checker types), branches convert and store, `endif` loads it; a branch that ended stores nothing; no branch reaching the end gives `unreachable` and `undef` | `for`, `while`, `if let` as a value, a `match` with no type written | #1618 (filled) |
@@ -378,6 +378,7 @@ Iteration in the checker; the rules are the top comment of the file.
 - Modules are named by path (`front::roots`; owner, 2026-10-31): `src/game/replay.smith` is `game::replay`, `lib/std/ascii.smith` is `std::ascii`. Roots are `src` and `lib`; roots from `build.smith` are later.
 - A `module` line that disagrees with the path is an error naming both; two files with one name are an error naming both; a file under no root takes its `module` line.
 - `build.c` compiles `front/*.smith` (all but `emit_jit` and `cimport_cache`) into smith, with `shim/cimport.cpp` and `shim/cimport_deps.cpp` linked beside the other shims, with `ascii`, `format` and `clock` as plain compile steps. The units runner (`SMITH_CORE`) has no front end.
+- `smith prove ... -- --front-end=new` (#1974): a `.smith` source goes through `compile::file` to bitcode, not clang. `file` writes the module as emitted when the output is named `*.bc` (`shim/prove.cpp`, `compile_with_new_front_end`, in a child process), and the prover reads it as it reads clang's. A `.c` file is unchanged. Gaps: `lib/std/contract.smith` is in today's syntax (`[[gnu::always_inline]]`) and does not compile under the new front end yet, and `c::smith_requires` from `import <smith/contract.h>` is not found (an inline function of a header), so a contract cannot be written yet; the test (`tests/prove_smith_test.smith`) proves only that a function reaches the prover by its name.
 - Gaps: the temporary objects of a link (`<TMPDIR>/<name>.front.o`) are not removed yet; the header cache and `import <header.h>;` are not called by `compile`.
 - Tests: `tests/front_join_test.smith` (in process and through `$SMITH_SELF`, goldens `tests/front/join/`) and `tests/front_roots_test.smith`.
 
@@ -396,6 +397,13 @@ Declarations read from C headers become `front::ast` nodes with `from_c` set; th
 - Slice 1 serves `initialize` (full sync), `shutdown`, `exit`, `didOpen`, `didChange` and `didClose`; each open or change answers with `textDocument/publishDiagnostics` from `compile::diagnose(path, source, roots)`: the parser's errors (and, in smith's own syntax, its warnings as severity 2), or the checker's errors when it parsed. Any other request gets -32601.
 - Columns are bytes in the line (LSP counts UTF-16 units). Hover (#1892, `front/lsp_hover.smith`): `textDocument/hover` returns the type of the innermost checked expression under the position (`ast::expr_at`, `compile::hover_at`) as markdown with its range; the server keeps the open documents' text by uri (fixed slots) for it. The next slices (#1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
 
+## The formatter (`front/format_space.smith`, `front/format.smith`, #1886)
+
+`smith fmt` on smith's own front end, one style and no clang-format (the plan: #1886, with #1377's zero patches). Not wired into `smith fmt` yet (#1890).
+- `format_space::space_between(prev, next, context)` is the space inside a line, a pure function of two token kinds (#1888).
+- `format::format(source)` lexes with `tokenize_new`, adds the layout tokens and writes the file back: 4 spaces a level from `indent`/`dedent`, one statement a line, the space by `space_between`, `#` and `##` comments kept as written (taken from the gap between two tokens, trailing or on their own line, a comment before a dedent is written at the new level), at most one blank line in a row, none at the start or end, one final newline. A line that goes on inside a bracket or after a binary operator keeps its break and is indented two levels deeper than its statement. Lines over 100 columns are left as written. It is idempotent; an error of the lexer or the layout is its result.
+- Tests: `tests/front_format_test.smith` reads the pairs `tests/front/format/<name>.smith` and `.expected` and checks that formatting twice changes nothing over `tests/front/e2e/`.
+
 ## Tests
 
 The front end has its own runner (`tests/front_units/build.c`, `front-project`), because its tests link LLVM's C API ([build-tests](build-tests.md)).
@@ -409,4 +417,12 @@ The front end has its own runner (`tests/front_units/build.c`, `front-project`),
 ### front::types_attr (`front/types_attr.smith`, #1628)
 - An attribute may sit on its own line before a declaration, a struct field or an enumerator (`parse_decl`); one followed by a blank line, a comment or the end of the block is the error "an attribute marks the declaration on the next line". `@attribute` marks a struct as an attribute type.
 - `types_attr::check_module` checks every `@name` written so: built-ins (`inline noinline cold pure affine c_name attribute effects`) pass, any other unqualified name must be an `@attribute` struct of the module and its arguments are a construction of it, known at compile time, and the arguments are matched as a construction matches them, positional first and then named (`types_expr::argument_field`, #1813): `@rename("x")` is `@rename(to = "x")`. `@x()` is a parser warning whose fix drops the `()` (`warn_empty_call`). `@mod::name` is `not yet typed` (one module is checked at a time). Tests: `tests/front_attr_test.smith`.
+
+### front::effects_table (`front/effects_table.smith`, #1965, piece 1 of #1939)
+
+- The 13 effect bits and the libc leaf table of `shim/effects_table.h` as data: `describe(set)`, `leaf(name, &set)` (bisection over a sorted table; false for a name the table lacks, which the checker reads as `unknown`). The header stays the source until the plugin is deleted (#1632); `tests/front_effects_table_test.smith` reads it as text and fails when a name or its bits differ. Inference and ceilings come in #1966 and #1967.
 - `@when(cond)` (#1801, `front/when.smith`) on a top-level declaration or a struct field: `cond` is `target.os == .macos` / `.linux` (or `!=`), `true`, `false`, `!`, `&&`, `||`. `types_decl::check_module_headers` (and `check_module_with`) checks a module that has one twice, once with the declarations live on macOS and once on Linux whatever system builds; an error found on one only says `on macos:` / `on linux:`, and a use of a name that is gone there says `` `f` is not declared on linux: it is declared only when <cond> ``. `@when` on an import, an enumerator, a parameter or anything but a declaration is an error pointing at `if constexpr`; a statement takes no attribute, so a local is a parse error. The generated C header writes each condition as `#if` (`defined(__APPLE__)`, `defined(__linux__)`; a field's `#if` is inside the struct). Tests: `tests/front_when_test.smith`, `tests/front_header_test.smith`, `tests/front_fix_test.smith`.
+
+### Return types and function names (`front/parse_type.smith`, `front/parse_decl.smith`, #1959)
+- A function's return type may be any type the type grammar reads, including a call of a type function (`Option(T)`) and one through a module in smith's own syntax (`-> arena.slice_of(T, countof(dims))`: `parse_type::qualified_type_function` joins `.name(` to the path and reads the arguments as an applied type). A `.` after a type that is not followed by `name(` still ends the type.
+- `type` is a keyword where a type is expected, and a function may be named `type` (`pub fn type(p: *parser) -> *node:`). Tests: `tests/front_parse_type_call_test.smith`.
