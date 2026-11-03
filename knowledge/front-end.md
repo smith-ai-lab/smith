@@ -188,6 +188,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - `stream::Stream(T)` (#1613) is the type kind `Kind.stream`, interned by `types::stream_of`, shown `stream::Stream(i32)`, one pointer in layout.
 - Smith's own syntax (#1512, C5): `Checked.new_syntax` is set around types written there (`Param.is_new`, `variable.is_new`, `FieldDecl.is_new`).
 - There the lowercase built-ins (`i8`..`usize`, `f32`, `f64`, `bool`, `char`, `str`, `void`, `type`) equal `I8`..`Usize`, `F32`, `F64`, `Bool`, `Char`, `Str`, `Void`.
+- In a function with smith's own syntax the same names are also types inside its expressions: `x.to(bool)`, `sizeof(char)`, a lambda's `fn(q: bool) -> bool: q` (#1960).
 - The concepts `int float num signed unsigned pointer` are `concept_type` types (an error as a field type). In today's syntax `char`, `bool` and C type names are errors.
 - `[5,3]T` equals `[5][3]T`, `[,3]T` is a slice of `[3]T`, `[,]T` is a `block`, `?T` is the option type, and `Line := []u8` is an alias by substitution.
 - A module-level `a := 3` takes `i32` (`f64` for a float literal) from a literal initializer. A field's `is_new` is not read yet (#1531): a field always counts as new.

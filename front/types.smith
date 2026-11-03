@@ -852,6 +852,7 @@ export struct Options {
 
 export struct Checked {
     Options options;
+    Bool new_body;   // the function being checked has a parameter or a local in smith's own syntax (so far)
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
     Bool in_header;  // the declarations of a C header are being declared: a repeated name is not an error
     Str prefix;      // `m::` while the declarations of the module imported as `m` are declared; else empty
