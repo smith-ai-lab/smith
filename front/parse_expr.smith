@@ -1517,6 +1517,21 @@ static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
     return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand}});
 }
 
+// Whether the position lies inside an unclosed `(` or `[` of the statement, so a line break there ends nothing: the
+// tokens before it are read back to the nearest unmatched opener (a `{` or `;` first means no, a `(` or `[` yes).
+static Bool inside_brackets(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = p->position; i > 0; i--) {
+        lex::TokenKind kind = p->tokens[i - 1].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) depth += 1;
+        if (depth == 0 && (kind == lex::semicolon || kind == lex::left_brace)) return false;
+        if (kind != lex::left_paren && kind != lex::left_bracket && kind != lex::left_brace) continue;
+        if (depth == 0) return true;
+        depth -= 1;
+    }
+    return false;
+}
+
 // A postfix operator applied to the last operand, if one is at the position.
 static Outcome postfix_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
@@ -1532,9 +1547,10 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     case lex::dot:
     case lex::arrow:
         // A `.` that starts a line is not a continuation where the line before it ends a statement (`.b => x` after
-        // `.a => f(1)` in a match, the Go rule of lex::ends_statement).
+        // `.a => f(1)` in a match, the Go rule of lex::ends_statement). Inside parentheses or brackets a line break
+        // ends nothing, so `f(g(x)\n.name)` continues (#1773).
         if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
-            lex::ends_statement(p->tokens[p->position - 1]))
+            lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
             return .absent;
         result = member(p, base);
         break;
