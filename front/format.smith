@@ -299,21 +299,67 @@ static Str path_of(const char *path) {
     return path[0:c::strlen(path)];
 }
 
-// Whether the file at `path` is `front::format`'s. Today's parser (`parser::parse`) reads a file in today's syntax with
-// no error, and stays clang-format's until the switch-over (#1631); so does a file whose first error in the new syntax
-// has a fix (`//` for `#`, a directive: the fixer knows the form, so it is today's). Any other error is a mistake in a
-// new-syntax file: `format_run` reports it and writes nothing, and the file never goes to clang-format, which would
-// mangle it (#2040). C: `front_format_accepts`; 1 when it is front::format's, else 0 (also for a file that does not
-// read).
+static Bool starts_with(Str text, Str prefix) {
+    return countof(text) >= countof(prefix) && mem::equal(text[0:countof(prefix)], prefix);
+}
+
+// Whether a line of the text starts with a form only today's syntax (or C) has: `module x;`, `export`, `typedef`,
+// `import <`, a `//` or `/*` comment, a `#include`, `#define` or `#if` (the new syntax has `pub`, `import c <...>` for
+// a header, and `#` comments). Checked first: it costs no parse, and a parse that is not freed adds up over many files.
+static Bool has_todays_line(Str text) {
+    Usize start = 0;
+    while (start < countof(text)) {
+        Usize stop = start;
+        while (stop < countof(text) && text[stop] != '\n')
+            stop += 1;
+        Str line = text[start:stop];
+        if (starts_with(line, "module ") || starts_with(line, "export ") || starts_with(line, "typedef ") ||
+            starts_with(line, "import <") || starts_with(line, "//") || starts_with(line, "/*") ||
+            starts_with(line, "#include") || starts_with(line, "#define") || starts_with(line, "#if"))
+            return true;
+        start = stop + 1;
+    }
+    return false;
+}
+
+// Whether a line of the text starts with a form only the new syntax has: `fn`, `let`, `pub`, `import std.` or
+// `import c <...>` (a header), or a `#` comment (a `#include`, `#define` and `#if` are checked before).
+static Bool has_new_line(Str text) {
+    Usize start = 0;
+    while (start < countof(text)) {
+        Usize stop = start;
+        while (stop < countof(text) && text[stop] != '\n')
+            stop += 1;
+        Str line = text[start:stop];
+        if (starts_with(line, "fn ") || starts_with(line, "let ") || starts_with(line, "pub ") ||
+            starts_with(line, "import std.") || starts_with(line, "import c <") || starts_with(line, "#"))
+            return true;
+        start = stop + 1;
+    }
+    return false;
+}
+
+// Whether the file at `path` is `front::format`'s. A file in today's syntax stays clang-format's until the switch-over
+// (#1631): a line starts with a form only today's syntax has, or today's parser (`parser::parse`) reads it with no
+// error, or its first error in the new syntax has a fix (`//` for `#`, a directive: the fixer knows the form) or is at
+// a
+// `/` (`/* */`). A file that reads in the new syntax is front::format's. One that does not, and has a line only the new
+// syntax has, is a mistake in a new-syntax file: `format_run` reports it and writes nothing, and the file never goes
+// to clang-format, which would mangle it (#2040). Any other file (today's syntax with a mistake in it, say) stays
+// clang-format's. C: `front_format_accepts`; 1 when it is front::format's, else 0 (also for a file that does not read).
 [[std::c_name("front_format_accepts")]] export I32 accepts(const char *path) {
     Str text = "";
     if (!read_text(path_of(path), &text)) return 0;
+    if (has_todays_line(text)) return 0;
     parser::Parsed today = parser::parse(path_of(path), text);
     if (countof(today.errors) == 0) return 0;
     parser::Parsed fresh = parser::parse_new(path_of(path), text);
     if (countof(fresh.errors) == 0) return 1;
     parse::Edits fix = fresh.errors[0].fix;
-    return countof(fix) > 0 ? 0 : 1;
+    Usize at = fresh.errors[0].span.start;
+    Bool slash = at < countof(text) && text[at] == '/'; // a `/* */` comment has no fix, but is no new syntax either
+    if (countof(fix) > 0 || slash) return 0;
+    return has_new_line(text) ? 1 : 0;
 }
 
 // Writes `value` in decimal to `fd`.
