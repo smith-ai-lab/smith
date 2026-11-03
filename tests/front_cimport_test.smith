@@ -7,6 +7,7 @@ module front_cimport_test;
 
 import front::ast;
 import front::cimport;
+import front::cimport_cache;
 import std::arena;
 import <stdlib.h>;
 import <string.h>;
@@ -242,4 +243,94 @@ export void test_cimport_a_missing_header_is_an_error_naming_the_header_and_the_
     test::check_condition(c::strstr(h.error.data, "no_such_header_anywhere.h") != nullptr);
     test::check_condition(c::strstr(h.error.data, "folders searched") != nullptr);
     test::check_condition(c::strstr(h.error.data, "/include") != nullptr);
+}
+
+// The declaration called `name` of any kind, or null.
+static const ast::Decl *find_any(const Header *h, Str name) {
+    for (Usize i = 0; i < countof(h->decls); i++) {
+        const ast::Decl *d = h->decls[i];
+        if (d->kind == .function && slice::equal(d->kind.function.name, name)) return d;
+        if (d->kind == .record && slice::equal(d->kind.record.name, name)) return d;
+        if (d->kind == .type_alias && slice::equal(d->kind.type_alias.name, name)) return d;
+        if (d->kind == .enumeration && slice::equal(d->kind.enumeration.name, name)) return d;
+        if (d->kind == .variable && slice::equal(d->kind.variable.name, name)) return d;
+    }
+    return nullptr;
+}
+
+// The declaration is in places.h at `line` and its comment is `doc`.
+static Bool is_placed(const ast::Decl *d, U32 line, Str doc) {
+    return d != nullptr && d->place.line == line && slice::equal(d->doc, doc) && countof(d->place.file) != 0 &&
+           c::strstr(d->place.file.data, "places.h") != nullptr;
+}
+
+static void check_places(const Header *h) {
+    test::check_equal(countof(h->error), 0);
+    Str add_doc = "Adds two numbers.\nBoth are read, neither is written.";
+    test::check_condition(is_placed(find_any(h, "places_add"), 6, add_doc));
+    test::check_condition(is_placed(find_any(h, "places_bare"), 8, ""));
+    const ast::Decl *point = find_any(h, "PlacesPoint");
+    Str point_doc = "A point on the plane.";
+    test::check_condition(is_placed(point, 11, point_doc));
+    if (point != nullptr && point->kind == .record && countof(point->kind.record.fields) == 2) {
+        ast::FieldDecl x = point->kind.record.fields[0];
+        ast::FieldDecl y = point->kind.record.fields[1];
+        test::check_equal(x.place.line, 13);
+        test::check_equal(x.place.column, 9);
+        Str x_doc = "The horizontal position.";
+        test::check_condition(slice::equal(x.doc, x_doc));
+        test::check_equal(y.place.line, 14);
+        test::check_equal(countof(y.doc), 0);
+    } else {
+        test::check_condition(false);
+    }
+    test::check_condition(is_placed(find_any(h, "PlacesTicks"), 18, "A whole number of ticks."));
+    const ast::Decl *color = find_any(h, "PlacesColor");
+    test::check_condition(is_placed(color, 21, "The colors."));
+    if (color != nullptr && color->kind == .enumeration && countof(color->kind.enumeration.items) == 2) {
+        ast::Enumerator red = color->kind.enumeration.items[0];
+        test::check_equal(red.place.line, 23);
+        Str red_doc = "The first one.";
+        test::check_condition(slice::equal(red.doc, red_doc));
+        ast::Enumerator green = color->kind.enumeration.items[1];
+        test::check_equal(countof(green.doc), 0);
+    } else {
+        test::check_condition(false);
+    }
+    const ast::Decl *limit = find_any(h, "PLACES_LIMIT");
+    Str limit_doc = "The limit of places (the fixture of tests/front_cimport_test.smith, #1941).";
+    test::check_condition(is_placed(limit, 2, limit_doc));
+}
+
+export void test_cimport_each_declaration_keeps_its_place_and_comment() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "places.h", true);
+    check_places(&h);
+}
+
+export void test_cimport_a_system_declaration_has_a_place_and_no_builtin_does() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "string.h", false);
+    const ast::Decl *length_fn = find(&h, "strlen");
+    test::check_condition(length_fn != nullptr && length_fn->place.line != 0 && countof(length_fn->place.file) != 0);
+    for (Usize i = 0; i < countof(h.decls); i++) {
+        test::check_condition(h.decls[i]->place.file.data == nullptr || h.decls[i]->place.file.data[0] != '<');
+    }
+}
+
+export void test_cimport_places_and_comments_survive_a_round_trip_through_the_cache() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "places.h", true);
+    Header back = {};
+    test::check_condition(cimport_cache::round_trip(&memory, &h, &back));
+    check_places(&back);
 }

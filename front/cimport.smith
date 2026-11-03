@@ -64,6 +64,7 @@ struct Function {
 struct Field {
     Str name;
     U32 type;
+    U32 ordinal; // in the shim's fields, the key of its place
 };
 
 struct Record {
@@ -89,6 +90,24 @@ struct Item {
     Str text; // a string constant's bytes
 };
 
+// Where a declaration is and its comment (words[23..24] of the shim's result). `kind` and `ordinal` say whose: the
+// place_* numbers below and an index in that kind's table; a typedef is named by `name`.
+struct PlaceRow {
+    U32 kind;
+    U32 ordinal;
+    Str name;
+    ast::Place place;
+    Str doc;
+};
+
+constexpr U32 place_function = 0;
+constexpr U32 place_struct = 1;
+constexpr U32 place_field = 2;
+constexpr U32 place_enum = 3;
+constexpr U32 place_item = 4;
+constexpr U32 place_constant = 5;
+constexpr U32 place_typedef = 6;
+
 export struct NotImported {
     U32 kind;
     Str name;
@@ -103,6 +122,9 @@ struct Table {
     Item items[:];
     Item constants[:];
     NotImported not_imported[:];
+    PlaceRow places[:];
+    U32 place_rows[:]; // row + 1 in `places` of each function, struct, field, enum, item and constant; 0 for none
+    Usize place_base[6];
     Str error;
 };
 
@@ -166,6 +188,37 @@ static void read_values(arena::Arena *a, Table *header, const U32 w[:], const ch
     }
 }
 
+static Usize place_slot(const Table *t, U32 kind, U32 ordinal) {
+    return t->place_base[kind] + ordinal;
+}
+
+// The places of the shim's words, and for each table the row of each of its entries.
+static void read_places(arena::Arena *a, Table *header, const U32 w[:], const char *pool) {
+    header->places = arena::push_slice(a, PlaceRow, w[24]);
+    U32 counts[6] = {w[7], w[9], w[11], w[18], w[20], w[22]};
+    Usize total = 0;
+    for (U32 k = 0; k < 6; k++) {
+        header->place_base[k] = total;
+        total += counts[k];
+    }
+    header->place_rows = arena::push_slice(a, U32, total);
+    for (Usize i = 0; i < total; i++)
+        header->place_rows[i] = 0;
+    for (U32 i = 0; i < w[24]; i++) {
+        Usize at = w[23] + 6 * (Usize)i;
+        PlaceRow row = {.kind = w[at], .ordinal = w[at + 1]};
+        row.place = (ast::Place){.file = text(pool, w[at + 2]), .line = w[at + 3], .column = w[at + 4]};
+        row.doc = text(pool, w[at + 5]);
+        if (row.kind == place_typedef) {
+            row.name = text(pool, row.ordinal);
+        }
+        header->places[i] = row;
+        if (row.kind < 6 && row.ordinal < counts[row.kind]) {
+            header->place_rows[place_slot(header, row.kind, row.ordinal)] = i + 1;
+        }
+    }
+}
+
 // Reads `name` (written `<name>` or, with quoted, "name" beside `folder`) with the compile flags `flags`, one on each
 // line. All three are NUL-terminated. The records are allocated in `a`.
 static Table read_table(arena::Arena *a, const char *name, Bool quoted, const char *folder, const char *flags) {
@@ -221,11 +274,12 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
         s.fields = arena::push_slice(a, Field, w[at + 2]);
         for (U32 j = 0; j < w[at + 2]; j++) {
             Usize f = w[10] + 2 * ((Usize)w[at + 1] + j);
-            s.fields[j] = (Field){.name = text(pool, w[f]), .type = w[f + 1]};
+            s.fields[j] = (Field){.name = text(pool, w[f]), .type = w[f + 1], .ordinal = w[at + 1] + j};
         }
         header.structs[i] = s;
     }
     read_values(a, &header, w, pool);
+    read_places(a, &header, w, pool);
     header.not_imported = arena::push_slice(a, NotImported, w[15]);
     for (U32 i = 0; i < w[15]; i++) {
         Usize at = w[14] + 3 * (Usize)i;
@@ -233,6 +287,22 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
             (NotImported){.kind = w[at], .name = text(pool, w[at + 1]), .reason = text(pool, w[at + 2])};
     }
     return header;
+}
+
+// The row of entry `ordinal` of a table, or null.
+static const PlaceRow *place_of(const Table *t, U32 kind, Usize ordinal) {
+    U32 row = t->place_rows[place_slot(t, kind, (U32)ordinal)];
+    return row == 0 ? nullptr : &t->places[row - 1];
+}
+
+// The row of the typedef called `name`, or null.
+static const PlaceRow *typedef_place(const Table *t, Str name) {
+    for (Usize i = 0; i < countof(t->places); i++) {
+        if (t->places[i].kind == place_typedef && c::strcmp(t->places[i].name.data, name.data) == 0) {
+            return &t->places[i];
+        }
+    }
+    return nullptr;
 }
 
 static Str integer_name(U32 bits, Bool is_signed) {
@@ -344,23 +414,39 @@ static ast::Decl *from_c(ast::Decl *d) {
     return d;
 }
 
-static ast::Decl *record_decl(const Record *s, TypeList types) {
+// Where a header declares `d` and the comment above it, from the row `row` (null: unknown).
+static ast::Decl *placed(ast::Decl *d, const PlaceRow *row) {
+    if (row != nullptr) {
+        d->place = row->place;
+        d->doc = row->doc;
+    }
+    return d;
+}
+
+static ast::Decl *record_decl(const Table *t, U32 index, TypeList types) {
+    const Record *s = &t->structs[index];
     ast::FieldDecl fields[:] = mem::alloc_slice(ast::FieldDecl, countof(s->fields));
     for (Usize i = 0; i < countof(fields); i++) {
         fields[i] = ast::field(s->fields[i].name, types[s->fields[i].type]);
+        const PlaceRow *row = place_of(t, place_field, s->fields[i].ordinal);
+        if (row != nullptr) {
+            fields[i].place = row->place;
+            fields[i].doc = row->doc;
+        }
     }
     ast::DeclKind kind = {.record = {.name = s->name, .opaque = s->opaque, .fields = fields}};
-    return from_c(ast::decl((ast::Decl){}, kind));
+    return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_struct, index));
 }
 
-static ast::Decl *function_decl(const Function *f, TypeList types) {
+static ast::Decl *function_decl(const Table *t, U32 index, TypeList types) {
+    const Function *f = &t->functions[index];
     ast::Param params[:] = mem::alloc_slice(ast::Param, countof(f->parameters));
     for (Usize i = 0; i < countof(params); i++) {
         params[i] = ast::param(f->parameters[i].name, types[f->parameters[i].type]);
     }
     ast::DeclKind kind = {
         .function = {.name = f->name, .params = params, .result = types[f->result], .variadic = f->variadic}};
-    return from_c(ast::decl((ast::Decl){}, kind));
+    return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_function, index));
 }
 
 // A value as an expression: an integer literal, a floating literal or a string, negated when it is below zero.
@@ -381,17 +467,25 @@ static ast::Expr *value_expr(const Item *item) {
     return ast::expr({.unary = {.op = negate, .operand = literal}});
 }
 
-static ast::Decl *enumeration_decl(const Table *t, const EnumInfo *e, TypeList types) {
+static ast::Decl *enumeration_decl(const Table *t, U32 index, TypeList types) {
+    const EnumInfo *e = &t->enums[index];
     ast::Enumerator items[:] = mem::alloc_slice(ast::Enumerator, e->count);
     for (U32 i = 0; i < e->count; i++) {
         const Item *item = &t->items[e->first + i];
         items[i] = ast::enumerator(item->name, value_expr(item), nullptr);
+        const PlaceRow *row = place_of(t, place_item, e->first + i);
+        if (row != nullptr) {
+            items[i].place = row->place;
+            items[i].doc = row->doc;
+        }
     }
-    return from_c(ast::enumeration(e->name, types[e->underlying], items));
+    return placed(from_c(ast::enumeration(e->name, types[e->underlying], items)), place_of(t, place_enum, index));
 }
 
-static ast::Decl *constant_decl(const Item *item, TypeList types) {
-    ast::Decl *d = from_c(ast::variable(item->name, types[item->type], value_expr(item)));
+static ast::Decl *constant_decl(const Table *t, U32 index, TypeList types) {
+    const Item *item = &t->constants[index];
+    ast::Decl *d = placed(from_c(ast::variable(item->name, types[item->type], value_expr(item))),
+                          place_of(t, place_constant, index));
     if (d->kind == .variable) {
         d->kind.variable.is_constexpr = true;
     }
@@ -413,19 +507,20 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
     ast::DeclRef *block = (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), total, alignof(ast::DeclRef));
     Usize at = 0;
     for (Usize i = 0; i < countof(t.structs); i++)
-        block[at++] = record_decl(&t.structs[i], types);
+        block[at++] = record_decl(&t, (U32)i, types);
     for (Usize i = 0; i < countof(t.types); i++) {
         if (!first_typedef(&t, i)) {
             continue;
         }
-        block[at++] = from_c(ast::type_alias(t.types[i].name, types[t.types[i].a]));
+        block[at++] =
+            placed(from_c(ast::type_alias(t.types[i].name, types[t.types[i].a])), typedef_place(&t, t.types[i].name));
     }
     for (Usize i = 0; i < countof(t.enums); i++)
-        block[at++] = enumeration_decl(&t, &t.enums[i], types);
+        block[at++] = enumeration_decl(&t, (U32)i, types);
     for (Usize i = 0; i < countof(t.functions); i++)
-        block[at++] = function_decl(&t.functions[i], types);
+        block[at++] = function_decl(&t, (U32)i, types);
     for (Usize i = 0; i < countof(t.constants); i++)
-        block[at++] = constant_decl(&t.constants[i], types);
+        block[at++] = constant_decl(&t, (U32)i, types);
     header.decls = block[0:total];
     return header;
 }

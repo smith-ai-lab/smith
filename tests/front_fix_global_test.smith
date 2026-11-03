@@ -1,0 +1,39 @@
+// Tests of the fixer's globals (#1956, part of #1631): `export T x = v;` is `pub let mut x: T = v`, a `constexpr`
+// or `const` one is `pub const x: T = v`, one with no `export` loses only the `pub`, and a `//` comment on the line
+// of an `export constexpr` does not make the next pass read the fixed text with the old parser (which dropped `const`).
+module front_fix_global_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", result.text);
+    test::check_equal(again.text, after);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_global_an_exported_global_is_pub_let_mut() {
+    expect("export Usize counter = 3;\n", "pub let mut counter: usize = 3\n");
+}
+
+export void test_front_fix_global_a_plain_global_is_let_mut() {
+    expect("Usize plain = 1;\n", "let mut plain: usize = 1\n");
+}
+
+export void test_front_fix_global_a_constexpr_global_is_const() {
+    expect("constexpr Usize cap = 4;\n", "const cap: usize = 4\n");
+    expect("export constexpr Usize cap = 4;\n", "pub const cap: usize = 4\n");
+}
+
+export void test_front_fix_global_a_comment_on_an_exported_constexpr_keeps_const() {
+    expect("export constexpr Usize frames_max = 16; // the frames kept\n",
+           "pub const frames_max: usize = 16 # the frames kept\n");
+}
