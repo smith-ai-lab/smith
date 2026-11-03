@@ -2,8 +2,9 @@
 // laid out like a case of tests/smith-lang/cases but with `src/*.smith` in smith's own syntax. Each file of `src/` is
 // compiled through `compile::file` (one module per file, named by the file) and then, by the files under `expect/`:
 //   expect/error    compiling fails with exactly these diagnostics, the scratch folder left out (`src/main.smith:1:2:
-//   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file expect/stdout   the objects are
-//   linked (the case has `pub fn main`) and the program prints exactly this
+//   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file c/main.c   a C program that calls
+//   the case's headers, linked with the objects instead of a `pub fn main` expect/stdout   the objects are linked (the
+//   case has `pub fn main`) and the program prints exactly this
 // Add a case by adding a folder.
 module front_corpus_test;
 
@@ -117,17 +118,29 @@ static Str modules_of(Str dir) {
     return scan(as_str(format::push(dir, "/src")), ".smith");
 }
 
-// The `.c` files of `<dir>/src` as linker arguments.
-static Str c_files_of(Str dir, Str folder) {
-    Str names = scan(as_str(format::push(dir, "/src")), ".c");
-    Str args = "";
+// The C sources of `<dir>/src`, compiled by `smith cc` and linked beside the modules (a module's C file calls its
+// exports, as `c-name` does).
+static Str c_sources_of(Str dir) {
+    return scan(as_str(format::push(dir, "/src")), ".c");
+}
+
+// Compiles each C source of the case to `<name>.c.o` and adds the object to the linker's arguments; a failure is
+// recorded in the case's diagnostics.
+static Built add_c_sources(Str folder, Str sources, Built built) {
     Usize at = 0;
-    while (at < countof(names)) {
-        Str name = line_at(names, at);
+    while (at < countof(sources)) {
+        Str name = line_at(sources, at);
         at += countof(name) + 1;
-        args = as_str(format::push(args, folder, "/src/", name, ".c "));
+        Str object = as_str(format::push(folder, "/", replace(name, "/", "_"), ".c.o"));
+        I32 status = sh_status(
+            as_str(format::push(smith_path(), " cc -I ", folder, "/src -c ", folder, "/src/", name, ".c -o ", object)));
+        if (status != 0) {
+            built.ok = false;
+            built.text = as_str(format::push(built.text, "src/", name, ".c: the C compiler failed\n"));
+        }
+        built.objects = as_str(format::push(built.objects, object, " "));
     }
-    return args;
+    return built;
 }
 
 static Built build_case(Str folder, Str modules) {
@@ -206,8 +219,12 @@ static Str stand_ins(Str cast_body) {
 // after the output for a status other than 0).
 static void check_stdout(Str dir, Str folder, Built built) {
     write_text(as_str(format::push(folder, "/stubs.c")), stand_ins("__builtin_trap();"));
-    I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/stubs.c ", built.objects,
-                                               c_files_of(dir, folder), "-o ", folder, "/prog")));
+    // A case with `c/main.c` has a C program as its caller: it includes the headers this case wrote.
+    Str caller_path = as_str(format::push(dir, "/c/main.c"));
+    Str caller = "";
+    if (files::exists(caller_path)) caller = as_str(format::push("-I ", folder, " ", caller_path, " "));
+    I32 linked = sh_status(
+        as_str(format::push(smith_path(), " cc ", folder, "/stubs.c ", caller, built.objects, "-o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked != 0) return;
     (void)sh_status(
@@ -247,7 +264,7 @@ static void run_case(Str name) {
     Str folder = folder_for(name);
     test::check_equal(sh_status(as_str(format::push("cp -r ", dir, "/src ", folder, "/src"))), 0);
     Str modules = modules_of(dir);
-    Built built = build_case(folder, modules);
+    Built built = add_c_sources(folder, c_sources_of(dir), build_case(folder, modules));
     Str errors_path = as_str(format::push(dir, "/expect/error"));
     if (files::exists(errors_path)) {
         test::check_equal(built.ok, false);

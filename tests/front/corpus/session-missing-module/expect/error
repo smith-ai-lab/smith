@@ -1,0 +1,2 @@
+src/main.smith:2:1: error: cannot find the module `foo`; check its path under the roots
+src/main.smith:5:13: error: `foo` has no public `f`; write the name of one of its `pub` declarations
