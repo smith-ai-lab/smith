@@ -380,8 +380,8 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
     return nullptr;
 }
 
-// The edit that writes `mut ` before the name of `s`, when a fix may (a binding written in smith's own syntax, with no
-// attribute before it and not `const`), else an empty list.
+// The edit that writes `mut ` before the name of `s` (`let x` becomes `let mut x`), when a fix may (a binding written
+// in smith's own syntax, with no attribute before it and not `const`), else an empty list.
 static syntax::Edits mut_fix(const types::Symbol *s) {
     syntax::Edits edits = {};
     if (s == nullptr || !s->may_mut || !s->is_const) {
@@ -796,7 +796,7 @@ static void name_expr(types::Checked *c, Frame f) {
     ast::Path path = e->kind.name.path;
     const types::Symbol *s = types::lookup_path(&c->scopes, path);
     if (s == nullptr && is_undefined(e)) {
-        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `I32 x = undefined;`");
+        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `let mut x: i32 = undefined`");
         poison(c, e);
         return;
     }

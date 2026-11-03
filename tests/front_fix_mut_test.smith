@@ -43,8 +43,8 @@ static void expect(Str before, Str after, Usize applied) {
 }
 
 export void test_front_fix_mut_an_assigned_local_gets_mut() {
-    expect("fn f() {\n    total := 0\n    total = total + 1\n}\n",
-           "fn f() {\n    mut total := 0\n    total = total + 1\n}\n", 1);
+    expect("fn f() {\n    let total = 0\n    total = total + 1\n}\n",
+           "fn f() {\n    let mut total = 0\n    total = total + 1\n}\n", 1);
 }
 
 export void test_front_fix_mut_an_assigned_parameter_gets_mut() {
@@ -56,13 +56,13 @@ export void test_front_fix_mut_a_pointer_written_through_becomes_mut() {
 }
 
 export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
-    expect("fn f() {\n    x := 1\n    p := &x\n    p.* = 2\n}\n",
-           "fn f() {\n    mut x := 1\n    p := &x\n    p.* = 2\n}\n", 1);
+    expect("fn f() {\n    let x = 1\n    let p = &x\n    p.* = 2\n}\n",
+           "fn f() {\n    let mut x = 1\n    let p = &x\n    p.* = 2\n}\n", 1);
 }
 
 export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
-    expect("fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n",
-           "fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n", 0);
+    expect("fn f(p: *mut i32) {\n    let mut n = 0\n    n = 2\n    p.* = n\n}\n",
+           "fn f(p: *mut i32) {\n    let mut n = 0\n    n = 2\n    p.* = n\n}\n", 0);
 }
 
 // A C function-pointer declarator (#1743): the fix writes the function value as `Fn(R (A))`, then the name. The rest of

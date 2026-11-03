@@ -526,16 +526,18 @@ export void test_parse_decl_new_variables() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "a := 3\n"
-                 "b: i32 = 4\n"
-                 "mut c := 0\n"
-                 "mut d: usize\n"
-                 "mut e: *mut point = 0\n"
-                 "const TAU := 6\n"
+    Str source = "let a = 3\n"
+                 "let b: i32 = 4\n"
+                 "let mut c = 0\n"
+                 "let mut d: usize = undefined\n"
+                 "let mut e: *mut point = 0\n"
+                 "const TAU = 6\n"
                  "const LIMIT: i32 = 8\n"
-                 "pub f := 1\n"
-                 "@inline pub g: i32 = 2\n"
-                 "IntPair := Pair\n";
+                 "pub let f = 1\n"
+                 "@inline pub let g: i32 = 2\n"
+                 "let IntPair = Pair\n"
+                 "pub let mut shares: u64 = 0\n"
+                 "extern let mut errno: i32\n";
     test::golden("tests/front/parse_decl/new_variables.txt", new_dump_of(source));
 }
 
@@ -630,7 +632,7 @@ export void test_parse_decl_new_destructure() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = new_parser_of("(q, r) := divmod\nmut (a, b) := pair\nx := 1");
+    parse::Parser p = new_parser_of("let (q, mut r) = divmod\nlet (mut a, b) = pair\nlet x = 1");
     test::check_condition(parse_decl::at_destructure(&p));
     ast::Stmt *first = parse_decl::destructure(&p);
     test::check_condition(parse_decl::at_destructure(&p));
@@ -651,7 +653,7 @@ export void test_parse_decl_new_goes_on_after_an_error() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parse::Parser p = new_parser_of("a: i32\nb := 1\nfn f(x) {\n}\nmut c := 2\n");
+    parse::Parser p = new_parser_of("let a: i32\nlet b = 1\nfn f(x) {\n}\nlet mut c = 2\n");
     ast::Module m = parse_decl::file(&p, "test.smith");
     test::check_equal(countof(p.errors), 2);
     test::check_equal(countof(m.decls), 2);
@@ -665,9 +667,11 @@ export void test_parse_decl_new_error_a_constant_needs_a_value() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "`a` needs a value: write `a: i32 = value`, or `mut a: i32` to start at zero";
-    expect_text(new_first_error("a: i32\n"), expected);
-    expect_text(new_first_error("const a: i32\n"), expected);
+    Str expected = "`a` needs a value: write `let a: i32 = value`, or `= undefined` to leave it unset";
+    expect_text(new_first_error("let a: i32\n"), expected);
+    expect_text(new_first_error("let mut a: i32\n"), expected);
+    Str constant = "`a` needs a value: write `const a: i32 = value`, or `= undefined` to leave it unset";
+    expect_text(new_first_error("const a: i32\n"), constant);
 }
 
 export void test_parse_decl_new_error_const_and_mut() {
@@ -676,8 +680,7 @@ export void test_parse_decl_new_error_const_and_mut() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str expected = "`const` and `mut` cannot be combined: a constant never changes";
-    expect_text(new_first_error("const mut a := 1\n"), expected);
-    expect_text(new_first_error("mut const a := 1\n"), expected);
+    expect_text(new_first_error("const mut a = 1\n"), expected);
 }
 
 export void test_parse_decl_new_error_a_name_after_mut() {
@@ -685,7 +688,7 @@ export void test_parse_decl_new_error_a_name_after_mut() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("mut 3\n"), "expected a name after `mut`, found `3`");
+    expect_text(new_first_error("let mut 3\n"), "expected a name after `mut`, found `3`");
 }
 
 export void test_parse_decl_new_error_a_semicolon() {
@@ -694,8 +697,8 @@ export void test_parse_decl_new_error_a_semicolon() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str expected = "a declaration ends with the line, not `;`: remove it";
-    expect_text(new_first_error("a := 1;\n"), expected);
-    parse::Parser p = new_parser_of("a := 1;\n");
+    expect_text(new_first_error("let a = 1;\n"), expected);
+    parse::Parser p = new_parser_of("let a = 1;\n");
     ast::Module m = parse_decl::file(&p, "test.smith");
     parse::Edits fix = p.errors[0].fix;
     test::check_equal(countof(fix), 1);
@@ -708,8 +711,8 @@ export void test_parse_decl_new_error_two_on_a_line() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str expected = "a declaration is one line: expected a line break after it, found `b`";
-    expect_text(new_first_error("a := 1 b := 2\n"), expected);
+    Str expected = "a declaration is one line: expected a line break after it, found `let`";
+    expect_text(new_first_error("let a = 1 let b = 2\n"), expected);
 }
 
 export void test_parse_decl_new_error_a_missing_value() {
@@ -717,8 +720,8 @@ export void test_parse_decl_new_error_a_missing_value() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("a :=\n"), "the expression stub reads an integer, a string or a name");
-    expect_text(new_first_error("a: = 1\n"), "the type stub reads a name");
+    expect_text(new_first_error("let a =\n"), "the expression stub reads an integer, a string or a name");
+    expect_text(new_first_error("let a: = 1\n"), "the type stub reads a name");
 }
 
 export void test_parse_decl_new_error_function_parameters() {
@@ -741,7 +744,7 @@ export void test_parse_decl_new_error_function_head() {
     expect_text(new_first_error("fn (a: i32) {\n}\n"), "a function has a name: write `fn name(a: i32) -> i32 { ... }`");
     expect_text(new_first_error("fn f a: i32 {\n}\n"), "expected `(` after the function's name, found `a`");
     expect_text(new_first_error("fn f() -> {\n}\n"), "the type stub reads a name");
-    expect_text(new_first_error("fn f()\nx := 1\n"), "a function has a body: expected `{` after the parameters");
+    expect_text(new_first_error("fn f()\nlet x = 1\n"), "a function has a body: expected `{` after the parameters");
 }
 
 export void test_parse_decl_new_error_a_destructuring() {
@@ -749,14 +752,14 @@ export void test_parse_decl_new_error_a_destructuring() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str module_level = "a destructuring `(q, r) := f()` is a statement, not a declaration of a module";
-    expect_text(new_first_error("(q, r) := f\n"), module_level);
-    parse::Parser p = new_parser_of("(a, 1) := f\n");
+    Str module_level = "a destructuring `let (q, r) = f()` is a statement, not a declaration of a module";
+    expect_text(new_first_error("let (q, r) = f\n"), module_level);
+    parse::Parser p = new_parser_of("let (a, 1) = f\n");
     test::check_condition(parse_decl::destructure(&p) == nullptr);
-    expect_text(p.errors[0].message, "a destructuring lists names: write `(q, r) := f()`, found `1`");
-    parse::Parser empty = new_parser_of("() := f\n");
+    expect_text(p.errors[0].message, "a destructuring lists names: write `let (q, r) = f()`, found `1`");
+    parse::Parser empty = new_parser_of("let () = f\n");
     test::check_condition(parse_decl::destructure(&empty) == nullptr);
-    expect_text(empty.errors[0].message, "a destructuring lists names: write `(q, r) := f()`");
+    expect_text(empty.errors[0].message, "a destructuring lists names: write `let (q, r) = f()`");
     parse::Parser open = new_parser_of("(q, r) f\n");
     test::check_equal(parse_decl::at_destructure(&open), false);
 }
@@ -766,8 +769,9 @@ export void test_parse_decl_new_error_an_attribute() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_text(new_first_error("@3 a := 1\n"), "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
-    expect_text(new_first_error("@c_name(\"f\" a := 1\n"), "expected `)` after the attribute's arguments, found `a`");
+    expect_text(new_first_error("@3 let a = 1\n"), "an attribute has a name: write `@inline` or `@c_name(\"f\")`");
+    expect_text(new_first_error("@c_name(\"f\" let a = 1\n"),
+                "expected `)` after the attribute's arguments, found `let`");
 }
 
 export void test_parse_decl_new_error_a_field() {
@@ -811,7 +815,7 @@ export void test_parse_decl_old_module_line_and_export() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub c: i32 = 3\n", 3);
+    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub let c: i32 = 3\n", 3);
 }
 
 export void test_parse_decl_old_variables() {
@@ -819,12 +823,12 @@ export void test_parse_decl_old_variables() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 a = 3;\n", "a: i32 = 3\n", 1);
-    expect_fixed("auto a = 3;\n", "a := 3\n", 1);
-    expect_fixed("I32 a;\n", "mut a: i32\n", 1);
+    expect_fixed("I32 a = 3;\n", "let a: i32 = 3\n", 1);
+    expect_fixed("auto a = 3;\n", "let a = 3\n", 1);
+    expect_fixed("I32 a;\n", "let mut a: i32 = 0\n", 1);
     expect_fixed("static constexpr I32 n = 8;\n", "static const n: i32 = 8\n", 1);
-    expect_fixed("constexpr auto n = 8;\n", "const n := 8\n", 1);
-    expect_fixed("constexpr Type Meters = F64;\n", "Meters := f64\n", 2);
+    expect_fixed("constexpr auto n = 8;\n", "const n = 8\n", 1);
+    expect_fixed("constexpr Type Meters = F64;\n", "let Meters = f64\n", 2);
 }
 
 export void test_parse_decl_old_variables_without_a_fix_warn_and_stay() {
@@ -866,7 +870,7 @@ export void test_parse_decl_old_types() {
     expect_fixed("struct P {\n    I32 x;\n    I32 y;\n};\n", "struct P {\n    x: i32\n    y: i32\n}\n", 5);
     expect_fixed("struct Q {\n    I32 a;\n    I32 xs[4];\n};\n", "struct Q {\n    a: i32\n    i32 xs[4];\n}\n", 4);
     expect_fixed("enum C {\n    red,\n    green = 2,\n};\n", "enum C {\n    red\n    green = 2\n}\n", 3);
-    expect_fixed("typedef U32 Index;\n", "Index := u32\n", 2);
+    expect_fixed("typedef U32 Index;\n", "let Index = u32\n", 2);
     expect_fixed("typedef struct {\n    I32 x;\n} Point;\n", "struct Point {\n    x: i32\n}\n", 3);
     expect_fixed("typedef enum {\n    Circle circle;\n    empty;\n} Shape;\n",
                  "enum Shape {\n    circle: Circle\n    empty\n}\n", 3);
@@ -877,10 +881,10 @@ export void test_parse_decl_old_attributes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("[[nodiscard]] I32 a = 1;\n", "a: i32 = 1\n", 2);
-    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "_a: i32 = 1\n", 1);
+    expect_fixed("[[nodiscard]] I32 a = 1;\n", "let a: i32 = 1\n", 2);
+    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "let _a: i32 = 1\n", 1);
     expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K {\n}\n", 2);
-    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") a: i32 = 1\n", 2);
+    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") let a: i32 = 1\n", 2);
     expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32) { }\n", 2);
     expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32) { }\n", 1);
 }
@@ -892,8 +896,9 @@ export void test_parse_decl_locals_are_fixed_too() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f() {\n    p: *Key = &key\n}\n", 2);
-    expect_fixed("void f(void) {\n    U64 n = 3;\n    I32 m;\n}\n", "fn f() {\n    n: u64 = 3\n    mut m: i32\n}\n", 3);
-    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    a: i32 = n as i32\n}\n", 3);
+    expect_fixed("void f(void) {\n    Key *p = &key;\n}\n", "fn f() {\n    let p: *Key = &key\n}\n", 2);
+    expect_fixed("void f(void) {\n    U64 n = 3;\n    I32 m;\n}\n",
+                 "fn f() {\n    let n: u64 = 3\n    let mut m: i32 = undefined\n}\n", 3);
+    expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32) {\n    let a: i32 = n as i32\n}\n", 3);
     expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point) {\n}\n", 1);
 }

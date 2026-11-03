@@ -4,8 +4,8 @@
     (block
       (declaration
         (variable a new (auto) (name 3)))
-      (declaration
-        (variable b new (named i32) (name 4)))
+      (labeled b
+        (expression (name i32 = 4)))
       (declaration
         (variable c mut new (auto) (name 0)))
       (declaration
@@ -13,5 +13,5 @@
       (declaration
         (variable _ new (auto) (name f())))
       (destructure q r (name g()))
-      (destructure mut s t (name h()))
+      (destructure mut s mut t (name h()))
       (expression (name x)))))

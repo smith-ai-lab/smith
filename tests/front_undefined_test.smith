@@ -1,7 +1,6 @@
-// Tests of `T x = undefined;` (K3b, #1334 of #1112): the checker takes `undefined` only as a local's whole
-// initializer, with the declared type, and the emitter gives the local its slot and no zero store. The emitter has no
-// debug/release switch (`debug_info` only turns DWARF on), so there is no fill pattern. Memory rules as in
-// tests/front_emit_zero_test.smith.
+// Tests of `= undefined` (K3b, #1334 of #1112; no zero values, #1810 of #1428): the checker takes `undefined` only as a
+// local's whole initializer, with the declared type, and the emitter gives the local its slot and no zero store; with
+// `Options.fill_undefined` (a debug build) the slot holds the byte 0xAA. A declaration with no value is an error.
 module front_undefined_test;
 
 import front::ast;
@@ -58,23 +57,17 @@ export void test_front_undefined_is_only_a_whole_initializer() {
     errors("I32 f() { I32 x = 0; x = undefined; return x; }", 1, "only valid as a whole initializer");
 }
 
-static ast::Decl *function_of(ast::StmtRef items[:]) {
-    ast::Param none[1] = {};
-    ast::Decl *f = ast::function("f", none[0:0], ast::named("I32"), ast::block(items));
-    f->exported = true;
-    return f;
-}
+typedef I32 (*Nullary)();
 
-static Bool has_store(Bool undefined) {
+static Bool has_fill(Bool fill) {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    ast::Expr *init = nullptr;
-    if (undefined) init = ast::name("undefined");
-    ast::StmtKind decl = {.declaration = {.decl = ast::variable("t", ast::named("I32"), init)}};
-    ast::StmtRef items[2] = {ast::stmt(decl), ast::return_value(ast::integer(0))};
-    ast::DeclRef only[1] = {function_of(items)};
-    ast::Module m = ast::new_module("front::test", only);
+    parser::Parsed p =
+        parser::parse_new("t.smith", "pub fn f() -> i32 {\n    let mut t: i32 = undefined\n    t = 1\n    t\n}\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(checked.error_count, (Usize)0);
     mem::set_allocator(outside);
     emit_jit::JitResult started = emit_jit::start();
     test::check_equal(started == .ok, true);
@@ -84,12 +77,15 @@ static Bool has_store(Bool undefined) {
         c::LLVMContextRef context = c::LLVMContextCreate();
         emit::Options options = {};
         options.target = host.target;
-        emit::ModuleResult emitted = emit::module(context, &m, options);
+        options.checked = &checked;
+        options.fill_undefined = fill;
+        emit::ModuleResult emitted = emit::module(context, &p.module, options);
         test::check_equal(emitted == .ok, true);
         if (emitted == .ok) {
             char *text = c::LLVMPrintModuleToString(emitted.ok);
             test::check_equal(c::strstr(text, "alloca i32") != nullptr, true);
-            found = c::strstr(text, "store i32 0, ptr %t") != nullptr;
+            test::check_equal(c::strstr(text, "store i32 0, ptr %t") == nullptr, true);
+            found = c::strstr(text, "memset") != nullptr;
             c::LLVMDisposeMessage(text);
             c::LLVMDisposeModule(emitted.ok);
         }
@@ -99,7 +95,43 @@ static Bool has_store(Bool undefined) {
     return found;
 }
 
-export void test_front_undefined_the_slot_has_no_zero_store() {
-    test::check_equal(has_store(false), true);
-    test::check_equal(has_store(true), false);
+export void test_front_undefined_the_slot_has_no_zero_store_and_a_debug_build_fills_it() {
+    test::check_equal(has_fill(false), false);
+    test::check_equal(has_fill(true), true);
+}
+
+// A read through a pointer, which the checker does not follow, sees the byte 0xAA of a debug build.
+export void test_front_undefined_a_debug_build_reads_0xaa() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed p = parser::parse_new(
+        "t.smith", "pub fn peek() -> i32 {\n    let mut b: i32 = undefined\n    let p = &b\n    p.*\n}\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(checked.error_count, (Usize)0);
+    mem::set_allocator(outside);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    if (started == .ok) {
+        emit_jit::Jit host = started.ok;
+        c::LLVMContextRef context = c::LLVMContextCreate();
+        emit::Options options = {};
+        options.target = host.target;
+        options.checked = &checked;
+        options.fill_undefined = true;
+        emit::ModuleResult emitted = emit::module(context, &p.module, options);
+        test::check_equal(emitted == .ok, true);
+        if (emitted == .ok) {
+            test::check_equal(emit_jit::add(&host, context, emitted.ok) == .ok, true);
+            emit_jit::AddressResult found = emit_jit::lookup(&host, "peek");
+            test::check_equal(found == .ok, true);
+            if (found == .ok) test::check_equal(((Nullary)found.ok)(), (I32)0xAAAAAAAA);
+        }
+        emit_jit::stop(&host);
+    }
+}
+
+export void test_front_undefined_a_declaration_with_no_value_is_an_error() {
+    errors("I32 f() { I32 x; return 0; }", 1, "needs a value");
 }

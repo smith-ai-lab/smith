@@ -111,7 +111,7 @@ static Str head() {
 }
 
 export void test_front_types_method_in_the_type_module_by_pointer() {
-    clean(join(head(), "fn run() -> i32 {\n    mut xs := list.make()\n    xs.push(5)\n    xs.size()\n}\n"));
+    clean(join(head(), "fn run() -> i32 {\n    let mut xs = list.make()\n    xs.push(5)\n    xs.size()\n}\n"));
 }
 
 export void test_front_types_method_by_value_and_through_a_pointer() {
@@ -145,7 +145,7 @@ export void test_front_types_method_of_another_type_is_not_a_method() {
 }
 
 export void test_front_types_method_pointer_to_mut_needs_a_mut_base() {
-    fails(join(head(), "fn run() {\n    xs := list.make()\n    xs.push(5)\n}\n"), "drops const", "");
+    fails(join(head(), "fn run() {\n    let xs = list.make()\n    xs.push(5)\n}\n"), "drops const", "");
 }
 
 export void test_front_types_method_a_field_and_a_function_of_one_name() {

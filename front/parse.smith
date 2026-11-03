@@ -62,7 +62,7 @@ export typedef typeof(ParseError[:]) Errors;
 // The state of a parse: the tokens (ending with an `end_of_file` token), the text they lie in, the position of the next
 // one, and the errors recorded so far (in the order they were found).
 // A braced list with no type whose items are all `.field = value`: where its braces are and the edits that drop the
-// dots, kept for the declaration it initializes (`P p = {.x = 1};` is `p := P(x = 1)`, #1767).
+// dots, kept for the declaration it initializes (`P p = {.x = 1};` is `let p = P(x = 1)`, #1767).
 export struct NamedList {
     Bool plain;
     ast::Span open;

@@ -179,7 +179,7 @@ export void test_front_emit_cast_failing_block_calls_the_report_function() {
     test::check_equal(contains(ir, "call void @smith_contract_fail_cast(i64 %"), true);
     test::check_equal(contains(ir, "i32 1, ptr @type)"), true); // the source is signed
     test::check_equal(contains(ir, "c\"U8\\00\""), true);
-    char *index = ir_of("export I32 f(U64 i) { I32 xs[3]; xs[1] = 5; return xs[i]; }");
+    char *index = ir_of("export I32 f(U64 i) { I32 xs[3] = undefined; xs[1] = 5; return xs[i]; }");
     test::check_equal(contains(index, "call void @smith_contract_fail_index(i64 %"), true);
     test::check_equal(contains(index, "i32 0, i64 3)"), true); // an unsigned index, and the count
     test::check_equal(contains(index, "llvm.trap"), true);
@@ -215,7 +215,7 @@ static void report_of(Usize address, Usize argument, char *out, Usize size) {
 export void test_front_emit_cast_run_report_names_the_value_and_the_type() {
     Scenario s = {};
     begin(&s, "export U8 byte(I32 a) { return (U8)a; } "
-              "export I32 at(U64 i) { I32 xs[3]; xs[1] = 5; return xs[i]; }");
+              "export I32 at(U64 i) { I32 xs[3] = undefined; xs[1] = 5; return xs[i]; }");
     emit_jit::Jit host = start_jit();
     jit_scenario(&host, &s);
     Usize byte_at = symbol_of(&host, "byte");

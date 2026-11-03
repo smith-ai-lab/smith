@@ -435,7 +435,8 @@ export void test_a_makefile_too_big_for_one_function() {
         write(folder, concatenated("src", i, ".dat"), "");
     }
     char *makefile = mem::alloc_slice(char, 1U << 16).data;
-    Usize used = (Usize)__builtin_snprintf(makefile, 1U << 16, "DATA := $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
+    Usize used =
+        (Usize)__builtin_snprintf(makefile, 1U << 16, "let DATA = $(sort $(wildcard src*.dat))\nPREFIX ?= out\n");
     for (I32 i = 1; i <= 30; i++) {
         used += (Usize)__builtin_snprintf(makefile + used, (1U << 16) - used,
                                           "step%d: $(DATA)\n\t@touch $(PREFIX)%d.txt $(DATA)\n", i, i);

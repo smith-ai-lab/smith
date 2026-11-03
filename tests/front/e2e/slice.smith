@@ -1,5 +1,5 @@
 fn total(xs: []i32) -> i64 {
-    mut sum: i64 = 0
+    let mut sum: i64 = 0
     for x in xs {
         sum += x as i64
     }
@@ -7,7 +7,7 @@ fn total(xs: []i32) -> i64 {
 }
 
 fn count_char(s: str, wanted: Char) -> usize {
-    mut n: usize = 0
+    let mut n: usize = 0
     for c in s {
         if c as Char == wanted {
             n += 1
@@ -17,7 +17,7 @@ fn count_char(s: str, wanted: Char) -> usize {
 }
 
 fn first_word(s: str) -> str {
-    mut i: usize = 0
+    let mut i: usize = 0
     while i < countof(s) && s[i] as Char != ' ' {
         i += 1
     }
@@ -25,7 +25,7 @@ fn first_word(s: str) -> str {
 }
 
 pub fn check() -> i32 {
-    mut a: [4]i32
+    let mut a: [4]i32 = undefined
     a[0] = 1
     a[1] = 2
     a[2] = 3
@@ -33,7 +33,7 @@ pub fn check() -> i32 {
     if total(a) != 10 || total(a[1:3]) != 5 {
         return 1
     }
-    s: []i32 = a
+    let s: []i32 = a
     s[0] = 40
     if a[0] != 40 {
         return 2
@@ -41,7 +41,7 @@ pub fn check() -> i32 {
     if count_char("banana", 'a') != 3 {
         return 3
     }
-    w := first_word("hello world")
+    let w = first_word("hello world")
     if countof(w) != 5 || w[4] as Char != 'o' {
         return 4
     }

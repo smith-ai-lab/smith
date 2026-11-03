@@ -213,7 +213,7 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
 }
 
 // The function of an imported module a callee names: `m.sin`, `r.math.sin` (a module imported by another), or `sin`
-// after `sin := m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
+// after `let sin = m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
 // symbol the module's object defines. Returns false for any other callee.
 static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
     if (e->options.checked == nullptr) return false;

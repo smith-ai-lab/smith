@@ -324,6 +324,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
     options.source = source;
     options.checked = &checked;
+    options.fill_undefined = true; // objects are made at optimization 0, a debug build
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();

@@ -1,6 +1,6 @@
-// Tests of tuples: types, `(a, b)`, `t.0` and `(q, r) := f()` in the emitter (#1619 of #1428). Each scenario is source
-// text in smith's own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through
-// the JIT.
+// Tests of tuples: types, `(a, b)`, `t.0` and `let (q, r) = f()` in the emitter (#1619 of #1428). Each scenario is
+// source text in smith's own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run
+// through the JIT.
 module front_emit_tuple_test;
 
 import front::ast;
@@ -137,7 +137,7 @@ export void test_front_emit_tuple_the_type_is_a_struct_of_its_elements() {
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("pub fn a(t: (i32, i64)) -> i32 {\n    0\n}\n"
                      "pub fn b(t: (i32,)) -> (i32, i64) {\n    (1, 2)\n}\n"
-                     "pub fn c() -> i32 {\n    u: () = ()\n    0\n}\n",
+                     "pub fn c() -> i32 {\n    let u: () = ()\n    0\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "{ i32, i64 }"), true);
@@ -151,12 +151,12 @@ export void test_front_emit_tuple_literals_members_and_places_read_back() {
     emit_jit::Jit host = start_jit();
     char *ir = ir_of("fn divmod(a: i32, b: i32) -> (i32, i32) {\n    (a / b, a % b)\n}\n"
                      "fn widen(p: (i32, i64)) -> i64 {\n    p.0 as i64 + p.1\n}\n"
-                     "pub fn quotient(n: i32) -> i32 {\n    (q, r) := divmod(n, 5)\n    q\n}\n"
-                     "pub fn remainder(n: i32) -> i32 {\n    (_, r) := divmod(n, 5)\n    r\n}\n"
-                     "pub fn widened(n: i32) -> i32 {\n    mut t: (i32, i64) = (1, 2)\n    t.0 = 40\n"
+                     "pub fn quotient(n: i32) -> i32 {\n    let (q, r) = divmod(n, 5)\n    q\n}\n"
+                     "pub fn remainder(n: i32) -> i32 {\n    let (_, r) = divmod(n, 5)\n    r\n}\n"
+                     "pub fn widened(n: i32) -> i32 {\n    let mut t: (i32, i64) = (1, 2)\n    t.0 = 40\n"
                      "    if widen(t) == 42 {\n        return 1\n    }\n    0\n}\n"
-                     "pub fn nested(n: i32) -> i32 {\n    x := ((1, n), 3)\n    x.0.1\n}\n"
-                     "pub fn unhinted(n: i32) -> i32 {\n    t := (n, 7)\n    t.1\n}\n",
+                     "pub fn nested(n: i32) -> i32 {\n    let x = ((1, n), 3)\n    x.0.1\n}\n"
+                     "pub fn unhinted(n: i32) -> i32 {\n    let t = (n, 7)\n    t.1\n}\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Pick quotient = (Pick)symbol_of(&host, "quotient");
@@ -173,12 +173,12 @@ export void test_front_emit_tuple_literals_members_and_places_read_back() {
 }
 
 export void test_front_emit_tuple_a_name_declared_twice_is_an_error() {
-    stops_with("fn g() -> (i32, i32) {\n    (1, 2)\n}\nfn f() -> i32 {\n    (a, a) := g()\n    0\n}\n", false,
+    stops_with("fn g() -> (i32, i32) {\n    (1, 2)\n}\nfn f() -> i32 {\n    let (a, a) = g()\n    0\n}\n", false,
                "is declared twice", "a");
 }
 
 export void test_front_emit_tuple_a_member_past_the_end_or_of_a_non_tuple_is_an_error_at_its_span() {
-    stops_with("fn f(t: (i32, i32)) -> i32 {\n    _ := t.5\n    0\n}\n", false, "the tuple (i32, i32) has 2 elements",
-               "t.5");
-    stops_with("fn f(t: i32) -> i32 {\n    _ := t.0\n    0\n}\n", false, ".0 needs a tuple, found i32", "t.0");
+    stops_with("fn f(t: (i32, i32)) -> i32 {\n    let _ = t.5\n    0\n}\n", false,
+               "the tuple (i32, i32) has 2 elements", "t.5");
+    stops_with("fn f(t: i32) -> i32 {\n    let _ = t.0\n    0\n}\n", false, ".0 needs a tuple, found i32", "t.0");
 }
