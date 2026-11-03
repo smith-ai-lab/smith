@@ -397,14 +397,18 @@ export void test_front_types_decl_destructuring_splits_a_tuple() {
 // accepted, and a type passed as a value is `Auto`.
 export void test_front_types_decl_a_switch_over_an_enumeration_is_typed() {
     reading_new = false;
-    clean("typedef enum { red; green; } Color;\nI32 f(Color c) {\n    switch (c) {\n    case .red: return 1;\n    default: return 0;\n    }\n}\n");
-    clean("I32 g(I32 n) {\n    switch (n) {\n    case 1: { I32 x = 2; return x; }\n    case 2: { I32 x = 3; return x; }\n    default: return 0;\n    }\n}\n");
-    fails("I32 g(I32 n) {\n    switch (n) {\n    case 1: return missing;\n    default: return 0;\n    }\n}\n", "missing", "declare");
+    clean("typedef enum { red; green; } Color;\nI32 f(Color c) {\n    switch (c) {\n    case .red: return 1;\n    "
+          "default: return 0;\n    }\n}\n");
+    clean("I32 g(I32 n) {\n    switch (n) {\n    case 1: { I32 x = 2; return x; }\n    case 2: { I32 x = 3; return x; "
+          "}\n    default: return 0;\n    }\n}\n");
+    fails("I32 g(I32 n) {\n    switch (n) {\n    case 1: return missing;\n    default: return 0;\n    }\n}\n",
+          "missing", "declare");
 }
 
 export void test_front_types_decl_a_switch_over_a_payload_enumeration_is_typed() {
     reading_new = false;
-    clean("typedef struct { F64 r; } Circle;\ntypedef enum { Circle circle; empty; } Shape;\nF64 area(Shape s) {\n    switch (s) {\n    case .circle: return 1.0;\n    case .empty: return 0.0;\n    }\n}\n");
+    clean("typedef struct { F64 r; } Circle;\ntypedef enum { Circle circle; empty; } Shape;\nF64 area(Shape s) {\n    "
+          "switch (s) {\n    case .circle: return 1.0;\n    case .empty: return 0.0;\n    }\n}\n");
 }
 
 export void test_front_types_decl_countof_of_an_auto_parameter_is_accepted() {
