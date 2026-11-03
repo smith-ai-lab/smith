@@ -1432,8 +1432,16 @@ export Bool field_visible(const Ty *record, const Slot *field) {
     return field->is_pub || countof(record->owner) == 0;
 }
 
-// Reports a field the module being checked may not name: it is private to the module that declares the record.
-export void private_field(Checked *r, ast::Span span, const Ty *record, Str name) {
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(prefix) > countof(text)) return false;
+    for (Usize i = 0; i < countof(prefix); i++) {
+        if (text[i] != prefix[i]) return false;
+    }
+    return true;
+}
+
+// The module that declares the record, as written: `lib.math`.
+static Str owner_dotted(const Ty *record) {
     Str module = record->owner[0:countof(record->owner) - 2];
     Str dotted = module;
     for (Usize i = 0; i + 1 < countof(module); i++) {
@@ -1445,7 +1453,36 @@ export void private_field(Checked *r, ast::Span span, const Ty *record, Str name
             i = 0;
         }
     }
+    return dotted;
+}
+
+// Reports a field the module being checked may not name: it is private to the module that declares the record.
+export void private_field(Checked *r, ast::Span span, const Ty *record, Str name) {
+    Str dotted = owner_dotted(record);
     failf(r, span, name, " is private to ", dotted, "; mark it pub or call a function of ", dotted);
+}
+
+// Reports a construction of a record that has a private field, from outside its module (#1813): only a function of
+// the module builds it. The message lists the module's `pub` functions that return the record.
+export void private_build(Checked *r, ast::Span span, const Ty *record) {
+    Str dotted = owner_dotted(record);
+    Str names = "";
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const Symbol *s = &r->scopes.symbols[i];
+        if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
+        Bool public = s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+        if (s->type->element != record || !public) continue;
+        if (countof(s->name) <= countof(record->owner) || !starts_with(s->name, record->owner)) continue;
+        Str name = s->name[countof(record->owner):countof(s->name)];
+        if (countof(names) > 0) names = msg(format::push(names, ", "));
+        names = msg(format::push(names, "`", name, "`"));
+    }
+    Str type = show(record);
+    if (countof(names) == 0) {
+        failf(r, span, "`", type, "` has private fields; build it with a function of `", dotted, "`");
+        return;
+    }
+    failf(r, span, "`", type, "` has private fields; build it with a function of `", dotted, "`: ", names);
 }
 
 // The name a declaration is known by: `c::` before a C name, and the alias of the module being imported (`m::`) before

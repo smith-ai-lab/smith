@@ -47,10 +47,11 @@
 // pseudo-frames that open and close scopes and bind names, and one last frame that joins the branches' types.
 //
 // CONSTRUCTION AND POINTERS (#1513, C2b, spec "Structs, enums and building values" and "Pointers"): `Point(x = 1)`
-// (a call whose callee names a struct: named fields in any order, a field left out is zero), named arguments of a
-// function (`f(b = 1, a = 2)`, matched by the parameter names of its declaration), `[1, 2, 3]`, and, for a variable of
-// smith's own syntax (`Symbol.is_new`): constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x`
-// through a pointer, and a write through `*T` is an error naming `*mut T`.
+// (a call whose callee names a struct: positional fields in order, then named ones in any order; a field left out is
+// zero until defaults land), named arguments of a function (`f(b = 1, a = 2)`, matched by the parameter names of its
+// declaration), `[1, 2, 3]`, and, for a variable of smith's own syntax (`Symbol.is_new`): constant unless `mut`, `&x`
+// is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through `*T` is an error naming `*mut
+// T`.
 //
 // NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a type used as a value, a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
@@ -2025,13 +2026,6 @@ static void stream_after(types::Checked *c, Frame f) {
 // ---------------------------------------------------------------------------------------------------------------
 // Construction: `Point(x = 1, y = 2)` (spec "Structs, enums and building values" of #1428)
 
-static Str first_field(types::TypeRef record) {
-    if (countof(record->slots) == 0) {
-        return "field";
-    }
-    return record->slots[0].name;
-}
-
 // The record a call constructs when its callee names a struct (or an alias of one), else null.
 static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
     if (callee->kind != .name) {
@@ -2060,28 +2054,61 @@ static void construct_before(Work *w, Frame f, types::TypeRef record) {
             if (field != nullptr) {
                 wanted = field->type;
             }
+        } else if (i - 1 < countof(record->slots)) {
+            wanted = record->slots[i - 1].type;
         }
         push(w, argument_value(args[i - 1]), wanted, 0);
     }
 }
 
-// Outside the module that declares the record, a construction may name only `pub` fields; a field it leaves out,
-// private ones included, is zero (#1428). False, after an error naming the first private field it names, when it
-// names one.
-static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record, ast::ExprRef args[:]) {
-    for (Usize i = 0; i < countof(args); i++) {
-        const ast::Expr *arg = args[i];
-        if (!(arg->kind == .named_arg)) continue;
-        const types::Slot *field = types::member(record, arg->kind.named_arg.name);
-        if (field != nullptr && !types::field_visible(record, field)) {
-            types::private_field(c, e->span, record, field->name);
+// Outside the module that declares the record, a record with a private field is built only by a function of that
+// module, even when every private field has a default (#1813). A record whose fields are all `pub` is built anywhere.
+// False, after an error, when the record may not be built here.
+static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record) {
+    for (Usize i = 0; i < countof(record->slots); i++) {
+        if (!types::field_visible(record, &record->slots[i])) {
+            types::private_build(c, e->span, record);
             return false;
         }
     }
     return true;
 }
 
-// The values are typed: every argument is a named, known field, given once. A field left out is zero.
+// The field an argument fills: the one at its position, or the one it names. Null, after an error, when it fills none.
+static const types::Slot *argument_field(types::Checked *c, ast::ExprRef args[:], Usize i, types::TypeRef record,
+                                         Str shown, Bool by_name, Usize *index) {
+    const ast::Expr *arg = args[i];
+    if (arg->kind != .named_arg) {
+        if (by_name) {
+            types::failf(c, arg->span, "a positional argument cannot follow a named one; name this field of `", shown,
+                         "`");
+            return nullptr;
+        }
+        if (i >= countof(record->slots)) {
+            types::failf(c, arg->span, "`", shown, "` has ", countof(record->slots), " fields, but ", countof(args),
+                         " values are given");
+            return nullptr;
+        }
+        *index = i;
+        return &record->slots[i];
+    }
+    Str name = arg->kind.named_arg.name;
+    for (Usize k = 0; k < countof(record->slots); k++) {
+        if (same_text(record->slots[k].name, name)) {
+            *index = k;
+            return &record->slots[k];
+        }
+    }
+    if (countof(record->slots) == 0) {
+        types::failf(c, arg->span, "`", shown, "` has no field `", name, "`; it has no fields at all");
+    } else {
+        types::failf(c, arg->span, "`", shown, "` has no field `", name, "`; write one of its fields, such as `",
+                     record->slots[0].name, "`");
+    }
+    return nullptr;
+}
+
+// The values are typed: every argument fills a known field, given once, positional ones first (Python's rules).
 static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -2090,39 +2117,25 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     ast::ExprRef args[:] = e->kind.call.args;
     Str shown = types::show(record);
     Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
-    Bool ok = private_construction(c, e, record, args);
+    Bool ok = private_construction(c, e, record);
+    Bool by_name = false;
     for (Usize i = 0; i < countof(args); i++) {
         const ast::Expr *arg = args[i];
-        if (!(arg->kind == .named_arg)) {
-            types::failf(c, args[i]->span, "a field of `", shown, "` is always named; write `", shown, "(",
-                         first_field(record), " = value)`");
-            ok = false;
-            continue;
-        }
-        Str name = arg->kind.named_arg.name;
-        const types::Slot *field = types::member(record, name);
-        if (field == nullptr) {
-            if (countof(record->slots) == 0) {
-                types::failf(c, args[i]->span, "`", shown, "` has no field `", name, "`; it has no fields at all");
-            } else {
-                types::failf(c, args[i]->span, "`", shown, "` has no field `", name,
-                             "`; write one of its fields, such as `", record->slots[0].name, "`");
-            }
-            ok = false;
-            continue;
-        }
         Usize index = 0;
-        for (Usize k = 0; k < countof(record->slots); k++) {
-            if (same_text(record->slots[k].name, name)) {
-                index = k;
-            }
+        const types::Slot *field = argument_field(c, args, i, record, shown, by_name, &index);
+        if (arg->kind == .named_arg) {
+            by_name = true;
+        }
+        if (field == nullptr) {
+            ok = false;
+            continue;
         }
         if (seen[index]) {
-            types::failf(c, args[i]->span, "the field `", name, "` of `", shown, "` is given twice; remove one");
+            types::failf(c, arg->span, "the field `", field->name, "` of `", shown, "` is given twice; remove one");
             ok = false;
         }
         seen[index] = true;
-        if (typ(c, arg->kind.named_arg.value) == invalid(c)) {
+        if (typ(c, argument_value(args[i])) == invalid(c)) {
             ok = false;
         }
     }

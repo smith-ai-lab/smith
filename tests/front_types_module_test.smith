@@ -198,17 +198,24 @@ export void test_front_types_module_private_field_is_an_error_outside() {
           "mark it pub or call a function of lib.math");
 }
 
-export void test_front_types_module_construction_names_only_pub_fields() {
+export void test_front_types_module_a_struct_with_a_private_field_is_built_only_by_its_module() {
+    // named or positional, with the private field or without it: only a function of the module builds it
     fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1, items = "
           "2)\n}\n",
-          "items is private to lib.math", "");
-    clean("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1)\n}\n");
-    clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(x = 1.0, y = 2.0)\n}\n");
+          "`lib::math::Handle` has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(len = 1)\n}\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle()\n}\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle(1, 2)\n}\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    clean("m := import lib.math\n\nfn run() -> m.Handle {\n    return m.handle()\n}\n");
 }
 
-export void test_front_types_module_empty_construction_is_clean_outside() {
-    clean("m := import lib.math\nHandle := m.Handle\n\nfn run() -> m.Handle {\n    return Handle()\n}\n");
-    clean("m := import lib.math\nHandle := m.Handle\n\nfn run() -> i32 {\n    h := Handle()\n    return h.len\n}\n");
+export void test_front_types_module_a_struct_of_pub_fields_is_built_anywhere() {
+    clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(x = 1.0, y = 2.0)\n}\n");
+    clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(1.0, 2.0)\n}\n");
+    clean("m := import lib.math\nPoint := m.Point\n\nfn run() -> m.Point {\n    return Point(1.0, y = 2.0)\n}\n");
 }
 
 export void test_front_types_module_own_fields_are_all_visible() {
