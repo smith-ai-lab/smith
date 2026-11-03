@@ -1,0 +1,3 @@
+src/main.smith:5:13: error: `scale::Range` has private fields; build it with a function of `scale`
+src/main.smith:6:5: error: `scale` has no public `counter`; write the name of one of its `pub` declarations
+src/main.smith:7:13: error: `scale` has no public `clamp_to_base`; write the name of one of its `pub` declarations
