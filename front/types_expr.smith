@@ -1838,6 +1838,32 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     push_arguments(w, args, signature);
 }
 
+// A string literal in the `...` is a C string.
+static Bool is_string_literal(const ast::Expr *x) {
+    return x->kind == .string;
+}
+
+// What C can receive in the `...` of a call: an integer, float, bool, char, pointer or C enum.
+static Bool c_receivable(types::TypeRef t) {
+    if (t->kind == .bool_type || t->kind == .integer || t->kind == .floating || t->kind == .pointer) return true;
+    if (t->kind == .null_type) return true;
+    return t->kind == .enumeration && !t->has_payload;
+}
+
+// The arguments past the fixed parameters of a C variadic (`extern fn printf(f: *u8, ...)`) must be types C can
+// receive.
+static void check_variadic_arguments(types::Checked *c, types::TypeRef signature, ast::ExprRef args[:]) {
+    if (!signature->variadic) return;
+    for (Usize i = countof(signature->slots); i < countof(args); i++) {
+        types::TypeRef t = typ(c, args[i]);
+        if (t == nullptr || t->kind == .invalid || t->kind == .automatic || t->kind == .concept_type) continue;
+        if (c_receivable(t) || is_string_literal(args[i])) continue;
+        Str hint = " cannot go through `...`: C receives an integer, float, bool, char, pointer or C enum";
+        if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
+        types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
+    }
+}
+
 static void call_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -1849,6 +1875,7 @@ static void call_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    check_variadic_arguments(c, signature, e->kind.call.args);
     finish(c, e, signature->element, f.expected);
 }
 
