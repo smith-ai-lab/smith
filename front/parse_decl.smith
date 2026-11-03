@@ -607,10 +607,13 @@ static Bool gap_is_not_plain(Str gap) {
 // An attribute that ends its line marks the declaration on the next line: not a blank line, a comment, or the end of
 // the block.
 static void check_attribute_target(parse::Parser *p, ast::Span span) {
-    if (!line_ended(p)) return;
+    if (!line_ended(p) && !(p->layout && at_line_end(p))) return;
     lex::Token last = p->tokens[p->position - 1];
-    lex::Token next = parse::peek(p);
-    Bool ends = next.kind == lex::right_brace || next.kind == lex::end_of_file;
+    Usize ahead = 0;
+    while (p->layout && parse::peek_at(p, ahead).kind == lex::newline) // layout path: the line break is a token
+        ahead += 1;
+    lex::Token next = parse::peek_at(p, ahead);
+    Bool ends = next.kind == lex::right_brace || next.kind == lex::end_of_file || next.kind == lex::dedent;
     if (!ends && !gap_is_not_plain(p->source[last.span.end:next.span.start])) return;
     parse::error(p, span, "an attribute marks the declaration on the next line");
 }
@@ -1074,6 +1077,26 @@ static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dim
     return to;
 }
 
+// The array suffixes written after a name (#1898): `text` is them as smith writes them in front of the type (`[3]`,
+// `[][2]`), `end` is where the last one ends in the source, `blocked` is set when one has no fix (`[]`, `[const :]`).
+// Without a suffix `text` is empty and `blocked` is false.
+struct Dims {
+    Str text;
+    U32 end;
+    Bool blocked;
+};
+
+// The suffixes in the tokens `first` to `last` (not taken), which follow a type and a name (so `first` is at least 2).
+static Dims read_dims(const parse::Parser *p, Usize first, Usize last) {
+    Dims dims = {.text = ""};
+    if (last <= first) return dims;
+    dims.end = p->tokens[last - 1].span.end;
+    Str text = "";
+    dims.blocked = first < 2 || strip_suffixes(p, first - 2, last, &text) != first;
+    if (!dims.blocked) dims.text = text;
+    return dims;
+}
+
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
 // `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
 // it has no mechanical fix (no name, `auto x`, a qualified slice).
@@ -1197,7 +1220,7 @@ static Bool is_number_type(Str type) {
 // `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
 // the like are a warning with no edits.
 static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
-                         Bool suffixed) {
+                         Dims dims) {
     lex::Token last = p->tokens[p->position - 1];
     Bool has_init = equal_end > 0;
     Bool automatic = type->kind == .auto_type;
@@ -1205,17 +1228,26 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
-    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern && !p->for_init;
+    Bool suffixed = countof(dims.text) > 0;
+    Bool fixable = last.kind == lex::semicolon && !dims.blocked && !pre->is_extern && !p->for_init;
+    // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
+    if (suffixed && !has_init && (pre->is_static || pre->top)) fixable = false;
+    Str value = "";
+    if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
+    if (suffixed && countof(value) > 0 && value[0] == '{') fixable = false;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
         char message[:] = format::push("a variable is written `", name, ": T = value`, the type after the name: `",
-                                       written, " ", name, "` has no mechanical fix (an array suffix, `extern`)");
+                                       written, " ", name,
+                                       "` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` "
+                                       "after the name, a `{...}` list, an array that C zeroes): write it by hand");
         parse::Edits none = {};
         warn(p, head.type_start, head.name.span.end, message, none);
         return;
     }
     Str lead = pre->is_constexpr && !type_value ? "const " : "let ";
+    written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = {};
@@ -1227,7 +1259,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (!has_init) {
         Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
         text = as_str(format::push("let mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
-        to = head.name.span.end;
+        to = suffixed ? dims.end : head.name.span.end;
     }
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, to, text));
@@ -1265,7 +1297,9 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
 static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, Head head, U32 start, ast::TypeExpr *type) {
     Str name = parse::text(p, head.name);
     Usize errors_before = countof(p->errors);
+    Usize suffix_first = p->position;
     ast::TypeExpr *full = array_suffixes(p, type);
+    Dims dims = read_dims(p, suffix_first, p->position);
     ast::Expr *init = nullptr;
     U32 equal_end = 0;
     if (!parse::at(p, lex::comma) && parse::at(p, lex::equal)) equal_end = parse::peek(p).span.end;
@@ -1288,7 +1322,7 @@ static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, Head hea
     // A range `for (T x : xs)`: the `:` is the statement's, which reads the range.
     Bool before_range = index_of_range || (init == nullptr && parse::at(p, lex::colon));
     if (!before_range) parse::expect(p, lex::semicolon, "`;` after the declaration");
-    if (!before_range && !failed_since(p, errors_before)) fix_variable(p, pre, head, type, equal_end, full != type);
+    if (!before_range && !failed_since(p, errors_before)) fix_variable(p, pre, head, type, equal_end, dims);
     ast::DeclKind kind = {.variable = {.name = name,
                                        .type = full,
                                        .init = init,
@@ -1350,17 +1384,19 @@ static Str tag_name(parse::Parser *p) {
 
 // `I32 x;` is `x: I32` in a record, and the `;` goes. False (and a warning with no edits) for a field with an array
 // suffix, a bit-width or no name.
-static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token semi, Bool blocked) {
+static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token semi, Dims dims, Bool blocked) {
     parse::Edits edits = {};
-    if (blocked || name.kind != lex::name || semi.kind != lex::semicolon) {
+    if (blocked || dims.blocked || name.kind != lex::name || semi.kind != lex::semicolon) {
         warn(p, start, semi.span.end,
-             "a field is written `x: T`: this one (an array suffix, a bit-width) has no mechanical fix", edits);
+             "a field is written `x: T`: this one (a bit-width, no name, `[]` or `[const :]` after the name) has no "
+             "mechanical fix: write it by hand",
+             edits);
         return false;
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(word, ": ", written);
-    edits = with_edit(edits, edit(start, name.span.end, text));
+    char text[:] = format::push(word, ": ", dims.text, written);
+    edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");
     warn(p, start, semi.span.end, message, edits);
@@ -1398,16 +1434,17 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
         several_names_error(p, field.type, field.name);
         return field;
     }
-    ast::TypeExpr *plain = field.type;
+    Usize suffix_first = p->position;
     field.type = array_suffixes(p, field.type);
-    Bool blocked = field.type != plain;
+    Dims dims = read_dims(p, suffix_first, p->position);
+    Bool blocked = false;
     if (parse::accept(p, lex::colon)) {
         field.bit_width = parse::expression(p);
         blocked = true;
     }
     Usize errors_before = countof(p->errors);
     lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the field");
-    if (!(top && countof(p->errors) == errors_before && fix_field(p, start, name_token, semi, blocked)))
+    if (!(top && countof(p->errors) == errors_before && fix_field(p, start, name_token, semi, dims, blocked)))
         style->unfixed = true;
     field.span = parse::span_from(p, start);
     return field;
@@ -1495,11 +1532,12 @@ static FieldList parse_fields(parse::Parser *p, Style *style) {
         Usize before = p->position;
         if (parse::at(p, lex::at)) {
             Prefixes marks = {};
-            while (parse::at(p, lex::at))
+            while (parse::at(p, lex::at)) {
                 parse_at_attribute(p, &marks);
-            skip_newlines(p);
+                skip_newlines(p); // layout path: stacked attributes, one per line
+            }
             if (!new_field_ahead(p)) {
-                if (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file))
+                if (!parse::at(p, lex::right_brace) && !parse::at(p, lex::end_of_file) && !parse::at(p, lex::dedent))
                     parse::error(p, parse::peek(p).span, "an attribute marks a field written `name: type`");
                 if (p->position == before) parse::advance(p);
                 continue;
@@ -1780,16 +1818,18 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
 }
 
 // `typedef T Name;` is `let Name = T` (the type follows the name); an array suffix is a warning with no edits.
-static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, lex::Token semi, Bool suffixed) {
+static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, lex::Token semi, Dims dims) {
     Str name = parse::text(p, head.name);
-    Str written = trimmed(source_between(p, head.type_start, head.name.span.start));
+    Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     parse::Edits edits = {};
-    if (suffixed || semi.kind != lex::semicolon) {
+    if (dims.blocked || semi.kind != lex::semicolon) {
         warn(p, typedef_start, semi.span.end,
-             "an alias is written `let Name = T`: one with an array suffix has no mechanical fix", edits);
+             "an alias is written `let Name = T`: one with `[]` or `[const :]` after the name has no mechanical fix: "
+             "write it by hand",
+             edits);
         return;
     }
-    char text[:] = format::push("let ", name, " = ", written);
+    char text[:] = format::push("let ", name, " = ", dims.text, written);
     edits = with_edit(edits, edit(typedef_start, semi.span.end, text));
     char message[:] = format::push("an alias is written `", text, "`");
     warn(p, typedef_start, semi.span.end, message, edits);
@@ -1871,7 +1911,9 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         return nullptr;
     }
     Str name = parse::text(p, alias);
+    Usize suffix_first = p->position;
     ast::TypeExpr *full = array_suffixes(p, type);
+    Dims dims = read_dims(p, suffix_first, p->position);
     if (parse::at(p, lex::comma)) {
         several_names_error(p, type, name);
         return nullptr;
@@ -1880,7 +1922,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
     if (pre->top && !failed_since(p, errors_before)) {
         Head head = {.type_start = type_start, .name = alias};
-        fix_typedef_alias(p, p->tokens[typedef_index].span.start, head, semi, full != type);
+        fix_typedef_alias(p, p->tokens[typedef_index].span.start, head, semi, dims);
     }
     ast::DeclKind kind = {.type_alias = {.name = name, .type = full}};
     return make(p, start, pre, kind);

@@ -9,15 +9,15 @@ for (;;) break;
 }
 ===
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (an array suffix, `extern`)
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (an array suffix, `extern`)
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (an array suffix, `extern`)
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so

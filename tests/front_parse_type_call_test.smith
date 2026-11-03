@@ -144,22 +144,10 @@ export void test_parse_type_call_expression_stays() {
     test::check_condition(stmt->kind == .expression);
 }
 
-// The errors of source read in smith's own syntax, with the real parsers' hooks.
+// The errors of source read in smith's own syntax, with the real parsers' hooks (the layout path when it has a block).
 static Usize new_errors_of(Str source) {
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        parse_decl::file(&p, "t.smith");
-        return countof(p.errors);
-    case .error:
-        return 1;
-    }
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    return countof(parsed.errors);
 }
 
 // Call statements one per line (#1554): the line break after `)` ends each, so `f(x)` and the `f(x)` below are two
@@ -169,9 +157,8 @@ export void test_parse_type_call_statements_in_a_row_new_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
+    test::check_equal(new_errors_of("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    f(x)\n"),
+                      0);
     test::check_equal(
-        new_errors_of("fn f(x: i32) -> i32 { return x\n}\nfn g(x: i32) -> i32 {\n    f(x)\n    f(x)\n}\n"), 0);
-    test::check_equal(
-        new_errors_of("fn f(x: i32) -> i32 { return x\n}\nfn g(x: i32) -> i32 {\n    f(x)\n    f(x)\n    f(x)\n}\n"),
-        0);
+        new_errors_of("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    f(x)\n    f(x)\n"), 0);
 }

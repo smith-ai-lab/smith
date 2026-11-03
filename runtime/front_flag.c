@@ -13,6 +13,9 @@ int32_t front_compile_run(const char *const *sources, const char *const *outputs
 // front::compile's header entry (`front_header_run`), declared by hand for the same reason.
 int32_t front_header_run(const char *source, const char *output, const char *triple);
 
+// front::lsp_server's entry (`front_lsp_run`, `smith lsp --smith`), declared by hand for the same reason.
+int32_t front_lsp_run(void);
+
 // front::parser's fix entry (front/parser.smith, `front_parser_fix_run`), declared by hand for the same reason.
 int32_t front_parser_fix_run(const char *const *paths, size_t count);
 
