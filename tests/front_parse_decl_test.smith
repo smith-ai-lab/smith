@@ -874,7 +874,7 @@ export void test_parse_decl_old_module_line_and_export() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub let c: i32 = 3\n", 3);
+    expect_fixed("module a::b;\nexport I32 c = 3;\n", "pub let mut c: i32 = 3\n", 3);
 }
 
 export void test_parse_decl_old_variables() {
@@ -882,8 +882,8 @@ export void test_parse_decl_old_variables() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 a = 3;\n", "let a: i32 = 3\n", 1);
-    expect_fixed("auto a = 3;\n", "let a = 3\n", 1);
+    expect_fixed("I32 a = 3;\n", "let mut a: i32 = 3\n", 1);
+    expect_fixed("auto a = 3;\n", "let mut a = 3\n", 1);
     expect_fixed("I32 a;\n", "let mut a: i32 = 0\n", 1);
     expect_fixed("static constexpr I32 n = 8;\n", "static const n: i32 = 8\n", 1);
     expect_fixed("constexpr auto n = 8;\n", "const n = 8\n", 1);
@@ -964,10 +964,10 @@ export void test_parse_decl_old_attributes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("[[nodiscard]] I32 a = 1;\n", "let a: i32 = 1\n", 2);
-    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "let _a: i32 = 1\n", 1);
+    expect_fixed("[[nodiscard]] I32 a = 1;\n", "let mut a: i32 = 1\n", 2);
+    expect_fixed("[[maybe_unused]] I32 a = 1;\n", "let mut _a: i32 = 1\n", 1);
     expect_fixed("[[std::affine]] struct K {\n};\n", "@affine struct K {\n}\n", 2);
-    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") let a: i32 = 1\n", 2);
+    expect_fixed("[[std::c_name(\"k\")]] I32 a = 1;\n", "@c_name(\"k\") let mut a: i32 = 1\n", 2);
     expect_fixed("[[gnu::cold]] void f(I32 a) { }\n", "@cold fn f(a: i32) { }\n", 2);
     expect_fixed("void f([[maybe_unused]] I32 a) { }\n", "fn f(_a: i32) { }\n", 1);
 }

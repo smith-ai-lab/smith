@@ -230,6 +230,13 @@ static Str hash_comments(Str source) {
             i = end > i ? end : i + 1;
             continue;
         }
+        if (source[i] == '#' && (i + 1 >= n || source[i + 1] == ' ' || source[i + 1] == '\n' || source[i + 1] == '#')) {
+            // A `#` comment written already: what is in it stays (the pass that wrote it may run again, #1956).
+            while (i < n && source[i] != '\n') {
+                i += 1;
+            }
+            continue;
+        }
         if (i + 1 < n && source[i] == '/' && source[i + 1] == '/') {
             Bool blank = i + 2 >= n || source[i + 2] == ' ' || source[i + 2] == '\n';
             Str spaced = blank ? "#" : "# ";
