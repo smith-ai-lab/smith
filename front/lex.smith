@@ -1000,7 +1000,7 @@ struct Layout {
 };
 
 // The deepest nesting of blocks (the scanner of the tree-sitter grammar has the same limit).
-static const Usize max_levels = 128;
+static constexpr Usize max_levels = 128;
 
 static void put(Layout *l, TokenKind kind, Usize at) {
     Token t = {.kind = kind, .span = {.start = (U32)at, .end = (U32)at}};
