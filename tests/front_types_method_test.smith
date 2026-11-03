@@ -49,12 +49,12 @@ static Str join(Str a, Str b) {
 
 // A list type with a function that takes it by pointer and one that takes it by value, and a second module's type.
 static Str list_source() {
-    return "pub struct List {\n    pub count: i32\n}\n\n"
-           "pub fn push(l: *mut List, x: i32) {\n    l.count += x\n}\n\n"
-           "pub fn size(l: *List) -> i32 {\n    l.count\n}\n\n"
-           "pub fn first(l: List) -> i32 {\n    l.count\n}\n\n"
-           "pub fn make() -> List {\n    return List(count = 0)\n}\n\n"
-           "pub struct Other {\n    n: i32\n}\n";
+    return "pub struct List:\n    pub count: i32\n\n"
+           "pub fn push(l: *mut List, x: i32):\n    l.count += x\n\n"
+           "pub fn size(l: *List) -> i32:\n    l.count\n\n"
+           "pub fn first(l: List) -> i32:\n    l.count\n\n"
+           "pub fn make() -> List:\n    return List(count = 0)\n\n"
+           "pub struct Other:\n    n: i32\n";
 }
 
 static const ast::Module *load(const char *name) {
@@ -111,55 +111,53 @@ static Str head() {
 }
 
 export void test_front_types_method_in_the_type_module_by_pointer() {
-    clean(join(head(), "fn run() -> i32 {\n    let mut xs = list.make()\n    xs.push(5)\n    xs.size()\n}\n"));
+    clean(join(head(), "fn run() -> i32:\n    let mut xs = list.make()\n    xs.push(5)\n    xs.size()\n"));
 }
 
 export void test_front_types_method_by_value_and_through_a_pointer() {
-    clean(join(head(), "fn run(p: *list.List) -> i32 {\n    p.first() + p.size()\n}\n"));
+    clean(join(head(), "fn run(p: *list.List) -> i32:\n    p.first() + p.size()\n"));
 }
 
 export void test_front_types_method_in_the_current_module() {
-    clean(join(head(), "fn twice(l: list.List) -> i32 {\n    l.count * 2\n}\n\n"
-                       "fn run(l: list.List) -> i32 {\n    l.twice()\n}\n"));
+    clean(join(head(), "fn twice(l: list.List) -> i32:\n    l.count * 2\n\n"
+                       "fn run(l: list.List) -> i32:\n    l.twice()\n"));
 }
 
 export void test_front_types_method_on_a_built_in_type_is_current_module_only() {
-    clean("fn triple(x: i32) -> i32 {\n    x * 3\n}\n\nfn run(n: i32) -> i32 {\n    n.triple()\n}\n");
+    clean("fn triple(x: i32) -> i32:\n    x * 3\n\nfn run(n: i32) -> i32:\n    n.triple()\n");
 }
 
 export void test_front_types_method_arguments_are_checked() {
-    fails(join(head(), "fn run(l: *mut list.List) {\n    l.push(true)\n}\n"), "Bool", "I32");
+    fails(join(head(), "fn run(l: *mut list.List):\n    l.push(true)\n"), "Bool", "I32");
 }
 
 export void test_front_types_method_result_is_the_functions() {
-    fails(join(head(), "fn run(l: list.List) -> str {\n    return l.first()\n}\n"), "I32", "Str");
+    fails(join(head(), "fn run(l: list.List) -> str:\n    return l.first()\n"), "I32", "Str");
 }
 
 export void test_front_types_method_that_is_missing_is_named() {
-    fails(join(head(), "fn run(l: list.List) -> i32 {\n    l.nothing()\n}\n"), "has no method `nothing`",
-          "this module");
+    fails(join(head(), "fn run(l: list.List) -> i32:\n    l.nothing()\n"), "has no method `nothing`", "this module");
 }
 
 export void test_front_types_method_of_another_type_is_not_a_method() {
-    fails(join(head(), "fn run(o: list.Other) -> i32 {\n    o.first()\n}\n"), "does not take a", "first");
+    fails(join(head(), "fn run(o: list.Other) -> i32:\n    o.first()\n"), "does not take a", "first");
 }
 
 export void test_front_types_method_pointer_to_mut_needs_a_mut_base() {
-    fails(join(head(), "fn run() {\n    let xs = list.make()\n    xs.push(5)\n}\n"), "drops const", "");
+    fails(join(head(), "fn run():\n    let xs = list.make()\n    xs.push(5)\n"), "drops const", "");
 }
 
 export void test_front_types_method_a_field_and_a_function_of_one_name() {
-    fails("struct S {\n    size: i32\n}\n\nfn size(s: S) -> i32 {\n    s.size\n}\n\nfn run(s: S) -> i32 {\n    "
-          "s.size()\n}\n",
+    fails("struct S:\n    size: i32\n\nfn size(s: S) -> i32:\n    s.size\n\nfn run(s: S) -> i32:\n    "
+          "s.size()\n",
           "a field and a method of one type cannot share a name", "");
 }
 
 export void test_front_types_method_current_module_shadowing_the_type_module_is_an_error() {
-    fails(
-        join(head(), "fn first(l: list.List) -> i32 {\n    0\n}\n\nfn run(l: list.List) -> i32 {\n    l.first()\n}\n"),
-        "would be ambiguous", "");
+    fails(join(head(), "fn first(l: list.List) -> i32:\n    0\n\nfn run(l: list.List) -> i32:\n    l.first()\n"),
+          "would be ambiguous", "");
 }
 
 export void test_front_types_method_a_field_holding_a_function_is_called_as_before() {
-    clean("struct S {\n    f: fn(i32) -> i32\n}\n\nfn run(s: S) -> i32 {\n    s.f(1)\n}\n");
+    clean("struct S:\n    f: fn(i32) -> i32\n\nfn run(s: S) -> i32:\n    s.f(1)\n");
 }

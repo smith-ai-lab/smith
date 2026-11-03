@@ -79,37 +79,36 @@ static void says(Str source, Str first, Str second) {
 }
 
 export void test_when_two_declarations_of_one_name_with_opposite_conditions_are_clean() {
-    clean("@when(target.os == .macos)\nfn open_window() -> i32 {\n    1\n}\n\n"
-          "@when(target.os != .macos)\nfn open_window() -> i32 {\n    2\n}\n\n"
-          "fn main() -> i32 {\n    open_window()\n}\n");
+    clean("@when(target.os == .macos)\nfn open_window() -> i32:\n    1\n\n"
+          "@when(target.os != .macos)\nfn open_window() -> i32:\n    2\n\n"
+          "fn main() -> i32:\n    open_window()\n");
 }
 
 export void test_when_conditions_combine_and_a_field_can_have_one() {
-    clean(
-        "struct Window {\n    id: i32\n    @when(target.os == .macos && !(target.os == .linux))\n    layer: i32\n}\n\n"
-        "@when(target.os == .macos || target.os == .linux)\nfn both() -> i32 {\n    1\n}\n");
+    clean("struct Window:\n    id: i32\n    @when(target.os == .macos && !(target.os == .linux))\n    layer: i32\n\n"
+          "@when(target.os == .macos || target.os == .linux)\nfn both() -> i32:\n    1\n");
 }
 
 export void test_when_a_duplicate_that_only_the_other_target_has_is_an_error_naming_it() {
-    says("@when(target.os == .macos)\nfn f() -> i32 {\n    1\n}\n\n"
-         "@when(target.os != .linux)\nfn f() -> i32 {\n    2\n}\n",
+    says("@when(target.os == .macos)\nfn f() -> i32:\n    1\n\n"
+         "@when(target.os != .linux)\nfn f() -> i32:\n    2\n",
          "on macos: ", "`f` is declared twice");
 }
 
 export void test_when_a_use_with_no_live_declaration_names_the_condition() {
-    says("@when(target.os == .macos)\nfn open_window() -> i32 {\n    1\n}\n\n"
-         "fn main() -> i32 {\n    open_window()\n}\n",
+    says("@when(target.os == .macos)\nfn open_window() -> i32:\n    1\n\n"
+         "fn main() -> i32:\n    open_window()\n",
          "on linux: `open_window` is not declared on linux", "declared only when target.os == .macos");
 }
 
 export void test_when_on_an_import_an_enumerator_or_a_parameter_points_at_if_constexpr() {
     says("@when(target.os == .macos)\nimport std::mem\n", "`@when` is for a function", "if constexpr");
-    says("enum Kind {\n    a\n    @when(target.os == .macos)\n    b\n}\n", "`@when` is for a function", "if constexpr");
-    says("fn f(@when(target.os == .macos) x: i32) -> i32 {\n    x\n}\n", "`@when` is for a function", "if constexpr");
+    says("enum Kind:\n    a\n    @when(target.os == .macos)\n    b\n", "`@when` is for a function", "if constexpr");
+    says("fn f(@when(target.os == .macos) x: i32) -> i32:\n    x\n", "`@when` is for a function", "if constexpr");
 }
 
 export void test_when_needs_one_condition_the_checker_can_read() {
-    says("@when(1 + 2)\nfn f() -> i32 {\n    1\n}\n", "`@when` reads `target.os == .macos`", "`&&` and `||`");
-    says("@when()\nfn f() -> i32 {\n    1\n}\n", "`@when` takes one condition", "target.os");
-    says("@when(target.os == .windows)\nfn f() -> i32 {\n    1\n}\n", "`@when` reads", "`||`");
+    says("@when(1 + 2)\nfn f() -> i32:\n    1\n", "`@when` reads `target.os == .macos`", "`&&` and `||`");
+    says("@when()\nfn f() -> i32:\n    1\n", "`@when` takes one condition", "target.os");
+    says("@when(target.os == .windows)\nfn f() -> i32:\n    1\n", "`@when` reads", "`||`");
 }
