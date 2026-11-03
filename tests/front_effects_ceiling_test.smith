@@ -1,0 +1,136 @@
+// Tests of front::effects_ceiling (#2019, piece 2 of #1939): a ceiling written into IR and read back, a `@pure`
+// function that reaches a print is an error at the call with the chain, `@effects(alloc)` over `malloc` passes, a
+// function with no ceiling has no error, and the wording is the old plugin's (tests/effects/effects_chain.smith).
+module front_effects_ceiling_test;
+
+import <llvm-c/Core.h>;
+import <llvm-c/IRReader.h>;
+import <string.h>;
+
+import front::effects_ceiling;
+import front::effects_pass;
+import front::effects_table;
+import front::types_attr;
+import std::mem;
+import std::test;
+
+static const char *ir = "@.str = private constant [3 x i8] c\"hi\\00\"\n"
+                        "declare i32 @printf(ptr, ...)\n"
+                        "declare ptr @malloc(i64)\n"
+                        "declare ptr @fopen(ptr, ptr)\n"
+                        "define internal void @log_it() !dbg !7 {\n"
+                        "  %r = call i32 (ptr, ...) @printf(ptr @.str), !dbg !9\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define void @bad() !dbg !8 {\n"
+                        "  call void @log_it(), !dbg !10\n"
+                        "  ret void\n"
+                        "}\n"
+                        "define ptr @grab() {\n"
+                        "  %p = call ptr @malloc(i64 8)\n"
+                        "  ret ptr %p\n"
+                        "}\n"
+                        "define ptr @too_much() !dbg !11 {\n"
+                        "  %p = call ptr @fopen(ptr @.str, ptr @.str), !dbg !12\n"
+                        "  ret ptr %p\n"
+                        "}\n"
+                        "define void @free_to_print() {\n"
+                        "  %r = call i32 (ptr, ...) @printf(ptr @.str)\n"
+                        "  ret void\n"
+                        "}\n"
+                        "!llvm.dbg.cu = !{!0}\n"
+                        "!llvm.module.flags = !{!5, !6}\n"
+                        "!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, producer: \"t\", "
+                        "isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)\n"
+                        "!1 = !DIFile(filename: \"chain.smith\", directory: \".\")\n"
+                        "!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+                        "!6 = !{i32 2, !\"Dwarf Version\", i32 5}\n"
+                        "!7 = distinct !DISubprogram(name: \"log_it\", scope: !1, file: !1, line: 7, type: !13, "
+                        "spFlags: DISPFlagDefinition, unit: !0)\n"
+                        "!8 = distinct !DISubprogram(name: \"bad\", scope: !1, file: !1, line: 15, type: !13, "
+                        "spFlags: DISPFlagDefinition, unit: !0)\n"
+                        "!9 = !DILocation(line: 8, scope: !7)\n"
+                        "!10 = !DILocation(line: 16, scope: !8)\n"
+                        "!11 = distinct !DISubprogram(name: \"too_much\", scope: !1, file: !1, line: 24, type: !13, "
+                        "spFlags: DISPFlagDefinition, unit: !0)\n"
+                        "!12 = !DILocation(line: 25, scope: !11)\n"
+                        "!13 = !DISubroutineType(types: !{})\n";
+
+static Bool same(Str a, Str b) {
+    return mem::equal(a, b);
+}
+
+static c::LLVMModuleRef parse(c::LLVMContextRef context) {
+    c::LLVMMemoryBufferRef buffer = c::LLVMCreateMemoryBufferWithMemoryRangeCopy(ir, c::strlen(ir), "chain.ll");
+    c::LLVMModuleRef module = nullptr;
+    char *problem = nullptr;
+    if (c::LLVMParseIRInContext(context, buffer, &module, &problem) != 0) {
+        c::LLVMDisposeMessage(problem);
+        test::check(false);
+    }
+    c::LLVMSetSourceFileName(module, "chain.smith", 11);
+    return module;
+}
+
+export void test_front_effects_ceiling_round_trip() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context);
+    defer c::LLVMDisposeModule(module);
+    c::LLVMValueRef bad = c::LLVMGetNamedFunction(module, "bad");
+    U32 mask = 99;
+    test::check(!effects_ceiling::read(bad, &mask));
+    effects_ceiling::write(bad, 0);
+    test::check(effects_ceiling::read(bad, &mask));
+    test::check_equal(mask, 0u);
+    c::LLVMValueRef grab = c::LLVMGetNamedFunction(module, "grab");
+    effects_ceiling::write(grab, effects_table::alloc | effects_table::fails);
+    test::check(effects_ceiling::read(grab, &mask));
+    test::check_equal(mask, effects_table::alloc | effects_table::fails);
+}
+
+export void test_front_effects_ceiling_errors() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context);
+    defer c::LLVMDisposeModule(module);
+    effects_ceiling::write(c::LLVMGetNamedFunction(module, "bad"), 0);
+    effects_ceiling::write(c::LLVMGetNamedFunction(module, "grab"), effects_table::alloc);
+    effects_ceiling::write(c::LLVMGetNamedFunction(module, "too_much"), effects_table::alloc);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    effects_ceiling::Report report = {};
+    defer effects_ceiling::release(&report);
+    effects_ceiling::check(&g, module, &report);
+    test::check_equal(report.count, 2ul); // grab is within its ceiling and free_to_print has none
+    test::check_equal(report.items[0].line, 16u);
+    test::check(same(report.items[0].function, "bad"));
+    test::check(same(report.items[0].message,
+                     "smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: "
+                     "bad -> log_it (chain.smith:16) -> printf (chain.smith:8)"));
+    test::check_equal(report.items[1].line, 25u);
+    test::check(same(report.items[1].message,
+                     "smith-effect: `too_much` is limited to alloc, but it has the effects files, globals: "
+                     "too_much -> fopen (chain.smith:25)"));
+    Str text = effects_ceiling::render(&report);
+    defer mem::free((char *)(Usize)text.data);
+    Str first = "chain.smith:16:1: error: smith-effect: `bad` is [[std::pure]]";
+    test::check(same(text[0:countof(first)], first));
+}
+
+export void test_front_effects_ceiling_no_ceiling_no_error() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context);
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    effects_ceiling::Report report = {};
+    defer effects_ceiling::release(&report);
+    effects_ceiling::check(&g, module, &report);
+    test::check_equal(report.count, 0ul);
+}
