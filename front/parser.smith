@@ -112,6 +112,15 @@ static Parsed read_new(Str file, Str source, Bool braces) {
         return result;
     }
     lex::Tokens tokens = lexed.ok;
+    lex::Lexed made = lex::layout(source, tokens);
+    if (!braces && made == .error) {
+        lex::LexError failure = made.error;
+        parse::ParseError first = {.span = failure.span, .message = failure.message};
+        result.errors = mem::realloc(result.errors, 1);
+        result.errors[0] = first;
+        return result;
+    }
+    mem::free(made.ok.data);
     Bool layout = !braces && takes_layout(source, lexed.ok, &tokens);
     parse::Parser p = parse::make(tokens, source);
     p.new_syntax = true;

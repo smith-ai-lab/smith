@@ -1,0 +1,5 @@
+pub fn check() -> i32:
+    if true:
+        return 1
+      return 2
+    0
