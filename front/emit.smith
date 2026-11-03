@@ -364,6 +364,62 @@ static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
     return symbol->decl->kind.variable.init;
 }
 
+// The names of `autodiff::out` (a path) or `autodiff.out` (a chain of `.`), the module first; none for anything else.
+static types::Names qualified_names(const ast::Expr *x) {
+    types::Names names = {};
+    if (x->kind == .member) return types::member_names(x);
+    if (x->kind != .name) return names;
+    ast::Path path = x->kind.name.path;
+    if (countof(path.segments) < 2 || countof(path.segments) > 8) return names;
+    for (Usize i = 0; i < countof(path.segments); i++)
+        names.items[i] = path.segments[i].text;
+    names.count = countof(path.segments);
+    return names;
+}
+
+// `autodiff::out`: a global of an imported module (not a header's: `c_constant` took those). The declaration it names
+// and its key, `std::autodiff::out`, as the checker keeps it (#1975).
+static Bool imported_global(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *key) {
+    if (e->options.checked == nullptr) return false;
+    types::Names names = qualified_names(x);
+    if (names.count < 2) return false;
+    const types::Scopes *scopes = &e->options.checked->scopes;
+    Str prefix = "";
+    for (Usize i = 0; i + 1 < names.count; i++) {
+        const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
+        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        Str module_path = "";
+        for (Usize j = 0; j < countof(module->decl->kind.import_module.path.segments); j++)
+            module_path =
+                state::msg(format::push(module_path, module->decl->kind.import_module.path.segments[j].text, "::"));
+        prefix = module_path;
+    }
+    Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
+    const types::Symbol *target = types::lookup(scopes, full);
+    if (target == nullptr || target->kind != .variable || target->decl == nullptr || target->decl->from_c ||
+        target->decl->kind != .variable)
+        return false;
+    *found = target->decl;
+    *key = full;
+    return true;
+}
+
+// Reads an imported module's global: declared external under its `@c_name` (else its key) when first read, then loaded.
+static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x, const ast::Decl *d, Str key) {
+    types::TypeRef wanted = types::type_of(e->options.checked, x);
+    if (wanted == nullptr) return state::fail("the global has no type", x->span);
+    state::TyResult made = state::type_of_checked(e, wanted, x->span);
+    if (made == .error) return {.error = made.error};
+    Str own = state::c_name_of(d);
+    char *label = state::cstr(countof(own) > 0 ? own : key);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    if (global == nullptr) global = c::LLVMAddGlobal(e->module, made.ok.llvm, label);
+    mem::free(label);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, made.ok.llvm, global, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = made.ok});
+    return state::success();
+}
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
@@ -372,6 +428,9 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         return memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
+    const ast::Decl *imported = nullptr;
+    Str imported_key = "";
+    if (imported_global(e, x, &imported, &imported_key)) return imported_global_read(e, x, imported, imported_key);
     const ast::Expr *constant = c_constant(e, x);
     if (constant != nullptr) {
         types::TypeRef wanted = types::type_of(e->options.checked, x);
