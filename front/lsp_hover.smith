@@ -17,7 +17,7 @@ static Str as_str(char chars[:]) {
 }
 
 // The byte offset of the 0-based `line` and `character` in `source`; the end of the text when the line is past it.
-static U32 offset_of(Str source, U64 line, U64 character) {
+export U32 offset_of(Str source, U64 line, U64 character) {
     U64 seen = 0;
     Usize i = 0;
     while (i < countof(source) && seen < line) {

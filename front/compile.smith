@@ -116,7 +116,7 @@ static Bool word_at(Str source, Usize at, Str word) {
 }
 
 // Whether the first token of `source` is the keyword `module`: today's syntax (every file in it has the line).
-static Bool starts_with_module(Str source) {
+export Bool starts_with_module(Str source) {
     Usize i = 0;
     while (i < countof(source)) {
         if (ascii::space(source[i])) {

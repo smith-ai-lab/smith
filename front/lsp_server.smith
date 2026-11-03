@@ -20,6 +20,7 @@ import front::compile;
 import front::lsp_definition;
 import front::lsp_hover;
 import front::lsp_symbols;
+import front::lsp_semantic;
 import front::roots;
 import std::arena;
 import std::format;
@@ -191,6 +192,34 @@ static void forget_document(Str uri) {
     if (slot != nullptr) slot->used = false;
 }
 
+// A number of a JSON value read as digits (0 when it is not one).
+static U64 number_of(const c::SmithJsonValue *value) {
+    U64 n = 0;
+    if (value == nullptr) return 0;
+    for (Usize i = 0; i < countof(value->text); i++)
+        if (value->text[i] >= '0' && value->text[i] <= '9') n = n * 10 + (U64)(value->text[i] - '0');
+    return n;
+}
+
+// The `result` of `textDocument/semanticTokens/full` (no `range`) and `/range`: null for a document that is not open.
+static Str semantic_result(Str uri, const c::SmithJsonValue *range) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr) return "null";
+    Str source = as_str(slot->text[0:slot->text_length]);
+    U32 from = 0;
+    U32 to = (U32)countof(source);
+    if (range != nullptr) {
+        const c::SmithJsonValue *start = c::smith_json_member(range, "start");
+        const c::SmithJsonValue *end = c::smith_json_member(range, "end");
+        if (start == nullptr || end == nullptr) return "null";
+        from = lsp_hover::offset_of(source, number_of(c::smith_json_member(start, "line")),
+                                    number_of(c::smith_json_member(start, "character")));
+        to = lsp_hover::offset_of(source, number_of(c::smith_json_member(end, "line")),
+                                  number_of(c::smith_json_member(end, "character")));
+    }
+    return lsp_semantic::result(path_of(uri), source, from, to);
+}
+
 // The `result` of a `textDocument/hover` request: null for a document that is not open.
 static Str hover_result(Str uri, const c::SmithJsonValue *position_param) {
     Document *slot = find_document(uri);
@@ -258,9 +287,12 @@ export Str handle(Str body) {
     const c::SmithJsonValue *params = c::smith_json_member(message, "params");
     const c::SmithJsonValue *document = params == nullptr ? nullptr : c::smith_json_member(params, "textDocument");
     if (roots::same(method, "initialize")) {
-        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true,"
-                         "\"documentSymbolProvider\":true},\"serverInfo\":{\"name\":"
-                         "\"smith lsp\"}}");
+        return reply(id,
+                     as_str(format::push("{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,"
+                                         "\"definitionProvider\":true,\"documentSymbolProvider\":true,"
+                                         "\"semanticTokensProvider\":{\"legend\":",
+                                         lsp_semantic::legend(),
+                                         ",\"full\":true,\"range\":true}},\"serverInfo\":{\"name\":\"smith lsp\"}}")));
     }
     if (roots::same(method, "shutdown")) {
         shut_down = true;
@@ -292,6 +324,14 @@ export Str handle(Str body) {
     }
     if (roots::same(method, "textDocument/documentSymbol"))
         return reply(id, symbols_result(string_of(document, "uri")));
+    if (roots::same(method, "textDocument/semanticTokens/full")) {
+        return reply(id, semantic_result(string_of(document, "uri"), nullptr));
+    }
+    if (roots::same(method, "textDocument/semanticTokens/range")) {
+        const c::SmithJsonValue *range = params == nullptr ? nullptr : c::smith_json_member(params, "range");
+        if (range == nullptr) return reply(id, "null");
+        return reply(id, semantic_result(string_of(document, "uri"), range));
+    }
     if (countof(id) == 0) return "";
     return failure(id, "-32601", as_str(format::push("method not found: ", method)));
 }

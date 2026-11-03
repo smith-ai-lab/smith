@@ -607,6 +607,8 @@ static ast::TypeKind function_rest(parse::Parser *p, ast::TypeExpr *result) {
         }
         ast::TypeExpr *param = parse::type(p);
         params = with_type(params, param);
+        // A parameter's name (`Fn(void (Key key))`) is left out of the type: the fix writes only the types.
+        if (param != nullptr && parse::at(p, lex::name)) parse::advance(p);
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the parameters of the function type");
