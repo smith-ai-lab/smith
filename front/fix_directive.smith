@@ -5,7 +5,7 @@
 // of every such line in the file:
 //
 //   #define LIMIT 4                 const LIMIT := 4
-//   #include <sys/stat.h>           stat := import c <sys/stat.h>
+//   #include <sys/stat.h>           import c <sys/stat.h>   (`as name` only when the file's name is not a name)
 //
 //   #if defined(__APPLE__)          @when(target.os == .macos)   (before each declaration of the branch;
 //   ...declarations...              the `#if`, `#else` and `#endif` lines are removed)
@@ -97,7 +97,7 @@ static typeof(char[:]) binding_name(Str path) {
     return name;
 }
 
-// `#include <path>` on the line s[hash:end]: `name := import c <path>`; a quoted include has no spelling yet.
+// `#include <path>` on the line s[hash:end]: `import c <path>`; a quoted include has no spelling yet.
 static Bool include_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *edits) {
     Usize open = skip_blanks(s, at, end);
     if (open >= end || s[open] != '<') return false;
@@ -108,7 +108,18 @@ static Bool include_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *e
     Str path = s[open + 1:close];
     char name[:] = binding_name(path);
     if (countof(name) == 0 || ascii::digit(name[0])) return false;
-    push(edits, hash, close + 1, as_str(format::push(name, " := import c <", path, ">")));
+    // `as name` only when the header's own name is not a valid name (`x-y.h` binds `x_y`)
+    Bool plain = true;
+    Usize from = 0;
+    for (Usize i = 0; i < countof(path); i++) {
+        if (path[i] == '/') from = i + 1;
+    }
+    for (Usize i = from; i < countof(path) && path[i] != '.'; i++) {
+        if (!is_word_char(path[i])) plain = false;
+    }
+    char suffix[:] = {};
+    if (!plain) suffix = format::push(" as ", name);
+    push(edits, hash, close + 1, as_str(format::push("import c <", path, ">", suffix)));
     return true;
 }
 

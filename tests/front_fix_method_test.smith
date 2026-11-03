@@ -43,7 +43,7 @@ static const ast::Module *load(const char *name) {
 }
 
 static Str head() {
-    return "list := import lib.list\n\n";
+    return "import lib.list\n\n";
 }
 
 static Str with_head(Str body) {
