@@ -19,7 +19,7 @@ Write tickets, tests of the new front end and examples in this syntax, never tod
 | structs, enums, payload enums, building values, named tuples, options | [smith-dev-syntax-data](../smith-dev-syntax-data/SKILL.md) |
 | private fields, `init` functions, field defaults | [smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md) |
 | `if`, `if let`, `match`, `while`, `while let`, `defer`, `errdefer`, `try` | [smith-dev-syntax-control](../smith-dev-syntax-control/SKILL.md) |
-| loops, streams, `for` expressions | [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md) |
+| loops, iterators, generators, `for` expressions | [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md) |
 | types as arguments, inferred parameters, concepts, type functions | [smith-dev-syntax-generics](../smith-dev-syntax-generics/SKILL.md) |
 | `const`, compile-time `if`, reflection, variadics | [smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md) |
 | `import`, `from`, `pub`, C, C++ and Objective-C, globals, `extern`, build files, tests | [smith-dev-syntax-modules](../smith-dev-syntax-modules/SKILL.md) |

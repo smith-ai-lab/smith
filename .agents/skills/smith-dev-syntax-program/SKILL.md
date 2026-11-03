@@ -39,7 +39,7 @@ pub fn main() -> i32:
     0
 ```
 
-`shapes.items()` stands for whatever slice or stream `std.list` gives; the std library's names are not part of #1428.
+`shapes.items()` stands for whatever slice or iterator `std.list` gives; the std library's names are not part of #1428.
 
 ## HTML with trailing blocks
 

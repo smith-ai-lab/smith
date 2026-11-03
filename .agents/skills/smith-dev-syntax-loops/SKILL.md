@@ -1,47 +1,54 @@
 ---
 name: smith-dev-syntax-loops
-description: "New syntax (#1428): `for x in xs:`, `while`, `while let`, `range`/`enumerate`/`zip`/`refs` streams, `mut` on a loop name, what can be looped over, `for` as an expression that builds an array, `continue` as a filter, nested `for` building a block, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop in the new syntax."
+description: "New syntax (#1428): `for x in xs:`, `while`, `while let`, `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`), iterators (any type whose module has `next`), generators with `yield` returning `iter(T)`, `mut` on a loop name, `for` as an expression that builds an array, `continue` as a filter, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop or an iterator in the new syntax."
 ---
 
-# Loops
+# Loops and iterators
 
 Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428.
 
-## Loops
-
 ```smith
+from std.seq import range, enumerate, zip, refs
+
 for x in xs: use(x)
 for (i, x) in enumerate(xs): print_row(i, x)
 for (a, b) in zip(xs, ys): add(a, b)            # variadic: zip(xs, ys, zs) gives triples
-for i in range(0, n): step(i)
 for i in range(n, 0, -1): step(i)
-for p in refs(points): p.x += 1                 # refs yields *mut T to write through
+for p in refs(points): p.x += 1                 # refs gives *mut T to write through
 for (i, mut x) in enumerate(copies): x *= 2     # mut on one name, as in let
-while queue.len() > 0: work(queue.pop())
 while let .some(n) = todo.pop(): visit(n)       # until the pattern fails to match
 ```
 
-- The language loops only over built-in types: fixed arrays, slices (so `str`), contiguous blocks (one row per turn) and streams. Anything else is a function that returns a stream: `range`, `enumerate`, `zip`, `refs`, and user iterators.
+- `for` loops over arrays, slices (so `str`), contiguous blocks (one row per turn) and **iterators**: any value whose type's module has `fn next(it: *mut T) -> ?E`, found as a method call is. `std.seq`'s functions (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, ...) are such structs: zero cost, the loop compiles to the hand-written one. There is no `map` or `filter`: a `for` expression does that.
 - C's three-part `for` and today's `for (Usize i, T x : xs)` are errors; the fix is `range`, `enumerate` or `while`.
-- `for` stays a keyword; the std library has no `map` or `each` over arrays.
+
+## Generators
+
+```smith
+fn nats() -> iter(i32):
+    let mut n = 0
+    while true:
+        yield n
+        n += 1
+```
+
+- A function returning `iter(T)` with a `yield` in its body is a generator: lazy, nothing runs until the first `next`. `return` ends it; `return v` is an error ("`yield v` first"). `yield` stands only in the generator's own body, not in a lambda or a called function.
+- It compiles to a state machine (its locals become a struct, `next` resumes at the last `yield`), so it is zero cost when inlined. `iter(T)` is a concept: "a type whose `next` gives `?T`"; each generator has its own type. `it.next()` and `it.close()` (runs its `defer`s) are built in.
 
 ## for as an expression
 
 ```smith
 let doubled = for x in xs: x * 2                # the body's value: the loop builds an array
-
 let evens = for x in xs:
     if x % 2 != 0: continue                     # continue skips an element: a filter
     x
-
-let grid = for i in range(0, n):                # nested fors build a contiguous block [n,m]T
+let grid = for i in range(0, n):                # nested fors build a contiguous block [n, m]T
     for j in range(0, m): cell(i, j)
-
 let energy = sum(for x in xs: x * x)            # fused into one loop: no temporary array
 ```
 
-Over a fixed array the result is a fixed array on the stack; over a slice, range or stream it is a slice in the current allocator. `break` stops early. A body with no value builds nothing. Inside brackets a `for` is one line.
+Over a fixed array the result is a fixed array on the stack; over a slice or an iterator it is a slice in the current allocator. `break` stops early. A body with no value builds nothing.
 
 ## Not settled yet
 
-`zip` over slices of different lengths (the lead recommends a checked failure); what looping over a `str` yields (the lead recommends bytes, with `utf8.chars(s)` for code points).
+`zip` over slices of different lengths (the lead recommends a checked failure); what looping over a `str` yields (the lead recommends bytes, with `utf8.chars(s)` for code points); boxing an iterator to store different ones in one variable.
