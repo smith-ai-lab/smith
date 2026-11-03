@@ -541,3 +541,22 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     *ty = t;
     return true;
 }
+
+// `@c_name` or today's `[[std::c_name]]`.
+export Bool is_c_name(ast::Attribute attribute) {
+    ast::Path name = attribute.name;
+    Usize n = countof(name.segments);
+    if (n == 1) return same_text(name.segments[0].text, "c_name");
+    return n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name");
+}
+
+// The function's c_name, or "" when it has none (checked by `check_function`).
+export Str c_name_of(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        if (!is_c_name(attribute) || countof(attribute.args) == 0) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
+}

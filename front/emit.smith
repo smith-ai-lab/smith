@@ -341,10 +341,21 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 // `c::EOF`, `c::O_RDONLY`: a constant a header declared (an enumerator, a macro with a value, a `static const`),
 // emitted where it is used as its initializer, typed as the checker typed it (#1762). Null when `x` is no such name.
 static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
-    if (x->kind != .name || e->options.checked == nullptr) return nullptr;
-    ast::Path path = x->kind.name.path;
-    if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
-    Str full = state::msg(format::push("c::", path.segments[1].text));
+    if (e->options.checked == nullptr) return nullptr;
+    Str full = "";
+    if (x->kind == .member) { // `c.name` after `import c <h>` (#1961), unless a local `c` hides it
+        state::Local local = {};
+        if (state::find_local(e, "c", &local)) return nullptr;
+        Str name = types::c_member_name(x);
+        if (countof(name) == 0) return nullptr;
+        full = state::msg(format::push("c::", name));
+    } else if (x->kind == .name) {
+        ast::Path path = x->kind.name.path;
+        if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
+        full = state::msg(format::push("c::", path.segments[1].text));
+    } else {
+        return nullptr;
+    }
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
     state::free_text(full);
     if (symbol == nullptr || symbol->kind != .variable || symbol->decl == nullptr || !symbol->decl->from_c)
@@ -684,33 +695,14 @@ static Str symbol_of(const ast::Module *m, Str name) {
     return symbol;
 }
 
-// `@c_name` or today's `[[std::c_name]]`.
-static Bool is_c_name(ast::Attribute attribute) {
-    ast::Path name = attribute.name;
-    Usize n = countof(name.segments);
-    if (n == 1) return state::same_text(name.segments[0].text, "c_name");
-    return n == 2 && state::same_text(name.segments[0].text, "std") &&
-           state::same_text(name.segments[1].text, "c_name");
-}
-
 static Bool is_string(const ast::Expr *x) {
     return x->kind == .string;
-}
-
-// The function's c_name, or "" when it has none (checked by `check_function`).
-static Str c_name_of(const ast::Decl *d) {
-    for (Usize i = 0; i < countof(d->attributes); i++) {
-        if (!is_c_name(d->attributes[i])) continue;
-        const ast::Expr *argument = d->attributes[i].args[0];
-        if (argument->kind == .string) return argument->kind.string.bytes;
-    }
-    return "";
 }
 
 // The LLVM name: the c_name if there is one, `main` for a `main`, else the module path joined with `::`. A fresh
 // string the caller frees.
 static Str function_symbol(const ast::Module *m, const ast::Decl *d, Str name) {
-    Str own = c_name_of(d);
+    Str own = state::c_name_of(d);
     if (countof(own) > 0) return state::msg(format::push(own));
     if (state::same_text(name, "main")) return state::msg(format::push(name));
     return symbol_of(m, name);
@@ -723,12 +715,13 @@ static state::Status check_function(const ast::Decl *d) {
     Bool variadic = d->kind.function.variadic;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(d->attributes); i++) {
-        if (!is_c_name(d->attributes[i])) continue;
+        if (!state::is_c_name(d->attributes[i])) continue;
         ast::Attribute attribute = d->attributes[i];
         if (countof(attribute.args) != 1 || !is_string(attribute.args[0]))
             return state::fail("`@c_name` takes one string", attribute.span);
     }
-    if (variadic) return state::not_emitted("variadic function", d->span);
+    if (variadic && d->kind.function.body != nullptr)
+        return state::not_emitted("variadic function with a body", d->span);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_constexpr || params[i].is_rest)
             return state::not_emitted("constexpr or rest parameter", params[i].span);
@@ -802,7 +795,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
-    Bool external = d->exported || d->is_pub || countof(c_name_of(d)) > 0 || state::same_text(name, "main");
+    Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
     if (external)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else

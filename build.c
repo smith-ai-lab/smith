@@ -860,6 +860,8 @@ static const char *const build_front_modules[] = {
     "lsp_semantic",
     "lsp_definition",
     "lsp_symbols",
+    "format_space",
+    "format",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 

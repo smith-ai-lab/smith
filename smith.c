@@ -3512,12 +3512,24 @@ static bool smith_lint_expand_dirs(int *argc, char ***argv); // runtime/verbs.c
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 int32_t front_lsp_run(void); // front/lsp_server.smith, see runtime/front_flag.c
 
+#ifndef SMITH_CORE
+static int smith_fmt_front(int *count, char **args, bool *only); // runtime/front_flag.c
+#endif
+
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
     int before = -1;
 #ifndef SMITH_CORE // the units runner links smith.c without the front end
     if (strcmp(tool->command, "lsp") == 0 && argc >= 3 && strcmp(argv[2], "--smith") == 0)
         return front_lsp_run() == 0 ? 0 : 1; // the language server for .smith, on smith's own front end
+#endif
+#ifndef SMITH_CORE
+    int front_status = 0; // `smith fmt` of .smith files in the new syntax: smith's own formatter (#1890)
+    if (strcmp(tool->command, "fmt") == 0 && argc >= 3 && argc <= smith_defaults_args_max - 8) {
+        bool only = false;
+        front_status = smith_fmt_front(&argc, argv, &only);
+        if (only) return front_status;
+    }
 #endif
     if (argc > smith_defaults_args_max - 8 &&
         (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0 ||
@@ -3548,6 +3560,9 @@ static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const c
     int status = smith_tool_launch(tool, argc, argv, self);
     // after a lint that passed, so a failing or unrunnable clang-tidy prints only its own words
     if (status == 0 && !by_project && strcmp(tool->command, "lint") == 0) smith_lint_host_note(argc, argv);
+#ifndef SMITH_CORE
+    if (status == 0) status = front_status;
+#endif
     return status != 0 ? status : (before > 0 ? before : 0);
 }
 

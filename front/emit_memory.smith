@@ -399,7 +399,8 @@ static state::Status global_place_of(state::Emitter *e, Str name, ast::Span span
     if (made == .error) {
         return {.error = made.error};
     }
-    Str symbol = qualified(e->tree, name);
+    Str own = state::c_name_of(d);
+    Str symbol = countof(own) > 0 ? state::msg(format::push(own)) : qualified(e->tree, name);
     const char *label = symbol.data; // the text of `qualified` ends with a terminator
     c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
     state::free_text(symbol);
@@ -1436,7 +1437,8 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     state::Ty ty = made.ok;
     c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
     if (init != nullptr && !d->is_extern) try compound_constant(e, ty, init, &initial);
-    Str symbol = qualified(e->tree, name);
+    Str own = state::c_name_of(d); // `@c_name("enzyme_out")` on an extern marker: the symbol is the C name
+    Str symbol = countof(own) > 0 ? state::msg(format::push(own)) : qualified(e->tree, name);
     const char *label = symbol.data; // the text of `qualified` ends with a terminator
     state::Status result = state::success();
     if (c::LLVMGetNamedGlobal(e->module, label) != nullptr) {
