@@ -247,6 +247,49 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     return true;
 }
 
+// The call a method call `x.f(a)` stands for, `f(x, a)`, which the checker recorded (#1795); `x` itself for any other
+// call.
+static const ast::Expr *method_form(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return x;
+    const ast::Expr *made = types::method_of(e->options.checked, x);
+    return made != nullptr ? made : x;
+}
+
+// The function of the type's module a method call `x.f(a)` names, when `f` is not one of the current module: the
+// symbol `lib::list::f`, found as the checker found it. Returns false for a function of this module.
+static Bool method_callee(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *symbol) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .member) return false;
+    types::TypeRef t = types::type_of(e->options.checked, callee->kind.member.base);
+    if (t == nullptr) return false;
+    if (t->kind == .pointer) t = t->element;
+    if (t->kind != .record) return false;
+    Str type_name = t->name;
+    Usize cut = 0;
+    for (Usize i = countof(type_name); i >= 2; i--) {
+        if (type_name[i - 1] == ':' && type_name[i - 2] == ':') {
+            cut = i;
+            break;
+        }
+    }
+    if (cut == 0) return false;
+    Str full = state::msg(format::push(type_name[0:cut], callee->kind.member.name));
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) return false;
+    *found = target->decl;
+    *symbol = full;
+    return true;
+}
+
+// `imported_callee` for a call that may be a method call.
+static Bool call_target(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *symbol) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (method_form(e, x) != x) return method_callee(e, x, found, symbol);
+    return imported_callee(e, callee, found, symbol);
+}
+
 // The function a call names: one of the module's with a body, or a prototype of the module.
 static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const ast::Decl *imported) {
     if (imported != nullptr) return imported_function(e, key, imported);
@@ -469,7 +512,11 @@ static c::LLVMValueRef promoted(state::Emitter *e, state::Value value) {
 
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
-    const ast::Expr *x = w->expr;
+    const ast::Expr *written = w->expr;
+    if (written->kind != .call) {
+        return state::fail("not a call", w->span);
+    }
+    const ast::Expr *x = method_form(e, written);
     if (x->kind != .call) {
         return state::fail("not a call", w->span);
     }
@@ -477,7 +524,7 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *callee = x->kind.call.callee;
     const ast::Decl *imported = nullptr;
     Str key = "";
-    Bool is_imported = imported_callee(e, callee, &imported, &key);
+    Bool is_imported = call_target(e, written, &imported, &key);
     if (!is_imported && callee->kind != .name) {
         return state::fail("not a name", w->span);
     }
@@ -548,9 +595,13 @@ static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint h
 }
 
 // `Expr.call`.
-export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
+    if (written->kind != .call) {
+        return state::fail("not a call", written->span);
+    }
+    const ast::Expr *x = method_form(e, written);
     if (x->kind != .call) {
-        return state::fail("not a call", x->span);
+        return state::fail("not a call", written->span);
     }
     const ast::Expr *callee = x->kind.call.callee;
     ast::ExprRef args[:] = x->kind.call.args;
@@ -569,7 +620,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
             return lambdas::call_value(e, x, local.ty);
         if (streams::is_call(x)) return streams::call(e, x);
     }
-    is_imported = imported_callee(e, callee, &imported, &key);
+    is_imported = call_target(e, written, &imported, &key);
     if (!is_imported && callee->kind != .name) {
         return state::not_emitted("call of something that is not a name", x->span);
     }
@@ -595,7 +646,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         release(sig);
         return slotted;
     }
-    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
+    state::push_then(e, (state::Work){.then = call_finish, .expr = written, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
     for (Usize i = count; i > 0; i--) {
         Bool extra = i - 1 >= countof(sig.params); // a variadic argument has no parameter to give it a type

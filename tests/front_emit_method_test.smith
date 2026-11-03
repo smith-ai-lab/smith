@@ -1,0 +1,109 @@
+// Tests of method calls in the emitter (#1796 of #1793, #1428): `x.f(args)` is emitted as the call `f(x, args)` the
+// checker recorded, for a function of the current module (by value, by pointer) and on an array literal. A type of
+// another module cannot be emitted yet ("not emitted yet: qualified type", front/emit_memory.smith), so a function of
+// the type's module is covered by the checker's tests (front_types_method_test) until it can.
+module front_emit_method_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+static parser::Parsed parse_new(Str source) {
+    parser::Parsed result = {};
+    result.module.file = "t.smith";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .ok:
+        parse::Parser p = parse::make(lexed.ok, source);
+        p.new_syntax = true;
+        p.hooks.expression = parse_expr::expression;
+        p.hooks.type = parse_type::type;
+        p.hooks.statement = parse_stmt::statement;
+        p.hooks.declaration = parse_decl::declaration;
+        result.module = parse_decl::file(&p, "t.smith");
+        result.errors = p.errors;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    return result;
+}
+
+// A module of `source` named `name`, checked with `lib.list` loadable, emitted and added to `host`.
+static void add_module(emit_jit::Jit *host, Str name, Str source) {
+    parser::Parsed p = parse_new(source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module m = ast::new_module(name, p.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    test::check_equal(checked.error_count, (Usize)0);
+    emit::Options options = {};
+    options.target = host->target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    if (emitted == .error) {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    test::check_equal(emitted == .ok, true);
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    }
+}
+
+typedef I32 (*Run)();
+
+static I32 run(Str main_source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    add_module(&host, "front::test", main_source);
+    emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+    test::check_equal(found == .ok, true);
+    I32 result = -1;
+    if (found == .ok) result = ((Run)found.ok)();
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_method_a_function_of_this_module() {
+    Str source = "struct Box {\n    n: i32\n}\n\n"
+                 "fn total(b: Box) -> i32 {\n    b.n * 2\n}\n\n"
+                 "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
+                 "pub fn run() -> i32 {\n    mut b := Box(n = 1)\n    b.grow(3)\n    b.total()\n}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)8);
+}
+
+export void test_front_emit_method_on_an_array_literal() {
+    Str source = "fn sum(xs: [3]i32) -> i32 {\n    xs[0] + xs[1] + xs[2]\n}\n\n"
+                 "pub fn run() -> i32 {\n    [1, 2, 3].sum()\n}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)6);
+}
+
+export void test_front_emit_method_is_the_written_out_call() {
+    Str source = "struct Box {\n    n: i32\n}\n\n"
+                 "fn grow(b: *mut Box, by: i32) {\n    b.n += by\n}\n\n"
+                 "pub fn run() -> i32 {\n    mut a := Box(n = 1)\n    mut b := Box(n = 1)\n    grow(&a, 3)\n    "
+                 "b.grow(3)\n    a.n * 10 + b.n\n}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)44);
+}
