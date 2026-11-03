@@ -240,6 +240,39 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     remove_all(folder);
 }
 
+// A qualified type (#1935): `app` takes a `v.Vec` of the module `vecs` as a parameter and passes it to `v.dot`; the
+// record is declared in the importer's object under the module's path, and a C program passes a struct by value.
+export void test_front_e2e_a_qualified_type_names_the_record_of_an_imported_module() {
+    Str folder = folder_for("qualified");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/vecs.smith"));
+    write_text(library, "pub struct Vec:\n    pub x: f64\n    pub y: f64\n\n"
+                        "pub fn dot(a: Vec, b: Vec) -> f64:\n    a.x * b.x + a.y * b.y\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import vecs as v\n\npub fn norm(a: v.Vec) -> f64:\n    v.dot(a, a)\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/vecs.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        write_text(
+            as_str(format::push(folder, "/main.c")),
+            as_str(format::push("struct V { double x; double y; };\n", "double norm(struct V) __asm__(\"", prefix(),
+                                "app::norm\");\n", stand_ins("__builtin_trap();"),
+                                "int main(void) { struct V v = {3.0, 4.0}; return norm(v) == 25.0 ? 0 : 1; }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/vecs.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
 // Names from C headers (#1762): `import <h>;` declares what the header has as `c::name`, and the checker and the
 // emitter use them. The flags clang reads a header with are smith's own (the resource directory, the SDK), as `smith
 // cc` passes them in $SMITH_FRONT_CIMPORT_FLAGS.

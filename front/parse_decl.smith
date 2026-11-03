@@ -2428,11 +2428,18 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
         parse::expect(p, lex::left_paren, "`(` after the function's name");
     }
     ParamList params = {};
+    Bool keyword_only = false;
     while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         ast::Param param = {};
         if (!parse_new_param(p, &param)) break;
+        param.is_keyword = keyword_only;
         params = mem::realloc(params, countof(params) + 1);
         params[countof(params) - 1] = param;
+        // `;` ends the positional parameters: the ones after it are keyword-only.
+        if (parse::accept(p, lex::semicolon)) {
+            keyword_only = true;
+            continue;
+        }
         if (!parse::accept(p, lex::comma)) break;
     }
     if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");

@@ -252,6 +252,7 @@ export struct Param {
     Bool is_mut;         // `mut x: T`
     Bool is_new;         // written in smith's own syntax (`x: T`), not today's `T x`
     Bool is_const;       // `const n: usize`: known at compile time
+    Bool is_keyword;     // after the `;` of the parameter list: a call can only pass it by name
     Expr *default_value; // `port: u16 = 443`: what a call that leaves the argument out passes (null when none)
     Attribute attributes[:];
     Span span;
@@ -2103,6 +2104,7 @@ static void other_head(Output *text, Node node) {
         put_flag(text, node.param->is_mut, "mut");
         put_flag(text, node.param->is_new, "new");
         put_flag(text, node.param->is_const, "const");
+        put_flag(text, node.param->is_keyword, "keyword");
         break;
     case .field:
         put(text, "field ");
