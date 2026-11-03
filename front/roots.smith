@@ -11,9 +11,9 @@
 //
 // The roots are folders given by the caller: the project's source folder and smith's library folder by default
 // (`default_roots`), and the folder of the file being compiled when no other root holds it (`local`, #2041:
-// `main.smith` beside `primes.smith` is `main`, and `import primes` finds the second). Roots added in `build.smith` are
-// a later ticket. A file under no root has no name from its path: the caller falls back to its `module` line, or to the
-// file's own name. Paths are compared as written, after a leading
+// `import primes` finds `primes.smith` beside `main.smith`; the driver does not name the compiled file by it). Roots
+// added in `build.smith` are a later ticket. A file under no root has no name from its path: the caller falls back to
+// its `module` line, or to the file's own name. Paths are compared as written, after a leading
 // `./` is dropped; no file is read here.
 module front::roots;
 
