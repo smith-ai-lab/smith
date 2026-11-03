@@ -1876,7 +1876,13 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
 // the module that defines the type of `x` or of this module, and the call is the one written with `x` first.
 // Reports a method call whose function is missing or does not take the receiver first.
 static void method_missing(types::Checked *c, const ast::Expr *e, const types::Symbol *fn, types::TypeRef bt) {
+    if (!(e->kind == .call)) {
+        return;
+    }
     const ast::Expr *callee = e->kind.call.callee;
+    if (!(callee->kind == .member)) {
+        return;
+    }
     Str name = callee->kind.member.name;
     Str shown = types::show(bt);
     if (fn == nullptr) {
@@ -3403,6 +3409,9 @@ static void tuple_after(types::Checked *c, Frame f) {
 // Stage 0 of a node with children: decides what is pushed.
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) {
+        return;
+    }
     const ast::Expr *callee = e->kind.call.callee;
     if (is_vector_callee(c, callee)) {
         vector_before(c, w, f);
