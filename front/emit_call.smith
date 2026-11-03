@@ -185,9 +185,19 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
 
 // The prototype of a function of an imported module, declared when the first call needs it (#1714): an external
 // function named by `key`, the symbol the module's own object defines.
+// `geom::vec::` for the key `geom::vec::dot`: the text up to and including the last `::`.
+static Str module_prefix(Str key) {
+    for (Usize i = countof(key); i >= 2; i--) {
+        if (key[i - 1] == ':' && key[i - 2] == ':') return key[0:i];
+    }
+    return "";
+}
+
 static SignatureResult imported_function(state::Emitter *e, Str key, const ast::Decl *d) {
     if (d->from_c) return c_function(e, d);
+    e->import_scope = module_prefix(key);
     SignatureResult made = signature(e, d);
+    e->import_scope = "";
     if (made == .error) return made;
     Signature sig = made.ok;
     char *label = state::cstr(key);
