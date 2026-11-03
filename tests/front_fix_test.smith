@@ -372,7 +372,7 @@ export void test_a_slash_comment_becomes_a_hash_comment() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed own = parser::parse_new("t.smith", "fn f() -> i32 {\n    return 1 //one\n}\n");
+    parser::Parsed own = parser::parse_new("t.smith", "fn f() -> i32:\n    return 1 //one\n");
     check_count(countof(own.errors), 1);
     syntax::Edits edits = own.errors[0].fix;
     check_count(countof(edits), 1);

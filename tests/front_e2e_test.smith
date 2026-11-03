@@ -212,11 +212,11 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
     c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
     Str library = as_str(format::push(folder, "/lib/mathlib.smith"));
-    write_text(library, "pub fn scale(x: f64, k: f64) -> f64 {\n    x * k\n}\n");
+    write_text(library, "pub fn scale(x: f64, k: f64) -> f64:\n    x * k\n");
     Str app = as_str(format::push(folder, "/src/app.smith"));
     write_text(app, "import mathlib as m\nlet mul = m.scale\n\n"
-                    "pub fn check() -> i32 {\n    let a = m.scale(2.0, 3.0)\n    let b = mul(k = 3.0, x = 2.0)\n"
-                    "    if a != 6.0 {\n        return 1\n    }\n    if b != a {\n        return 2\n    }\n    0\n}\n");
+                    "pub fn check() -> i32:\n    let a = m.scale(2.0, 3.0)\n    let b = mul(k = 3.0, x = 2.0)\n"
+                    "    if a != 6.0:\n        return 1\n    if b != a:\n        return 2\n    0\n");
     roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
                             .library = as_str(format::push(folder, "/lib"))};
     compile::Report imported = compile::file(library, as_str(format::push(folder, "/mathlib.o")), "", folders);
@@ -278,7 +278,7 @@ static I32 run_with_header(Str name, Str body) {
     c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
     write_text(as_str(format::push(folder, "/src/kinds.h")), c_header());
     Str source = as_str(format::push("import \"kinds.h\";\nimport <stdio.h>;\nimport <stdlib.h>;\n\n",
-                                     "pub fn check() -> i32 {\n", body, "}\n"));
+                                     "pub fn check() -> i32:\n", body));
     compile::Report report = compile_module(folder, name, source);
     I32 status = -1;
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
@@ -295,20 +295,19 @@ static I32 run_with_header(Str name, Str body) {
 }
 
 export void test_front_e2e_c_function_and_constant_macro() {
-    Str body =
-        "    if c::abs(-5) != 5 {\n        return 1\n    }\n    if c::SCALE != 3 {\n        return 2\n    }\n    0\n";
+    Str body = "    if c::abs(-5) != 5:\n        return 1\n    if c::SCALE != 3:\n        return 2\n    0\n";
     test::check_equal(run_with_header("c_function", body), 0);
 }
 
 export void test_front_e2e_c_struct_typedef_and_constant() {
-    Str body = "    let mut p: c::point_t = c::point(x = 3, y = 4)\n    if c::sum(&p) != 7 {\n        return 1\n    }\n"
-               "    if c::answer != 42 {\n        return 2\n    }\n    0\n";
+    Str body = "    let mut p: c::point_t = c::point(x = 3, y = 4)\n    if c::sum(&p) != 7:\n        return 1\n"
+               "    if c::answer != 42:\n        return 2\n    0\n";
     test::check_equal(run_with_header("c_struct", body), 0);
 }
 
 export void test_front_e2e_c_enum() {
-    Str body = "    let k: c::color = c::blue\n    if k != c::blue {\n        return 1\n    }\n"
-               "    if c::green == c::blue {\n        return 2\n    }\n    0\n";
+    Str body = "    let k: c::color = c::blue\n    if k != c::blue:\n        return 1\n"
+               "    if c::green == c::blue:\n        return 2\n    0\n";
     test::check_equal(run_with_header("c_enum", body), 0);
 }
 
@@ -316,8 +315,8 @@ export void test_front_e2e_c_enum() {
 export void test_front_e2e_c_printf_prints() {
     use_header_flags();
     Str folder = folder_for("c_print");
-    Str source = "import <stdio.h>;\n\npub fn main() -> i32 {\n"
-                 "    let _ = c::printf(\"hello %d %s\\n\", 42, \"world\")\n    0\n}\n";
+    Str source = "import <stdio.h>;\n\npub fn main() -> i32:\n"
+                 "    let _ = c::printf(\"hello %d %s\\n\", 42, \"world\")\n    0\n";
     compile::Report report = compile_module(folder, "hello", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     if (report.ok) {
@@ -332,7 +331,7 @@ export void test_front_e2e_c_printf_prints() {
 export void test_front_e2e_a_c_name_no_header_declares_is_an_error() {
     use_header_flags();
     Str folder = folder_for("c_missing");
-    Str source = "import <stdio.h>;\n\npub fn check() -> i32 {\n    c::missing_function_name()\n    0\n}\n";
+    Str source = "import <stdio.h>;\n\npub fn check() -> i32:\n    c::missing_function_name()\n    0\n";
     compile::Report report = compile_module(folder, "missing", source);
     test::check_equal(report.ok, false);
     test::check_equal(has(report.text, "`c::missing_function_name` is not declared by any C header"), true);

@@ -87,95 +87,94 @@ static void fails(Str source, Str first, Str second) {
 // Built-in iterables
 
 export void test_front_types_iter_array_yields_its_elements() {
-    clean(
-        "fn run(xs: [3]i32) -> i32 {\n    let mut total = 0\n    for x in xs {\n        total = total + x\n    }\n    "
-        "total\n}\n");
+    clean("fn run(xs: [3]i32) -> i32:\n    let mut total = 0\n    for x in xs:\n        total = total + x\n    "
+          "total\n");
 }
 
 export void test_front_types_iter_slice_yields_its_elements() {
-    clean("fn run(xs: []i32) -> i32 {\n    let mut total = 0\n    for x in xs {\n        total = total + x\n    }\n    "
-          "total\n}\n");
+    clean("fn run(xs: []i32) -> i32:\n    let mut total = 0\n    for x in xs:\n        total = total + x\n    "
+          "total\n");
 }
 
 export void test_front_types_iter_element_has_the_element_type() {
-    fails("fn run(xs: []i32) {\n    for x in xs {\n        let s: str = x\n    }\n}\n", "found I32", "expected Str");
+    fails("fn run(xs: []i32):\n    for x in xs:\n        let s: str = x\n", "found I32", "expected Str");
 }
 
 export void test_front_types_iter_stream_yields_its_elements() {
-    clean("fn run(s: stream::Stream(i32)) -> i32 {\n    let mut total = 0\n    for x in s {\n        total = total + "
-          "x\n  "
-          "  }\n    "
-          "total\n}\n");
-    fails("fn run(s: stream::Stream(i32)) {\n    for x in s {\n        let t: str = x\n    }\n}\n", "found I32",
-          "expected Str");
+    clean("fn run(s: stream::Stream(i32)) -> i32:\n    let mut total = 0\n    for x in s:\n        total = total + "
+          "x\n    total\n");
+    fails("fn run(s: stream::Stream(i32)):\n    for x in s:\n        let t: str = x\n", "found I32", "expected Str");
 }
 
 export void test_front_types_iter_str_yields_bytes() {
-    clean("fn run(s: str) -> u8 {\n    let mut last: u8 = 0\n    for b in s {\n        last = b\n    }\n    last\n}\n");
-    fails("fn run(s: str) {\n    for b in s {\n        let c: str = b\n    }\n}\n", "found U8", "expected Str");
+    clean("fn run(s: str) -> u8:\n    let mut last: u8 = 0\n    for b in s:\n        last = b\n    last\n");
+    fails("fn run(s: str):\n    for b in s:\n        let c: str = b\n", "found U8", "expected Str");
 }
 
 export void test_front_types_iter_integer_is_not_iterable() {
-    fails("fn run(n: i32) {\n    for i in n {\n    }\n}\n", "`I32` is not iterable", "range(n)");
+    fails("fn run(n: i32):\n    for i in n:\n        return\n", "`I32` is not iterable", "range(n)");
 }
 
 export void test_front_types_iter_pointer_is_not_iterable() {
-    fails("fn run(p: *i32) {\n    for x in p {\n    }\n}\n", "is not iterable", "p[0:n]");
+    fails("fn run(p: *i32):\n    for x in p:\n        return\n", "is not iterable", "p[0:n]");
 }
 
 export void test_front_types_iter_loop_name_may_not_shadow() {
-    fails("fn run(xs: []i32) {\n    let x = 1\n    for x in xs {\n    }\n}\n", "`x` hides", "shadowing is an error");
+    fails("fn run(xs: []i32):\n    let x = 1\n    for x in xs:\n        return\n", "`x` hides",
+          "shadowing is an error");
 }
 
 export void test_front_types_iter_loop_name_ends_with_the_loop() {
-    fails("fn run(xs: []i32) -> i32 {\n    for x in xs {\n    }\n    x\n}\n", "x", "");
+    fails("fn run(xs: []i32) -> i32:\n    for x in xs:\n        return 0\n    x\n", "x", "");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Stream functions
 
 export void test_front_types_iter_range_yields_its_integers() {
-    clean("fn run(n: i32) -> i32 {\n    let mut total = 0\n    for i in range(n) {\n        total = total + i\n    }\n "
+    clean("fn run(n: i32) -> i32:\n    let mut total = 0\n    for i in range(n):\n        total = total + i\n "
           "   "
-          "total\n}\n");
-    clean("fn run() {\n    for i in range(2, 10) {\n    }\n}\n");
-    clean("fn run(limit: u32) -> u32 {\n    let mut total: u32 = 0\n    for i in range(0, limit) {\n        total = "
+          "total\n");
+    clean("fn run():\n    for i in range(2, 10):\n        return\n");
+    clean("fn run(limit: u32) -> u32:\n    let mut total: u32 = 0\n    for i in range(0, limit):\n        total = "
           "total "
-          "+ i\n    }\n    "
-          "total\n}\n");
-    clean("fn run(a: usize) -> usize {\n    let mut total: usize = 0\n    for i in range(a, 10) {\n        total = "
+          "+ i\n    "
+          "total\n");
+    clean("fn run(a: usize) -> usize:\n    let mut total: usize = 0\n    for i in range(a, 10):\n        total = "
           "total + "
-          "i\n    }\n    "
-          "total\n}\n");
-    fails("fn run(x: i32, y: u32) {\n    for i in range(x, y) {\n    }\n}\n", "U32", "I32");
+          "i\n    "
+          "total\n");
+    fails("fn run(x: i32, y: u32):\n    for i in range(x, y):\n        return\n", "U32", "I32");
 }
 
 export void test_front_types_iter_range_of_a_string_is_refused() {
-    fails("fn run(s: str) {\n    for i in range(s) {\n    }\n}\n", "`range` counts integers", "`Str`");
+    fails("fn run(s: str):\n    for i in range(s):\n        return\n", "`range` counts integers", "`Str`");
 }
 
 export void test_front_types_iter_refs_yields_pointers() {
-    clean("fn run(xs: []i32) {\n    for p in refs(xs) {\n        let q: *i32 = p\n    }\n}\n");
+    clean("fn run(xs: []i32):\n    for p in refs(xs):\n        let q: *i32 = p\n");
 }
 
 export void test_front_types_iter_zip_needs_two_iterables() {
-    fails("fn run(xs: []i32) {\n    for p in zip(xs) {\n    }\n}\n", "`zip` takes at least two", "directly");
+    fails("fn run(xs: []i32):\n    for p in zip(xs):\n        return\n", "`zip` takes at least two", "directly");
 }
 
 export void test_front_types_iter_zip_of_an_integer_is_refused() {
-    fails("fn run(xs: []i32, n: i32) {\n    for p in zip(xs, n) {\n    }\n}\n", "`I32` is not iterable", "range(n)");
+    fails("fn run(xs: []i32, n: i32):\n    for p in zip(xs, n):\n        return\n", "`I32` is not iterable",
+          "range(n)");
 }
 
 export void test_front_types_iter_zip_yields_tuples_so_one_name_is_refused() {
-    fails("fn run(xs: []i32, ys: []i32) {\n    for p in zip(xs, ys) {\n    }\n}\n", "`zip` yields tuples",
+    fails("fn run(xs: []i32, ys: []i32):\n    for p in zip(xs, ys):\n        return\n", "`zip` yields tuples",
           "for (i, x) in zip");
 }
 
 export void test_front_types_iter_enumerate_one_name_is_refused() {
-    fails("fn run(xs: []i32) {\n    for p in enumerate(xs) {\n    }\n}\n", "`enumerate` yields tuples", "for (i, x)");
+    fails("fn run(xs: []i32):\n    for p in enumerate(xs):\n        return\n", "`enumerate` yields tuples",
+          "for (i, x)");
 }
 
 export void test_front_types_iter_tuple_pattern_is_not_yet_typed() {
-    fails("fn run(xs: []i32) {\n    for (i, x) in enumerate(xs) {\n    }\n}\n", "not yet typed: a tuple pattern",
+    fails("fn run(xs: []i32):\n    for (i, x) in enumerate(xs):\n        return\n", "not yet typed: a tuple pattern",
           "#1557");
 }

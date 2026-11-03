@@ -249,6 +249,8 @@ static void end_line(parse::Parser *p, Str what) {
         return;
     }
     if (p->layout && at_line_end(p)) return;
+    // A value that ends in an indented block (`let r = do:` and its lines) ends with its `dedent`.
+    if (p->layout && p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent) return;
     char message[:] =
         format::push("a ", what, " is one line: expected a line break after it, found `", parse::text(p, token), "`");
     parse::error(p, token.span, message);

@@ -97,7 +97,7 @@ static Bool has_fill(Bool fill) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     parser::Parsed p =
-        parser::parse_new("t.smith", "pub fn f() -> i32 {\n    let mut t: i32 = undefined\n    t = 1\n    t\n}\n");
+        parser::parse_new("t.smith", "pub fn f() -> i32:\n    let mut t: i32 = undefined\n    t = 1\n    t\n");
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked checked = types_decl::check_module(&p.module, types::lp64());
     test::check_equal(checked.error_count, (Usize)0);
@@ -139,7 +139,7 @@ export void test_front_undefined_a_debug_build_reads_0xaa() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     parser::Parsed p = parser::parse_new(
-        "t.smith", "pub fn peek() -> i32 {\n    let mut b: i32 = undefined\n    let p = &b\n    p.*\n}\n");
+        "t.smith", "pub fn peek() -> i32:\n    let mut b: i32 = undefined\n    let p = &b\n    p.*\n");
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked checked = types_decl::check_module(&p.module, types::lp64());
     test::check_equal(checked.error_count, (Usize)0);
