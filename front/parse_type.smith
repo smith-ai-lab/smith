@@ -200,8 +200,20 @@ export Bool starts_new_type(const parse::Parser *p, Usize offset) {
            after == lex::name || is_keyword_type(after);
 }
 
+static ast::Path read_path(parse::Parser *p, Bool in_type);
+
 // Reads a path: `x`, `ascii::digit`, `c::printf`. The caller has checked that one starts here.
 export ast::Path path(parse::Parser *p) {
+    return read_path(p, false);
+}
+
+// Reads the path of a type. After a lowercase name a `.` may also be followed by a lowercase name, since a type has no
+// member access: `stdio.size_t`, `stdlib.div_t` (a C type under a header binding, #1678).
+static ast::Path type_path(parse::Parser *p) {
+    return read_path(p, true);
+}
+
+static ast::Path read_path(parse::Parser *p, Bool in_type) {
     ast::Identifier segments[:] = {};
     ast::Path result = {.segments = segments};
     lex::Token first = parse::peek(p);
@@ -211,6 +223,10 @@ export ast::Path path(parse::Parser *p) {
         ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
         result.segments[countof(result.segments) - 1] = segment;
         Bool more = at_separator(p, 0, token.kind) && is_segment(parse::peek_at(p, 1).kind);
+        if (in_type && p->new_syntax && token.kind == lex::name && parse::peek_at(p, 0).kind == lex::dot &&
+            parse::peek_at(p, 1).kind == lex::name && parse::peek_at(p, 2).kind != lex::left_paren) {
+            more = true;
+        }
         if (!more) break;
         lex::Token separator = parse::advance(p);
         if (separator.kind == lex::colon_colon) parse::warn_separator(p, separator);
@@ -394,7 +410,7 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         return spelled(p, token.span.start, q);
     }
     if (is_segment(token.kind)) {
-        ast::Path named = path(p);
+        ast::Path named = type_path(p);
         return node(start, p, q, {.named = {.path = named}});
     }
     if (token.kind == lex::end_of_file) {
