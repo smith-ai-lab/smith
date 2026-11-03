@@ -1,0 +1,82 @@
+// `smith fmt` on .smith files in the new syntax (#1890, part of #1886): they go to smith's own formatter
+// (front::format), not to clang-format. A file in today's syntax stays clang-format's until the switch-over (#1631).
+// smith-covers: smith.c runtime/front_flag.c front/format.smith front/format_space.smith
+module fmt_smith_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static const char *const untidy = "fn total(xs: []i32) -> i32:\n    let mut sum=0\n    for x in xs:\n"
+                                  "        sum   += x\n    sum\n";
+static const char *const tidy = "fn total(xs: []i32) -> i32:\n    let mut sum = 0\n    for x in xs:\n"
+                                "        sum += x\n    sum\n";
+
+export void test_fmt_rewrites_a_new_syntax_file_with_the_front_end_formatter() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", untidy);
+    scratch::Run run = scratch::sh(&p, "smith fmt -i a.smith");
+    test::check_equal(run.status, 0);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), tidy), true);
+}
+
+export void test_fmt_a_second_run_changes_nothing() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", untidy);
+    scratch::Run first = scratch::sh(&p, "smith fmt -i a.smith && cp a.smith b.smith && smith fmt -i a.smith");
+    test::check_equal(first.status, 0);
+    test::check_equal(scratch::sh(&p, "cmp a.smith b.smith").status, 0);
+    test::check_equal(scratch::sh(&p, "smith fmt --dry-run --Werror a.smith").status, 0);
+}
+
+export void test_fmt_dry_run_names_the_file_that_would_change_and_writes_nothing() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", untidy);
+    scratch::Run run = scratch::sh(&p, "smith fmt --dry-run --Werror a.smith 2>&1");
+    test::check_equal(run.status != 0, true);
+    test::check_equal(scratch::contains(run.out, "a.smith: would be formatted"), true);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), untidy), true);
+}
+
+export void test_fmt_a_file_in_clang_format_ignore_is_left_alone() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", untidy);
+    scratch::write(&p, ".clang-format-ignore", "# fixtures\na.smith\n");
+    test::check_equal(scratch::sh(&p, "smith fmt -i a.smith").status, 0);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), untidy), true);
+}
+
+export void test_fmt_a_c_file_beside_a_new_syntax_file_is_still_clang_formats() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", untidy);
+    scratch::write(&p, "b.c", "int   main( void ){return 0;}\n");
+    test::check_equal(scratch::sh(&p, "smith fmt -i a.smith b.c").status, 0);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), tidy), true);
+    test::check_equal(scratch::contains(scratch::read(&p, "b.c"), "int main(void)"), true);
+}
