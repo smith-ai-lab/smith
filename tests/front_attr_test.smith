@@ -43,42 +43,19 @@ static Str join(Str a, Str b) {
     return out;
 }
 
-// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 // The first parse error of `source`, or "no error".
 static Str parse_error_of(Str source) {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     if (countof(p.errors) == 0) return "no error";
     return join(p.errors[0].message, "");
 }
 
 static types::Checked check_text(Str source) {
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     if (countof(p.errors) > 0) {
         Str shown = p.errors[0].message;
         Str none = "no error";
@@ -129,7 +106,7 @@ static void attached(Str source, Usize expected) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     const ast::Decl *d = p.module.decls[countof(p.module.decls) - 1];
     Usize found = countof(d->attributes);
