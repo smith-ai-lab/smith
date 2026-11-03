@@ -642,7 +642,9 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     if (countof(parsed.errors) > 0) {
         return failed(as_str(format::push(warned, lines_of(path, source, parsed.errors, "error"))), times);
     }
-    Str problem = name_module(&parsed.module, path, folders);
+    roots::Roots named_by = folders;
+    named_by.local = ""; // the file being compiled keeps its plain symbol names; `local` only finds its imports (#2041)
+    Str problem = name_module(&parsed.module, path, named_by);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
     Str wanted = triple;
@@ -1020,7 +1022,9 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     times.parse = clock::monotonic() - mark;
     if (countof(parsed.errors) > 0)
         return failed(as_str(format::push(lines_of(path, source, parsed.errors, "error"))), times);
-    Str problem = name_module(&parsed.module, path, folders);
+    roots::Roots named_by = folders;
+    named_by.local = ""; // the file being compiled keeps its plain symbol names; `local` only finds its imports (#2041)
+    Str problem = name_module(&parsed.module, path, named_by);
     if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
     Str wanted = triple;
     if (countof(wanted) == 0) {
