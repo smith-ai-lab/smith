@@ -1394,8 +1394,36 @@ static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMVa
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
+// An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
+static state::Status array_constant(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .string && ty.element->kind == .integer && ty.element->bits == 8) {
+        Str bytes = x->kind.string.bytes;
+        if (countof(bytes) + 1 > ty.count) return state::failf(x->span, "the string does not fit ", ty.name);
+        if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+        c::LLVMValueRef values[256]; // the bytes, then zeros up to the length
+        for (Usize i = 0; i < ty.count; i++)
+            values[i] = c::LLVMConstInt(ty.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+        return state::success();
+    }
+    if (x->kind != .array_lit)
+        return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
+    ast::ExprRef items[:] = x->kind.array_lit.items;
+    if (countof(items) > ty.count)
+        return state::failf(x->span, "the array has ", ty.count, " elements, the literal ", countof(items));
+    if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+    c::LLVMValueRef values[256];
+    for (Usize i = 0; i < ty.count; i++) {
+        values[i] = c::LLVMConstNull(ty.element->llvm);
+        if (i < countof(items)) try scalar_constant(*ty.element, items[i], &values[i]);
+    }
+    *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+    return state::success();
+}
+
 // A record's constant from a compound of scalar constants; fields left out are zero.
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind == .array) return array_constant(ty, x, out);
     if (x->kind != .compound) {
         return scalar_constant(ty, x, out);
     }
