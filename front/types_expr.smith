@@ -3522,7 +3522,10 @@ static Bool leaf(types::Checked *c, Frame f) {
         // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
         Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
                           f.expected->element->kind == .integer && f.expected->element->bits == 8;
-        finish(c, e, as_pointer ? f.expected : c->table.text, f.expected);
+        // A literal given to `[N]char`: the bytes and the zero byte fill the array, so N is the length plus one.
+        Bool as_array = f.expected != nullptr && f.expected->kind == .array && f.expected->element->kind == .integer &&
+                        f.expected->element->bits == 8 && f.expected->count == countof(e->kind.string.bytes) + 1;
+        finish(c, e, (as_pointer || as_array) ? f.expected : c->table.text, f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {

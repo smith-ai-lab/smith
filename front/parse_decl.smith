@@ -2261,6 +2261,22 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str opener, B
     return false;
 }
 
+// `let xs: [_]i32 = [1, 2, 3]` and `const s: [_]char = "abc"`: a `[_]` length is the initializer's element count, a
+// string literal's bytes and its terminator, as in C. The length is written into the type, so the checker, the
+// emitter and the headers all see an ordinary `[3]`. Any other initializer is left alone for them to report.
+static void infer_array_length(ast::TypeExpr *type, const ast::Expr *init) {
+    if (type == nullptr || init == nullptr || type->kind != .array) return;
+    const ast::Expr *count = type->kind.array.count;
+    if (count == nullptr || count->kind != .name || countof(count->kind.name.path.segments) != 1) return;
+    Str word = count->kind.name.path.segments[0].text;
+    if (countof(word) != 1 || word[0] != '_') return;
+    if (init->kind == .array_lit) {
+        type->kind.array.count = ast::integer(countof(init->kind.array_lit.items));
+    } else if (init->kind == .string) {
+        type->kind.array.count = ast::integer(countof(init->kind.string.bytes) + 1);
+    }
+}
+
 // `let a = v`, `let a: T = v`, `let mut a: usize = 0`, `const X = v`; the position is at the first of them.
 static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
     Bool is_let = let_at(p, 0);
@@ -2290,6 +2306,7 @@ static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start
         return nullptr;
     }
     end_line(p, "declaration");
+    infer_array_length(type, init);
     ast::DeclKind kind = {.variable = {.name = parse::text(p, name),
                                        .type = type,
                                        .init = init,
