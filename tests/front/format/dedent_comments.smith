@@ -1,0 +1,9 @@
+fn f() -> i32:
+    if x:
+        y()
+    ## a doc comment
+
+    # before the dedent
+fn g() -> i32:
+    return 0
+# last

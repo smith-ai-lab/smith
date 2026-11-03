@@ -44,6 +44,7 @@ import std::clock;
 import std::files;
 import std::format;
 import std::mem;
+import <llvm-c/BitWriter.h>;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
@@ -507,6 +508,24 @@ export Symbols symbols(Str path, Str source) {
     return list;
 }
 
+static Bool ends_with_bc(Str name) {
+    return countof(name) > 3 && roots::same(name[countof(name) - 3:countof(name)], ".bc");
+}
+
+// The module as bitcode in `output`, for an output named `*.bc`: `smith prove` (#1974) reads bitcode, not an object.
+static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warned, Times times) {
+    char *bitcode_path = state::cstr(output);
+    defer mem::free(bitcode_path);
+    Times timed = times;
+    U64 mark = clock::monotonic();
+    I32 failed_write = c::LLVMWriteBitcodeToFile(ir, bitcode_path);
+    timed.write = clock::monotonic() - mark;
+    if (failed_write != 0) {
+        return failed(as_str(format::push(warned, path, ": error: cannot write the bitcode\n")), timed);
+    }
+    return (Report){.ok = true, .text = warned, .times = timed};
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
@@ -567,6 +586,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     c::LLVMModuleRef ir = emitted.ok;
     defer c::LLVMDisposeModule(ir);
 
+    if (ends_with_bc(output)) return write_bitcode(ir, path, output, warned, times);
     emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);

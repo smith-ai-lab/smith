@@ -1011,9 +1011,10 @@ static Usize find_at_depth_0(const parse::Parser *p, Usize from, Usize stop, lex
     return stop;
 }
 
-// The source text of the tokens at the offsets `first` to `last`.
+// The source text of the tokens at the offsets `first` to `last`, with the fixes of the forms inside it applied (a cast
+// `(T)x` in the header is written `x.to(T)` there, #1958): the header is read again once its expressions are parsed.
 static Str tokens_text(const parse::Parser *p, Usize first, Usize last) {
-    return p->source[parse::peek_at(p, first).span.start:parse::peek_at(p, last).span.end];
+    return parse::mended(p, parse::peek_at(p, first).span.start, parse::peek_at(p, last).span.end);
 }
 
 // The header of the `for` in smith's own form, or an empty text when it has none. The `(` is at offset 0.
@@ -1125,6 +1126,16 @@ static void for_fix(parse::Parser *p, Frame *frame, U32 cut_start, RangeText ran
     }
 }
 
+// The header's text again, from the `(` at token `open`, once the header is parsed: the first reading ran before the
+// expressions inside it recorded their fixes.
+static RangeText reread_range(parse::Parser *p, Usize open) {
+    Usize after = p->position;
+    p->position = open;
+    RangeText again = range_text(p);
+    p->position = after;
+    return again;
+}
+
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
 static Frame open_for(parse::Parser *p) {
     if (new_for(p)) return open_for_in(p);
@@ -1172,6 +1183,7 @@ static Frame open_for(parse::Parser *p) {
         parse::expect(p, lex::right_paren, "`)`");
     }
     if (countof(p->errors) > before) skip_group(p, open);
+    if (countof(p->errors) == before && range.ok) range = reread_range(p, open);
     if (countof(p->errors) == before) for_fix(p, &frame, cut_start, range);
     return frame;
 }

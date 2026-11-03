@@ -313,6 +313,14 @@ static const types::Symbol *root_symbol(const types::Checked *c, const ast::Expr
     return nullptr;
 }
 
+// A type written inside an expression: `bool` and `char` are types in a body that has smith's own syntax (#1960).
+static types::TypeRef resolve_written(types::Checked *c, const ast::TypeExpr *t) {
+    c->new_syntax = c->new_body;
+    types::TypeRef found = types::resolve(c, t);
+    c->new_syntax = false;
+    return found;
+}
+
 // Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
 static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     const types::Symbol *s = root_symbol(c, e);
@@ -2500,7 +2508,7 @@ static void cast_before(types::Checked *c, Work *w, Frame f) {
     if (!(e->kind == .cast)) {
         return;
     }
-    types::TypeRef to = types::resolve(c, e->kind.cast.type);
+    types::TypeRef to = resolve_written(c, e->kind.cast.type);
     const ast::Expr *operand = e->kind.cast.operand;
     types::set_type(c, e, to);
     push(w, e, f.expected, 1);
@@ -2546,7 +2554,7 @@ static void query_before(types::Checked *c, Work *w, Frame f) {
     }
     types::TypeRef size = types::builtin(&c->table, "Usize");
     if (e->kind.query.type != nullptr) {
-        types::TypeRef t = types::resolve(c, e->kind.query.type);
+        types::TypeRef t = resolve_written(c, e->kind.query.type);
         Bool counting = e->kind.query.op == .count_of;
         if (counting) {
             count_check(c, e, t);
@@ -2722,7 +2730,7 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     }
     types::TypeRef t = f.expected;
     if (e->kind.compound.type != nullptr) {
-        t = types::resolve(c, e->kind.compound.type);
+        t = resolve_written(c, e->kind.compound.type);
     } else if (t == nullptr) {
         types::failf(c, e->span,
                      "a `{...}` list needs a type; write `(T){...}` or give the variable a type before `=`");
@@ -2845,7 +2853,7 @@ static types::TypeRef lambda_param(types::Checked *c, const ast::Param *p, types
         }
         return given;
     }
-    types::TypeRef written = types::resolve(c, p->type);
+    types::TypeRef written = resolve_written(c, p->type);
     if (given != nullptr && written != given && written != invalid(c)) {
         types::failf(c, p->span, "the lambda parameter `", p->name, "` is `", types::show(written), "` but `",
                      types::show(given), "` is expected; write `", types::show(given), "` or leave the type out");
@@ -2859,7 +2867,7 @@ static types::TypeRef lambda_result(types::Checked *c, const ast::Expr *e, types
         return nullptr;
     }
     if (e->kind.lambda.result != nullptr) {
-        return types::resolve(c, e->kind.lambda.result);
+        return resolve_written(c, e->kind.lambda.result);
     }
     if (signature != nullptr) {
         return signature->element;
