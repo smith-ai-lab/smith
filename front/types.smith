@@ -1848,7 +1848,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     for (Usize i = 0; i < n; i++) {
         const ast::Param *p = &list[i];
         params[i].name = p->name;
-        if (is_type_name(p->type)) {
+        if (p->is_pack || p->is_gather) {
+            failf(r, p->span, p->is_pack ? "not yet: positional packs" : "not yet: gathered keywords");
+            params[i].type = r->table.invalid;
+        } else if (is_type_name(p->type)) {
             if (!p->is_constexpr && !p->is_new) {
                 failf(r, p->span, "parameter `", p->name,
                       "` has type `Type`, so it is compile-time: write `constexpr Type ", p->name, "`");
