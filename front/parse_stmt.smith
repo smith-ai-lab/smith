@@ -434,6 +434,8 @@ static void end_statement(parse::Parser *p) {
         return;
     }
     if (last_token_ends_line(p) || parse::at(p, lex::right_brace)) return;
+    // A trailing block (`f(x):` and its lines) ends with its `dedent`, and that ends the statement too.
+    if (p->layout && p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent) return;
     if (p->layout && (parse::at(p, lex::newline) || parse::at(p, lex::dedent) || parse::at(p, lex::end_of_file) ||
                       parse::at(p, lex::kw_else)))
         return;
