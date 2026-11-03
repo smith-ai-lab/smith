@@ -850,7 +850,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
 }
 
 static types::Checked check_once(const ast::Module *m, types::Target target, types::ModuleLoader load,
-                                types::HeaderLoader headers) {
+                                 types::HeaderLoader headers) {
     state = (State){};
     types_fn::reset();
     types::Options chosen = options(target);
