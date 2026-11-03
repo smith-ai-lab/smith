@@ -567,10 +567,22 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
         parse::warning_fix(p, whole, "an array value `{1, 2}` is written `[1, 2]`", edits);
         return;
     }
+    if (!fix->complex && fix->designated > 0 && fix->positional == 0) {
+        parse::NamedList named = {.plain = true, .open = open.span, .close = close.span, .edits = fix->edits};
+        p->named_list = named;
+    }
     parse::warning_fix(
         p, whole,
         "a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array",
         no_edits());
+}
+
+// Whether the `{` at the position opens a list whose first item is `.name =`: in smith's own syntax a block never
+// starts that way, so it is today's initializer list (`P p = {.x = 1};`), which has a fix (#1767).
+static Bool designated_list_ahead(const parse::Parser *p) {
+    lex::TokenKind name = parse::peek_at(p, 2).kind;
+    return parse::peek_at(p, 1).kind == lex::dot && (name == lex::name || name == lex::type_name) &&
+           parse::peek_at(p, 3).kind == lex::equal;
 }
 
 // `{ items }`: the position is at the brace. `type` is null for a list alone; `rparen` is where the `)` of a typed
@@ -638,6 +650,15 @@ static void lambda_warning(parse::Parser *p, U32 start, U32 bracket_end, const a
     U32 end = has_parens ? p->tokens[p->position - 1].span.end : bracket_end;
     parse::warning_fix(p, from_to(start, end), "a lambda is `fn(a: T) -> R { ... }` in Smith, with no capture list",
                        edits);
+}
+
+// Whether the position is at the head of a lambda in today's form: `[`, names and commas, `]`, then `(`. In smith's own
+// syntax a `[` otherwise starts an array literal, and an array literal is never called (#1786).
+static Bool at_old_lambda(const parse::Parser *p) {
+    Usize at = 1;
+    while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
+        at += 1;
+    return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
 }
 
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
@@ -880,10 +901,10 @@ static ast::Expr *primary(parse::Parser *p) {
     case lex::dot:
         return variant_value(p);
     case lex::left_brace:
-        if (p->new_syntax) return statement_value(p);
+        if (p->new_syntax && !designated_list_ahead(p)) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
-        if (p->new_syntax) return array_literal(p);
+        if (p->new_syntax && !at_old_lambda(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);
@@ -1517,6 +1538,21 @@ static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
     return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand}});
 }
 
+// Whether the position lies inside an unclosed `(` or `[` of the statement, so a line break there ends nothing: the
+// tokens before it are read back to the nearest unmatched opener (a `{` or `;` first means no, a `(` or `[` yes).
+static Bool inside_brackets(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = p->position; i > 0; i--) {
+        lex::TokenKind kind = p->tokens[i - 1].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) depth += 1;
+        if (depth == 0 && (kind == lex::semicolon || kind == lex::left_brace)) return false;
+        if (kind != lex::left_paren && kind != lex::left_bracket && kind != lex::left_brace) continue;
+        if (depth == 0) return true;
+        depth -= 1;
+    }
+    return false;
+}
+
 // A postfix operator applied to the last operand, if one is at the position.
 static Outcome postfix_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
@@ -1532,9 +1568,10 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     case lex::dot:
     case lex::arrow:
         // A `.` that starts a line is not a continuation where the line before it ends a statement (`.b => x` after
-        // `.a => f(1)` in a match, the Go rule of lex::ends_statement).
+        // `.a => f(1)` in a match, the Go rule of lex::ends_statement). Inside parentheses or brackets a line break
+        // ends nothing, so `f(g(x)\n.name)` continues (#1773).
         if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
-            lex::ends_statement(p->tokens[p->position - 1]))
+            lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
             return .absent;
         result = member(p, base);
         break;

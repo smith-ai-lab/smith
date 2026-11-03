@@ -1107,6 +1107,23 @@ static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     warn(p, head.type_start, end, message, edits);
 }
 
+// Whether the initializer is an untyped list of `.field = value` items that ends at the `;`, for a variable of a
+// named type: then `P p = {.x = 1};` is `p := P(x = 1)`.
+static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
+    if (type->kind != .named || equal_end == 0 || !p->named_list.plain) return false;
+    const parse::NamedList *list = &p->named_list;
+    return list->open.start >= equal_end && list->close.end <= semicolon &&
+           same_text(trimmed(source_between(p, equal_end, list->open.start)), "") &&
+           same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
+}
+
+// The edits that turn the braces of that list into the call `Type(...)`; the dots' edits come with it.
+static parse::Edits named_list_edits(const parse::Parser *p, Str type) {
+    parse::Edits edits = p->named_list.edits;
+    edits = with_edit(edits, edit(p->named_list.open.start, p->named_list.open.end, as_str(format::push(type, "("))));
+    return with_edit(edits, edit(p->named_list.close.start, p->named_list.close.end, ")"));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T`, `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v`
 // and `constexpr Type N = T;` is `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
 // the like are a warning with no edits.
@@ -1119,7 +1136,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
-    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern;
+    Bool fixable = last.kind == lex::semicolon && !suffixed && !pre->is_extern && !p->for_init;
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
@@ -1132,6 +1149,11 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str lead = pre->is_constexpr && !type_value ? "const " : "";
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
+    parse::Edits list_edits = {};
+    if (named_list_init(p, type, equal_end, last.span.start)) {
+        text = as_str(format::push(lead, name, " :="));
+        list_edits = named_list_edits(p, written);
+    }
     if (type_value || automatic) text = as_str(format::push(lead, name, " :="));
     if (!has_init) {
         text = as_str(format::push("mut ", name, ": ", written));
@@ -1140,6 +1162,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, to, text));
     edits = with_edit(edits, edit(last.span.start, last.span.end, ""));
+    for (Usize i = 0; i < countof(list_edits); i += 1)
+        edits = with_edit(edits, list_edits[i]);
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a variable is written `", text, " ...`: the name comes first and the `;` goes");

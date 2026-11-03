@@ -849,11 +849,13 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
 }
 
-static types::Checked check_once(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+static types::Checked check_once(const ast::Module *m, types::Target target, types::ModuleLoader load,
+                                types::HeaderLoader headers) {
     state = (State){};
     types_fn::reset();
     types::Options chosen = options(target);
     chosen.load = load;
+    chosen.headers = headers;
     types::Checked r = types::check(m, chosen);
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
@@ -922,14 +924,15 @@ static Bool has_error(const types::Checked *r, const types::Error *e) {
     return false;
 }
 
-// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
-// public declaration `name` of `a.b`. A module with `@when` is checked once for each system smith builds on, and an
-// error found on one system only says which.
-export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
-    if (!when::uses_when(m)) return check_once(m, target, load);
-    types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load);
+// `check_module_with` that also reads the C headers the file imports (`import <stdio.h>;`, #1762): `headers` gives the
+// declarations of one, and `c::printf`, `c::FILE` are then names of the module. A module with `@when` is checked once
+// for each system smith builds on, and an error found on one system only says which.
+export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
+                                           types::HeaderLoader headers) {
+    if (!when::uses_when(m)) return check_once(m, target, load, headers);
+    types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load, headers);
     explain_dead(&mac, m, when::os_macos);
-    types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load);
+    types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load, headers);
     explain_dead(&lin, m, when::os_linux);
     Bool only_lin[:] = mem::alloc_slice(Bool, lin.error_count);
     for (Usize i = 0; i < lin.error_count; i++)
@@ -947,6 +950,12 @@ export types::Checked check_module_with(const ast::Module *m, types::Target targ
     }
     types_attr::check_when(&mac, m);
     return mac;
+}
+
+// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+// public declaration `name` of `a.b`.
+export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+    return check_module_headers(m, target, load, nullptr);
 }
 
 // Checks a whole module for `target`.
