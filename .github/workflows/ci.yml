@@ -518,13 +518,15 @@ jobs:
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
           tmp=$(mktemp -d)
-          # release/publish.smith, compiled by the smith installed now (the previous release's)
-          L=lib/std
-          smith cc -w -I include -I .smith/include release/publish.smith $L/files.smith $L/console.smith \
-            $L/format.smith $L/mem.smith $L/arena.smith $L/contract.smith $L/env.smith $L/text.smith \
-            $L/process.smith $L/clock.smith lib/handlers.c lib/trace.c -o "$tmp.release"
-          "$tmp.release" fetch "stage0-$GITHUB_SHA" "$tmp"
-          rm -f "$tmp.release"
+          # plain curl and tar, no smith: this step must work with whatever smith is installed, even a stale one
+          # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
+          name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
+          base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
+          curl -fsSL --retry 3 -o "$tmp/$name" "$base/$name"
+          curl -fsSL --retry 3 -o "$tmp/$name.sha256" "$base/$name.sha256"
+          [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
+            || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
+          tar -C "$tmp" -xJf "$tmp/$name"
           mkdir -p "$HOME/.local/bin"
           for f in "$tmp"/bin/*; do
             # copy beside, then rename over: a smith running now keeps its old file
