@@ -250,3 +250,25 @@ export void test_from_shadowing_a_declared_name_is_an_error() {
 export void test_two_imports_binding_one_name_are_an_error() {
     fails("import lib.math\nimport lib.re as math\n", "`math` is declared twice", "");
 }
+
+// Defaults (#1847): a field's and a parameter's, constant, in order, and what a construction or a call may leave out.
+export void test_front_types_module_defaults_fill_what_a_construction_or_a_call_leaves_out() {
+    clean("struct Config {\n    port: i32 = 80\n    debug: bool = false\n}\n\nfn run() -> Config {\n    return "
+          "Config()\n}\n");
+    clean("struct Config {\n    port: i32 = 80\n    debug: bool = false\n}\n\nfn run() -> Config {\n    "
+          "return Config(debug = true)\n}\n");
+    clean("fn connect(host: i32, port: i32 = 443) -> i32 {\n    host + port\n}\n\nfn run() -> i32 {\n    "
+          "connect(1) + connect(1, 2) + connect(1, port = 3)\n}\n");
+}
+
+export void test_front_types_module_a_missing_field_without_a_default_is_an_error() {
+    fails("struct Config {\n    host: i32\n    port: i32 = 80\n}\n\nfn run() -> Config {\n    return Config()\n}\n",
+          "the field `host` of `Config` is left out and has no default", "");
+}
+
+export void test_front_types_module_a_default_must_be_a_constant_in_order() {
+    fails("fn size() -> i32 {\n    3\n}\n\nstruct Box {\n    n: i32 = size()\n}\n",
+          "a default must be a compile-time constant", "");
+    fails("fn f(a: i32, b: i32 = a) -> i32 {\n    b\n}\n", "a default must be a compile-time constant", "");
+    fails("fn f(a: i32 = 1, b: i32) -> i32 {\n    b\n}\n", "has no default but follows one that has", "");
+}

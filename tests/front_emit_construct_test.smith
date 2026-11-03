@@ -270,6 +270,67 @@ export void test_front_emit_construct_nothing_given_is_all_zero() {
     emit_jit::stop(&host);
 }
 
+// `Point` whose fields default to 7 and 3: a field left out takes its default (#1847).
+static ast::Decl *defaulted_point_record() {
+    ast::FieldDecl fields[2] = {ast::field("x", i32_type()), ast::field("y", i32_type())};
+    fields[0].default_value = number(7);
+    fields[1].default_value = number(3);
+    return ast::record_decl("Point", fields);
+}
+
+export void test_front_emit_construct_a_field_left_out_takes_its_default() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[4] = {
+        defaulted_point_record(),
+        read_point("none", call0("Point")),
+        read_point("only_y", call1("Point", arg("y", number(1)))),
+        read_point("only_x", call1("Point", number(2))),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn none = (NoArgFn)symbol_of(&host, "front::test::none");
+    NoArgFn only_y = (NoArgFn)symbol_of(&host, "front::test::only_y");
+    NoArgFn only_x = (NoArgFn)symbol_of(&host, "front::test::only_x");
+    test::check_equal(none(), 73);
+    test::check_equal(only_y(), 71);
+    test::check_equal(only_x(), 23);
+    emit_jit::stop(&host);
+}
+
+// `abc(a, b = 5, c = 9)`: an argument left out takes its default, by position or when others are named.
+export void test_front_emit_construct_a_parameter_left_out_takes_its_default() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *abc = abc_function();
+    if (abc->kind == .function) {
+        abc->kind.function.params[1].default_value = number(5);
+        abc->kind.function.params[2].default_value = number(9);
+    }
+    ast::StmtRef one[1] = {give(call1("abc", number(1)))};
+    ast::StmtRef two[1] = {give(call2("abc", number(1), number(2)))};
+    ast::StmtRef named[1] = {give(call2("abc", arg("a", number(4)), arg("c", number(6))))};
+    ast::DeclRef decls[4] = {
+        abc,
+        function_of0("one", i32_type(), one),
+        function_of0("two", i32_type(), two),
+        function_of0("named", i32_type(), named),
+    };
+    ast::Module m = module_of(decls);
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn first = (NoArgFn)symbol_of(&host, "front::test::one");
+    NoArgFn second = (NoArgFn)symbol_of(&host, "front::test::two");
+    NoArgFn third = (NoArgFn)symbol_of(&host, "front::test::named");
+    test::check_equal(first(), 159);
+    test::check_equal(second(), 129);
+    test::check_equal(third(), 456);
+    emit_jit::stop(&host);
+}
+
 // A construction as an argument and a call returning a record, passed on.
 export void test_front_emit_construct_as_an_argument_and_a_returned_value() {
     TreeMemory trees = {};

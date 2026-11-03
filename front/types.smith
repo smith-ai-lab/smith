@@ -123,6 +123,7 @@ export struct Slot {
     TypeRef type;
     U64 value;   // an enumerator's value
     Bool is_pub; // a field other modules may name (`pub x: T`, or any field written in today's syntax)
+    const ast::Expr *default_value; // `x: T = 3`: the field's default (null when none)
 };
 
 // Which fields mean something depends on `kind`:
@@ -1581,6 +1582,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         const ast::FieldDecl *f = &members[i];
         fields[i].name = f->name;
         fields[i].is_pub = f->is_pub || !f->is_new;
+        fields[i].default_value = f->default_value;
         if (f->is_pub && !(d->is_pub || d->exported)) {
             failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
                   "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");

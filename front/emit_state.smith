@@ -179,6 +179,7 @@ export struct EnumType {
 export struct FieldInfo {
     Str name;
     Ty ty;
+    ast::Expr *default_value; // `x: T = 3`: written for a construction that leaves the field out (null: none)
 };
 
 export struct RecordType {
