@@ -66,6 +66,7 @@ import front::types_expr;
 import front::types_fn;
 import front::types_iter;
 import front::types_stream;
+import front::when;
 import std::arena;
 import std::format;
 import std::mem;
@@ -848,9 +849,7 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
 }
 
-// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
-// public declaration `name` of `a.b`.
-export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+static types::Checked check_once(const ast::Module *m, types::Target target, types::ModuleLoader load) {
     state = (State){};
     types_fn::reset();
     types::Options chosen = options(target);
@@ -863,6 +862,91 @@ export types::Checked check_module_with(const ast::Module *m, types::Target targ
     types_attr::check_module(&r, m);
     uninstall();
     return r;
+}
+
+static Bool starts_with(Str text, Str head) {
+    if (countof(head) > countof(text)) return false;
+    for (Usize i = 0; i < countof(head); i++) {
+        if (text[i] != head[i]) return false;
+    }
+    return true;
+}
+
+// The name between the first pair of backticks of `text`, "" when there is none.
+static Str first_quoted(Str text) {
+    Usize from = 0;
+    while (from < countof(text) && text[from] != '`')
+        from += 1;
+    Usize to = from + 1;
+    while (to < countof(text) && text[to] != '`')
+        to += 1;
+    if (to >= countof(text)) return "";
+    return text[from + 1:to];
+}
+
+static Usize length_of(Str text) {
+    return countof(text);
+}
+
+static Bool same_str(Str a, Str b) {
+    return starts_with(a, b) && countof(a) == countof(b);
+}
+
+// A use of a name that is gone on `os` says where the name is declared.
+static void explain_dead(types::Checked *r, const ast::Module *m, when::Os os) {
+    typeof(when::Dead[:]) dead = when::dead_names(m, os);
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str text = r->errors[i].message;
+        if (!starts_with(text, "unknown name `") && !starts_with(text, "unknown type `")) continue;
+        Str name = first_quoted(text);
+        for (Usize k = 0; k < countof(dead); k++) {
+            if (!same_str(dead[k].name, name)) continue;
+            Str condition = dead[k].condition;
+            if (length_of(condition) == 0) {
+                condition = "a condition";
+            }
+            r->errors[i].message = types::message_of(format::push("`", name, "` is not declared on ", when::os_name(os),
+                                                                  ": it is declared only when ", condition));
+            break;
+        }
+    }
+}
+
+static Bool has_error(const types::Checked *r, const types::Error *e) {
+    for (Usize i = 0; i < r->error_count; i++) {
+        const types::Error *o = &r->errors[i];
+        if (o->span.start == e->span.start && o->span.end == e->span.end && same_str(o->message, e->message)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+// public declaration `name` of `a.b`. A module with `@when` is checked once for each system smith builds on, and an
+// error found on one system only says which.
+export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
+    if (!when::uses_when(m)) return check_once(m, target, load);
+    types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load);
+    explain_dead(&mac, m, when::os_macos);
+    types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load);
+    explain_dead(&lin, m, when::os_linux);
+    Bool only_lin[:] = mem::alloc_slice(Bool, lin.error_count);
+    for (Usize i = 0; i < lin.error_count; i++)
+        only_lin[i] = !has_error(&mac, &lin.errors[i]);
+    for (Usize i = 0; i < mac.error_count; i++) {
+        if (!has_error(&lin, &mac.errors[i])) {
+            mac.errors[i].message = types::message_of(format::push("on macos: ", mac.errors[i].message));
+        }
+    }
+    for (Usize i = 0; i < lin.error_count; i++) {
+        if (!only_lin[i]) continue;
+        types::Error found = lin.errors[i];
+        found.message = types::message_of(format::push("on linux: ", found.message));
+        types::add_error(&mac, found);
+    }
+    types_attr::check_when(&mac, m);
+    return mac;
 }
 
 // Checks a whole module for `target`.
