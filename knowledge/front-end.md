@@ -130,6 +130,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `Type T` without `constexpr` (A7m, #1357) parses as an ordinary parameter; the checker reports it (N1, #1339: write `constexpr Type T`).
 - Declarations in smith's own syntax (S3, #1444): `a := v`, `a: T = v`, `mut a: T`, `const X := v`, `pub`, `@attr`, `fn name(a: T, mut b: T, const n: usize, T: type, rest: ...) -> R { }`.
 - Also `struct Name { field: T }` and `enum Name: u8 { low = 2 }`, one member per line with no `;` or `,`. New is told from old by the first one or two tokens.
+- Keywords as names (#1770): after `.` a keyword is a member name (`x.module`, `t.type`) and in a struct body a field may be named with one (`module: str`); both positions are unambiguous. A local or parameter named with a keyword is still an error, and `int : 3` stays an unnamed C bit-field.
 - A declaration ends with its line; a `;` or `,` there is an error with a fix that deletes it. After an error the parse skips to the end of the line (`recover_line`).
 - `parse_decl::at_destructure(p)` and `destructure(p)` read `(q, r) := f()` for the statement parser; `declaration` on one is an error.
 - Old declaration forms are warnings with fixes (F2, #1507): `module a::b;` removed, `export` to `pub`, `I32 a = 3;` to `a: I32 = 3`, `R f(A a) {...}` to `fn f(a: A) -> R {...}`.
