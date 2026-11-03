@@ -13,6 +13,7 @@ import std::format;
 import std::mem;
 import std::process;
 import std::test;
+import <stdio.h>;
 import <stdlib.h>;
 import <sys/stat.h>;
 import <unistd.h>;
@@ -76,7 +77,7 @@ static void compile_example(Str folder, Str name, Str source) {
     roots::Roots folders = {.source = src, .library = as_str(format::push(repo(), "/lib"))};
     compile::Report report = compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
     // The diagnostics first, so a failure shows them.
-    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    if (!report.ok) c::fprintf(c::stderr, "%.*s\n", (int)countof(report.text), report.text.data);
     test::check_equal(report.ok, true);
 }
 
