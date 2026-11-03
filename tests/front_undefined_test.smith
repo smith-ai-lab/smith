@@ -57,6 +57,39 @@ export void test_front_undefined_is_only_a_whole_initializer() {
     errors("I32 f() { I32 x = 0; x = undefined; return x; }", 1, "only valid as a whole initializer");
 }
 
+// `source` (smith's own syntax) gives `count` errors, the first of which says `needle`.
+static void new_errors(Str source, Usize count, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, count);
+    if (count > 0 && r.error_count > 0) test::check_condition(has(r.errors[0].message, needle));
+}
+
+export void test_front_undefined_a_read_before_any_write_is_an_error() {
+    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    return a\n}\n", 1,
+               "`a` is read before it is written");
+    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a = a + 1\n    return a\n}\n", 1, "read before");
+    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a += 1\n    return a\n}\n", 1, "read before");
+}
+
+export void test_front_undefined_a_read_the_checker_cannot_order_is_allowed() {
+    new_errors(
+        "fn g(c: bool) -> i32 {\n    let mut a: i32 = undefined\n    if c {\n        a = 1\n    }\n    return a\n}\n",
+        0, "");
+    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a = 1\n    return a\n}\n", 0, "");
+    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    let mut i: i32 = 0\n    while i < 3 {\n        a "
+               "= i\n        i = i + 1\n    }\n    return a\n}\n",
+               0, "");
+    new_errors(
+        "fn fill(p: *mut i32) {\n}\nfn f() -> i32 {\n    let mut a: i32 = undefined\n    fill(&a)\n    return a\n}\n",
+        0, "");
+}
+
 typedef I32 (*Nullary)();
 
 static Bool has_fill(Bool fill) {
