@@ -61,6 +61,15 @@ export typedef typeof(ParseError[:]) Errors;
 
 // The state of a parse: the tokens (ending with an `end_of_file` token), the text they lie in, the position of the next
 // one, and the errors recorded so far (in the order they were found).
+// A braced list with no type whose items are all `.field = value`: where its braces are and the edits that drop the
+// dots, kept for the declaration it initializes (`P p = {.x = 1};` is `p := P(x = 1)`, #1767).
+export struct NamedList {
+    Bool plain;
+    ast::Span open;
+    ast::Span close;
+    Edits edits;
+};
+
 export struct Parser {
     lex::Tokens tokens;
     Str source;
@@ -68,6 +77,7 @@ export struct Parser {
     Errors errors;
     Errors warnings; // old forms that still compile, with their fixes: kept apart so `errors` stays the failures
     Hooks hooks;
+    NamedList named_list; // the last untyped list with only field designators
     Bool head;     // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
                    // at its top level, so a `{` opens the body (#961)
     Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts

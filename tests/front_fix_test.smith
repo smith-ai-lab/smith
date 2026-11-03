@@ -314,3 +314,18 @@ export void test_a_for_with_a_continue_gets_no_while() {
     Str word = "while";
     check_flag(slice::find_slice(fixed.text, word) == .some, false);
 }
+
+// `Node n = {.a = 1};` is `n := Node(a = 1)`: a variable of a named type whose untyped list only has
+// field designators, and the text reads in the new syntax (#1767).
+export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node "
+                                                "make(void) {\n    Node n = {.a = 1};\n    return n;\n}\n");
+    check_text(fixed.text,
+               "struct Node { a: i32 }\nstatic fn make() -> Node {\n    n := Node(a = 1)\n    return n\n}\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}

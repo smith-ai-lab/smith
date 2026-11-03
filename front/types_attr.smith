@@ -20,6 +20,7 @@
 module front::types_attr;
 
 import front::ast;
+import front::parse as syntax;
 import front::types;
 import front::types_expr;
 import std::format;
@@ -126,6 +127,15 @@ static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name
             }
         }
         if (at >= count) continue;
+        if (arg->kind != .named_arg) {
+            // `@rename("x")` is `@rename(to = "x")`: a struct call names its fields (#1798)
+            Str field = type->slots[at].name;
+            syntax::Edits fix = {};
+            fix = mem::realloc(fix, 1);
+            fix[0] = (syntax::Edit){.span = {.start = arg->span.start, .end = arg->span.start},
+                                    .text = msg(format::push(field, " = "))};
+            types::fail_fix(r, arg->span, msg(format::push("name the field: `@", name, "(", field, " = ...)`")), fix);
+        }
         if (!is_constant(r, value)) {
             types::fail(r, value->span, "an attribute's arguments are computed at compile time");
             continue;
