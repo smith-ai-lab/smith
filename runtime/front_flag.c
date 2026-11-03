@@ -173,11 +173,14 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
         }
         smith_front_arguments[used++] = args[i];
     }
-    bool only_options = true;            // nothing but -c and -o <file> left: clang has no input to compile
+    bool only_options = true; // nothing but options left (-c, -I dir, -o file ...): clang has no input to compile
     for (int i = first; i < used; i++) { // bounded by used
-        if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
+        const char *argument = smith_front_arguments[i];
+        bool takes_value = strcmp(argument, "-o") == 0 || strcmp(argument, "-I") == 0 || strcmp(argument, "-D") == 0 ||
+                           strcmp(argument, "-isystem") == 0 || strcmp(argument, "-include") == 0;
+        if (takes_value && i + 1 < used)
             i++;
-        else if (strcmp(smith_front_arguments[i], "-c") != 0)
+        else if (argument[0] != '-')
             only_options = false;
     }
     return compile_only && only_options ? 0 : used;
