@@ -35,9 +35,9 @@ fn nats() -> iter(i32):
 - It compiles to a state machine (its locals become a struct that resumes at the last `yield`), so it is zero cost when inlined. `iter(T)` is a concept; each generator has its own type. `it.next()` (gives `?T`) and `it.close()` (runs its `defer`s) are built in; nobody writes a `next`. A container's module defines its passes as generators:
 
 ```smith
-pub fn items(l: *List(T)) -> iter(T):            # for x in shapes: ...
+pub fn items[T](l: *List(T)) -> iter(T):          # for x in shapes: ...
     for i in range(0, l.len): yield l.data[i]
-pub fn refs(l: *mut List(T)) -> iter(*mut T):    # for p in refs(shapes): p.x += 1
+pub fn refs[T](l: *mut List(T)) -> iter(*mut T):  # for p in refs(shapes): p.x += 1
     for i in range(0, l.len): yield &l.data[i]
 ```
 
