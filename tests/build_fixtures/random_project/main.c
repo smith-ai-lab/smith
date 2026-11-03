@@ -1,5 +1,6 @@
 #include <smith/arena.h>
 #include <smith/categorical.h>
+#include <smith/math.h>
 #include <smith/mem.h>
 #include <smith/random.h>
 

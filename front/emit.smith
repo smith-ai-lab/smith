@@ -28,6 +28,8 @@
 // `xs[a:b]` and `s[i]` go to emit_memory; an array that is a place, where a slice is expected, becomes `{ address, N }`
 // (`is_array_place`, aliasing the array), and an array value is stored in a slot (`convert_value`).
 //
+// ARRAYS (#1624): `[1, 2]` goes to emit_memory::array_literal, or to emit_vector::list for a vector.
+//
 // WAVE 3 (#1582 of #1428) added one stub per new area, the same way: emit_option (`?T`, `.some`, `.none`, `if let`;
 // #1584), emit_match (enumerations, `.red`, `match`; #1585), emit_value (an `if` or a block as a value), emit_iter
 // (`for x in xs`; #1586), emit_tuple and emit_lambda (the next batch). This file routes to them and nothing else will
@@ -299,7 +301,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
         return call::call(e, x, hint);
     }
-    if (x->kind == .array_lit) return vectors::list(e, x, hint);
+    if (x->kind == .array_lit) {
+        if (hint.present && hint.ty.kind == .vector) return vectors::list(e, x, hint);
+        return memory::array_literal(e, x, hint);
+    }
     if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
     if (x->kind == .index) return memory::index(e, x, hint);
     if (x->kind == .member) {
@@ -1088,6 +1093,18 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 // ---------------------------------------------------------------------------------------------------------------
 // The module
 
+// `sin := m.sin` or `Point := m.Point`: a name for a declaration of an imported module (#1714). The checker has typed
+// it; there is nothing to emit, a call through it reaches the function itself.
+static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
+    if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (init == nullptr || init->kind != .member) return false;
+    types::Names names = types::member_names(init);
+    if (names.count < 2) return false;
+    const types::Symbol *first = types::lookup(&e->options.checked->scopes, names.items[0]);
+    return first != nullptr && first->kind == .module_name;
+}
+
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
@@ -1103,7 +1120,7 @@ static state::Status declare_all(state::Emitter *e) {
             else
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            try memory::global_variable(e, d);
+            if (!is_module_alias(e, d)) try memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c) {
             return state::not_emitted("this kind of declaration", d->span);
         }

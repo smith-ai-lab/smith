@@ -652,6 +652,10 @@ static bool smith_lang_slice_begin_array(SmithLang *lang, const SmithHost *host,
         if (used > leading + 1) made[leading + 1].space_before = true;
     }
     made[used++] = span[name];
+    if (leading == 0) { // the made tokens take the declaration's line break (-Wmisleading-indentation)
+        made[0].line_start = span[0].line_start;
+        made[0].space_before = span[0].space_before;
+    }
     if (!smith_lang_tuple_replace(lang, end, made, used)) return false;
     lang->slice.skip = span[name].location; // the name just declared starts no chain
     smith_lang_slice_flag(lang);
