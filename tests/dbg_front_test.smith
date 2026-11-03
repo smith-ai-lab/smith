@@ -21,12 +21,16 @@ constexpr char geometry[_] = "pub fn area(w: i32, h: i32) -> i32:\n"
                              "    area(2, 3) - 6\n";
 
 // The stand-ins of the checks the new emitter calls, so the program links without smith's runtime.
-constexpr char main_c[_] = "int check(void);\n"
+constexpr char main_c[_] = "#include <stdio.h>\n"
+                           "int check(void);\n"
                            "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
                            "const char *d, const char *e) { __builtin_trap(); }\n"
                            "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
                            "{ __builtin_trap(); }\n"
-                           "int main(void) { return check(); }\n";
+                           "int main(int count, char **arguments) {\n"
+                           "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
+                           "    return check();\n"
+                           "}\n";
 
 static Bool made(scratch::Project *p) {
     if (scratch::sh(p, "smith dbg --version").status != 0) return false;
@@ -52,4 +56,21 @@ export void test_dbg_front_a_new_syntax_program_shows_source_names_lines_and_loc
     scratch::expect_contains("the caller is named", run.out, "check at geometry.smith:6");
     scratch::expect_contains("a parameter shows under its name and type", run.out, "(int) w = ");
     scratch::expect_contains("a local shows under its name", run.out, "(int) r = ");
+}
+
+// `run` passes the arguments as they are, for a program the new front end compiled as for one from C (#388).
+export void test_dbg_front_run_passes_arguments_as_they_are() {
+    scratch::Project p = scratch::make("front_dbg_args", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    if (!made(&p)) return;
+    scratch::write(&p, "one.txt", "");
+    scratch::Run run = scratch::sh(&p, "smith dbg -b -o 'settings set plugin.process.gdb-remote.packet-timeout 600' "
+                                       "-o run prog -- 'a b' '*.txt' 2>&1");
+    scratch::expect_contains("an argument with a space stays one", run.out, "<a b>");
+    scratch::expect_contains("a glob character stays", run.out, "<*.txt>");
+    scratch::expect_lacks("nothing is expanded", run.out, "<one.txt>");
 }
