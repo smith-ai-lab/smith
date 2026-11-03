@@ -1,0 +1,10 @@
+# An exported function takes an array as C does: the header's `int32_t xs[4]` is a pointer to the first element.
+pub fn pick(xs: [4]i32, i: usize) -> i32:
+    xs[i]
+
+pub fn corner(m: [3][2]i32) -> i32:
+    m[2][1]
+
+# Smith callers pass an array the same way.
+pub fn pick_last(xs: [4]i32) -> i32:
+    pick(xs, 3)

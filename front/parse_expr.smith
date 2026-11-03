@@ -716,20 +716,6 @@ static ast::Expr *lambda(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Smith's own forms (#1446): arrays, tuples, lambdas and blocks
 
-// `[1, 2, 3]`: the position is at the bracket.
-static ast::Expr *array_literal(parse::Parser *p) {
-    U32 start = parse::advance(p).span.start;
-    ast::ExprRef items[:] = {};
-    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *next = parse::expression(p);
-        if (next == nullptr) return nullptr;
-        items = parse_type::with_expr(items, next);
-        if (!parse::accept(p, lex::comma)) break;
-    }
-    if (!expect_ok(p, lex::right_bracket, "`]` to end the array")) return nullptr;
-    return make(parse::span_from(p, start), {.array_lit = {.items = items}});
-}
-
 // The offset just past the group that opens at `offset` (an `open` token), counting depth.
 static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind open, lex::TokenKind close) {
     Usize depth = 0;
@@ -742,6 +728,23 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
         if (depth == 0) return offset;
     }
     return offset;
+}
+
+// `[1, 2, 3]`: the position is at the bracket.
+static ast::Expr *array_literal(parse::Parser *p) {
+    // `[n]T` is an array type written as a value (`no_rule([n + 1]char)`): a type follows the closing bracket.
+    Usize after = after_group(p, 0, lex::left_bracket, lex::right_bracket);
+    if (after > 0 && parse_type::starts_type(p, after)) return type_value(p);
+    U32 start = parse::advance(p).span.start;
+    ast::ExprRef items[:] = {};
+    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
+        ast::Expr *next = parse::expression(p);
+        if (next == nullptr) return nullptr;
+        items = parse_type::with_expr(items, next);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!expect_ok(p, lex::right_bracket, "`]` to end the array")) return nullptr;
+    return make(parse::span_from(p, start), {.array_lit = {.items = items}});
 }
 
 // The token that opens a lambda's body: the `:` of the layout path, a `{` otherwise.
@@ -1649,8 +1652,12 @@ static Bool same_text(Str a, Str b) {
 
 // Whether a conversion call `.to(T)`, `.wrap(T)` or `.cast(T)` starts at the `.` the position is at: the three are
 // built-in functions, so the argument is always a type.
-static Bool conversion_ahead(const parse::Parser *p) {
+static Bool conversion_ahead(const parse::Parser *p, const ast::Expr *base) {
     if (parse::peek(p).kind != lex::dot) return false;
+    // `format.to(out, n, x)`: `format` is a module bound by an import, so this is that module's function (#2104).
+    if (base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
+        parse::is_module(p, base->kind.name.path.segments[0].text))
+        return false;
     lex::Token name = parse::peek_at(p, 1);
     if (name.kind != lex::name || parse::peek_at(p, 2).kind != lex::left_paren) return false;
     Str word = parse::text(p, name);
@@ -1710,7 +1717,7 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
             lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
             return .absent;
-        result = conversion_ahead(p) ? conversion(p, base) : member(p, base);
+        result = conversion_ahead(p, base) ? conversion(p, base) : member(p, base);
         break;
     case lex::dot_star:
         parse::advance(p);
