@@ -567,6 +567,31 @@ export void test_front_emit_memory_global_counter_incremented_by_a_function() {
     emit_jit::stop(&host);
 }
 
+static void make_constexpr(ast::Decl *d) {
+    if (d->kind == .variable) d->kind.variable.is_constexpr = true;
+}
+
+// const LIMIT = 10;  (no written type: i32)  constexpr I32 SMALL = 3;  I32 limit() { return LIMIT + SMALL; }
+export void test_front_emit_memory_untyped_and_constexpr_globals_are_constants() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::Decl *limit = ast::variable("LIMIT", ast::make_type(.auto_type), number(10));
+    make_constexpr(limit);
+    limit->exported = true;
+    ast::Decl *small = ast::variable("SMALL", i32_type(), number(3));
+    make_constexpr(small);
+    ast::StmtRef items[1] = {give(binary(.add, name("LIMIT"), name("SMALL")))};
+    ast::Module m = module3(limit, small, function_of0("limit", i32_type(), items));
+    tree_end(&trees);
+    emit_jit::Jit host = start_jit();
+    jit_module(&host, &m);
+    NoArgFn read = (NoArgFn)symbol_of(&host, "front::test::limit");
+    test::check_equal(read(), 13);
+    I32 *stored = (I32 *)symbol_of(&host, "front::test::LIMIT");
+    test::check_equal(*stored, 10);
+    emit_jit::stop(&host);
+}
+
 // A global read and assigned by its bare name.
 // I32 counter = 5;  I32 bump() { counter = counter + 1; return counter; }
 export void test_front_emit_memory_global_read_and_assigned_by_bare_name() {
