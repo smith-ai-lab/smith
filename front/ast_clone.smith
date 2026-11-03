@@ -1,0 +1,475 @@
+// front::ast_clone: a deep copy of a declaration of the syntax tree (#1907, part of #1700). A generic function is made
+// into an instance by cloning its declaration and binding its compile-time parameters in the clone, so the checker and
+// the emitter see an ordinary declaration (the lead's decision on #1700).
+//
+// The copy shares no node with the original: every node, list and path is allocated again in the current allocator.
+// Texts (`Str`) point into the source and are not copied. Nothing here is recursive: a work list holds the copies whose
+// children are still the original's, and each is visited once, which replaces its children by copies (breadth first,
+// as the dump does).
+//
+// Adding a kind to `front/ast.smith` means adding it here: the walks below name every kind of node, and a test of
+// `tests/front_ast_clone_test.smith` builds a tree with each.
+module front::ast_clone;
+
+import front::ast;
+import std::arena;
+import std::mem;
+
+typedef ast::ExprRef ExprRefList[:];
+typedef ast::StmtRef StmtRefList[:];
+typedef ast::DeclRef DeclRefList[:];
+typedef ast::TypeRef TypeRefList[:];
+typedef ast::Identifier IdentifierList[:];
+typedef ast::Attribute AttributeList[:];
+typedef ast::Param ParamList[:];
+typedef ast::FieldDecl FieldDeclList[:];
+typedef ast::Enumerator EnumeratorList[:];
+typedef ast::Initializer InitializerList[:];
+typedef ast::MatchArm MatchArmList[:];
+typedef ast::SwitchCase SwitchCaseList[:];
+typedef ast::GenericAssoc GenericAssocList[:];
+typedef ast::TypeArg TypeArgList[:];
+
+// One copy whose children are not copied yet.
+typedef enum {
+    ast::Decl *decl;
+    ast::Stmt *stmt;
+    ast::Expr *expr;
+    ast::TypeExpr *type;
+} Node;
+
+struct Work {
+    Node data[:];
+    Usize length;
+};
+
+static void add(Work *work, Node node) {
+    if (work->length == countof(work->data)) {
+        Usize capacity = countof(work->data) * 2;
+        if (capacity < 64) {
+            capacity = 64;
+        }
+        Node grown[:] = mem::alloc_slice(Node, capacity);
+        for (Usize i = 0; i < work->length; i++)
+            grown[i] = work->data[i];
+        work->data = grown;
+    }
+    work->data[work->length] = node;
+    work->length += 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A child: a copy of the node, queued so that its own children are copied later. Null stays null.
+
+static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
+    if (old == nullptr) return nullptr;
+    ast::Expr *copy = ast::new_expr(*old);
+    add(work, {.expr = copy});
+    return copy;
+}
+
+static ast::Stmt *take_stmt(Work *work, const ast::Stmt *old) {
+    if (old == nullptr) return nullptr;
+    ast::Stmt *copy = ast::new_stmt(*old);
+    add(work, {.stmt = copy});
+    return copy;
+}
+
+static ast::TypeExpr *take_type(Work *work, const ast::TypeExpr *old) {
+    if (old == nullptr) return nullptr;
+    ast::TypeExpr *copy = ast::new_type(*old);
+    add(work, {.type = copy});
+    return copy;
+}
+
+static ast::Decl *take_decl(Work *work, const ast::Decl *old) {
+    if (old == nullptr) return nullptr;
+    ast::Decl *copy = ast::new_decl(*old);
+    add(work, {.decl = copy});
+    return copy;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Lists. A list of pointers is not made by mem::alloc_slice: its instance for a pointer element draws the lint of a
+// multilevel conversion (as in front/ast.smith).
+
+static ExprRefList take_exprs(Work *work, ast::ExprRef list[:]) {
+    ast::ExprRef *block =
+        (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), countof(list), alignof(ast::ExprRef));
+    for (Usize i = 0; i < countof(list); i++)
+        block[i] = take_expr(work, list[i]);
+    ExprRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static StmtRefList take_stmts(Work *work, ast::StmtRef list[:]) {
+    ast::StmtRef *block =
+        (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), countof(list), alignof(ast::StmtRef));
+    for (Usize i = 0; i < countof(list); i++)
+        block[i] = take_stmt(work, list[i]);
+    StmtRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static DeclRefList take_decls(Work *work, ast::DeclRef list[:]) {
+    ast::DeclRef *block =
+        (ast::DeclRef *)mem::alloc_array_raw(sizeof(ast::DeclRef), countof(list), alignof(ast::DeclRef));
+    for (Usize i = 0; i < countof(list); i++)
+        block[i] = take_decl(work, list[i]);
+    DeclRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static TypeRefList take_types(Work *work, ast::TypeRef list[:]) {
+    ast::TypeRef *block =
+        (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), countof(list), alignof(ast::TypeRef));
+    for (Usize i = 0; i < countof(list); i++)
+        block[i] = take_type(work, list[i]);
+    TypeRefList copy = block[0:countof(list)];
+    return copy;
+}
+
+static IdentifierList take_identifiers(ast::Identifier list[:]) {
+    IdentifierList copy = mem::alloc_slice(ast::Identifier, countof(list));
+    for (Usize i = 0; i < countof(list); i++)
+        copy[i] = list[i];
+    return copy;
+}
+
+static ast::Path take_path(ast::Path path) {
+    path.segments = take_identifiers(path.segments);
+    return path;
+}
+
+static AttributeList take_attributes(Work *work, ast::Attribute list[:]) {
+    AttributeList copy = mem::alloc_slice(ast::Attribute, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].name = take_path(list[i].name);
+        copy[i].args = take_exprs(work, list[i].args);
+    }
+    return copy;
+}
+
+static ParamList take_params(Work *work, ast::Param list[:]) {
+    ParamList copy = mem::alloc_slice(ast::Param, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].type = take_type(work, list[i].type);
+        copy[i].default_value = take_expr(work, list[i].default_value);
+        copy[i].attributes = take_attributes(work, list[i].attributes);
+    }
+    return copy;
+}
+
+static FieldDeclList take_fields(Work *work, ast::FieldDecl list[:]) {
+    FieldDeclList copy = mem::alloc_slice(ast::FieldDecl, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].type = take_type(work, list[i].type);
+        copy[i].bit_width = take_expr(work, list[i].bit_width);
+        copy[i].default_value = take_expr(work, list[i].default_value);
+        copy[i].attributes = take_attributes(work, list[i].attributes);
+    }
+    return copy;
+}
+
+static EnumeratorList take_enumerators(Work *work, ast::Enumerator list[:]) {
+    EnumeratorList copy = mem::alloc_slice(ast::Enumerator, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].value = take_expr(work, list[i].value);
+        copy[i].payload = take_type(work, list[i].payload);
+        copy[i].attributes = take_attributes(work, list[i].attributes);
+    }
+    return copy;
+}
+
+static void take_designators(Work *work, ast::Designator source[:], ast::Designator target[:]) {
+    for (Usize k = 0; k < countof(source); k++) {
+        ast::Designator one = source[k];
+        if (one == .index) {
+            one.index.index = take_expr(work, one.index.index);
+        }
+        target[k] = one;
+    }
+}
+
+static InitializerList take_initializers(Work *work, ast::Initializer list[:]) {
+    InitializerList copy = mem::alloc_slice(ast::Initializer, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].value = take_expr(work, list[i].value);
+        ast::Designator source[:] = list[i].designators;
+        ast::Designator target[:] = mem::alloc_slice(ast::Designator, countof(source));
+        take_designators(work, source, target);
+        copy[i].designators = target;
+    }
+    return copy;
+}
+
+static MatchArmList take_arms(Work *work, ast::MatchArm list[:]) {
+    MatchArmList copy = mem::alloc_slice(ast::MatchArm, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].value = take_expr(work, list[i].value);
+        ast::Pattern source[:] = list[i].patterns;
+        ast::Pattern target[:] = mem::alloc_slice(ast::Pattern, countof(source));
+        for (Usize k = 0; k < countof(source); k++) {
+            target[k] = source[k];
+        }
+        copy[i].patterns = target;
+    }
+    return copy;
+}
+
+static SwitchCaseList take_cases(Work *work, ast::SwitchCase list[:]) {
+    SwitchCaseList copy = mem::alloc_slice(ast::SwitchCase, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].values = take_exprs(work, list[i].values);
+        copy[i].body = take_stmts(work, list[i].body);
+    }
+    return copy;
+}
+
+static GenericAssocList take_assocs(Work *work, ast::GenericAssoc list[:]) {
+    GenericAssocList copy = mem::alloc_slice(ast::GenericAssoc, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        copy[i] = list[i];
+        copy[i].type = take_type(work, list[i].type);
+        copy[i].value = take_expr(work, list[i].value);
+    }
+    return copy;
+}
+
+static TypeArgList take_type_args(Work *work, ast::TypeArg list[:]) {
+    TypeArgList copy = mem::alloc_slice(ast::TypeArg, countof(list));
+    for (Usize i = 0; i < countof(list); i++) {
+        ast::TypeArg one = list[i];
+        if (one == .type) {
+            one.type.type = take_type(work, one.type.type);
+        }
+        if (one == .value) {
+            one.value.value = take_expr(work, one.value.value);
+        }
+        copy[i] = one;
+    }
+    return copy;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The children of a copy: types
+
+static void visit_type(Work *work, ast::TypeExpr *t) {
+    if (t->kind == .named) t->kind.named.path = take_path(t->kind.named.path);
+    if (t->kind == .pointer) t->kind.pointer.pointee = take_type(work, t->kind.pointer.pointee);
+    if (t->kind == .array) {
+        t->kind.array.element = take_type(work, t->kind.array.element);
+        t->kind.array.count = take_expr(work, t->kind.array.count);
+    }
+    if (t->kind == .slice) t->kind.slice.element = take_type(work, t->kind.slice.element);
+    if (t->kind == .function) {
+        t->kind.function.params = take_types(work, t->kind.function.params);
+        t->kind.function.result = take_type(work, t->kind.function.result);
+    }
+    if (t->kind == .applied) {
+        t->kind.applied.name = take_path(t->kind.applied.name);
+        t->kind.applied.args = take_type_args(work, t->kind.applied.args);
+    }
+    if (t->kind == .type_of) t->kind.type_of.operand = take_expr(work, t->kind.type_of.operand);
+    if (t->kind == .record) t->kind.record.fields = take_fields(work, t->kind.record.fields);
+    if (t->kind == .tuple) t->kind.tuple.elements = take_types(work, t->kind.tuple.elements);
+    if (t->kind == .option) t->kind.option.inner = take_type(work, t->kind.option.inner);
+    if (t->kind == .block_type) {
+        t->kind.block_type.element = take_type(work, t->kind.block_type.element);
+        t->kind.block_type.dims = take_exprs(work, t->kind.block_type.dims);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Expressions
+
+static void visit_expr_leaves(Work *work, ast::Expr *e) {
+    if (e->kind == .name) e->kind.name.path = take_path(e->kind.name.path);
+    if (e->kind == .variant) e->kind.variant.payload = take_expr(work, e->kind.variant.payload);
+    if (e->kind == .type_value) e->kind.type_value.type = take_type(work, e->kind.type_value.type);
+    if (e->kind == .unary) e->kind.unary.operand = take_expr(work, e->kind.unary.operand);
+    if (e->kind == .binary) {
+        e->kind.binary.left = take_expr(work, e->kind.binary.left);
+        e->kind.binary.right = take_expr(work, e->kind.binary.right);
+    }
+    if (e->kind == .assign) {
+        e->kind.assign.target = take_expr(work, e->kind.assign.target);
+        e->kind.assign.value = take_expr(work, e->kind.assign.value);
+    }
+    if (e->kind == .conditional) {
+        e->kind.conditional.condition = take_expr(work, e->kind.conditional.condition);
+        e->kind.conditional.then_value = take_expr(work, e->kind.conditional.then_value);
+        e->kind.conditional.else_value = take_expr(work, e->kind.conditional.else_value);
+    }
+    if (e->kind == .call) {
+        e->kind.call.callee = take_expr(work, e->kind.call.callee);
+        e->kind.call.args = take_exprs(work, e->kind.call.args);
+    }
+    if (e->kind == .index) {
+        e->kind.index.base = take_expr(work, e->kind.index.base);
+        e->kind.index.index = take_expr(work, e->kind.index.index);
+    }
+    if (e->kind == .slice_of) {
+        e->kind.slice_of.base = take_expr(work, e->kind.slice_of.base);
+        e->kind.slice_of.start = take_expr(work, e->kind.slice_of.start);
+        e->kind.slice_of.end = take_expr(work, e->kind.slice_of.end);
+    }
+    if (e->kind == .member) e->kind.member.base = take_expr(work, e->kind.member.base);
+}
+
+static void visit_expr(Work *work, ast::Expr *e) {
+    visit_expr_leaves(work, e);
+    if (e->kind == .cast) {
+        e->kind.cast.type = take_type(work, e->kind.cast.type);
+        e->kind.cast.operand = take_expr(work, e->kind.cast.operand);
+    }
+    if (e->kind == .query) {
+        e->kind.query.type = take_type(work, e->kind.query.type);
+        e->kind.query.operand = take_expr(work, e->kind.query.operand);
+    }
+    if (e->kind == .compound) {
+        e->kind.compound.type = take_type(work, e->kind.compound.type);
+        e->kind.compound.items = take_initializers(work, e->kind.compound.items);
+    }
+    if (e->kind == .lambda) {
+        e->kind.lambda.captures = take_identifiers(e->kind.lambda.captures);
+        e->kind.lambda.params = take_params(work, e->kind.lambda.params);
+        e->kind.lambda.result = take_type(work, e->kind.lambda.result);
+        e->kind.lambda.body = take_stmt(work, e->kind.lambda.body);
+    }
+    if (e->kind == .try_expr) e->kind.try_expr.operand = take_expr(work, e->kind.try_expr.operand);
+    if (e->kind == .reflect_member) {
+        e->kind.reflect_member.base = take_expr(work, e->kind.reflect_member.base);
+        e->kind.reflect_member.field = take_expr(work, e->kind.reflect_member.field);
+    }
+    if (e->kind == .expand) e->kind.expand.pattern = take_expr(work, e->kind.expand.pattern);
+    if (e->kind == .named_arg) e->kind.named_arg.value = take_expr(work, e->kind.named_arg.value);
+    if (e->kind == .tuple_lit) e->kind.tuple_lit.items = take_exprs(work, e->kind.tuple_lit.items);
+    if (e->kind == .array_lit) e->kind.array_lit.items = take_exprs(work, e->kind.array_lit.items);
+    if (e->kind == .stmt_expr) e->kind.stmt_expr.stmt = take_stmt(work, e->kind.stmt_expr.stmt);
+    if (e->kind == .generic_select) {
+        e->kind.generic_select.control = take_expr(work, e->kind.generic_select.control);
+        e->kind.generic_select.assocs = take_assocs(work, e->kind.generic_select.assocs);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Statements
+
+static void visit_stmt_loops(Work *work, ast::Stmt *s) {
+    if (s->kind == .while_stmt) {
+        s->kind.while_stmt.condition = take_expr(work, s->kind.while_stmt.condition);
+        s->kind.while_stmt.body = take_stmt(work, s->kind.while_stmt.body);
+    }
+    if (s->kind == .do_while) {
+        s->kind.do_while.body = take_stmt(work, s->kind.do_while.body);
+        s->kind.do_while.condition = take_expr(work, s->kind.do_while.condition);
+    }
+    if (s->kind == .for_stmt) {
+        s->kind.for_stmt.init = take_stmt(work, s->kind.for_stmt.init);
+        s->kind.for_stmt.condition = take_expr(work, s->kind.for_stmt.condition);
+        s->kind.for_stmt.step = take_expr(work, s->kind.for_stmt.step);
+        s->kind.for_stmt.body = take_stmt(work, s->kind.for_stmt.body);
+        s->kind.for_stmt.range = take_expr(work, s->kind.for_stmt.range);
+        s->kind.for_stmt.index = take_stmt(work, s->kind.for_stmt.index);
+    }
+    if (s->kind == .for_in) {
+        s->kind.for_in.names = take_identifiers(s->kind.for_in.names);
+        s->kind.for_in.iterable = take_expr(work, s->kind.for_in.iterable);
+        s->kind.for_in.body = take_stmt(work, s->kind.for_in.body);
+    }
+}
+
+static void visit_stmt(Work *work, ast::Stmt *s) {
+    visit_stmt_loops(work, s);
+    if (s->kind == .expression) s->kind.expression.value = take_expr(work, s->kind.expression.value);
+    if (s->kind == .declaration) s->kind.declaration.decl = take_decl(work, s->kind.declaration.decl);
+    if (s->kind == .block) s->kind.block.items = take_stmts(work, s->kind.block.items);
+    if (s->kind == .if_stmt) {
+        s->kind.if_stmt.condition = take_expr(work, s->kind.if_stmt.condition);
+        s->kind.if_stmt.then_branch = take_stmt(work, s->kind.if_stmt.then_branch);
+        s->kind.if_stmt.else_branch = take_stmt(work, s->kind.if_stmt.else_branch);
+    }
+    if (s->kind == .switch_stmt) {
+        s->kind.switch_stmt.value = take_expr(work, s->kind.switch_stmt.value);
+        s->kind.switch_stmt.cases = take_cases(work, s->kind.switch_stmt.cases);
+    }
+    if (s->kind == .match_stmt) {
+        s->kind.match_stmt.value = take_expr(work, s->kind.match_stmt.value);
+        s->kind.match_stmt.arms = take_arms(work, s->kind.match_stmt.arms);
+    }
+    if (s->kind == .destructure) {
+        s->kind.destructure.names = take_identifiers(s->kind.destructure.names);
+        s->kind.destructure.init = take_expr(work, s->kind.destructure.init);
+    }
+    if (s->kind == .if_let) {
+        s->kind.if_let.value = take_expr(work, s->kind.if_let.value);
+        s->kind.if_let.then_branch = take_stmt(work, s->kind.if_let.then_branch);
+        s->kind.if_let.else_branch = take_stmt(work, s->kind.if_let.else_branch);
+    }
+    if (s->kind == .return_stmt) s->kind.return_stmt.value = take_expr(work, s->kind.return_stmt.value);
+    if (s->kind == .yield_stmt) s->kind.yield_stmt.value = take_expr(work, s->kind.yield_stmt.value);
+    if (s->kind == .defer_stmt) s->kind.defer_stmt.body = take_stmt(work, s->kind.defer_stmt.body);
+    if (s->kind == .errdefer_stmt) s->kind.errdefer_stmt.body = take_stmt(work, s->kind.errdefer_stmt.body);
+    if (s->kind == .labeled) s->kind.labeled.body = take_stmt(work, s->kind.labeled.body);
+    if (s->kind == .static_assert_stmt) {
+        s->kind.static_assert_stmt.condition = take_expr(work, s->kind.static_assert_stmt.condition);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Declarations
+
+static void visit_decl(Work *work, ast::Decl *d) {
+    d->attributes = take_attributes(work, d->attributes);
+    if (d->kind == .variable) {
+        d->kind.variable.type = take_type(work, d->kind.variable.type);
+        d->kind.variable.init = take_expr(work, d->kind.variable.init);
+    }
+    if (d->kind == .function) {
+        d->kind.function.params = take_params(work, d->kind.function.params);
+        d->kind.function.result = take_type(work, d->kind.function.result);
+        d->kind.function.body = take_stmt(work, d->kind.function.body);
+    }
+    if (d->kind == .record) d->kind.record.fields = take_fields(work, d->kind.record.fields);
+    if (d->kind == .enumeration) {
+        d->kind.enumeration.underlying = take_type(work, d->kind.enumeration.underlying);
+        d->kind.enumeration.items = take_enumerators(work, d->kind.enumeration.items);
+    }
+    if (d->kind == .type_alias) d->kind.type_alias.type = take_type(work, d->kind.type_alias.type);
+    if (d->kind == .import_module) d->kind.import_module.path = take_path(d->kind.import_module.path);
+    if (d->kind == .import_from) {
+        d->kind.import_from.path = take_path(d->kind.import_from.path);
+        d->kind.import_from.names = take_identifiers(d->kind.import_from.names);
+    }
+    if (d->kind == .static_assert_decl) {
+        d->kind.static_assert_decl.condition = take_expr(work, d->kind.static_assert_decl.condition);
+    }
+    if (d->kind == .if_constexpr) {
+        d->kind.if_constexpr.condition = take_expr(work, d->kind.if_constexpr.condition);
+        d->kind.if_constexpr.then_decls = take_decls(work, d->kind.if_constexpr.then_decls);
+        d->kind.if_constexpr.else_decls = take_decls(work, d->kind.if_constexpr.else_decls);
+    }
+}
+
+// A deep copy of `d`, a function, a variable or any other declaration, in the current allocator. The copy shares no
+// node, list or path with `d`; texts still point into the source.
+export ast::Decl *clone_decl(const ast::Decl *d) {
+    Work work = {};
+    ast::Decl *root = take_decl(&work, d);
+    for (Usize at = 0; at < work.length; at++) {
+        Node node = work.data[at];
+        if (node == .decl) visit_decl(&work, node.decl);
+        if (node == .stmt) visit_stmt(&work, node.stmt);
+        if (node == .expr) visit_expr(&work, node.expr);
+        if (node == .type) visit_type(&work, node.type);
+    }
+    return root;
+}

@@ -112,12 +112,18 @@ typedef I32 (*Lanes)();
 export void test_front_emit_vector_arithmetic_is_one_vector_operation() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir =
-        ir_of("pub fn sum_of(x: f32, y: f32) -> f32 {\n    let a = vec(f32, 4)(x, y, 3, 4)\n    let b = a * 2.0\n"
-              "    let c = a + b\n    let d = c / a\n    let e = c - a\n    c[0] + c[2] + d[1] + e[3]\n}\n"
-              "pub fn dot(x: f32, y: f32) -> f32 {\n    let a = vec(f32, 4)(x, y, 1, 2)\n"
-              "    let p = a * a\n    p[0] + p[1] + p[2] + p[3]\n}\n",
-              &host, &s);
+    char *ir = ir_of("pub fn sum_of(x: f32, y: f32) -> f32:\n"
+                     "    let a = vec(f32, 4)(x, y, 3, 4)\n"
+                     "    let b = a * 2.0\n"
+                     "    let c = a + b\n"
+                     "    let d = c / a\n"
+                     "    let e = c - a\n"
+                     "    c[0] + c[2] + d[1] + e[3]\n"
+                     "pub fn dot(x: f32, y: f32) -> f32:\n"
+                     "    let a = vec(f32, 4)(x, y, 1, 2)\n"
+                     "    let p = a * a\n"
+                     "    p[0] + p[1] + p[2] + p[3]\n",
+                     &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fmul <4 x float>"), true);
     test::check_equal(contains(ir, "fadd <4 x float>"), true);
@@ -133,12 +139,22 @@ export void test_front_emit_vector_arithmetic_is_one_vector_operation() {
 export void test_front_emit_vector_comparisons_give_a_vector_of_bool() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir =
-        ir_of("pub fn lanes() -> i32 {\n    let a = vec(f32, 4)(1, 2, 3, 4)\n    let b = vec(f32, 4)(4, 2, 2, 1)\n"
-              "    let lt = a < b\n    let eq = a == b\n    let mut n = 0\n"
-              "    if lt[0] {\n        n += 1\n    }\n    if lt[1] {\n        n += 10\n    }\n"
-              "    if eq[1] {\n        n += 100\n    }\n    if lt[3] {\n        n += 1000\n    }\n    n\n}\n",
-              &host, &s);
+    char *ir = ir_of("pub fn lanes() -> i32:\n"
+                     "    let a = vec(f32, 4)(1, 2, 3, 4)\n"
+                     "    let b = vec(f32, 4)(4, 2, 2, 1)\n"
+                     "    let lt = a < b\n"
+                     "    let eq = a == b\n"
+                     "    let mut n = 0\n"
+                     "    if lt[0]:\n"
+                     "        n += 1\n"
+                     "    if lt[1]:\n"
+                     "        n += 10\n"
+                     "    if eq[1]:\n"
+                     "        n += 100\n"
+                     "    if lt[3]:\n"
+                     "        n += 1000\n"
+                     "    n\n",
+                     &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fcmp olt <4 x float>"), true);
     Lanes lanes = (Lanes)symbol_of(&host, "lanes");
@@ -149,11 +165,14 @@ export void test_front_emit_vector_comparisons_give_a_vector_of_bool() {
 export void test_front_emit_vector_lane_write_and_integer_lanes() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir =
-        ir_of("pub fn lanes() -> i32 {\n    let mut m = vec(i32, 3)(0, 0, 0)\n    m[0] = 5\n    m[2] = m[0] + 1\n"
-              "    let u = vec(u8, 2)(250, 1)\n    let w = u + 10\n    m[0] + m[1] * 100 + m[2] * 1000 + (w[0].to("
-              "i32)) * 10000\n}\n",
-              &host, &s);
+    char *ir = ir_of("pub fn lanes() -> i32:\n"
+                     "    let mut m = vec(i32, 3)(0, 0, 0)\n"
+                     "    m[0] = 5\n"
+                     "    m[2] = m[0] + 1\n"
+                     "    let u = vec(u8, 2)(250, 1)\n"
+                     "    let w = u + 10\n"
+                     "    m[0] + m[1] * 100 + m[2] * 1000 + (w[0].to(i32)) * 10000\n",
+                     &host, &s);
     test::check_equal(ir != nullptr, true);
     Lanes lanes = (Lanes)symbol_of(&host, "lanes");
     test::check_equal(lanes(), (I32)(5 + 6000 + 40000));
@@ -163,8 +182,11 @@ export void test_front_emit_vector_lane_write_and_integer_lanes() {
 export void test_front_emit_vector_from_a_list_and_through_a_parameter() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("fn second(v: vec(f32, 2)) -> f32 {\n    v[1]\n}\n"
-                     "pub fn lanes() -> i32 {\n    let l: vec(f32, 2) = [1.5, 2.5]\n    second(l + 1.0).to(i32)\n}\n",
+    char *ir = ir_of("fn second(v: vec(f32, 2)) -> f32:\n"
+                     "    v[1]\n"
+                     "pub fn lanes() -> i32:\n"
+                     "    let l: vec(f32, 2) = [1.5, 2.5]\n"
+                     "    second(l + 1.0).to(i32)\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Lanes lanes = (Lanes)symbol_of(&host, "lanes");
@@ -173,16 +195,27 @@ export void test_front_emit_vector_from_a_list_and_through_a_parameter() {
 }
 
 export void test_front_emit_vector_checker_messages() {
-    Str wrong_count = last_error("fn f() -> f32 {\n    let a = vec(f32, 4)(1, 2, 3)\n    a[0]\n}\n");
+    Str wrong_count = last_error("fn f() -> f32:\n"
+                                 "    let a = vec(f32, 4)(1, 2, 3)\n"
+                                 "    a[0]\n");
     test::check_equal(contains(wrong_count.data, "built from exactly 4 values, found 3"), true);
-    Str out_of_range = last_error("fn f() -> f32 {\n    let a = vec(f32, 4)(1, 2, 3, 4)\n    a[4]\n}\n");
+    Str out_of_range = last_error("fn f() -> f32:\n"
+                                  "    let a = vec(f32, 4)(1, 2, 3, 4)\n"
+                                  "    a[4]\n");
     test::check_equal(contains(out_of_range.data, "out of range"), true);
-    Str mixed = last_error("fn f(a: vec(f32, 4), b: vec(f64, 4)) -> f32 {\n    let c = a + b\n    c[0]\n}\n");
+    Str mixed = last_error("fn f(a: vec(f32, 4), b: vec(f64, 4)) -> f32:\n"
+                           "    let c = a + b\n"
+                           "    c[0]\n");
     test::check_equal(contains(mixed.data, "write two `vec(F32, 4)`"), true);
-    Str zero = last_error("fn f(a: vec(f32, 0)) -> f32 {\n    0.0\n}\n");
+    Str zero = last_error("fn f(a: vec(f32, 0)) -> f32:\n"
+                          "    0.0\n");
     test::check_equal(contains(zero.data, "at least one lane"), true);
-    Str not_number = last_error("fn f(a: vec(bool, 2)) -> f32 {\n    0.0\n}\n");
+    Str not_number = last_error("fn f(a: vec(bool, 2)) -> f32:\n"
+                                "    0.0\n");
     test::check_equal(contains(not_number.data, "number type"), true);
-    Str flag_write = last_error("fn f(a: vec(f32, 2)) -> f32 {\n    let mut l = a < a\n    l[0] = true\n    0.0\n}\n");
+    Str flag_write = last_error("fn f(a: vec(f32, 2)) -> f32:\n"
+                                "    let mut l = a < a\n"
+                                "    l[0] = true\n"
+                                "    0.0\n");
     test::check_equal(contains(flag_write.data, "cannot be assigned"), true);
 }
