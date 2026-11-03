@@ -418,3 +418,15 @@ export void test_a_typedef_of_a_function_type_with_parameter_names_is_rewritten(
     check_flag(fixed.applied > 0, true);
     check_text(fixed.text[0:3], "let");
 }
+
+// An opaque tag and its alias is the opaque `struct Name`, the C name kept by `@c_name` (#2091).
+export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\n@c_name(\"SmithChunk\") pub typedef struct SmithChunk Chunk;\n"
+                                 "typedef struct Node Node;\n");
+    check_text(fixed.text, "@c_name(\"SmithChunk\") pub struct Chunk\nstruct Node\n");
+}
