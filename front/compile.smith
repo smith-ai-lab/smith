@@ -330,7 +330,21 @@ export struct Hover {
     U32 start;
     U32 end;
     Str type;
+    Str doc; // the comment above the name's declaration in a C header, without its markers; empty when there is none
 };
+
+// The symbol of a name that a C header declared (`c::printf`, or `c.printf` in smith's own syntax), or null: headers
+// declare their names as `c::name`, whatever the import is called, so the member of a plain name reads the same row.
+static const types::Symbol *header_symbol(const types::Checked *checked, const ast::Expr *at) {
+    const types::Symbol *found = nullptr;
+    if (at->kind == .name) {
+        found = types::lookup_path(&checked->scopes, at->kind.name.path);
+    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
+        found = types::lookup(&checked->scopes, as_str(format::push("c::", at->kind.member.name)));
+    }
+    if (found == nullptr || found->decl == nullptr || !found->decl->from_c) return nullptr;
+    return found;
+}
 
 // The innermost checked expression of the text `source` of `path` that covers the byte `offset`, with its type (the
 // language server's hover, #1892). Nothing is read or written; the result is the current allocator's.
@@ -344,8 +358,12 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     const ast::Expr *at = ast::expr_at(&parsed.module, offset);
     if (at == nullptr) return (Hover){};
     types::TypeRef type = types::type_of(&checked, at);
+    const types::Symbol *named = header_symbol(&checked, at);
+    if (type == nullptr && named != nullptr) type = named->type; // `c.f` before the checker binds `c` (#1961)
     if (type == nullptr) return (Hover){};
-    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type)};
+    Str doc = "";
+    if (named != nullptr) doc = named->decl->doc;
+    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
 }
 
 // Where a name is declared (the language server's go-to-definition, #1893): in `file` (empty: the file asked about),
