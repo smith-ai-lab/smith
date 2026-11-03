@@ -840,7 +840,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
             return {.error = made.error};
         }
         params[i] = made.ok;
-        types[i] = params[i].llvm;
+        types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
     if (result_type != nullptr) {
@@ -898,7 +898,7 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
             return {.error = made.error};
         }
         params[i] = made.ok;
-        llvm_types[i] = params[i].llvm;
+        llvm_types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
     if (signature->element != nullptr && signature->element != e->options.checked->table.void_type) {
@@ -955,6 +955,9 @@ static state::Status declare_params(state::Emitter *e, const ast::Decl *d, state
         c::LLVMValueRef value = c::LLVMGetParam(info.llvm, (U32)i);
         c::LLVMSetValueName2(value, p.name.data, countof(p.name));
         c::LLVMValueRef slot = state::new_alloca(e, info.params[i], p.name);
+        // An array arrives as a pointer to the caller's elements: the parameter is a copy of them, in its own slot.
+        state::Ty param = info.params[i];
+        if (param.kind == .array) value = c::LLVMBuildLoad2(e->builder, param.llvm, value, "copy");
         c::LLVMBuildStore(e->builder, value, slot);
         state::add_local(e, (state::Local){.name = p.name, .ty = info.params[i], .address = slot});
         try debug::declare_local(e, p.name, info.params[i], slot, p.span);

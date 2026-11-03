@@ -2,8 +2,9 @@
 // laid out like a case of tests/smith-lang/cases but with `src/*.smith` in smith's own syntax. Each file of `src/` is
 // compiled through `compile::file` (one module per file, named by the file) and then, by the files under `expect/`:
 //   expect/error    compiling fails with exactly these diagnostics, the scratch folder left out (`src/main.smith:1:2:
-//   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file expect/stdout   the objects are
-//   linked (the case has `pub fn main`) and the program prints exactly this
+//   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file c/main.c   a C program that calls
+//   the case's headers, linked with the objects instead of a `pub fn main` expect/stdout   the objects are linked (the
+//   case has `pub fn main`) and the program prints exactly this
 // Add a case by adding a folder.
 module front_corpus_test;
 
@@ -175,8 +176,12 @@ static Str stand_ins(Str cast_body) {
 // after the output for a status other than 0).
 static void check_stdout(Str dir, Str folder, Built built) {
     write_text(as_str(format::push(folder, "/stubs.c")), stand_ins("__builtin_trap();"));
+    // A case with `c/main.c` has a C program as its caller: it includes the headers this case wrote.
+    Str caller_path = as_str(format::push(dir, "/c/main.c"));
+    Str caller = "";
+    if (files::exists(caller_path)) caller = as_str(format::push("-I ", folder, " ", caller_path, " "));
     I32 linked = sh_status(
-        as_str(format::push(smith_path(), " cc ", folder, "/stubs.c ", built.objects, "-o ", folder, "/prog")));
+        as_str(format::push(smith_path(), " cc ", folder, "/stubs.c ", caller, built.objects, "-o ", folder, "/prog")));
     test::check_equal(linked, 0);
     if (linked != 0) return;
     (void)sh_status(
