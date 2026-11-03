@@ -782,6 +782,8 @@ static void drain(types::Checked *r) {
 // ---------------------------------------------------------------------------------------------------------------
 // Functions and the module
 
+static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature);
+
 // The types::BodyChecker: the body of one function of the module.
 export void check_body(types::Checked *r, const ast::Decl *function) {
     if (function->kind != .function || function->kind.function.body == nullptr) {
@@ -792,7 +794,18 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     if (symbol == nullptr || symbol->decl != function || symbol->type->kind != .function) {
         return;
     }
-    types::TypeRef signature = symbol->type;
+    if (symbol->generic) {
+        return; // a template: its bodies are the instances' (check_instances)
+    }
+    check_function(r, function, symbol->type);
+}
+
+// The body of `function` against `signature`: the parameters in a scope of their own, then the body.
+static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature) {
+    if (function->kind != .function) {
+        return;
+    }
+    Str name = function->kind.function.name;
     ast::Param params[:] = function->kind.function.params;
     types::push_scope(&r->scopes);
     for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
@@ -827,6 +840,22 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
+}
+
+// Checks the body of every instance of a generic function that a call made (#1908), each in a scope that binds its
+// compile-time parameters; an instance may make others, which are checked in turn.
+static void check_instances(types::Checked *r) {
+    for (Usize i = 0; i < r->instance_count; i++) {
+        if (r->instances[i].checked) {
+            continue;
+        }
+        r->instances[i].checked = true;
+        types::Instance instance = r->instances[i];
+        types::push_scope(&r->scopes);
+        types::bind_instance(r, &instance);
+        check_function(r, instance.decl, instance.signature);
+        types::pop_scope(&r->scopes);
+    }
 }
 
 export void install() {
@@ -879,6 +908,7 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
     }
+    check_instances(&r);
     drain(&r);
     types_attr::check_module(&r, m);
     uninstall();
