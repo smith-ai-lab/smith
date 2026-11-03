@@ -1,4 +1,4 @@
-// to, wrap and cast (#1811): a conversion that fits, a wrap that keeps the low bits, a pointer reinterpreted.
+# to, wrap and cast (#1811): a conversion that fits, a wrap that keeps the low bits, a pointer reinterpreted.
 
 pub fn check() -> i32 {
     big: i32 = 300
