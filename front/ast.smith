@@ -40,6 +40,14 @@ export struct Span {
     U32 end;
 };
 
+// Where a declaration read from a C header is (clang's presumed location: the header as written) (#1941). `file` is
+// empty when it is not known.
+export struct Place {
+    Str file;
+    U32 line;
+    U32 column;
+};
+
 // `Str` inside the inline struct of a payload enum's variant breaks today's lowering, so those fields are written
 // `Text`: the same type.
 export typedef Str Text;
@@ -108,6 +116,8 @@ export struct FieldDecl {
     Bool is_pub; // `pub x: T`: other modules may name it; a new-syntax field without it is private to its module
     Attribute attributes[:];
     Span span;
+    Place place; // of a field read from a C header
+    Str doc;     // the comment above it, without its markers
 };
 
 export typedef enum {
@@ -509,6 +519,8 @@ export struct Enumerator {
     TypeExpr *payload; // a payload enum's variant
     Attribute attributes[:];
     Span span;
+    Place place; // of an enumerator read from a C header
+    Str doc;     // the comment above it, without its markers
 };
 
 export typedef enum {
@@ -580,6 +592,8 @@ export struct Decl {
     Bool is_extern;
     Bool is_inline;
     Bool from_c; // read from a C header; its name is reached as `c::name`
+    Place place; // where the header declares it (from_c only)
+    Str doc;     // the comment above it in the header, without its markers; empty when there is none
     DeclKind kind;
 };
 
