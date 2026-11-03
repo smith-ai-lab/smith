@@ -29,10 +29,11 @@ static const char *const key = "smith-effects";
 
 // What one error holds. `message` and `chain` are owned by the report.
 export struct Violation {
-    Str function;   // the function's name as the source writes it
-    Str message;    // "`bad` is [[std::pure]], but it has the effects console, globals: bad -> log_it (f:16) -> printf (f:8)"
-    U32 line;       // the call that first added an effect beyond the ceiling, 0 when the function adds it itself
-    U32 excess;     // the effects beyond the ceiling
+    Str function; // the function's name as the source writes it
+    Str message;  // "`bad` is [[std::pure]], but it has the effects console, globals: bad -> log_it (f:16) -> printf
+                  // (f:8)"
+    U32 line;     // the call that first added an effect beyond the ceiling, 0 when the function adds it itself
+    U32 excess;   // the effects beyond the ceiling
     U32 ceiling;
 };
 
@@ -114,8 +115,8 @@ static Str chain_of(const effects_pass::Graph *g, Usize index, Usize bit, Str fi
     for (Usize steps = 0; steps < 64; steps++) {
         effects_pass::Cause cause = effects_pass::cause_of(g, at, bit);
         if (cause.callee == effects_pass::none) break;
-        Str next = effects_cache::as_str(
-            format::push(text, " -> ", plain(effects_pass::name_of(g, cause.callee)), " (", file, ":", cause.line, ")"));
+        Str next = effects_cache::as_str(format::push(text, " -> ", plain(effects_pass::name_of(g, cause.callee)), " (",
+                                                      file, ":", cause.line, ")"));
         effects_cache::free_text(text);
         text = next;
         at = cause.callee;
@@ -155,9 +156,8 @@ static void check_function(const effects_pass::Graph *g, c::LLVMValueRef functio
     Str kind = ceiling == 0 ? effects_cache::dup("[[std::pure]]")
                             : effects_cache::as_str(format::push("limited to ", effects_table::describe(ceiling)));
     Str own = effects_cache::dup(plain(effects_pass::name_of(g, index)));
-    Str message = effects_cache::as_str(
-        format::push("smith-effect: `", own, "` is ", kind, ", but it has the effects ", effects_table::describe(extra),
-                     ": ", chain));
+    Str message = effects_cache::as_str(format::push("smith-effect: `", own, "` is ", kind, ", but it has the effects ",
+                                                     effects_table::describe(extra), ": ", chain));
     effects_cache::free_text(kind);
     effects_cache::free_text(chain);
     push(report, (Violation){.function = own, .message = message, .line = line, .excess = extra, .ceiling = ceiling});
@@ -188,8 +188,8 @@ export Str render(const Report *report) {
         effects_cache::free_text(text);
         text = next;
         if ((v->excess & (v->excess - 1)) != 0) {
-            next = effects_cache::as_str(format::push(
-                text, place, ": note: this call is the first of the effects beyond the declared ones\n"));
+            next = effects_cache::as_str(
+                format::push(text, place, ": note: this call is the first of the effects beyond the declared ones\n"));
             effects_cache::free_text(text);
             text = next;
         }

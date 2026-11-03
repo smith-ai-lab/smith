@@ -108,12 +108,12 @@ export void test_front_effects_ceiling_errors() {
     test::check_equal(report.items[0].line, 16u);
     test::check(same(report.items[0].function, "bad"));
     test::check(same(report.items[0].message,
-                           "smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: "
-                           "bad -> log_it (chain.smith:16) -> printf (chain.smith:8)"));
+                     "smith-effect: `bad` is [[std::pure]], but it has the effects console, globals: "
+                     "bad -> log_it (chain.smith:16) -> printf (chain.smith:8)"));
     test::check_equal(report.items[1].line, 25u);
     test::check(same(report.items[1].message,
-                           "smith-effect: `too_much` is limited to alloc, but it has the effects files, globals: "
-                           "too_much -> fopen (chain.smith:25)"));
+                     "smith-effect: `too_much` is limited to alloc, but it has the effects files, globals: "
+                     "too_much -> fopen (chain.smith:25)"));
     Str text = effects_ceiling::render(&report);
     defer mem::free((char *)(Usize)text.data);
     Str first = "chain.smith:16:1: error: smith-effect: `bad` is [[std::pure]]";
