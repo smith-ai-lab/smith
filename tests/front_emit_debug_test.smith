@@ -138,7 +138,7 @@ export void test_front_emit_debug_a_function_has_a_subprogram_and_a_location() {
     ast::Module m = add_module();
     tree_end(&trees);
     char *text = ir_of(&m, add_text(), true);
-    test::check_equal(has(text, "DISubprogram(name: \"test.add\", linkageName: \"front::test::add\""), true);
+    test::check_equal(has(text, "DISubprogram(name: \"front.test.add\", linkageName: \"front::test::add\""), true);
     test::check_equal(has(text, "line: 2,"), true);
     test::check_equal(has(text, "DICompileUnit(language: DW_LANG_C11, file: "), true);
     test::check_equal(has(text, "producer: \"smith\""), true);
