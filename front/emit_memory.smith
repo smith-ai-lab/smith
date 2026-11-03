@@ -21,6 +21,11 @@
 // the count; `s[i]` and `xs[a:b]` are checked against the count in every build (the index report); `countof(s)` is the
 // count. A slice of a pointer is `not emitted yet`.
 //
+// BLOCKS (#1710): `[,]T` and `[,,]T` are `{ ptr data, [N x usize] counts }`; `xs[i]` checks `i` against the first count
+// and gives a row, a block of one dimension fewer (a slice for the last two) over the same elements; `countof(xs)` is
+// the first count; a fixed array of arrays converts to a block by aliasing it. `[5,3]T` is nested arrays and `[,3]T` a
+// slice.
+//
 // ARRAY LITERALS (#1624): `[a, b, c]` is an array value (items converted to the element type, inserted into a zero
 // array); where a slice is expected the array is stored in a fresh entry-block slot and the Value is `{ slot, M }`.
 // The hidden array lives as long as the function: a literal evaluated again (in a loop) overwrites the same slot, so a
@@ -137,6 +142,21 @@ export state::Ty slice_type(state::Emitter *e, state::Ty element, Str name) {
     return ty;
 }
 
+// A block of `dimensions` run-time sizes of `cell`: the literal struct `{ ptr data, [dimensions x usize] counts }`.
+export state::Ty block_type(state::Emitter *e, state::Ty cell, U64 dimensions) {
+    c::LLVMTypeRef counts = c::LLVMArrayType2(index_word(e), dimensions);
+    c::LLVMTypeRef parts[2] = {state::pointer_type(e, 0), counts};
+    state::Ty *inner = own(e, cell);
+    state::Ty ty = {.kind = .block,
+                    .llvm = c::LLVMStructTypeInContext(e->context, parts, 2, 0),
+                    .name = "block",
+                    .element = inner,
+                    .count = dimensions};
+    return ty;
+}
+
+export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t);
+
 // The type at the bottom of a chain of pointers and arrays: a scalar, an enumeration, a record, `str` or a slice.
 static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .slice) {
@@ -146,6 +166,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         state::Ty made = slice_type(e, inner.ok, "slice");
         return made;
     }
+    if (base->kind == .block_type) return type_block(e, base);
     if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
     ast::Path path = base->kind.named.path;
     if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");
@@ -164,6 +185,39 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         return ty;
     }
     return ty_failf(base->span, "unknown type ", name);
+}
+
+// `[5,3]T` (nested arrays), `[,3]T` (a slice of `[3]T`), `[,]T` and `[,,]T` (a block): the checker's `build_block`.
+export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .block_type) {
+        return ty_failf(t->span, "not a block type", "");
+    }
+    ast::ExprRef dims[:] = t->kind.block_type.dims;
+    state::TyResult found = state::type_of(e, t->kind.block_type.element);
+    if (found == .error) return found;
+    Usize empty = 0;
+    while (empty < countof(dims) && dims[empty] == nullptr)
+        empty += 1;
+    state::Ty cell = found.ok;
+    for (Usize i = countof(dims); i > empty; i--) {
+        const ast::Expr *size = dims[i - 1];
+        if (size == nullptr || size->kind != .integer)
+            return ty_failf(t->span, "an array length is an integer literal", "");
+        cell = array_of(e, cell, size->kind.integer.value);
+    }
+    if (empty == 0) {
+        state::Ty whole = cell;
+        return whole;
+    }
+    state::Ty made = {};
+    if (empty == 1) {
+        made = slice_type(e, cell, "slice");
+    } else if (empty > 8) {
+        return ty_failf(t->span, "a block has at most 8 dimensions", "");
+    } else {
+        made = block_type(e, cell, empty);
+    }
+    return made;
 }
 
 // The type `t` says. A chain of pointers and arrays is walked with a loop, then built from the inside.
@@ -447,6 +501,52 @@ static void slice_element(state::Emitter *e, state::Value base, state::Value at,
     state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
 }
 
+// The counts of a block: its sizes as words, one per dimension.
+static void block_counts(state::Emitter *e, c::LLVMValueRef whole, U64 dimensions, c::LLVMValueRef counts[8]) {
+    c::LLVMValueRef all = c::LLVMBuildExtractValue(e->builder, whole, 1, "counts");
+    for (U64 i = 0; i < dimensions; i++)
+        counts[i] = c::LLVMBuildExtractValue(e->builder, all, (U32)i, "count");
+}
+
+// The block `{ data, counts }` of type `ty`; `counts` has one word per dimension.
+static state::Value make_block(state::Emitter *e, state::Ty ty, c::LLVMValueRef data, c::LLVMValueRef counts[8]) {
+    c::LLVMTypeRef words = c::LLVMArrayType2(index_word(e), ty.count);
+    c::LLVMValueRef all = c::LLVMGetUndef(words);
+    for (U64 i = 0; i < ty.count; i++)
+        all = c::LLVMBuildInsertValue(e->builder, all, counts[i], (U32)i, "");
+    c::LLVMValueRef with_data = c::LLVMBuildInsertValue(e->builder, c::LLVMGetUndef(ty.llvm), data, 0, "");
+    c::LLVMValueRef whole = c::LLVMBuildInsertValue(e->builder, with_data, all, 1, "block");
+    return (state::Value){.llvm = whole, .ty = ty};
+}
+
+// A block's row `xs[i]`, checked against the first count: a block of one dimension fewer (a slice for the last two)
+// that shares the elements. The row is a value; it is spilled to a slot so that the next index finds a place.
+static void block_row(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+    c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "block");
+    c::LLVMValueRef data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
+    c::LLVMValueRef counts[8] = {};
+    block_counts(e, whole, base.ty.count, counts);
+    c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, counts[0], "outside");
+    report_index(e, bad, at.llvm, at.ty.is_signed, counts[0]);
+    c::LLVMValueRef stride = c::LLVMConstInt(index_word(e), 1, 0);
+    for (U64 i = 1; i < base.ty.count; i++)
+        stride = c::LLVMBuildMul(e->builder, stride, counts[i], "stride");
+    c::LLVMValueRef start = c::LLVMBuildMul(e->builder, position, stride, "start");
+    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "row");
+    state::Value row = {};
+    if (base.ty.count == 2) {
+        row = make_slice(e, slice_type(e, *base.ty.element, "slice"), first, counts[1]);
+    } else {
+        c::LLVMValueRef inner[8] = {};
+        for (U64 i = 1; i < base.ty.count; i++)
+            inner[i - 1] = counts[i];
+        row = make_block(e, block_type(e, *base.ty.element, base.ty.count - 1), first, inner);
+    }
+    c::LLVMValueRef slot = state::new_alloca(e, row.ty, "row");
+    c::LLVMBuildStore(e->builder, row.llvm, slot);
+    state::push_value(e, (state::Value){.llvm = slot, .ty = row.ty});
+}
+
 // A lane of a vector of Bools (a comparison's result) is one bit, with no address: it is read into a temporary.
 static void flag_lane(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
     check_index(e, base, at, position);
@@ -472,6 +572,10 @@ static state::Status index_finish(state::Emitter *e, const state::Work *w) {
     }
     if (base.ty.kind == .slice) {
         slice_element(e, base, at, position);
+        return state::success();
+    }
+    if (base.ty.kind == .block) {
+        block_row(e, base, at, position);
         return state::success();
     }
     if (base.ty.kind != .pointer || base.ty.element == nullptr) return state::failf(w->span, "indexing ", base.ty.name);
@@ -755,12 +859,21 @@ static state::Status static_type(state::Emitter *e, const ast::Expr *x, state::T
 static Bool checked_slice(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return false;
     types::TypeRef t = types::type_of(e->options.checked, x);
-    return t != nullptr && (t->kind == .slice || t->kind == .text);
+    return t != nullptr && (t->kind == .slice || t->kind == .text || t->kind == .block);
 }
 
 // `countof` of a slice: its count, a `usize`.
 static state::Status count_finish(state::Emitter *e, const state::Work *w) {
     state::Value slice = state::pop_value(e);
+    if (slice.ty.kind == .block) {
+        c::LLVMValueRef counts[8] = {};
+        block_counts(e, slice.llvm, slice.ty.count, counts);
+        state::Ty first = {};
+        state::scalar_type(e, "usize", &first);
+        state::push_value(
+            e, (state::Value){.llvm = c::LLVMBuildIntCast2(e->builder, counts[0], first.llvm, 0, ""), .ty = first});
+        return state::success();
+    }
     if (slice.ty.kind != .slice) return state::failf(w->span, "countof of ", slice.ty.name, ", which is not a slice");
     state::Ty word = {};
     state::scalar_type(e, "usize", &word);
@@ -835,9 +948,24 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
     return state::success();
 }
 
+// A fixed array of arrays as the block `to`: `{ address, sizes }`, the sizes the first dimensions of the array's type.
+static state::Value array_as_block(state::Emitter *e, state::Ty to, c::LLVMValueRef address, state::Ty array) {
+    c::LLVMValueRef counts[8] = {};
+    state::Ty inner = array;
+    for (U64 i = 0; i < to.count; i++) {
+        counts[i] = c::LLVMConstInt(index_word(e), inner.count, 0);
+        inner = *inner.element;
+    }
+    return make_block(e, to, address, counts);
+}
+
 static state::Status array_slice_finish(state::Emitter *e, const state::Work *w) {
     state::Value place = state::pop_value(e);
     if (place.ty.kind != .array) return state::failf(w->span, "a slice of ", place.ty.name, ", which is not an array");
+    if (w->ty.kind == .block) {
+        state::push_value(e, array_as_block(e, w->ty, place.llvm, place.ty));
+        return state::success();
+    }
     c::LLVMValueRef count = c::LLVMConstInt(index_word(e), place.ty.count, 0);
     state::push_value(e, make_slice(e, w->ty, place.llvm, count));
     return state::success();
@@ -854,6 +982,10 @@ export state::Status array_as_slice(state::Emitter *e, const ast::Expr *x, state
 export state::Status array_value_as_slice(state::Emitter *e, state::Value value, state::Ty to) {
     c::LLVMValueRef slot = state::new_alloca(e, value.ty, "temporary");
     c::LLVMBuildStore(e->builder, value.llvm, slot);
+    if (to.kind == .block) {
+        state::push_value(e, array_as_block(e, to, slot, value.ty));
+        return state::success();
+    }
     c::LLVMValueRef count = c::LLVMConstInt(index_word(e), value.ty.count, 0);
     state::push_value(e, make_slice(e, to, slot, count));
     return state::success();
