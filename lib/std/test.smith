@@ -2385,6 +2385,8 @@ void judge_expectation(Run *run, const Shared *block) {
     run->heading = nullptr;
     if (verdict == nullptr) {
         run->outcome = (Outcome){.end = End_Passed};
+        run->output.kept = 0; // the stop it expected wrote the output (the assert's message): --verbose shows none
+        run->output.total = 0;
         return;
     }
     run->outcome = (Outcome){.end = End_Check};
