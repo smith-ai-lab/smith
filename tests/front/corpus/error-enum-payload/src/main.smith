@@ -1,0 +1,18 @@
+# Errors of an enum with payloads: a variant the match does not name, a variant the type does not have, and one that
+# carries a payload used alone.
+pub struct Circle:
+    pub radius: f32
+
+pub enum Shape:
+    circle: Circle
+    empty
+
+fn describe(s: Shape) -> i32:
+    match s:
+        .circle(_): 1
+
+pub fn main() -> i32:
+    let a: Shape = .circle
+    let b: Shape = .nothing
+    let c: Shape = .empty
+    describe(a) + describe(b) + describe(c)

@@ -1,0 +1,4 @@
+pub fn main() -> i32:
+    let number: i32 = 5
+    let view: []i32 = number[0:1]
+    view[0]

@@ -1,0 +1,7 @@
+# `countof` of a pointer is an error: a pointer has no count (issue #167).
+fn bad(p: *u32) -> usize:
+    countof(p)
+
+pub fn main() -> i32:
+    let x: u32 = 0
+    bad(&x).to(i32)
