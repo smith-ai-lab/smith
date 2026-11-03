@@ -364,6 +364,62 @@ static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
     return symbol->decl->kind.variable.init;
 }
 
+// The names of `autodiff::out` (a path) or `autodiff.out` (a chain of `.`), the module first; none for anything else.
+static types::Names qualified_names(const ast::Expr *x) {
+    types::Names names = {};
+    if (x->kind == .member) return types::member_names(x);
+    if (x->kind != .name) return names;
+    ast::Path path = x->kind.name.path;
+    if (countof(path.segments) < 2 || countof(path.segments) > 8) return names;
+    for (Usize i = 0; i < countof(path.segments); i++)
+        names.items[i] = path.segments[i].text;
+    names.count = countof(path.segments);
+    return names;
+}
+
+// `autodiff::out`: a global of an imported module (not a header's: `c_constant` took those). The declaration it names
+// and its key, `std::autodiff::out`, as the checker keeps it (#1975).
+static Bool imported_global(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *key) {
+    if (e->options.checked == nullptr) return false;
+    types::Names names = qualified_names(x);
+    if (names.count < 2) return false;
+    const types::Scopes *scopes = &e->options.checked->scopes;
+    Str prefix = "";
+    for (Usize i = 0; i + 1 < names.count; i++) {
+        const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
+        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        Str module_path = "";
+        for (Usize j = 0; j < countof(module->decl->kind.import_module.path.segments); j++)
+            module_path =
+                state::msg(format::push(module_path, module->decl->kind.import_module.path.segments[j].text, "::"));
+        prefix = module_path;
+    }
+    Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
+    const types::Symbol *target = types::lookup(scopes, full);
+    if (target == nullptr || target->kind != .variable || target->decl == nullptr || target->decl->from_c ||
+        target->decl->kind != .variable)
+        return false;
+    *found = target->decl;
+    *key = full;
+    return true;
+}
+
+// Reads an imported module's global: declared external under its `@c_name` (else its key) when first read, then loaded.
+static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x, const ast::Decl *d, Str key) {
+    types::TypeRef wanted = types::type_of(e->options.checked, x);
+    if (wanted == nullptr) return state::fail("the global has no type", x->span);
+    state::TyResult made = state::type_of_checked(e, wanted, x->span);
+    if (made == .error) return {.error = made.error};
+    Str own = state::c_name_of(d);
+    char *label = state::cstr(countof(own) > 0 ? own : key);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    if (global == nullptr) global = c::LLVMAddGlobal(e->module, made.ok.llvm, label);
+    mem::free(label);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, made.ok.llvm, global, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = made.ok});
+    return state::success();
+}
+
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
@@ -372,6 +428,9 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         return memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
+    const ast::Decl *imported = nullptr;
+    Str imported_key = "";
+    if (imported_global(e, x, &imported, &imported_key)) return imported_global_read(e, x, imported, imported_key);
     const ast::Expr *constant = c_constant(e, x);
     if (constant != nullptr) {
         types::TypeRef wanted = types::type_of(e->options.checked, x);
@@ -809,6 +868,59 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     return state::success();
 }
 
+// Whether `d` is a generic function: a template emits nothing, its instances are emitted (#1909).
+static Bool is_template(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) return true;
+    }
+    return false;
+}
+
+// Pass 2 for an instance the checker made: its symbol is `module::alloc.i32`, its types are the checker's.
+static state::Status declare_instance(state::Emitter *e, const types::Instance *instance) {
+    const ast::Decl *d = instance->decl;
+    if (d->kind != .function) {
+        return state::fail("not a function", d->span);
+    }
+    Str name = d->kind.function.name;
+    types::TypeRef signature = instance->signature;
+    Usize count = countof(signature->slots);
+    if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
+    state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
+    c::LLVMTypeRef llvm_types[64];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = type_of_checked(e, signature->slots[i].type, d->span);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        params[i] = made.ok;
+        llvm_types[i] = params[i].llvm;
+    }
+    state::Ty result = void_type(e);
+    if (signature->element != nullptr && signature->element != e->options.checked->table.void_type) {
+        state::TyResult made_result = type_of_checked(e, signature->element, d->span);
+        if (made_result == .error) {
+            return {.error = made_result.error};
+        }
+        result = made_result.ok;
+    }
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, llvm_types, (U32)count, 0);
+    Str symbol = function_symbol(e->tree, d, name);
+    char *label = state::cstr(symbol);
+    c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    add_function(e, (state::FunctionInfo){.name = name,
+                                          .symbol = symbol,
+                                          .llvm = function,
+                                          .llvm_type = type,
+                                          .result = result,
+                                          .params = params[0:count]});
+    return state::success();
+}
+
 // The function's entry block: the slots come first and a branch leads to the body, which is where code goes.
 static void start_function(state::Emitter *e, state::FunctionInfo info) {
     e->function = info.llvm;
@@ -969,7 +1081,25 @@ static state::Status emit_generator(state::Emitter *e, const ast::Decl *d, state
 }
 
 // Pass 3: one body.
-static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
+// The compile-time constants of an instance (`n` of `table(64)`) are locals holding their value.
+static state::Status declare_constants(state::Emitter *e, const types::Instance *instance, ast::Span span) {
+    for (Usize i = 0; i < countof(instance->bindings); i++) {
+        types::Binding binding = instance->bindings[i];
+        if (binding.is_type) continue;
+        state::TyResult made = type_of_checked(e, binding.type, span);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        state::Ty ty = made.ok;
+        c::LLVMValueRef slot = state::new_alloca(e, ty, binding.name);
+        c::LLVMBuildStore(e->builder, c::LLVMConstInt(ty.llvm, binding.value, 0), slot);
+        state::add_local(e, (state::Local){.name = binding.name, .ty = ty, .address = slot});
+    }
+    return state::success();
+}
+
+static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info,
+                                   const types::Instance *instance) {
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
     }
@@ -979,6 +1109,7 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     state::begin_scope(e);
     try debug::begin_function(e, d);
     try declare_params(e, d, info);
+    if (instance != nullptr) try declare_constants(e, instance, d->span);
     Bool is_void_result = c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind;
     if (!is_void_result && ends_in_value_statement(body)) {
         try value_statement_block(e, body);
@@ -1268,13 +1399,18 @@ static state::Status declare_all(state::Emitter *e) {
         if (d->kind == .function) {
             if (d->kind.function.body == nullptr)
                 try call::prototype(e, d);
-            else
+            else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
             if (!is_module_alias(e, d)) try memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from) {
             return state::not_emitted("this kind of declaration", d->span);
+        }
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            try declare_instance(e, &e->options.checked->instances[i]);
         }
     }
     return state::success();
@@ -1286,8 +1422,15 @@ static state::Status emit_all(state::Emitter *e) {
     Usize next = 0;
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
-        if (d->kind == .function && d->kind.function.body != nullptr) {
-            try emit_function(e, d, e->functions[next]);
+        if (d->kind == .function && d->kind.function.body != nullptr && !is_template(d)) {
+            try emit_function(e, d, e->functions[next], nullptr);
+            next += 1;
+        }
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            try emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
+                              &e->options.checked->instances[i]);
             next += 1;
         }
     }

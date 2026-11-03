@@ -270,6 +270,24 @@ export void test_front_join_driver_two_files_with_one_name_are_an_error_naming_b
     remove_all(folder);
 }
 
+// A global of an imported module is read under its `@c_name` (#1975): `probe.marker` is an undefined `enzyme_out` in
+// the importer's object, the symbol Enzyme looks for at link time, and the module's object defines nothing under that
+// name.
+export void test_front_join_driver_a_global_of_an_imported_module_is_read_under_its_c_name() {
+    Str folder = folder_for("global");
+    sh(as_str(format::push("mkdir -p ", folder, "/src/ad")));
+    write_text(as_str(format::push(folder, "/src/ad/probe.smith")),
+               "@c_name(\"enzyme_out\")\npub extern let marker: i32\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import ad.probe\n\npub fn read() -> i32:\n    probe.marker\n");
+    Ran ran = sh(as_str(
+        format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new -c src/main.smith src/ad/probe.smith")));
+    test::check_equal(ran.status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_out'"))).status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/probe.o | grep -q enzyme_out"))).status != 0, true);
+    remove_all(folder);
+}
+
 // The real lib/std/ascii.smith: parsed and checked clean, then front::emit stops at `char`. This documents the gap
 // (nothing is asserted about the outcome, so the day the emitter handles `char` this test needs no change).
 export void test_front_join_the_real_ascii_module_reports_where_it_stops() {

@@ -1,0 +1,7 @@
+fn take(xs: []i32) -> i32:
+    xs[0]
+
+pub fn main() -> i32:
+    let mut raw: [3]i32 = [1, 2, 3]
+    let p: *mut i32 = &raw[0]
+    take(p)

@@ -1,0 +1,4 @@
+import no.such.thing
+
+pub fn main() -> i32:
+    0
