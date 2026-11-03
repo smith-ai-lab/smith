@@ -832,6 +832,7 @@ static const char *const build_front_modules[] = {
     "types_undefined",
     "lint",
     "affine",
+    "affine_loops",
     "types_fn",
     "types_iter",
     "emit_state",
