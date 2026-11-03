@@ -231,7 +231,7 @@ export void test_front_header_an_option_parameter_is_an_error_and_writes_nothing
     compile::Report done = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
     test::check_equal(done.ok, false);
     Str want = as_str(
-        format::push(shapes_path(folder), ":1:10: error: `f` takes `?i32`, which has no C spelling in a header yet\n"));
+        format::push(shapes_path(folder), ":1:10: error: `f` takes `?i32`, whose C layout is not defined yet\n"));
     test::check_equal(done.text, want);
     test::check_equal(files::exists(header_path(folder)), false);
     remove_all(folder);

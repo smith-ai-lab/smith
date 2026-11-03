@@ -38,6 +38,7 @@ export void test_lsp_initialize_replies_with_the_capabilities_and_the_id() {
     test::check(has(out, "Content-Length: "));
     test::check(has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1,"
                          "\"hoverProvider\":true,\"definitionProvider\":true,\"documentSymbolProvider\":true,"
+                         "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
                          "\"semanticTokensProvider\":{\"legend\":"));
 }
 

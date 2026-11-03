@@ -141,3 +141,8 @@ export void test_front_types_payload_match_binding_on_a_bare_variant_is_refused(
                  "        .empty(e): 0\n"),
           "`.empty` carries no value to bind", "");
 }
+
+export void test_front_types_payload_read_without_testing_the_variant_suggests_if_let_or_match() {
+    fails(shapes("fn area(s: Shape) -> f32:\n    return s.circle.radius\n"), "payload enumeration",
+          "`if let .variant(v) = x:`");
+}
