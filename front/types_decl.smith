@@ -67,6 +67,7 @@ import front::types_fn;
 import front::types_iter;
 import front::types_stream;
 import front::types_undefined;
+import front::affine;
 import front::parse as syntax;
 import front::when;
 import std::arena;
@@ -750,6 +751,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
+    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
     state.result = outer;
 }
 

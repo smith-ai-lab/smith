@@ -89,6 +89,36 @@ static Str diagnostic(Str file, Str source, ast::Span span, Str severity, Str me
     return as_str(format::push(file, ":", position(source, span.start), ": ", severity, ": ", message, "\n"));
 }
 
+// The 1-based line of the byte `offset` of `source`.
+static U64 line_of(Str source, U32 offset) {
+    U64 line = 1;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') line += 1;
+    }
+    return line;
+}
+
+// `message` with its `$line` made the line of `related` (a check's message that names another place, #1986).
+static Str with_line(Str source, Str message, ast::Span related) {
+    for (Usize i = 0; i + 5 <= countof(message); i++) {
+        if (message[i] == '$' && message[i + 1] == 'l' && message[i + 2] == 'i' && message[i + 3] == 'n' &&
+            message[i + 4] == 'e') {
+            return as_str(format::push(message[0:i], line_of(source, related.start), message[i + 5:countof(message)]));
+        }
+    }
+    return message;
+}
+
+// The report of one error of the checker: its line, then its note when it has one.
+static Str error_lines(Str file, Str source, const types::Error *e) {
+    Str message = e->has_related ? with_line(source, e->message, e->related) : e->message;
+    Str text = diagnostic(file, source, e->span, "error", message);
+    if (e->has_related) {
+        text = as_str(format::push(text, diagnostic(file, source, e->related, "note", e->related_message)));
+    }
+    return text;
+}
+
 // The lines of `list`, in order, as `severity`.
 static Str lines_of(Str file, Str source, parse::Errors list, Str severity) {
     Str all = "";
@@ -314,10 +344,13 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     for (Usize i = 0; i < checked.error_count; i++) {
         list = mem::realloc(list, countof(list) + 1);
-        list[countof(list) - 1] = (Problem){.start = checked.errors[i].span.start,
-                                            .end = checked.errors[i].span.end,
-                                            .error = true,
-                                            .message = checked.errors[i].message};
+        list[countof(list) - 1] =
+            (Problem){.start = checked.errors[i].span.start,
+                      .end = checked.errors[i].span.end,
+                      .error = true,
+                      .message = checked.errors[i].has_related
+                                     ? with_line(source, checked.errors[i].message, checked.errors[i].related)
+                                     : checked.errors[i].message};
     }
     return list;
 }
@@ -384,8 +417,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     if (checked.error_count > 0) {
         Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
-            all = as_str(format::push(
-                all, diagnostic(path, source, checked.errors[i].span, "error", checked.errors[i].message)));
+            all = as_str(format::push(all, error_lines(path, source, &checked.errors[i])));
         }
         return failed(all, times);
     }
