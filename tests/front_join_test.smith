@@ -302,6 +302,7 @@ export void test_front_join_driver_a_function_cast_to_a_pointer_is_passed_to_a_v
                "    let r = c.__enzyme_autodiff(square.cast(*mut void), dup, x, dup, &dx)\n    r + dx\n");
     Ran ran =
         sh(as_str(format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new -I inc -c src/main.smith")));
+    if (ran.status != 0) c::printf("enzyme probe: %s\n", ran.errors.data);
     test::check_equal(ran.status, 0);
     test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U __enzyme_autodiff'"))).status, 0);
     test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_dup'"))).status, 0);
