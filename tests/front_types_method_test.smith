@@ -71,7 +71,7 @@ static parser::Parsed parse_new(Str source) {
 
 // A list type with a function that takes it by pointer and one that takes it by value, and a second module's type.
 static Str list_source() {
-    return "pub struct List {\n    count: i32\n}\n\n"
+    return "pub struct List {\n    pub count: i32\n}\n\n"
            "pub fn push(l: *mut List, x: i32) {\n    l.count += x\n}\n\n"
            "pub fn size(l: *List) -> i32 {\n    l.count\n}\n\n"
            "pub fn first(l: List) -> i32 {\n    l.count\n}\n\n"
