@@ -1,0 +1,8 @@
+import <stdio.h>;
+
+pub fn main() -> i32:
+    let outer: fn(i32) -> i32 = fn(a: i32) -> i32:
+        let inner: fn(i32) -> i32 = fn(b): b + 1
+        inner(a) * 2
+    let _ = c::printf("%d\n", outer(4))
+    0
