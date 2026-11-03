@@ -1,0 +1,101 @@
+// Tests of front::ast_clone (#1907, part of #1700): a function parsed from source is cloned, and the dump of the clone
+// is the dump of the original. A change to the clone leaves the original's dump as it was, so the two share no node.
+// Each test builds in an arena it sets as the current allocator.
+module front_ast_clone_test;
+
+import front::ast;
+import front::ast_clone;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The dump of one declaration, as a module of its own.
+static Str dump_of(ast::Decl *d) {
+    ast::DeclRef decls[1] = {d};
+    ast::Module m = ast::new_module("m", decls);
+    return ast::dump(&m);
+}
+
+// The first declaration of `source`; the source must parse.
+static ast::Decl *first_decl(Str source) {
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return p.module.decls[0];
+}
+
+// Clones the first declaration of `source` and compares the dumps; the dump is not empty.
+static void check_clone(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Decl *original = first_decl(source);
+    ast::Decl *copy = ast_clone::clone_decl(original);
+    test::check(copy != original);
+    Str before = dump_of(original);
+    test::check(countof(before) > 0);
+    test::check_equal(dump_of(copy), before);
+}
+
+export void test_front_ast_clone_a_plain_function() {
+    check_clone("I32 add(I32 a, I32 b) { return a + b; }\n");
+}
+
+export void test_front_ast_clone_loops_branches_and_switch() {
+    check_clone("I32 count(I32 n) {\n"
+                "    I32 total = 0;\n"
+                "    for (I32 i = 0; i < n; i += 1) { if (i % 2 == 0) total += i; else continue; }\n"
+                "    while (total > 100) total -= 1;\n"
+                "    do { total += 1; } while (total < 3);\n"
+                "    switch (total) { case 0: case 1: return 1; default: return 2; }\n"
+                "}\n");
+}
+
+export void test_front_ast_clone_expressions() {
+    check_clone("I64 mix(I32 *p, I32 xs[:]) {\n"
+                "    I64 a = (I64)p[0] + sizeof(I32) + countof(xs);\n"
+                "    I32 b = a > 0 ? xs[0] : xs[1:2][0];\n"
+                "    return a + b + (*p) + (I64)f(1, 2);\n"
+                "}\n");
+}
+
+export void test_front_ast_clone_a_lambda_and_a_compound_literal() {
+    check_clone("I32 run(I32 n) {\n"
+                "    auto twice = [n](I32 x) { return x * n; };\n"
+                "    Point q = (Point){.x = 1, .y = 2};\n"
+                "    return twice(q.x);\n"
+                "}\n");
+}
+
+export void test_front_ast_clone_a_record_and_an_enumeration() {
+    check_clone("struct Point { I32 x; I32 y; };\n");
+    check_clone("typedef enum { red; green; } Color;\n");
+}
+
+export void test_front_ast_clone_shares_no_node() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::Decl *original = first_decl("I32 add(I32 a, I32 b) { return a + b; }\n");
+    Str before = dump_of(original);
+    ast::Decl *copy = ast_clone::clone_decl(original);
+    if (original->kind != .function || copy->kind != .function) {
+        test::check(false);
+        return;
+    }
+    test::check(copy->kind.function.body != original->kind.function.body);
+    test::check(&copy->kind.function.params[0] != &original->kind.function.params[0]);
+    // Rename the copy's parameter and replace its statement: the original does not move.
+    copy->kind.function.name = "other";
+    copy->kind.function.params[0].name = "z";
+    ast::Stmt *body = copy->kind.function.body;
+    if (body->kind != .block) {
+        test::check(false);
+        return;
+    }
+    body->kind.block.items[0] = ast::return_value(ast::integer(7));
+    test::check_equal(dump_of(original), before);
+    test::check(!mem::equal(dump_of(copy), before));
+}
