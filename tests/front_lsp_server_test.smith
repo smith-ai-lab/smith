@@ -1,0 +1,94 @@
+// Tests of the language server for `.smith` (#1887): messages go through `lsp_server::handle` with no pipe, and what
+// comes back is the framed reply. Initialize, a document with a type error, one with none, a change, a request it does
+// not know, and the shutdown.
+module front_lsp_server_test;
+
+import front::lsp_server;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Str open_with(Str text) {
+    return as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{"
+                               "\"uri\":\"file:///t/a.smith\",\"text\":\"",
+                               text, "\"}}}"));
+}
+
+export void test_lsp_initialize_replies_with_the_capabilities_and_the_id() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\",\"params\":{}}");
+    test::check(has(out, "Content-Length: "));
+    test::check(
+        has(out, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"capabilities\":{\"textDocumentSync\":1}"));
+}
+
+export void test_lsp_did_open_reports_a_type_error_at_its_line_and_column() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str out = lsp_server::handle(open_with("fn main() -> i32:\\n    let x: i32 = \\\"s\\\"\\n    return x\\n"));
+    test::check(has(out, "\"method\":\"textDocument/publishDiagnostics\""));
+    test::check(has(out, "\"uri\":\"file:///t/a.smith\""));
+    test::check(has(out, "\"start\":{\"line\":1,\"character\":17}"));
+    test::check(has(out, "\"severity\":1"));
+    test::check(has(out, "expected I32, found Str"));
+}
+
+export void test_lsp_a_clean_document_has_no_diagnostics_and_a_change_replaces_them() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str clean = lsp_server::handle(open_with("fn main() -> i32:\\n    return 0\\n"));
+    test::check(has(clean, "\"diagnostics\":[]"));
+    Str changed =
+        lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{"
+                           "\"textDocument\":{\"uri\":\"file:///t/a.smith\",\"version\":2},"
+                           "\"contentChanges\":[{\"text\":\"fn main() -> i32:\\n    return \\\"s\\\"\\n\"}]}}");
+    test::check(has(changed, "\"severity\":1"));
+}
+
+export void test_lsp_an_unknown_request_is_an_error_and_an_unknown_notification_is_ignored() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str failed = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"foo/bar\"}");
+    test::check(has(failed, "\"id\":3,\"error\":{\"code\":-32601"));
+    Str none = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"$/setTrace\",\"params\":{}}");
+    test::check_equal(countof(none), 0);
+    Str broken = lsp_server::handle("{\"jsonrpc\":");
+    test::check(has(broken, "-32700"));
+}
+
+export void test_lsp_shutdown_then_exit_finishes() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check(!lsp_server::finished());
+    Str down = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"shutdown\"}");
+    test::check(has(down, "\"id\":9,\"result\":null"));
+    Str quiet = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    test::check_equal(countof(quiet), 0);
+    test::check(lsp_server::finished());
+}

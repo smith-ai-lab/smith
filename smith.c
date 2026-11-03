@@ -3510,9 +3510,15 @@ static bool smith_lint_expand_dirs(int *argc, char ***argv); // runtime/verbs.c
 
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
+int32_t front_lsp_run(void); // front/lsp_server.smith, see runtime/front_flag.c
+
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
     SMITH_ASSERT(tool != nullptr && argc >= 2 && argv[0] != nullptr);
     int before = -1;
+#ifndef SMITH_CORE // the units runner links smith.c without the front end
+    if (strcmp(tool->command, "lsp") == 0 && argc >= 3 && strcmp(argv[2], "--smith") == 0)
+        return front_lsp_run() == 0 ? 0 : 1; // the language server for .smith, on smith's own front end
+#endif
     if (argc > smith_defaults_args_max - 8 &&
         (strcmp(tool->command, "fmt") == 0 || strcmp(tool->command, "lint") == 0 ||
          strcmp(tool->command, "lsp") == 0)) {
