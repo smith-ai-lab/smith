@@ -1874,6 +1874,22 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
 
 // Stage 7: the base of `x.f(args)` is typed. A field `f` of a record is called as a value; else `f` is a function of
 // the module that defines the type of `x` or of this module, and the call is the one written with `x` first.
+// Reports a method call whose function is missing or does not take the receiver first.
+static void method_missing(types::Checked *c, const ast::Expr *e, const types::Symbol *fn, types::TypeRef bt) {
+    const ast::Expr *callee = e->kind.call.callee;
+    Str name = callee->kind.member.name;
+    Str shown = types::show(bt);
+    if (fn == nullptr) {
+        types::failf(c, callee->span, "`", shown, "` has no method `", name, "`; write a function `", name,
+                     "` whose first parameter is a `", shown, "`, in this module or in the module that defines `",
+                     shown, "`");
+    } else {
+        types::failf(c, callee->span, "the function `", name, "` does not take a `", shown,
+                     "` first, so it is not a method of it; write `", name, "(...)` with the right arguments");
+    }
+    poison(c, e);
+}
+
 static void method_resolved(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -1929,16 +1945,7 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         return;
     }
     if (fn == nullptr || first_parameter(fn) == nullptr || first_parameter(fn) != self_type) {
-        Str shown = types::show(bt);
-        if (fn == nullptr) {
-            types::failf(c, callee->span, "`", shown, "` has no method `", name, "`; write a function `", name,
-                         "` whose first parameter is a `", shown, "`, in this module or in the module that defines `",
-                         shown, "`");
-        } else {
-            types::failf(c, callee->span, "the function `", name, "` does not take a `", shown,
-                         "` first, so it is not a method of it; write `", name, "(...)` with the right arguments");
-        }
-        poison(c, e);
+        method_missing(c, e, fn, bt);
         push_arguments(w, args, nullptr);
         return;
     }
@@ -3394,6 +3401,31 @@ static void tuple_after(types::Checked *c, Frame f) {
 }
 
 // Stage 0 of a node with children: decides what is pushed.
+static void call_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (is_vector_callee(c, callee)) {
+        vector_before(c, w, f);
+        return;
+    }
+    if (countof(stream_callee(c, callee)) > 0) {
+        stream_before(w, f);
+        return;
+    }
+    types::TypeRef record = constructed_record(c, callee);
+    if (record != nullptr) {
+        construct_before(w, f, record);
+        return;
+    }
+    if (method_shaped(c, callee) && callee->kind == .member) {
+        push(w, e, f.expected, 7);
+        push(w, callee->kind.member.base, nullptr, 0);
+        return;
+    }
+    push(w, e, f.expected, 1);
+    push(w, callee, nullptr, 0);
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .unary) {
@@ -3415,27 +3447,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .stmt_expr) {
         value_before(c, w, f);
     } else if (e->kind == .call) {
-        const ast::Expr *callee = e->kind.call.callee;
-        if (is_vector_callee(c, callee)) {
-            vector_before(c, w, f);
-            return;
-        }
-        if (countof(stream_callee(c, callee)) > 0) {
-            stream_before(w, f);
-            return;
-        }
-        types::TypeRef record = constructed_record(c, callee);
-        if (record != nullptr) {
-            construct_before(w, f, record);
-            return;
-        }
-        if (method_shaped(c, callee) && callee->kind == .member) {
-            push(w, e, f.expected, 7);
-            push(w, callee->kind.member.base, nullptr, 0);
-            return;
-        }
-        push(w, e, f.expected, 1);
-        push(w, callee, nullptr, 0);
+        call_before(c, w, f);
     } else if (e->kind == .index) {
         const ast::Expr *index = e->kind.index.index;
         const ast::Expr *base = e->kind.index.base;
