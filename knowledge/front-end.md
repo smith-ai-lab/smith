@@ -10,6 +10,7 @@ Plan: #1112 (the plan of record is its first comment), smith's own syntax and th
 The new front end reads `.smith` itself and emits LLVM IR through LLVM's C API, with no patches on LLVM. It lives in `front/`.
 
 `smith cc --front-end=new` (`front/compile.smith`, #1221, #1578) is the way in: experimental, off by default; without it a `.smith` file still goes through the token lowering.
+`smith build`, `smith run` and `smith test` take the same flag (#2042): `--front-end=new` becomes `-DSMITH_FRONT_END=new` (`runtime/verbs.c`, `smith_build_main_front` in `smith.c`), `smith_object` adds `--front-end=new` to each `.smith` compile, so the flag is part of the command and of the cache key, and `smith cc` writes the `-MD -MF` depfile itself (`smith_front_depfile`). Any other value is a usage error. Test: `tests/build_front_end_test.smith`.
 The pipeline, one module group per section below:
 
 - **lex, parse**: text to a `front::ast` tree (`lex`, `parse`, `parse_expr`, `parse_type`, `parse_stmt`, `parse_decl`, `parser`).
