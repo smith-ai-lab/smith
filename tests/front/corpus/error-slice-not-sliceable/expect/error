@@ -1,0 +1,1 @@
+src/main.smith:3:23: error: cannot slice a value of type `I32`; slice an array, a slice, a `Str` or a typed pointer

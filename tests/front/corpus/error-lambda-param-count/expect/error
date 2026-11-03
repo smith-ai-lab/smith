@@ -1,0 +1,1 @@
+src/main.smith:6:11: error: the lambda has 2 parameters but `I32 (I32)` takes 1; write 1 parameters

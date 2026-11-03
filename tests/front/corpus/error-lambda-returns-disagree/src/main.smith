@@ -1,0 +1,6 @@
+# Every `return` of a lambda has the lambda's result type.
+pub fn main() -> i32:
+    let f = fn(a: i32) -> i32:
+        return a
+        return 1.5
+    0
