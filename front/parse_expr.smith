@@ -610,25 +610,40 @@ static ast::Param lambda_param(parse::Parser *p) {
     return param;
 }
 
-// A lambda in today's form (`[x](I32 a) -> I32 { ... }`) read in smith's own syntax: a warning whose fix writes the
-// head as `fn(a: I32) -> I32` (the types inside are mended by the next pass). A parameter with no type has no fix.
-static void old_lambda_warning(parse::Parser *p, ast::Span head, const ast::Param params[:],
-                               const ast::TypeExpr *result) {
-    char text[:] = format::push("fn(");
-    for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].type == nullptr) return;
-        Str type = parse::mended(p, params[i].type->span.start, params[i].type->span.end);
-        text = format::push(text, i > 0 ? ", " : "", params[i].name, ": ", type);
+// The text without the spaces at its ends.
+static Str trim_ends(Str text) {
+    Usize from = 0;
+    Usize to = countof(text);
+    while (from < to && text[from] == ' ')
+        from += 1;
+    while (to > from && text[to - 1] == ' ')
+        to -= 1;
+    return text[from:to];
+}
+
+// The fix of an old lambda `[x](I32 a) -> I32 { ... }` (#1771): `fn(a: i32) -> i32 { ... }`, with no capture list. The
+// bracket group becomes `fn` (`fn()` when no parameters follow), and each parameter `T a` becomes `a: T` with its type
+// mended. The result type has its own fix.
+static void lambda_warning(parse::Parser *p, U32 start, U32 bracket_end, const ast::Param params[:], Bool has_parens) {
+    parse::Edits edits = {};
+    edits = with_edit(edits, from_to(start, bracket_end), has_parens ? "fn" : "fn()");
+    for (Usize i = 0; i < countof(params); i += 1) {
+        const ast::Param *param = &params[i];
+        if (param->type == nullptr) return;
+        U32 name_start = param->span.end - (U32)countof(param->name);
+        Str type = trim_ends(parse::mended(p, param->span.start, name_start));
+        Str written = as_str(format::push(param->name, ": ", type));
+        edits = with_edit(edits, from_to(param->span.start, param->span.end), written);
     }
-    text = format::push(text, ")");
-    if (result != nullptr) text = format::push(text, " -> ", parse::mended(p, result->span.start, result->span.end));
-    parse::warning_fix(p, head, "a lambda is written `fn(a: T) -> R { ... }` in Smith",
-                       with_edit(no_edits(), head, text));
+    U32 end = has_parens ? p->tokens[p->position - 1].span.end : bracket_end;
+    parse::warning_fix(p, from_to(start, end), "a lambda is `fn(a: T) -> R { ... }` in Smith, with no capture list",
+                       edits);
 }
 
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
+    Usize errors_before = countof(p->errors);
     ast::Identifier captures[:] = {};
     while (parse::at(p, lex::name)) {
         lex::Token name = parse::advance(p);
@@ -638,6 +653,8 @@ static ast::Expr *lambda(parse::Parser *p) {
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_bracket, "`]` to end the captures");
+    U32 bracket_end = p->tokens[p->position - 1].span.end;
+    Bool has_parens = parse::at(p, lex::left_paren);
     ast::Param params[:] = {};
     if (parse::accept(p, lex::left_paren)) {
         while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
@@ -647,12 +664,12 @@ static ast::Expr *lambda(parse::Parser *p) {
         }
         parse::expect(p, lex::right_paren, "`)` to end the parameters");
     }
+    if (countof(p->errors) == errors_before) lambda_warning(p, start, bracket_end, params, has_parens);
     ast::TypeExpr *result = parse::accept(p, lex::arrow) ? parse::type(p) : nullptr;
     if (!parse::at(p, lex::left_brace)) {
         parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
         return nullptr;
     }
-    if (p->new_syntax) old_lambda_warning(p, from_to(start, p->tokens[p->position - 1].span.end), params, result);
     ast::Stmt *body = parse::statement(p);
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
@@ -661,17 +678,6 @@ static ast::Expr *lambda(parse::Parser *p) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Smith's own forms (#1446): arrays, tuples, lambdas and blocks
-
-// Whether the bracket at the position starts a lambda in today's form in smith's own syntax: names between the
-// brackets, then `(` (`[](I32 a) { ... }`, `[x](I32 a) { ... }`) or a `{` after `[]`. An array is never called.
-static Bool old_lambda_ahead(const parse::Parser *p) {
-    Usize at = 1;
-    while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
-        at += 1;
-    if (parse::peek_at(p, at).kind != lex::right_bracket) return false;
-    lex::TokenKind next = parse::peek_at(p, at + 1).kind;
-    return next == lex::left_paren || (at == 1 && next == lex::left_brace);
-}
 
 // `[1, 2, 3]`: the position is at the bracket.
 static ast::Expr *array_literal(parse::Parser *p) {
@@ -877,7 +883,7 @@ static ast::Expr *primary(parse::Parser *p) {
         if (p->new_syntax) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
-        if (p->new_syntax && !old_lambda_ahead(p)) return array_literal(p);
+        if (p->new_syntax) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);
@@ -1429,6 +1435,18 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
 }
 
+// `xs[i, j, k]` of a block: the same as `xs[i][j][k]`, one index node per position. The position is at the first comma.
+static ast::Expr *block_index(parse::Parser *p, ast::Expr *base, ast::Expr *first) {
+    ast::Expr *result = make(parse::span_from(p, base->span.start), {.index = {.base = base, .index = first}});
+    while (parse::accept(p, lex::comma)) {
+        ast::Expr *next = parse::expression(p);
+        if (next == nullptr) return nullptr;
+        result = make(parse::span_from(p, base->span.start), {.index = {.base = result, .index = next}});
+    }
+    parse::expect(p, lex::right_bracket, "`]` to end the index");
+    return result;
+}
+
 // `xs[i]`, `xs[a:b]`, `xs[a:]`, `xs[:b]`, `xs[:]`: the position is at the bracket.
 static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     parse::advance(p);
@@ -1437,7 +1455,9 @@ static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     Bool is_slice = false;
     if (!parse::at(p, lex::colon)) {
         first = parse::expression(p);
-        if (first == nullptr || comma_operator(p)) return nullptr;
+        if (first == nullptr) return nullptr;
+        if (p->new_syntax && parse::at(p, lex::comma)) return block_index(p, base, first);
+        if (comma_operator(p)) return nullptr;
     }
     if (parse::accept(p, lex::colon)) {
         is_slice = true;
@@ -1476,7 +1496,8 @@ static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
     }
     if (parse::at(p, lex::left_bracket)) return reflect_member(p, base, arrow);
     lex::Token name = parse::peek(p);
-    if (name.kind != lex::name && name.kind != lex::type_name && name.kind != lex::integer) {
+    if (name.kind != lex::name && name.kind != lex::type_name && name.kind != lex::integer &&
+        !lex::is_keyword(name.kind)) {
         parse::expect(p, lex::name, "a member name");
         return nullptr;
     }

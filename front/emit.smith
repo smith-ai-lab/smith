@@ -149,6 +149,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         return memory::type_record(e, t);
     }
     if (t->kind == .slice) return memory::type_slice(e, t);
+    if (t->kind == .block_type) return memory::type_block(e, t);
     if (t->kind == .option) return optional::type_option(e, t);
     if (t->kind == .tuple) return tupled::type_tuple(e, t);
     if (t->kind == .function) return lambdas::type_function(e, t);
@@ -283,7 +284,8 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 // ones nobody emits yet are the last line. (A chain of `if`, see `type_of`.)
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
-    if (hint.present && hint.ty.kind == .slice && is_array_place(e, x)) return memory::array_as_slice(e, x, hint);
+    if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
+        return memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
     if (x->kind == .name) {
@@ -1068,7 +1070,8 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         return state::success();
     }
     if (to.kind == .option) return optional::wrap(e, value, to, span);
-    if (to.kind == .slice && value.ty.kind == .array) return memory::array_value_as_slice(e, value, to);
+    if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
+        return memory::array_value_as_slice(e, value, to);
     state::Ty from = value.ty;
     if (is_plain_integer(from) && is_plain_integer(to) && to.bits > from.bits) {
         Bool same_sign = from.is_signed == to.is_signed;
