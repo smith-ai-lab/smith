@@ -1,0 +1,143 @@
+// Tests of front::effects_table (#1965, piece 1 of #1939): the bits, `describe` and `leaf`, and a drift check that
+// reads shim/effects_table.h as text and fails when a name or its bits differ from the table in .smith.
+module front_effects_table_test;
+
+import <stdio.h>;
+import <stdlib.h>;
+
+import front::effects_table;
+import std::mem;
+import std::test;
+
+static Str text(char chars[:]) {
+    return chars;
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+export void test_front_effects_table_bits_and_describe() {
+    test::check(same(effects_table::describe(0), text("nothing")));
+    test::check(same(effects_table::describe(effects_table::alloc | effects_table::files), text("alloc, files")));
+    test::check(same(effects_table::describe(effects_table::tasks), text("tasks")));
+    test::check(
+        same(effects_table::describe(effects_table::everything),
+             text("alloc, files, net, console, clock, process, env, entropy, globals, unknown, fails, code, tasks")));
+}
+
+export void test_front_effects_table_leaf() {
+    U32 set = 99;
+    test::check(effects_table::leaf(text("malloc"), &set));
+    test::check_equal(set, effects_table::alloc);
+    test::check(effects_table::leaf(text("sqrt"), &set));
+    test::check_equal(set, 0u);
+    test::check(effects_table::leaf(text("getcwd"), &set));
+    test::check_equal(set, effects_table::files | effects_table::alloc);
+    test::check(!effects_table::leaf(text("no_such_function"), &set));
+    test::check(!effects_table::leaf(text(""), &set));
+}
+
+export void test_front_effects_table_is_sorted() {
+    for (Usize i = 1; i < effects_table::count; i++) {
+        Str a = effects_table::name_at(i - 1);
+        Str b = effects_table::name_at(i);
+        Bool less = false;
+        for (Usize k = 0; k < countof(a) && k < countof(b); k++) {
+            if (a[k] != b[k]) {
+                less = (U8)a[k] < (U8)b[k];
+                break;
+            }
+            less = countof(a) < countof(b);
+        }
+        test::check(less);
+    }
+}
+
+// The set the header gives an expression like `Files | Alloc`.
+static U32 bits_of(Str text) {
+    U32 set = 0;
+    for (Usize i = 0; i < effects_table::bit_count; i++) {
+        Str word = effects_table::bit_name(i);
+        for (Usize k = 0; k + countof(word) <= countof(text); k++) {
+            Bool same = true;
+            for (Usize j = 0; j < countof(word); j++) {
+                // The header spells the bits with a capital: `Files`.
+                char expected = j == 0 ? (char)(word[j] - 'a' + 'A') : word[j];
+                if (text[k + j] != expected) {
+                    same = false;
+                    break;
+                }
+            }
+            Bool before = k == 0 || text[k - 1] == ' ' || text[k - 1] == '|';
+            Bool after = k + countof(word) == countof(text) || text[k + countof(word)] == ' ' ||
+                         text[k + countof(word)] == '|' || text[k + countof(word)] == '}';
+            if (same && before && after) set |= 1u << i;
+        }
+    }
+    return set;
+}
+
+// Every `{"name", Bits},` of the header's effect list and every `"name",` of its pure list agrees with the table.
+export void test_front_effects_table_agrees_with_the_plugin_header() {
+    // The front runner runs in a scratch folder; build.c gives it the repository in SMITH_REPO.
+    const char *repo = c::getenv("SMITH_REPO");
+    test::check(repo != nullptr);
+    if (repo == nullptr) return;
+    char path[1024];
+    c::snprintf(path, 1024, "%s/shim/effects_table.h", repo);
+    c::FILE *file = c::fopen(path, "r");
+    test::check(file != nullptr);
+    if (file == nullptr) return;
+    char line[512];
+    Bool pure_list = false;
+    Bool effect_list = false;
+    Usize entries = 0;
+    while (c::fgets(line, 512, file) != nullptr) {
+        Str text = line[0:c::strlen(line)];
+        if (c::strstr(line, "pure_functions[] = {") != nullptr) {
+            pure_list = true;
+            continue;
+        }
+        if (c::strstr(line, "effect_functions[] = {") != nullptr) {
+            pure_list = false;
+            effect_list = true;
+            continue;
+        }
+        if (c::strncmp(line, "};", 2) == 0) {
+            pure_list = false;
+            effect_list = false;
+            continue;
+        }
+        if (!pure_list && !effect_list) continue;
+        Usize first = 0;
+        while (first < countof(text) && text[first] == ' ')
+            first++;
+        if (first + 1 >= countof(text)) continue;
+        Bool brace = text[first] == '{';
+        if (brace) first++;
+        if (text[first] != '"') continue;
+        Usize end = first + 1;
+        while (text[end] != '"')
+            end++;
+        Str name = text[first + 1:end];
+        U32 expected = 0;
+        if (effect_list && brace) {
+            Usize bits = end + 3;
+            Usize stop = bits;
+            while (text[stop] != '}')
+                stop++;
+            expected = bits_of(text[bits:stop]);
+        }
+        U32 got = 12345;
+        test::check(effects_table::leaf(name, &got));
+        test::check_equal(got, expected);
+        entries++;
+    }
+    c::fclose(file);
+    test::check_equal(entries, effects_table::count);
+}
