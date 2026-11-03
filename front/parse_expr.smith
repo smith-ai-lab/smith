@@ -610,6 +610,22 @@ static ast::Param lambda_param(parse::Parser *p) {
     return param;
 }
 
+// A lambda in today's form (`[x](I32 a) -> I32 { ... }`) read in smith's own syntax: a warning whose fix writes the
+// head as `fn(a: I32) -> I32` (the types inside are mended by the next pass). A parameter with no type has no fix.
+static void old_lambda_warning(parse::Parser *p, ast::Span head, const ast::Param params[:],
+                               const ast::TypeExpr *result) {
+    char text[:] = format::push("fn(");
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].type == nullptr) return;
+        Str type = parse::mended(p, params[i].type->span.start, params[i].type->span.end);
+        text = format::push(text, i > 0 ? ", " : "", params[i].name, ": ", type);
+    }
+    text = format::push(text, ")");
+    if (result != nullptr) text = format::push(text, " -> ", parse::mended(p, result->span.start, result->span.end));
+    parse::warning_fix(p, head, "a lambda is written `fn(a: T) -> R { ... }` in Smith",
+                       with_edit(no_edits(), head, text));
+}
+
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
@@ -636,6 +652,7 @@ static ast::Expr *lambda(parse::Parser *p) {
         parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
         return nullptr;
     }
+    if (p->new_syntax) old_lambda_warning(p, from_to(start, p->tokens[p->position - 1].span.end), params, result);
     ast::Stmt *body = parse::statement(p);
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
@@ -644,6 +661,17 @@ static ast::Expr *lambda(parse::Parser *p) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Smith's own forms (#1446): arrays, tuples, lambdas and blocks
+
+// Whether the bracket at the position starts a lambda in today's form in smith's own syntax: names between the
+// brackets, then `(` (`[](I32 a) { ... }`, `[x](I32 a) { ... }`) or a `{` after `[]`. An array is never called.
+static Bool old_lambda_ahead(const parse::Parser *p) {
+    Usize at = 1;
+    while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
+        at += 1;
+    if (parse::peek_at(p, at).kind != lex::right_bracket) return false;
+    lex::TokenKind next = parse::peek_at(p, at + 1).kind;
+    return next == lex::left_paren || (at == 1 && next == lex::left_brace);
+}
 
 // `[1, 2, 3]`: the position is at the bracket.
 static ast::Expr *array_literal(parse::Parser *p) {
@@ -849,7 +877,7 @@ static ast::Expr *primary(parse::Parser *p) {
         if (p->new_syntax) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
-        if (p->new_syntax) return array_literal(p);
+        if (p->new_syntax && !old_lambda_ahead(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);

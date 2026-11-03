@@ -1,0 +1,32 @@
+// A lambda in today's form read by the fixer (#1786): `[](I32 a) { ... }` is mended to `fn(a: i32) { ... }` in the same
+// passes as the rest of the line, in a function that has a result as in one that has none.
+module front_fix_lambda_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str mended(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", source);
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", result.text);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    return result.text;
+}
+
+export void test_front_fix_lambda_function_pointer_local_with_a_result() {
+    Str got = mended("I32 main() { I32 (*f)(I32) = [](I32 a) { return a; }; }");
+    Str want = "fn main() -> i32 { f: fn(i32) -> i32 = fn(a: i32) { return a } }";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_lambda_function_pointer_local_without_a_result() {
+    Str got = mended("void g() { I32 (*f)(I32) = [](I32 a) { return a; }; }");
+    Str want = "fn g() { f: fn(i32) -> i32 = fn(a: i32) { return a } }";
+    test::check_equal(got, want);
+}
