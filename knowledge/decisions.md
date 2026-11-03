@@ -1,12 +1,12 @@
 ---
 type: convention
 title: Every decision, in one line each
-description: The owner's decisions about smith, one line each, with a link to the concept that holds the reasoning and the owner's words.
+description: The current defaults about smith, one line each, each open to change on evidence, with a link to the concept that holds the reasoning and the owner's words.
 tags: [decisions]
 ---
 # Every decision, in one line each
 
-A decision changes only with the owner. Each line links the concept that holds it, with the owner's words and the date.
+These are the current defaults, not permanent rules. The aim is the best possible decision, and data drives it: a line changes when measurements, a failed attempt or new information show a better choice. Many lines are the owner agreeing to a proposal with the information there was at the time, not the owner's own design. Any agent who finds a line wrong, or in conflict with what the owner says now, brings it to the lead with the evidence instead of following it or working around it; the lead takes it to the owner, and only the owner changes a line (owner, 2026-11-03: "What we want to do is pursue the best possible decision, and the thing that's going to drive it is data, not once we have something we can never change our mind"). Each line links the concept that holds it, with the owner's words and the date.
 
 - One compiler, upstream LLVM 23.1.3, built by `smith build llvm` and linked into smith; no LLVM install at run time; smith is built by its previous release, never by Homebrew's `llvm`; `.metal` goes to Apple's `metal`. [one-compiler](one-compiler.md), [llvm-build](llvm-build.md), [smith-bootstrap](smith-bootstrap.md)
 - smith compiles in its own process (`clang_main`); `SMITH_CLANG` runs an external clang; a change of compiler rebuilds every object. [one-compiler](one-compiler.md)
