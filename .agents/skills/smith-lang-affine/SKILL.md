@@ -43,4 +43,6 @@ U64 b = draw(parts[0]);   // error: smith-affine: 'parts[0]' is used again; it w
 
 Each message is at the second use, with a note at the first. The loop and index errors show the plain loop and the reassignment (`key = next[0];`) as the way out.
 
+In `.smith` files of smith's own front end the same rules are checked by `front/affine.smith` (straight-line code, branches, `defer`; loops, elements and slices follow in #1987), with the same messages and the same note at the first use.
+
 Not checked: unions, `_Atomic`, a cast that hides the type. A struct holding an affine member is not affine itself (reading the member is a use). Template functions and functions with another error are skipped.

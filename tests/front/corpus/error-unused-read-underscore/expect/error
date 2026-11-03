@@ -1,0 +1,1 @@
+src/main.smith:4:5: error: unknown name `_`; declare it before it is used, for example `I32 _ = 0;`, or import the module that has it
