@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-attributes
-description: "New syntax (#1428): built-in attributes (`@inline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, `@when(target.os == .macos)`, `@effects(alloc, net)`), `@when`'s rules and its header `#if`, user attributes as `@attribute` structs written with braces (`@serial.rename{to = \"user_id\"}`), reading them by reflection, `_` for unused. Load when writing an attribute in the new syntax."
+description: "New syntax (#1428): attributes are structs written with call syntax, `()` left off when empty (`@inline`, `@affine`, `@c_name(\"x\")`, `@when(target.os == .macos)`, `@effects(.alloc, .net)`, `@serial.rename(to = \"user_id\")`, `@serial.skip`), `@when`'s rules and its header `#if`, user attributes as `@attribute` structs, reading them by reflection, wrapping a function by an explicit call (`memo(compute)`), `_` for unused. Load when writing an attribute in the new syntax."
 ---
 
 # Attributes
@@ -20,7 +20,7 @@ pub struct Key:
 @c_name("smith_arena_push")
 pub fn push(a: *mut Arena, size: usize) -> *mut u8: ...
 
-@effects(alloc, net)
+@effects(.alloc, .net)
 pub fn fetch(url: str) -> Result(str, net.Error): ...
 
 @when(target.os == .macos)
@@ -30,9 +30,9 @@ fn open_window() -> Window: ...
 fn open_window() -> Window: ...
 ```
 
-- Built in, so no namespace, and written with parentheses because they are not structs: `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name("x")`, `@when(cond)`, `@effects(...)`.
+- Every attribute is a struct, written with call syntax on the line before what it marks. With no arguments the parentheses are left off (`@inline`, not `@inline()`; `smith fmt` drops them).
+- Built-ins are lowercase with no namespace: `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name("x")`, `@when(cond)`, `@effects(...)`. A new one (`@hot`, `@unroll`) exists once its own feature ticket decides it. `[[std::x]]` becomes `@x`.
 - `@when(cond)`: a top-level declaration or struct field that exists only where the compile-time `cond` holds. For each supported target (macOS and Linux), two live declarations of a name are an error, and so is a use with none. The generated header writes `#if`. Inside a function, a compile-time `if` chooses the code instead.
-- Written on the line before what it marks.
 - `[[nodiscard]]` is gone (an unused result is an error); `[[maybe_unused]]` becomes a `_` prefix on the name.
 
 ## User attributes
@@ -43,8 +43,10 @@ pub struct rename:
     to: str
 
 struct User:
-    @serial.rename{to = "user_id"}
+    @serial.rename(to = "user_id")
     id: u64
+    @serial.skip
+    cache: u64 = 0
 ```
 
-A user attribute is a struct marked `@attribute`; using it builds the struct at compile time, with braces like any struct. It is qualified by its module. It has no behaviour of its own: code reads it through reflection, `f.attr(serial.rename)` giving `?serial.rename`.
+A user attribute is a struct marked `@attribute`; using it builds the struct at compile time, positional or named, like any struct. It is qualified by its module. Attributes are data, not decorators: code reads one through reflection, `f.attr(serial.rename)` giving `?serial.rename`, and wrapping a function is an explicit call: `pub let fast_compute = memo(compute)`.

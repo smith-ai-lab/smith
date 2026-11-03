@@ -1,59 +1,60 @@
 ---
 name: smith-dev-syntax-functions
-description: "New syntax (#1428): `fn` declarations with `:` bodies, `-> R`, the last line as the value, `return`, `mut` parameters, named arguments, `main(args: []str)`, one-line lambdas `fn(x): x * 2`, trailing blocks `f(x): ...` and bare `html:`, captures, `fn_once`. Load when writing functions, lambdas or calls in the new syntax."
+description: "New syntax (#1428): `fn` declarations with `:` bodies, `-> R`, the last line as the value, `return`, `mut` parameters, parameter defaults (`port: u16 = 443`), named arguments, keyword-only parameters after `;`, `; kw...` and spreading `f(x; opts...)`, `main(args: []str)`, lambdas `fn(x): x * 2`, trailing lambdas `sort(xs) fn(a, b): ...`, trailing blocks `f(x): ...` and bare `html:`, captures, `fn_once`. Load when writing functions, lambdas or calls in the new syntax."
 ---
 
-# Functions, lambdas and trailing blocks
+# Functions, arguments and lambdas
 
 Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428.
 
-## Functions
+## Functions and arguments
 
 ```smith
 pub fn area(r: f64) -> f64:
-    TAU / 2 * r * r                 // the last line is the value
+    TAU / 2 * r * r                 # the last line is the value
 
-fn bump(mut x: i32) -> i32:         // parameters are constant unless mut
+fn bump(mut x: i32) -> i32:         # parameters are constant unless mut
     x += 1
     x
 
 fn find(xs: []i32, want: i32) -> ?usize:
     for (i, x) in enumerate(xs):
-        if x == want: return i      // return leaves early
+        if x == want: return i      # return leaves early
     .none
 
 fn divmod(a: i32, b: i32) -> (i32, i32): (a / b, a % b)
-fn log(s: str): stdio.printf("%.*s\n", s)          // nothing returned: no arrow
-fn on_event(_: Event, _: i32): count += 1          // repeated _ parameters
-pub fn main(args: []str) -> i32: 0                 // or main() with no parameters
+fn on_event(_: Event, _: i32): count += 1          # nothing returned: no arrow; repeated _ parameters
+pub fn main(args: []str) -> i32: 0                 # or main() with no parameters
 
-let c = connect(host = "example.org", retry = true)   // named arguments are optional for functions
+fn connect(host: str, port: u16 = 443; timeout: u32 = 30) -> Conn: ...   # after ;: keyword-only
+let c = connect("example.org", timeout = 5)        # port takes its default
+let d = connect(host = "example.org", port = 80)   # any parameter may be named
+
+fn info(msg: str; ctx...): ...                     # ; ctx... gathers the leftover named arguments
+log.info("parsed rows", count = n, ms = ms)        # ctx is the named tuple (count = n, ms = ms)
+log.warn("request failed"; req...)                 # ; x... spreads a struct or named tuple as named arguments
 ```
 
-## Lambdas and trailing blocks
+- A default must be a compile-time constant. Positional arguments come first, then named ones; a call needs no `;` unless it spreads: `f(1; opts..., retry = 3)`. A name given twice is an error, and with no named arguments `kw` is `()`.
+- `fn f(x: str, xs...; kw...)`: `xs` gets the leftover positional arguments ([smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md)), `kw` the named ones.
+
+## Lambdas and trailing lambdas
 
 ```smith
-let factor = 3
-let scaled = apply(xs, fn(x): x * factor)       // types from the expected fn(i32) -> i32
-
-retry(times = 3): fetch(url)                    // a trailing block: the last argument, a fn()
-repeat(3):
-    fmt.print("hello world")
-let page = html:                                // no other argument: no parentheses
+let scaled = apply(xs, fn(x): x * factor)       # types from the expected fn(i32) -> i32
+sort(people) fn(a, b): a.age < b.age            # a trailing lambda: the last argument
+gpu.each(&q, n) fn(i):
+    out[i] = a[i] * 2 + b[i]
+retry(times = 3): fetch(url)                    # no parameters: f(x): ...
+let page = html:                                # and no other argument: no parentheses
     body:
         h1(class = "big"): "hello"
-
-let step = fn(x: f64) -> f64:                   // a lambda longer than a line is named first
-    let y = x * x
-    y + 1
-let ys = apply(xs, step)
 ```
 
-- A trailing block is a `fn()` with no parameters, written `f(x): ...` or bare `name:`; inside a function, `name:` without `let` is always a block call. A last argument that is a `fn()` is always written this way: `smith fmt` rewrites `f(x, fn(): ...)`.
-- Indentation is ignored inside brackets, so a lambda inside an argument list is one line; a longer one is declared with `let` first.
+- A last argument that is a function is always written trailing: `smith fmt` rewrites `f(x, fn(a): ...)` to `f(x) fn(a): ...`, and `f(x) fn(): ...` to `f(x): ...`. Inside a function, `name:` without `let` is always a block call. Inside brackets a lambda is one line.
 - Captures have no list. A lambda that does not escape captures by reference; a stored one (a field `on_click: fn()`) copies its captures into the current allocator, and the checker refuses one that captures a pointer into the current function's stack. `fn_once` is called exactly once on every path.
 - A `fn(...)` parameter is instantiated per lambda, so the call is direct. At the C boundary a lambda with no captures is a C function pointer.
 
 ## Not settled yet
 
-`@inline pub fn` with its body in the header (today's `export inline`).
+`@inline pub fn` with its body in the header (today's `export inline`); for logging (#502), scoped context (like tracing spans) and a bare-name shorthand (`ms` for `ms = ms`).
