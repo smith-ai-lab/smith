@@ -928,7 +928,7 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
 
 // A string literal: a private constant `[N+1 x i8]` (the zero byte is not in the count), and `{ ptr, N }` of type
 // `str`.
-export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .string) {
         return state::fail("not a string literal", x->span);
     }
@@ -940,6 +940,10 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
     c::LLVMSetGlobalConstant(global, 1);
     c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
     c::LLVMSetUnnamedAddr(global, 1);
+    if (hint.present && hint.ty.kind == .pointer) { // a literal given to `const char *`: the address of the bytes
+        state::push_value(e, (state::Value){.llvm = global, .ty = hint.ty});
+        return state::success();
+    }
     state::Ty character = {};
     state::scalar_type(e, "char", &character);
     state::Ty ty = slice_type(e, character, "str");
@@ -1233,7 +1237,7 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
 // ---------------------------------------------------------------------------------------------------------------
 // Declarations
 
-static void add_record(state::Emitter *e, state::RecordType record) {
+export void add_record(state::Emitter *e, state::RecordType record) {
     if (e->record_count == countof(e->records)) {
         Usize capacity = countof(e->records) * 2;
         if (capacity < 8) capacity = 8;
