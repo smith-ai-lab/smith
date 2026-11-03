@@ -357,7 +357,8 @@ export void test_parse_expr_old_conditionals_and_lists_have_fixes() {
     check_fixes("tests/front/parse_expr/old_lists.txt",
                 "c ? a : b\nx = c ? a : b\na ? b : c ? d : e\na + b ? c : d\n(P){.x = 1, .y = 2}\n(P){1, 2}\n(I32)c ? "
                 "a : b\nc ? (I32)a : (U8)b\n"
-                "(P){.a.b = 1}\n(P){}\n{1, 2, 3}\n{{1, 2}, {3, 4}}\n{.x = 1}\n{}\n{[2] = 1}");
+                "(P){.a.b = 1}\n(P){}\n{1, 2, 3}\n{{1, 2}, {3, 4}}\n{.x = 1}\n{}\n{[2] = 1}\n(P){0}\n(P){1, .y = 2}\n"
+                "f((Hex){value, width})\nrange((Usize)k, n + 1)");
 }
 
 export void test_parse_expr_old_increments_and_chains_have_fixes() {
