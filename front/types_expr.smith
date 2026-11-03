@@ -3672,6 +3672,73 @@ static Bool value_argument(types::Checked *c, const ast::Param *p, const ast::Ex
     return false;
 }
 
+// Whether the template has a parameter written `auto x`: its instance depends on the types of the arguments (#1934).
+static Bool has_auto_param(ast::Param params[:]) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_auto_param(&params[i])) return true;
+    }
+    return false;
+}
+
+// Stage 0 of a call of a function with `auto` parameters: the arguments are typed first, the instance is found after
+// them (`auto_resolved`).
+static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    if (countof(args) != countof(params)) {
+        types::failf(c, e->span, "this call passes ", countof(args), " argument", countof(args) == 1 ? "" : "s",
+                     " but `", template->name, "` takes ", countof(params));
+        poison(c, e);
+        return;
+    }
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) {
+            types::failf(c, e->span, "not yet: `", template->name, "` has both `auto` and compile-time parameters");
+            poison(c, e);
+            return;
+        }
+    }
+    push(w, e, f.expected, 4);
+    for (Usize i = countof(args); i > 0; i--) {
+        push(w, argument_value(args[i - 1]), nullptr, 0);
+    }
+}
+
+// Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
+static void auto_resolved(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call)) return;
+    const types::Symbol *template = generic_callee(c, e->kind.call.callee);
+    if (template == nullptr || !(template->decl->kind == .function)) {
+        poison(c, e);
+        return;
+    }
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    types::Binding given[:] = mem::alloc_slice(types::Binding, countof(params));
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (!types::is_auto_param(&params[i])) continue;
+        types::TypeRef t = typ(c, argument_value(args[i]));
+        if (t == invalid(c)) {
+            poison(c, e);
+            return;
+        }
+        given[bound] = (types::Binding){.is_type = true, .type = t};
+        bound += 1;
+    }
+    Usize at = types::instance_of(c, template->decl, given[0:bound]);
+    if (at >= c->instance_count) {
+        poison(c, e);
+        return;
+    }
+    types::set_type(c, e->kind.call.callee, c->instances[at].signature);
+    types::use_instance(c, e, at);
+    call_after(c, f);
+}
+
 // Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
 static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
     const ast::Expr *e = f.node;
@@ -3680,6 +3747,10 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
+    if (has_auto_param(params)) {
+        auto_before(c, w, f, template);
+        return;
+    }
     if (countof(args) != countof(params)) {
         types::failf(c, e->span, "this call passes ", countof(args), " argument", countof(args) == 1 ? "" : "s",
                      " but `", template->name, "` takes ", countof(params), "; give a type or a constant for each ",
@@ -3851,6 +3922,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         stream_before(w, f);
         return;
     }
+    if (callee->kind == .member) {
+        syntax::Edits fix = {};
+        Str lacking = types::c_member_error(c, callee, &fix);
+        if (countof(lacking) > 0) { // `stdio.nothing(1)`, or `c.printf(...)` with no `c` bound
+            types::fail_fix(c, callee->span, lacking, fix);
+            poison(c, e);
+            return;
+        }
+    }
     types::TypeRef record = constructed_record(c, callee);
     if (record != nullptr) {
         construct_before(w, f, record);
@@ -3915,8 +3995,15 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
         const types::Symbol *header = types::c_member(c, e);
-        if (header != nullptr) { // `c.name` after `import c <h>`: the header's declaration
+        if (header != nullptr) { // `stdio.name` after `import c <stdio.h>`: the header's declaration
             finish(c, e, header->type, f.expected);
+            return;
+        }
+        syntax::Edits fix = {};
+        Str lacking = types::c_member_error(c, e, &fix);
+        if (countof(lacking) > 0) {
+            types::fail_fix(c, e->span, lacking, fix);
+            poison(c, e);
             return;
         }
         if (module_value(c, f, types::member_names(e))) return;
@@ -3967,6 +4054,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .call) {
         if (f.stage == 1) {
             call_callee_done(c, w, f);
+        } else if (f.stage == 4) {
+            auto_resolved(c, f);
         } else if (f.stage == 7) {
             method_resolved(c, w, f);
         } else if (f.stage == 9) {
