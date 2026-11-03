@@ -1026,9 +1026,16 @@ export void test_front_types_expr_a_struct_is_built_by_a_call_with_named_fields(
     ast::ExprRef twice[2] = {named("x", num(1)), named("x", num(2))};
     types_expr::infer(&r, ast::call(ast::name("Point"), twice));
     test::check_condition(says(last(&r), "the field `x` of `Point` is given twice; remove one"));
+    // a positional argument fills the field at its position; one after a named argument, or past the last field, fails
     ast::ExprRef bare[1] = {num(1)};
-    types_expr::infer(&r, ast::call(ast::name("Point"), bare));
-    test::check_condition(says(last(&r), "a field of `Point` is always named; write `Point(x = value)`"));
+    test::check_condition(types_expr::infer(&r, ast::call(ast::name("Point"), bare)) == pt);
+    ast::ExprRef late[2] = {named("x", num(1)), num(2)};
+    types_expr::infer(&r, ast::call(ast::name("Point"), late));
+    test::check_condition(
+        says(last(&r), "a positional argument cannot follow a named one; name this field of `Point`"));
+    ast::ExprRef extra[3] = {num(1), num(2), num(3)};
+    types_expr::infer(&r, ast::call(ast::name("Point"), extra));
+    test::check_condition(says(last(&r), "`Point` has 2 fields, but 3 values are given"));
     var(&r, "s", "Str");
     ast::ExprRef wrong[1] = {named("x", ast::name("s"))};
     test::check_condition(types_expr::infer(&r, ast::call(ast::name("Point"), wrong)) == r.table.invalid);
