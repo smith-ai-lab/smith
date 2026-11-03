@@ -271,3 +271,17 @@ export void test_an_empty_compound_literal_is_rewritten_to_a_call() {
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
+
+// `typedef void (*Callback)(void);` is `Callback := fn()`: the capitalized name of the alias stays, `(void)` is no
+// parameters, and the text reads in the new syntax (#1769).
+export void test_a_typedef_of_a_function_pointer_keeps_its_name() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef void (*Callback)(void);\n"
+                                                "typedef int (*Binary)(int, int);\n");
+    check_text(fixed.text, "Callback := fn()\nBinary := fn(i32, i32) -> i32\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
