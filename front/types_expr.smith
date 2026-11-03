@@ -1861,6 +1861,9 @@ static Bool method_shaped(const types::Checked *c, const ast::Expr *callee) {
     if (callee->kind != .member || callee->kind.member.arrow) {
         return false;
     }
+    if (types::c_member(c, callee) != nullptr) {
+        return false; // `c.f(x)` is the C function `c::f`
+    }
     types::Names names = types::member_names(callee);
     if (names.count >= 2 && c->options.load != nullptr) {
         const types::Symbol *first = types::scoped(c, names.items[0]);
@@ -3910,6 +3913,11 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, base, nullptr, 0);
     } else if (e->kind == .member) {
         const ast::Expr *base = e->kind.member.base;
+        const types::Symbol *header = types::c_member(c, e);
+        if (header != nullptr) { // `c.name` after `import c <h>`: the header's declaration
+            finish(c, e, header->type, f.expected);
+            return;
+        }
         if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
