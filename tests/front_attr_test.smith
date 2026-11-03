@@ -173,7 +173,8 @@ export void test_front_attr_a_plain_struct_is_not_an_attribute() {
 }
 
 export void test_front_attr_arguments_are_a_construction_of_the_struct() {
-    fails(join(attribute_struct(), "@Rename(to = \"a\", to = \"b\")\nfn f() {\n}\n"), "has 1 fields", "gives 2");
+    fails(join(attribute_struct(), "@Rename(to = \"a\", to = \"b\")\nfn f() {\n}\n"), "the field `to` of `Rename`",
+          "given twice");
     fails(join(attribute_struct(), "@Rename(from = \"a\")\nfn f() {\n}\n"), "no field `from`", "Rename");
     fails(join(attribute_struct(), "@Rename(to = 3)\nfn f() {\n}\n"), "expected Str", "found");
 }
@@ -184,42 +185,51 @@ export void test_front_attr_arguments_are_computed_at_compile_time() {
     clean(join(attribute_struct(), "const label := \"x\"\n@Rename(to = label)\nfn f() {\n}\n"));
 }
 
-// The text a fix-it of error `at` inserts, and where.
-static Str fix_text(const types::Checked *r, Usize at) {
-    parse::Edits fix = r->errors[at].fix;
-    Usize edits = countof(fix);
-    test::check_equal(edits, (Usize)1);
-    return r->errors[at].fix[0].text;
+// A positional argument fills the field at its place, as it does in a construction (#1813).
+export void test_front_attr_a_positional_argument_fills_the_field_at_its_place() {
+    clean(join(attribute_struct(), "@Rename(\"x\")\nfn f() {\n}\n"));
 }
 
-export void test_front_attr_a_positional_argument_is_an_error_with_a_fix() {
+// `@x()` still compiles; its warning's fix drops the `()`.
+export void test_front_attr_empty_parentheses_warn_with_a_fix_that_drops_them() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = join(attribute_struct(), "@Rename(\"x\")\nfn f() {\n}\n");
-    types::Checked r = check_text(source);
-    test::check_equal(r.error_count, (Usize)1);
-    test::check_condition(has(errors_of(&r), "name the field: `@Rename(to = ...)`"));
-    Str want = "to = ";
-    test::check_equal(fix_text(&r, 0), want);
-    Usize at = r.errors[0].fix[0].span.start;
-    Usize end = r.errors[0].fix[0].span.end;
-    test::check_equal(end, at);
-    test::check_equal(source[at], (char)'"');
+    Str source = "@inline()\nfn f() {\n}\n";
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    Usize errors = countof(p.errors);
+    Usize warnings = countof(p.warnings);
+    test::check_equal(errors, (Usize)0);
+    test::check_equal(warnings, (Usize)1);
+    parse::Edits fix = p.warnings[0].fix;
+    Usize edits = countof(fix);
+    test::check_equal(edits, (Usize)1);
+    U32 start = p.warnings[0].fix[0].span.start;
+    U32 end = p.warnings[0].fix[0].span.end;
+    test::check_equal(start, (U32)7);
+    test::check_equal(end, (U32)9);
 }
 
-export void test_front_attr_a_two_field_attribute_names_its_fields_in_order() {
+export void test_front_attr_a_two_field_attribute_matches_positions_and_names() {
+    Str pair = "@attribute\npub struct Route {\n    path: str\n    verb: str\n}\n";
+    clean(join(pair, "@Route(\"/a\", \"get\")\nfn f() {\n}\n"));
+    clean(join(pair, "@Route(\"/a\", verb = \"get\")\nfn f() {\n}\n"));
+    clean(join(pair, "@Route(path = \"/a\", verb = \"get\")\nfn f() {\n}\n"));
+}
+
+export void test_front_attr_a_positional_argument_after_a_named_one_is_an_error() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str pair = "@attribute\npub struct Route {\n    path: str\n    verb: str\n}\n";
-    types::Checked r = check_text(join(pair, "@Route(\"/a\", \"get\")\nfn f() {\n}\n"));
-    test::check_equal(r.error_count, (Usize)2);
-    Str first = "path = ";
-    Str second = "verb = ";
-    test::check_equal(fix_text(&r, 0), first);
-    test::check_equal(fix_text(&r, 1), second);
-    clean(join(pair, "@Route(path = \"/a\", verb = \"get\")\nfn f() {\n}\n"));
+    types::Checked r = check_text(join(pair, "@Route(path = \"/a\", \"get\")\nfn f() {\n}\n"));
+    test::check_condition(has(errors_of(&r), "a positional argument cannot follow a named one"));
+}
+
+// `Point(a, b)` with variables is a construction, though the parser first reads it as an applied type (#1813).
+export void test_front_attr_a_struct_called_with_names_is_a_construction() {
+    Str point = "struct Point {\n    x: i32\n    y: i32\n}\n";
+    clean(join(point, "fn make(a: i32, b: i32) -> Point {\n    return Point(a, b)\n}\n"));
 }

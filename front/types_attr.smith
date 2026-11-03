@@ -101,49 +101,43 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
     return true;
 }
 
-static Bool has_field(const types::Ty *type, Str name) {
-    for (Usize i = 0; i < countof(type->slots); i++) {
-        if (same_text(type->slots[i].name, name)) return true;
+// Whether argument `i` fills a field an earlier argument filled: the field at `at` is among the positional ones, or an
+// earlier argument names it.
+static Bool given_before(const ast::Attribute *a, Usize i, Usize at, Usize positional) {
+    const ast::Expr *arg = a->args[i];
+    if (arg->kind != .named_arg) return false;
+    if (at < positional) return true;
+    for (Usize j = 0; j < i; j++) {
+        const ast::Expr *earlier = a->args[j];
+        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, arg->kind.named_arg.name))
+            return true;
     }
     return false;
 }
 
-// The arguments of `@rename(...)` against the fields of its struct.
+// The arguments of `@rename(...)` against the fields of its struct: matched as a construction matches them (#1813),
+// by position or by name, positional ones first.
 static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name, const types::Ty *type) {
-    Usize count = countof(type->slots);
-    if (countof(a->args) > count) {
-        types::failf(r, a->span, "`", name, "` has ", count, " fields, but the attribute gives ", countof(a->args));
-    }
+    Bool by_name = false;
+    Usize positional = 0;
     for (Usize i = 0; i < countof(a->args); i++) {
         const ast::Expr *arg = a->args[i];
         const ast::Expr *value = arg;
-        Usize at = i;
-        if (arg->kind == .named_arg) {
-            Str field = arg->kind.named_arg.name;
-            value = arg->kind.named_arg.value;
-            if (!has_field(type, field)) {
-                types::failf(r, arg->span, "`", name, "` has no field `", field, "`");
-                continue;
-            }
-            for (Usize k = 0; k < count; k++) {
-                if (same_text(type->slots[k].name, field)) at = k;
-            }
-        }
-        if (at >= count) continue;
-        if (arg->kind != .named_arg) {
-            // `@rename("x")` is `@rename(to = "x")`: a struct call names its fields (#1798)
-            Str field = type->slots[at].name;
-            syntax::Edits fix = {};
-            fix = mem::realloc(fix, 1);
-            fix[0] = (syntax::Edit){.span = {.start = arg->span.start, .end = arg->span.start},
-                                    .text = msg(format::push(field, " = "))};
-            types::fail_fix(r, arg->span, msg(format::push("name the field: `@", name, "(", field, " = ...)`")), fix);
+        if (arg->kind == .named_arg) value = arg->kind.named_arg.value;
+        Usize at = 0;
+        const types::Slot *field = types_expr::argument_field(r, a->args, i, type, name, by_name, &at);
+        if (arg->kind == .named_arg) by_name = true;
+        if (field == nullptr) continue;
+        if (arg->kind != .named_arg) positional += 1;
+        if (given_before(a, i, at, positional)) {
+            types::failf(r, arg->span, "the field `", field->name, "` of `", name, "` is given twice; remove one");
+            continue;
         }
         if (!is_constant(r, value)) {
             types::fail(r, value->span, "an attribute's arguments are computed at compile time");
             continue;
         }
-        types_expr::check(r, value, type->slots[at].type);
+        types_expr::check(r, value, field->type);
     }
 }
 

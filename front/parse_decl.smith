@@ -613,6 +613,13 @@ static void check_attribute_target(parse::Parser *p, ast::Span span) {
     parse::error(p, span, "an attribute marks the declaration on the next line");
 }
 
+// `@x()` with nothing between the parentheses: a warning whose fix drops the `()` (#1813).
+static void warn_empty_call(parse::Parser *p, U32 open) {
+    U32 end = parse::span_from(p, open).end;
+    parse::Edits fix = with_edit(mem::alloc_slice(parse::Edit, 0), edit(open, end, ""));
+    warn(p, open, end, "an attribute without arguments is written without `()`: drop them", fix);
+}
+
 // One `@name` or `@name(args)` (smith's own spelling; the position is at the `@`). A name may be qualified
 // (`@serial::rename("id")`).
 static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
@@ -635,14 +642,17 @@ static void parse_at_attribute(parse::Parser *p, Prefixes *out) {
         attribute.name.segments[count] = (ast::Identifier){.text = parse::text(p, part), .span = part.span};
         attribute.name.span = parse::span_from(p, name.span.start);
     }
-    if (parse::accept(p, lex::left_paren)) {
+    if (parse::at(p, lex::left_paren)) {
+        U32 open = parse::advance(p).span.start;
         while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
             ast::Expr *argument = parse_attribute_argument(p);
             if (argument == nullptr) break;
             attribute.args = push_expr(attribute.args, argument);
             if (!parse::accept(p, lex::comma)) break;
         }
+        Bool empty = countof(attribute.args) == 0 && parse::at(p, lex::right_paren);
         parse::expect(p, lex::right_paren, "`)` after the attribute's arguments");
+        if (empty) warn_empty_call(p, open);
     }
     attribute.span = parse::span_from(p, start);
     out->attributes = mem::realloc(out->attributes, countof(out->attributes) + 1);
