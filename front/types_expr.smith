@@ -1655,10 +1655,16 @@ static void type_named_arguments(types::Checked *c, ast::ExprRef args[:]) {
 static Usize required_arguments(ast::Param params[:], Usize wanted) {
     if (countof(params) != wanted) return wanted;
     Usize required = 0;
+    Usize keywords = 0;
     for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].default_value == nullptr) required = i + 1;
+        if (params[i].default_value != nullptr) continue;
+        if (params[i].is_keyword) {
+            keywords += 1;
+        } else {
+            required = i + 1;
+        }
     }
-    return required;
+    return required + keywords;
 }
 
 // Reports a wrong argument count; true when the count is right. A parameter with a default may be left out.
@@ -1751,6 +1757,35 @@ static void push_named_arguments(types::Checked *c, Work *w, ast::ExprRef args[:
     }
 }
 
+// Whether some argument of the call is written `name = ...`.
+static Bool names_argument(ast::ExprRef args[:], Str name) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) {
+            if (same_text(arg->kind.named_arg.name, name)) return true;
+        }
+    }
+    return false;
+}
+
+// A positional argument for a keyword-only parameter (one after the `;` of the declaration) is an error, and so is
+// leaving out a keyword-only parameter that has no default.
+static void check_keyword_only(types::Checked *c, const ast::Expr *e, ast::ExprRef args[:], ast::Param params[:]) {
+    for (Usize i = 0; i < countof(args) && i < countof(params); i++) {
+        if (!is_named(args[i]) && params[i].is_keyword) {
+            types::failf(c, args[i]->span, "`", params[i].name, "` is keyword-only; write `", params[i].name,
+                         " = ...`");
+        }
+    }
+    for (Usize i = 0; i < countof(params); i++) {
+        const ast::Param *param = &params[i];
+        if (param->is_keyword && param->default_value == nullptr && !names_argument(args, param->name)) {
+            types::failf(c, e->span, "`", param->name, "` is keyword-only and has no default; write `", param->name,
+                         " = ...` in the call");
+        }
+    }
+}
+
 static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -1780,6 +1815,7 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     if (!arity_ok(c, e, signature, params, countof(args))) {
         signature = nullptr;
     }
+    if (signature != nullptr) check_keyword_only(c, e, args, params);
     if (has_named(args) && signature != nullptr) {
         if (countof(params) != countof(signature->slots)) {
             types::failf(c, e->span,
