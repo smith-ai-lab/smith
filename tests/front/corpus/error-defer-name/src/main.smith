@@ -1,0 +1,4 @@
+# `defer` is a keyword: it cannot name a variable (issue #210).
+pub fn main() -> i32:
+    let defer = 1
+    defer - 1

@@ -1,0 +1,2 @@
+src/main.smith:15:20: error: `.circle` carries a `Circle`; write `.circle(value)`
+src/main.smith:16:20: error: `Shape` has no enumerator `nothing`; write one of its enumerators, such as `.circle`

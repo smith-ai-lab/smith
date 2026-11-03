@@ -1,0 +1,19 @@
+struct Ball:
+    size: i32
+
+fn erase(ball: *Ball) -> *void:
+    ball.cast(*void)
+
+fn take(ball: *Ball) -> i32:
+    ball.size
+
+# `*void` never becomes `*T` silently, in any position (issue #398).
+fn returned(data: *void) -> *Ball:
+    data
+
+fn positions(data: *void) -> i32:
+    let initialized: *Ball = data
+    take(data.cast(*Ball))
+
+pub fn main() -> i32:
+    0
