@@ -281,11 +281,13 @@ export void test_a_three_part_for_is_rewritten_to_while() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
-        "t.smith", "module m;\nstatic void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
+        "t.smith",
+        "module m;\nstatic void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
-    check_text(fixed.text,
-               "static fn f(mut n: i32) {\n    { mut i: i32 = 0\nwhile i * 2 < n {\n        n -= 1\n    i += 3\n}\n}\n}\n");
+    check_text(
+        fixed.text,
+        "static fn f(mut n: i32) {\n    { mut i: i32 = 0\nwhile i * 2 < n {\n        n -= 1\n    i += 3\n}\n}\n}\n");
 }
 
 export void test_a_for_with_a_continue_gets_no_while() {
