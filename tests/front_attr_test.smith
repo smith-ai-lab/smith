@@ -122,24 +122,24 @@ static void attached(Str source, Usize expected) {
 }
 
 export void test_front_attr_own_line_before_a_function() {
-    attached("@inline\nfn hot() -> i32 {\n    1\n}\n", 1);
-    attached("@inline fn hot() -> i32 {\n    1\n}\n", 1);
-    attached("@inline\n@cold\nfn hot() -> i32 {\n    1\n}\n", 2);
+    attached("@inline\nfn hot() -> i32:\n    1\n", 1);
+    attached("@inline fn hot() -> i32:\n    1\n", 1);
+    attached("@inline\n@cold\nfn hot() -> i32:\n    1\n", 2);
 }
 
 export void test_front_attr_own_line_before_a_field() {
-    attached("struct User {\n    @cold\n    id: u64\n}\n", 1);
+    attached("struct User:\n    @cold\n    id: u64\n", 1);
     attached("struct User {\n    @cold\n    @pure\n    id: u64\n    name: str\n}\n", 2);
 }
 
 export void test_front_attr_own_line_before_an_enumerator() {
-    attached("enum Color {\n    red\n    @cold\n    green\n}\n", 1);
+    attached("enum Color:\n    red\n    @cold\n    green\n", 1);
 }
 
 export void test_front_attr_needs_a_declaration_on_the_next_line() {
     Str message = "an attribute marks the declaration on the next line";
-    test::check_equal(parse_error_of("@inline\n\nfn f() {\n}\n"), message);
-    test::check_equal(parse_error_of("@inline\n# why\nfn f() {\n}\n"), message);
+    test::check_equal(parse_error_of("@inline\n\nfn f():\n    return\n"), message);
+    test::check_equal(parse_error_of("@inline\n# why\nfn f():\n    return\n"), message);
     test::check_equal(parse_error_of("struct A {\n    x: i32\n    @cold\n}\n"), message);
     test::check_equal(parse_error_of("@inline\n"), message);
 }
@@ -148,11 +148,11 @@ export void test_front_attr_needs_a_declaration_on_the_next_line() {
 // The checker
 
 static Str attribute_struct() {
-    return "@attribute\npub struct Rename {\n    to: str\n}\n";
+    return "@attribute\npub struct Rename:\n    to: str\n";
 }
 
 export void test_front_attr_user_attribute_names_its_fields() {
-    clean(join(attribute_struct(), "struct User {\n    @Rename(to = \"user_id\")\n    id: u64\n}\n"));
+    clean(join(attribute_struct(), "struct User:\n    @Rename(to = \"user_id\")\n    id: u64\n"));
 }
 
 export void test_front_attr_two_attributes_on_two_lines_before_a_field() {
@@ -160,34 +160,34 @@ export void test_front_attr_two_attributes_on_two_lines_before_a_field() {
 }
 
 export void test_front_attr_built_ins_stay_unqualified() {
-    clean("@inline\nfn hot() -> i32 {\n    1\n}\n");
-    fails("@loud\nfn hot() -> i32 {\n    1\n}\n", "unknown attribute `loud`", "`@inline`");
+    clean("@inline\nfn hot() -> i32:\n    1\n");
+    fails("@loud\nfn hot() -> i32:\n    1\n", "unknown attribute `loud`", "`@inline`");
 }
 
 export void test_front_attr_a_plain_struct_is_not_an_attribute() {
-    fails("pub struct Rename {\n    to: str\n}\n@Rename(\"x\")\nfn f() {\n}\n", "`Rename` is not an attribute",
+    fails("pub struct Rename:\n    to: str\n@Rename(\"x\")\nfn f():\n    return\n", "`Rename` is not an attribute",
           "mark its struct `@attribute`");
-    fails("import serial;\n@serial::rename(\"x\")\nfn f() {\n}\n", "serial::rename", "another module");
-    fails("@serial::rename(\"x\")\nfn f() {\n}\n", "`serial::rename` is not an attribute",
+    fails("import serial;\n@serial::rename(\"x\")\nfn f():\n    return\n", "serial::rename", "another module");
+    fails("@serial::rename(\"x\")\nfn f():\n    return\n", "`serial::rename` is not an attribute",
           "mark its struct `@attribute`");
 }
 
 export void test_front_attr_arguments_are_a_construction_of_the_struct() {
-    fails(join(attribute_struct(), "@Rename(to = \"a\", to = \"b\")\nfn f() {\n}\n"), "the field `to` of `Rename`",
-          "given twice");
-    fails(join(attribute_struct(), "@Rename(from = \"a\")\nfn f() {\n}\n"), "no field `from`", "Rename");
-    fails(join(attribute_struct(), "@Rename(to = 3)\nfn f() {\n}\n"), "expected Str", "found");
+    fails(join(attribute_struct(), "@Rename(to = \"a\", to = \"b\")\nfn f():\n    return\n"),
+          "the field `to` of `Rename`", "given twice");
+    fails(join(attribute_struct(), "@Rename(from = \"a\")\nfn f():\n    return\n"), "no field `from`", "Rename");
+    fails(join(attribute_struct(), "@Rename(to = 3)\nfn f():\n    return\n"), "expected Str", "found");
 }
 
 export void test_front_attr_arguments_are_computed_at_compile_time() {
-    fails(join(attribute_struct(), "fn name() -> str {\n    \"x\"\n}\n@Rename(to = name())\nfn f() {\n}\n"),
+    fails(join(attribute_struct(), "fn name() -> str:\n    \"x\"\n@Rename(to = name())\nfn f():\n    return\n"),
           "an attribute's arguments are computed at compile time", "compile time");
-    clean(join(attribute_struct(), "const label = \"x\"\n@Rename(to = label)\nfn f() {\n}\n"));
+    clean(join(attribute_struct(), "const label = \"x\"\n@Rename(to = label)\nfn f():\n    return\n"));
 }
 
 // A positional argument fills the field at its place, as it does in a construction (#1813).
 export void test_front_attr_a_positional_argument_fills_the_field_at_its_place() {
-    clean(join(attribute_struct(), "@Rename(\"x\")\nfn f() {\n}\n"));
+    clean(join(attribute_struct(), "@Rename(\"x\")\nfn f():\n    return\n"));
 }
 
 // `@x()` still compiles; its warning's fix drops the `()`.
@@ -196,7 +196,7 @@ export void test_front_attr_empty_parentheses_warn_with_a_fix_that_drops_them() 
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "@inline()\nfn f() {\n}\n";
+    Str source = "@inline()\nfn f():\n    return\n";
     parser::Parsed p = parser::parse_new("t.smith", source);
     Usize errors = countof(p.errors);
     Usize warnings = countof(p.warnings);
@@ -212,10 +212,10 @@ export void test_front_attr_empty_parentheses_warn_with_a_fix_that_drops_them() 
 }
 
 export void test_front_attr_a_two_field_attribute_matches_positions_and_names() {
-    Str pair = "@attribute\npub struct Route {\n    path: str\n    verb: str\n}\n";
-    clean(join(pair, "@Route(\"/a\", \"get\")\nfn f() {\n}\n"));
-    clean(join(pair, "@Route(\"/a\", verb = \"get\")\nfn f() {\n}\n"));
-    clean(join(pair, "@Route(path = \"/a\", verb = \"get\")\nfn f() {\n}\n"));
+    Str pair = "@attribute\npub struct Route:\n    path: str\n    verb: str\n";
+    clean(join(pair, "@Route(\"/a\", \"get\")\nfn f():\n    return\n"));
+    clean(join(pair, "@Route(\"/a\", verb = \"get\")\nfn f():\n    return\n"));
+    clean(join(pair, "@Route(path = \"/a\", verb = \"get\")\nfn f():\n    return\n"));
 }
 
 export void test_front_attr_a_positional_argument_after_a_named_one_is_an_error() {
@@ -223,13 +223,13 @@ export void test_front_attr_a_positional_argument_after_a_named_one_is_an_error(
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str pair = "@attribute\npub struct Route {\n    path: str\n    verb: str\n}\n";
-    types::Checked r = check_text(join(pair, "@Route(path = \"/a\", \"get\")\nfn f() {\n}\n"));
+    Str pair = "@attribute\npub struct Route:\n    path: str\n    verb: str\n";
+    types::Checked r = check_text(join(pair, "@Route(path = \"/a\", \"get\")\nfn f():\n    return\n"));
     test::check_condition(has(errors_of(&r), "a positional argument cannot follow a named one"));
 }
 
 // `Point(a, b)` with variables is a construction, though the parser first reads it as an applied type (#1813).
 export void test_front_attr_a_struct_called_with_names_is_a_construction() {
-    Str point = "struct Point {\n    x: i32\n    y: i32\n}\n";
-    clean(join(point, "fn make(a: i32, b: i32) -> Point {\n    return Point(a, b)\n}\n"));
+    Str point = "struct Point:\n    x: i32\n    y: i32\n";
+    clean(join(point, "fn make(a: i32, b: i32) -> Point:\n    return Point(a, b)\n"));
 }
