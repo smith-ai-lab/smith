@@ -1,0 +1,409 @@
+// front::types_undefined: a read of an `undefined` local before any write is an error (#1854, split from #1810).
+//
+// THE RULES
+//
+//   tracked    A local declared `let mut x: T = undefined` in smith's own syntax. Parameters, globals and
+//              `extern let` are not tracked.
+//   read       Any use of the name that is not a write. A plain assignment `x = e` reads `e` first, so `x = x + 1`
+//              reads. A compound assignment `x += 1` and `x++` read.
+//   write      `x = e`, and (the checker does not follow them) `&x`, `x[i] = e`, `x.f = e`, `x[a:b]` and `x` or
+//              `x.f` passed to a call (an array or struct the callee may fill).
+//   error      The first statement, after the declaration and in the same block, that reads the local when no
+//              statement before it wrote it. A statement that both reads and writes it (a loop that fills it, an `if`
+//              that sets it in one branch) is allowed: the checker cannot tell the order, and when in doubt it allows.
+//   unknown    A lambda, a `do:` or `if` used as a value and `_Generic` hold code this pass does not read: they count
+//              as a write, so they never produce an error.
+//
+// At most `tracked_limit` undefined locals of one block are followed at a time; the rest are allowed, which is the
+// side a false error would not be on. No recursion: statements and expressions are walked with a work stack that grows.
+module front::types_undefined;
+
+import front::ast;
+import front::types;
+import std::mem;
+
+constexpr Usize tracked_limit = 32;
+
+struct Item {
+    const ast::Stmt *stmt;
+    const ast::Expr *expr;
+};
+
+struct Work {
+    Item items[:];
+    Usize top;
+};
+
+// What a statement or an expression does with one name.
+struct Usage {
+    Usize reads;
+    Usize writes;
+    const ast::Expr *first_read;
+};
+
+static void push(Work *w, const ast::Stmt *stmt, const ast::Expr *expr) {
+    if (stmt == nullptr && expr == nullptr) {
+        return;
+    }
+    if (w->top == countof(w->items)) {
+        Usize capacity = countof(w->items) * 2;
+        if (capacity < 32) {
+            capacity = 32;
+        }
+        w->items = mem::realloc(w->items, capacity);
+    }
+    w->items[w->top] = (Item){.stmt = stmt, .expr = expr};
+    w->top += 1;
+}
+
+static void push_exprs(Work *w, ast::ExprRef list[:]) {
+    for (Usize i = 0; i < countof(list); i++) {
+        push(w, nullptr, list[i]);
+    }
+}
+
+static void push_stmts(Work *w, ast::StmtRef list[:]) {
+    for (Usize i = 0; i < countof(list); i++) {
+        push(w, list[i], nullptr);
+    }
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static Bool is_name(const ast::Expr *e, Str name) {
+    if (e == nullptr || !(e->kind == .name)) {
+        return false;
+    }
+    ast::Identifier segments[:] = e->kind.name.path.segments;
+    return countof(segments) == 1 && same(segments[0].text, name);
+}
+
+// The name an lvalue is built on: `x` in `x`, `x[i]`, `x.f`, `x[a:b]`.
+static const ast::Expr *root_of(const ast::Expr *e) {
+    while (e != nullptr) {
+        if (e->kind == .index) {
+            e = e->kind.index.base;
+        } else if (e->kind == .slice_of) {
+            e = e->kind.slice_of.base;
+        } else if (e->kind == .member && !e->kind.member.arrow) {
+            e = e->kind.member.base;
+        } else {
+            break;
+        }
+    }
+    return e;
+}
+
+static void note_read(Usage *u, const ast::Expr *e) {
+    if (u->reads == 0) {
+        u->first_read = e;
+    }
+    u->reads += 1;
+}
+
+// `target = value` and `target op= value`.
+static void assignment(Work *w, Usage *u, Str name, const ast::Expr *e) {
+    if (!(e->kind == .assign)) {
+        return;
+    }
+    const ast::Expr *target = e->kind.assign.target;
+    if (is_name(target, name)) {
+        if (!(e->kind.assign.op == .plain)) {
+            note_read(u, target);
+        }
+        u->writes += 1;
+    } else if (is_name(root_of(target), name)) {
+        u->writes += 1;
+    } else {
+        push(w, nullptr, target);
+    }
+    push(w, nullptr, e->kind.assign.value);
+}
+
+// `&x` is a write (the pointer may be used to fill it), `x++` and `--x` read.
+static void unary(Work *w, Usage *u, Str name, const ast::Expr *e) {
+    if (!(e->kind == .unary)) {
+        return;
+    }
+    const ast::Expr *operand = e->kind.unary.operand;
+    if (e->kind.unary.op == .address_of && is_name(root_of(operand), name)) {
+        u->writes += 1;
+    } else {
+        push(w, nullptr, operand);
+    }
+}
+
+// The expressions an expression holds, other than an assignment or a unary operator.
+static void operands(Work *w, Usage *u, Str name, const ast::Expr *e) {
+    if (e->kind == .binary) {
+        push(w, nullptr, e->kind.binary.left);
+        push(w, nullptr, e->kind.binary.right);
+    } else if (e->kind == .conditional) {
+        push(w, nullptr, e->kind.conditional.condition);
+        push(w, nullptr, e->kind.conditional.then_value);
+        push(w, nullptr, e->kind.conditional.else_value);
+    } else if (e->kind == .call) {
+        push(w, nullptr, e->kind.call.callee);
+        for (Usize i = 0; i < countof(e->kind.call.args); i++) {
+            if (is_name(root_of(e->kind.call.args[i]), name)) {
+                u->writes += 1; // an array or a struct passed on may be filled by the callee
+            }
+        }
+        push_exprs(w, e->kind.call.args);
+    } else if (e->kind == .index) {
+        push(w, nullptr, e->kind.index.base);
+        push(w, nullptr, e->kind.index.index);
+    } else if (e->kind == .slice_of) {
+        if (is_name(root_of(e->kind.slice_of.base), name)) {
+            u->writes += 1; // a slice of it may be filled
+        }
+        push(w, nullptr, e->kind.slice_of.base);
+        push(w, nullptr, e->kind.slice_of.start);
+        push(w, nullptr, e->kind.slice_of.end);
+    } else if (e->kind == .member) {
+        push(w, nullptr, e->kind.member.base);
+    } else if (e->kind == .cast) {
+        push(w, nullptr, e->kind.cast.operand);
+    }
+}
+
+// The expressions of the rarer kinds.
+static void operands_more(Work *w, Usage *u, const ast::Expr *e) {
+    if (e->kind == .variant) {
+        push(w, nullptr, e->kind.variant.payload);
+    } else if (e->kind == .try_expr) {
+        push(w, nullptr, e->kind.try_expr.operand);
+    } else if (e->kind == .named_arg) {
+        push(w, nullptr, e->kind.named_arg.value);
+    } else if (e->kind == .expand) {
+        push(w, nullptr, e->kind.expand.pattern);
+    } else if (e->kind == .tuple_lit) {
+        push_exprs(w, e->kind.tuple_lit.items);
+    } else if (e->kind == .array_lit) {
+        push_exprs(w, e->kind.array_lit.items);
+    } else if (e->kind == .reflect_member) {
+        push(w, nullptr, e->kind.reflect_member.base);
+        push(w, nullptr, e->kind.reflect_member.field);
+    } else if (e->kind == .compound) {
+        for (Usize i = 0; i < countof(e->kind.compound.items); i++) {
+            push(w, nullptr, e->kind.compound.items[i].value);
+        }
+    } else if (e->kind == .lambda || e->kind == .stmt_expr || e->kind == .generic_select) {
+        u->writes += 1; // code this pass does not read: allow
+    }
+}
+
+static void expression(Work *w, Usage *u, Str name, const ast::Expr *e) {
+    if (e->kind == .name) {
+        if (is_name(e, name)) {
+            note_read(u, e);
+        }
+    } else if (e->kind == .assign) {
+        assignment(w, u, name, e);
+    } else if (e->kind == .unary) {
+        unary(w, u, name, e);
+    } else {
+        operands(w, u, name, e);
+        operands_more(w, u, e);
+    }
+}
+
+// The pieces of the statements that hold only statements and expressions.
+static void statement_parts(Work *w, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        push(w, nullptr, s->kind.expression.value);
+    } else if (s->kind == .declaration) {
+        const ast::Decl *d = s->kind.declaration.decl;
+        if (d->kind == .variable) {
+            push(w, nullptr, d->kind.variable.init);
+        }
+    } else if (s->kind == .block) {
+        push_stmts(w, s->kind.block.items);
+    } else if (s->kind == .if_stmt) {
+        push(w, nullptr, s->kind.if_stmt.condition);
+        push(w, s->kind.if_stmt.then_branch, nullptr);
+        push(w, s->kind.if_stmt.else_branch, nullptr);
+    } else if (s->kind == .while_stmt) {
+        push(w, nullptr, s->kind.while_stmt.condition);
+        push(w, s->kind.while_stmt.body, nullptr);
+    } else if (s->kind == .do_while) {
+        push(w, nullptr, s->kind.do_while.condition);
+        push(w, s->kind.do_while.body, nullptr);
+    } else if (s->kind == .for_stmt) {
+        push(w, s->kind.for_stmt.init, s->kind.for_stmt.condition);
+        push(w, nullptr, s->kind.for_stmt.step);
+        push(w, nullptr, s->kind.for_stmt.range);
+        push(w, s->kind.for_stmt.index, nullptr);
+        push(w, s->kind.for_stmt.body, nullptr);
+    }
+}
+
+// The rest of the statements.
+static void statement_parts_more(Work *w, Usage *u, const ast::Stmt *s) {
+    if (s->kind == .for_in) {
+        push(w, nullptr, s->kind.for_in.iterable);
+        push(w, s->kind.for_in.body, nullptr);
+    } else if (s->kind == .match_stmt) {
+        push(w, nullptr, s->kind.match_stmt.value);
+        for (Usize i = 0; i < countof(s->kind.match_stmt.arms); i++) {
+            push(w, nullptr, s->kind.match_stmt.arms[i].value);
+        }
+    } else if (s->kind == .switch_stmt) {
+        push(w, nullptr, s->kind.switch_stmt.value);
+        for (Usize i = 0; i < countof(s->kind.switch_stmt.cases); i++) {
+            push_stmts(w, s->kind.switch_stmt.cases[i].body);
+        }
+    } else if (s->kind == .destructure) {
+        push(w, nullptr, s->kind.destructure.init);
+    } else if (s->kind == .if_let) {
+        push(w, nullptr, s->kind.if_let.value);
+        push(w, s->kind.if_let.then_branch, nullptr);
+        push(w, s->kind.if_let.else_branch, nullptr);
+    } else if (s->kind == .return_stmt) {
+        push(w, nullptr, s->kind.return_stmt.value);
+    } else if (s->kind == .yield_stmt) {
+        push(w, nullptr, s->kind.yield_stmt.value);
+    } else if (s->kind == .defer_stmt) {
+        push(w, s->kind.defer_stmt.body, nullptr);
+    } else if (s->kind == .errdefer_stmt) {
+        push(w, s->kind.errdefer_stmt.body, nullptr);
+    } else if (s->kind == .labeled) {
+        push(w, s->kind.labeled.body, nullptr);
+    } else if (s->kind == .goto_stmt) {
+        u->writes += 1; // control flow this pass does not follow: allow
+    }
+}
+
+// What `stmt` (or, with a null `stmt`, `expr`) does with `name`, everything under it included.
+static Usage scan(Str name, const ast::Stmt *stmt, const ast::Expr *expr) {
+    Work w = {};
+    Usage u = {};
+    push(&w, stmt, expr);
+    while (w.top > 0) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt != nullptr) {
+            statement_parts(&w, item.stmt);
+            statement_parts_more(&w, &u, item.stmt);
+        }
+        if (item.expr != nullptr) {
+            expression(&w, &u, name, item.expr);
+        }
+    }
+    return u;
+}
+
+static void report(types::Checked *r, Str name, const ast::Expr *at) {
+    types::failf(r, at->span, "`", name, "` is read before it is written: write it first, or give it a value");
+}
+
+// An undefined local, as declared by `s`: its name, else an empty text.
+static Str undefined_name(const ast::Stmt *s) {
+    if (!(s->kind == .declaration)) {
+        return "";
+    }
+    const ast::Decl *d = s->kind.declaration.decl;
+    if (!(d->kind == .variable) || !d->kind.variable.is_new || d->kind.variable.init == nullptr) {
+        return "";
+    }
+    const ast::Expr *init = d->kind.variable.init;
+    if (!(init->kind == .name) || countof(init->kind.name.path.segments) != 1 ||
+        !same(init->kind.name.path.segments[0].text, "undefined")) {
+        return "";
+    }
+    return d->kind.variable.name;
+}
+
+// `s` when it is `name = value` or `name op= value` (its value is read before the write), else null.
+static const ast::Expr *assignment_to(const ast::Stmt *s, Str name) {
+    if (!(s->kind == .expression) || s->kind.expression.value == nullptr) {
+        return nullptr;
+    }
+    const ast::Expr *e = s->kind.expression.value;
+    if (e->kind == .assign && is_name(e->kind.assign.target, name)) {
+        return e;
+    }
+    return nullptr;
+}
+
+// Reads `s` against one tracked name; true when the name is settled (written, or reported) and need not be followed.
+static Bool settle(types::Checked *r, Str name, const ast::Stmt *s) {
+    const ast::Expr *e = assignment_to(s, name);
+    if (e != nullptr && e->kind == .assign) {
+        Usage v = scan(name, nullptr, e->kind.assign.value);
+        if (!(e->kind.assign.op == .plain)) {
+            report(r, name, e->kind.assign.target);
+        } else if (v.reads > 0 && v.writes == 0) {
+            report(r, name, v.first_read);
+        }
+        return true;
+    }
+    Usage u = scan(name, s, nullptr);
+    if (u.writes > 0) {
+        return true;
+    }
+    if (u.reads > 0) {
+        report(r, name, u.first_read);
+        return true;
+    }
+    return false;
+}
+
+// One block, in order: follows the undefined locals it declares until each is written.
+static void block(types::Checked *r, const ast::Stmt *b) {
+    if (!(b->kind == .block)) {
+        return;
+    }
+    Str tracked[tracked_limit] = {};
+    Usize count = 0;
+    ast::StmtRef items[:] = b->kind.block.items;
+    for (Usize i = 0; i < countof(items); i++) {
+        Usize kept = 0;
+        for (Usize k = 0; k < count; k++) {
+            if (!settle(r, tracked[k], items[i])) {
+                tracked[kept] = tracked[k];
+                kept += 1;
+            }
+        }
+        count = kept;
+        Str declared = undefined_name(items[i]);
+        if (countof(declared) > 0 && count < tracked_limit) {
+            tracked[count] = declared;
+            count += 1;
+        }
+    }
+}
+
+// The statements under `s` that may hold blocks of their own.
+static void inner(Work *w, const ast::Stmt *s) {
+    statement_parts(w, s);
+    Usage ignored = {};
+    statement_parts_more(w, &ignored, s);
+}
+
+// Checks every block of the body `root`.
+export void check_body(types::Checked *r, const ast::Stmt *root) {
+    Work w = {};
+    push(&w, root, nullptr);
+    while (w.top > 0) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt == nullptr) {
+            continue; // an expression pushed along with the statements
+        }
+        if (item.stmt->kind == .block) {
+            block(r, item.stmt);
+        }
+        inner(&w, item.stmt);
+    }
+}

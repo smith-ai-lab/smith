@@ -815,7 +815,7 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 static const char *const build_front_modules[] = {
     "ast",          "when",        "lex",           "parse",       "parse_expr",    "parse_type", "parse_stmt",
     "parse_decl",   "parser",      "types",         "types_expr",  "types_convert", "types_decl", "types_attr",
-    "types_stream", "types_fn",    "types_iter",    "emit_state",  "emit",          "emit_arith", "emit_control",
+    "types_stream", "types_undefined", "types_fn",    "types_iter",    "emit_state",  "emit",          "emit_arith", "emit_control",
     "emit_call",    "emit_memory", "emit_debug",    "emit_object", "roots",         "fix",        "cimport",
     "compile",      "emit_option", "emit_match",    "emit_value",  "emit_iter",     "emit_tuple", "emit_lambda",
     "emit_vector",  "emit_stream", "fix_directive", "fix_method",
