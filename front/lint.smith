@@ -10,6 +10,12 @@
 //                       checked replacement in std::mem.
 //   smith-bounded-loop  a `for` with no condition, or a `while`, `do ... while` or `for` whose condition is the
 //                       constant `true` (or a non-zero integer), outside `main`.
+//   smith-module-library  `import c <smith/arena.h>`, or a `c::name` the header lists, where the header is a library
+//                       that is a module: its generated header says `// smith-module: std::arena` and `// smith-names:
+//                       push_raw=smith_arena_push ...`, and the module is imported by name instead. The checker
+//                       does not read files: `set_header_text` gives it the text of a header (empty: none), and with
+//                       none given the check is off. Names are looked for in expressions, in the types of
+//                       parameters, results, fields and `let`s, not in casts.
 //
 // A call counts as C's when it is written `c::name`, through the alias or the name of a C header the module
 // imports (`stdlib::malloc`), or is a bare `name` brought in by `from c <header> import name`. `mem::free` and a
@@ -20,6 +26,7 @@ module front::lint;
 
 import front::ast;
 import front::types;
+import std::format;
 import std::mem;
 
 struct Item {
@@ -370,8 +377,281 @@ static Bool is_trusted(const ast::Stmt *root) {
     return found;
 }
 
+// ---- smith-module-library
+
+// Gives the text of the C header `import c <h>` names, or an empty string when it cannot be read.
+export typedef Str (*HeaderText)(Str header, Bool angled);
+
+static HeaderText header_text = nullptr;
+
+// Sets where the check reads headers from; null turns it off.
+export void set_header_text(HeaderText reader) {
+    header_text = reader;
+}
+
+// A library that is a module: its module (`std::arena`), the name to call it by (`arena`), the C name and the
+// module's name of each export, and the module's generic functions.
+struct Library {
+    Str module;
+    Str binding;
+    Str c_names[96];
+    Str names[96];
+    Usize count;
+    Str generics[32];
+    Usize generic_count;
+};
+
+struct Libraries {
+    Library items[6];
+    Usize count;
+};
+
+// Whether `line` starts with `head`; `rest` is what follows.
+static Bool after(Str line, Str head, Str *rest) {
+    if (countof(head) > countof(line)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(head); i++) {
+        if (line[i] != head[i]) {
+            return false;
+        }
+    }
+    *rest = line[countof(head):];
+    return true;
+}
+
+// The words of `text`, split at spaces, one at a time: the word that starts at `from`, and where the next starts.
+static Str word_at(Str text, Usize *from) {
+    while (*from < countof(text) && text[*from] == ' ') {
+        *from += 1;
+    }
+    Usize start = *from;
+    while (*from < countof(text) && text[*from] != ' ') {
+        *from += 1;
+    }
+    return text[start:*from];
+}
+
+// `push_raw=smith_arena_push ...`: the pairs of the `// smith-names:` line.
+static void read_names(Library *lib, Str rest) {
+    Usize from = 0;
+    while (from < countof(rest) && lib->count < countof(lib->names)) {
+        Str word = word_at(rest, &from);
+        for (Usize i = 0; i < countof(word); i++) {
+            if (word[i] == '=') {
+                lib->names[lib->count] = word[:i];
+                lib->c_names[lib->count] = word[i + 1:];
+                lib->count += 1;
+                break;
+            }
+        }
+    }
+}
+
+// The member of `// smith-generic: std::test check_equal`.
+static void read_generic(Library *lib, Str rest) {
+    Usize from = 0;
+    word_at(rest, &from);
+    Str member = word_at(rest, &from);
+    if (countof(member) > 0 && lib->generic_count < countof(lib->generics)) {
+        lib->generics[lib->generic_count] = member;
+        lib->generic_count += 1;
+    }
+}
+
+// `arena` of `std::arena`.
+static Str binding_of(Str module) {
+    Usize from = 0;
+    for (Usize i = 0; i < countof(module); i++) {
+        if (module[i] == ':') {
+            from = i + 1;
+        }
+    }
+    return module[from:];
+}
+
+// Reads the lines of a header that name its module; false when it names none.
+static Bool read_library(Str text, Library *lib) {
+    Bool found = false;
+    Usize from = 0;
+    Usize line_number = 0;
+    for (Usize i = 0; i <= countof(text) && line_number < 4096; i++) {
+        if (i < countof(text) && text[i] != '\n') {
+            continue;
+        }
+        Str line = text[from:i];
+        Str rest = "";
+        if (after(line, "// smith-generic: ", &rest)) {
+            read_generic(lib, rest);
+        } else if (line_number < 8 && after(line, "// smith-module: ", &rest)) {
+            lib->module = rest;
+            lib->binding = binding_of(rest);
+            found = true;
+        } else if (line_number < 8 && after(line, "// smith-names: ", &rest)) {
+            read_names(lib, rest);
+        }
+        from = i + 1;
+        line_number += 1;
+    }
+    return found;
+}
+
+static Str example_of(const Library *lib) {
+    if (same(lib->module, "std::arena")) {
+        return " (a typed push is `arena::push(&a, T)`)";
+    }
+    return "";
+}
+
+// `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
+// generic's, which takes the type from its first argument.
+static Str generic_of(const Library *lib, Str name) {
+    Str types = "bool char i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 pointer ptr";
+    Usize from = 0;
+    while (from < countof(types)) {
+        Str type = word_at(types, &from);
+        Usize size = countof(type) + 1;
+        if (countof(name) <= size || name[countof(name) - size] != '_' ||
+            !same(name[countof(name) - size + 1:], type)) {
+            continue;
+        }
+        Str base = name[:countof(name) - size];
+        if (listed(base, lib->generics, lib->generic_count)) {
+            char text[:] = format::push(" (or, better, the generic `", lib->binding, "::", base,
+                                        "(a, b)`, which takes the type from its first argument)");
+            return text;
+        }
+    }
+    return "";
+}
+
+// The libraries the module's `import c <h>` lines reach, reported once each.
+static Libraries libraries_of(types::Checked *r, const ast::Module *m) {
+    Libraries libs = {};
+    if (header_text == nullptr) {
+        return libs;
+    }
+    for (Usize i = 0; i < countof(m->decls) && libs.count < countof(libs.items); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_c) {
+            continue;
+        }
+        Str header = d->kind.import_c.header;
+        Bool angled = d->kind.import_c.angled;
+        Library lib = {};
+        if (!read_library(header_text(header, angled), &lib)) {
+            continue;
+        }
+        Str open = "\"";
+        Str close = "\"";
+        if (angled) {
+            open = "<";
+            close = ">";
+        }
+        types::failf(r, d->span, "`import ", open, header, close, ";` reads ", lib.module,
+                     ", a module, through its C header: write `import ", lib.module, ";` and call it as `", lib.binding,
+                     "::name(...)`", example_of(&lib));
+        libs.items[libs.count] = lib;
+        libs.count += 1;
+    }
+    return libs;
+}
+
+// Reports `c::name` when `name` is an export of a library the module reached through its header.
+static void report_library_path(types::Checked *r, const Libraries *libs, ast::Path path) {
+    ast::Identifier segments[:] = path.segments;
+    if (countof(segments) != 2 || !same(segments[0].text, "c")) {
+        return;
+    }
+    Str name = segments[1].text;
+    for (Usize i = 0; i < libs->count; i++) {
+        const Library *lib = &libs->items[i];
+        for (Usize k = 0; k < lib->count; k++) {
+            if (!same(name, lib->c_names[k])) {
+                continue;
+            }
+            types::failf(r, path.span, "`c::", name, "` is `", lib->binding, "::", lib->names[k], "` of the module ",
+                         lib->module, ", reached through its C header: write `import ", lib->module, ";` and `",
+                         lib->binding, "::", lib->names[k], "`", example_of(lib), generic_of(lib, lib->names[k]));
+            return;
+        }
+    }
+}
+
+// The names a type writes: its pointee, element, parameters and result, with a work stack that grows.
+static void report_type(types::Checked *r, const Libraries *libs, const ast::TypeExpr *root) {
+    if (libs->count == 0 || root == nullptr) {
+        return;
+    }
+    const ast::TypeExpr *stack[64];
+    Usize top = 0;
+    stack[top] = root;
+    top += 1;
+    while (top > 0) {
+        top -= 1;
+        const ast::TypeExpr *t = stack[top];
+        const ast::TypeExpr *parts[8] = {};
+        Usize count = 0;
+        if (t->kind == .named) {
+            report_library_path(r, libs, t->kind.named.path);
+        } else if (t->kind == .pointer) {
+            parts[0] = t->kind.pointer.pointee;
+            count = 1;
+        } else if (t->kind == .array) {
+            parts[0] = t->kind.array.element;
+            count = 1;
+        } else if (t->kind == .slice) {
+            parts[0] = t->kind.slice.element;
+            count = 1;
+        } else if (t->kind == .option) {
+            parts[0] = t->kind.option.inner;
+            count = 1;
+        } else if (t->kind == .function) {
+            parts[0] = t->kind.function.result;
+            count = 1;
+            for (Usize i = 0; i < countof(t->kind.function.params) && count < countof(parts); i++) {
+                parts[count] = t->kind.function.params[i];
+                count += 1;
+            }
+        }
+        for (Usize i = 0; i < count && top < countof(stack); i++) {
+            if (parts[i] != nullptr) {
+                stack[top] = parts[i];
+                top += 1;
+            }
+        }
+    }
+}
+
+// The type of a `let` or a variable inside a function.
+static void report_local_type(types::Checked *r, const Libraries *libs, const ast::Stmt *s) {
+    if (s->kind == .declaration) {
+        const ast::Decl *d = s->kind.declaration.decl;
+        if (d->kind == .variable) {
+            report_type(r, libs, d->kind.variable.type);
+        }
+    }
+}
+
+// The types a declaration of the module writes outside a function body.
+static void report_decl_types(types::Checked *r, const Libraries *libs, const ast::Decl *d) {
+    if (d->kind == .variable) {
+        report_type(r, libs, d->kind.variable.type);
+    } else if (d->kind == .function) {
+        for (Usize i = 0; i < countof(d->kind.function.params); i++) {
+            report_type(r, libs, d->kind.function.params[i].type);
+        }
+        report_type(r, libs, d->kind.function.result);
+    } else if (d->kind == .record) {
+        for (Usize i = 0; i < countof(d->kind.record.fields); i++) {
+            report_type(r, libs, d->kind.record.fields[i].type);
+        }
+    }
+}
+
 // Checks every call and loop under `root`.
-static void check_function(types::Checked *r, const CNames *c, const ast::Stmt *root, Bool is_main) {
+static void check_function(types::Checked *r, const CNames *c, const Libraries *libs, const ast::Stmt *root,
+                           Bool is_main) {
     if (is_trusted(root)) {
         return;
     }
@@ -384,12 +664,16 @@ static void check_function(types::Checked *r, const CNames *c, const ast::Stmt *
             if (!is_main) {
                 report_loop(r, item.stmt);
             }
+            report_local_type(r, libs, item.stmt);
             stmt_parts(&w, item.stmt);
             stmt_parts_more(&w, item.stmt);
         }
         if (item.expr != nullptr) {
             if (item.expr->kind == .call) {
                 report_call(r, item.expr, c);
+            }
+            if (item.expr->kind == .name) {
+                report_library_path(r, libs, item.expr->kind.name.path);
             }
             expr_parts(&w, item.expr);
             expr_parts_more(&w, item.expr);
@@ -449,10 +733,12 @@ static CNames c_names(const ast::Module *m) {
 // Checks every function body of the module.
 export void check_module(types::Checked *r, const ast::Module *m) {
     CNames c = c_names(m);
+    Libraries libs = libraries_of(r, m);
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
+        report_decl_types(r, &libs, d);
         if (d->kind == .function && d->kind.function.body != nullptr) {
-            check_function(r, &c, d->kind.function.body, same(d->kind.function.name, "main"));
+            check_function(r, &c, &libs, d->kind.function.body, same(d->kind.function.name, "main"));
         }
     }
 }

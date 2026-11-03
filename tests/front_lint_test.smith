@@ -12,6 +12,7 @@ import front::parse_stmt;
 import front::parse_type;
 import front::parser;
 import front::types;
+import front::lint;
 import front::types_decl;
 import std::arena;
 import std::mem;
@@ -118,4 +119,67 @@ export void test_front_lint_main_may_run_forever() {
 
 export void test_front_lint_a_bounded_loop_is_fine() {
     quiet("fn f(n: u32):\n    let mut i: u32 = 0\n    while i < n:\n        i = i + 1\n", "never ends on its own");
+}
+
+// A header that is a module, as the generated header of std::arena and std::test open.
+export Str header_of(Str name, Bool angled) {
+    if (angled && has(name, "smith/arena.h")) {
+        return "// Generated.\n// smith-module: std::arena\n// smith-imports:\n// smith-names: Arena=SmithArena "
+               "push_raw="
+               "smith_arena_push\n";
+    }
+    if (angled && has(name, "smith/test.h")) {
+        return "// Generated.\n// smith-module: std::test\n// smith-imports:\n// smith-names: check=smith_check "
+               "check_equal_i32=smith_check_equal_i32\n// smith-generic: std::test check_equal\n";
+    }
+    return "";
+}
+
+// `source` checked with the library headers readable.
+static Str library_errors(Str source) {
+    lint::set_header_text(header_of);
+    Str text = errors_of(source);
+    lint::set_header_text(nullptr);
+    return text;
+}
+
+export void test_front_lint_a_library_header_is_a_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/arena.h>\n");
+    test::check_condition(has(text, "`import <smith/arena.h>;` reads std::arena, a module, through its C header: write "
+                                    "`import std::arena;` and call it as `arena::name(...)` (a typed push is "
+                                    "`arena::push(&a, T)`)"));
+}
+
+export void test_front_lint_a_library_name_is_the_modules() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/arena.h>\nfn f(a: *c::SmithArena, n: usize) -> *u8:\n    return "
+                              "c::smith_arena_push(a, n)\n");
+    test::check_condition(has(text, "`c::SmithArena` is `arena::Arena` of the module std::arena, reached through its C "
+                                    "header: write `import std::arena;` and `arena::Arena`"));
+    test::check_condition(has(text, "`c::smith_arena_push` is `arena::push_raw` of the module std::arena"));
+}
+
+export void test_front_lint_a_library_generic_is_named() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str text = library_errors("import c <smith/test.h>\nfn f(a: i32):\n    c::smith_check_equal_i32(a, 1)\n");
+    test::check_condition(has(text, "(or, better, the generic `test::check_equal(a, b)`, which takes the type from its "
+                                    "first argument)"));
+}
+
+export void test_front_lint_a_plain_header_is_not_a_library() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(!has(library_errors("import c <stdio.h>\nfn f():\n    c::puts(\"x\")\n"), "a module"));
 }
