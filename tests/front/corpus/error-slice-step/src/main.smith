@@ -1,0 +1,8 @@
+fn take(xs: []i32) -> i32:
+    xs[0]
+
+pub fn main() -> i32:
+    let raw: [6]i32 = [1, 2, 3, 4, 5, 6]
+    let all: []i32 = raw
+    let every_other: []i32 = all[0:6:2]
+    take(every_other)

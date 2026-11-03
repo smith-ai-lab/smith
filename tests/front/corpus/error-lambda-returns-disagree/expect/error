@@ -1,0 +1,1 @@
+src/main.smith:5:16: error: expected I32, found F64: a float converts to an integer only by a cast, which drops the fraction; write a conversion: x.to(I32)
