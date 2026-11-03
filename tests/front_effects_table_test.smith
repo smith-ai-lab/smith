@@ -6,6 +6,7 @@ import <stdio.h>;
 import <stdlib.h>;
 
 import front::effects_table;
+import std::format;
 import std::mem;
 import std::test;
 
@@ -88,9 +89,8 @@ export void test_front_effects_table_agrees_with_the_plugin_header() {
     const char *repo = c::getenv("SMITH_REPO");
     test::check(repo != nullptr);
     if (repo == nullptr) return;
-    char path[1024];
-    c::snprintf(path, 1024, "%s/shim/effects_table.h", repo);
-    c::FILE *file = c::fopen(path, "r");
+    char path[:] = format::push(repo[0:c::strlen(repo)], "/shim/effects_table.h");
+    c::FILE *file = c::fopen(path.data, "r");
     test::check(file != nullptr);
     if (file == nullptr) return;
     char line[512];
