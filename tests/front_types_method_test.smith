@@ -47,28 +47,6 @@ static Str join(Str a, Str b) {
     return out;
 }
 
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 // A list type with a function that takes it by pointer and one that takes it by value, and a second module's type.
 static Str list_source() {
     return "pub struct List {\n    pub count: i32\n}\n\n"
@@ -82,7 +60,7 @@ static Str list_source() {
 static const ast::Module *load(const char *name) {
     Str path = name[0:c::strlen(name)];
     if (!same(path, "lib.list")) return nullptr;
-    parser::Parsed p = parse_new(list_source());
+    parser::Parsed p = parser::parse_new("t.smith", list_source());
     test::check_equal(countof(p.errors), (Usize)0);
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
@@ -90,7 +68,7 @@ static const ast::Module *load(const char *name) {
 }
 
 static types::Checked check_text(Str source) {
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module_with(&p.module, types::lp64(), load);
 }
