@@ -856,6 +856,7 @@ export struct Options {
 
 export struct Checked {
     Options options;
+    Bool new_body;   // the function being checked has a parameter or a local in smith's own syntax (so far)
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
     Bool in_header;  // the declarations of a C header are being declared: a repeated name is not an error
     Str prefix;      // `m::` while the declarations of the module imported as `m` are declared; else empty
@@ -1352,6 +1353,110 @@ static TypeRef build_block(Checked *r, ast::Span span, ast::ExprRef dims[:], Typ
     return block_of(&r->table, cell, empty);
 }
 
+// One step of `constant_length`: an expression, and whether its operands' values are already on the value stack.
+struct LengthStep {
+    const ast::Expr *expr;
+    Bool operands_done;
+};
+
+static LengthStep length_step(const ast::Expr *expr, Bool operands_done) {
+    LengthStep step = {.expr = expr, .operands_done = operands_done};
+    return step;
+}
+
+// Applies a binary operator to two lengths; false when it is not a length operator or the result is not a length
+// (a division by zero, a negative subtraction, a shift of 64 or more).
+static Bool apply_length(ast::BinaryOp op, U64 a, U64 b, U64 *out) {
+    if (op == .add)
+        *out = a + b;
+    else if (op == .multiply)
+        *out = a * b;
+    else if (op == .subtract && a >= b)
+        *out = a - b;
+    else if (op == .divide && b != 0)
+        *out = a / b;
+    else if (op == .remainder && b != 0)
+        *out = a % b;
+    else if (op == .shift_left && b < 64)
+        *out = a << b;
+    else if (op == .shift_right && b < 64)
+        *out = a >> b;
+    else
+        return false;
+    return true;
+}
+
+// Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
+// written as a value.
+static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
+    if (e->kind == .name) {
+        *path = e->kind.name.path;
+        return true;
+    }
+    if (e->kind == .type_value) {
+        const ast::TypeExpr *t = e->kind.type_value.type;
+        if (t != nullptr && t->kind == .named) {
+            *path = t->kind.named.path;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The value of an array length that is known at compile time: an integer literal, a name of a constant (`constexpr`,
+// `const`, or a `let` that is not `mut`) whose initializer is one, and `+ - * / % << >>` of these. An explicit stack,
+// never recursion, and a budget of steps so a constant defined by itself ends. False when it is anything else.
+static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
+    LengthStep steps[32];
+    U64 values[32];
+    Usize top = 0;
+    Usize have = 0;
+    steps[top++] = length_step(root, false);
+    for (Usize budget = 0; top > 0; budget++) {
+        if (budget == 256) return false;
+        LengthStep step = steps[--top];
+        const ast::Expr *e = step.expr;
+        if (e == nullptr) return false;
+        if (e->kind == .integer) {
+            values[have++] = e->kind.integer.value;
+            continue;
+        }
+        ast::Path path = {};
+        if (names_a_constant(e, &path)) {
+            const Symbol *s = lookup_path(&r->scopes, path);
+            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
+            const ast::Expr *init = s->decl->kind.variable.init;
+            Bool fixed = s->is_const;
+            if (s->decl->kind.variable.is_new)
+                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
+            if (!fixed || init == nullptr || top == 32) return false;
+            steps[top++] = length_step(init, false);
+            continue;
+        }
+        if (e->kind == .binary) {
+            ast::BinaryOp op = e->kind.binary.op;
+            const ast::Expr *left = e->kind.binary.left;
+            const ast::Expr *right = e->kind.binary.right;
+            if (step.operands_done) {
+                U64 value = 0;
+                if (have < 2 || !apply_length(op, values[have - 2], values[have - 1], &value)) return false;
+                have -= 2;
+                values[have++] = value;
+            } else {
+                if (top + 3 > 32 || have + 2 > 32) return false;
+                steps[top++] = length_step(e, true);
+                steps[top++] = length_step(right, false);
+                steps[top++] = length_step(left, false);
+            }
+            continue;
+        }
+        return false;
+    }
+    if (have != 1) return false;
+    *out = values[0];
+    return true;
+}
+
 // Makes the type of a composite node from its children's, which are `n` values from `base`.
 static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
     if (any_invalid(r, w, base, n)) return r->table.invalid;
@@ -1366,14 +1471,16 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
-        if (count == nullptr || count->kind != .integer) {
+        U64 length = 0;
+        if (count == nullptr || !constant_length(r, count, &length)) {
             ast::Span at = node->span;
             if (count != nullptr) at = count->span;
-            failf(r, at, "not yet typed: an array length that is not an integer literal");
+            failf(r, at, "not yet typed: an array length that is not a constant; write an integer, a constant or ",
+                  "arithmetic on constants");
             return r->table.invalid;
         }
         Bool is_const = node->kind.array.element->qualifiers.is_const;
-        return array_of(&r->table, w->values[base].type, count->kind.integer.value, is_const);
+        return array_of(&r->table, w->values[base].type, length, is_const);
     }
     if (node->kind == .option) return option_of(&r->table, w->values[base].type);
     if (node->kind == .block_type) return build_block(r, node->span, node->kind.block_type.dims, w->values[base].type);
@@ -1697,7 +1804,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     for (Usize i = 0; i < n; i++) {
         const ast::Param *p = &list[i];
         params[i].name = p->name;
-        if (is_type_name(p->type)) {
+        if (p->is_pack || p->is_gather) {
+            failf(r, p->span, p->is_pack ? "not yet: positional packs" : "not yet: gathered keywords");
+            params[i].type = r->table.invalid;
+        } else if (is_type_name(p->type)) {
             if (!p->is_constexpr && !p->is_new) {
                 failf(r, p->span, "parameter `", p->name,
                       "` has type `Type`, so it is compile-time: write `constexpr Type ", p->name, "`");

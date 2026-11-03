@@ -7,6 +7,8 @@ tests/smith-lang/cases/**
 tests/tree_sitter_cases/*
 tests/prove/**
 tests/front/e2e/*.smith
+tests/front/format/*.smith
+tests/front/format/*.expected
 tests/front/migrate/*.smith
 # The owner's scan reference, copied as it is (the hash of each file is in tests/autodiff/scan/COPIED.sha256).
 tests/autodiff/scan/**

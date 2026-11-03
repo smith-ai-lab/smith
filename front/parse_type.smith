@@ -607,6 +607,8 @@ static ast::TypeKind function_rest(parse::Parser *p, ast::TypeExpr *result) {
         }
         ast::TypeExpr *param = parse::type(p);
         params = with_type(params, param);
+        // A parameter's name (`Fn(void (Key key))`) is left out of the type: the fix writes only the types.
+        if (param != nullptr && parse::at(p, lex::name)) parse::advance(p);
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the parameters of the function type");
@@ -1102,6 +1104,24 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
     parse::warning_fix(p, span, message, edits);
 }
 
+// In smith's own syntax a type function of a module is applied through a dot, `arena.slice_of(T, n)`: when the path
+// just read is followed by `.name(`, the dot and the name join the path and the result is true, so the arguments are
+// read as an applied type. Anywhere else a `.` after a type is not part of it.
+static Bool qualified_type_function(parse::Parser *p, ast::TypeExpr *base) {
+    if (!p->new_syntax || base->kind != .named) return false;
+    if (parse::peek(p).kind != lex::dot || parse::peek_at(p, 1).kind != lex::name) return false;
+    if (parse::peek_at(p, 2).kind != lex::left_paren) return false;
+    parse::advance(p);
+    lex::Token token = parse::advance(p);
+    ast::Path named = base->kind.named.path;
+    named.segments = mem::realloc(named.segments, countof(named.segments) + 1);
+    ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
+    named.segments[countof(named.segments) - 1] = segment;
+    named.span = parse::span_from(p, named.span.start);
+    base->kind.named.path = named;
+    return true;
+}
+
 // Reads one type: qualifiers, the base, the applied form of a type name followed by `(`, the suffixes.
 static ast::TypeExpr *read(parse::Parser *p) {
     if (at_new_type(p)) return new_type(p);
@@ -1113,6 +1133,7 @@ static ast::TypeExpr *read(parse::Parser *p) {
     old.base = p->position;
     ast::TypeExpr *base = plain(p, start, q);
     if (base == nullptr) return nullptr;
+    Bool qualified_call = qualified_type_function(p, base);
     Bool call_shape = parse::at(p, lex::left_paren) && !c_declarator_ahead(p);
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
@@ -1120,7 +1141,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
         Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
         Bool capital = countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z';
         Bool is_vec = countof(name.segments) == 1 && text::is(last, "vec");
-        if (capital || is_lambda || is_vec || group_then_name(p, 0)) base = applied(p, start, q, name);
+        if (capital || is_lambda || is_vec || qualified_call || group_then_name(p, 0))
+            base = applied(p, start, q, name);
     }
     old.after = p->position;
     ast::TypeExpr *result = suffixes(p, start, base);

@@ -1246,7 +1246,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         warn(p, head.type_start, head.name.span.end, message, none);
         return;
     }
-    Str lead = pre->is_constexpr && !type_value ? "const " : "let ";
+    // A global of C is writable: `let mut` (`pub let mut` with the `export` before it); a local is `let`.
+    Str lead = "let ";
+    if (pre->is_constexpr && !type_value) lead = "const ";
+    if (!pre->is_constexpr && pre->top) lead = "let mut ";
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
@@ -2364,6 +2367,15 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
     param->is_new = true;
     param->is_const = parse::accept(p, lex::kw_const);
     lex::Token name = parse::peek(p);
+    if (is_name(name.kind) && parse::peek_at(p, 1).kind == lex::ellipsis) {
+        // `xs...` gathers positional arguments, `; kw...` named ones (the list tells which, see below).
+        param->name = parse::text(p, parse::advance(p));
+        param->type = auto_type(parse::advance(p).span);
+        param->is_pack = true;
+        param->attributes = pre.attributes;
+        param->span = parse::span_from(p, start);
+        return true;
+    }
     if (!is_name(name.kind) || parse::peek_at(p, 1).kind != lex::colon) {
         Str word = parse::text(p, name);
         char message[:] = format::push("a parameter is written `name: type`, found `", word, "`");
@@ -2411,13 +2423,21 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
     return make(p, start, pre, kind);
 }
 
+// A `name...` parameter before the `;` gathers positional arguments; after it, named ones (`; kw...`).
+static void check_pack(ast::Param *param, Bool after_semicolon) {
+    if (!param->is_pack || !after_semicolon) return;
+    param->is_pack = false;
+    param->is_gather = true;
+}
+
 // `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
 // `fn`.
 static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
     parse::advance(p);
     Usize errors_before = countof(p->errors);
     lex::Token name = parse::peek(p);
-    if (!is_name(name.kind)) {
+    // `type` is a keyword only where a type is expected: `fn type(p: *Parser)` names a function.
+    if (!is_name(name.kind) && name.kind != lex::kw_type) {
         Str form = p->layout ? "fn name(a: i32) -> i32:" : "fn name(a: i32) -> i32 { ... }";
         parse::error(p, name.span, as_str(format::push("a function has a name: write `", form, "`")));
     } else {
@@ -2430,10 +2450,17 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
         ast::Param param = {};
         if (!parse_new_param(p, &param)) break;
         param.is_keyword = keyword_only;
+        check_pack(&param, keyword_only);
         params = mem::realloc(params, countof(params) + 1);
         params[countof(params) - 1] = param;
         // `;` ends the positional parameters: the ones after it are keyword-only.
+        if (param.is_gather && !parse::at(p, lex::right_paren)) {
+            parse::error(p, parse::peek(p).span,
+                         "`name...` after the `;` gathers the named arguments: it is the last parameter");
+            break;
+        }
         if (parse::accept(p, lex::semicolon)) {
+            if (keyword_only) parse::error(p, parse::peek(p).span, "a parameter list has one `;`");
             keyword_only = true;
             continue;
         }
