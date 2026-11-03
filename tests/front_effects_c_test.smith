@@ -74,7 +74,7 @@ export void test_front_effects_c_smith_calls_c() {
     test::check_equal(effects_pass::set_of(&g, "helper"), effects_table::console | effects_table::globals);
     test::check_equal(effects_pass::set_of(&g, "pure_caller"), 0u);
     test::check_equal(effects_pass::set_of(&g, "caller"), effects_table::console | effects_table::globals);
-    // caller -> helper -> printf (util.c:7)
+    // caller -> helper -> printf (util.c:9)
     Usize caller = effects_pass::find(&g, "caller");
     Usize helper = effects_pass::find(&g, "helper");
     Usize printf_at = effects_pass::find(&g, "printf");
@@ -82,7 +82,7 @@ export void test_front_effects_c_smith_calls_c() {
     test::check_equal(effects_pass::cause_of(&g, caller, 3).callee, helper);
     effects_pass::Cause last = effects_pass::cause_of(&g, helper, 3);
     test::check_equal(last.callee, printf_at);
-    test::check_equal(last.line, 7u);
+    test::check_equal(last.line, 9u);
 }
 
 export void test_front_effects_c_cpp_runtime() {
