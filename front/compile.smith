@@ -399,6 +399,166 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
 }
 
+// Where a name is declared (the language server's go-to-definition, #1893): in `file` (empty: the file asked about),
+// the bytes `start` to `end`, or, for a declaration read from a C header, the `line` and `column` (1-based) clang gives
+// when `by_line` is set.
+export struct Location {
+    Bool found;
+    Str file;
+    U32 start;
+    U32 end;
+    Bool by_line;
+    U32 line;
+    U32 column;
+};
+
+// The name a declaration introduces, empty when it introduces none (an import, a static assertion).
+static Str declared_name(const ast::Decl *d) {
+    if (d->kind == .function) return d->kind.function.name;
+    if (d->kind == .record) return d->kind.record.name;
+    if (d->kind == .enumeration) return d->kind.enumeration.name;
+    if (d->kind == .type_alias) return d->kind.type_alias.name;
+    if (d->kind == .variable) return d->kind.variable.name;
+    return "";
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+// The place of the declaration called `name` in `m`; not found when there is none.
+static Location declaration_in(const ast::Module *m, Str name) {
+    for (Usize i = 0; m != nullptr && i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (countof(name) == 0 || !same_text(declared_name(d), name)) continue;
+        if (d->from_c) {
+            return (Location){.found = true,
+                              .file = d->place.file,
+                              .by_line = true,
+                              .line = d->place.line,
+                              .column = d->place.column};
+        }
+        return (Location){.found = true, .file = m->file, .start = d->span.start, .end = d->span.end};
+    }
+    return (Location){};
+}
+
+// The dotted name of an import's path (`std.math`), NUL-terminated.
+static Str dotted_of(ast::Path path) {
+    Str out = "";
+    for (Usize i = 0; i < countof(path.segments); i++)
+        out = as_str(format::push(out, i == 0 ? "" : ".", path.segments[i].text));
+    return out;
+}
+
+// The module the name `qualifier` stands for in `m`: an `import a.b` is reached as `b`, `import a.b as q` as `q`, an
+// `import c <h>` as `c` (or its alias), and a name brought in by `from a.b import n` is not a qualifier.
+static const ast::Module *qualified_module(const ast::Module *m, Str qualifier) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_module) {
+            Usize n = countof(d->kind.import_module.path.segments);
+            if (n == 0) continue;
+            Str last = d->kind.import_module.path.segments[n - 1].text;
+            Str reached = last;
+            if (countof(d->kind.import_module.alias) > 0) reached = d->kind.import_module.alias;
+            if (same_text(reached, qualifier)) return load_module(dotted_of(d->kind.import_module.path).data);
+        }
+        if (d->kind == .import_c) {
+            Str reached = "c";
+            if (countof(d->kind.import_c.alias) > 0) reached = d->kind.import_c.alias;
+            if (same_text(reached, qualifier)) return load_header(d->kind.import_c.header, d->kind.import_c.angled);
+        }
+    }
+    return nullptr;
+}
+
+// The module that `from a.b import n` takes `name` from, when one does.
+static const ast::Module *from_module(const ast::Module *m, Str name) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_from) continue;
+        for (Usize k = 0; k < countof(d->kind.import_from.names); k++) {
+            if (!same_text(d->kind.import_from.names[k].text, name)) continue;
+            if (countof(d->kind.import_from.header) > 0)
+                return load_header(d->kind.import_from.header, d->kind.import_from.angled);
+            return load_module(dotted_of(d->kind.import_from.path).data);
+        }
+    }
+    return nullptr;
+}
+
+// Where the name under the byte `offset` of the text `source` of `path` is declared (go-to-definition, #1893): a name
+// of this file, `q.name` or `q::name` through an import (a module, or a C header with the place clang records), or a
+// name a `from ... import` brought in. Nothing is read but the imported files; the result is the current allocator's.
+export Location definition_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return (Location){};
+    import_roots = folders;
+    header_folder = folder_of(path);
+    const ast::Expr *at = ast::expr_at(&parsed.module, offset);
+    if (at == nullptr) return (Location){};
+    Location found = {};
+    if (at->kind == .name) {
+        ast::Path name = at->kind.name.path;
+        Usize n = countof(name.segments);
+        if (n == 0) return (Location){};
+        if (n >= 2) {
+            found =
+                declaration_in(qualified_module(&parsed.module, name.segments[n - 2].text), name.segments[n - 1].text);
+        } else {
+            Str word = name.segments[0].text;
+            found = declaration_in(&parsed.module, word);
+            if (!found.found) found = declaration_in(from_module(&parsed.module, word), word);
+        }
+    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
+        ast::Path base = at->kind.member.base->kind.name.path;
+        if (countof(base.segments) == 1) {
+            found = declaration_in(qualified_module(&parsed.module, base.segments[0].text), at->kind.member.name);
+        }
+    }
+    if (found.found && countof(found.file) == 0) found.file = path;
+    return found;
+}
+
+// One declaration of a file for the outline: its name, what it is (`function`, `struct`, `enum`, `constant`,
+// `variable`, `type`) and the bytes it covers.
+export struct Symbol {
+    Str name;
+    Str kind;
+    U32 start;
+    U32 end;
+};
+
+export typedef typeof(Symbol[:]) Symbols;
+
+// The declarations of the text `source` of `path` that have a name, in order (document symbols, #1893); none when the
+// text does not parse. The result is the current allocator's.
+export Symbols symbols(Str path, Str source) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    Symbols list = {};
+    if (countof(parsed.errors) > 0) return list;
+    for (Usize i = 0; i < countof(parsed.module.decls); i++) {
+        const ast::Decl *d = parsed.module.decls[i];
+        Str name = declared_name(d);
+        if (countof(name) == 0) continue;
+        Str kind = "variable";
+        if (d->kind == .function) kind = "function";
+        if (d->kind == .record) kind = "struct";
+        if (d->kind == .enumeration) kind = "enum";
+        if (d->kind == .type_alias) kind = "type";
+        if (d->kind == .variable && d->kind.variable.is_constexpr) kind = "constant";
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] = (Symbol){.name = name, .kind = kind, .start = d->span.start, .end = d->span.end};
+    }
+    return list;
+}
+
 static Bool ends_with_bc(Str name) {
     return countof(name) > 3 && roots::same(name[countof(name) - 3:countof(name)], ".bc");
 }
@@ -415,6 +575,18 @@ static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warne
         return failed(as_str(format::push(warned, path, ": error: cannot write the bitcode\n")), timed);
     }
     return (Report){.ok = true, .text = warned, .times = timed};
+}
+
+// The emitter's options for one file: objects are made at optimization 0, a debug build, and `smith cc -g` sets
+// SMITH_FRONT_DEBUG (runtime/front_flag.c), which gives the object debug info (#1979).
+static emit::Options emit_options(Str wanted, Str source, types::Checked *checked) {
+    emit::Options options = {};
+    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
+    options.source = source;
+    options.checked = checked;
+    options.fill_undefined = true;
+    options.debug_info = c::getenv("SMITH_FRONT_DEBUG") != nullptr;
+    return options;
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
@@ -459,11 +631,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         return failed(all, times);
     }
 
-    emit::Options options = {};
-    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
-    options.source = source;
-    options.checked = &checked;
-    options.fill_undefined = true; // objects are made at optimization 0, a debug build
+    emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
