@@ -2420,7 +2420,8 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     parse::advance(p);
     Usize errors_before = countof(p->errors);
     lex::Token name = parse::peek(p);
-    if (!is_name(name.kind)) {
+    // `type` is a keyword only where a type is expected: `fn type(p: *Parser)` names a function.
+    if (!is_name(name.kind) && name.kind != lex::kw_type) {
         Str form = p->layout ? "fn name(a: i32) -> i32:" : "fn name(a: i32) -> i32 { ... }";
         parse::error(p, name.span, as_str(format::push("a function has a name: write `", form, "`")));
     } else {
