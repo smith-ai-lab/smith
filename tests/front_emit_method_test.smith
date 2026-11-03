@@ -43,45 +43,38 @@ static parser::Parsed parse_new(Str source) {
     return result;
 }
 
-// A module of `source` named `name`, checked with `lib.list` loadable, emitted and added to `host`.
-static void add_module(emit_jit::Jit *host, Str name, Str source) {
-    parser::Parsed p = parse_new(source);
-    test::check_equal(countof(p.errors), (Usize)0);
-    ast::Module m = ast::new_module(name, p.module.decls);
-    types::Checked checked = types_decl::check_module(&m, types::lp64());
-    test::check_equal(checked.error_count, (Usize)0);
-    emit::Options options = {};
-    options.target = host->target;
-    options.checked = &checked;
-    c::LLVMContextRef context = c::LLVMContextCreate();
-    emit::ModuleResult emitted = emit::module(context, &m, options);
-    if (emitted == .error) {
-        Str expected = "no error";
-        test::check_equal(emitted.error.message, expected);
-    }
-    test::check_equal(emitted == .ok, true);
-    if (emitted == .ok) {
-        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
-        test::check_equal(added == .ok, true);
-    }
-}
-
 typedef I32 (*Run)();
 
-static I32 run(Str main_source, Str symbol) {
-    arena::Arena memory = test::memory(1U << 24);
+// Parses and checks under the arena as front_emit_option_test.smith does; emission and the JIT use the system's
+// allocator, and the arena stays alive until the function has run.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parse_new(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
     emit_jit::JitResult started = emit_jit::start();
     test::check_equal(started == .ok, true);
     emit_jit::Jit host = {};
     if (started == .ok) host = started.ok;
-    add_module(&host, "front::test", main_source);
-    emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
-    test::check_equal(found == .ok, true);
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
     I32 result = -1;
-    if (found == .ok) result = ((Run)found.ok)();
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
     emit_jit::stop(&host);
     return result;
 }
