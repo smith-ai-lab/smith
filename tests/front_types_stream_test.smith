@@ -136,3 +136,8 @@ export void test_front_types_stream_next_is_an_optional_of_the_element() {
           "    let n: i32 = stream::next(s)\n",
           "found Option(I32)", "expected I32");
 }
+
+export void test_front_types_bool_and_char_are_types_in_the_expressions_of_a_new_syntax_body() {
+    clean("fn f(x: i32) -> i32:\n    let ok: bool = true\n    let c: char = 'a'\n    let y = x.to(bool)\n    let n = "
+          "sizeof(char)\n    x\n");
+}
