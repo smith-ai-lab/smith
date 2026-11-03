@@ -3275,10 +3275,9 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     smith_task(b, "ci-times", &ci_times);
     SmithStep frontend_coverage = {
         .run = build_frontend_coverage,
-        .args =
-            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
-                       smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"),
-                       nullptr),
+        .args = smith_list(
+            b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
+            smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);

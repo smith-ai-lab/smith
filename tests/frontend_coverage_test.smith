@@ -1,7 +1,8 @@
 // scripts/frontend_coverage/main.smith (#1730), the tool of `smith build frontend-coverage`: its grouping and summary
 // on a small fixed table of four files (one passes, two fail at the check stage with the same cause, one of them with
-// a second error that the first would have hidden (#1922), one fails differently at the parse stage). The tool is a project of its own in a scratch folder, run by the smith under test;
-// no real file is read or changed. smith-covers: scripts/frontend_coverage/main.smith
+// a second error that the first would have hidden (#1922), one fails differently at the parse stage). The tool is a
+// project of its own in a scratch folder, run by the smith under test; no real file is read or changed. smith-covers:
+// scripts/frontend_coverage/main.smith
 module frontend_coverage_test;
 
 import std::arena;
@@ -37,12 +38,12 @@ export void test_frontend_coverage_groups_failures_and_counts_the_passes() {
     scratch::expect_contains("frontend_coverage: and of another", run.out, "failed at parse  1\n");
     scratch::expect_contains("frontend_coverage: three causes of four diagnostics", run.out,
                              "failures by cause (3 causes, 4 diagnostics):\n");
-    scratch::expect_contains("frontend_coverage: names are one cause, with occurrences, files and places, the biggest first",
-                             run.out,
-                             "      2      2  unknown name `<name>`\n                e.g. b.smith:3:7\n"
-                             "                e.g. d.smith:5:5\n"
-                             "      1      1  expected <n> arguments, found <n>\n                e.g. b.smith:9:1\n"
-                             "      1      1  expected `<name>`, found `<name>`\n                e.g. c.smith:4:2\n");
+    scratch::expect_contains(
+        "frontend_coverage: names are one cause, with occurrences, files and places, the biggest first", run.out,
+        "      2      2  unknown name `<name>`\n                e.g. b.smith:3:7\n"
+        "                e.g. d.smith:5:5\n"
+        "      1      1  expected <n> arguments, found <n>\n                e.g. b.smith:9:1\n"
+        "      1      1  expected `<name>`, found `<name>`\n                e.g. c.smith:4:2\n");
     scratch::release(run.out);
     scratch::release(run.err);
 }
