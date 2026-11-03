@@ -1,0 +1,8 @@
+import c <stdio.h>
+import grid
+
+pub fn main() -> i32:
+    let mut board: grid.Board = undefined
+    board.cells[15] = 1
+    let _ = stdio.printf("%zu %zu %zu\n", grid.board_size(), grid.other_sizes(), sizeof(board.cells))
+    0

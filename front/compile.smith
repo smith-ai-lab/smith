@@ -1055,6 +1055,95 @@ static Str guarded(ast::Attribute list[:], Str text, Bool own_lines) {
     return as_str(format::push("#if ", condition, "\n", text, "#endif\n"));
 }
 
+// The C text of one operand of an array length: an integer, or a name a header binding gives (`k.SIDE` is `SIDE`, and
+// `*binding` the binding's name). Empty when it has no C spelling (a constant of smith's own is no C name).
+static Str length_leaf(const ast::Expr *e, Str *binding) {
+    if (e == nullptr) return "";
+    if (e->kind == .integer) return as_str(format::push((U64)e->kind.integer.value));
+    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
+        countof(e->kind.member.base->kind.name.path.segments) == 1) {
+        *binding = e->kind.member.base->kind.name.path.segments[0].text;
+        return e->kind.member.name;
+    }
+    ast::Path path = {};
+    if (e->kind == .name) path = e->kind.name.path;
+    if (e->kind == .type_value && e->kind.type_value.type->kind == .named)
+        path = e->kind.type_value.type->kind.named.path;
+    if (countof(path.segments) != 2) return "";
+    *binding = path.segments[0].text;
+    return path.segments[1].text;
+}
+
+static Str length_operator(ast::BinaryOp op) {
+    if (op == .add) return " + ";
+    if (op == .subtract) return " - ";
+    if (op == .multiply) return " * ";
+    if (op == .divide) return " / ";
+    return "";
+}
+
+// The C text of an array length: one operand, or two joined by `+ - * /`. Empty when it has no C spelling.
+static Str length_text(const ast::Expr *e, Str *binding) {
+    if (e != nullptr && e->kind == .binary) {
+        Str op = length_operator(e->kind.binary.op);
+        Str left = length_leaf(e->kind.binary.left, binding);
+        Str right = length_leaf(e->kind.binary.right, binding);
+        if (countof(op) == 0 || countof(left) == 0 || countof(right) == 0) return "";
+        return as_str(format::push(left, op, right));
+    }
+    return length_leaf(e, binding);
+}
+
+// The brackets of the arrays a field's type starts with, outermost first (`[k.SIDE][2]u8` is `[SIDE][2]`), and the
+// element type in `*element`. `*failed` is set when a length has no C spelling.
+static Str array_brackets(const ast::TypeExpr *type, const ast::TypeExpr **element, Str *bindings, Bool *failed) {
+    Str brackets = "";
+    const ast::TypeExpr *at = type;
+    while (at->kind == .array) {
+        Str binding = "";
+        Str text = length_text(at->kind.array.count, &binding);
+        if (countof(text) == 0) *failed = true;
+        if (countof(binding) > 0) *bindings = as_str(format::push(*bindings, binding, "\n"));
+        brackets = as_str(format::push(brackets, "[", text, "]"));
+        at = at->kind.array.element;
+    }
+    *element = at;
+    return brackets;
+}
+
+// The `#include` lines for the header bindings (`k` of `import c "k.h"`) that array lengths used.
+static Str length_includes(const ast::Module *m, Str bindings) {
+    Str lines = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_c) continue;
+        Str name = d->kind.import_c.header;
+        Usize begin = 0;
+        Usize end = countof(name);
+        for (Usize k = 0; k < countof(name); k++) {
+            if (name[k] == '/') begin = k + 1;
+        }
+        for (Usize k = begin; k < countof(name); k++) {
+            if (name[k] == '.') end = k;
+        }
+        Str binding = countof(d->kind.import_c.alias) > 0 ? d->kind.import_c.alias : name[begin:end];
+        Bool used = false;
+        Usize at = 0;
+        while (at < countof(bindings)) {
+            Usize stop = at;
+            while (stop < countof(bindings) && bindings[stop] != '\n')
+                stop += 1;
+            if (roots::same(bindings[at:stop], binding)) used = true;
+            at = stop + 1;
+        }
+        if (!used) continue;
+        Str quote_open = d->kind.import_c.angled ? "<" : "\"";
+        Str quote_close = d->kind.import_c.angled ? ">" : "\"";
+        lines = as_str(format::push(lines, "#include ", quote_open, name, quote_close, "\n"));
+    }
+    return lines;
+}
+
 // The header's text for the parsed module, or "" with the errors in `*problems`.
 static Str header_text(Str path, Str source, const ast::Module *m, Str triple, Str *problems) {
     Str module_c = joined(m, "_");
@@ -1068,13 +1157,17 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         structs[countof(structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
     }
     Str types = "";
+    Str used_bindings = "";
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         if (d->kind != .record || !d->is_pub) continue;
         Str fields = "";
         for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
             ast::FieldDecl field = d->kind.record.fields[k];
-            Spelled spelled = spell(field.type, structs, prefix);
+            Bool unspelled = false;
+            const ast::TypeExpr *element = field.type;
+            Str brackets = array_brackets(field.type, &element, &used_bindings, &unspelled);
+            Spelled spelled = unspelled ? (Spelled){} : spell(element, structs, prefix);
             if (countof(spelled.text) == 0) {
                 Str message = as_str(format::push("field `", field.name, "` of `", d->kind.record.name, "` is `",
                                                   source_of(source, field.type->span),
@@ -1083,7 +1176,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
                 continue;
             }
             Bool star = spelled.text[countof(spelled.text) - 1] == '*';
-            Str one = as_str(format::push(spelled.text, star ? "" : " ", field.name, "; "));
+            Str one = as_str(format::push(spelled.text, star ? "" : " ", field.name, brackets, "; "));
             fields = as_str(format::push(fields, guarded(d->kind.record.fields[k].attributes, one, true)));
         }
         Str made = as_str(format::push("typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
@@ -1104,10 +1197,10 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     if (countof(*problems) > 0) return "";
     Str gap = "";
     if (countof(types) > 0 && countof(body) > 0) gap = "\n";
-    return as_str(format::push("// clang-format off\n// Generated by smith from ", path,
-                               ". Do not edit.\n// clang-format on\n",
-                               "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#ifdef __cplusplus\n",
-                               "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
+    return as_str(format::push(
+        "// clang-format off\n// Generated by smith from ", path, ". Do not edit.\n// clang-format on\n",
+        "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings),
+        "#ifdef __cplusplus\n", "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
 }
 
 // Writes `text` to `output` unless the file already holds those bytes. Returns an error text, empty when it worked.

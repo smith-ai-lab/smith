@@ -833,8 +833,10 @@ export struct Error {
 export struct NodeType {
     const ast::Expr *node;
     TypeRef type;
-    Bool cast_checked;       // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
-    TypeRef cast_from;       // the operand's type, when `cast_checked`
+    Bool cast_checked; // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
+    TypeRef cast_from; // the operand's type, when `cast_checked`
+    Bool has_length;   // an array length written as constants (`[k.SIDE * 2]u8`): the value is `length`
+    U64 length;
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
 };
 
@@ -1031,6 +1033,33 @@ export void set_method(Checked *r, const ast::Expr *node, const ast::Expr *rewri
         entry = entry_of(r, node);
     }
     if (entry != nullptr) entry->method = rewritten;
+}
+
+// Records that the array length `node`, written as constants, has the value `length`.
+export void set_length(Checked *r, const ast::Expr *node, U64 length) {
+    NodeType *entry = entry_of(r, node);
+    if (entry == nullptr) {
+        set_type(r, node, nullptr);
+        entry = entry_of(r, node);
+    }
+    if (entry == nullptr) return;
+    entry->has_length = true;
+    entry->length = length;
+}
+
+// The value of an array length that the checker folded; false when `node` is not one.
+export Bool length_of(const Checked *r, const ast::Expr *node, U64 *out) {
+    Usize capacity = countof(r->nodes);
+    if (capacity == 0) return false;
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr) {
+        if (r->nodes[at].node == node) {
+            *out = r->nodes[at].length;
+            return r->nodes[at].has_length;
+        }
+        at = (at + 1) & (capacity - 1);
+    }
+    return false;
 }
 
 // The call a method call stands for, or null when `node` is not a method call.
@@ -1464,9 +1493,22 @@ static Bool apply_length(ast::BinaryOp op, U64 a, U64 b, U64 *out) {
     return true;
 }
 
+static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+
 // Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
 // written as a value.
 static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
+    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
+        countof(e->kind.member.base->kind.name.path.segments) == 1) {
+        // `k.depth`: a name of a C header's constant, `k` the header's binding (the path of `k.SIDE` is a type_value)
+        ast::Identifier second = {.text = e->kind.member.name, .span = e->span};
+        Usize first_at = 0;
+        ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
+        segments[first_at] = e->kind.member.base->kind.name.path.segments[0];
+        segments[1] = second;
+        *path = (ast::Path){.segments = segments, .span = e->span};
+        return true;
+    }
     if (e->kind == .name) {
         *path = e->kind.name.path;
         return true;
@@ -1501,7 +1543,7 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
         }
         ast::Path path = {};
         if (names_a_constant(e, &path)) {
-            const Symbol *s = lookup_path(&r->scopes, path);
+            const Symbol *s = type_through_modules(r, path);
             if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
             const ast::Expr *init = s->decl->kind.variable.init;
             Bool fixed = s->is_const;
@@ -1565,6 +1607,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
             return r->table.invalid;
         }
         Bool is_const = node->kind.array.element->qualifiers.is_const;
+        set_length(r, count, length);
         return array_of(&r->table, w->values[base].type, length, is_const);
     }
     if (node->kind == .option) return option_of(&r->table, w->values[base].type);
@@ -2582,9 +2625,15 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
 
 // Declares the public and private declarations of the imported modules, each under its prefix, before the module's
 // own (#1677). A generic function is not declared (its use reports itself).
+static void declare_headers(Checked *r, const ast::Module *m);
+
 static void declare_imported(Checked *r, Pending list[:], Usize count) {
     for (Usize k = 0; k < count; k++) {
         const ast::Module *m = list[k].module;
+        // The headers the module imports bind their names for its own declarations only (`[k.SIDE]u8` in a field),
+        // so the bindings go once the module is declared.
+        Usize bindings = r->binding_count;
+        declare_headers(r, m);
         r->prefix = list[k].prefix;
         for (Usize i = 0; i < countof(m->decls); i++)
             declare_nominal(r, m->decls[i]);
@@ -2601,6 +2650,7 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
                 r->scopes.count = symbols;
             }
         }
+        r->binding_count = bindings;
     }
     r->prefix = "";
 }
