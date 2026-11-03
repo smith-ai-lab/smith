@@ -1,0 +1,36 @@
+import target
+
+if constexpr (target.os == target.macos) {
+    import c <sys/does_not_exist_on_linux.h>
+
+    fn pick() -> i32:
+        return 1
+} else {
+    fn pick() -> i32:
+        return 2
+}
+
+if constexpr (true) {
+    fn always() -> i32:
+        return 10
+} else {
+    fn always() -> i32:
+        return 20
+}
+
+if constexpr (false) {
+    fn never() -> i32:
+        return 1
+} else {
+    fn never() -> i32:
+        return 30
+}
+
+pub fn check() -> i32:
+    if always() != 10:
+        return 1
+    if never() != 30:
+        return 2
+    if pick() != 2:
+        return 3
+    0

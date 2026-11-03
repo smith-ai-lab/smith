@@ -57,6 +57,10 @@ export const ast::Attribute *find(ast::Attribute list[:]) {
 
 // `target.os`.
 static Bool is_target_os(const ast::Expr *e) {
+    if (e->kind == .name && countof(e->kind.name.path.segments) == 2) { // `target::os`
+        ast::Path path = e->kind.name.path;
+        return same_text(path.segments[0].text, "target") && same_text(path.segments[1].text, "os");
+    }
     if (e->kind != .member || e->kind.member.arrow) return false;
     if (!same_text(e->kind.member.name, "os")) return false;
     const ast::Expr *base = e->kind.member.base;
@@ -64,26 +68,52 @@ static Bool is_target_os(const ast::Expr *e) {
     return same_text(base->kind.name.path.segments[0].text, "target");
 }
 
-// `target.os == .macos` or `.linux != target.os`: which system, and whether the test is `!=`.
+// A plain name `target` (`target.macos` has it as the base of the member).
+static Bool is_target_name(const ast::Expr *e) {
+    if (e == nullptr || e->kind != .name) return false;
+    ast::Path path = e->kind.name.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "target");
+}
+
+// The name a value gives to a system: `.macos`, `target.macos` or `target::macos`, "" for anything else.
+static Str os_word(const ast::Expr *b) {
+    if (b->kind == .name && countof(b->kind.name.path.segments) == 2) {
+        ast::Path path = b->kind.name.path;
+        if (same_text(path.segments[0].text, "target")) return path.segments[1].text;
+    }
+    if (b->kind == .variant && b->kind.variant.payload == nullptr) return b->kind.variant.name;
+    if (b->kind == .member && !b->kind.member.arrow && is_target_name(b->kind.member.base)) return b->kind.member.name;
+    return "";
+}
+
+// The system a value names.
+static Bool os_value(const ast::Expr *b, Os *which) {
+    Str name = os_word(b);
+    if (same_text(name, "macos")) {
+        *which = os_macos;
+        return true;
+    }
+    if (same_text(name, "linux")) {
+        *which = os_linux;
+        return true;
+    }
+    return false;
+}
+
+// `target.os == .macos`, `target.os == target.macos` or `.linux != target.os`: which system, and whether the test
+// is `!=`.
 static Bool os_test(const ast::Expr *e, Os *which, Bool *negated) {
     if (e->kind != .binary) return false;
     if (e->kind.binary.op != .equal && e->kind.binary.op != .not_equal) return false;
     const ast::Expr *a = e->kind.binary.left;
     const ast::Expr *b = e->kind.binary.right;
     if (a == nullptr || b == nullptr) return false;
-    if (b->kind == .member) {
+    if (!is_target_os(a)) {
         const ast::Expr *swap = a;
         a = b;
         b = swap;
     }
-    if (!is_target_os(a) || b->kind != .variant || b->kind.variant.payload != nullptr) return false;
-    if (same_text(b->kind.variant.name, "macos")) {
-        *which = os_macos;
-    } else if (same_text(b->kind.variant.name, "linux")) {
-        *which = os_linux;
-    } else {
-        return false;
-    }
+    if (!is_target_os(a) || !os_value(b, which)) return false;
     *negated = e->kind.binary.op == .not_equal;
     return true;
 }
@@ -274,6 +304,7 @@ static Bool exists(ast::Attribute list[:], Os os) {
 static Bool has_when(const ast::Module *m) {
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
+        if (d->kind == .if_constexpr) return true;
         if (find(d->attributes) != nullptr) return true;
         if (d->kind == .record) {
             for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
@@ -296,7 +327,64 @@ export Bool uses_when(const ast::Module *m) {
     return has_when(m);
 }
 
-export const ast::Module *live_module(const ast::Module *m, Os os) {
+// One level of file-scope `if constexpr` opened: the taken branch's declarations take its place. A condition this
+// module cannot read stays as written (the checker reports it).
+static typeof(ast::DeclRef[:]) open_conditionals(const ast::Module *m, Os os, Usize *opened) {
+    ast::DeclRef kept[:] = {};
+    *opened = 0;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        Bool ok = false;
+        Bool value = false;
+        if (d->kind == .if_constexpr) value = holds(d->kind.if_constexpr.condition, os, &ok);
+        if (!ok) {
+            kept = mem::realloc(kept, countof(kept) + 1);
+            kept[countof(kept) - 1] = m->decls[i];
+            continue;
+        }
+        *opened += 1;
+        ast::DeclRef branch[:] = {};
+        if (d->kind == .if_constexpr)
+            branch = value ? d->kind.if_constexpr.then_decls : d->kind.if_constexpr.else_decls;
+        for (Usize k = 0; k < countof(branch); k++) {
+            kept = mem::realloc(kept, countof(kept) + 1);
+            kept[countof(kept) - 1] = branch[k];
+        }
+    }
+    return kept;
+}
+
+// The module with every readable file-scope `if constexpr` replaced by its taken branch (nested ones too, to a depth
+// of 32).
+static const ast::Module *without_conditionals(const ast::Module *m, Os os) {
+    const ast::Module *at = m;
+    for (Usize depth = 0; depth < 32; depth++) {
+        Usize opened = 0;
+        typeof(ast::DeclRef[:]) kept = open_conditionals(at, os, &opened);
+        if (opened == 0) return at;
+        ast::Module *copy = mem::alloc(ast::Module);
+        *copy = *at;
+        copy->decls = kept;
+        at = copy;
+    }
+    return at;
+}
+
+// The module with its file-scope `if constexpr` resolved for `os` and every `@when` kept.
+export const ast::Module *resolved(const ast::Module *m, Os os) {
+    return without_conditionals(m, os);
+}
+
+// The system a target triple names: `apple` or `darwin` is macos, anything else linux.
+export Os os_of(Str triple) {
+    for (Usize i = 0; i + 5 <= countof(triple); i++) {
+        if (same_text(triple[i:i + 5], "apple") || same_text(triple[i:i + 5], "darwi")) return os_macos;
+    }
+    return os_linux;
+}
+
+export const ast::Module *live_module(const ast::Module *whole, Os os) {
+    const ast::Module *m = without_conditionals(whole, os);
     if (!has_when(m)) return m;
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = *m;

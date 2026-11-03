@@ -2545,6 +2545,7 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
                 continue;
             }
             if (countof(path.segments) == 0) continue;
+            if (countof(path.segments) == 1 && same_text(path.segments[0].text, "target")) continue; // built in
             if (d->kind == .import_module) {
                 Str alias = d->kind.import_module.alias;
                 if (countof(alias) == 0) alias = path.segments[countof(path.segments) - 1].text;

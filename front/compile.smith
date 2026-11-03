@@ -780,8 +780,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
-    types::Checked checked =
-        types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
+    const ast::Module *module = when::resolved(&parsed.module, when::os_of(wanted));
+    types::Checked checked = types_decl::check_module_headers(module, target_of(wanted), load_module, load_header);
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
         Str all = warned;
@@ -795,7 +795,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
-    emit::ModuleResult emitted = emit::module(context, &parsed.module, options);
+    emit::ModuleResult emitted = emit::module(context, module, options);
     times.emit = clock::monotonic() - mark;
     if (emitted == .error)
         return failed(
