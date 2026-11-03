@@ -792,6 +792,10 @@ export void test_error_array_param_unsized() {
     corpus_case("error-array-param-unsized");
 }
 
+export void test_error_attribute_before_export() {
+    corpus_case("error-attribute-before-export");
+}
+
 export void test_error_c_name() {
     corpus_case("error-c-name");
 }

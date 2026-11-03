@@ -1,0 +1,2 @@
+src/std/order.smith:4:15: unknown type name 'export'
+src/std/order.smith:4:1: an attribute goes after `export`, not before it: `export [[...]] int f()`

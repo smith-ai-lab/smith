@@ -65,7 +65,10 @@ static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t 
         }
         return;
     }
-    if (lang->written_count >= smith_lang_written_max) return; // a table that is full costs only the spelling
+    if (lang->written_count >= smith_lang_written_max) {
+        smith_lang_limit(lang, "written spellings of imported names", smith_lang_written_max);
+        return;
+    }
     SmithLangWritten *entry = &lang->written[lang->written_count++];
     entry->lowered = smith_lang_store(lang, lowered, lowered_length);
     entry->written = smith_lang_store(lang, written, written_length);

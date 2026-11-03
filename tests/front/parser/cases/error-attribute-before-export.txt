@@ -1,0 +1,1 @@
+error-attribute-before-export/std/order.smith: ok
