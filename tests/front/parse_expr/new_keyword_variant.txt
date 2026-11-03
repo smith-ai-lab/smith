@@ -1,0 +1,21 @@
+.type
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant type)))))
+
+.type(x)
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant type (name x))))))
+
+.fn
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (variant fn)))))
+
