@@ -818,12 +818,16 @@ static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LL
     }
 }
 
+static Bool is_slice(state::Ty ty) {
+    return ty.kind == .slice;
+}
+
 // `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
 // argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
 static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, state::Ty args) {
     c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
     if (e->target_data != nullptr) word = c::LLVMIntPtrTypeInContext(e->context, e->target_data);
-    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef pointer = c::LLVMPointerTypeInContext(e->context, 0);
     c::LLVMTypeRef int32 = c::LLVMInt32TypeInContext(e->context);
     c::LLVMTypeRef main_params[2] = {int32, pointer};
     c::LLVMTypeRef main_type = c::LLVMFunctionType(int32, main_params, 2, 0);
@@ -900,7 +904,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         result = made_result.ok;
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
-    Bool takes_args = state::same_text(name, "main") && count == 1 && params[0].kind == .slice;
+    Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
     Str symbol = function_symbol(e->tree, d, name);
     if (takes_args) symbol = state::msg(format::push("main.args"));
     char *label = state::cstr(symbol);
