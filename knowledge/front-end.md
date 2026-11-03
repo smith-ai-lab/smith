@@ -62,7 +62,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `lex::tokenize_new` is the same for smith's own syntax; the new parser calls it, `parser::parse` still calls `tokenize`.
 - Kinds are a plain enum (`lex::plus`, `lex::kw_if`). An identifier is `type_name` when its first character is uppercase, else `name`: the parser needs no symbol table.
 - Keywords are C23's plus smith's `module import export defer errdefer try countof`; C's type keywords stay keywords. Literals are `integer`, `floating`, `character`, `string`.
-- The tokenizer checks the form of a literal (separators, suffixes, prefixes, escapes) and the parser decodes the value.
+- The tokenizer checks the form of a literal (separators, suffixes, prefixes, escapes) and the parser decodes the value. `0o755` is octal (#1900); a `.` after the digits of an integer that starts a word which is no exponent or suffix is a method call (`3.to(u8)` is `3`, `.`, `to`), while `1.e5` and `1.f` stay floating.
 - Punctuators are C's without `#` and `##`, plus `::`, `:=`, `=>`, `@` and `.*` (one token). `[:]` is three tokens, `[[` and `]]` two each; no trigraphs or digraphs.
 - The keywords `fn pub mut match in as fn_once type yield` exist only through `tokenize_new`; `tokenize` keeps them names, because today's code uses them as names.
 - Each `Token` has `line_break`, recorded only. `lex::ends_statement(token)` is Go's rule: a break ends a statement after a name, literal, `)`, `]`, `}`, `return`, `break` or `continue`.
