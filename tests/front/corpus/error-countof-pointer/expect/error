@@ -1,0 +1,1 @@
+src/main.smith:3:5: error: countof takes an array or a slice, found `const U32 *`; write the name of an array or a slice

@@ -1,0 +1,111 @@
+// Tests of front::affine (#1986, piece 1 of #1972): a value of an `@affine` type is used at most once. The sources are
+// smith's own syntax; the cases are those of tests/affine/*.smith (shim/affine.cpp, the old checker), with the same
+// messages up to the line of the first use, which the checker has as a byte offset. Loops, elements and slices are
+// piece 2 (#1987), the narrowing of a payload enum piece 3 (#1988).
+module front_affine_test;
+
+import front::compile;
+import front::parser;
+import front::roots;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str text_of(char chars[:]) {
+    return chars;
+}
+
+// The declarations every case shares: `Key` is affine, `Holder` holds one, `draw` takes one by value.
+static Str prelude() {
+    return "@affine\npub struct Key:\n    bits: u64\n\npub struct Holder:\n    key: Key\n    n: u64\n\n"
+           "fn draw(key: Key) -> u64:\n    key.bits\n\nfn take(key: *Key) -> u64:\n    key.bits\n\n";
+}
+
+// `body` (after the prelude) gives `count` errors, the first of which says `needle`.
+static void cases(Str body, Usize count, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", text_of(format::push(prelude(), body)));
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, count);
+    if (count > 0 && r.error_count > 0) test::check_condition(has(r.errors[0].message, needle));
+}
+
+export void test_front_affine_a_second_use_is_an_error() {
+    cases("fn twice(key: Key) -> u64:\n    let a = draw(key)\n    let b = draw(key)\n    a + b\n", 1,
+          "'key' is used again");
+    cases("fn once(key: Key) -> u64:\n    draw(key)\n", 0, "");
+}
+
+export void test_front_affine_a_member_is_a_path() {
+    cases("fn member(h: Holder) -> u64:\n    let a = draw(h.key)\n    a + draw(h.key) + h.n\n", 1,
+          "'h.key' is used again");
+    cases("fn other(h: Holder) -> u64:\n    draw(h.key) + h.n\n", 0, "");
+}
+
+export void test_front_affine_a_value_that_is_not_affine_is_free() {
+    cases("fn bits(key: Key) -> u64:\n    key.bits + key.bits\n", 0, "");
+}
+
+export void test_front_affine_address_of_is_a_use() {
+    cases("fn address(key: Key) -> u64:\n    let p = &key\n    draw(key) + take(p)\n", 1, "'key' is used again");
+}
+
+export void test_front_affine_assigning_a_value_makes_the_name_fresh() {
+    cases("fn fresh(mut key: Key, other: Key) -> u64:\n    let a = draw(key)\n    key = other\n    a + draw(key)\n", 0,
+          "");
+}
+
+export void test_front_affine_a_branch_that_uses_it_counts() {
+    cases("fn join(key: Key, c: bool) -> u64:\n    let mut a: u64 = 0\n    if c:\n        a = draw(key)\n"
+          "    a + draw(key)\n",
+          1, "'key' is used again");
+}
+
+export void test_front_affine_a_branch_that_returns_does_not_count() {
+    cases("fn branches(key: Key, c: bool) -> u64:\n    if c:\n        return draw(key)\n    draw(key) + 1\n", 0, "");
+}
+
+export void test_front_affine_a_defer_counts_where_it_is_written() {
+    cases("fn deferred(key: Key) -> u64:\n    let mut a: u64 = 0\n    defer a = draw(key)\n    draw(key) + a\n", 1,
+          "'key' is used again");
+}
+
+export void test_front_affine_the_error_names_the_first_use() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = text_of(format::push(
+        prelude(), "fn twice(key: Key) -> u64:\n    let a = draw(key)\n    let b = draw(key)\n    a + b\n"));
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(r.errors[0].has_related);
+    test::check_condition(r.errors[0].related.start < r.errors[0].span.start);
+    test::check_condition(has(r.errors[0].related_message, "'key' was first used here"));
+    roots::Roots folders = {};
+    compile::Problems found = compile::diagnose("t.smith", source, folders);
+    test::check_equal(countof(found), (Usize)1);
+    test::check_condition(has(found[0].message, "'key' is used again; it was already used at line 16"));
+}
