@@ -391,7 +391,9 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     Bool is_mut = d->kind.variable.is_mut;
     types::TypeRef type = r->table.automatic;
     if (!(written->kind == .auto_type)) {
+        r->new_syntax = is_new; // a local's `*T` is read-only in smith's own syntax (#1899), as a parameter's is
         type = types::resolve(r, written);
+        r->new_syntax = false;
     }
     if (init == nullptr) {
         types::failf(r, d->span, "`", name, "` needs a value: give one, or write `= undefined`");
