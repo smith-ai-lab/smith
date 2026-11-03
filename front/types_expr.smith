@@ -110,6 +110,8 @@ struct Frame {
     const ast::Stmt *source;
     Usize index;
     Str message;
+    // Only for a `type_value` read as a construction (stage 1): the call it stands for.
+    const ast::Expr *twin;
 };
 
 struct Work {
@@ -2093,7 +2095,7 @@ static Bool private_construction(types::Checked *c, const ast::Expr *e, types::T
 }
 
 // The field an argument fills: the one at its position, or the one it names. Null, after an error, when it fills none.
-static const types::Slot *argument_field(types::Checked *c, ast::ExprRef args[:], Usize i, types::TypeRef record,
+export const types::Slot *argument_field(types::Checked *c, ast::ExprRef args[:], Usize i, types::TypeRef record,
                                          Str shown, Bool by_name, Usize *index) {
     const ast::Expr *arg = args[i];
     if (arg->kind != .named_arg) {
@@ -3400,6 +3402,58 @@ static void value_after(types::Checked *c, Frame f) {
 // ---------------------------------------------------------------------------------------------------------------
 // The walk
 
+// `Point(a, b)`: the parser reads a name first as a type (it cannot tell it from `Pair(i32)`). When the path names a
+// struct and every argument is a name or a value, it is a construction (#1813): the call is built here and checked in
+// its place. Null when it is not one.
+static const ast::Expr *type_value_call(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .type_value) return nullptr;
+    const ast::TypeExpr *t = e->kind.type_value.type;
+    if (t->kind != .applied) return nullptr;
+    ast::Expr *callee = mem::alloc(ast::Expr);
+    callee->span = e->span;
+    callee->kind = {.name = {.path = t->kind.applied.name}};
+    if (constructed_record(c, callee) == nullptr) return nullptr;
+    Usize count = countof(t->kind.applied.args);
+    ast::ExprRef *block = (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), count, alignof(ast::ExprRef));
+    ast::ExprRef args[:] = block[0:count];
+    for (Usize i = 0; i < count; i++) {
+        const ast::TypeArg *arg = &t->kind.applied.args[i];
+        if (*arg == .value) {
+            block[i] = arg->value.value;
+            continue;
+        }
+        if (arg->type.type->kind != .named) return nullptr;
+        ast::Expr *value = mem::alloc(ast::Expr);
+        value->span = arg->type.type->span;
+        value->kind = {.name = {.path = arg->type.type->kind.named.path}};
+        block[i] = value;
+    }
+    ast::Expr *call = mem::alloc(ast::Expr);
+    call->span = e->span;
+    call->kind = {.call = {.callee = callee, .args = args}};
+    return call;
+}
+
+// The call is checked in the place of the type; the type takes its type afterwards (stage 1).
+static void type_value_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *call = type_value_call(c, f.node);
+    if (call == nullptr) {
+        not_yet(c, f.node, "a type used as a value");
+        return;
+    }
+    push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
+    push(w, call, f.expected, 0);
+}
+
+static void type_value_after(types::Checked *c, Frame f) {
+    types::TypeRef t = types::type_of(c, f.twin);
+    if (t == nullptr || t == invalid(c)) {
+        poison(c, f.node);
+        return;
+    }
+    types::set_type(c, f.node, t);
+}
+
 static Bool leaf(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .integer) {
@@ -3426,8 +3480,6 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
-    } else if (e->kind == .type_value) {
-        not_yet(c, e, "a type used as a value");
     } else if (e->kind == .try_expr) {
         not_yet(c, e, "try");
     } else {
@@ -3505,7 +3557,9 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
 
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
-    if (e->kind == .unary) {
+    if (e->kind == .type_value) {
+        type_value_before(c, w, f);
+    } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
         const ast::Expr *right = e->kind.binary.right;
@@ -3562,7 +3616,9 @@ static void before(types::Checked *c, Work *w, Frame f) {
 // Stage 1 and later: the children are typed.
 static void after(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
-    if (e->kind == .unary) {
+    if (e->kind == .type_value) {
+        type_value_after(c, f);
+    } else if (e->kind == .unary) {
         unary_after(c, f);
     } else if (e->kind == .binary) {
         binary_after(c, f);
