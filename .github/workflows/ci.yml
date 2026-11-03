@@ -372,10 +372,59 @@ jobs:
             echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
+  checks-linux:
+    # fmt, docs and lint on every pull request (#2137): the macos job runs them in the merge queue only, so a PR could be
+    # green and still fail lint there, and each queue failure ejects every PR behind it. Linux is free; the queue's macos
+    # job stays the final word for macOS-only findings (u64/usize widen differently there, so lint prints a note here).
+    # The stages run one after another (two verbs collide on .smith/build.ninja) and every stage runs after a failure.
+    needs: [changes, pack, build-linux]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+      SMITH_OUTPUT: full
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux
+      - name: Checks
+        shell: bash
+        run: |
+          # the same stage helper and report as the macos job's Checks step
+          stage() { # name, then the command
+            local name=$1 start=$SECONDS code=0
+            shift
+            "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            echo "$code $((SECONDS - start))" >"$RUNNER_TEMP/$name.status"
+            echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          names="fmt docs lint"
+          stage fmt "$SMITH" fmt --dry-run --Werror
+          stage docs "$SMITH" docs
+          stage lint "$SMITH" lint
+          failed=0
+          for name in $names; do
+            read -r code took <"$RUNNER_TEMP/$name.status"
+            if [ "$code" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
+              failed=1
+            else
+              echo "ok $name"
+            fi
+          done
+          exit $failed
+
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux]
+    needs: [changes, pack, macos, build-linux, test-linux, checks-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -387,6 +436,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           TEST_LINUX: ${{ needs.test-linux.result }}
+          CHECKS_LINUX: ${{ needs.checks-linux.result }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           case " $RESULTS " in
@@ -407,6 +457,8 @@ jobs:
           esac
           # a pull request owes no macOS: the merge queue runs it (2026-11-03)
           [ "$EVENT" = pull_request ] && owed="${owed/MACOS/}"
+          # a pull request of scope full owes checks-linux (fmt, docs, lint; #2137); the queue runs them on macOS
+          [ "$EVENT" = pull_request ] && [ "$SCOPE" = full ] && owed="$owed CHECKS_LINUX"
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
