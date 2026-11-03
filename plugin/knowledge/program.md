@@ -11,11 +11,12 @@ A Smith program is one file with a main function. Names from the standard librar
 ## Example
 
 ```smith
-import std.console
-
-fn main():
-    console.print("hello\n")
+pub fn main() -> i32:
+    let answer = 6 * 7
+    answer
 ```
+
+The last line of a function is its value. Printing needs `import std.console`; that example joins this page when the new front end compiles the standard library from a user project (#2041, #1902).
 
 ## Rules
 
