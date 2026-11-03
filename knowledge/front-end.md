@@ -193,7 +193,7 @@ The types of the front end and the checker's entry point; the API is the top com
 - The concepts `int float num signed unsigned pointer` are `concept_type` types (an error as a field type). In today's syntax `char`, `bool` and C type names are errors.
 - `[5,3]T` equals `[5][3]T`, `[,3]T` is a slice of `[3]T`, `[,]T` is a `block`, `?T` is the option type, and `Line := []u8` is an alias by substitution.
 - A module-level `a := 3` takes `i32` (`f64` for a float literal) from a literal initializer. A field's `is_new` is not read yet (#1531): a field always counts as new.
-- Not yet typed: `typeof`, a bit-field, `if constexpr`, a compile-time or rest parameter, a non-literal array length.
+- Not yet typed: `typeof`, a bit-field, `if constexpr`, a compile-time or rest parameter. An array length is typed when it is an integer literal, a constant (`const`, or a `let` that is not `mut`) whose initializer is one, or `+ - * / % << >>` of these (#1918); the emitter still wants a literal (#1917).
 - No recursion: `resolve`, `layout` and `show` use explicit stacks. Tests: `tests/front_types_test.smith`, golden `tests/front/types/`.
 
 ### front::types_expr (`front/types_expr.smith`, #1220 J1b)
