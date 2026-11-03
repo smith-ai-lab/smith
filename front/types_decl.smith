@@ -913,7 +913,7 @@ export void uninstall() {
 
 export types::Options options(types::Target target) {
     install();
-    return (types::Options){.target = target, .bodies = check_body};
+    return (types::Options){.target = target, .bodies = check_body, .expression = types_expr::infer};
 }
 
 // A module-level variable's initializer, against its declared type.
