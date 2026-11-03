@@ -597,6 +597,15 @@ export void test_parse_decl_new_types() {
     test::golden("tests/front/parse_decl/new_types.txt", new_dump_of(source));
 }
 
+// A keyword names a field in a struct body (`module: str`), never a local or a parameter (#1770).
+export void test_parse_decl_keyword_names_a_field() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_text(new_first_error("struct P {\n    module: str\n    type: Kind\n}\n"), "no error");
+}
+
 // 1 when the first field of a record declaration is written in smith's own syntax, 0 when not, 2 for no record.
 static I32 first_field_is_new(const ast::Decl *d) {
     if (d->kind != .record) return 2;

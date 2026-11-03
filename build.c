@@ -3249,7 +3249,7 @@ static int build_frontend_coverage(SmithRun *run) {
         .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
         .log = results,
         .stdout_only = true});
-    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, nullptr));
+    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {

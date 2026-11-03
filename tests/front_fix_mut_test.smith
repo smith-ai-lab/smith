@@ -82,3 +82,16 @@ export void test_front_fix_function_pointer_declarator_is_rewritten() {
     test::check_equal(twice, want);
     test::check_equal(again, (Usize)0);
 }
+
+// A cast to a type keyword ends the statement at its line break (#1775): `(void)f(x);` is `f(x) as void`, and the next
+// line starts a new statement instead of reading `expected ;`. The checker has its own say about the cast (#1775 only
+// reads), so this checks the parse.
+export void test_front_fix_mut_a_cast_to_void_ends_its_statement() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn f(n: i32) -> i32 {\n    return n\n}\nfn g() {\n    f(1) as void\n    f(2) as void\n}\n";
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+}

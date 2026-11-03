@@ -127,7 +127,8 @@ export struct Slot {
 // Which fields mean something depends on `kind`:
 //   integer: bits, is_signed, name        floating: bits, name        record: name, slots, is_union, complete
 //   pointer, slice: element, pointee_const   array: element, count, pointee_const
-//   enumeration: name, element (the underlying integer), slots (the enumerators, with their values)
+//   enumeration: name, element (the underlying integer), slots (the enumerators, with their values); when has_payload,
+//                a slot's type is what the enumerator carries (`void` for one that carries nothing)
 //   function: slots (parameters), element (the result), variadic
 //   tuple: slots (one per element, named by its position)
 //   vector: element, count
@@ -140,6 +141,7 @@ export struct Ty {
     Bool variadic;
     Bool is_union;
     Bool complete;
+    Bool has_payload; // an enumeration whose enumerators carry values (`circle: Circle`)
     TypeRef element;
     TypeRef error;
     U64 count;
@@ -1507,6 +1509,10 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     Usize n = countof(members);
     Slot items[:] = mem::alloc_slice(Slot, n);
     U64 next = 0;
+    Bool has_payload = false;
+    for (Usize i = 0; i < n; i++) {
+        has_payload = has_payload || members[i].payload != nullptr;
+    }
     for (Usize i = 0; i < n; i++) {
         const ast::Enumerator *item = &members[i];
         const ast::Expr *value = item->value;
@@ -1515,14 +1521,18 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
         } else if (value != nullptr) {
             failf(r, value->span, "not yet typed: an enumerator value that is not an integer literal");
         }
-        if (item->payload != nullptr) {
-            failf(r, item->span, "not yet typed: a payload enumeration");
+        TypeRef carried = symbol->type->element;
+        if (has_payload) {
+            carried = item->payload != nullptr ? resolve(r, item->payload) : r->table.void_type;
         }
-        items[i] = (Slot){.name = item->name, .type = symbol->type->element, .value = next};
+        items[i] = (Slot){.name = item->name, .type = carried, .value = next};
         next += 1;
     }
     Ty *made = own(&r->table, symbol->type);
-    if (made != nullptr) set_fields(made, items);
+    if (made != nullptr) {
+        set_fields(made, items);
+        made->has_payload = has_payload;
+    }
 }
 
 // Whether the written type is the bare name `Type`: a type argument as a parameter, the result of a type function.
