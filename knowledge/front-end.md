@@ -389,7 +389,7 @@ Declarations read from C headers become `front::ast` nodes with `from_c` set; th
 `smith lsp --smith` is a language server for `.smith` written in `.smith` on this front end (the plan: #1887, with #1377's zero patches). Plain `smith lsp` stays clangd; an editor registers the server per file type, so there is no proxy.
 - JSON-RPC 2.0 over stdio with `Content-Length` framing; `lsp_server::handle(body)` is one message in, the framed replies out, which the tests drive with no pipe (`tests/front_lsp_server_test.smith`); `run` (C: `front_lsp_run`) is the loop, one arena reset per message.
 - Slice 1 serves `initialize` (full sync), `shutdown`, `exit`, `didOpen`, `didChange` and `didClose`; each open or change answers with `textDocument/publishDiagnostics` from `compile::diagnose(path, source, roots)`: the parser's errors (and, in smith's own syntax, its warnings as severity 2), or the checker's errors when it parsed. Any other request gets -32601.
-- Columns are bytes in the line (LSP counts UTF-16 units). The next slices (#1892 hover, #1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
+- Columns are bytes in the line (LSP counts UTF-16 units). Hover (#1892, `front/lsp_hover.smith`): `textDocument/hover` returns the type of the innermost checked expression under the position (`ast::expr_at`, `compile::hover_at`) as markdown with its range; the server keeps the open documents' text by uri (fixed slots) for it. The next slices (#1893 definition and symbols, #1894 completion) add methods to the table in `lsp_server::handle`; #1895 makes plain `smith lsp` clangd without patches.
 
 ## Tests
 

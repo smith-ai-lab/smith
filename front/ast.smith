@@ -2252,3 +2252,25 @@ export Str dump(const Module *m) {
     put_char(&text, '\n');
     return text.data[0:text.length];
 }
+
+// The innermost expression of `m` whose bytes cover `offset`, or null when there is none (the language server's hover,
+// #1892). Of two that cover it, the one with the shorter span wins; a later one wins a tie.
+export const Expr *expr_at(const Module *m, U32 offset) {
+    Items items = {};
+    add(&items, {.module = m});
+    const Expr *best = nullptr;
+    for (Usize at = 0; at < items.length; at++) {
+        Node node = items.data[at].node;
+        if (node == .expr) {
+            const Expr *e = node.expr;
+            Bool covers = e->span.start <= offset && offset < e->span.end;
+            Bool tighter = best == nullptr || e->span.end - e->span.start <= best->span.end - best->span.start;
+            if (covers && tighter) best = e;
+        }
+        Usize before = items.length;
+        other_children(&items, node);
+        items.data[at].first = before;
+        items.data[at].count = items.length - before;
+    }
+    return best;
+}
