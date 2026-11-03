@@ -737,6 +737,18 @@ static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warne
     return (Report){.ok = true, .text = warned, .times = timed};
 }
 
+// The emitter's options for one file: objects are made at optimization 0, a debug build, and `smith cc -g` sets
+// SMITH_FRONT_DEBUG (runtime/front_flag.c), which gives the object debug info (#1979).
+static emit::Options emit_options(Str wanted, Str source, types::Checked *checked) {
+    emit::Options options = {};
+    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
+    options.source = source;
+    options.checked = checked;
+    options.fill_undefined = true;
+    options.debug_info = c::getenv("SMITH_FRONT_DEBUG") != nullptr;
+    return options;
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
@@ -779,11 +791,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         return failed(all, times);
     }
 
-    emit::Options options = {};
-    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
-    options.source = source;
-    options.checked = &checked;
-    options.fill_undefined = true; // objects are made at optimization 0, a debug build
+    emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
