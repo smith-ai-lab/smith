@@ -1,0 +1,210 @@
+================================================================================
+decls: pub fn with generics, defaults, mut and keyword-only parameters
+================================================================================
+
+pub fn sum[T: num](xs: []T) -> T:
+    xs[0]
+
+fn open(path: str, mut flags: i32 = 0; retry: bool = false) -> i32:
+    flags
+
+fn variadic(label: str, nums: i32...):
+    pass(label)
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (generic_parameters
+      (identifier)
+      (type_identifier))
+    (fn_parameters
+      (identifier)
+      (array_type
+        (type_identifier)))
+    (type_identifier)
+    (layout_block
+      (layout_expression_statement
+        (subscript_expression
+          (identifier)
+          (number_literal)))))
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier)
+      (identifier)
+      (type_identifier)
+      (number_literal)
+      (identifier)
+      (type_identifier)
+      (false))
+    (type_identifier)
+    (layout_block
+      (layout_expression_statement
+        (identifier))))
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier)
+      (identifier)
+      (type_identifier))
+    (layout_block
+      (layout_expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier)))))))
+
+================================================================================
+decls: struct with defaults and pub fields, enum with payloads and values
+================================================================================
+
+pub struct Point:
+    pub x: i32
+    y: i32 = 0
+
+enum Level(u8):
+    low = 2
+    high = 9
+
+enum Shape:
+    circle(Circle)
+    empty
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (layout_struct
+    (identifier)
+    (layout_field
+      (identifier)
+      (type_identifier))
+    (layout_field
+      (identifier)
+      (type_identifier)
+      (number_literal)))
+  (layout_enum
+    (identifier)
+    (type_identifier)
+    (layout_variant
+      (identifier)
+      (number_literal))
+    (layout_variant
+      (identifier)
+      (number_literal)))
+  (layout_enum
+    (identifier)
+    (layout_variant
+      (identifier)
+      (type_identifier))
+    (layout_variant
+      (identifier))))
+
+================================================================================
+decls: imports
+================================================================================
+
+import std.math
+import std.math as m
+from std.math import sin, cos as cosine
+pub import std.text
+import c <stdio.h>
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (layout_import
+    (dotted_path
+      (identifier)
+      (identifier)))
+  (layout_import
+    (dotted_path
+      (identifier)
+      (identifier))
+    (identifier))
+  (layout_import
+    (dotted_path
+      (identifier)
+      (identifier))
+    (identifier)
+    (identifier)
+    (identifier))
+  (layout_import
+    (dotted_path
+      (identifier)
+      (identifier)))
+  (layout_import
+    (identifier)
+    (system_lib_string)))
+
+================================================================================
+decls: attributes and globals
+================================================================================
+
+@inline
+@c_name("add")
+@when(target.os == .macos)
+@serial.rename(to = "user_id")
+fn add(a: i32, b: i32) -> i32:
+    a + b
+
+let mut counter: i32 = 0
+pub const limit = 10
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (layout_attribute
+    (dotted_path
+      (identifier)))
+  (layout_attribute
+    (dotted_path
+      (identifier))
+    (argument_list
+      (string_literal
+        (string_content))))
+  (layout_attribute
+    (dotted_path
+      (identifier))
+    (argument_list
+      (binary_expression
+        (field_expression
+          (identifier)
+          (field_identifier))
+        (variant_expression
+          (identifier)))))
+  (layout_attribute
+    (dotted_path
+      (identifier)
+      (identifier))
+    (argument_list
+      (assignment_expression
+        (identifier)
+        (string_literal
+          (string_content)))))
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier)
+      (identifier)
+      (type_identifier))
+    (type_identifier)
+    (layout_block
+      (layout_expression_statement
+        (binary_expression
+          (identifier)
+          (identifier)))))
+  (layout_global
+    (layout_let_declaration
+      (layout_pattern
+        (identifier))
+      (type_identifier)
+      (number_literal)))
+  (layout_global
+    (layout_const_declaration
+      (identifier)
+      (number_literal))))
