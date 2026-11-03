@@ -24,9 +24,9 @@ a + b ? c : d
   warnings left: 0
 
 (P){1, 2}
-  warning 0-9: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
-  fixed: (P){1, 2}
-  warnings left: 1
+  warning 0-9: a compound literal `(P){a, b}` is written `P(a, b)`
+  fixed: P(1, 2)
+  warnings left: 0
 
 (I32)c ? a : b
   warning 1-4: write the type `I32` as `i32` in smith's own syntax
@@ -79,4 +79,25 @@ c ? (I32)a : (U8)b
   warning 0-9: a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array (no fix)
   fixed: {[2] = 1}
   warnings left: 1
+
+(P){0}
+  warning 0-6: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
+  fixed: (P){0}
+  warnings left: 1
+
+(P){1, .y = 2}
+  warning 0-14: a compound literal is written `P(x = 1, y = 2)`: name each field (no fix)
+  fixed: (P){1, .y = 2}
+  warnings left: 1
+
+f((Hex){value, width})
+  warning 2-21: a compound literal `(P){a, b}` is written `P(a, b)`
+  fixed: f(Hex(value, width))
+  warnings left: 0
+
+range((Usize)k, n + 1)
+  warning 7-12: write the type `Usize` as `usize` in smith's own syntax
+  warning 6-14: a cast is `x.to(T)`: write `x.to(usize)`
+  fixed: range(k.to(usize), n + 1)
+  warnings left: 0
 
