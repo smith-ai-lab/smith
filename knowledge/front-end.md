@@ -87,6 +87,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - New syntax (S5, #1446, with `Parser.new_syntax`): `named_arg` (`f(a = 1)`), a capitalized path called with named arguments is a construction (`Point(x = 1)`), `.name(payload)`, `(a, b)`, `[1, 2, 3]`, `p.*`.
 - `x as T` binds tighter than every binary operator and after prefix ones (`-x as T` is `(-x) as T`); `&x` is `address_of`.
 - `fn(x) { body }` and `fn[a](x: i32) -> R { body }` are lambdas; a `fn` with no body is a type (`fn_has_body` scans to the `{`). `if`, `match`, `for` and `{` start `stmt_expr`.
+- An old lambda `[x](I32 a) -> I32 { }` has a fix-it (#1771, `lambda_warning` in parse_expr): the bracket group becomes `fn` (`fn()` with no parameters) and each `T a` becomes `a: T`; the result type has its own fix. Without it the new parser read the brackets as an array called with `(I32 a)`.
 - A trailing block (#961): a `{` on the same line as a call's `)` is a lambda with no parameters, appended as the last argument; a condition head takes none at its top level (`Parser.head`).
 - Old expression forms are warnings with fixes (F4, #1509): `(T)x` to `x as T`, `p->x` to `p.x`, `*p` to `p.*`, `c ? a : b` to `if c { a } else { b }`, `(P){.x = 1}` to `P(x = 1)`, `{1, 2}` to `[1, 2]`, `i++;` to `i += 1`. A variable of a named type with an untyped list of only `.field = value` items, `P p = {.x = 1};`, is `p := P(x = 1)` (#1767); a `{` followed by `.name =` is that list even in smith's own syntax, where a block never starts that way.
 - Forms with no mechanical fix stay warnings with no edits (a typed list with positional items, `++` as a value, a method chain). Two edits at one offset clash, so a nested fix lands on the next pass.
@@ -130,6 +131,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `Type T` without `constexpr` (A7m, #1357) parses as an ordinary parameter; the checker reports it (N1, #1339: write `constexpr Type T`).
 - Declarations in smith's own syntax (S3, #1444): `a := v`, `a: T = v`, `mut a: T`, `const X := v`, `pub`, `@attr`, `fn name(a: T, mut b: T, const n: usize, T: type, rest: ...) -> R { }`.
 - Also `struct Name { field: T }` and `enum Name: u8 { low = 2 }`, one member per line with no `;` or `,`. New is told from old by the first one or two tokens.
+- Keywords as names (#1770): after `.` a keyword is a member name (`x.module`, `t.type`) and in a struct body a field may be named with one (`module: str`); both positions are unambiguous. A local or parameter named with a keyword is still an error, and `int : 3` stays an unnamed C bit-field.
 - A declaration ends with its line; a `;` or `,` there is an error with a fix that deletes it. After an error the parse skips to the end of the line (`recover_line`).
 - `parse_decl::at_destructure(p)` and `destructure(p)` read `(q, r) := f()` for the statement parser; `declaration` on one is an error.
 - Old declaration forms are warnings with fixes (F2, #1507): `module a::b;` removed, `export` to `pub`, `I32 a = 3;` to `a: I32 = 3`, `R f(A a) {...}` to `fn f(a: A) -> R {...}`.
