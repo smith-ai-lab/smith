@@ -19,6 +19,11 @@ int32_t front_lsp_run(void);
 // front::parser's fix entry (front/parser.smith, `front_parser_fix_run`), declared by hand for the same reason.
 int32_t front_parser_fix_run(const char *const *paths, size_t count);
 
+// front::format's entries (front/format.smith), declared by hand for the same reason: `front_format_accepts` is 1 for a
+// file in the new syntax, `front_format_run` formats files (in place when `write`, else it only reports).
+int32_t front_format_accepts(const char *path);
+int32_t front_format_run(const char *const *paths, size_t count, bool write);
+
 constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
 constexpr size_t smith_front_name_max = 4096;
@@ -206,3 +211,54 @@ static int smith_lint_fix(int count, char **args) {
     return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
 }
+
+#ifndef SMITH_CORE
+#include <fnmatch.h>
+// `smith fmt` on `.smith` files (#1890): the files of `args` (argv[2 ..]) that are in the new syntax go to smith's own
+// formatter (front::format) and are taken out of the arguments, which clang-format then gets without them: `.c` files
+// and `.smith` files in today's syntax stay clang-format's until the switch-over (#1631). Writes in place unless
+// `--dry-run` or `-n` is among the arguments. Returns the formatter's status (0 when it had no file), and the number
+// of arguments left in *count; *only is set when it took files and no file argument is left for clang-format.
+// Whether `.clang-format-ignore` (in the current folder, as clang-format reads it: one glob a line, `#` comments, paths
+// relative to it) names `file`: such a file is left as it is.
+static bool smith_fmt_ignored(const char *file) {
+    FILE *list = fopen(".clang-format-ignore", "r");
+    if (list == nullptr) return false;
+    while (file[0] == '.' && file[1] == '/')
+        file += 2; // bounded by the name
+    char line[PATH_MAX];
+    bool ignored = false;
+    while (!ignored && fgets(line, sizeof line, list) != nullptr) { // bounded by the file
+        line[strcspn(line, "\n")] = '\0';
+        ignored = line[0] != '\0' && line[0] != '#' && fnmatch(line, file, 0) == 0;
+    }
+    fclose(list);
+    return ignored;
+}
+
+static int smith_fmt_front(int *count, char **args, bool *only) {
+    static const char *taken[smith_front_args_max];
+    size_t found = 0;
+    bool write = true;
+    int kept = 0;
+    bool found_ignored = false;
+    for (int i = 0; i < *count; i++) { // bounded by count
+        if (strcmp(args[i], "--dry-run") == 0 || strcmp(args[i], "-n") == 0) write = false;
+        if (i >= 2 && smith_front_is_source(args[i]) && access(args[i], R_OK) == 0 &&
+            front_format_accepts(args[i]) == 1 && found < smith_front_args_max) {
+            if (!smith_fmt_ignored(args[i]))
+                taken[found++] = args[i];
+            else
+                found_ignored = true;
+            continue;
+        }
+        args[kept++] = args[i];
+    }
+    *count = kept;
+    bool others = false;
+    for (int i = 2; i < kept; i++)
+        others = others || args[i][0] != '-';
+    *only = (found > 0 || found_ignored) && !others;
+    return found == 0 ? 0 : front_format_run(taken, found, write);
+}
+#endif
