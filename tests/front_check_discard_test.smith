@@ -1,5 +1,5 @@
-// The checker's fix for a discarded value (#1915, part of #1902): `(void)x;` is written `_ = x;`, from the checker's own
-// error, in the same passes as the other fix-its. A second run applies nothing.
+// The checker's fix for a discarded value (#1915, part of #1902): `(void)x;` is written `_ = x;`, from the
+// checker's own error, in the same passes as the other fix-its. A second run applies nothing.
 module front_check_discard_test;
 
 import front::fix;
