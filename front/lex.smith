@@ -30,8 +30,8 @@ import std::ascii;
 import std::mem;
 import std::text;
 
-// What a token is. The keywords are `kw_alignas` to `kw_countof` and the punctuators `left_paren` to `comma`, each run
-// in one piece.
+// What a token is. The keywords are `kw_alignas` to `kw_countof` and the punctuators `left_paren` to `dot_star`, each
+// run in one piece. `newline`, `indent` and `dedent` come only from `layout` (no text, a span of no width).
 // NOLINTBEGIN(readability-identifier-naming)
 // The constants are written short, as lex::name and lex::kw_if, and the check wants C's Type_Value.
 export enum TokenKind {
@@ -163,6 +163,9 @@ export enum TokenKind {
     fat_arrow,
     at,
     dot_star,
+    newline,
+    indent,
+    dedent,
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -185,7 +188,7 @@ export typedef struct {
 export typedef Result(Tokens, LexError) Lexed;
 
 // The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
-static const char *const kind_names[128] = {
+static const char *const kind_names[136] = {
     "end_of_file",
     "type_name",
     "name",
@@ -314,9 +317,12 @@ static const char *const kind_names[128] = {
     "fat_arrow",
     "at",
     "dot_star",
+    "newline",
+    "indent",
+    "dedent",
 };
 
-static const char *const kind_texts[128] = {
+static const char *const kind_texts[136] = {
     "",
     "",
     "",
@@ -445,6 +451,9 @@ static const char *const kind_texts[128] = {
     "=>",
     "@",
     ".*",
+    "",
+    "",
+    "",
 };
 
 // The name of a kind as a dump prints it (`kw_if`, `left_paren`).
@@ -901,4 +910,138 @@ export Str dump(Tokens tokens, Str source) {
 // The same dump with ` [eol]` after each token that a line break follows (the flag `Token.line_break`).
 export Str dump_lines(Tokens tokens, Str source) {
     return dump_with(tokens, source, true);
+}
+
+// Whether a token that ends a line makes the next line continue it: a binary operator or an assignment.
+static Bool continues_line(TokenKind kind) {
+    switch (kind) {
+    case ampersand:
+    case star:
+    case plus:
+    case minus:
+    case slash:
+    case percent:
+    case less_less:
+    case greater_greater:
+    case less:
+    case greater:
+    case less_equal:
+    case greater_equal:
+    case equal_equal:
+    case bang_equal:
+    case caret:
+    case pipe:
+    case ampersand_ampersand:
+    case pipe_pipe:
+    case equal:
+    case star_equal:
+    case slash_equal:
+    case percent_equal:
+    case plus_equal:
+    case minus_equal:
+    case less_less_equal:
+    case greater_greater_equal:
+    case ampersand_equal:
+    case caret_equal:
+    case pipe_equal:
+    case colon_equal:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The layout being made: the tokens so far, the open levels and the open brackets.
+struct Layout {
+    Tokens out;
+    Usize count;
+    Usize level;
+    Usize depth;
+};
+
+static void put(Layout *l, TokenKind kind, Usize at) {
+    Token t = {.kind = kind, .span = {.start = (U32)at, .end = (U32)at}};
+    l->out[l->count] = t;
+    l->count += 1;
+}
+
+// The columns of the indentation of the line the token at `at` starts, or an error for a tab in it.
+static Result(Usize, LexError) indentation(Str source, Usize at) {
+    Usize start = at;
+    while (start > 0 && source[start - 1] != '\n')
+        start -= 1;
+    for (Usize i = start; i < at; i++) {
+        if (source[i] == '\t') return {.error = error_at(i, i + 1, "indent with 4 spaces, not a tab")};
+    }
+    return at - start;
+}
+
+// What the start of a line (its first token, at `at`) adds: `newline`, then `indent` after a `:` that ends the previous
+// line, or one `dedent` for each level dropped.
+static Result(Bool, LexError) line_start(Layout *l, Str source, Token first, TokenKind before) {
+    Usize at = first.span.start;
+    Result(Usize, LexError) measured = indentation(source, at);
+    if (measured == .error) return {.error = measured.error};
+    Usize columns = measured.ok;
+    if (columns % 4 != 0) return {.error = error_at(at - columns, at, "indent with a multiple of 4 spaces")};
+    Usize wanted = columns / 4;
+    if (wanted > l->level) {
+        if (wanted != l->level + 1 || before != colon)
+            return {.error = error_at(at - columns, at, "unexpected indent")};
+        put(l, newline, at);
+        put(l, indent, at);
+        l->level = wanted;
+        return true;
+    }
+    if (wanted == l->level) {
+        if (before != end_of_file) put(l, newline, at);
+        return true;
+    }
+    while (l->level > wanted) {
+        put(l, newline, at);
+        put(l, dedent, at);
+        l->level -= 1;
+    }
+    return true;
+}
+
+static void open_or_close(Layout *l, TokenKind kind) {
+    if (kind == left_paren || kind == left_bracket || kind == left_brace) l->depth += 1;
+    if ((kind == right_paren || kind == right_bracket || kind == right_brace) && l->depth > 0) l->depth -= 1;
+}
+
+// The tokens with layout (#1808, of the revision of #1428): a statement ends with `newline`, a `:` that ends a line and
+// is followed by a more indented line opens a block with `indent`, and every level a line drops closes with `dedent`
+// (each one after a `newline`); the end of the file closes the open levels. Indentation is 4 spaces a level. Inside an
+// open `(`, `[` or `{`, after a binary operator at the end of a line, and on blank and comment-only lines, line breaks
+// and indentation count for nothing. `tokens` is what `tokenize_new` gave, ending with `end_of_file`; the result is the
+// current allocator's.
+export Lexed layout(Str source, Tokens tokens) {
+    Layout l = {.out = mem::alloc_slice(Token, countof(tokens) * 6 + 4)};
+    TokenKind before = end_of_file;
+    Usize previous_end = 0;
+    for (Token token : tokens) {
+        Bool first = before == end_of_file || has_newline(source[previous_end:token.span.start]);
+        if (token.kind == end_of_file) {
+            if (before != end_of_file && l.level == 0) put(&l, newline, token.span.start);
+            while (l.level > 0) {
+                put(&l, newline, token.span.start);
+                put(&l, dedent, token.span.start);
+                l.level -= 1;
+            }
+        } else if (first && l.depth == 0 && !continues_line(before)) {
+            Result(Bool, LexError) started = line_start(&l, source, token, before);
+            if (started == .error) {
+                mem::free(l.out.data);
+                return {.error = started.error};
+            }
+        }
+        l.out[l.count] = token;
+        l.count += 1;
+        open_or_close(&l, token.kind);
+        before = token.kind;
+        previous_end = token.span.end;
+    }
+    Tokens shrunk = mem::realloc(l.out, l.count);
+    return {.ok = shrunk};
 }

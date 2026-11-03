@@ -66,6 +66,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Punctuators are C's without `#` and `##`, plus `::`, `:=`, `=>`, `@` and `.*` (one token). `[:]` is three tokens, `[[` and `]]` two each; no trigraphs or digraphs.
 - The keywords `fn pub mut match in as fn_once type yield` exist only through `tokenize_new`; `tokenize` keeps them names, because today's code uses them as names.
 - Each `Token` has `line_break`, recorded only. `lex::ends_statement(token)` is Go's rule: a break ends a statement after a name, literal, `)`, `]`, `}`, `return`, `break` or `continue`.
+- `lex::layout(source, tokens)` (#1808) turns the tokens of `tokenize_new` into tokens with layout, not yet read by the parser: `newline` ends a statement, `indent` follows a `:` that ends a line when the next line is one level (4 spaces) deeper, and each level a line drops is a `newline dedent`; the end of the file closes the open levels. Inside `(`, `[` or `{`, after a binary operator at a line's end, and on blank or comment-only lines, line breaks and indentation count for nothing. Errors: a tab in indentation, a level that is not a multiple of 4, an unexpected indent. Layout tokens have no text and a span of no width.
 - `lex::dump_lines` is `dump` with ` [eol]` after such a token (`tests/front/lex/new-syntax.tokens`).
 - Errors: an unterminated string, character or block comment, a malformed number, a byte that starts no token, and any `#` (the message names `constexpr` and `import`).
 
