@@ -527,6 +527,8 @@ static ast::Stmt *yield_statement(parse::Parser *p) {
     U32 start = keyword.span.start;
     Usize before = countof(p->errors);
     Bool bare = parse::at(p, lex::semicolon) || parse::at(p, lex::right_brace) || last_token_ends_line(p);
+    if (p->layout && (parse::at(p, lex::newline) || parse::at(p, lex::dedent) || parse::at(p, lex::end_of_file)))
+        bare = true;
     if (bare) {
         parse::error(p, keyword.span, "yield needs a value: `yield x` (a plain `return` ends the stream)");
         return settle(p, start, before, empty_stmt());
