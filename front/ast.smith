@@ -148,7 +148,8 @@ export typedef enum {
     } record; // an anonymous struct or union used as a type: a payload variant `struct { I32 a; } one;`
     struct {
         TypeRef elements[:];
-    } tuple; // `struct { I32, F32 }`: types with no field names, in order
+        Identifier names[:]; // `(count: i32, ms: f64)`: one name per element, or none for `(i32, f64)`
+    } tuple;                 // `struct { I32, F32 }`: types with no field names, in order
     struct {
         TypeExpr *inner;
     } option; // `?T`
@@ -1948,6 +1949,10 @@ static void type_head(Output *text, TypeExpr *t) {
         break;
     case .tuple:
         put(text, "tuple");
+        for (Usize i = 0; i < countof(t->kind.tuple.names); i++) {
+            put(text, " ");
+            put(text, t->kind.tuple.names[i].text);
+        }
         break;
     case .option:
         put(text, "option");

@@ -246,6 +246,18 @@ export TypeList with_type(ast::TypeRef list[:], ast::TypeExpr *t) {
     return grown;
 }
 
+export typedef ast::Identifier NameList[:];
+
+export NameList with_name(ast::Identifier list[:], ast::Identifier name) {
+    Usize count = countof(list) + 1;
+    NameList grown = mem::alloc_slice(ast::Identifier, count);
+    for (Usize i = 0; i < countof(list); i += 1) {
+        grown[i] = list[i];
+    }
+    grown[countof(list)] = name;
+    return grown;
+}
+
 // A type node from its parts.
 static ast::TypeExpr *node(U32 start, const parse::Parser *p, ast::Qualifiers qualifiers, ast::TypeKind kind) {
     ast::TypeExpr value = {.span = parse::span_from(p, start), .qualifiers = qualifiers, .kind = kind};
@@ -726,20 +738,31 @@ static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
 static ast::TypeExpr *new_tuple(parse::Parser *p, U32 start) {
     parse::advance(p);
     ast::TypeRef elements[:] = {};
+    NameList names = {};
     Bool comma = false;
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        if (p->new_syntax && parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
+            lex::Token field = parse::advance(p);
+            names = with_name(names, (ast::Identifier){.text = parse::text(p, field), .span = field.span});
+            parse::advance(p);
+        }
         elements = with_type(elements, parse::type(p));
         comma = parse::accept(p, lex::comma);
         if (!comma) break;
     }
     Bool closed = parse::at(p, lex::right_paren);
     parse::expect(p, lex::right_paren, "`)` to end the tuple type");
-    if (closed && countof(elements) == 1 && !comma) {
+    if (countof(names) > 0 && countof(names) != countof(elements)) {
+        parse::error(p, parse::span_from(p, start),
+                     "a tuple type names all its elements or none: `(count: i32, ms: f64)`");
+        names = names[0:0];
+    }
+    if (closed && countof(elements) == 1 && !comma && countof(names) == 0) {
         parse::error(p, parse::span_from(p, start),
                      "a tuple of one type is written with a comma, `(T,)`; a type needs no parentheses");
     }
     ast::Qualifiers none = {};
-    return node(start, p, none, {.tuple = {.elements = elements}});
+    return node(start, p, none, {.tuple = {.elements = elements, .names = names}});
 }
 
 // `fn(A, B) -> R` and `fn_once(A) -> R`: the position is at the keyword. Without `->` the function has no result.
