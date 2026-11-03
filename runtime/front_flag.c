@@ -24,6 +24,22 @@ int32_t front_parser_fix_run(const char *const *paths, size_t count);
 int32_t front_format_accepts(const char *path);
 int32_t front_format_run(const char *const *paths, size_t count, bool write);
 
+// shim/cimport_std.cpp: the table of the sources of `std.<name>` that front::compile's loader reads (#2041).
+void smith_std_source_add(const char *name, const char *source, size_t size);
+
+// Hands the front end the source of every `.smith` library embedded in this binary, so `import std.<name>` resolves
+// outside smith's repository. Once per process.
+static void smith_front_std_sources(void) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) { // bounded by the table
+        if (smith_libraries[i].lang)
+            smith_std_source_add(smith_libraries[i].name, (const char *)smith_libraries[i].source,
+                                 smith_libraries[i].source_size);
+    }
+}
+
 constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
 constexpr size_t smith_front_name_max = 4096;
@@ -170,6 +186,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
             smith_front_sources[sources++] = args[i];
         }
     }
+    if (sources > 0) smith_front_std_sources();
     if (smith_front_header_requested(count, args)) return smith_front_header(count, args, sources, output, triple);
     bool single = compile_only && sources == 1;
     for (size_t i = 0; i < sources; i++) { // bounded by the arguments

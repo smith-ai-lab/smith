@@ -648,10 +648,10 @@ typedef struct {
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",        "lld",         "format",      "tidy",          "clangd",
-                                   "symbolize",    "hook",        "lsp",         "lldb",          "lldb_dap",
-                                   "lldb_explain", "lldb_slices", "affine",      "effects_infer", "lldb_server",
-                                   "coverage",     "cimport",     "cimport_deps"};
+    const char *const sources[] = {"clang",        "lld",         "format",       "tidy",          "clangd",
+                                   "symbolize",    "hook",        "lsp",          "lldb",          "lldb_dap",
+                                   "lldb_explain", "lldb_slices", "affine",       "effects_infer", "lldb_server",
+                                   "coverage",     "cimport",     "cimport_deps", "cimport_std"};
     const char *pch = build_shim_pch(b, config, folder);
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
@@ -942,9 +942,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject libraries[linked_count + 1];
     SmithObject runtime_io;
     build_io_object(b, config, folder, flags, &runtime_io);
-    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 18, the packed data and
+    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 19, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[3 + linked_count + 18 + 2 + 4 + 1];
+    const SmithObject *objects[3 + linked_count + 19 + 2 + 4 + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
