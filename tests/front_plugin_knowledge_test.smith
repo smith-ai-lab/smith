@@ -3,7 +3,8 @@
 // concept by adding its file and its line in plugin/knowledge/index.md; its ```smith blocks are compiled by the
 // second test, each as a module of its own.
 // smith-covers: plugin/knowledge/ runtime/docs.c front/compile.smith
-module plugin_knowledge_test;
+// It is named front_*_test so the front end's runner (tests/front_units/build.c) links it with front/.
+module front_plugin_knowledge_test;
 
 import front::compile;
 import front::roots;
