@@ -27,6 +27,10 @@ This skill ships in the smith plugin, from `.agents/skills/smith-lsp/SKILL.md` i
 
 Diagnostics at the line and column of the source (the lowering's own, such as ``printf` is a C name; write `c::printf``, and clang's), hover, go-to-definition and references across modules (from a call of a generic to the generic), document symbols, completion (`box::` offers the module's exports), signature help, inlay hints. A "did you mean" note points at the declaration in the module's `.smith`. A run-time array is shown as written: `F32[:]`, `F32[:][2]`, `F32[:][:]`, `const char[:]`, `U8[restrict :]` and `U8[const :]` in a hover, the outline and a completion, never `struct smith_array_f32_n`. Not done: a rename of an exported name edits only what clangd's index has seen; hover in an importer shows types as the generated header writes them (`int32_t`, not `I32`); completion offers `#include` edits for C names; only one `.smith` file is lowered at a time, so a project of many modules opens a little slower than the same in C.
 
+## The server for `.smith` on smith's own front end (experimental)
+
+`smith lsp --smith` speaks LSP over stdio and serves only `.smith` files, with the new front end's parser and checker: diagnostics on open and on every change (full document sync). No hover, definition or completion yet (#1892 to #1894). Register it for the `smith` file type alone; keep `smith lsp` (clangd) for C. Columns are bytes. Design: `knowledge/front-end.md`, section The language server.
+
 ## Ask it from the shell
 
 ```sh

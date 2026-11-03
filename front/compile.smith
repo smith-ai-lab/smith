@@ -8,6 +8,8 @@
 //   header(path, output, triple, roots) the C header of one file in smith's own syntax (#1621): `pub struct`s and
 //                                       `pub fn`s with a C spelling, from the declarations alone (no checker), written
 //                                       only when its bytes change; `run_header` is its C entry (`--smith-header`)
+//   diagnose(path, source, roots)       the parser's and the checker's findings on a text, as `Problems` (spans and
+//                                       messages), for the language server (#1887)
 //   run(sources, outputs, count, triple)
 //                                       what the driver calls (C: `front_compile_run`): every file of the command line
 //                                       with the default roots, diagnostics on stderr, 0 when every object was written
@@ -275,6 +277,49 @@ static const ast::Module *load_header(Str header, Bool angled) {
 
 static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
+}
+
+// One finding of `diagnose`: the bytes it covers, whether it is an error (else a warning), and its message.
+export struct Problem {
+    U32 start;
+    U32 end;
+    Bool error;
+    Str message;
+};
+
+export typedef typeof(Problem[:]) Problems;
+
+static Problems problems_of(Problems list, parse::Errors found, Bool error) {
+    for (Usize i = 0; i < countof(found); i++) {
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] =
+            (Problem){.start = found[i].span.start, .end = found[i].span.end, .error = error, .message = found[i].message};
+    }
+    return list;
+}
+
+// The findings of the parser and the checker on the text `source` of the file `path`, no file read and nothing written
+// (the language server's diagnostics, #1887): the parser's errors (and the warnings of a file in smith's own syntax),
+// or, when it parsed, the checker's errors. The module's name is not compared with its path. The findings are the
+// current allocator's.
+export Problems diagnose(Str path, Str source, roots::Roots folders) {
+    Problems list = {};
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (!today) list = problems_of(list, parsed.warnings, false);
+    list = problems_of(list, parsed.errors, true);
+    if (countof(parsed.errors) > 0) return list;
+    import_roots = folders;
+    header_folder = folder_of(path);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    for (Usize i = 0; i < checked.error_count; i++) {
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] = (Problem){.start = checked.errors[i].span.start,
+                                            .end = checked.errors[i].span.end,
+                                            .error = true,
+                                            .message = checked.errors[i].message};
+    }
+    return list;
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.

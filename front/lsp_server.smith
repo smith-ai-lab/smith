@@ -1,0 +1,228 @@
+// front::lsp_server: `smith lsp --smith`, the language server for `.smith` files on smith's own front end (#1887, slice
+// 1 of its pieces; design in knowledge/front-end.md). JSON-RPC 2.0 over stdio with LSP's `Content-Length` framing.
+//
+//   handle(body)   one message (the JSON text, no header) in, the replies out as framed messages (empty: none); what the
+//                  tests drive, with no pipe
+//   run()          C: `front_lsp_run`: reads messages from stdin until `exit` or the end of the input, writes the replies
+//                  to stdout; returns 0 after `shutdown` then `exit`, else 1
+//
+// Served: `initialize` (full document sync), `shutdown`, `exit`, `textDocument/didOpen` and `didChange` (each answered
+// by `textDocument/publishDiagnostics` from front::compile::diagnose) and `didClose` (clears them). Any other request is
+// answered with the error -32601; any other notification is ignored. A position is a line and a byte count in the line
+// (LSP asks for UTF-16 units; the two agree on ASCII). One thread, one message at a time; the memory of a message is
+// the current allocator's, which `run` makes an arena that it resets after each one.
+module front::lsp_server;
+
+import front::compile;
+import front::roots;
+import std::arena;
+import std::format;
+import std::mem;
+import <smith/json.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+constexpr c::SmithJsonLimits limits = {.depth = 64, .string_length = 1 << 24, .count = 1 << 20};
+
+// Set by `exit`, and by `shutdown` before it.
+static Bool exiting = false;
+static Bool shut_down = false;
+
+// Whether `exit` has been handled.
+export Bool finished() {
+    return exiting;
+}
+
+// The text of `body` as a framed message: the header, a blank line and the body.
+export Str frame(Str body) {
+    return as_str(format::push("Content-Length: ", countof(body), "\r\n\r\n", body));
+}
+
+// `text` as the inside of a JSON string.
+static Str escape(Str text) {
+    Str out = "";
+    for (Usize i = 0; i < countof(text); i++) {
+        char ch = text[i];
+        if (ch == '"') {
+            out = as_str(format::push(out, "\\\""));
+        } else if (ch == '\\') {
+            out = as_str(format::push(out, "\\\\"));
+        } else if (ch == '\n') {
+            out = as_str(format::push(out, "\\n"));
+        } else if (ch == '\r') {
+            out = as_str(format::push(out, "\\r"));
+        } else if (ch == '\t') {
+            out = as_str(format::push(out, "\\t"));
+        } else if ((U8)ch < 32) {
+            out = as_str(format::push(out, " "));
+        } else {
+            out = as_str(format::push(out, text[i:i + 1]));
+        }
+    }
+    return out;
+}
+
+// The member `key` of the object `from` as text, empty when it is missing or not a string.
+static Str string_of(const c::SmithJsonValue *from, const char *key) {
+    if (from == nullptr) return "";
+    const c::SmithJsonValue *member = c::smith_json_member(from, key);
+    if (member == nullptr || member->kind != c::SmithJsonKind_String) return "";
+    return member->text;
+}
+
+// The id of a request as JSON text; empty for a notification.
+static Str id_of(const c::SmithJsonValue *message) {
+    const c::SmithJsonValue *id = c::smith_json_member(message, "id");
+    if (id == nullptr) return "";
+    if (id->kind == c::SmithJsonKind_Number) return id->text;
+    if (id->kind == c::SmithJsonKind_String) return as_str(format::push("\"", escape(id->text), "\""));
+    return "null";
+}
+
+static Str reply(Str id, Str result) {
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"result\":", result, "}")));
+}
+
+static Str failure(Str id, Str code, Str message) {
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"error\":{\"code\":", code,
+                                     ",\"message\":\"", escape(message), "\"}}")));
+}
+
+// `file:///a/b.smith` as `/a/b.smith`; any other text as it is.
+static Str path_of(Str uri) {
+    Str prefix = "file://";
+    if (countof(uri) < countof(prefix)) return uri;
+    for (Usize i = 0; i < countof(prefix); i++) {
+        if (uri[i] != prefix[i]) return uri;
+    }
+    return uri[countof(prefix):countof(uri)];
+}
+
+// The 0-based line and the byte column of the byte `offset` of `source`, as `"line":L,"character":C`.
+static Str position(Str source, U32 offset) {
+    U64 line = 0;
+    U64 column = 0;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    return as_str(format::push("{\"line\":", line, ",\"character\":", column, "}"));
+}
+
+// A `textDocument/publishDiagnostics` notification for the text `source` of the document `uri`.
+export Str diagnostics(Str uri, Str source) {
+    compile::Problems found = compile::diagnose(path_of(uri), source, roots::default_roots());
+    Str list = "";
+    for (Usize i = 0; i < countof(found); i++) {
+        U32 severity = found[i].error ? 1 : 2;
+        list = as_str(format::push(list, i == 0 ? "" : ",", "{\"range\":{\"start\":", position(source, found[i].start),
+                                   ",\"end\":", position(source, found[i].end), "},\"severity\":", severity,
+                                   ",\"source\":\"smith\",\"message\":\"", escape(found[i].message), "\"}"));
+    }
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                                     escape(uri), "\",\"diagnostics\":[", list, "]}}")));
+}
+
+static Str cleared(Str uri) {
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                                     escape(uri), "\",\"diagnostics\":[]}}")));
+}
+
+// The text of the last change of a `didChange` (full sync: it is the whole document).
+static Str last_change(const c::SmithJsonValue *params) {
+    const c::SmithJsonValue *changes = c::smith_json_member(params, "contentChanges");
+    if (changes == nullptr || changes->kind != c::SmithJsonKind_Array || changes->count == 0) return "";
+    return string_of(changes->items[changes->count - 1], "text");
+}
+
+// One message in, its replies out, framed.
+export Str handle(Str body) {
+    const c::SmithJsonValue *message = nullptr;
+    c::SmithJsonError problem = {};
+    if (!c::smith_json_parse(body, limits, &message, &problem) || message->kind != c::SmithJsonKind_Object) {
+        return failure("null", "-32700", "parse error");
+    }
+    Str method = string_of(message, "method");
+    Str id = id_of(message);
+    const c::SmithJsonValue *params = c::smith_json_member(message, "params");
+    const c::SmithJsonValue *document = params == nullptr ? nullptr : c::smith_json_member(params, "textDocument");
+    if (roots::same(method, "initialize")) {
+        return reply(id, "{\"capabilities\":{\"textDocumentSync\":1},\"serverInfo\":{\"name\":\"smith lsp\"}}");
+    }
+    if (roots::same(method, "shutdown")) {
+        shut_down = true;
+        return reply(id, "null");
+    }
+    if (roots::same(method, "exit")) {
+        exiting = true;
+        return "";
+    }
+    if (roots::same(method, "textDocument/didOpen")) return diagnostics(string_of(document, "uri"), string_of(document, "text"));
+    if (roots::same(method, "textDocument/didChange")) return diagnostics(string_of(document, "uri"), last_change(params));
+    if (roots::same(method, "textDocument/didClose")) return cleared(string_of(document, "uri"));
+    if (countof(id) == 0) return "";
+    return failure(id, "-32601", as_str(format::push("method not found: ", method)));
+}
+
+// The bytes of stdin into `into`, all of them or false at the end of the input.
+static Bool read_exact(char *into, Usize count) {
+    Usize done = 0;
+    while (done < count) {
+        Isize n = c::read(0, into + done, count - done);
+        if (n <= 0) return false;
+        done += (Usize)n;
+    }
+    return true;
+}
+
+// The length a header announces: reads header lines up to the blank one; 0 at the end of the input or without one.
+static Usize read_header() {
+    Usize length = 0;
+    char line[256];
+    Usize used = 0;
+    for (Usize guard = 0; guard < 4096; guard++) {
+        char ch = 0;
+        if (!read_exact(&ch, 1)) return 0;
+        if (ch != '\n') {
+            if (used < sizeof line && ch != '\r') line[used++] = ch;
+            continue;
+        }
+        if (used == 0) return length;
+        Str name = "Content-Length:";
+        Bool matches = used > countof(name);
+        for (Usize i = 0; matches && i < countof(name); i++)
+            matches = line[i] == name[i];
+        if (matches) {
+            for (Usize i = countof(name); i < used; i++) {
+                if (line[i] >= '0' && line[i] <= '9') length = length * 10 + (Usize)(line[i] - '0');
+            }
+        }
+        used = 0;
+    }
+    return 0;
+}
+
+[[std::c_name("front_lsp_run")]] export I32 run() {
+    arena::Arena memory = arena::growing(1U << 22, nullptr);
+    defer arena::release(&memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    while (!exiting) {
+        arena::reset(&memory);
+        Usize length = read_header();
+        if (length == 0) break;
+        char body[:] = mem::alloc_slice(char, length);
+        if (!read_exact(body.data, length)) break;
+        Str out = handle(body);
+        if (countof(out) > 0) (void)c::write(1, out.data, countof(out));
+    }
+    return exiting && shut_down ? 0 : 1;
+}
