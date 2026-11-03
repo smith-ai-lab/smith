@@ -238,6 +238,11 @@ export void test_lex_a_token_records_whether_a_line_break_follows() {
     }
     test::check_equal(ending, 7);
     test::check_equal(lex::ends_statement(operators[1]), false);
+    // A C type word ends a line too: `x as void` and then `return` is two statements.
+    lex::Tokens words = tokens_of("x as void\nreturn\n");
+    test::check_equal(lex::ends_statement(words[2]), true);
+    lex::Tokens joined = tokens_of("unsigned\nint\n");
+    test::check_equal(lex::ends_statement(joined[0]), false);
 }
 
 export void test_lex_golden_the_new_syntax() {
