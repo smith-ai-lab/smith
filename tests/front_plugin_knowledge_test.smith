@@ -1,0 +1,128 @@
+// Tests of plugin/knowledge/ (#2054, piece 1 of #2026): the language as users get it, an OKF bundle that `smith docs`
+// checks, with examples in the new syntax that compile through the new front end, so they cannot go stale. Add a
+// concept by adding its file and its line in plugin/knowledge/index.md; its ```smith blocks are compiled by the
+// second test, each as a module of its own.
+// smith-covers: plugin/knowledge/ runtime/docs.c front/compile.smith
+// It is named front_*_test so the front end's runner (tests/front_units/build.c) links it with front/.
+module front_plugin_knowledge_test;
+
+import front::compile;
+import front::roots;
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Str text_of(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return "";
+    format::Chars chars = mem::view(loaded.ok, char);
+    return chars;
+}
+
+// The repository's folder: the runner's folder only links tests, lib and front, so plugin/ is found through
+// $SMITH_REPO.
+static Str repo() {
+    const char *folder = c::getenv("SMITH_REPO");
+    return folder != nullptr ? as_str(format::push(folder)) : as_str(format::push("."));
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    return countof(text) >= countof(prefix) && roots::same(text[0:countof(prefix)], prefix);
+}
+
+static Bool ends_with(Str text, Str suffix) {
+    return countof(text) > countof(suffix) && roots::same(text[countof(text) - countof(suffix):], suffix);
+}
+
+static void remove_all(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+// The bundle has no problem: `smith docs plugin` checks plugin/knowledge/ with the types its index declares.
+export void test_plugin_knowledge_smith_docs_passes() {
+    const char *self = c::getenv("SMITH_SELF");
+    Str command = as_str(format::push(self != nullptr ? self : "smith", " docs ", repo(), "/plugin"));
+    const char *const argv[4] = {"sh", "-c", command.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+    if (done != .ok) return;
+    test::check_equal(done.ok.exit.status, 0);
+}
+
+// Compiles the ```smith block that starts at `text[start:]` (after its fence line) as module `name`.
+static void compile_example(Str folder, Str name, Str source) {
+    Str src = as_str(format::push(folder, "/src"));
+    c::mkdir(src.data, 0o700);
+    Str path = as_str(format::push(src, "/", name, ".smith"));
+    write_text(path, source);
+    roots::Roots folders = {.source = src, .library = as_str(format::push(repo(), "/lib"))};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
+    // The diagnostics first, so a failure shows them.
+    if (!report.ok) (void)console::print_error(report.text, "\n");
+    test::check_equal(report.ok, true);
+}
+
+// One concept: every ```smith block of the file is compiled.
+static void compile_concept(Str file, Str name) {
+    Str text = text_of(file);
+    Str folder = as_str(format::push("/tmp/plugin_knowledge_", (I64)c::getpid(), "_", name));
+    c::mkdir(folder.data, 0o700);
+    Usize at = 0;
+    Usize number = 0;
+    while (at < countof(text)) {
+        Usize end = at;
+        while (end < countof(text) && text[end] != '\n')
+            end += 1;
+        Str line = text[at:end];
+        at = end + 1;
+        if (!starts_with(line, "```smith")) continue;
+        Usize begin = at;
+        Usize stop = begin;
+        while (at < countof(text)) {
+            Usize e = at;
+            while (e < countof(text) && text[e] != '\n')
+                e += 1;
+            Str inner = text[at:e];
+            at = e + 1;
+            if (starts_with(inner, "```")) break;
+            stop = at;
+        }
+        number += 1;
+        compile_example(folder, as_str(format::push(name, "_", number)), text[begin:stop]);
+    }
+    remove_all(folder);
+}
+
+// Every ```smith block of every concept compiles through the new front end.
+export void test_plugin_knowledge_every_example_compiles() {
+    files::EntriesResult listing = files::list(as_str(format::push(repo(), "/plugin/knowledge")));
+    test::check_equal(listing == .ok, true);
+    if (listing != .ok) return;
+    for (files::Entry entry : listing.ok) {
+        Str file = entry.name;
+        if (!ends_with(file, ".md") || roots::same(file, "index.md")) continue;
+        Str name = file[0:countof(file) - 3];
+        compile_concept(as_str(format::push(repo(), "/plugin/knowledge/", file)), name);
+    }
+}

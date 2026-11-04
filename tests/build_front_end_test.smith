@@ -1,0 +1,46 @@
+// `smith run`, `build` and `test` honor `--front-end=new` (issue #2042): the project's .smith sources go through
+// smith's own front end, as `smith cc --front-end=new` does; without the flag the old front end compiles them, and
+// objects of the two never share a cache entry. The program is `fn main() -> i32:` with an indented body, a form only
+// the new front end reads, and it exits 7. (Named build_front_end_test, not front_*: tests/front_* belong to the front
+// end's own runner.) smith-covers: smith.c runtime/front_flag.c runtime/verbs.c runtime/build_runtime.c
+module build_front_end_test;
+
+import std::test;
+import scratch;
+
+export void test_run_with_the_flag_uses_the_new_front_end() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run with =
+        scratch::sh(&p, "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith "
+                        "primes_test.smith && printf 'fn main() -> i32:\\n    return 7\\n' > main.smith && "
+                        "smith run --front-end=new");
+    defer scratch::release(with.out);
+    defer scratch::release(with.err);
+    test::check_equal(with.status, 7);
+}
+
+export void test_the_flag_is_part_of_the_cache() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    // new, then old, then new: the old front end cannot read the program, so the second build must fail (it did not
+    // reuse the object of the first), and the third must pass again.
+    scratch::Run run =
+        scratch::sh(&p, "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith "
+                        "primes_test.smith && printf 'fn main() -> i32:\\n    return 7\\n' > main.smith && "
+                        "smith run --front-end=new; first=$?; smith run >/dev/null 2>&1; second=$?; "
+                        "smith run --front-end=new; third=$?; echo \"$first $second $third\" >&2; exit 0");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("flag, plain, flag", run.err, "7 1 7");
+}
+
+export void test_another_value_of_the_flag_is_an_error() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(&p, "smith run --front-end=old");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    test::check_condition(run.status != 0);
+    scratch::expect_contains("run --front-end=old", run.err, "--front-end takes only `new`");
+}

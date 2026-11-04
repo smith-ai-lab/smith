@@ -1,0 +1,12 @@
+import <stdio.h>;
+
+fn count_if(pred: fn(i32) -> Bool, n: i32) -> i32:
+    let mut total = 0
+    for i in range(0, n):
+        if pred(i): total += 1
+    total
+
+pub fn main() -> i32:
+    # the lambda's return type is written with the capitalized Bool
+    let _ = c::printf("%d\n", count_if(fn(a: i32) -> Bool: a % 2 == 0, 10))
+    0

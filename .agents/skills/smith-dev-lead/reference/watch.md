@@ -85,6 +85,10 @@ health() {
   for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?status=completed&per_page=40" --jq '.workflow_runs[]|select(.conclusion=="failure" and (.event=="pull_request" or .event=="merge_group"))|"\(.id),\(.pull_requests[0].number // (.head_branch|capture("pr-(?<n>[0-9]+)").n? // "?"))"' 2>/dev/null); do
     id=${run%,*}; pr=${run#*,}
     seen "run$id" || continue
+    # a queue group carries every PR ahead of its own: blame the first PR in the group, the oldest one not on main
+    # (2026-11-03: one bad PR, #2074, read as a test failing on 4 PRs)
+    first=$(gh api "repos/$R/actions/runs/$id" --jq .head_sha 2>/dev/null | xargs -I{} gh api "repos/$R/compare/main...{}" --jq '.commits[0].commit.message|split("\n")[0]|capture("\\(#(?<n>[0-9]+)\\)$").n' 2>/dev/null)
+    [ -n "$first" ] && pr=$first
     gh api "repos/$R/actions/runs/$id/jobs?per_page=60" --jq '.jobs[]|select(.name!="ci" and (.conclusion=="failure" or .conclusion=="cancelled"))|"\(.id) \(.conclusion) \(.runner_name // "") \(.name|split(" ")[0])"' 2>/dev/null |
     while read -r job how runner name; do
       if [ "$how" = cancelled ]; then
@@ -168,7 +172,10 @@ check() {
     w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments?per_page=100" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for #[0-9]+')
     [ -z "$w" ] && seen "w$i" && echo "#$i is blocked with no Waits-for line (a runner's question?): answer it, name what unlocks it, or remove blocked"
   done
-  main=$(gh api "repos/$R/commits/main" --jq '"\(.sha) \((now-(.commit.committer.date|fromdateiso8601))>3600)"' 2>/dev/null)
+  # a squash commit's committer date is when the PR entered the queue, not when it merged (2026-11-03): count PRs merged
+  main=$(gh api "repos/$R/commits/main" --jq .sha 2>/dev/null)
+  last=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" --jq .total_count 2>/dev/null)
+  main="$main $([ "${last:-1}" = 0 ] && echo true)"
   [ "${main##* }" = true ] && [ "$(gh api "repos/$R/pulls?state=open&per_page=1" --jq length 2>/dev/null)" -gt 0 ] &&
     seen "stall${main%% *}" && { echo "no merge into main for an hour with PRs open; what each waits on:"; prs_state; }
   # a ticket with no real body (a split that left `x`, 2026-11-02): runners skip it and the pool idles
