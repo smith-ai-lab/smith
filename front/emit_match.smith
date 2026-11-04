@@ -5,7 +5,9 @@
 // makes `==`, `!=`, `c as u8` and `n as Color` and a zero value work with no change elsewhere; the checker keeps an
 // enumeration apart from integers. Enumerators take their values in order from 0, or the written value (an integer
 // literal); each one after a written value is the previous plus one. The enumeration goes in `Emitter.enums`.
-// A payload enumeration (`circle: Circle`) is `not emitted yet: a payload enumeration`.
+// A payload enumeration (`circle: Circle`) is the kind `variant_enum`: `{ i32 tag, [N x i64] }`, the tag the variant's
+// position, the payload stored through a pointer to the second field (#2140). `.circle(c)` builds one; `match` and
+// `if let` read the tag and bind the payload.
 //
 // `.red` (`variant`) is the enumerator's value as a constant of the enumeration expected: the hint's type, else the
 // checker's type of the node. With neither it is an Error that asks for the type.
@@ -70,14 +72,13 @@ static void add_enum(state::Emitter *e, state::EnumType made) {
 }
 
 // The values of `items`, in order from 0 or as written.
-static state::Status enumerator_values(const ast::Decl *d, state::Enumerator out[:]) {
+static state::Status enumerator_values(state::Emitter *e, const ast::Decl *d, state::Enumerator out[:]) {
     if (d->kind != .enumeration) {
         return state::fail("not an enumeration", d->span);
     }
     ast::Enumerator items[:] = d->kind.enumeration.items;
     U64 next = 0;
     for (Usize i = 0; i < countof(items); i++) {
-        if (items[i].payload != nullptr) return state::not_emitted("a payload enumeration", d->span);
         const ast::Expr *written = items[i].value;
         if (written != nullptr) {
             if (written->kind != .integer)
@@ -89,9 +90,42 @@ static state::Status enumerator_values(const ast::Decl *d, state::Enumerator out
                 return state::failf(items[i].span, items[i].name, " is declared twice");
         }
         out[i] = (state::Enumerator){.name = items[i].name, .value = next};
+        if (items[i].payload != nullptr) {
+            state::TyResult made = state::type_of(e, items[i].payload);
+            if (made == .error) {
+                return {.error = made.error};
+            }
+            out[i].has_payload = true;
+            out[i].payload = made.ok;
+        }
         next += 1;
     }
     return state::success();
+}
+
+static Bool any_payload(state::Enumerator items[:]) {
+    for (Usize i = 0; i < countof(items); i++) {
+        if (items[i].has_payload) return true;
+    }
+    return false;
+}
+
+// A payload enumeration: `{ i32 tag, [N x i64] }`, N words holding the largest payload (the tag is the variant's
+// position; the payload is read and written through a pointer to the second field).
+static state::Ty variant_enum_type(state::Emitter *e, Str name, state::Enumerator items[:]) {
+    U64 bytes = 8;
+    for (Usize i = 0; i < countof(items); i++) {
+        if (!items[i].has_payload) continue;
+        U64 size = 64;
+        if (e->target_data != nullptr) size = c::LLVMABISizeOfType(e->target_data, items[i].payload.llvm);
+        if (size > bytes) bytes = size;
+    }
+    c::LLVMTypeRef fields[2];
+    fields[0] = c::LLVMInt32TypeInContext(e->context);
+    fields[1] = c::LLVMArrayType(c::LLVMInt64TypeInContext(e->context), (U32)((bytes + 7) / 8));
+    state::Ty ty = {.kind = .variant_enum, .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false)};
+    ty.name = name;
+    return ty;
 }
 
 export state::Status enum_decl(state::Emitter *e, const ast::Decl *d) {
@@ -116,11 +150,12 @@ export state::Status enum_decl(state::Emitter *e, const ast::Decl *d) {
     }
     Usize count = countof(d->kind.enumeration.items);
     state::Enumerator items[:] = mem::alloc_slice(state::Enumerator, count + 1);
-    state::Status status = enumerator_values(d, items);
+    state::Status status = enumerator_values(e, d, items);
     if (status == .error) {
         mem::free(items.data);
         return status;
     }
+    if (any_payload(items[0:count])) base = variant_enum_type(e, name, items[0:count]);
     base.name = name;
     add_enum(e, (state::EnumType){.name = name, .ty = base, .items = items[0:count]});
     return state::success();
@@ -138,15 +173,47 @@ static Bool find_enumerator(state::Emitter *e, Usize at, Str name, U64 *value) {
     return false;
 }
 
+// The position of the enumerator `name` in the enumeration `at`.
+static Usize enumerator_index(state::Emitter *e, Usize at, Str name) {
+    state::Enumerator items[:] = e->enums[at].items;
+    for (Usize i = 0; i < countof(items); i++) {
+        if (state::same_text(items[i].name, name)) return i;
+    }
+    return 0;
+}
+
 // The enumeration `.red` stands for: the hint's type, else the checker's.
 static Bool enum_expected(state::Emitter *e, const ast::Expr *x, state::Hint hint, Usize *at) {
-    if (hint.present && hint.ty.kind == .integer && find_enum(e, hint.ty.name, at)) return true;
+    if (hint.present && (hint.ty.kind == .integer || hint.ty.kind == .variant_enum) && find_enum(e, hint.ty.name, at))
+        return true;
     state::TyResult checked = state::type_of_node(e, x);
     if (checked == .error) {
         state::free_text(checked.error.message);
         return false;
     }
-    return checked.ok.kind == .integer && find_enum(e, checked.ok.name, at);
+    return (checked.ok.kind == .integer || checked.ok.kind == .variant_enum) && find_enum(e, checked.ok.name, at);
+}
+
+static c::LLVMValueRef tag_constant(state::Emitter *e, U64 value) {
+    return c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), value, 0);
+}
+
+// The payload is on the value stack: convert it, store the tag and the payload in a slot, load the enumeration.
+static state::Status variant_finish(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    Usize at = 0;
+    if (!find_enum(e, w->ty.name, &at)) return state::fail("not an enumeration", w->span);
+    try state::convert(e, value, e->enums[at].items[w->number].payload, w->span, .initialize);
+    state::Value converted = state::pop_value(e);
+    c::LLVMValueRef slot = state::new_alloca(e, w->ty, "variant");
+    c::LLVMBuildStore(e->builder, c::LLVMConstNull(w->ty.llvm), slot);
+    c::LLVMValueRef tag = c::LLVMBuildStructGEP2(e->builder, w->ty.llvm, slot, 0, "tag");
+    c::LLVMBuildStore(e->builder, tag_constant(e, w->number), tag);
+    c::LLVMValueRef data = c::LLVMBuildStructGEP2(e->builder, w->ty.llvm, slot, 1, "payload");
+    c::LLVMBuildStore(e->builder, converted.llvm, data);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, w->ty.llvm, slot, "variant");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = w->ty});
+    return state::success();
 }
 
 // `.red`.
@@ -155,7 +222,7 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
         return state::fail("not a variant", x->span);
     }
     Str name = x->kind.variant.name;
-    if (x->kind.variant.payload != nullptr) return state::not_emitted("a payload enumeration", x->span);
+    const ast::Expr *inner = x->kind.variant.payload;
     Usize at = 0;
     if (!enum_expected(e, x, hint, &at))
         return state::failf(x->span, ".", name, " needs the enumeration it names; write the type");
@@ -163,6 +230,21 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
     if (!find_enumerator(e, at, name, &value))
         return state::failf(x->span, e->enums[at].name, " has no enumerator ", name);
     state::Ty ty = e->enums[at].ty;
+    Usize position = enumerator_index(e, at, name);
+    state::Enumerator item = e->enums[at].items[position];
+    if (inner != nullptr && !item.has_payload) return state::failf(x->span, ".", name, " has no value");
+    if (inner == nullptr && item.has_payload) return state::failf(x->span, ".", name, " needs a value");
+    if (ty.kind == .variant_enum) {
+        if (inner == nullptr) {
+            c::LLVMValueRef zero = c::LLVMConstNull(ty.llvm);
+            c::LLVMValueRef tagged = c::LLVMBuildInsertValue(e->builder, zero, tag_constant(e, position), 0, "variant");
+            state::push_value(e, (state::Value){.llvm = tagged, .ty = ty});
+            return state::success();
+        }
+        state::push_then(e, (state::Work){.then = variant_finish, .ty = ty, .number = position, .span = x->span});
+        state::push_eval(e, inner, state::hint_of(item.payload));
+        return state::success();
+    }
     state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(ty.llvm, value, 0), .ty = ty});
     return state::success();
 }
@@ -195,6 +277,26 @@ static state::Status arm_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// The payload of the variant `name` of `o`, a payload enumeration's value (undefined when its tag is another).
+static state::Value variant_payload(state::Emitter *e, state::Value o, Str name) {
+    Usize at = 0;
+    _ = find_enum(e, o.ty.name, &at);
+    state::Ty payload = e->enums[at].items[enumerator_index(e, at, name)].payload;
+    c::LLVMValueRef slot = state::new_alloca(e, o.ty, "scrutinee");
+    c::LLVMBuildStore(e->builder, o.llvm, slot);
+    c::LLVMValueRef data = c::LLVMBuildStructGEP2(e->builder, o.ty.llvm, slot, 1, "payload");
+    return (state::Value){.llvm = c::LLVMBuildLoad2(e->builder, payload.llvm, data, "payload"), .ty = payload};
+}
+
+// Binds `binding` to the payload of the variant `name` of `o`, if the variant has one and the binding is not `_`.
+static void bind_variant(state::Emitter *e, state::Value o, Str name, Str binding) {
+    if (countof(binding) == 0 || state::same_text(binding, "_")) return;
+    state::Value inner = variant_payload(e, o, name);
+    c::LLVMValueRef slot = state::new_alloca(e, inner.ty, binding);
+    c::LLVMBuildStore(e->builder, inner.llvm, slot);
+    state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
+}
+
 // An arm starts: its block, a scope, the payload bound, then its value.
 static state::Status arm_start(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
@@ -211,6 +313,8 @@ static state::Status arm_start(state::Emitter *e, const state::Work *w) {
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = first.binding, .ty = inner.ty, .address = slot});
     }
+    if (scrutinee(e, w->flag).ty.kind == .variant_enum)
+        bind_variant(e, scrutinee(e, w->flag), first.name, first.binding);
     state::Work finish = *w;
     finish.then = arm_finish;
     state::push_then(e, finish);
@@ -263,13 +367,19 @@ static c::LLVMBasicBlockRef arm_for(const ast::Stmt *s, c::LLVMBasicBlockRef blo
 // The switch over an enumeration's value.
 static state::Status switch_enum(state::Emitter *e, const ast::Stmt *s, state::Value o, Usize at,
                                  c::LLVMBasicBlockRef blocks[64]) {
+    c::LLVMValueRef subject = o.llvm;
+    c::LLVMTypeRef subject_type = o.ty.llvm;
+    if (o.ty.kind == .variant_enum) {
+        subject = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
+        subject_type = c::LLVMInt32TypeInContext(e->context);
+    }
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
     }
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     c::LLVMBasicBlockRef fallback = arm_for(s, blocks, "_");
     if (fallback == nullptr) fallback = unreachable_block(e, "match_default");
-    c::LLVMValueRef chosen = c::LLVMBuildSwitch(e->builder, o.llvm, fallback, (U32)countof(arms));
+    c::LLVMValueRef chosen = c::LLVMBuildSwitch(e->builder, subject, fallback, (U32)countof(arms));
     for (Usize i = 0; i < countof(arms); i++) {
         ast::Pattern patterns[:] = arms[i].patterns;
         for (Usize k = 0; k < countof(patterns); k++) {
@@ -278,7 +388,7 @@ static state::Status switch_enum(state::Emitter *e, const ast::Stmt *s, state::V
             U64 value = 0;
             if (!find_enumerator(e, at, p.name, &value))
                 return state::failf(p.span, e->enums[at].name, " has no enumerator ", p.name);
-            c::LLVMAddCase(chosen, c::LLVMConstInt(o.ty.llvm, value, 0), blocks[i]);
+            c::LLVMAddCase(chosen, c::LLVMConstInt(subject_type, value, 0), blocks[i]);
         }
     }
     return state::success();
@@ -330,7 +440,7 @@ static state::Status dispatch(state::Emitter *e, const state::Work *w) {
     Usize at = 0;
     if (o.ty.kind == .option)
         try branch_option(e, s, o, blocks);
-    else if (o.ty.kind == .integer && find_enum(e, o.ty.name, &at))
+    else if ((o.ty.kind == .integer || o.ty.kind == .variant_enum) && find_enum(e, o.ty.name, &at))
         try switch_enum(e, s, o, at, blocks);
     else
         return state::failf(s->span, "match needs an enumeration or an option, not ", o.ty.name);
@@ -367,4 +477,85 @@ export state::Status match_stmt(state::Emitter *e, const ast::Stmt *s) {
 // A `match` used as a value.
 export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint hint) {
     return begin(e, s, hint, true);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `if let` over an enumeration
+
+static void jump_to(state::Emitter *e, c::LLVMBasicBlockRef block) {
+    jump(e, block);
+}
+
+static state::Status let_after_then(state::Emitter *e, const state::Work *w) {
+    state::end_scope(e);
+    jump_to(e, w->blocks[1]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->flag ? w->blocks[0] : w->blocks[1]);
+    return state::success();
+}
+
+static state::Status let_branch_end(state::Emitter *e, const state::Work *w) {
+    jump_to(e, w->blocks[0]);
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    return state::success();
+}
+
+// The scrutinee is on the value stack: compare its tag with the pattern's variant, bind the payload, run the branches.
+static state::Status let_branch(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind != .if_let) {
+        return state::fail("not an if let", s->span);
+    }
+    state::Value o = state::peek_value(e);
+    if (o.ty.kind == .option) {
+        return optional::if_let_branch(e, w);
+    }
+    _ = state::pop_value(e);
+    Usize at = 0;
+    if (!(o.ty.kind == .integer || o.ty.kind == .variant_enum) || !find_enum(e, o.ty.name, &at))
+        return state::failf(s->span, "if let needs an enumeration or an option, not ", o.ty.name);
+    ast::Pattern pattern = s->kind.if_let.pattern;
+    U64 value = 0;
+    if (!find_enumerator(e, at, pattern.name, &value))
+        return state::failf(pattern.span, e->enums[at].name, " has no enumerator ", pattern.name);
+    c::LLVMValueRef tag = o.llvm;
+    c::LLVMTypeRef tag_type = o.ty.llvm;
+    if (o.ty.kind == .variant_enum) {
+        tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
+        tag_type = c::LLVMInt32TypeInContext(e->context);
+    }
+    const ast::Stmt *else_branch = s->kind.if_let.else_branch;
+    Bool has_else = else_branch != nullptr;
+    c::LLVMBasicBlockRef then_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_then");
+    c::LLVMBasicBlockRef else_block = nullptr;
+    if (has_else) else_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_else");
+    c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_end");
+    if (!has_else) else_block = end_block;
+    c::LLVMValueRef same =
+        c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, tag, c::LLVMConstInt(tag_type, value, 0), "is_variant");
+    c::LLVMBuildCondBr(e->builder, same, then_block, else_block);
+    c::LLVMPositionBuilderAtEnd(e->builder, then_block);
+    state::begin_scope(e);
+    if (o.ty.kind == .variant_enum) bind_variant(e, o, pattern.name, pattern.binding);
+    if (has_else) {
+        state::Work end = {.then = let_branch_end, .span = s->span};
+        end.blocks[0] = end_block;
+        state::push_then(e, end);
+        state::push_statement(e, else_branch);
+    }
+    state::Work after = {.then = let_after_then, .flag = has_else, .span = s->span};
+    after.blocks[0] = else_block;
+    after.blocks[1] = end_block;
+    state::push_then(e, after);
+    state::push_statement(e, s->kind.if_let.then_branch);
+    return state::success();
+}
+
+// `if let .circle(c) = s { .. } else { .. }` over an enumeration.
+export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .if_let) {
+        return state::fail("not an if let", s->span);
+    }
+    state::push_then(e, (state::Work){.then = let_branch, .stmt = s, .span = s->span});
+    state::push_eval(e, s->kind.if_let.value, state::no_hint());
+    return state::success();
 }

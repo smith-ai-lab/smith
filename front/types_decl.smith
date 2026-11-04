@@ -802,7 +802,7 @@ static void lambda_body(types::Checked *r, Pending p) {
     state.function = p.function;
     for (Usize i = 0; i < countof(params) && i < countof(function->slots); i++) {
         types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = function->slots[i].type};
-        if (!types::declare(&r->scopes, symbol)) {
+        if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
         } else {
@@ -867,7 +867,7 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
                                    .may_mut = params[i].is_new && countof(attributes) == 0 && !params[i].is_const &&
                                               !params[i].is_constexpr && !params[i].is_rest,
                                    .written = params[i].type};
-        if (!types::declare(&r->scopes, parameter)) {
+        if (!is_discard(params[i].name) && !types::declare(&r->scopes, parameter)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
                          "`; choose another name");
         }

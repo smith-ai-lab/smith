@@ -145,6 +145,20 @@ static state::TyResult type_of_header(state::Emitter *e, const ast::TypeExpr *t)
     return type_of_checked(e, symbol->type, t->span);
 }
 
+// `let Plain = fn(u64) -> u64`: a name for a type, which the checker declared as that type (#2190).
+static Bool is_alias_symbol(const types::Symbol *s) {
+    return s != nullptr && s->kind == .type_name && s->decl != nullptr && s->decl->kind == .variable;
+}
+
+// The alias's written type, emitted as any written type is (a function type has no checker form to emit yet).
+static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) {
+    const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
+    // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
+    if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
+    if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
+    return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
+}
+
 // `v.Vec`, a record of an imported module: `v` is the module's alias, and the checker declared the record under the
 // module's path (`geom::vec::Vec`).
 static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *t) {
@@ -164,6 +178,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     }
     const types::Symbol *target = types::lookup(scopes, full);
     state::free_text(full);
+    if (is_alias_symbol(target)) return type_of_alias(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
     return memory::imported_record(e, target->decl, target->type->name);
@@ -175,6 +190,10 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     Str full = state::msg(format::push(e->import_scope, path.segments[0].text));
     const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
     state::free_text(full);
+    if (is_alias_symbol(target)) {
+        *made = type_of_alias(e, target);
+        return true;
+    }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return false;
     *made = memory::imported_record(e, target->decl, target->type->name);
@@ -205,10 +224,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
             return scoped;
         if (countof(path.segments) == 1 && e->options.checked != nullptr) {
             const types::Symbol *alias = types::lookup(&e->options.checked->scopes, path.segments[0].text);
-            // `const Pair = (i32, f32)`: the name stands for the type the checker made of it.
-            if (alias != nullptr && alias->kind == .type_name && alias->decl != nullptr &&
-                alias->decl->kind == .variable)
-                return type_of_checked(e, alias->type, t->span);
+            if (is_alias_symbol(alias)) return type_of_alias(e, alias);
         }
         return memory::type_record(e, t);
     }
@@ -719,7 +735,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .empty) return state::success();
     if (s->kind == .match_stmt) return matching::match_stmt(e, s);
     if (s->kind == .for_in) return looping::for_in(e, s);
-    if (s->kind == .if_let) return optional::if_let(e, s);
+    if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
     return state::not_emitted("static_assert", s->span); // the one kind left
@@ -825,6 +841,59 @@ static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LL
     }
 }
 
+static Bool is_slice(state::Ty ty) {
+    return ty.kind == .slice;
+}
+
+// `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
+// argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
+static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, state::Ty args) {
+    c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
+    if (e->target_data != nullptr) word = c::LLVMIntPtrTypeInContext(e->context, e->target_data);
+    c::LLVMTypeRef pointer = c::LLVMPointerTypeInContext(e->context, 0);
+    c::LLVMTypeRef int32 = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMTypeRef main_params[2] = {int32, pointer};
+    c::LLVMTypeRef main_type = c::LLVMFunctionType(int32, main_params, 2, 0);
+    c::LLVMValueRef main_function = c::LLVMAddFunction(e->module, "main", main_type);
+    c::LLVMSetLinkage(main_function, c::LLVMExternalLinkage);
+    c::LLVMTypeRef length_params[1] = {pointer};
+    c::LLVMTypeRef length_type = c::LLVMFunctionType(word, length_params, 1, 0);
+    c::LLVMValueRef length = c::LLVMGetNamedFunction(e->module, "strlen");
+    if (length == nullptr) length = c::LLVMAddFunction(e->module, "strlen", length_type);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, main_function, "entry");
+    c::LLVMBasicBlockRef test = c::LLVMAppendBasicBlockInContext(e->context, main_function, "test");
+    c::LLVMBasicBlockRef step = c::LLVMAppendBasicBlockInContext(e->context, main_function, "step");
+    c::LLVMBasicBlockRef done = c::LLVMAppendBasicBlockInContext(e->context, main_function, "done");
+    c::LLVMValueRef argc = c::LLVMGetParam(main_function, 0);
+    c::LLVMValueRef argv = c::LLVMGetParam(main_function, 1);
+    c::LLVMPositionBuilderAtEnd(b, entry);
+    c::LLVMValueRef count = c::LLVMBuildSExt(b, argc, word, "count");
+    c::LLVMValueRef cells = c::LLVMBuildArrayAlloca(b, args.element->llvm, count, "cells");
+    c::LLVMValueRef index = c::LLVMBuildAlloca(b, word, "index");
+    c::LLVMBuildStore(b, c::LLVMConstInt(word, 0, 0), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, test);
+    c::LLVMValueRef at = c::LLVMBuildLoad2(b, word, index, "at");
+    c::LLVMBuildCondBr(b, c::LLVMBuildICmp(b, c::LLVMIntULT, at, count, "more"), step, done);
+    c::LLVMPositionBuilderAtEnd(b, step);
+    c::LLVMValueRef from[1] = {at};
+    c::LLVMValueRef slot = c::LLVMBuildGEP2(b, pointer, argv, from, 1, "slot");
+    c::LLVMValueRef text = c::LLVMBuildLoad2(b, pointer, slot, "text");
+    c::LLVMValueRef size = c::LLVMBuildCall2(b, length_type, length, &text, 1, "size");
+    c::LLVMValueRef cell = c::LLVMBuildGEP2(b, args.element->llvm, cells, from, 1, "cell");
+    c::LLVMBuildStore(b, text, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 0, "data"));
+    c::LLVMBuildStore(b, size, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 1, "count"));
+    c::LLVMBuildStore(b, c::LLVMBuildAdd(b, at, c::LLVMConstInt(word, 1, 0), "next"), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, done);
+    c::LLVMValueRef slice = c::LLVMGetUndef(args.llvm);
+    slice = c::LLVMBuildInsertValue(b, slice, cells, 0, "data");
+    slice = c::LLVMBuildInsertValue(b, slice, count, 1, "count");
+    c::LLVMBuildRet(b, c::LLVMBuildCall2(b, body_type, body, &slice, 1, "result"));
+    c::LLVMDisposeBuilder(b);
+}
+
 // Pass 2: the function's symbol, type and linkage.
 static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) {
@@ -858,12 +927,15 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         result = made_result.ok;
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
+    Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
     Str symbol = function_symbol(e->tree, d, name);
+    if (takes_args) symbol = state::msg(format::push("main.args"));
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
     Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
+    if (takes_args) external = false;
     if (external)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
@@ -874,6 +946,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
                                           .llvm_type = type,
                                           .result = result,
                                           .params = params[0:count]});
+    if (takes_args) add_args_entry(e, function, type, params[0]);
     return state::success();
 }
 
@@ -1395,6 +1468,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     const ast::Expr *init = d->kind.variable.init;
+    if (init != nullptr && init->kind == .type_value) return true; // `let Plain = fn(u64) -> u64`: the checker's alias
     if (init == nullptr || init->kind != .member) return false;
     types::Names names = types::member_names(init);
     if (names.count < 2) return false;

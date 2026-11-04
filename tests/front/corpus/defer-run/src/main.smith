@@ -1,0 +1,42 @@
+import c <stdio.h>
+
+# `defer` runs the deferred statement when its block exits, last deferred first, on the end of the block, `return`,
+# `break` and `continue` (issue #210). The new syntax has no `goto`, so the case of a jump out is gone.
+fn early(n: i32) -> i32:
+    defer let _ = stdio.puts("leave early")
+    if n > 0:
+        return 1
+    let _ = stdio.puts("not early")
+    0
+
+pub fn main() -> i32:
+    {
+        defer let _ = stdio.puts("first deferred, runs last")
+        defer let _ = stdio.puts("second deferred, runs first")
+        let _ = stdio.puts("body")
+    }
+    for i in range(0, 3):
+        defer let _ = stdio.printf("end of iteration %d\n", i)
+        if i == 0:
+            continue
+        if i == 2:
+            break
+        let _ = stdio.puts("middle")
+    {
+        defer {
+            let _ = stdio.puts("block a")
+            let _ = stdio.puts("block b")
+        }
+        let _ = stdio.puts("in block")
+    }
+    {
+        defer let _ = stdio.puts("outer")
+        {
+            defer let _ = stdio.puts("inner")
+            let _ = stdio.puts("nested body")
+        }
+        let _ = stdio.puts("outer body")
+    }
+    let _ = early(1)
+    let _ = early(0)
+    0
