@@ -780,8 +780,10 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
     if (countof(path.segments) == 1) binding = types::c_binding_of(c, name);
     if (countof(binding) > 0) { // a C function of a header the file imports: `printf` is `stdio.printf` (#2287)
         syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
-        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start}, .text = msg(format::push(binding, "."))};
-        types::fail_fix(c, e->span, msg(format::push("`", name, "` comes from a C header: write `", binding, ".", name, "`")), fix);
+        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start},
+                                .text = msg(format::push(binding, "."))};
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", name, "` comes from a C header: write `", binding, ".", name, "`")), fix);
         poison(c, e);
         return;
     }
