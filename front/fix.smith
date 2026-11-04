@@ -6,7 +6,7 @@
 //                                     applied: a fix (all its edits or none) is taken when no edit of it overlaps one
 //                                     already taken, else it is skipped
 //   fix::fix_file(path)               one file mended in place: parse, apply, and again until nothing applies (at most
-//                                     8 passes); the number of fixes applied, -1 when the file cannot be read or
+//                                     16 passes); the number of fixes applied, -1 when the file cannot be read or
 //                                     written
 //   fix::fix_text(file, source)       the same on a text; `store(path, text)` writes a file
 //   fix::set_loader(load)             the reader of imported modules the checker's fixes use (#1797): `fix_run` sets
@@ -139,7 +139,7 @@ export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings)
     return apply_all(source, all);
 }
 
-constexpr Usize fix_passes = 8;
+constexpr Usize fix_passes = 16;
 
 // Reads the modules a file imports (#1797): without one the checker knows nothing of an import, and the fixes that need
 // another module's types (a call written in the method form) are not made. A test supplies its own; the driver's reads
@@ -320,7 +320,7 @@ static Str hash_comments(Str source) {
 }
 
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
-// applies none (at most 8 passes). `applied` counts the fixes of all the passes.
+// applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
     header_folder = ".";
