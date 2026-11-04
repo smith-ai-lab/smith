@@ -2621,6 +2621,13 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
 static Frame open_frame(parse::Parser *p) {
     Frame frame = {.start = parse::peek(p).span.start};
     parse::advance(p);
+    if (p->layout) {
+        // Smith's own syntax: `if cond:` and the declarations indented under it.
+        frame.condition = parse::expression(p);
+        parse::expect(p, lex::colon, "`:`");
+        if (!open_layout_block(p)) parse::error(p, parse::peek(p).span, "expected an indented block after `if ...:`");
+        return frame;
+    }
     parse::expect(p, lex::kw_constexpr, "`constexpr`: `if constexpr` is the only `if` of a file");
     parse::expect(p, lex::left_paren, "`(`");
     frame.condition = parse::expression(p);
@@ -2655,20 +2662,27 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
     for (Usize step = 0; step <= countof(p->tokens); step++) {
         ast::Decl *done = nullptr;
         Bool closed = false;
+        if (depth > 0) skip_newlines(p);
         lex::TokenKind kind = parse::peek(p).kind;
         if (depth > 0 && kind == lex::end_of_file) {
             parse::error(p, parse::peek(p).span, "expected `}` to close `if constexpr`, found the end of the file");
             done = finish_frame(p, &stack[depth - 1]);
             depth -= 1;
             closed = true;
-        } else if (depth > 0 && kind == lex::right_brace) {
+        } else if (depth > 0 && (kind == (p->layout ? lex::dedent : lex::right_brace))) {
             parse::advance(p);
             Frame *top = &stack[depth - 1];
+            if (p->layout) skip_newlines(p);
             if (!top->in_else && parse::at(p, lex::kw_else)) {
                 parse::advance(p);
                 top->in_else = true;
                 if (parse::at(p, lex::kw_if)) {
                     top->chained = true;
+                } else if (p->layout) {
+                    parse::expect(p, lex::colon, "`:` or `if` after `else`");
+                    if (!open_layout_block(p)) {
+                        parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
+                    }
                 } else {
                     parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
                 }
