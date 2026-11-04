@@ -1,0 +1,7 @@
+# An import under `@when` is read only where the condition holds (#2142): the header of the other system is never
+# looked for.
+@when(target.os == .macos)
+import c <only_on_macos_no_such_header.h>
+
+pub fn check() -> i32:
+    0

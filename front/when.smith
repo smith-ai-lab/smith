@@ -19,6 +19,7 @@ import front::ast;
 import std::arena;
 import std::format;
 import std::mem;
+import target;
 
 // The systems smith builds on. Plain numbers: `linux` is a macro of the C compiler in its GNU modes.
 export typedef U32 Os;
@@ -40,6 +41,15 @@ static Bool same_text(Str a, Str b) {
         if (a[i] != b[i]) return false;
     }
     return true;
+}
+
+// The system smith runs on: the one whose headers it can read.
+export Os host() {
+    if constexpr (target::os == target::macos) {
+        return os_macos;
+    } else {
+        return os_linux;
+    }
 }
 
 export Str os_name(Os os) {
@@ -288,6 +298,17 @@ static Bool has_when(const ast::Module *m) {
                 if (find(d->kind.function.params[k].attributes) != nullptr) return true;
             }
         }
+    }
+    return false;
+}
+
+// Whether the module reads a C header on `os` through an import under `@when` (#2142): a header of another system
+// than the one smith runs on is not there to read, so the module is not checked as it is on that system.
+export Bool reads_guarded_header(const ast::Module *m, Os os) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        Bool header = d->kind == .import_c || (d->kind == .import_from && countof(d->kind.import_from.header) > 0);
+        if (header && find(d->attributes) != nullptr && exists(d->attributes, os)) return true;
     }
     return false;
 }

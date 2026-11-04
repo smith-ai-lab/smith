@@ -1024,6 +1024,19 @@ static Bool has_error(const types::Checked *r, const types::Error *e) {
 export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
                                            types::HeaderLoader headers) {
     if (!when::uses_when(m)) return check_once(m, target, load, headers);
+    // The headers of the other system are not there to read: that system's variant is not checked (#2142).
+    if (when::host() == when::os_linux && when::reads_guarded_header(m, when::os_macos)) {
+        types::Checked only = check_once(when::live_module(m, when::os_linux), target, load, headers);
+        explain_dead(&only, m, when::os_linux);
+        types_attr::check_when(&only, m);
+        return only;
+    }
+    if (when::host() == when::os_macos && when::reads_guarded_header(m, when::os_linux)) {
+        types::Checked only = check_once(when::live_module(m, when::os_macos), target, load, headers);
+        explain_dead(&only, m, when::os_macos);
+        types_attr::check_when(&only, m);
+        return only;
+    }
     types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load, headers);
     explain_dead(&mac, m, when::os_macos);
     types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load, headers);

@@ -101,10 +101,12 @@ export void test_when_a_use_with_no_live_declaration_names_the_condition() {
          "on linux: `open_window` is not declared on linux", "declared only when target.os == .macos");
 }
 
-export void test_when_on_an_import_an_enumerator_or_a_parameter_points_at_if_constexpr() {
-    says("@when(target.os == .macos)\nimport std::mem\n", "`@when` is for a function", "if constexpr");
-    says("enum Kind:\n    a\n    @when(target.os == .macos)\n    b\n", "`@when` is for a function", "if constexpr");
-    says("fn f(@when(target.os == .macos) x: i32) -> i32:\n    x\n", "`@when` is for a function", "if constexpr");
+export void test_when_on_an_import_is_clean_and_on_an_enumerator_or_a_parameter_points_at_if_constexpr() {
+    clean("@when(target.os == .macos)\nimport std.mem\n\nfn f() -> i32:\n    1\n");
+    says("enum Kind:\n    a\n    @when(target.os == .macos)\n    b\n", "`@when` is for an import, function",
+         "if constexpr");
+    says("fn f(@when(target.os == .macos) x: i32) -> i32:\n    x\n", "`@when` is for an import, function",
+         "if constexpr");
 }
 
 export void test_when_needs_one_condition_the_checker_can_read() {
