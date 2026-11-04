@@ -1411,17 +1411,18 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
 }
 
 // `[5,3]T` is `[5][3]T`; `[,3]T` is a slice of `[3]T`; `[,]T` and `[,,]T` are blocks of 2 and 3 dimensions known at run
-// time. A known size after an empty one, or a size that is not an integer literal, is not typed yet.
+// time. The sizes after the last empty one are the cell; a known size before it (`[,2,]T`) is a dimension counted at
+// run time. A size that is not an integer literal is not typed yet.
 static TypeRef build_block(Checked *r, ast::Span span, ast::ExprRef dims[:], TypeRef element) {
-    Usize empty = 0;
-    while (empty < countof(dims) && dims[empty] == nullptr)
-        empty += 1;
+    Usize empty = countof(dims);
+    while (empty > 0 && dims[empty - 1] != nullptr)
+        empty -= 1;
     TypeRef cell = element;
     for (Usize i = countof(dims); i > empty; i--) {
         const ast::Expr *size = dims[i - 1];
-        if (size == nullptr || size->kind != .integer) {
-            failf(r, span, "not yet typed: a block with a size that is not an integer literal, or an empty ",
-                  "size after a known one; write the empty sizes first, as `[,3]T`");
+        if (size->kind != .integer) {
+            failf(r, span, "not yet typed: a block with a size that is not an integer literal; write the integer, ",
+                  "for example `[,3]T`");
             return r->table.invalid;
         }
         cell = array_of(&r->table, cell, size->kind.integer.value, false);
