@@ -5,8 +5,10 @@ pub struct Pair:
     pub sized: str
 
 fn put(text: str):
-    let n = countof(text)
-    let _ = c::printf("%.*s\n", n.to(i32), text)
+    # (A `str` cannot go through a C variadic, so the characters are written one by one.)
+    for i in range(0, countof(text)):
+        let _ = c::printf("%c", text[i].to(i32))
+    let _ = c::printf("\n")
 
 pub fn main() -> i32:
     # (The old case had `table` and `names` at file scope: a global array constant of structs or strings is not
