@@ -1,0 +1,143 @@
+// Tests of `rest...` (#1821): the leftover positional arguments are gathered into a tuple, and each list of argument
+// types is its own instance.
+module front_pack_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+static parser::Parsed parse_new(Str source) {
+    return parser::parse_new("t.smith", source);
+}
+
+typedef I32 (*Run)();
+
+// Parses and checks under the arena as front_emit_option_test.smith does; emission and the JIT use the system's
+// allocator, and the arena stays alive until the function has run.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parse_new(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_kw_gather_leftovers_are_a_named_tuple() {
+    Str source = "fn info(msg: i32; ctx...) -> i32:\n"
+                 "    msg + ctx.count * 10 + ctx.ms * 100\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let n = 2\n"
+                 "    let ms = 3\n"
+                 "    info(1, count = n, ms = ms)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)321);
+}
+
+export void test_front_kw_gather_no_leftovers_is_an_empty_tuple() {
+    Str source = "fn info(msg: i32; ctx...) -> i32:\n"
+                 "    msg\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    info(7)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)7);
+}
+
+export void test_front_kw_gather_each_call_site_is_its_own_instance() {
+    Str source = "fn total(base: i32; extra...) -> i32:\n"
+                 "    base + extra.a\n"
+                 "\n"
+                 "fn total2(base: i32; extra...) -> i32:\n"
+                 "    base + extra.b\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    total(1, a = 2) + total(10, a = 20, b = 0) + total2(100, b = 200)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)333);
+}
+
+export void test_front_kw_gather_a_named_parameter_is_not_a_leftover() {
+    Str source = "fn info(msg: i32; level: i32 = 1, ctx...) -> i32:\n"
+                 "    msg + level * 1000 + ctx.n\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    info(5, level = 2, n = 6)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)2011);
+}
+
+static Usize errors_of(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parse_new(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    return checked.error_count;
+}
+
+export void test_front_pack_leftovers_are_a_tuple() {
+    Str source = "fn add(base: i32, rest...) -> i32:\n"
+                 "    base + rest.0 * 10 + rest.1 * 100\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    add(1, 2, 3)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)321);
+}
+
+export void test_front_pack_each_list_of_types_is_an_instance() {
+    Str source = "fn first(rest...) -> i32:\n"
+                 "    rest.0.to(i32)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    first(4, 'x') + first(5.0, 1)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)9);
+}
+
+export void test_front_pack_countof() {
+    Str source = "fn n(rest...) -> usize:\n"
+                 "    countof(rest)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    (n() * 100 + n(1) * 10 + n(1, 2, 3)).to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)13);
+}
+
+export void test_front_pack_a_named_argument_is_an_error() {
+    Str source = "fn f(rest...) -> i32:\n"
+                 "    1\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    f(1, x = 2)\n";
+    test::check_equal(errors_of(source) > 0, true);
+}

@@ -107,12 +107,12 @@ static Usize errors_of(Str source) {
 export void test_front_named_tuple_literal_type_and_fields_read_back() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("fn make(n: i32) -> (count: i32, ms: i64) {\n    (count = n, ms = 7)\n}\n"
-                     "pub fn count(n: i32) -> i32 {\n    let r = make(n)\n    r.count\n}\n"
-                     "pub fn ms(n: i32) -> i32 {\n    let r = make(n)\n    r.ms.to(i32)\n}\n"
-                     "pub fn typed(n: i32) -> i32 {\n    let r: (count: i32, ms: i64) = (count = n, ms = 1)\n"
-                     "    r.count + r.ms.to(i32)\n}\n"
-                     "pub fn empty(n: i32) -> i32 {\n    let u: () = ()\n    n\n}\n",
+    char *ir = ir_of("fn make(n: i32) -> (count: i32, ms: i64):\n    (count = n, ms = 7)\n"
+                     "pub fn count(n: i32) -> i32:\n    let r = make(n)\n    r.count\n"
+                     "pub fn ms(n: i32) -> i32:\n    let r = make(n)\n    r.ms.to(i32)\n"
+                     "pub fn typed(n: i32) -> i32:\n    let r: (count: i32, ms: i64) = (count = n, ms = 1)\n"
+                     "    r.count + r.ms.to(i32)\n"
+                     "pub fn empty(n: i32) -> i32:\n    let u: () = ()\n    n\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "{ i32, i64 }"), true);
@@ -169,7 +169,7 @@ export void test_front_named_tuple_identity_is_names_and_types_in_order() {
 }
 
 export void test_front_named_tuple_a_missing_name_is_an_error() {
-    test::check_equal(errors_of("fn f(r: (x: i32, y: i32)) -> i32 {\n    r.z\n}\n") > 0, true);
+    test::check_equal(errors_of("fn f(r: (x: i32, y: i32)) -> i32:\n    r.z\n") > 0, true);
 }
 
 export void test_front_named_tuple_naming_some_elements_is_a_parse_error() {
@@ -177,8 +177,8 @@ export void test_front_named_tuple_naming_some_elements_is_a_parse_error() {
     s.memory = test::memory(1U << 22);
     s.allocator = arena::allocator(&s.memory);
     mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
-    parser::Parsed a = parser::parse_new("t.smith", "fn f() -> i32 {\n    let r = (x = 1, 2)\n    0\n}\n");
-    parser::Parsed b = parser::parse_new("t.smith", "fn f(r: (x: i32, i64)) -> i32 {\n    0\n}\n");
+    parser::Parsed a = parser::parse_new("t.smith", "fn f() -> i32:\n    let r = (x = 1, 2)\n    0\n");
+    parser::Parsed b = parser::parse_new("t.smith", "fn f(r: (x: i32, i64)) -> i32:\n    0\n");
     mem::set_allocator(outside);
     test::check_equal(countof(a.errors) > 0, true);
     test::check_equal(countof(b.errors) > 0, true);

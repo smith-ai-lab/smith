@@ -856,6 +856,14 @@ export typedef const ast::Module *(*HeaderLoader)(Str header, Bool angled);
 // Gives the type of an expression (J1b's `infer`), for `typeof(a + b)` in a type; this file cannot import it (#1918).
 export typedef TypeRef (*ExprTyper)(Checked *r, const ast::Expr *e);
 
+// Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or
+// "" when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
+static Str load_failure_text = "";
+
+export void set_load_failure(Str text) {
+    load_failure_text = text;
+}
+
 export struct Options {
     Target target;
     BodyChecker bodies;   // null: bodies are not checked
@@ -1460,10 +1468,13 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
-    if (same_text(name, "Fn") && args == 1 && n == 1) {
+    Bool is_lambda = same_text(name, "Lambda");
+    if ((same_text(name, "Fn") || is_lambda) && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;
         if (!(argument->kind == .function)) {
-            failf(r, span, "`Fn` takes a function type; write `Fn(R (P1, P2))`, for example `Fn(Bool (I32, I32))`");
+            Str written = is_lambda ? "Lambda" : "Fn";
+            failf(r, span, "`", written, "` takes a function type; write `", written, "(R (P1, P2))`, for example `",
+                  written, "(Bool (I32, I32))`");
             return r->table.invalid;
         }
         return fn_value_of(&r->table, w->values[base].type);
@@ -2065,6 +2076,7 @@ export Bool is_auto_slice(const ast::TypeExpr *t) {
 // one too: its type is the named tuple of the call's leftover named arguments (#1985).
 export Bool is_auto_param(const ast::Param *p) {
     if (p->is_gather) return p->is_new && !p->is_pack;
+    if (p->is_pack) return p->is_new; // `rest...`: its type is the tuple of the leftover positional arguments
     if (p->type == nullptr || p->is_rest || p->is_pack || p->is_gather) return false;
     return is_auto_slice(p->type) || p->type->kind == .auto_type;
 }
@@ -2103,9 +2115,6 @@ static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Para
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
     if (is_template(d, list, result_type)) {
-        for (Usize i = 0; i < countof(list); i++) {
-            if (list[i].is_pack) failf(r, list[i].span, "not yet: positional packs");
-        }
         declare_template(r, d, name, list);
         return;
     }
@@ -2754,10 +2763,18 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
             if (r->options.load == nullptr) continue;
             Str prefix = prefix_of_import(d);
             if (has_prefix(list, count, prefix)) continue;
+            load_failure_text = "";
             const ast::Module *loaded =
                 r->options.load(msg(format::push(joined(path, ".")))
                                     .data); // a copy: one name is a slice of the source, with no terminator
-            if (loaded == nullptr) {
+            if (loaded == nullptr && countof(load_failure_text) > 0) {
+                if (at != m && countof(at->name.segments) > 0) {
+                    failf(r, d->span, "`", joined(at->name, "."), "` imports `", joined(path, "."),
+                          "`, which does not parse: ", load_failure_text);
+                } else {
+                    failf(r, d->span, "the module `", joined(path, "."), "` does not parse: ", load_failure_text);
+                }
+            } else if (loaded == nullptr) {
                 failf(r, d->span, "cannot find the module `", joined(path, "."), "`; check its path under the roots");
             } else if (count == countof(list)) {
                 failf(r, d->span, "more than ", countof(list), " modules are imported; the checker reads that many");

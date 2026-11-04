@@ -124,7 +124,11 @@ static Bool group_then_name(const parse::Parser *p, Usize at) {
 // `opt::maybe(Usize) x`. A call followed by a name is no expression and no declaration otherwise (#1358).
 export Bool call_type_ahead(const parse::Parser *p, Usize offset) {
     Usize last = path_last(p, offset);
-    if (last == no_path || parse::peek_at(p, last).kind != lex::name) return false;
+    if (last == no_path) return false;
+    // `Fn(U32 (void *)) f`: what the fix of a function-pointer declarator wrote.
+    Bool fn_call =
+        parse::peek_at(p, last).kind == lex::type_name && text::is(parse::text(p, parse::peek_at(p, last)), "Fn");
+    if (parse::peek_at(p, last).kind != lex::name && !fn_call) return false;
     if (last != offset && text::is(parse::text(p, parse::peek_at(p, offset)), "c")) return false;
     return group_then_name(p, last + 1);
 }
@@ -437,6 +441,14 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         lex::Token tag = parse::peek(p);
         if (!parse::accept(p, lex::name) && !parse::accept(p, lex::type_name)) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");
+        } else if (tag.kind == lex::name && text::is(parse::text(p, tag), "c") && parse::at(p, lex::colon_colon)) {
+            // `struct c::pollfd`: a C tag through the header's namespace is the type `c.pollfd`.
+            while (parse::at(p, lex::colon_colon) &&
+                   (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
+                parse::warn_separator(p, parse::advance(p));
+                parse::advance(p);
+            }
+            drop_tag_keyword(p, token, tag);
         } else if (tag.kind == lex::type_name && !parse::at(p, lex::colon_colon) && !parse::at(p, lex::left_brace) &&
                    !parse::at(p, lex::colon) && !parse::at(p, lex::semicolon)) {
             // not the declaration of the tag itself (`struct Q {`), only a use of it
@@ -467,6 +479,37 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return nullptr;
 }
 
+// The parameter list of a function-pointer declarator without the names of its parameters (`void *context` is
+// `void *`): the tokens from `first` to `last` (the `)`, not taken). `text` when no parameter has a name.
+static Str unnamed_params(const parse::Parser *p, Usize first, Usize last, Str text) {
+    Str out = "";
+    Usize from = first;
+    Usize depth = 0;
+    Bool changed = false;
+    for (Usize i = first; i <= last && i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+        if ((kind == lex::right_paren || kind == lex::right_bracket) && depth > 0) depth -= 1;
+        Bool end = i == last || (kind == lex::comma && depth == 0);
+        if (!end) continue;
+        Usize stop = i;
+        Bool named = stop >= from + 2 && p->tokens[stop - 1].kind == lex::name;
+        if (named) {
+            lex::TokenKind before = p->tokens[stop - 2].kind;
+            named = before == lex::star || before == lex::type_name || is_keyword_type(before);
+        }
+        Usize keep_end = named ? stop - 1 : stop;
+        if (keep_end > from) {
+            Str piece = p->source[p->tokens[from].span.start:p->tokens[keep_end - 1].span.end];
+            char joined[:] = format::push(out, countof(out) > 0 ? ", " : "", piece);
+            out = joined;
+        }
+        if (named) changed = true;
+        from = i + 1;
+    }
+    return changed ? out : text;
+}
+
 // The error of a function-pointer declarator, and recovery past it: the two parenthesis groups of `I32 (*f)(I32)`. The
 // fix rewrites the type and both groups, from `start`, to `Fn(I32 (I32)) f` (the name is left out when there is none).
 static void function_pointer(parse::Parser *p, U32 start) {
@@ -477,8 +520,10 @@ static void function_pointer(parse::Parser *p, U32 start) {
     Str name = "";
     Str params = "";
     U32 end = open;
+    Usize params_first = 0;
     for (Usize group = 0; group < 2 && parse::at(p, lex::left_paren); group += 1) {
         U32 inner = parse::peek(p).span.end;
+        if (group == 1) params_first = p->position + 1;
         U32 close = inner;
         Usize depth = 0;
         for (Usize i = 0; i < countof(p->tokens); i += 1) {
@@ -496,7 +541,7 @@ static void function_pointer(parse::Parser *p, U32 start) {
             parse::advance(p);
             if (depth == 0) break;
         }
-        if (group == 1) params = p->source[inner:close];
+        if (group == 1) params = unnamed_params(p, params_first, p->position - 1, p->source[inner:close]);
     }
     Str type = p->source[start:open];
     while (countof(type) > 0 && type[countof(type) - 1] == ' ') {

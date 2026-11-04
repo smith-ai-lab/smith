@@ -4030,6 +4030,72 @@ static void gather_before(types::Checked *c, Work *w, Frame f, const types::Symb
     auto_before(c, w, inner, template);
 }
 
+// The parameter written `rest...` of a template, or null (#1821).
+static const ast::Param *pack_param(ast::Param params[:]) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_pack && !params[i].is_gather) return &params[i];
+    }
+    return nullptr;
+}
+
+// Stage 0 of a call of a function with `rest...`: the leftover positional arguments become one tuple, the last
+// argument, which the pack takes as an `auto` parameter; then the call goes on as the call of a template with `auto`
+// parameters, one instance per list of argument types (#1821).
+static void pack_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    Usize fixed = countof(params) - 1; // the pack is the last parameter
+    if (&params[fixed] != pack_param(params) || countof(args) < fixed) {
+        types::failf(c, e->span, "this call passes ", countof(args), " argument", countof(args) == 1 ? "" : "s",
+                     " but `", template->name, "` takes at least ", fixed, "; `", pack_param(params)->name,
+                     "...` must be its last parameter");
+        poison(c, e);
+        return;
+    }
+    ast::ExprRef *leftover_block = expr_block(countof(args) - fixed);
+    ast::ExprRef leftovers[:] = leftover_block[0:countof(args) - fixed];
+    for (Usize i = fixed; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) {
+            types::failf(c, arg->span, "`", template->name, "` has no parameter `", arg->kind.named_arg.name,
+                         "`; a pack takes positional arguments");
+            poison(c, e);
+            return;
+        }
+        leftovers[i - fixed] = args[i];
+    }
+    ast::Expr *tuple = ast::tuple_literal(leftovers);
+    tuple->span = e->span;
+    ast::ExprRef *block = expr_block(fixed + 1);
+    ast::ExprRef all[:] = block[0:fixed + 1];
+    for (Usize k = 0; k < fixed; k++) {
+        all[k] = args[k];
+    }
+    all[fixed] = tuple;
+    ast::Expr *made = ast::call(e->kind.call.callee, all);
+    made->span = e->span;
+    types::set_method(c, e, made);
+    push(w, e, nullptr, 8);
+    Frame inner = f;
+    inner.node = made;
+    auto_before(c, w, inner, template);
+}
+
+// Stage 0 of a call of a function whose instance depends on the arguments' types: `; kw...`, `rest...` or `auto`.
+static void rewritten_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    if (template->decl->kind != .function) return;
+    ast::Param params[:] = template->decl->kind.function.params;
+    if (gather_param(params) != nullptr) {
+        gather_before(c, w, f, template);
+    } else if (pack_param(params) != nullptr) {
+        pack_before(c, w, f, template);
+    } else {
+        auto_before(c, w, f, template);
+    }
+}
+
 // Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
 static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
     const ast::Expr *e = f.node;
@@ -4038,12 +4104,8 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
-    if (gather_param(params) != nullptr) {
-        gather_before(c, w, f, template);
-        return;
-    }
-    if (has_auto_param(params)) {
-        auto_before(c, w, f, template);
+    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params)) {
+        rewritten_before(c, w, f, template);
         return;
     }
     if (countof(args) != countof(params)) {

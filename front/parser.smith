@@ -78,27 +78,6 @@ export Parsed parse(Str file, Str source) {
     return result;
 }
 
-// Which path a file takes, decided here and nowhere else (#1856; #1859 deletes it with the brace path): the layout
-// path, with `newline`, `indent` and `dedent` from lex::layout, when the file has an indented block (a file with none
-// has no
-// `:` block to read, and the layout tokens would only add `newline`s to the declaration parser, #1857, before it reads
-// them); the brace path, today's tokens, otherwise. Gives true, and the tokens with layout in `laid`, for the layout
-// path.
-static Bool takes_layout(Str source, lex::Tokens tokens, lex::Tokens *laid) {
-    lex::Lexed made = lex::layout(source, tokens);
-    if (made == .error) return false;
-    Bool indents = false;
-    for (lex::Token token : made.ok) {
-        if (token.kind == lex::indent) indents = true;
-    }
-    if (!indents) {
-        mem::free(made.ok.data);
-        return false;
-    }
-    *laid = made.ok;
-    return true;
-}
-
 static Parsed read_new(Str file, Str source, Bool braces) {
     Parsed result = {};
     result.module.file = file;
@@ -113,6 +92,7 @@ static Parsed read_new(Str file, Str source, Bool braces) {
     }
     lex::Tokens tokens = lexed.ok;
     lex::Lexed made = lex::layout(source, tokens);
+    Bool layout = false;
     if (made == .error) {
         if (!braces) {
             lex::LexError failure = made.error;
@@ -121,10 +101,12 @@ static Parsed read_new(Str file, Str source, Bool braces) {
             result.errors[0] = first;
             return result;
         }
-    } else {
+    } else if (braces) {
         mem::free(made.ok.data);
+    } else {
+        tokens = made.ok;
+        layout = true;
     }
-    Bool layout = !braces && takes_layout(source, lexed.ok, &tokens);
     parse::Parser p = parse::make(tokens, source);
     p.new_syntax = true;
     p.layout = layout;

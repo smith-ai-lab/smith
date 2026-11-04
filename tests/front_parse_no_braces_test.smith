@@ -1,0 +1,31 @@
+// The new syntax has no brace blocks (#1870 of #1859): `parser::parse_new` reads layout only, so a function or an `if`
+// body in braces is an error, and the same text in `:` blocks reads cleanly.
+module front_parse_no_braces_test;
+
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_of(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    return countof(parsed.errors);
+}
+
+export void test_a_function_body_in_braces_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(errors_of("fn f(a: i32) -> i32 {\n    a\n}\n") > 0);
+    test::check_equal(errors_of("fn f(a: i32) -> i32:\n    a\n"), (Usize)0);
+}
+
+export void test_an_if_body_in_braces_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(errors_of("fn f(a: i32) -> i32:\n    if a > 0 {\n        return 1\n    }\n    0\n") > 0);
+    test::check_equal(errors_of("fn f(a: i32) -> i32:\n    if a > 0:\n        return 1\n    0\n"), (Usize)0);
+}
