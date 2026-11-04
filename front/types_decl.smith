@@ -902,7 +902,7 @@ static void check_instances(types::Checked *r) {
     }
 }
 
-static types::TypeRef result_hook(void) {
+static types::TypeRef result_hook() {
     return state.result;
 }
 

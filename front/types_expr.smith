@@ -87,7 +87,7 @@ export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, ty
 export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
 
 // The result type of the function being checked (`nullptr` outside one); `try` reads it.
-export typedef types::TypeRef (*FunctionResult)(void);
+export typedef types::TypeRef (*FunctionResult)();
 
 export struct Hooks {
     FunctionResult function_result;
@@ -4017,6 +4017,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     push(w, callee, nullptr, 0);
 }
 
+static void try_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind == .try_expr) {
+        const ast::Expr *operand = e->kind.try_expr.operand;
+        push(w, e, f.expected, 1);
+        push(w, operand, nullptr, 0);
+    }
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -4036,9 +4045,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
     } else if (e->kind == .try_expr) {
-        const ast::Expr *operand = e->kind.try_expr.operand;
-        push(w, e, f.expected, 1);
-        push(w, operand, nullptr, 0);
+        try_before(w, f);
     } else if (e->kind == .variant) {
         some_before(w, f);
     } else if (e->kind == .stmt_expr) {
