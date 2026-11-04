@@ -161,3 +161,8 @@ export void test_front_fix_blocks_an_if_value_after_an_assignment_joins_its_line
     check("fn f():\n    n +=\n        if a:\n            1\n        else:\n            0\n    g(n)\n",
           "fn f():\n    n += if a:\n        1\n    else:\n        0\n    g(n)\n");
 }
+
+export void test_front_fix_blocks_a_case_label_keeps_its_one_colon() {
+    check("fn f() {\n    switch (x) {\n    case .a: {\n        g()\n    }\n    }\n}\n",
+          "fn f():\n    switch (x):\n    case .a:\n        g()\n");
+}

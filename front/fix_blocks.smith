@@ -182,13 +182,20 @@ static Bool multi_line_ready(lex::Tokens tokens, Brace brace) {
     return !(brace.close + 1 < countof(tokens) && !tokens[brace.close].line_break);
 }
 
+// What the `{` becomes: `:`, or nothing after the `:` of a `case .a: {` label, which already ends the header.
+static Str colon_for(lex::Tokens tokens, Usize open) {
+    Str none = "";
+    Str colon = ":";
+    return open > 0 && tokens[open - 1].kind == lex::colon ? none : colon;
+}
+
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
 // `else` follows, or the `}` alone when it ends the last statement's line).
 static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
     if (!multi_line_ready(tokens, brace)) return;
-    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, ":");
+    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon_for(tokens, brace.open));
     if (!tokens[brace.close - 1].line_break) {
         add_cut(cuts, spaces_before(source, close.span.start), close.span.end, brace.tail);
         return;
@@ -278,7 +285,7 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
         if (empty) add_cut(cuts, open.span.end, close.span.end, "");
         return;
     }
-    add_cut(cuts, before, close.span.end, as_str(format::push(":", body)));
+    add_cut(cuts, before, close.span.end, as_str(format::push(colon_for(tokens, brace.open), body)));
     if (else_next)
         add_cut(cuts, close.span.end, tokens[brace.close + 1].span.start, as_str(format::push("\n", spaces(indent))));
 }
