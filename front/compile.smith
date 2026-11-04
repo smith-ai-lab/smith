@@ -1470,7 +1470,8 @@ static Str length_includes(const ast::Module *m, Str bindings) {
         if (!used) continue;
         Str quote_open = d->kind.import_c.angled ? "<" : "\"";
         Str quote_close = d->kind.import_c.angled ? ">" : "\"";
-        lines = as_str(format::push(lines, "#include ", quote_open, name, quote_close, "\n"));
+        Str line = as_str(format::push("#include ", quote_open, name, quote_close, "\n"));
+        lines = as_str(format::push(lines, guarded(d->attributes, line, false))); // an import under `@when` (#2142)
     }
     return lines;
 }

@@ -3,7 +3,7 @@
 //
 //   find(list)                The `@when` attribute among `list`, or null.
 //   holds(cond, os, &ok)      Whether the condition is true on `os`; `ok` is false when it is not a condition this
-//                             module reads (the only forms are `target.os == .macos`, `target.os != .linux`,
+//                             module reads (the only forms are `target.os == .macos`, `target.arch != .x86_64`,
 //                             `true`, `false`, `!`, `&&`, `||`).
 //   smith_text(cond)          The condition as it is written, for messages ("" when it is not readable).
 //   c_text(cond)              The condition as a C preprocessor condition (`defined(__APPLE__)`), "" when not readable.
@@ -25,6 +25,11 @@ import target;
 export typedef U32 Os;
 export constexpr Os os_macos = 0;
 export constexpr Os os_linux = 1;
+
+// The processors: the one smith runs on is the one `target.arch` reads (the checker does not check both).
+export typedef U32 Arch;
+export constexpr Arch arch_aarch64 = 0;
+export constexpr Arch arch_x86_64 = 1;
 
 export struct Dead {
     Str name;
@@ -49,6 +54,14 @@ export Os host() {
         return os_macos;
     } else {
         return os_linux;
+    }
+}
+
+export Arch host_arch() {
+    if constexpr (target::arch == target::aarch64) {
+        return arch_aarch64;
+    } else {
+        return arch_x86_64;
     }
 }
 
@@ -98,6 +111,34 @@ static Bool os_test(const ast::Expr *e, Os *which, Bool *negated) {
     return true;
 }
 
+// `target.arch == .aarch64` or `.x86_64 != target.arch`: which processor, and whether the test is `!=`.
+static Bool arch_test(const ast::Expr *e, Arch *which, Bool *negated) {
+    if (e->kind != .binary) return false;
+    if (e->kind.binary.op != .equal && e->kind.binary.op != .not_equal) return false;
+    const ast::Expr *a = e->kind.binary.left;
+    const ast::Expr *b = e->kind.binary.right;
+    if (a == nullptr || b == nullptr) return false;
+    if (b->kind == .member) {
+        const ast::Expr *swap = a;
+        a = b;
+        b = swap;
+    }
+    if (a->kind != .member || a->kind.member.arrow || !same_text(a->kind.member.name, "arch")) return false;
+    const ast::Expr *base = a->kind.member.base;
+    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
+    if (!same_text(base->kind.name.path.segments[0].text, "target")) return false;
+    if (b->kind != .variant || b->kind.variant.payload != nullptr) return false;
+    if (same_text(b->kind.variant.name, "aarch64")) {
+        *which = arch_aarch64;
+    } else if (same_text(b->kind.variant.name, "x86_64")) {
+        *which = arch_x86_64;
+    } else {
+        return false;
+    }
+    *negated = e->kind.binary.op == .not_equal;
+    return true;
+}
+
 static Bool is_logical(const ast::Expr *e) {
     return e->kind == .binary && (e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or);
 }
@@ -134,6 +175,7 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
         Frame *f = &frames[top - 1];
         const ast::Expr *e = f->e;
         Os which = os_macos;
+        Arch arch_which = arch_aarch64;
         Bool negated = false;
         const ast::Expr *lhs = nullptr;
         const ast::Expr *rhs = nullptr;
@@ -143,6 +185,9 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
             top -= 1;
         } else if (os_test(e, &which, &negated)) {
             values[count++] = ((os == which) != negated);
+            top -= 1;
+        } else if (arch_test(e, &arch_which, &negated)) {
+            values[count++] = ((host_arch() == arch_which) != negated);
             top -= 1;
         } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
             if (f->stage == 0) {
@@ -211,6 +256,7 @@ static Str render(const ast::Expr *cond, Bool as_c) {
         }
         const ast::Expr *e = p.e;
         Os which = os_macos;
+        Arch arch_which = arch_aarch64;
         Bool negated = false;
         const ast::Expr *lhs = nullptr;
         const ast::Expr *rhs = nullptr;
@@ -227,6 +273,14 @@ static Str render(const ast::Expr *cond, Bool as_c) {
                 seq[n++] = word(negated ? msg(format::push("!", macro)) : macro);
             } else {
                 seq[n++] = word(msg(format::push("target.os ", pick(negated, "!=", "=="), " .", os_name(which))));
+            }
+        } else if (arch_test(e, &arch_which, &negated)) {
+            Str name = pick(arch_which == arch_aarch64, "aarch64", "x86_64");
+            if (as_c) {
+                Str macro = pick(arch_which == arch_aarch64, "defined(__aarch64__)", "defined(__x86_64__)");
+                seq[n++] = word(negated ? msg(format::push("!", macro)) : macro);
+            } else {
+                seq[n++] = word(msg(format::push("target.arch ", pick(negated, "!=", "=="), " .", name)));
             }
         } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
             const ast::Expr *inner = e->kind.unary.operand;
