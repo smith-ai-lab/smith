@@ -544,6 +544,75 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
+  frontend-coverage:
+    # the count of how many .smith files the new front end handles (#2073, #1885), measured on Linux (CI's machine, not
+    # a developer's Mac) on every merge to main with the smith this job builds for that commit: a push to main runs no
+    # test job, and no release job hands its smith over, so `setup-smith` builds one here (cache-warm, a few minutes).
+    # It gates nothing: it is not in `ci`'s needs, and a failure to measure is reported (`unmeasured`), never a red main.
+    # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md), and the count itself takes about 2 minutes.
+    needs: changes
+    if: ${{ github.event_name == 'push' && needs.changes.outputs.scope == 'release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install lld
+        run: sudo apt-get install -y -q lld
+      - uses: ./.github/actions/setup-smith
+      - name: Count
+        id: count
+        # never fails the job: the output is read afterwards, whatever happened
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          "$SMITH" build frontend-coverage -Dall=1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          exit 0
+      - name: Publish the number
+        if: always()
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/coverage/output.txt"
+          line=$(sed -n 's/^frontend-coverage: \([0-9][0-9]*\) of \([0-9][0-9]*\) files pass$/\1 \2/p' "$out" 2>/dev/null | tail -n 1)
+          {
+            if [ -n "$line" ]; then
+              echo "### Front-end coverage: ${line% *} of ${line#* } files pass"
+              echo
+              echo '```'
+              grep -E '^  failed at ' "$out"
+              echo '```'
+              echo
+              echo 'Top 10 causes (count, files, cause):'
+              echo '```'
+              awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+  / {print; n++} n==10 {exit}' "$out"
+              echo '```'
+            else
+              echo "### Front-end coverage: not measured"
+              echo '```'
+              tail -n 40 "$out" 2>/dev/null
+              echo '```'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+          # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
+          if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
+          else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
+      - name: Save the table
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
     # a failed Linux job still lets the macOS release out

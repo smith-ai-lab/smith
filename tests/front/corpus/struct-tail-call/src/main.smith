@@ -1,0 +1,15 @@
+import c <stdio.h>
+
+# A function whose last line is a construction `T(1)` (a capitalized name called) followed by another declaration (#2145).
+pub struct T:
+    pub a: i32
+
+fn make() -> T:
+    T(1)
+
+fn twice(t: T) -> i32:
+    t.a * 2
+
+pub fn main() -> i32:
+    let _ = stdio.printf("%d\n", twice(make()))
+    0

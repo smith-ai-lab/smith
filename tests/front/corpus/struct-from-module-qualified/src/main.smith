@@ -1,0 +1,8 @@
+import c <stdio.h>
+import words
+
+fn main() -> i32:
+    let p = words.Pair(key = "ab", value = "x")
+    let q = words.Pair("cde", "yz")
+    let _ = stdio.printf("%zu %zu %zu %zu\n", countof(p.key), countof(p.value), countof(q.key), countof(q.value))
+    return 0
