@@ -1,0 +1,60 @@
+// An assignment gives its right side the type of its target (#2129, part of #1999): `c = .none`, `b.w = .none`,
+// `xs[0] = .none` and `found = word[0:1]` for an option, as `let c: ?T = ...` and a call argument already do.
+// Each scenario is source text read by front::parser's hooks and checked by front::types_decl.
+module front_check_assign_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_of(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    return checked.error_count;
+}
+
+export void test_front_check_assign_a_variable_takes_none_and_some() {
+    test::check_equal(errors_of("pub fn f():\n"
+                                "    let mut c: ?i32 = .some(3)\n"
+                                "    c = .none\n"
+                                "    c = .some(4)\n"),
+                      (Usize)0);
+}
+
+export void test_front_check_assign_a_field_takes_none() {
+    test::check_equal(errors_of("pub struct Box:\n"
+                                "    pub w: ?i32\n"
+                                "pub fn f(b: *mut Box):\n"
+                                "    b.w = .none\n"),
+                      (Usize)0);
+}
+
+export void test_front_check_assign_an_element_takes_none() {
+    test::check_equal(errors_of("pub fn f(xs: []?i32):\n"
+                                "    xs[0] = .none\n"),
+                      (Usize)0);
+}
+
+export void test_front_check_assign_a_plain_value_converts_to_the_option() {
+    test::check_equal(errors_of("pub fn f(n: i32, word: str):\n"
+                                "    let mut c: ?i32 = .none\n"
+                                "    c = n\n"
+                                "    let mut found: ?str = .none\n"
+                                "    found = word[0:1]\n"),
+                      (Usize)0);
+}

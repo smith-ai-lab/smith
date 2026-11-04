@@ -114,6 +114,28 @@ prs_state() {
   done
 }
 
+# The front-end coverage count (#2073): CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on
+# every push to main (`unmeasured` in place of the numbers when it could not count). Wake the lead when the passed
+# count of a main commit is lower than that of the commit measured before it, naming both. Read through `gh api`: the
+# newest push runs of ci.yml on main, each one's job log; a run with no number (job skipped, unmeasured) is passed over.
+coverage() {
+  prev=
+  for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
+    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage")|.id' 2>/dev/null | head -1)
+    [ -z "$job" ] && continue
+    got=$(gh api "repos/$R/actions/jobs/$job/logs" 2>/dev/null | grep -oE 'frontend-coverage: [0-9a-f]{40} [0-9]+ [0-9]+$' | tail -1)
+    [ -z "$got" ] && continue
+    set -- $got   # frontend-coverage: sha passed total
+    # runs come newest first: $prev is the newer commit, $got the one measured before it
+    if [ -n "$prev" ]; then
+      set -- $prev; nsha=$2; npass=$3; ntotal=$4; set -- $got; osha=$2; opass=$3
+      [ "$npass" -lt "$opass" ] && seen "cov-$nsha" && echo "the front-end coverage count dropped from $opass (main $osha) to $npass of $ntotal (main $nsha): a regression; the job summary of that run has the top causes"
+      return
+    fi
+    prev=$got
+  done
+}
+
 # Only what needs the lead.
 check() {
   top=$(gh api repos/$R/issues/73 --jq '.body|split("\n")[0]' 2>/dev/null)
@@ -160,6 +182,7 @@ check() {
     done
     [ $anyopen = 1 ] && [ $live = 0 ] && seen "quiet-$(date -u +%F-%H)" && echo "the chain is quiet: no activity on any #73 focus ticket or a PR naming one for 45 minutes; start runners"
   fi
+  coverage
   # the `ci` check of main's tip, not the workflow's conclusion: a cancelled cache-warming job (warm) fails the
   # workflow while every gate passed
   sha=$(gh api "repos/$R/commits/main" --jq .sha 2>/dev/null)
@@ -221,4 +244,5 @@ done
 - **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, the oldest queued CI run, and how many tickets are claimed now, so each wake shows the whole factory The claimed count is compared with the sessions that are `working`: on 2026-11-03 it was 40 against 6.
 - **A claim gone quiet (every 15 minutes):** a `claimed` ticket with no open PR naming it and no change on the ticket for 30 minutes wakes the lead, at most once an hour per ticket. The lead checks the runner's session before releasing: a first build takes about 15 minutes and `smith check` 10 or more, with nothing on GitHub.
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
+- **The front-end coverage count (every 15 minutes, `coverage`):** CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on each push to main (#2073). The watcher reads the log of the two newest main runs that have a number through `gh api` and wakes the lead once when the passed count dropped, naming both commits. A run that logged `unmeasured` or has no such job is passed over.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.
