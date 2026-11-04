@@ -2780,7 +2780,8 @@ static Bool prefix_at(Str text, Usize at, Str prefix) {
 // Whether `word` is one a system condition is made of.
 static Bool system_word(Str word) {
     return same_text(word, "target") || same_text(word, "os") || same_text(word, "macos") || same_text(word, "linux") ||
-           same_text(word, "arch") || same_text(word, "aarch64") || same_text(word, "x86_64") || same_text(word, "true") || same_text(word, "false");
+           same_text(word, "arch") || same_text(word, "aarch64") || same_text(word, "x86_64") ||
+           same_text(word, "true") || same_text(word, "false");
 }
 
 // The condition as `@when` writes it: `target::os` is `target.os` and `target::macos` is `.macos`. Gives "" when it
