@@ -1,0 +1,106 @@
+// Tests of the compile-time `if` on a fact of the target in a body (#2277, part of #2224): `target.os` and
+// `target.static_analyzer` decide the `if` before the checker, which sees only the branch kept, on each system.
+module front_target_if_test;
+
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str format_line(Str text, Str line) {
+    char out[:] = mem::alloc_slice(char, countof(text) + countof(line) + 1);
+    for (Usize i = 0; i < countof(text); i++) {
+        out[i] = text[i];
+    }
+    for (Usize i = 0; i < countof(line); i++) {
+        out[countof(text) + i] = line[i];
+    }
+    out[countof(text) + countof(line)] = '\n';
+    return out;
+}
+
+// The errors of `source` (smith's own syntax, or today's when it starts with `module`), one per line.
+static Str checked(Str source, Bool today) {
+    parser::Parsed p = today ? parser::parse("t.smith", source) : parser::parse_new("t.smith", source);
+    Str text = "";
+    for (Usize i = 0; i < countof(p.errors); i++)
+        text = format_line(text, p.errors[i].message);
+    if (countof(p.errors) > 0) return text;
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    for (Usize i = 0; i < r.error_count; i++)
+        text = format_line(text, r.errors[i].message);
+    return text;
+}
+
+static void expect(Str source, Bool today, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = checked(source, today);
+    if (countof(needle) == 0) {
+        Str none = "";
+        test::check_equal(errors, none);
+    } else {
+        test::check_condition(has(errors, needle));
+    }
+}
+
+export void test_front_target_if_the_branch_not_kept_is_not_checked() {
+    expect("fn f(x: i32) -> i32:\n    if target.static_analyzer:\n        return nothing_here(x)\n    x\n", false, "");
+    expect("fn f(x: i32) -> i32:\n    if !target.static_analyzer:\n        return x\n    else:\n        return "
+           "nothing_here(x)\n",
+           false, "");
+}
+
+export void test_front_target_if_the_branch_kept_is_checked() {
+    expect("fn f(x: i32) -> i32:\n    if !target.static_analyzer:\n        return nothing_here(x)\n    x\n", false,
+           "nothing_here");
+}
+
+export void test_front_target_if_on_the_os_checks_each_branch_on_its_system() {
+    expect("fn f() -> i32:\n    if target.os == .macos:\n        return 1\n    else:\n        return 2\n", false, "");
+    expect("fn f() -> i32:\n    if target.os == .macos:\n        return mac_only()\n    return 2\n", false,
+           "on macos: ");
+    expect("fn f() -> i32:\n    if target.os != .macos:\n        return linux_only()\n    return 2\n", false,
+           "on linux: ");
+}
+
+export void test_front_target_if_a_run_time_condition_keeps_both_branches() {
+    expect("fn f(x: i32) -> i32:\n    if x > 0:\n        return nothing_here(x)\n    x\n", false, "nothing_here");
+}
+
+export void test_front_target_if_constexpr_in_todays_syntax_keeps_one_branch() {
+    expect("module t;\nBool f(Bool c) {\n    if constexpr (target::static_analyzer) {\n"
+           "        return nothing_here(c);\n    } else {\n        return c;\n    }\n}\n",
+           true, "");
+}
+
+export void test_front_target_if_on_the_arch_keeps_one_branch() {
+    expect("fn f() -> i32:\n    if target.arch == .aarch64:\n        return 1\n    else if target.arch == .x86_64:\n"
+           "        return 2\n    return 3\n",
+           false, "");
+}
+
+export void test_front_target_if_a_condition_on_target_that_cannot_be_decided_is_an_error() {
+    expect("fn f() -> i32:\n    if target.os == .windows:\n        return 1\n    return 2\n", false,
+           "a condition on `target` is decided at compile time");
+    expect("fn f(n: i32) -> i32:\n    if target.static_analyzer || n > 0:\n        return 1\n    return 2\n", false,
+           "a condition on `target` is decided at compile time");
+}

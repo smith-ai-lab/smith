@@ -546,6 +546,14 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
+    // A condition about the target that `when::live_module` did not decide (#2277); a local named `target` is not one.
+    if (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr) {
+        types::failf(r, test->span,
+                     "a condition on `target` is decided at compile time and this one cannot be: write it with "
+                     "`target.os == .macos` (or `.linux`), `target.arch == .aarch64` (or `.x86_64`), "
+                     "`target.static_analyzer`, `!`, `&&`, `||`, `true` and `false`");
+        return;
+    }
     if (is_constexpr) {
         not_yet(r, s, "if constexpr in a body");
         return;
@@ -1095,20 +1103,26 @@ export types::Checked check_module_headers(const ast::Module *m, types::Target t
     if (!when::uses_when(m)) return check_once(m, target, load, headers);
     // The headers of the other system are not there to read: that system's variant is not checked (#2142).
     if (when::host() == when::os_linux && when::reads_guarded_header(m, when::os_macos)) {
-        types::Checked only = check_once(when::live_module(m, when::os_linux), target, load, headers);
+        const ast::Module *live = when::live_module(m, when::os_linux);
+        types::Checked only = check_once(live, target, load, headers);
         explain_dead(&only, m, when::os_linux);
         types_attr::check_when(&only, m);
+        only.module = live;
         return only;
     }
     if (when::host() == when::os_macos && when::reads_guarded_header(m, when::os_linux)) {
-        types::Checked only = check_once(when::live_module(m, when::os_macos), target, load, headers);
+        const ast::Module *live = when::live_module(m, when::os_macos);
+        types::Checked only = check_once(live, target, load, headers);
         explain_dead(&only, m, when::os_macos);
         types_attr::check_when(&only, m);
+        only.module = live;
         return only;
     }
-    types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load, headers);
+    const ast::Module *mac_live = when::live_module(m, when::os_macos);
+    types::Checked mac = check_once(mac_live, target, load, headers);
     explain_dead(&mac, m, when::os_macos);
-    types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load, headers);
+    const ast::Module *lin_live = when::live_module(m, when::os_linux);
+    types::Checked lin = check_once(lin_live, target, load, headers);
     explain_dead(&lin, m, when::os_linux);
     Bool only_lin[:] = mem::alloc_slice(Bool, lin.error_count);
     for (Usize i = 0; i < lin.error_count; i++)
@@ -1125,7 +1139,13 @@ export types::Checked check_module_headers(const ast::Module *m, types::Target t
         types::add_error(&mac, found);
     }
     types_attr::check_when(&mac, m);
-    return mac;
+    mac.module = mac_live;
+    if (when::host() == when::os_macos) return mac;
+    // The emitter emits the variant of the system smith runs on: its nodes are the ones that variant's check typed.
+    lin.errors = mac.errors;
+    lin.error_count = mac.error_count;
+    lin.module = lin_live;
+    return lin;
 }
 
 // Checks a whole module, reading the modules it imports with `load` (#1677): `import a.b as m` makes `m.name` the

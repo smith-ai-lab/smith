@@ -4,18 +4,23 @@
 //   find(list)                The `@when` attribute among `list`, or null.
 //   holds(cond, os, &ok)      Whether the condition is true on `os`; `ok` is false when it is not a condition this
 //                             module reads (the only forms are `target.os == .macos`, `target.os != .linux`,
-//                             `true`, `false`, `!`, `&&`, `||`).
+//                             `target.static_analyzer` (false: the new front end is never clang's analyzer),
+//                             `true`, `false`, `!`, `&&`, `||`; today's `target::os == target::macos` too).
 //   smith_text(cond)          The condition as it is written, for messages ("" when it is not readable).
 //   c_text(cond)              The condition as a C preprocessor condition (`defined(__APPLE__)`), "" when not readable.
 //   name_of(d)                The name a declaration declares, "" when it declares none.
-//   live_module(m, os)        The module as it is on `os`: a declaration or a field whose `@when` is false is gone.
-//                             The same module when nothing has a `@when`.
+//   live_module(m, os)        The module as it is on `os`: a declaration or a field whose `@when` is false is gone,
+//                             and an `if` of a body whose condition is about the target keeps one branch (#2277): the
+//                             checker and the emitter never see the other. The same module when nothing changes.
+//   uses_when(m)              Whether `live_module` changes anything on some system.
+//   about_target(cond)        Whether a condition names `target`: one `live_module` did not decide is an error.
 //   dead_names(m, os)         The names of the declarations that are gone on `os`, with their conditions.
 //
 // No recursion: the walks over a condition have an explicit stack of at most 32 entries (deeper is not readable).
 module front::when;
 
 import front::ast;
+import front::ast_clone;
 import std::arena;
 import std::format;
 import std::mem;
@@ -65,37 +70,87 @@ export const ast::Attribute *find(ast::Attribute list[:]) {
     return nullptr;
 }
 
-// `target.os`.
-static Bool is_target_os(const ast::Expr *e) {
+// Set when `holds` reads a fact of the target (`target.os`, `target.static_analyzer`), so that `decides` keeps a branch
+// only for a condition about the target.
+static Bool read_target = false;
+
+// `target.<fact>`, or `target::<fact>` in today's syntax.
+static Bool is_target(const ast::Expr *e, Str fact) {
+    if (e == nullptr) return false;
+    if (e->kind == .name) {
+        if (countof(e->kind.name.path.segments) != 2) return false;
+        return same_text(e->kind.name.path.segments[0].text, "target") &&
+               same_text(e->kind.name.path.segments[1].text, fact);
+    }
     if (e->kind != .member || e->kind.member.arrow) return false;
-    if (!same_text(e->kind.member.name, "os")) return false;
+    if (!same_text(e->kind.member.name, fact)) return false;
     const ast::Expr *base = e->kind.member.base;
     if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
     return same_text(base->kind.name.path.segments[0].text, "target");
 }
 
-// `target.os == .macos` or `.linux != target.os`: which system, and whether the test is `!=`.
-static Bool os_test(const ast::Expr *e, Os *which, Bool *negated) {
-    if (e->kind != .binary) return false;
-    if (e->kind.binary.op != .equal && e->kind.binary.op != .not_equal) return false;
+// The system `.macos` or `target::macos` names.
+static Bool system_named(const ast::Expr *e, Os *which) {
+    Bool mac = is_target(e, "macos");
+    Bool lin = is_target(e, "linux");
+    if (e->kind == .variant && e->kind.variant.payload == nullptr) {
+        mac = same_text(e->kind.variant.name, "macos");
+        lin = same_text(e->kind.variant.name, "linux");
+    }
+    if (mac) *which = os_macos;
+    if (lin) *which = os_linux;
+    return mac || lin;
+}
+
+// `target.<fact> == <value>` or `<value> != target.<fact>`: the value side, and whether the test is `!=`; null when
+// `e` is no such test.
+static const ast::Expr *fact_test(const ast::Expr *e, Str fact, Bool *negated) {
+    if (e->kind != .binary) return nullptr;
+    if (e->kind.binary.op != .equal && e->kind.binary.op != .not_equal) return nullptr;
     const ast::Expr *a = e->kind.binary.left;
     const ast::Expr *b = e->kind.binary.right;
-    if (a == nullptr || b == nullptr) return false;
-    if (b->kind == .member) {
+    if (a == nullptr || b == nullptr) return nullptr;
+    if (is_target(b, fact)) {
         const ast::Expr *swap = a;
         a = b;
         b = swap;
     }
-    if (!is_target_os(a) || b->kind != .variant || b->kind.variant.payload != nullptr) return false;
-    if (same_text(b->kind.variant.name, "macos")) {
-        *which = os_macos;
-    } else if (same_text(b->kind.variant.name, "linux")) {
-        *which = os_linux;
+    if (!is_target(a, fact)) return nullptr;
+    *negated = e->kind.binary.op == .not_equal;
+    return b;
+}
+
+// `target.os == .macos` or `.linux != target.os`: which system, and whether the test is `!=`.
+static Bool os_test(const ast::Expr *e, Os *which, Bool *negated) {
+    const ast::Expr *b = fact_test(e, "os", negated);
+    return b != nullptr && system_named(b, which);
+}
+
+// `.aarch64` or `target::aarch64`, `.x86_64` or `target::x86_64`.
+static Bool arch_named(const ast::Expr *e, Bool *arm) {
+    Bool aarch64 = is_target(e, "aarch64");
+    Bool x86_64 = is_target(e, "x86_64");
+    if (e->kind == .variant && e->kind.variant.payload == nullptr) {
+        aarch64 = same_text(e->kind.variant.name, "aarch64");
+        x86_64 = same_text(e->kind.variant.name, "x86_64");
+    }
+    *arm = aarch64;
+    return aarch64 || x86_64;
+}
+
+// `target.arch == .aarch64` or `.x86_64 != target.arch`: whether it names aarch64, and whether the test is `!=`.
+static Bool arch_test(const ast::Expr *e, Bool *arm, Bool *negated) {
+    const ast::Expr *b = fact_test(e, "arch", negated);
+    return b != nullptr && arch_named(b, arm);
+}
+
+// Whether smith runs on aarch64: the architecture of the system `host` names (no cross compiles yet).
+static Bool host_arm() {
+    if constexpr (target::arch == target::aarch64) {
+        return true;
     } else {
         return false;
     }
-    *negated = e->kind.binary.op == .not_equal;
-    return true;
 }
 
 static Bool is_logical(const ast::Expr *e) {
@@ -135,6 +190,7 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
         const ast::Expr *e = f->e;
         Os which = os_macos;
         Bool negated = false;
+        Bool arm = false;
         const ast::Expr *lhs = nullptr;
         const ast::Expr *rhs = nullptr;
         Bool is_and = false;
@@ -143,6 +199,15 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
             top -= 1;
         } else if (os_test(e, &which, &negated)) {
             values[count++] = ((os == which) != negated);
+            read_target = true;
+            top -= 1;
+        } else if (arch_test(e, &arm, &negated)) {
+            values[count++] = ((host_arm() == arm) != negated);
+            read_target = true;
+            top -= 1;
+        } else if (is_target(e, "static_analyzer")) {
+            values[count++] = false; // the new front end never runs under clang's analyzer (#2277)
+            read_target = true;
             top -= 1;
         } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
             if (f->stage == 0) {
@@ -175,6 +240,77 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
     }
     *ok = count == 1;
     return values[0];
+}
+
+// Whether `cond` names `target` anywhere (`target.x`, `target::x`, `target` alone), through `!`, `-`, the binary
+// operators and members; at most 32 pending nodes, deeper is not looked at.
+export Bool about_target(const ast::Expr *cond) {
+    const ast::Expr *stack[32];
+    Usize top = 0;
+    if (cond != nullptr) stack[top++] = cond;
+    while (top > 0) {
+        const ast::Expr *e = stack[--top];
+        if (e->kind == .name) {
+            if (countof(e->kind.name.path.segments) > 0 && same_text(e->kind.name.path.segments[0].text, "target")) {
+                return true;
+            }
+        } else if (e->kind == .member) {
+            if (e->kind.member.base != nullptr) stack[top++] = e->kind.member.base;
+        } else if (e->kind == .unary) {
+            if (e->kind.unary.operand != nullptr) stack[top++] = e->kind.unary.operand;
+        } else if (e->kind == .binary && top + 2 <= 32) {
+            if (e->kind.binary.left != nullptr) stack[top++] = e->kind.binary.left;
+            if (e->kind.binary.right != nullptr) stack[top++] = e->kind.binary.right;
+        }
+        if (top >= 31) return false;
+    }
+    return false;
+}
+
+// Whether `cond` is known on `os` and is about the target; `*value` is then what it is (#2277). A condition of
+// literals only (`if true:`) is left to the checker.
+static Bool decides(const ast::Expr *cond, Os os, Bool *value) {
+    read_target = false;
+    Bool ok = false;
+    *value = holds(cond, os, &ok);
+    return ok && read_target;
+}
+
+// The system `choose` decides for, and whether it replaced an `if` since it was set.
+static Os choosing_os = os_macos;
+static Bool chose = false;
+
+// A compile-time `if` is the branch it keeps (an empty block when that is a missing `else`); any other statement is
+// itself.
+static const ast::Stmt *choose(const ast::Stmt *s) {
+    if (s->kind != .if_stmt) return s;
+    Bool value = false;
+    if (!decides(s->kind.if_stmt.condition, choosing_os, &value)) return s;
+    chose = true;
+    const ast::Stmt *kept = value ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
+    if (kept != nullptr) return kept;
+    ast::StmtRef none[:] = {};
+    ast::Stmt *empty = ast::block(none);
+    empty->span = s->span;
+    return empty;
+}
+
+// The function with each compile-time `if` of its body replaced by the branch it keeps on `os` (#2277): a copy, or
+// `d` itself when its body has none (and any other declaration).
+static const ast::Decl *decided(const ast::Decl *d, Os os) {
+    if (d->kind != .function || d->kind.function.body == nullptr) return d;
+    choosing_os = os;
+    chose = false;
+    ast::Decl *copy = ast_clone::clone_decl_choosing(d, choose);
+    if (!chose) return d;
+    return copy;
+}
+
+static Bool has_body_ifs(const ast::Module *m) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        if (decided(m->decls[i], host()) != m->decls[i]) return true;
+    }
+    return false;
 }
 
 // One piece of a rendering still to write: an expression, or the text that goes between.
@@ -212,6 +348,7 @@ static Str render(const ast::Expr *cond, Bool as_c) {
         const ast::Expr *e = p.e;
         Os which = os_macos;
         Bool negated = false;
+        Bool arm = false;
         const ast::Expr *lhs = nullptr;
         const ast::Expr *rhs = nullptr;
         Bool is_and = false;
@@ -228,6 +365,16 @@ static Str render(const ast::Expr *cond, Bool as_c) {
             } else {
                 seq[n++] = word(msg(format::push("target.os ", pick(negated, "!=", "=="), " .", os_name(which))));
             }
+        } else if (arch_test(e, &arm, &negated)) {
+            if (as_c) {
+                Str macro = pick(arm, "defined(__aarch64__)", "defined(__x86_64__)");
+                seq[n++] = word(negated ? msg(format::push("!", macro)) : macro);
+            } else {
+                seq[n++] = word(
+                    msg(format::push("target.arch ", pick(negated, "!=", "=="), " .", pick(arm, "aarch64", "x86_64"))));
+            }
+        } else if (is_target(e, "static_analyzer")) {
+            seq[n++] = word(as_c ? "defined(__clang_analyzer__)" : "target.static_analyzer");
         } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
             const ast::Expr *inner = e->kind.unary.operand;
             seq[n++] = word("!");
@@ -314,7 +461,7 @@ export Bool reads_guarded_header(const ast::Module *m, Os os) {
 }
 
 export Bool uses_when(const ast::Module *m) {
-    return has_when(m);
+    return has_when(m) || has_body_ifs(m);
 }
 
 // Pushes `list` on the stack of declarations still to read, last first so that the first comes off first.
@@ -350,7 +497,7 @@ static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
 }
 
 export const ast::Module *live_module(const ast::Module *m, Os os) {
-    if (!has_when(m)) return m;
+    Bool changed = has_when(m);
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = *m;
     ast::DeclRef none[:] = {};
@@ -360,6 +507,11 @@ export const ast::Module *live_module(const ast::Module *m, Os os) {
         const ast::Decl *d = flat[i];
         if (!exists(d->attributes, os)) continue;
         ast::DeclRef kept = flat[i];
+        const ast::Decl *chosen = decided(d, os);
+        if (chosen != d) {
+            changed = true;
+            kept = ast::new_decl(*chosen);
+        }
         if (d->kind == .record) {
             ast::FieldDecl fields[:] = {};
             for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
@@ -374,6 +526,7 @@ export const ast::Module *live_module(const ast::Module *m, Os os) {
         copy->decls = mem::realloc(copy->decls, countof(copy->decls) + 1);
         copy->decls[countof(copy->decls) - 1] = kept;
     }
+    if (!changed) return m;
     return copy;
 }
 
