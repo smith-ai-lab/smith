@@ -205,6 +205,8 @@ export Bool starts_new_type(const parse::Parser *p, Usize offset) {
         at += 1;
         if (depth == 0) break;
     }
+    // A name on the next line starts the next declaration (`let a = [1, 2]` then `let b`), not the element type.
+    if (at > offset && parse::peek_at(p, at - 1).line_break) return false;
     lex::TokenKind after = parse::peek_at(p, at).kind;
     return after == lex::star || after == lex::question || after == lex::left_bracket || after == lex::left_paren ||
            after == lex::kw_fn || after == lex::kw_fn_once || after == lex::kw_type || after == lex::type_name ||

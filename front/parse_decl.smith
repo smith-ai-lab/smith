@@ -1228,6 +1228,15 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
     return true;
 }
 
+// The index of the `;` of `__asm__("sym");` at token `at` (the label that renames a C symbol), 0 when there is none.
+static Usize asm_label_end(const parse::Parser *p, Usize at) {
+    if (at + 4 >= countof(p->tokens)) return 0;
+    if (p->tokens[at].kind != lex::name || !same_text(parse::text(p, p->tokens[at]), "__asm__")) return 0;
+    if (p->tokens[at + 1].kind != lex::left_paren || p->tokens[at + 2].kind != lex::string) return 0;
+    if (p->tokens[at + 3].kind != lex::right_paren || p->tokens[at + 4].kind != lex::semicolon) return 0;
+    return at + 4;
+}
+
 // `R f(A a) { ... }` is `fn f(a: A) -> R { ... }` (no `-> void`); the parameters are the tokens `open` to `close`. A
 // prototype, and a head with a parameter that has no mechanical fix, are a warning with no edits.
 static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize open, Usize close, Bool has_body) {
@@ -1240,6 +1249,13 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     // `extern void f(A a);` is `extern fn f(a: A)`: the linker provides the body, so the `;` goes (#2224).
     Bool prototype =
         !has_body && pre->is_extern && close + 1 < countof(p->tokens) && p->tokens[close + 1].kind == lex::semicolon;
+    // `extern T f(A a) __asm__("sym");` renames the C symbol: `extern @c_name("sym") fn f(a: A)` (#2224).
+    Usize asm_end = asm_label_end(p, close + 1);
+    Str symbol = "";
+    if (!has_body && pre->is_extern && asm_end > 0) {
+        prototype = true;
+        symbol = parse::text(p, p->tokens[close + 3]);
+    }
     Bool fixable = new_parameters(p, open, close, &params) && (has_body || prototype);
     if (pre->is_constexpr && pre->constexpr_end > head.type_start) fixable = false;
     if (!fixable) {
@@ -1252,10 +1268,15 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     }
     Str result = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str written = as_str(format::push("fn ", name, "(", params, ")"));
+    if (countof(symbol) > 0) written = as_str(format::push("@c_name(", symbol, ") ", written));
     if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, end, written));
-    if (prototype) edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
+    if (prototype && asm_end > 0) {
+        edits = with_edit(edits, edit(p->tokens[close].span.end, p->tokens[asm_end].span.end, ""));
+    } else if (prototype) {
+        edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
+    }
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");
