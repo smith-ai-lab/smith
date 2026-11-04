@@ -261,7 +261,11 @@ static const ast::Module *load_embedded(Str dotted) {
     Str path = as_str(format::push("lib/std/", name, ".smith"));
     Str source = found[0:size];
     parser::Parsed parsed = starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
-    if (countof(parsed.errors) > 0) return nullptr;
+    if (countof(parsed.errors) > 0) {
+        types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
+                                                    parsed.errors[0].message)));
+        return nullptr;
+    }
     ast::Identifier parts[:] = {};
     parts = mem::realloc(parts, 2);
     Str lead = "std";
@@ -298,7 +302,11 @@ static const ast::Module *load_module(const char *dotted) {
         Str source = chars;
         parser::Parsed parsed =
             starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
-        if (countof(parsed.errors) > 0) return nullptr;
+        if (countof(parsed.errors) > 0) {
+            types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
+                                                        parsed.errors[0].message)));
+            return nullptr;
+        }
         if (countof(name_module(&parsed.module, path, import_roots)) > 0) return nullptr;
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
