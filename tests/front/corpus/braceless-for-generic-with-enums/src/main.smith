@@ -1,0 +1,11 @@
+import finder
+import c <stdio.h>
+
+# A for body holding a generic call, in a module whose import brings option's enum (#462).
+fn show(T: type, value: T):
+    let _ = stdio.printf("%d\n", value.to(i32))
+
+pub fn main() -> i32:
+    for i in range(0, 3):
+        show(i32, i.to(i32))
+    0

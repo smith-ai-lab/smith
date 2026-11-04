@@ -1,0 +1,8 @@
+import c <stdio.h>
+import shapes
+import units
+
+fn main() -> i32:
+    let room: shapes.Rect = shapes.room(3, 4)
+    let _ = stdio.printf("%u cm2, %u per meter\n", shapes.area_cm2(room), units.to_centimeters(1))
+    return 0

@@ -1,0 +1,5 @@
+import <stdio.h>;
+
+pub fn main() -> i32:
+    let _ = c::printf("main stays main\n")
+    0

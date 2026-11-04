@@ -1,0 +1,9 @@
+import <stdio.h>;
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32:
+    f(x)
+
+pub fn main() -> i32:
+    let r = apply(fn(a): a + 1, 4)
+    let _ = c::printf("%d\n", r)
+    0
