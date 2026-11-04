@@ -1,0 +1,5 @@
+# A pointer to a slice spells as a pointer to the slice's struct.
+pub fn take_line(text: *mut []char, line: *mut []char) -> bool:
+    line.* = text.*[0:1]
+    text.* = text.*[1:]
+    countof(text.*) > 0

@@ -43,31 +43,30 @@ static void expect(Str before, Str after, Usize applied) {
 }
 
 export void test_front_fix_mut_an_assigned_local_gets_mut() {
-    expect("fn f() {\n    total := 0\n    total = total + 1\n}\n",
-           "fn f() {\n    mut total := 0\n    total = total + 1\n}\n", 1);
+    expect("fn f():\n    let total = 0\n    total = total + 1\n",
+           "fn f():\n    let mut total = 0\n    total = total + 1\n", 1);
 }
 
 export void test_front_fix_mut_an_assigned_parameter_gets_mut() {
-    expect("fn f(n: i32) {\n    n = 2\n}\n", "fn f(mut n: i32) {\n    n = 2\n}\n", 1);
+    expect("fn f(n: i32):\n    n = 2\n", "fn f(mut n: i32):\n    n = 2\n", 1);
 }
 
 export void test_front_fix_mut_a_pointer_written_through_becomes_mut() {
-    expect("fn f(p: *i32) {\n    p.* = 1\n}\n", "fn f(p: *mut i32) {\n    p.* = 1\n}\n", 1);
+    expect("fn f(p: *i32):\n    p.* = 1\n", "fn f(p: *mut i32):\n    p.* = 1\n", 1);
 }
 
 export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
-    expect("fn f() {\n    x := 1\n    p := &x\n    p.* = 2\n}\n",
-           "fn f() {\n    mut x := 1\n    p := &x\n    p.* = 2\n}\n", 1);
+    expect("fn f():\n    let x = 1\n    let p = &x\n    p.* = 2\n",
+           "fn f():\n    let mut x = 1\n    let p = &x\n    p.* = 2\n", 1);
 }
 
 export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
-    expect("fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n",
-           "fn f(p: *mut i32) {\n    mut n := 0\n    n = 2\n    p.* = n\n}\n", 0);
+    expect("fn f(p: *mut i32):\n    let mut n = 0\n    n = 2\n    p.* = n\n",
+           "fn f(p: *mut i32):\n    let mut n = 0\n    n = 2\n    p.* = n\n", 0);
 }
 
-// A C function-pointer declarator (#1743): the fix writes the function value as `Fn(R (A))`, then the name. The rest of
-// the declaration (`;`, `name: T`) has fixes of its own (#1744, #1745), so the text is not clean yet, but the
-// declarator error is gone and a second run changes nothing.
+// A C function-pointer declarator (#1743): the fix writes the function value as `Fn(R (A a))`, and the next passes drop
+// the parameter name (#1957) and write the declaration, so the text is clean and a second run changes nothing.
 export void test_front_fix_function_pointer_declarator_is_rewritten() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -75,7 +74,7 @@ export void test_front_fix_function_pointer_declarator_is_rewritten() {
     defer mem::set_allocator(outside);
     Usize count = 0;
     Str got = fixed("I32 (*f)(I32 x);\n", &count);
-    Str want = "Fn(I32 (i32 x)) f;\n";
+    Str want = "let mut f: fn(i32) -> i32 = undefined\n";
     test::check_equal(got, want);
     Usize again = 0;
     Str twice = fixed(got, &again);
@@ -91,7 +90,13 @@ export void test_front_fix_mut_a_cast_to_void_ends_its_statement() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn f(n: i32) -> i32 {\n    return n\n}\nfn g() {\n    f(1) as void\n    f(2) as void\n}\n";
+    Str source = "fn f(n: i32) -> i32:\n    return n\nfn g():\n    f(1).to(void)\n    f(2).to(void)\n";
     parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
+}
+
+// A pointer written `*T` on a local (#1899) becomes `*mut T`, and the constant it points at becomes `mut`.
+export void test_front_fix_mut_a_written_pointer_local_becomes_mut() {
+    expect("fn f() -> i32:\n    let x: i32 = 0\n    let q: *i32 = &x\n    q.* = 3\n    return x\n",
+           "fn f() -> i32:\n    let mut x: i32 = 0\n    let q: *mut i32 = &x\n    q.* = 3\n    return x\n", 1);
 }

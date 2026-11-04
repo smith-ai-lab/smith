@@ -1,0 +1,139 @@
+// front::fix_method, the fix-it for method calls (#1797, part of #1793 of #1428): one way to write a call.
+//
+//   list.push(&xs, 5)               xs.push(5)
+//   list.size(p)                    p.size()
+//
+// A call `m.f(a, ...)` is written in the method form when `m` is an imported module, the type of `a` (seen through one
+// pointer) is a record that module defines, `f` is a function of that module whose first parameter is that type, and
+// `a` is what the method form passes: `&x` for a function that takes a pointer, `x` (or a pointer, passed on) for a
+// function that takes the pointer or the value as it is. Any other call is left alone: a function of a module that
+// does not define the type, a first argument that is a temporary where the function takes a pointer, a name that is
+// not an imported module.
+//
+//   fix_method::edits(source, module, checked)   one fix (the edits of one call) for each call that has the form
+module front::fix_method;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+// `lib::list::` of `lib::list::List`; empty for a name with no module.
+static Str module_prefix(Str type_name) {
+    for (Usize i = countof(type_name); i >= 2; i--) {
+        if (type_name[i - 1] == ':' && type_name[i - 2] == ':') return type_name[0:i];
+    }
+    return "";
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// `std.list` as `std::list::`, the prefix of the names of that module.
+static Str prefix_of(const types::Symbol *module) {
+    Str dotted = types::module_dotted(module);
+    if (countof(dotted) == 0) return "";
+    Str out = "";
+    for (Usize i = 0; i < countof(dotted); i++) {
+        Str piece = dotted[i:i + 1];
+        if (dotted[i] == '.') piece = "::";
+        out = types::message_of(format::push(out, piece));
+    }
+    return types::message_of(format::push(out, "::"));
+}
+
+// The type a function's first parameter takes, seen through one pointer; null when it has no parameter.
+static types::TypeRef first_parameter(const types::Symbol *s) {
+    if (s->type == nullptr || s->type->kind != .function || countof(s->type->slots) == 0) return nullptr;
+    types::TypeRef t = s->type->slots[0].type;
+    if (t->kind == .pointer) return t->element;
+    return t;
+}
+
+// Whether a receiver can stand before `.f` as it is written: a name, a member, an index or a call.
+static Bool is_simple(const ast::Expr *e) {
+    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call;
+}
+
+// The expression the method form takes as its receiver, or null when the call has no equivalent method form: `&x` for
+// a function that takes a pointer (the method form takes the address itself), a pointer passed on as it is, a value
+// passed to a function that takes the value.
+static const ast::Expr *receiver(const ast::Expr *first, types::TypeRef given, const types::Symbol *fn) {
+    Bool takes_pointer = false;
+    types::TypeRef takes = fn->type->slots[0].type;
+    if (takes->kind == .pointer) takes_pointer = true;
+    if (first->kind == .unary && first->kind.unary.op == .address_of) {
+        if (!takes_pointer) return nullptr;
+        return first->kind.unary.operand;
+    }
+    Bool is_pointer = false;
+    if (given->kind == .pointer) is_pointer = true;
+    if (takes_pointer != is_pointer) return nullptr;
+    return first;
+}
+
+static Str text_of(Str source, ast::Span span) {
+    return source[span.start:span.end];
+}
+
+// The fix of the call `e` when it has the form, else an empty list.
+static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *e) {
+    core::Edits none = {};
+    if (e->kind != .call) return none;
+    const ast::Expr *callee = e->kind.call.callee;
+    ast::ExprRef args[:] = e->kind.call.args;
+    if (callee->kind != .member || callee->kind.member.arrow || countof(args) == 0) return none;
+    types::Names names = types::member_names(callee);
+    if (names.count != 2) return none;
+    const types::Symbol *module = types::scoped(c, names.items[0]);
+    if (module == nullptr || module->kind != .module_name) return none;
+    types::TypeRef given = types::type_of(c, args[0]);
+    if (given == nullptr) return none;
+    types::TypeRef self_type = given;
+    if (given->kind == .pointer) self_type = given->element;
+    Str prefix = prefix_of(module);
+    if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(self_type->name), prefix))
+        return none;
+    const types::Symbol *fn = types::lookup(&c->scopes, types::message_of(format::push(prefix, names.items[1])));
+    if (fn == nullptr || fn->kind != .function_symbol || !types::is_public(fn)) return none;
+    if (first_parameter(fn) != self_type) return none;
+    const ast::Expr *self = receiver(args[0], given, fn);
+    if (self == nullptr || !is_simple(self)) return none;
+    // Fields of the type that carry the name would make `x.f()` a call of the field.
+    if (types::member(self_type, names.items[1]) != nullptr) return none;
+    Str head = types::message_of(format::push(text_of(source, self->span), ".", names.items[1], "("));
+    ast::Span whole = {.start = callee->span.start, .end = e->span.end};
+    if (countof(args) == 1) {
+        head = types::message_of(format::push(head, ")"));
+    } else {
+        whole.end = args[1]->span.start;
+    }
+    core::Edits out = {};
+    out = mem::realloc(out, 1);
+    out[0] = (core::Edit){.span = whole, .text = head};
+    return out;
+}
+
+// The fixes of `module`'s method-shaped calls, as errors that carry them (the driver applies them with the rest).
+export core::Errors edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (e == nullptr || e->kind != .call) continue;
+        core::Edits fix = fix_of(source, c, e);
+        if (countof(fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError found = {};
+        found.span = e->span;
+        found.message = "write the call in the method form `x.f(...)`";
+        found.fix = fix;
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}

@@ -1,36 +1,33 @@
-module game::replay;
-import lib::text as tx;
-import <string.h>;
-import "local.h";
+# A module with imports, exported types and values, a C header and a conditional declaration.
+import c <string.h>
+import c <local.h>
+import lib.text as tx
 
-export typedef struct { U64 frames; tx::Text name; } Replay;
-export constexpr U32 version = 3;
-export U32 counter = 7;
+pub struct Replay:
+    pub frames: u64
+    pub name: tx.Text
 
-export typedef struct Handle { I32 fd; } Handle;
-export enum Mode { Fast, Slow };
-export union Word { U32 whole; U8 bytes[4]; };
+pub const version: u32 = 3
+pub let mut counter: u32 = 7
 
-U32 helper() {
-    return version + counter;
-}
+pub struct Handle:
+    pub fd: i32
 
-export Replay open(Handle *handle, const char *path) {
-    Replay replay = {0};
-    replay.frames = helper() + (U64)handle->fd;
-    replay.name = tx::make(path);
-    counter += 1;
-    return replay;
-}
+pub enum Mode:
+    fast
+    slow
 
-export U64 checksum(const U8 *data, Usize size);
+fn helper() -> u32:
+    version + counter
 
-#if defined(__APPLE__)
-export int only_here();
-#endif
+pub fn open(handle: *Handle, path: *u8) -> Replay:
+    let mut replay = Replay(frames = 0, name = tx.make(path))
+    replay.frames = helper().to(u64) + handle.fd.to(u64)
+    counter += 1
+    replay
 
-export int say(const char *text) {
-    struct c::stat info;
-    F32 root = c::sqrtf(81.0f);
-    return c::puts(text) + (int)root + c::EOF + (int)sizeof(struct c::stat) + (int)sizeof(info);
-}
+pub fn checksum(data: *u8, size: usize) -> u64
+
+pub fn say(text: *u8) -> i32:
+    let root = math.sqrtf(81.0)
+    stdio.puts(text) + root.to(i32) + stdio.EOF

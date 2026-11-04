@@ -282,7 +282,7 @@ A question of a type (`Int`, `Float`, `Num`, ...; issue #193, skill `smith-lang-
 
 ## Decisions
 
-- Generic functions are lowered, not templates; every compile-time parameter is `constexpr`. Struct fields are plain data: an exported type exposes all its fields to every module and to reflection; a type with invariants is opaque (exported by name, used through its functions) or checked by contracts, never by private fields (owner, 2026-10-25).
+- Generic functions are lowered, not templates; every compile-time parameter is `constexpr`. Struct fields are private to their module unless marked `pub` (owner, 2026-11-03, replacing the 2026-10-25 rule that an exported type exposes all its fields): another module may name only the `pub` fields, build the struct naming only `pub` fields (every field not named, private ones included, is zero), and see only those in `fields(T)`; `pub` on a field of a struct that is not `pub` is an error; C imports have no privacy (the new front end enforces it for fields written `x: T`; today's `T x;` fields stay public until the switch-over, #1631).
 - Compile-time power is ordinary functions, not compiler builtins: what the compiler computes about types and values, a user's function can compute too (owner: "users have as much power as the compiler"); a builtin is added only where no function can express it.
 
 ## A lambda as an argument

@@ -1,38 +1,29 @@
-fn square(x: f16) -> f16 {
+fn square(x: f16) -> f16:
     x * x
-}
 
-fn scale(b: bf16) -> bf16 {
+fn scale(b: bf16) -> bf16:
     b * 2.0
-}
 
-pub fn check() -> i32 {
-    x: f16 = 1.5
-    y := square(x)
-    if (y as f32) != 2.25 {
+pub fn check() -> i32:
+    let x: f16 = 1.5
+    let y = square(x)
+    if (y.to(f32)) != 2.25:
         return 1
-    }
-    b: bf16 = 3.0
-    if !(b < (4.0 as bf16)) || scale(b) as f32 != 6.0 {
+    let b: bf16 = 3.0
+    if !(b < ((4.0).to(bf16))) || scale(b).to(f32) != 6.0:
         return 2
-    }
-    wide: f32 = x
-    if wide != 1.5 {
+    let wide: f32 = x
+    if wide != 1.5:
         return 3
-    }
-    n: i8 = 7
-    h: f16 = n
-    if (h as i32) != 7 {
+    let n: i8 = 7
+    let h: f16 = n
+    if (h.to(i32)) != 7:
         return 4
-    }
-    if ((x as bf16) as f32) != 1.5 {
+    if ((x.to(bf16)).to(f32)) != 1.5:
         return 5
-    }
-    mut z: f16 = 0
+    let mut z: f16 = 0
     z += 0.5
     z = -z
-    if (z as f64) != -0.5 {
+    if (z.to(f64)) != -0.5:
         return 6
-    }
     0
-}

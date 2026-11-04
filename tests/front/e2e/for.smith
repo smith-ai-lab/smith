@@ -1,43 +1,31 @@
-fn sum_to(n: i32) -> i32 {
-    mut total := 0
-    for i in range(n) {
+fn sum_to(n: i32) -> i32:
+    let mut total = 0
+    for i in range(n):
         total += i
-    }
     total
-}
 
-fn evens(limit: u32) -> u32 {
-    mut count: u32 = 0
-    zero: u32 = 0
-    for i in range(zero, limit, 2) {
-        if i == 6 {
+fn evens(limit: u32) -> u32:
+    let mut count: u32 = 0
+    let zero: u32 = 0
+    for i in range(zero, limit, 2):
+        if i == 6:
             continue
-        }
         count += 1
-    }
     count
-}
 
-pub fn check() -> i32 {
-    if sum_to(5) != 10 || sum_to(0) != 0 {
+pub fn check() -> i32:
+    if sum_to(5) != 10 || sum_to(0) != 0:
         return 1
-    }
-    if evens(10) != 4 {
+    if evens(10) != 4:
         return 2
-    }
-    mut xs: [4]i32
-    for p in refs(xs) {
+    let mut xs: [4]i32 = undefined
+    for p in refs(xs):
         p.* = 3
-    }
-    mut total := 0
-    for x in xs {
-        if x != 3 {
+    let mut total = 0
+    for x in xs:
+        if x != 3:
             break
-        }
         total += x
-    }
-    if total != 12 {
+    if total != 12:
         return 3
-    }
     0
-}

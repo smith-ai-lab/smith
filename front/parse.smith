@@ -49,6 +49,8 @@ export typedef struct {
 
 export typedef typeof(Edit[:]) Edits;
 
+export typedef typeof(Str[:]) Names;
+
 // What went wrong and where. `fix` is the edits that mend it (empty: none), applied together or not at all by
 // `smith lint --fix` (parser::apply_fixes). An old form that still compiles goes in the parser's `warnings`, not here.
 export typedef struct {
@@ -61,6 +63,15 @@ export typedef typeof(ParseError[:]) Errors;
 
 // The state of a parse: the tokens (ending with an `end_of_file` token), the text they lie in, the position of the next
 // one, and the errors recorded so far (in the order they were found).
+// A braced list with no type whose items are all `.field = value`: where its braces are and the edits that drop the
+// dots, kept for the declaration it initializes (`P p = {.x = 1};` is `let p = P(x = 1)`, #1767).
+export struct NamedList {
+    Bool plain;
+    ast::Span open;
+    ast::Span close;
+    Edits edits;
+};
+
 export struct Parser {
     lex::Tokens tokens;
     Str source;
@@ -68,12 +79,34 @@ export struct Parser {
     Errors errors;
     Errors warnings; // old forms that still compile, with their fixes: kept apart so `errors` stays the failures
     Hooks hooks;
+    NamedList named_list; // the last untyped list with only field designators
     Bool head;     // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
                    // at its top level, so a `{` opens the body (#961)
     Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
+    Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on
+                     // one is a call of the module's function, not the conversion `x.to(T)` (#2104)
+    Bool layout;     // the tokens went through lex::layout: blocks are `:` and `indent` ... `dedent`, a statement ends
+                     // with `newline` (#1856; parser::parse_new chooses, #1859 removes the other path)
 };
+
+// Records that an import binds `name` in the file.
+export void bind_module(Parser *p, Str name) {
+    if (countof(name) == 0) return;
+    Usize count = countof(p->modules);
+    p->modules = mem::realloc(p->modules, count + 1);
+    p->modules[count] = name;
+}
+
+// Whether an import has bound `name`.
+export Bool is_module(const Parser *p, Str name) {
+    for (Usize i = 0; i < countof(p->modules); i += 1) {
+        Str bound = p->modules[i];
+        if (countof(bound) == countof(name) && (countof(name) == 0 || mem::equal(bound, name))) return true;
+    }
+    return false;
+}
 
 // A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as
 // lex::tokenize gives them.

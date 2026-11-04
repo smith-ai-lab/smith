@@ -1,5 +1,5 @@
-// Tests of modules as compile-time values in the checker (#1677 of #1428): `m := import a.b` binds a module, `m.name`
-// is a public declaration of it, `sin := m.sin` is a name for the same function, and a module cannot be a run-time
+// Tests of modules as compile-time values in the checker (#1677 of #1428): `import a.b as m` binds a module, `m.name`
+// is a public declaration of it, `let sin = m.sin` is a name for the same function, and a module cannot be a run-time
 // value. Each scenario is source text in smith's own syntax; the imported modules are the `modules` table, read by
 // the loader the checker is given.
 module front_types_module_test;
@@ -48,44 +48,24 @@ static Str join(Str a, Str b) {
     return out;
 }
 
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 // The modules a scenario can import, by dotted path.
 static Str math_source() {
-    return "pub fn sin(x: f64) -> f64 {\n    x\n}\n\n"
-           "pub fn twice(x: f64) -> f64 {\n    x + x\n}\n\n"
-           "fn hidden() -> i32 {\n    1\n}\n\n"
-           "pub tau := 6.28\n\n"
-           "pub struct Point {\n    x: f64\n    y: f64\n}\n\n"
-           "pub fn origin() -> Point {\n    return Point(x = 0.0, y = 0.0)\n}\n";
+    return "pub fn sin(x: f64) -> f64:\n    x\n\n"
+           "pub fn twice(x: f64) -> f64:\n    x + x\n\n"
+           "fn hidden() -> i32:\n    1\n\n"
+           "pub let tau = 6.28\n\n"
+           "pub struct Point:\n    pub x: f64\n    pub y: f64\n\n"
+           "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
+           "pub fn handle() -> Handle:\n    return Handle(len = 1, items = 2)\n\n"
+           "pub fn origin() -> Point:\n    return Point(x = 0.0, y = 0.0)\n";
 }
 
 static Str re_source() {
-    return "pub math := import lib.math\n\npub fn one() -> i32 {\n    1\n}\n";
+    return "pub import lib.math\n\npub fn one() -> i32:\n    1\n";
 }
 
 static Str cycle_source() {
-    return "pub other := import lib.cycle\n\npub fn here() -> i32 {\n    1\n}\n";
+    return "pub import lib.cycle as other\n\npub fn here() -> i32:\n    1\n";
 }
 
 static const ast::Module *load(const char *name) {
@@ -99,7 +79,7 @@ static const ast::Module *load(const char *name) {
         source = cycle_source();
     else
         return nullptr;
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     if (countof(p.errors) > 0) {
         Str expected = "no error";
         test::check_equal(p.errors[0].message, expected);
@@ -110,7 +90,7 @@ static const ast::Module *load(const char *name) {
 }
 
 static types::Checked check_text(Str source) {
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module_with(&p.module, types::lp64(), load);
 }
@@ -149,61 +129,144 @@ static void fails(Str source, Str first, Str second) {
 }
 
 export void test_front_types_module_function_through_the_module() {
-    clean("m := import lib.math\n\nfn run() -> f64 {\n    m.sin(1.0)\n}\n");
+    clean("import lib.math as m\n\nfn run() -> f64:\n    m.sin(1.0)\n");
 }
 
 export void test_front_types_module_call_checks_arguments() {
-    fails("m := import lib.math\n\nfn run() -> f64 {\n    m.sin(true)\n}\n", "found Bool", "expected F64");
+    fails("import lib.math as m\n\nfn run() -> f64:\n    m.sin(true)\n", "found Bool", "expected F64");
 }
 
 export void test_front_types_module_constant_and_result_type() {
-    clean("m := import lib.math\n\nfn run() -> f64 {\n    m.tau + m.twice(1.0)\n}\n");
-    fails("m := import lib.math\n\nfn run() -> str {\n    return m.tau\n}\n", "F64", "Str");
+    clean("import lib.math as m\n\nfn run() -> f64:\n    m.tau + m.twice(1.0)\n");
+    fails("import lib.math as m\n\nfn run() -> str:\n    return m.tau\n", "F64", "Str");
 }
 
 export void test_front_types_module_type_through_the_module() {
-    clean("m := import lib.math\n\nfn run(p: m.Point) -> f64 {\n    p.x\n}\n");
-    clean("m := import lib.math\n\nfn run() -> m.Point {\n    m.origin()\n}\n");
+    clean("import lib.math as m\n\nfn run(p: m.Point) -> f64:\n    p.x\n");
+    clean("import lib.math as m\n\nfn run() -> m.Point:\n    m.origin()\n");
 }
 
 export void test_front_types_module_function_alias_is_a_constant() {
-    clean("m := import lib.math\nsin := m.sin\n\nfn run() -> f64 {\n    sin(1.0)\n}\n");
-    fails("m := import lib.math\nsin := m.sin\n\nfn run() -> f64 {\n    sin(true)\n}\n", "Bool", "F64");
+    clean("import lib.math as m\nlet sin = m.sin\n\nfn run() -> f64:\n    sin(1.0)\n");
+    fails("import lib.math as m\nlet sin = m.sin\n\nfn run() -> f64:\n    sin(true)\n", "Bool", "F64");
 }
 
 export void test_front_types_module_type_alias_is_the_same_type() {
-    clean("m := import lib.math\nPoint := m.Point\n\nfn run(p: Point) -> f64 {\n    p.x\n}\n\n"
-          "fn make() -> m.Point {\n    m.origin()\n}\n\nfn go() -> f64 {\n    run(make())\n}\n");
+    clean("import lib.math as m\nlet Point = m.Point\n\nfn run(p: Point) -> f64:\n    p.x\n\n"
+          "fn make() -> m.Point:\n    m.origin()\n\nfn go() -> f64:\n    run(make())\n");
 }
 
 export void test_front_types_module_reexport_is_a_module_too() {
-    clean("r := import lib.re\n\nfn run() -> f64 {\n    r.math.sin(1.0)\n}\n\nfn other() -> i32 {\n    r.one()\n}\n");
+    clean("import lib.re as r\n\nfn run() -> f64:\n    r.math.sin(1.0)\n\nfn other() -> i32:\n    r.one()\n");
 }
 
 export void test_front_types_module_a_cycle_ends() {
-    clean("c := import lib.cycle\n\nfn run() -> i32 {\n    c.other.here()\n}\n");
+    clean("import lib.cycle as c\n\nfn run() -> i32:\n    c.other.here()\n");
 }
 
 export void test_front_types_module_missing_name_names_the_module() {
-    fails("m := import lib.math\n\nfn run() -> f64 {\n    m.sinn(1.0)\n}\n", "`lib.math` has no public `sinn`",
+    fails("import lib.math as m\n\nfn run() -> f64:\n    m.sinn(1.0)\n", "`lib.math` has no public `sinn`",
           "did you mean `sin`?");
 }
 
 export void test_front_types_module_private_name_is_missing() {
-    fails("m := import lib.math\n\nfn run() -> i32 {\n    m.hidden()\n}\n", "`lib.math` has no public `hidden`", "");
+    fails("import lib.math as m\n\nfn run() -> i32:\n    m.hidden()\n", "`lib.math` has no public `hidden`", "");
 }
 
 export void test_front_types_module_missing_module_is_reported() {
-    fails("m := import lib.nothing\n", "cannot find the module `lib.nothing`", "");
+    fails("import lib.nothing as m\n", "cannot find the module `lib.nothing`", "");
 }
 
 export void test_front_types_module_is_not_a_run_time_value() {
-    fails("m := import lib.math\n\nfn run() {\n    mut x := m\n}\n", "known only at compile time", "`m`");
-    fails("m := import lib.math\n\nfn take(x: i32) {}\n\nfn run() {\n    take(m)\n}\n", "known only at compile time",
-          "`m`");
+    fails("import lib.math as m\n\nfn run():\n    let mut x = m\n", "known only at compile time", "`m`");
+    fails("import lib.math as m\n\nfn take(x: i32):\n    return\n\nfn run():\n    take(m)\n",
+          "known only at compile time", "`m`");
 }
 
 export void test_front_types_module_local_cannot_shadow_it() {
-    fails("m := import lib.math\n\nfn run() -> i32 {\n    m := 1\n    return 1\n}\n", "hides the module `m`",
+    fails("import lib.math as m\n\nfn run() -> i32:\n    let m = 1\n    return 1\n", "hides the module `m`",
           "shadowing is an error");
+}
+
+export void test_front_types_module_pub_field_is_visible_outside() {
+    clean("import lib.math as m\n\nfn run(h: m.Handle) -> i32:\n    h.len\n");
+    clean("import lib.math as m\n\nfn run() -> i32:\n    let mut h: m.Handle = undefined\n    return "
+          "m.handle().len\n");
+}
+
+export void test_front_types_module_private_field_is_an_error_outside() {
+    fails("import lib.math as m\n\nfn run(h: m.Handle) -> i32:\n    h.items\n", "items is private to lib.math",
+          "mark it pub or call a function of lib.math");
+}
+
+export void test_front_types_module_a_struct_with_a_private_field_is_built_only_by_its_module() {
+    // named or positional, with the private field or without it: only a function of the module builds it
+    fails("import lib.math as m\nlet Handle = m.Handle\n\nfn run() -> m.Handle:\n    return Handle(len = 1, items = "
+          "2)\n",
+          "`lib::math::Handle` has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("import lib.math as m\nlet Handle = m.Handle\n\nfn run() -> m.Handle:\n    return Handle(len = 1)\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("import lib.math as m\nlet Handle = m.Handle\n\nfn run() -> m.Handle:\n    return Handle()\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    fails("import lib.math as m\nlet Handle = m.Handle\n\nfn run() -> m.Handle:\n    return Handle(1, 2)\n",
+          "has private fields; build it with a function of `lib.math`: `handle`", "");
+    clean("import lib.math as m\n\nfn run() -> m.Handle:\n    return m.handle()\n");
+}
+
+export void test_front_types_module_a_struct_of_pub_fields_is_built_anywhere() {
+    clean("import lib.math as m\nlet Point = m.Point\n\nfn run() -> m.Point:\n    return Point(x = 1.0, y = 2.0)\n");
+    clean("import lib.math as m\nlet Point = m.Point\n\nfn run() -> m.Point:\n    return Point(1.0, 2.0)\n");
+    clean("import lib.math as m\nlet Point = m.Point\n\nfn run() -> m.Point:\n    return Point(1.0, y = 2.0)\n");
+}
+
+export void test_front_types_module_own_fields_are_all_visible() {
+    clean("pub struct List:\n    pub len: i32\n    items: i32\n\npub fn make() -> i32:\n"
+          "    let l = List(len = 1, items = 2)\n    return l.items\n");
+}
+
+export void test_front_types_module_pub_field_of_a_private_struct_is_an_error() {
+    fails("struct List:\n    pub len: i32\n", "the field `len` is `pub`, but `List` is not", "mark the struct `pub`");
+}
+
+export void test_from_makes_a_name_callable_bare() {
+    clean("from lib.math import sin, twice\n\nfn run() -> f64:\n    sin(1.0) + twice(2.0)\n");
+}
+
+export void test_from_makes_a_type_usable_bare() {
+    clean("from lib.math import Point\n\nfn run(p: Point) -> f64:\n    p.x\n");
+}
+
+export void test_from_names_a_missing_or_private_name() {
+    fails("from lib.math import sinn\n", "`lib.math` has no public `sinn`", "");
+    fails("from lib.math import hidden\n", "`lib.math` has no public `hidden`", "");
+}
+
+export void test_from_shadowing_a_declared_name_is_an_error() {
+    fails("from lib.math import sin\n\nfn sin(x: f64) -> f64:\n    x\n", "`sin` is declared twice", "");
+}
+
+export void test_two_imports_binding_one_name_are_an_error() {
+    fails("import lib.math\nimport lib.re as math\n", "`math` is declared twice", "");
+}
+
+// Defaults (#1847): a field's and a parameter's, constant, in order, and what a construction or a call may leave out.
+export void test_front_types_module_defaults_fill_what_a_construction_or_a_call_leaves_out() {
+    clean("struct Config:\n    port: i32 = 80\n    debug: bool = false\n\nfn run() -> Config:\n    return "
+          "Config()\n");
+    clean("struct Config:\n    port: i32 = 80\n    debug: bool = false\n\nfn run() -> Config:\n    "
+          "return Config(debug = true)\n");
+    clean("fn connect(host: i32, port: i32 = 443) -> i32:\n    host + port\n\nfn run() -> i32:\n    "
+          "connect(1) + connect(1, 2) + connect(1, port = 3)\n");
+}
+
+export void test_front_types_module_a_missing_field_without_a_default_is_an_error() {
+    fails("struct Config:\n    host: i32\n    port: i32 = 80\n\nfn run() -> Config:\n    return Config()\n",
+          "the field `host` of `Config` is left out and has no default", "");
+}
+
+export void test_front_types_module_a_default_must_be_a_constant_in_order() {
+    fails("fn size() -> i32:\n    3\n\nstruct Box:\n    n: i32 = size()\n", "a default must be a compile-time constant",
+          "");
+    fails("fn f(a: i32, b: i32 = a) -> i32:\n    b\n", "a default must be a compile-time constant", "");
+    fails("fn f(a: i32 = 1, b: i32) -> i32:\n    b\n", "has no default but follows one that has", "");
 }

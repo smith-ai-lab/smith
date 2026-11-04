@@ -1,0 +1,41 @@
+// Tests of the fixer on the type forms of lib/std (#2106, piece 3 of #2093, part of #2053 and #1631): a struct that
+// holds a function pointer next to `//` comments ends with the fields, not with `};` (the `#` comments the first pass
+// wrote hid the old forms left from the second), a type function's `Type T` parameter, a parameter named `type`
+// (reserved like `i32`, #1901) and a pointer to a slice `auto (*xs)[:]`.
+module front_fix_decl_forms_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_struct_with_a_function_pointer_and_comments() {
+    expect_fixed("module m;\nstruct Task {\n    Task *next; // the link\n    void (*entry)(void *context);\n"
+                 "    Bool done; // set\n};\n",
+                 "struct Task:\n    next: *Task # the link\n    entry: fn(*void)\n    done: bool # set\n");
+}
+
+export void test_front_fix_type_parameter_of_a_type_function() {
+    expect_fixed("module m;\nexport Type Wrap(Type T) {\n    return T;\n}\n",
+                 "pub fn Wrap(T: type) -> type:\n    return T\n");
+}
+
+export void test_front_fix_parameter_named_type() {
+    expect_fixed("module m;\nvoid f(const char *type, Usize n) {\n    g(type, n);\n}\n",
+                 "fn f(ty: *char, n: usize):\n    g(ty, n)\n");
+}
+
+export void test_front_fix_pointer_to_a_slice_of_auto() {
+    expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto):\n    g(xs)\n");
+}

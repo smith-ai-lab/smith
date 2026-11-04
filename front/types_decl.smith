@@ -9,9 +9,9 @@
 //                                  every lambda body. Errors are in `Checked.errors`, each at a span and each naming
 //                                  what was expected and what to write.
 //   check_module_with(module, target, load)
-//                                  check_module that also reads the modules the file imports (`m := import a.b`),
+//                                  check_module that also reads the modules the file imports (`import a.b as m`),
 //                                  `load` giving the tree of a dotted path (#1677): `m.name` is then a public
-//                                  declaration of that module, and `sin := m.sin` a name for it. Without `load`,
+//                                  declaration of that module, and `let sin = m.sin` a name for it. Without `load`,
 //                                  an import binds a name and reads nothing.
 //   options(target)                The `types::Options` that make `types::check` call `check_body` for every function
 //                                  with a body, after wiring the hooks below. For a caller that wants `types::check`
@@ -33,14 +33,14 @@
 //                  label's statement, `break`, `continue`, `goto`. A condition is checked against `Bool`; a `return`
 //                  value against the function's result type (a plain `return;` in a function that returns a value is
 //                  an error, a value in a `Void` function too).
-//   Constants      `const X := v` (and `constexpr`), local or of the module, is an error when `v` names a variable
+//   Constants      `const X = v` (and `constexpr`), local or of the module, is an error when `v` names a variable
 //                  that is not constant (spec "Modules and declarations"). In smith's own syntax (`is_new`): a
 //                  binding is constant unless `mut` (writes are refused by types_expr), shadowing is an error (the
-//                  earlier declaration is named by its byte offset: the checker has no line table), `_ := f()`
+//                  earlier declaration is named by its byte offset: the checker has no line table), `let _ = f()`
 //                  discards, and a call whose result is not `Void` and is not used is an error, once the function has a
-//                  parameter or an earlier local in that syntax (a function has no marker of its own). `(q, r) := f()`
-//                  and `mut (q, r) := f()` split a tuple: one binding per element, `_` discards one, a wrong count
-//                  is an error naming both. Nested patterns are not parsed yet.
+//                  parameter or an earlier local in that syntax (a function has no marker of its own). `let (q, r) =
+//                  f()` and `let (mut q, mut r) = f()` split a tuple: one binding per element, `_` discards one, a
+//                  wrong count is an error naming both. Nested patterns are not parsed yet.
 //   Locals         The type is written, or `Auto` takes the initializer's type. A name already in the same scope is an
 //                  error. A local is `const` through the written type.
 //   Calls, Fn      Calls and the `Fn(F)` values are typed by front::types_expr; this module supplies the conversions
@@ -49,8 +49,10 @@
 //   Lambdas        A lambda's parameters take the types of the expected `Fn(F)`. Its body is checked after the body
 //                  that holds it: the hook keeps a copy of the scopes as they were at the lambda and the statement
 //                  walk, which has no recursion, runs on it when the enclosing walk is done.
-//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `static_assert` in a
-//                  body, `if constexpr` and `for constexpr`, a range `for`, a local type or function, a name from a C
+//   static_assert  In a body its condition is checked as a `Bool`; the emitter folds it and reports a false or unknown
+//                  condition (front::emit).
+//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `if constexpr` and
+//   `for constexpr`, a range `for`, a local type or function, a name from a C
 //                  header (`c::printf`, until front::cimport lands, #1124), a function that falls off its end is not
 //                  yet reported.
 //
@@ -66,6 +68,11 @@ import front::types_expr;
 import front::types_fn;
 import front::types_iter;
 import front::types_stream;
+import front::lint;
+import front::types_undefined;
+import front::affine;
+import front::parse as syntax;
+import front::when;
 import std::arena;
 import std::format;
 import std::mem;
@@ -114,7 +121,6 @@ struct State {
     Str function;
     types::TypeRef result;      // what `return` is checked against
     types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
-    Bool new_body;              // the function has a parameter or a local in smith's own syntax (so far)
     const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
 };
@@ -158,18 +164,43 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     return false;
 }
 
+// `(Void)x` written as a statement discards a value; smith writes that `_ = x`. The fix replaces the cast's head, from
+// the cast to its operand, with `_ = `. Empty for any other cast.
+static syntax::Edits discard_fix(const ast::Expr *e, types::TypeRef to) {
+    syntax::Edits edits = {};
+    if (e->kind != .cast || to->kind != .void_type) {
+        return edits;
+    }
+    edits = mem::realloc(edits, 1);
+    Str word = "_ = ";
+    ast::Span head = {.start = e->span.start, .end = e->kind.cast.operand->span.start};
+    edits[0] = (syntax::Edit){.span = head, .text = word};
+    return edits;
+}
+
 // Whether the cast `e` may be written; a cast that can lose a value is marked for a run-time check (K1, #1328).
 static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Literal lit = types_convert::no_literal();
     if (e->kind == .cast) {
         lit = literal_of(e->kind.cast.operand);
     }
-    types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
-    if (!verdict.ok) {
-        types::fail(c, e->span, verdict.message);
+    ast::CastForm form = .convert;
+    if (e->kind == .cast) form = e->kind.cast.form;
+    if (form == .wrapping && !(from->kind == .integer && to->kind == .integer)) {
+        types::fail(c, e->span, "`wrap` keeps the low bits of an integer: it converts an integer to an integer");
         return false;
     }
-    if (verdict.checked) {
+    if (form == .reinterpret && to->kind != .pointer) {
+        types::fail(c, e->span,
+                    "`cast` reinterprets a pointer, or an integer of pointer size, as another pointer type");
+        return false;
+    }
+    types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
+    if (!verdict.ok) {
+        types::fail_fix(c, e->span, verdict.message, discard_fix(e, to));
+        return false;
+    }
+    if (verdict.checked && form != .wrapping) {
         types::mark_cast_checked(c, e, from);
     }
     return true;
@@ -245,10 +276,10 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
 
 static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types::TypeRef type, Bool is_const) {
     if (is_new_variable(d)) {
-        state.new_body = true;
+        r->new_body = true;
     }
     if (is_discard(name) && is_new_variable(d)) {
-        return; // `_ := f()` discards the value: nothing is declared
+        return; // `let _ = f()` discards the value: nothing is declared
     }
     if (shadows(r, d, name)) {
         return;
@@ -257,6 +288,7 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
     if (d->kind == .variable && d->kind.variable.is_new) {
         symbol.at = d->span;
+        symbol.at.start += 4; // past `let `: a fix writes `mut ` before the name
         symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
         symbol.written = d->kind.variable.type;
         symbol.init = d->kind.variable.init;
@@ -345,8 +377,8 @@ static void require_constant(types::Checked *r, Str name, const ast::Expr *init)
     const ast::Expr *bad = not_constant(r, init);
     if (bad != nullptr) {
         types::failf(r, bad->span, "`const ", name,
-                     "` is known at compile time, but this is not; use a constant here, or write `", name,
-                     " := ...` without `const`");
+                     "` is known at compile time, but this is not; use a constant here, or write `let ", name,
+                     " = ...` without `const`");
     }
 }
 
@@ -362,12 +394,18 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     Bool is_mut = d->kind.variable.is_mut;
     types::TypeRef type = r->table.automatic;
     if (!(written->kind == .auto_type)) {
+        r->new_syntax = is_new; // a local's `*T` is read-only in smith's own syntax (#1899), as a parameter's is
         type = types::resolve(r, written);
+        r->new_syntax = false;
     }
-    if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
+    if (init == nullptr) {
+        types::failf(r, d->span, "`", name, "` needs a value: give one, or write `= undefined`");
+        type = r->table.invalid;
+    } else if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
         if (is_auto(type)) {
-            types::failf(r, init->span, "`Auto ", name,
-                         " = undefined;` has no type to take; write the type, e.g. `I32 ", name, " = undefined;`");
+            types::failf(r, init->span, "`let mut ", name,
+                         " = undefined` has no type to take; write the type, e.g. `let mut ", name,
+                         ": i32 = undefined`");
             type = r->table.invalid;
         }
     } else if (is_auto(type)) {
@@ -394,8 +432,8 @@ static void local_declaration(types::Checked *r, const ast::Decl *d) {
                  "of the module");
 }
 
-// `(q, r) := f()` and `mut (q, r) := f()`: one constant (or variable) per element of the tuple the initializer
-// returns; `_` discards an element. The count must match the tuple's length.
+// `let (q, r) = f()` and `let (mut q, mut r) = f()`: one constant (or variable) per element of the tuple the
+// initializer returns; `_` discards an element. The count must match the tuple's length.
 static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .destructure)) {
         return;
@@ -403,12 +441,12 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
     ast::Identifier names[:] = s->kind.destructure.names;
     Bool is_mut = s->kind.destructure.is_mut;
     types::TypeRef found = types_expr::infer(r, s->kind.destructure.init);
-    state.new_body = true;
+    r->new_body = true;
     if (found == r->table.invalid) {
         return;
     }
     if (found->kind != .tuple) {
-        types::failf(r, s->span, "`(", countof(names), " names) := ...` splits a tuple, but this is a `",
+        types::failf(r, s->span, "`let (", countof(names), " names) = ...` splits a tuple, but this is a `",
                      types::show(found), "`; write a single name, or call something that returns a tuple");
         return;
     }
@@ -430,7 +468,8 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
             continue;
         }
         types::TypeRef type = found->slots[i].type;
-        types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_const = !is_mut, .is_new = true};
+        types::Symbol symbol = {
+            .name = name, .kind = .variable, .type = type, .is_const = !(is_mut || names[i].is_mut), .is_new = true};
         if (!types::declare(&r->scopes, symbol)) {
             types::failf(r, names[i].span, "`", name, "` is already declared in this scope; choose another name");
             continue;
@@ -513,6 +552,32 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
 }
 
+// `if let .some(x) = o`: the value is typed (a call of a generic function there makes its instance), `x` has the
+// payload's type in the `then` branch, and the `else` branch is checked outside it.
+static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .if_let)) {
+        return;
+    }
+    types::TypeRef t = types_expr::infer(r, s->kind.if_let.value);
+    if (s->kind.if_let.else_branch != nullptr) {
+        push(s->kind.if_let.else_branch, nullptr, enter);
+    }
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    push(s->kind.if_let.then_branch, nullptr, enter);
+    Str binding = s->kind.if_let.pattern.binding;
+    if (countof(binding) == 0 || is_discard(binding)) {
+        return;
+    }
+    types::TypeRef element = r->table.invalid;
+    if (t != nullptr && t->kind == .option && t->element != nullptr) {
+        element = t->element;
+    }
+    types::Symbol symbol = {.name = binding, .kind = .variable, .type = element, .is_const = true, .is_new = true};
+    types::declare(&r->scopes, symbol);
+    note_local(binding, element);
+}
+
 static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .for_in)) {
         return;
@@ -534,7 +599,7 @@ static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
             types::Symbol symbol = {
                 .name = names[i].text, .kind = .variable, .type = element, .is_const = true, .is_new = true};
             types::declare(&r->scopes, symbol);
-            state.new_body = true;
+            r->new_body = true;
             note_local(names[i].text, element);
         }
     }
@@ -617,8 +682,13 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     const ast::Expr *value = s->kind.expression.value;
-    types::TypeRef type = types_expr::infer(r, value);
-    if (!state.new_body || !(value->kind == .call) || type == nullptr) {
+    types::TypeRef type = nullptr;
+    if (r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type) {
+        type = types_expr::check(r, value, state.result); // the last line is the value: it takes the result's type
+    } else {
+        type = types_expr::infer(r, value);
+    }
+    if (!r->new_body || !(value->kind == .call) || type == nullptr) {
         return;
     }
     if (state.result != r->table.void_type && is_tail(s)) {
@@ -628,7 +698,32 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types::failf(r, s->span, "the result of this call, a `", types::show(type),
-                 "`, is not used; use it, or write `_ := ...` to discard it");
+                 "`, is not used; use it, or write `let _ = ...` to discard it");
+}
+
+// `switch (v) { case .a: ... default: ... }` (#1916): the value is typed, and when it is an enumeration with payloads
+// its cases are variants, which the arms of a `match` check by name; any other value types its cases against it. Each
+// case opens a scope for its body, like a block.
+static void switch_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .switch_stmt)) {
+        return;
+    }
+    types::TypeRef t = types_expr::infer(r, s->kind.switch_stmt.value);
+    Bool variants = t != nullptr && t->kind == .enumeration && t->has_payload;
+    ast::SwitchCase cases[:] = s->kind.switch_stmt.cases;
+    for (Usize i = countof(cases); i > 0; i--) {
+        ast::SwitchCase *k = &cases[i - 1];
+        push(ast::block(k->body), nullptr, enter);
+    }
+    if (variants || t == nullptr) {
+        return;
+    }
+    for (Usize i = 0; i < countof(cases); i++) {
+        ast::ExprRef values[:] = cases[i].values;
+        for (Usize j = 0; j < countof(values); j++) {
+            types_expr::check(r, values[j], t);
+        }
+    }
 }
 
 // Reads one statement: does what needs no children now, and pushes the children.
@@ -651,6 +746,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         push(s->kind.do_while.body, nullptr, enter);
     } else if (s->kind == .for_stmt) {
         for_statement(r, s);
+    } else if (s->kind == .if_let) {
+        if_let_statement(r, s);
     } else if (s->kind == .for_in) {
         for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
@@ -662,9 +759,27 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .labeled) {
         push(s->kind.labeled.body, nullptr, enter);
     } else if (s->kind == .switch_stmt) {
-        not_yet(r, s, "switch");
+        switch_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        not_yet(r, s, "static_assert in a body");
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    }
+}
+
+// A statement inside a block that is a value (`let v = if c:` and its lines): the ones that need no children are
+// checked in the scope the block opened; a loop, a nested block and the like are `not yet typed`.
+static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        expression_statement(r, s);
+    } else if (s->kind == .declaration) {
+        local_declaration(r, s->kind.declaration.decl);
+    } else if (s->kind == .destructure) {
+        destructure_statement(r, s);
+    } else if (s->kind == .return_stmt) {
+        return_statement(r, s);
+    } else if (s->kind == .static_assert_stmt) {
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    } else {
+        types::failf(r, s->span, "not yet typed: this statement inside a block that is used as a value");
     }
 }
 
@@ -673,6 +788,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     find_tails(root);
+    types_undefined::check_body(r, root);
     state.top = 0;
     push(root, nullptr, enter);
     while (state.top > 0) {
@@ -688,6 +804,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
+    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
     state.result = outer;
 }
 
@@ -738,7 +855,7 @@ static void lambda_body(types::Checked *r, Pending p) {
     state.function = p.function;
     for (Usize i = 0; i < countof(params) && i < countof(function->slots); i++) {
         types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = function->slots[i].type};
-        if (!types::declare(&r->scopes, symbol)) {
+        if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
         } else {
@@ -762,6 +879,8 @@ static void drain(types::Checked *r) {
 // ---------------------------------------------------------------------------------------------------------------
 // Functions and the module
 
+static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature);
+
 // The types::BodyChecker: the body of one function of the module.
 export void check_body(types::Checked *r, const ast::Decl *function) {
     if (function->kind != .function || function->kind.function.body == nullptr) {
@@ -772,7 +891,18 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     if (symbol == nullptr || symbol->decl != function || symbol->type->kind != .function) {
         return;
     }
-    types::TypeRef signature = symbol->type;
+    if (symbol->generic) {
+        return; // a template: its bodies are the instances' (check_instances)
+    }
+    check_function(r, function, symbol->type);
+}
+
+// The body of `function` against `signature`: the parameters in a scope of their own, then the body.
+static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature) {
+    if (function->kind != .function) {
+        return;
+    }
+    Str name = function->kind.function.name;
     ast::Param params[:] = function->kind.function.params;
     types::push_scope(&r->scopes);
     for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
@@ -790,15 +920,15 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
                                    .may_mut = params[i].is_new && countof(attributes) == 0 && !params[i].is_const &&
                                               !params[i].is_constexpr && !params[i].is_rest,
                                    .written = params[i].type};
-        if (!types::declare(&r->scopes, parameter)) {
+        if (!is_discard(params[i].name) && !types::declare(&r->scopes, parameter)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
                          "`; choose another name");
         }
     }
     state.function = name;
-    state.new_body = false;
+    r->new_body = false;
     for (Usize i = 0; i < countof(params); i++) {
-        state.new_body = state.new_body || params[i].is_new;
+        r->new_body = r->new_body || params[i].is_new;
     }
     types::TypeRef outer_generator = state.generator;
     state.generator = types_stream::generator_element(signature->element, function->kind.function.body);
@@ -809,8 +939,32 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     drain(r);
 }
 
+// Checks the body of every instance of a generic function that a call made (#1908), each in a scope that binds its
+// compile-time parameters; an instance may make others, which are checked in turn.
+static void check_instances(types::Checked *r) {
+    for (Usize i = 0; i < r->instance_count; i++) {
+        if (r->instances[i].checked) {
+            continue;
+        }
+        r->instances[i].checked = true;
+        types::Instance instance = r->instances[i];
+        types::push_scope(&r->scopes);
+        types::bind_instance(r, &instance);
+        check_function(r, instance.decl, instance.signature);
+        types::pop_scope(&r->scopes);
+    }
+}
+
+static types::TypeRef result_hook() {
+    return state.result;
+}
+
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){.function_result = result_hook,
+                                              .convert = convert_hook,
+                                              .cast = cast_hook,
+                                              .lambda_body = lambda_hook,
+                                              .statement = value_block_statement});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
@@ -820,7 +974,7 @@ export void uninstall() {
 
 export types::Options options(types::Target target) {
     install();
-    return (types::Options){.target = target, .bodies = check_body};
+    return (types::Options){.target = target, .bodies = check_body, .expression = types_expr::infer};
 }
 
 // A module-level variable's initializer, against its declared type.
@@ -829,12 +983,15 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
         return;
     }
     if (d->kind.variable.init->kind == .type_value) {
-        return; // `Point := m.Point`: an alias of a type, resolved with the declarations
+        return; // `let Point = m.Point`: an alias of a type, resolved with the declarations
     }
     Str name = d->kind.variable.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || symbol->decl != d) {
         return;
+    }
+    if (symbol->kind == .type_name) {
+        return; // `const Pair = (i32, f32)`: a tuple of types, an alias declared with the aliases
     }
     state.function = name;
     types::TypeRef type = symbol->type;
@@ -848,10 +1005,8 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
 }
 
-// `check_module_with` that also reads the C headers the file imports (`import <stdio.h>;`, #1762): `headers` gives the
-// declarations of one, and `c::printf`, `c::FILE` are then names of the module.
-export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
-                                           types::HeaderLoader headers) {
+static types::Checked check_once(const ast::Module *m, types::Target target, types::ModuleLoader load,
+                                 types::HeaderLoader headers) {
     state = (State){};
     types_fn::reset();
     types::Options chosen = options(target);
@@ -861,13 +1016,114 @@ export types::Checked check_module_headers(const ast::Module *m, types::Target t
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
     }
+    check_instances(&r);
     drain(&r);
     types_attr::check_module(&r, m);
+    lint::check_module(&r, m);
     uninstall();
     return r;
 }
 
-// Checks a whole module, reading the modules it imports with `load` (#1677): `m := import a.b` makes `m.name` the
+static Bool starts_with(Str text, Str head) {
+    if (countof(head) > countof(text)) return false;
+    for (Usize i = 0; i < countof(head); i++) {
+        if (text[i] != head[i]) return false;
+    }
+    return true;
+}
+
+// The name between the first pair of backticks of `text`, "" when there is none.
+static Str first_quoted(Str text) {
+    Usize from = 0;
+    while (from < countof(text) && text[from] != '`')
+        from += 1;
+    Usize to = from + 1;
+    while (to < countof(text) && text[to] != '`')
+        to += 1;
+    if (to >= countof(text)) return "";
+    return text[from + 1:to];
+}
+
+static Usize length_of(Str text) {
+    return countof(text);
+}
+
+static Bool same_str(Str a, Str b) {
+    return starts_with(a, b) && countof(a) == countof(b);
+}
+
+// A use of a name that is gone on `os` says where the name is declared.
+static void explain_dead(types::Checked *r, const ast::Module *m, when::Os os) {
+    typeof(when::Dead[:]) dead = when::dead_names(m, os);
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str text = r->errors[i].message;
+        if (!starts_with(text, "unknown name `") && !starts_with(text, "unknown type `")) continue;
+        Str name = first_quoted(text);
+        for (Usize k = 0; k < countof(dead); k++) {
+            if (!same_str(dead[k].name, name)) continue;
+            Str condition = dead[k].condition;
+            if (length_of(condition) == 0) {
+                condition = "a condition";
+            }
+            r->errors[i].message = types::message_of(format::push("`", name, "` is not declared on ", when::os_name(os),
+                                                                  ": it is declared only when ", condition));
+            break;
+        }
+    }
+}
+
+static Bool has_error(const types::Checked *r, const types::Error *e) {
+    for (Usize i = 0; i < r->error_count; i++) {
+        const types::Error *o = &r->errors[i];
+        if (o->span.start == e->span.start && o->span.end == e->span.end && same_str(o->message, e->message)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// `check_module_with` that also reads the C headers the file imports (`import <stdio.h>;`, #1762): `headers` gives the
+// declarations of one, and `c::printf`, `c::FILE` are then names of the module. A module with `@when` is checked once
+// for each system smith builds on, and an error found on one system only says which.
+export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
+                                           types::HeaderLoader headers) {
+    if (!when::uses_when(m)) return check_once(m, target, load, headers);
+    // The headers of the other system are not there to read: that system's variant is not checked (#2142).
+    if (when::host() == when::os_linux && when::reads_guarded_header(m, when::os_macos)) {
+        types::Checked only = check_once(when::live_module(m, when::os_linux), target, load, headers);
+        explain_dead(&only, m, when::os_linux);
+        types_attr::check_when(&only, m);
+        return only;
+    }
+    if (when::host() == when::os_macos && when::reads_guarded_header(m, when::os_linux)) {
+        types::Checked only = check_once(when::live_module(m, when::os_macos), target, load, headers);
+        explain_dead(&only, m, when::os_macos);
+        types_attr::check_when(&only, m);
+        return only;
+    }
+    types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load, headers);
+    explain_dead(&mac, m, when::os_macos);
+    types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load, headers);
+    explain_dead(&lin, m, when::os_linux);
+    Bool only_lin[:] = mem::alloc_slice(Bool, lin.error_count);
+    for (Usize i = 0; i < lin.error_count; i++)
+        only_lin[i] = !has_error(&mac, &lin.errors[i]);
+    for (Usize i = 0; i < mac.error_count; i++) {
+        if (!has_error(&lin, &mac.errors[i])) {
+            mac.errors[i].message = types::message_of(format::push("on macos: ", mac.errors[i].message));
+        }
+    }
+    for (Usize i = 0; i < lin.error_count; i++) {
+        if (!only_lin[i]) continue;
+        types::Error found = lin.errors[i];
+        found.message = types::message_of(format::push("on linux: ", found.message));
+        types::add_error(&mac, found);
+    }
+    types_attr::check_when(&mac, m);
+    return mac;
+}
+
+// Checks a whole module, reading the modules it imports with `load` (#1677): `import a.b as m` makes `m.name` the
 // public declaration `name` of `a.b`.
 export types::Checked check_module_with(const ast::Module *m, types::Target target, types::ModuleLoader load) {
     return check_module_headers(m, target, load, nullptr);

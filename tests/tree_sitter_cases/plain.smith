@@ -1,17 +1,17 @@
-// Plain C in a .smith file: the new words are names where C allows names.
-#include <stdio.h>
+# Names that were keywords once stay names where the syntax allows a name.
+import c <stdio.h>
 
-typedef int import;
-struct S { int module; int export; int type; };
+struct S:
+    pub module: i32
+    pub export: i32
+    pub kind: i32
 
-static int throw_it(int new, int class) {
-    int U8 = new + class;
-    return U8 + 1;
-}
+fn throw_it(new: i32, class: i32) -> i32:
+    let u8 = new + class
+    u8 + 1
 
-int main() {
-    struct S s = {.module = 1, .export = 2, .type = 3};
-    import import_value = throw_it(s.module, s.export);
-    printf("%d %d\n", import_value, s.type);
-    return 0;
-}
+pub fn main() -> i32:
+    let s = S(module = 1, export = 2, kind = 3)
+    let value = throw_it(s.module, s.export)
+    stdio.printf("%d %d\n", value, s.kind)
+    0

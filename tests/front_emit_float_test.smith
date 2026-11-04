@@ -32,34 +32,11 @@ struct Scenario {
     Bool has_checked;
 };
 
-// The module of `source`, read in smith's own syntax.
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static void begin(Scenario *s, Str source, Bool with_checker) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     if (with_checker) {
         s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
@@ -128,11 +105,19 @@ typedef I64 (*ToWide)(F64);
 export void test_front_emit_float_parameters_results_locals_and_arithmetic() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn calc(a: f64, b: f64) -> f64 {\n    mut x: f64 = 0\n    x += a * b\n    x = x - 1.0\n"
-                     "    negated := -x\n    negated / 2.0\n}\n"
-                     "pub fn single(a: f32, b: f32) -> f32 {\n    c: f32 = 0.5\n    a + b * c\n}\n"
-                     "pub fn plus(a: f64) -> f64 {\n    +a\n}\n"
-                     "pub fn infinite() -> f64 {\n    1.0 / 0.0\n}\n",
+    char *ir = ir_of("pub fn calc(a: f64, b: f64) -> f64:\n"
+                     "    let mut x: f64 = 0\n"
+                     "    x += a * b\n"
+                     "    x = x - 1.0\n"
+                     "    let negated = -x\n"
+                     "    negated / 2.0\n"
+                     "pub fn single(a: f32, b: f32) -> f32:\n"
+                     "    let c: f32 = 0.5\n"
+                     "    a + b * c\n"
+                     "pub fn plus(a: f64) -> f64:\n"
+                     "    +a\n"
+                     "pub fn infinite() -> f64:\n"
+                     "    1.0 / 0.0\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fadd"), true);
@@ -151,17 +136,45 @@ export void test_front_emit_float_parameters_results_locals_and_arithmetic() {
 export void test_front_emit_float_comparisons_and_nan() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir =
-        ir_of("pub fn lt(a: f64, b: f64) -> i32 {\n    if a < b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn le(a: f64, b: f64) -> i32 {\n    if a <= b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn gt(a: f64, b: f64) -> i32 {\n    if a > b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn ge(a: f64, b: f64) -> i32 {\n    if a >= b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn eq(a: f64, b: f64) -> i32 {\n    if a == b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn ne(a: f64, b: f64) -> i32 {\n    if a != b {\n        return 1\n    }\n    0\n}\n"
-              "pub fn nan_ne() -> i32 {\n    n := 0.0 / 0.0\n    if n != n {\n        return 1\n    }\n    0\n}\n"
-              "pub fn nan_eq() -> i32 {\n    n := 0.0 / 0.0\n    if n == n {\n        return 1\n    }\n    0\n}\n"
-              "pub fn literal(a: f64) -> i32 {\n    if 1.5 < a {\n        return 1\n    }\n    0\n}\n",
-              &host, &s);
+    char *ir = ir_of("pub fn lt(a: f64, b: f64) -> i32:\n"
+                     "    if a < b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn le(a: f64, b: f64) -> i32:\n"
+                     "    if a <= b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn gt(a: f64, b: f64) -> i32:\n"
+                     "    if a > b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn ge(a: f64, b: f64) -> i32:\n"
+                     "    if a >= b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn eq(a: f64, b: f64) -> i32:\n"
+                     "    if a == b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn ne(a: f64, b: f64) -> i32:\n"
+                     "    if a != b:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn nan_ne() -> i32:\n"
+                     "    let n = 0.0 / 0.0\n"
+                     "    if n != n:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn nan_eq() -> i32:\n"
+                     "    let n = 0.0 / 0.0\n"
+                     "    if n == n:\n"
+                     "        return 1\n"
+                     "    0\n"
+                     "pub fn literal(a: f64) -> i32:\n"
+                     "    if 1.5 < a:\n"
+                     "        return 1\n"
+                     "    0\n",
+                     &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fcmp olt"), true);
     test::check_equal(contains(ir, "fcmp une"), true);
@@ -192,8 +205,10 @@ export void test_front_emit_float_comparisons_and_nan() {
 export void test_front_emit_float_implicit_conversions() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn widen(a: f32) -> f64 {\n    a\n}\n"
-                     "pub fn from_int(n: i32) -> f64 {\n    n\n}\n",
+    char *ir = ir_of("pub fn widen(a: f32) -> f64:\n"
+                     "    a\n"
+                     "pub fn from_int(n: i32) -> f64:\n"
+                     "    n\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fpext"), true);
@@ -208,10 +223,14 @@ export void test_front_emit_float_implicit_conversions() {
 export void test_front_emit_float_casts() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn narrow(a: f64) -> f32 {\n    a as f32\n}\n"
-                     "pub fn wide(n: i64) -> f64 {\n    n as f64\n}\n"
-                     "pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
-                     "pub fn literal_truncate() -> i32 {\n    2.9 as i32\n}\n",
+    char *ir = ir_of("pub fn narrow(a: f64) -> f32:\n"
+                     "    a.to(f32)\n"
+                     "pub fn wide(n: i64) -> f64:\n"
+                     "    n.to(f64)\n"
+                     "pub fn truncate(a: f64) -> i32:\n"
+                     "    a.to(i32)\n"
+                     "pub fn literal_truncate() -> i32:\n"
+                     "    (2.9).to(i32)\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fptrunc"), true);
@@ -246,8 +265,10 @@ static Bool traps(Usize address, F64 argument) {
 export void test_front_emit_float_cast_to_an_integer_that_does_not_fit_calls_the_report() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn truncate(a: f64) -> i32 {\n    a as i32\n}\n"
-                     "pub fn byte(a: f64) -> u8 {\n    a as u8\n}\n",
+    char *ir = ir_of("pub fn truncate(a: f64) -> i32:\n"
+                     "    a.to(i32)\n"
+                     "pub fn byte(a: f64) -> u8:\n"
+                     "    a.to(u8)\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Usize truncate_at = symbol_of(&host, "truncate");
@@ -266,9 +287,13 @@ export void test_front_emit_float_cast_to_an_integer_that_does_not_fit_calls_the
 export void test_front_emit_half_and_bfloat_are_llvm_half_and_bfloat() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn half(a: f16) -> f16 {\n    a * a\n}\n"
-                     "pub fn brain(a: bf16) -> f32 {\n    b: bf16 = a + 1.0\n    b as f32\n}\n"
-                     "pub fn across(a: f16) -> bf16 {\n    a as bf16\n}\n",
+    char *ir = ir_of("pub fn half(a: f16) -> f16:\n"
+                     "    a * a\n"
+                     "pub fn brain(a: bf16) -> f32:\n"
+                     "    let b: bf16 = a + 1.0\n"
+                     "    b.to(f32)\n"
+                     "pub fn across(a: f16) -> bf16:\n"
+                     "    a.to(bf16)\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     test::check_equal(contains(ir, "fmul half"), true);
@@ -282,7 +307,7 @@ static Str first_error_of(Str source, Scenario *s) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     mem::set_allocator(outside);
     if (s->checked.error_count == 0) return "";
@@ -291,12 +316,21 @@ static Str first_error_of(Str source, Scenario *s) {
 
 export void test_front_emit_half_literal_out_of_range_and_half_to_bfloat_are_errors() {
     Scenario s = {};
-    Str range = first_error_of("pub fn f() -> f16 {\n    x: f16 = 70000.0\n    x\n}\n", &s);
+    Str range = first_error_of("pub fn f() -> f16:\n"
+                               "    let x: f16 = 70000.0\n"
+                               "    x\n",
+                               &s);
     test::check_equal(contains(range.data, "does not fit F16 (up to 65504)"), true);
     Scenario t = {};
-    Str convert = first_error_of("pub fn f(a: f16) -> bf16 {\n    b: bf16 = a\n    b\n}\n", &t);
+    Str convert = first_error_of("pub fn f(a: f16) -> bf16:\n"
+                                 "    let b: bf16 = a\n"
+                                 "    b\n",
+                                 &t);
     test::check_equal(countof(convert) > 0, true);
     Scenario u = {};
-    Str fine = first_error_of("pub fn f() -> bf16 {\n    x: bf16 = 3.0e38\n    x\n}\n", &u);
+    Str fine = first_error_of("pub fn f() -> bf16:\n"
+                              "    let x: bf16 = 3.0e38\n"
+                              "    x\n",
+                              &u);
     test::check_equal(countof(fine), (Usize)0);
 }

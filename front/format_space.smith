@@ -1,0 +1,211 @@
+// front::format_space: the space between two neighbouring tokens on a line, for `smith fmt` on smith's own front end
+// (#1888, part of #1886). A pure function of the two token kinds and two flags the caller tracks; the driver of the
+// formatter (front::format) lexes a file, walks the tokens of each line and asks this module before every token that
+// is not the first of its line. The style is the one of the syntax tour (skill smith-dev-syntax).
+//
+//   space_between(prev, next, context)   Whether one space (true) or none (false) goes between the tokens.
+//   ends_operand(kind)                   Whether a token of this kind can end an operand (a name, a literal, `)`).
+//   operand_expected(before)             Whether an operator after a token of this kind is a prefix one (`-x`, `*p`).
+//
+// The rules, in the order they are tried:
+//   * `newline`, `indent`, `dedent` and the end of the file are the driver's business: never a space.
+//   * Nothing is written before `,` `;` `)` `]` `:` `::` `.*` `...` or a `.` that follows an operand, and nothing
+//     after `(` `[` `.` `::` `@` `!` `~` `?` or a prefix operator (`-x`, `*p`, `&x`, `+x`).
+//   * `:` is followed by a space, except inside `[ ]` (`xs[a:b]`, `xs[:]`); `;` and `,` are followed by one.
+//   * `(` follows a name, a type name, `)` `]` or a keyword that is called (`fn(x)`, `sizeof(x)`, `countof(xs)`)
+//     with no space, any other keyword (`if (`, `return (`) with one. `[` follows an operand with none (`xs[0]`,
+//     `sum[f64]`) and anything else with one (`= [1, 2]`). `]` followed by a type word, `mut` or `[` is a type
+//     (`[]T`, `[5]u8`, `[]mut T`, `[3][4]u8`): no space.
+//   * Binary operators, `=`, `:=`, the compound assignments, `->` and `=>` have a space on both sides.
+//   * `{` and `}` (construction in the old spelling, until #1845 removes braces) keep a space inside unless empty.
+//   * Two other tokens next to each other have one space between them.
+module front::format_space;
+
+import front::lex;
+
+// What the caller tracks while it walks a line.
+//   prev_unary    The previous token is an operator written in front of its operand (`-` of `-x`, `*` of `*p`):
+//                 `operand_expected` of the token before it.
+//   in_brackets   The innermost open bracket is the `[` of an index or a slice, so a `:` is a slice's (no space) and
+//                 not a block head's or a parameter's. The `[` of the inferred parameters in a header (`fn sum[T:
+//                 num]`, a `[` right after `fn name`) is not: the driver knows it from the tokens before.
+export struct SpaceContext {
+    Bool prev_unary;
+    Bool in_brackets;
+};
+
+// Whether a token of this kind can end an operand: a name, a type, a literal, a closing bracket, `.*`, `...`.
+export Bool ends_operand(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::type_name:
+    case lex::name:
+    case lex::integer:
+    case lex::floating:
+    case lex::character:
+    case lex::string:
+    case lex::kw_true:
+    case lex::kw_false:
+    case lex::kw_nullptr:
+    case lex::kw_void:
+    case lex::kw_bool:
+    case lex::kw_char:
+    case lex::kw_int:
+    case lex::kw_long:
+    case lex::kw_short:
+    case lex::kw_float:
+    case lex::kw_double:
+    case lex::kw_type:
+    case lex::right_paren:
+    case lex::right_bracket:
+    case lex::right_brace:
+    case lex::dot_star:
+    case lex::ellipsis:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Whether an operator that follows a token of this kind has its operand after it (a prefix operator): the token
+// before it cannot end an operand. The first token of a line has `end_of_file`, `newline`, `indent` or `dedent` before
+// it.
+export Bool operand_expected(lex::TokenKind before) {
+    return !ends_operand(before);
+}
+
+// The operators written with a space on both sides: binary, comparison, assignment, `->`, `=>`, `:=`.
+static Bool spaced_operator(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::slash:
+    case lex::percent:
+    case lex::less_less:
+    case lex::greater_greater:
+    case lex::less:
+    case lex::greater:
+    case lex::less_equal:
+    case lex::greater_equal:
+    case lex::equal_equal:
+    case lex::bang_equal:
+    case lex::caret:
+    case lex::pipe:
+    case lex::ampersand_ampersand:
+    case lex::pipe_pipe:
+    case lex::equal:
+    case lex::star_equal:
+    case lex::slash_equal:
+    case lex::percent_equal:
+    case lex::plus_equal:
+    case lex::minus_equal:
+    case lex::less_less_equal:
+    case lex::greater_greater_equal:
+    case lex::ampersand_equal:
+    case lex::caret_equal:
+    case lex::pipe_equal:
+    case lex::colon_equal:
+    case lex::arrow:
+    case lex::fat_arrow:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The keywords that are called like a function: `fn(x)`, `sizeof(x)`, `countof(xs)`.
+static Bool called_keyword(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::kw_fn:
+    case lex::kw_fn_once:
+    case lex::kw_sizeof:
+    case lex::kw_alignof:
+    case lex::kw_countof:
+    case lex::kw_typeof:
+    case lex::kw_typeof_unqual:
+    case lex::kw_static_assert:
+    case lex::kw_atomic:
+    case lex::kw_bit_int:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The layout tokens and the end of the file: the driver writes the line breaks and the indentation.
+static Bool is_layout(lex::TokenKind kind) {
+    return kind == lex::newline || kind == lex::indent || kind == lex::dedent || kind == lex::end_of_file;
+}
+
+// A word of a type written after `]`: `[]T`, `[5]u8`, `[]mut T`, `[3][4]u8`.
+static Bool type_word(lex::TokenKind kind) {
+    return kind == lex::type_name || kind == lex::name || kind == lex::kw_mut || kind == lex::left_bracket ||
+           kind == lex::kw_bool || kind == lex::kw_char || kind == lex::kw_float || kind == lex::kw_double ||
+           kind == lex::kw_int || kind == lex::kw_long || kind == lex::kw_short || kind == lex::kw_signed ||
+           kind == lex::kw_unsigned || kind == lex::kw_void;
+}
+
+// Whether nothing goes after a token of kind prev, whatever follows.
+static Bool tight_after(lex::TokenKind prev, SpaceContext context) {
+    switch (prev) {
+    case lex::left_paren:
+    case lex::left_bracket:
+    case lex::dot:
+    case lex::colon_colon:
+    case lex::at:
+    case lex::bang:
+    case lex::tilde:
+    case lex::question:
+        return true;
+    case lex::colon:
+        return context.in_brackets;
+    case lex::star:
+    case lex::ampersand:
+    case lex::plus:
+    case lex::minus:
+    case lex::plus_plus:
+    case lex::minus_minus:
+        return context.prev_unary;
+    default:
+        return false;
+    }
+}
+
+// Whether nothing goes before a token of kind next that follows prev.
+static Bool tight_before(lex::TokenKind prev, lex::TokenKind next) {
+    switch (next) {
+    case lex::comma:
+    case lex::semicolon:
+    case lex::right_paren:
+    case lex::right_bracket:
+    case lex::colon:
+    case lex::colon_colon:
+    case lex::dot_star:
+    case lex::ellipsis:
+        return true;
+    case lex::dot:
+    case lex::plus_plus:
+    case lex::minus_minus:
+        return ends_operand(prev);
+    case lex::left_paren:
+        return ends_operand(prev) || called_keyword(prev);
+    case lex::left_bracket:
+        return ends_operand(prev);
+    default:
+        return false;
+    }
+}
+
+// Whether one space (true) or none (false) goes between a token of kind prev and the next one on the same line.
+export Bool space_between(lex::TokenKind prev, lex::TokenKind next, SpaceContext context) {
+    if (is_layout(prev) || is_layout(next)) return false;
+    if (prev == lex::right_bracket && type_word(next)) return false;
+    if (tight_after(prev, context)) return false;
+    if (tight_before(prev, next)) return false;
+    if (prev == lex::left_brace) return next != lex::right_brace;
+    if (next == lex::right_brace) return prev != lex::left_brace;
+    return true;
+}
+
+// Whether the operator of kind kind is written with a space on both sides in every position (`*`, `&`, `+` and `-`
+// are not: they are prefix operators too). The tests read it.
+export Bool is_spaced_operator(lex::TokenKind kind) {
+    return spaced_operator(kind);
+}

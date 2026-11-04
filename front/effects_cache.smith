@@ -1,0 +1,198 @@
+// front::effects_cache: the per-function summaries of front::effects_pass, kept by a hash of the function's IR (#2018,
+// piece 1 of #1939). A summary is what a function's body does by itself (`own`, the bits a write to a global or a call
+// through a pointer adds) and the direct calls it makes, by name with the source line. It does not depend on any
+// other function, so it stays valid while the function's IR hash is the same, whatever happens to the rest of the
+// build; the solver puts the summaries together each time.
+//
+//   lookup(cache, &summary)   true when the cache has `summary.name` with `summary.hash`: `own` and `calls` are filled
+//   store(cache, &summary)    puts (or replaces) the summary
+//   hits / misses             counters, for the tests and for `smith lsp`'s timing
+module front::effects_cache;
+
+import front::effects_table;
+import std::arena;
+import std::format;
+import std::mem;
+
+// What a Call records (`kind`). A direct call has the callee's name; the other kinds are the facts piece 3 of #1939
+// needs to follow function values: `slot` is a parameter number, `arg` another number, `target` a function's name.
+export constexpr U32 call_direct = 0;   // calls `callee`
+export constexpr U32 call_param = 1;    // calls its parameter `slot`; `callee` is the text of the function type called
+export constexpr U32 call_memory = 2;   // calls a pointer loaded from memory; `callee` is the function type's text
+export constexpr U32 pass_function = 3; // passes the function `target` as argument `slot` of `callee`
+export constexpr U32 pass_param = 4;    // passes its parameter `arg` as argument `slot` of `callee`
+export constexpr U32 pass_memory = 5;   // passes a pointer it cannot trace as argument `slot` of `callee`
+export constexpr U32 param_ceiling = 6; // parameter `slot` is limited to the effects in `arg`
+
+export struct Call {
+    Str callee;
+    U32 line;
+    U32 kind;
+    U32 slot;
+    U32 arg;
+    Str target;
+};
+
+export struct Summary {
+    Str name;
+    U64 hash;
+    U32 own;
+    Call calls[:];
+    Bool defined;
+};
+
+export struct Cache {
+    Summary items[:];
+    Usize count;
+    Usize table[:];
+    Usize hits;
+    Usize misses;
+};
+
+// FNV-1a over bytes, starting from `seed` (14695981039346656037 for the first piece).
+export U64 hash_bytes(Str bytes, U64 seed) {
+    U64 hash = seed;
+    for (Usize i = 0; i < countof(bytes); i++) {
+        hash ^= (U64)(U8)bytes[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static U64 name_hash(Str name) {
+    U64 hash = 14695981039346656037ull;
+    for (Usize i = 0; i < countof(name); i++) {
+        hash ^= (U64)(U8)name[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+// The number of calls of a summary, and the call at `i`: for another module, which cannot take `countof` of the slice.
+export Usize call_count(const Summary *summary) {
+    return countof(summary->calls);
+}
+
+export Call call_at(const Summary *summary, Usize i) {
+    return summary->calls[i];
+}
+
+// The text of a `format::push` as a Str; free it with `free_text`.
+export Str as_str(format::Chars chars) {
+    return chars.data[0:countof(chars)];
+}
+
+export Str dup(Str text) {
+    return as_str(format::push(text));
+}
+
+export void free_text(Str text) {
+    mem::free((char *)(Usize)text.data);
+}
+
+export void push_call(Summary *summary, Call call) {
+    Usize n = countof(summary->calls);
+    summary->calls = mem::realloc(summary->calls, n + 1);
+    summary->calls[n] = (Call){.callee = dup(call.callee),
+                               .line = call.line,
+                               .kind = call.kind,
+                               .slot = call.slot,
+                               .arg = call.arg,
+                               .target = dup(call.target)};
+}
+
+// A summary with its own copy of the name and the callee names; free it with `release_summary`.
+export Summary copy_summary(const Summary *from) {
+    Summary copy = {.name = dup(from->name), .hash = from->hash, .own = from->own, .defined = from->defined};
+    for (Usize i = 0; i < countof(from->calls); i++) {
+        push_call(&copy, from->calls[i]);
+    }
+    return copy;
+}
+
+export void release_summary(Summary *summary) {
+    free_text(summary->name);
+    for (Usize i = 0; i < countof(summary->calls); i++) {
+        free_text(summary->calls[i].callee);
+        free_text(summary->calls[i].target);
+    }
+    mem::free(summary->calls.data);
+    *summary = (Summary){};
+}
+
+export void release(Cache *cache) {
+    for (Usize i = 0; i < cache->count; i++) {
+        release_summary(&cache->items[i]);
+    }
+    mem::free(cache->items.data);
+    mem::free(cache->table.data);
+    *cache = (Cache){};
+}
+
+static Bool same_name(Str a, Str b) {
+    return mem::equal(a, b);
+}
+
+static Usize index_of(const Cache *cache, Str name) {
+    if (countof(cache->table) == 0) return ~(Usize)0;
+    Usize mask = countof(cache->table) - 1;
+    Usize slot = (Usize)name_hash(name) & mask;
+    while (cache->table[slot] != 0) {
+        Usize index = cache->table[slot] - 1;
+        if (same_name(cache->items[index].name, name)) return index;
+        slot = (slot + 1) & mask;
+    }
+    return ~(Usize)0;
+}
+
+static void insert_slot(Cache *cache, Usize index) {
+    Usize mask = countof(cache->table) - 1;
+    Usize slot = (Usize)name_hash(cache->items[index].name) & mask;
+    while (cache->table[slot] != 0) {
+        slot = (slot + 1) & mask;
+    }
+    cache->table[slot] = index + 1;
+}
+
+static void grow(Cache *cache) {
+    if (cache->count == countof(cache->items)) {
+        Usize capacity = countof(cache->items) == 0 ? 32 : countof(cache->items) * 2;
+        cache->items = mem::realloc(cache->items, capacity);
+    }
+    if ((cache->count + 1) * 2 > countof(cache->table)) {
+        Usize size = countof(cache->table) == 0 ? 64 : countof(cache->table) * 2;
+        mem::free(cache->table.data);
+        cache->table = mem::alloc_slice(Usize, size);
+        for (Usize i = 0; i < cache->count; i++) {
+            insert_slot(cache, i);
+        }
+    }
+}
+
+export Bool lookup(Cache *cache, Summary *summary) {
+    Usize index = index_of(cache, summary->name);
+    if (index == ~(Usize)0 || cache->items[index].hash != summary->hash) {
+        cache->misses += 1;
+        return false;
+    }
+    cache->hits += 1;
+    summary->own = cache->items[index].own;
+    const Summary *entry = &cache->items[index];
+    for (Usize i = 0; i < countof(entry->calls); i++) {
+        push_call(summary, entry->calls[i]);
+    }
+    return true;
+}
+
+export void store(Cache *cache, const Summary *summary) {
+    Usize index = index_of(cache, summary->name);
+    if (index != ~(Usize)0) {
+        release_summary(&cache->items[index]);
+        cache->items[index] = copy_summary(summary);
+        return;
+    }
+    grow(cache);
+    cache->items[cache->count] = copy_summary(summary);
+    insert_slot(cache, cache->count);
+    cache->count += 1;
+}

@@ -1,0 +1,249 @@
+// front::effects_ceiling: `@pure` and `@effects(...)` as ceilings over the solved graph of front::effects_pass (#2019,
+// piece 2 of #1939). The checker reads the ceiling from the attribute (front::types_attr::ceiling_of) and writes it
+// into the IR as a function attribute (`smith-effects`, the mask in decimal); after the pass, a function whose
+// inferred set goes past its ceiling is an error at the call that first added an effect beyond it, with the chain.
+// A function with no ceiling has no error. The wording is the old plugin's (`shim/effects_infer.cpp`), as
+// tests/effects/ expects it.
+//
+//   effects_ceiling::write(function, mask)            puts the ceiling on a function of the IR
+//   effects_ceiling::read(function, &mask)            true and the mask when the function has one
+//   effects_ceiling::check(&graph, module, &report)   after effects_pass::solve: one Violation for each function of
+//                                                     the module whose set passes its ceiling
+//   effects_ceiling::write_param(function, slot, mask)   puts a ceiling on a function-typed parameter (piece 3, #2020):
+//                                                     check then judges every function passed there at the call
+//   effects_ceiling::render(&report)                  the diagnostics as text, `file:line:col: error: ...`
+//   effects_ceiling::release(&report)
+//
+// A hop of the chain names the callee and the line of the call in the file of the module that is checked: a callee
+// that another module defines has the line of the call, as the old plugin printed it for a call across files.
+module front::effects_ceiling;
+
+import <llvm-c/Core.h>;
+import <string.h>;
+
+import front::effects_cache;
+import front::effects_pass;
+import front::effects_table;
+import std::format;
+import std::mem;
+
+static const char *const key = "smith-effects";
+
+// What one error holds. `message` and `chain` are owned by the report.
+export struct Violation {
+    Str function; // the function's name as the source writes it
+    Str message;  // "`bad` is [[std::pure]], but it has the effects console, globals: bad -> log_it (f:16) -> printf
+                  // (f:8)"
+    U32 line;     // the call that first added an effect beyond the ceiling, 0 when the function adds it itself
+    U32 excess;   // the effects beyond the ceiling
+    U32 ceiling;
+};
+
+export struct Report {
+    Violation items[:];
+    Usize count;
+    Str file; // the source file of the module that was checked
+};
+
+// ---------------------------------------------------------------------------------------------------------------
+// The ceiling in the IR
+
+export void write(c::LLVMValueRef function, U32 mask) {
+    c::LLVMContextRef context = c::LLVMGetModuleContext(c::LLVMGetGlobalParent(function));
+    Str digits = effects_cache::as_str(format::push(mask));
+    c::LLVMAttributeRef attribute =
+        c::LLVMCreateStringAttribute(context, key, (U32)c::strlen(key), digits.data, (U32)countof(digits));
+    c::LLVMAddAttributeAtIndex(function, (U32)c::LLVMAttributeFunctionIndex, attribute);
+    effects_cache::free_text(digits);
+}
+
+export Bool read(c::LLVMValueRef function, U32 *mask) {
+    c::LLVMAttributeRef attribute =
+        c::LLVMGetStringAttributeAtIndex(function, (U32)c::LLVMAttributeFunctionIndex, key, (U32)c::strlen(key));
+    if (attribute == nullptr) return false;
+    U32 length = 0;
+    const char *chars = c::LLVMGetStringAttributeValue(attribute, &length);
+    U32 value = 0;
+    for (U32 i = 0; i < length; i++) {
+        value = value * 10 + (U32)(chars[i] - '0');
+    }
+    *mask = value;
+    return true;
+}
+
+export void write_param(c::LLVMValueRef function, U32 slot, U32 mask) {
+    effects_pass::write_param_ceiling(function, slot, mask);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The check
+
+// The name of a function the way the source writes it: `<module>:<name>` with internal linkage loses the module.
+static Str plain(Str name) {
+    for (Usize i = 0; i < countof(name); i++) {
+        if (name[i] == ':') return name[i + 1:countof(name)];
+    }
+    return name;
+}
+
+static Str graph_name(c::LLVMValueRef function) {
+    Usize length = 0;
+    const char *chars = c::LLVMGetValueName2(function, &length);
+    Str name = chars[0:length];
+    c::LLVMLinkage linkage = c::LLVMGetLinkage(function);
+    if (linkage != c::LLVMInternalLinkage && linkage != c::LLVMPrivateLinkage) return effects_cache::dup(name);
+    Usize module_length = 0;
+    const char *module = c::LLVMGetModuleIdentifier(c::LLVMGetGlobalParent(function), &module_length);
+    return effects_cache::as_str(format::push(module[0:module_length], ":", name));
+}
+
+// The bit that gives the earliest call of the function among the bits of `extra`, or `none`: the call the error is
+// at. A bit the function adds itself has no call.
+static Usize first_bit(const effects_pass::Graph *g, Usize index, U32 extra) {
+    Usize best = effects_pass::none;
+    U32 best_line = 0;
+    for (Usize b = 0; b < effects_table::bit_count; b++) {
+        if ((extra & (1u << b)) == 0) continue;
+        effects_pass::Cause cause = effects_pass::cause_of(g, index, b);
+        if (cause.callee == effects_pass::none) continue;
+        if (best == effects_pass::none || cause.line < best_line) {
+            best = b;
+            best_line = cause.line;
+        }
+    }
+    return best;
+}
+
+// `bad -> log_it (file:16) -> printf (file:8)`: the hops that bit `bit` took from the function to where it started.
+static Str chain_of(const effects_pass::Graph *g, Usize index, Usize bit, Str file) {
+    Str text = effects_cache::dup(plain(effects_pass::name_of(g, index)));
+    Usize at = index;
+    for (Usize steps = 0; steps < 64; steps++) {
+        effects_pass::Cause cause = effects_pass::cause_of(g, at, bit);
+        if (cause.callee == effects_pass::none) break;
+        Str next = effects_cache::as_str(format::push(text, " -> ", plain(effects_pass::name_of(g, cause.callee)), " (",
+                                                      file, ":", cause.line, ")"));
+        effects_cache::free_text(text);
+        text = next;
+        at = cause.callee;
+    }
+    return text;
+}
+
+static void push(Report *report, Violation v) {
+    if (report->count == countof(report->items)) {
+        Usize capacity = countof(report->items) == 0 ? 8 : countof(report->items) * 2;
+        report->items = mem::realloc(report->items, capacity);
+    }
+    report->items[report->count] = v;
+    report->count += 1;
+}
+
+// A function passed where a parameter's ceiling does not allow its effects: `kernel` passes `print_it` to `map`, whose
+// parameter 1 is [[std::pure]]. The error is at the call; the chain is the passed function's.
+static void check_passes(const effects_pass::Graph *g, Usize index, Report *report) {
+    for (Usize k = 0; k < effects_pass::call_total(g, index); k++) {
+        effects_cache::Call call = effects_pass::call_item(g, index, k);
+        if (call.kind != effects_cache::pass_function) continue;
+        U32 ceiling = 0;
+        if (!effects_pass::param_limit(g, effects_pass::find(g, call.callee), call.slot, &ceiling)) continue;
+        Usize passed = effects_pass::find(g, call.target);
+        if (passed == effects_pass::none) continue;
+        U32 extra = effects_pass::set_of(g, call.target) & ~ceiling;
+        if (extra == 0) continue;
+        Usize bit = first_bit(g, passed, extra);
+        if (bit == effects_pass::none) {
+            for (Usize b = 0; b < effects_table::bit_count && bit == effects_pass::none; b++) {
+                if ((extra & (1u << b)) != 0) bit = b;
+            }
+        }
+        Str chain = chain_of(g, passed, bit, report->file);
+        Str kind = ceiling == 0 ? effects_cache::dup("[[std::pure]]")
+                                : effects_cache::as_str(format::push("limited to ", effects_table::describe(ceiling)));
+        Str own = effects_cache::dup(plain(effects_pass::name_of(g, index)));
+        Str message = effects_cache::as_str(format::push("smith-effect: `", own, "` passes `", plain(call.target),
+                                                         "` to `", plain(call.callee), "`, whose parameter ",
+                                                         call.slot + 1, " is ", kind, ", but it has the effects ",
+                                                         effects_table::describe(extra), ": ", chain));
+        effects_cache::free_text(kind);
+        effects_cache::free_text(chain);
+        push(report,
+             (Violation){.function = own, .message = message, .line = call.line, .excess = extra, .ceiling = ceiling});
+    }
+}
+
+static void check_function(const effects_pass::Graph *g, c::LLVMValueRef function, Report *report) {
+    Str name = graph_name(function);
+    Usize index = effects_pass::find(g, name);
+    effects_cache::free_text(name);
+    if (index == effects_pass::none) return;
+    check_passes(g, index, report);
+    U32 ceiling = 0;
+    if (!read(function, &ceiling)) return;
+    U32 extra = effects_pass::set_of(g, effects_pass::name_of(g, index)) & ~ceiling;
+    if (extra == 0) return;
+    Usize bit = first_bit(g, index, extra);
+    if (bit == effects_pass::none) {
+        // Only effects the body adds itself (a write to a global, a call through a pointer): no call to point at.
+        for (Usize b = 0; b < effects_table::bit_count && bit == effects_pass::none; b++) {
+            if ((extra & (1u << b)) != 0) bit = b;
+        }
+    }
+    U32 line = 0;
+    if (effects_pass::cause_of(g, index, bit).callee != effects_pass::none)
+        line = effects_pass::cause_of(g, index, bit).line;
+    Str chain = chain_of(g, index, bit, report->file);
+    Str kind = ceiling == 0 ? effects_cache::dup("[[std::pure]]")
+                            : effects_cache::as_str(format::push("limited to ", effects_table::describe(ceiling)));
+    Str own = effects_cache::dup(plain(effects_pass::name_of(g, index)));
+    Str message = effects_cache::as_str(format::push("smith-effect: `", own, "` is ", kind, ", but it has the effects ",
+                                                     effects_table::describe(extra), ": ", chain));
+    effects_cache::free_text(kind);
+    effects_cache::free_text(chain);
+    push(report, (Violation){.function = own, .message = message, .line = line, .excess = extra, .ceiling = ceiling});
+}
+
+// Judges every function of `module` that has a ceiling against the solved sets of `g`. The functions come out in the
+// order the module defines them.
+export void check(const effects_pass::Graph *g, c::LLVMModuleRef module, Report *report) {
+    if (countof(report->file) == 0) {
+        Usize length = 0;
+        const char *file = c::LLVMGetSourceFileName(module, &length);
+        report->file = effects_cache::dup(file[0:length]);
+    }
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        if (c::LLVMIsDeclaration(f) != 0) continue;
+        check_function(g, f, report);
+    }
+}
+
+// The diagnostics as the old plugin printed them: one line each, and under it a note when more than one effect is
+// beyond the ceiling (the error is at the first of them). A call has no column in IR, so it is 1.
+export Str render(const Report *report) {
+    Str text = effects_cache::dup("");
+    for (Usize i = 0; i < report->count; i++) {
+        const Violation *v = &report->items[i];
+        Str place = effects_cache::as_str(format::push(report->file, ":", v->line, ":1"));
+        Str next = effects_cache::as_str(format::push(text, place, ": error: ", v->message, "\n"));
+        effects_cache::free_text(text);
+        text = next;
+        if ((v->excess & (v->excess - 1)) != 0) {
+            next = effects_cache::as_str(
+                format::push(text, place, ": note: this call is the first of the effects beyond the declared ones\n"));
+            effects_cache::free_text(text);
+            text = next;
+        }
+        effects_cache::free_text(place);
+    }
+    return text;
+}
+
+export void release(Report *report) {
+    for (Usize i = 0; i < report->count; i++) {
+        effects_cache::free_text(report->items[i].function);
+        effects_cache::free_text(report->items[i].message);
+    }
+    mem::free(report->items.data);
+    if (countof(report->file) > 0) effects_cache::free_text(report->file);
+    *report = (Report){};
+}

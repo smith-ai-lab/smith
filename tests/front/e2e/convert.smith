@@ -1,0 +1,17 @@
+# to, wrap and cast (#1811): a conversion that fits, a wrap that keeps the low bits, a pointer reinterpreted.
+
+pub fn check() -> i32:
+    let big: i32 = 300
+    if big.wrap(u8).to(i32) != 44:
+        return 1
+    let small: i32 = 200
+    if small.to(u8).to(i32) != 200:
+        return 2
+    let minus: i32 = -1
+    if minus.wrap(u8).to(i32) != 255:
+        return 3
+    let mut word: u32 = 0x01020304
+    let bytes = (&word).cast(*mut u8)
+    if bytes.*.to(i32) != 4:
+        return 4
+    return 0

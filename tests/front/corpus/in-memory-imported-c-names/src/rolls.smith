@@ -1,0 +1,4 @@
+import core
+
+pub fn total(thing: *core.Thing, more: i32) -> i32:
+    thing.x + more

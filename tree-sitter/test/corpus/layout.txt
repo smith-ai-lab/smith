@@ -1,0 +1,120 @@
+================================================================================
+layout: a function with an indented body and comments
+================================================================================
+
+# a comment
+fn sign(x: i32) -> i32:
+    # inside the block
+    if x < 0:
+        return -1
+    else if x == 0:
+        return 0
+    else:
+        return 1
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (comment)
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier))
+    (type_identifier)
+    (layout_block
+      (comment)
+      (layout_if_statement
+        (binary_expression
+          (identifier)
+          (number_literal))
+        (layout_block
+          (layout_return_statement
+            (number_literal)))
+        (layout_if_statement
+          (binary_expression
+            (identifier)
+            (number_literal))
+          (layout_block
+            (layout_return_statement
+              (number_literal)))
+          (layout_block
+            (layout_return_statement
+              (number_literal))))))))
+
+================================================================================
+layout: one-line blocks, blank lines and a trailing comment
+================================================================================
+
+fn f(a: i32):
+    if a: return 1   # one line
+
+    g(a)
+
+fn g():
+    h()
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters
+      (identifier)
+      (type_identifier))
+    (layout_block
+      (layout_if_statement
+        (identifier)
+        (layout_block
+          (layout_return_statement
+            (number_literal))
+          (comment)))
+      (layout_expression_statement
+        (call_expression
+          (identifier)
+          (argument_list
+            (identifier))))))
+  (fn_declaration
+    (identifier)
+    (fn_parameters)
+    (layout_block
+      (layout_expression_statement
+        (call_expression
+          (identifier)
+          (argument_list))))))
+
+================================================================================
+layout: a break inside parentheses counts for nothing, and a dedent of two levels
+================================================================================
+
+fn f():
+    if a:
+        g(1,
+          2)
+fn h():
+    k()
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (fn_declaration
+    (identifier)
+    (fn_parameters)
+    (layout_block
+      (layout_if_statement
+        (identifier)
+        (layout_block
+          (layout_expression_statement
+            (call_expression
+              (identifier)
+              (argument_list
+                (number_literal)
+                (number_literal))))))))
+  (fn_declaration
+    (identifier)
+    (fn_parameters)
+    (layout_block
+      (layout_expression_statement
+        (call_expression
+          (identifier)
+          (argument_list))))))

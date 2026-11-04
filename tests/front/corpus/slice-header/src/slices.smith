@@ -1,0 +1,12 @@
+# A slice in a header: a field and a parameter spell as the struct of its element, defined once where it is first used.
+pub struct Layer:
+    pub weights: []f32
+    pub name: []char
+
+pub fn total(xs: []i32, skip: usize) -> usize:
+    let mut sum: usize = 0
+    let mut i = skip
+    while i < countof(xs):
+        sum += xs[i].to(usize)
+        i += 1
+    sum

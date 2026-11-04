@@ -1,0 +1,80 @@
+// front::lsp_hover: `textDocument/hover` for `.smith` on smith's own front end (#1892, a piece of #1887). The type of
+// the checked expression under the cursor, as markdown, with the range it covers; a name from a C header also gets the
+// comment above its declaration (#1943).
+//
+//   result(path, source, line, character)   the JSON for the `result` of the reply: `null` when nothing is under the
+//                                           cursor, else `{"contents":{...},"range":{...}}`
+//
+// A position is a line and a byte count in the line (LSP asks for UTF-16 units; the two agree on ASCII). The text is
+// the current allocator's.
+module front::lsp_hover;
+
+import front::compile;
+import front::roots;
+import std::format;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The byte offset of the 0-based `line` and `character` in `source`; the end of the text when the line is past it.
+export U32 offset_of(Str source, U64 line, U64 character) {
+    U64 seen = 0;
+    Usize i = 0;
+    while (i < countof(source) && seen < line) {
+        if (source[i] == '\n') seen += 1;
+        i += 1;
+    }
+    U64 column = 0;
+    while (i < countof(source) && column < character && source[i] != '\n') {
+        i += 1;
+        column += 1;
+    }
+    return (U32)i;
+}
+
+// The 0-based line and the byte column of the byte `offset` of `source`, as `"line":L,"character":C`.
+static Str position(Str source, U32 offset) {
+    U64 line = 0;
+    U64 column = 0;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    return as_str(format::push("{\"line\":", line, ",\"character\":", column, "}"));
+}
+
+// A type name or a header comment as the inside of a JSON string: a line break stays one, any other control byte
+// becomes a space, so the reply is valid whatever it holds.
+static Str escape(Str text) {
+    Str out = "";
+    for (Usize i = 0; i < countof(text); i++) {
+        char ch = text[i];
+        if (ch == '"' || ch == '\\') {
+            out = as_str(format::push(out, "\\", text[i:i + 1]));
+        } else if (ch == '\n') {
+            out = as_str(format::push(out, "\\n"));
+        } else if ((U8)ch < 32) {
+            out = as_str(format::push(out, " "));
+        } else {
+            out = as_str(format::push(out, text[i:i + 1]));
+        }
+    }
+    return out;
+}
+
+// The `result` of a hover at `line` and `character` of the text `source` of the file `path`.
+export Str result(Str path, Str source, U64 line, U64 character) {
+    U32 offset = offset_of(source, line, character);
+    compile::Hover found = compile::hover_at(path, source, roots::default_roots(), offset);
+    if (!found.found) return "null";
+    Str doc = "";
+    if (countof(found.doc) > 0) doc = as_str(format::push("\\n\\n", escape(found.doc)));
+    return as_str(format::push("{\"contents\":{\"kind\":\"markdown\",\"value\":\"```smith\\n", escape(found.type),
+                               "\\n```", doc, "\"},\"range\":{\"start\":", position(source, found.start),
+                               ",\"end\":", position(source, found.end), "}}"));
+}

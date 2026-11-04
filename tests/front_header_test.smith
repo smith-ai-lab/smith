@@ -23,6 +23,13 @@ static const char *smith_path() {
     return self != nullptr ? self : "smith";
 }
 
+static Bool contains(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
 static Str folder_for(Str name) {
     Str path = as_str(format::push("/tmp/front_header_", (I64)c::getpid(), "_", name));
     c::mkdir(path.data, 0o700);
@@ -80,11 +87,11 @@ static Str stand_ins() {
 }
 
 static Str shapes_source() {
-    return "pub struct Point {\n    x: f64\n    y: f64\n}\n\n"
-           "pub fn dot(a: *Point, b: *Point) -> f64 {\n    a.x * b.x + a.y * b.y\n}\n\n"
-           "pub fn bump(p: *mut i64) {\n    p.* = p.* + 1\n}\n\n"
-           "@c_name(\"shapes_count\")\npub fn count() -> u32 {\n    3\n}\n\n"
-           "fn hidden() -> i32 {\n    1\n}\n";
+    return "pub struct Point:\n    x: f64\n    y: f64\n\n"
+           "pub fn dot(a: *Point, b: *Point) -> f64:\n    a.x * b.x + a.y * b.y\n\n"
+           "pub fn bump(p: *mut i64):\n    p.* = p.* + 1\n\n"
+           "@c_name(\"shapes_count\")\npub fn count() -> u32:\n    3\n\n"
+           "fn hidden() -> i32:\n    1\n";
 }
 
 static Str golden(Str label_prefix) {
@@ -220,11 +227,11 @@ export void test_front_header_c_program_links_and_runs() {
 
 export void test_front_header_an_option_parameter_is_an_error_and_writes_nothing() {
     Str folder = folder_for("option");
-    write_text(shapes_path(folder), "pub fn f(o: ?i32) -> i32 {\n    1\n}\n");
+    write_text(shapes_path(folder), "pub fn f(o: ?i32) -> i32:\n    1\n");
     compile::Report done = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
     test::check_equal(done.ok, false);
     Str want = as_str(
-        format::push(shapes_path(folder), ":1:10: error: `f` takes `?i32`, which has no C spelling in a header yet\n"));
+        format::push(shapes_path(folder), ":1:10: error: `f` takes `?i32`, whose C layout is not defined yet\n"));
     test::check_equal(done.text, want);
     test::check_equal(files::exists(header_path(folder)), false);
     remove_all(folder);
@@ -232,14 +239,29 @@ export void test_front_header_an_option_parameter_is_an_error_and_writes_nothing
 
 export void test_front_header_a_struct_by_value_is_an_error() {
     Str folder = folder_for("value");
-    write_text(shapes_path(folder), "pub struct Point {\n    x: i64\n}\n\npub fn dot(a: Point) -> i64 {\n    a.x\n}\n");
+    write_text(shapes_path(folder), "pub struct Point:\n    x: i64\n\npub fn dot(a: Point) -> i64:\n    a.x\n");
     compile::Report done = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
     test::check_equal(done.ok, false);
     Str want = as_str(format::push(shapes_path(folder),
-                                   ":5:12: error: `dot` takes `Point` by value; C passes a struct by value by the "
+                                   ":4:12: error: `dot` takes `Point` by value; C passes a struct by value by the "
                                    "target's ABI, which the emitter does not follow yet: take `*Point`\n"));
     test::check_equal(done.text, want);
     test::check_equal(files::exists(header_path(folder)), false);
+    remove_all(folder);
+}
+
+// A pointer to a struct of an imported module is spelled by that module's C name, and its header is included once.
+export void test_front_header_a_pointer_to_an_imported_struct_is_spelled_and_included() {
+    Str folder = folder_for("imported");
+    write_text(shapes_path(folder),
+               "import geometry.core\n\npub fn dot(a: *geometry.core.Point, b: *mut geometry.core.Point) -> i64:\n"
+               "    a.x + b.x\n");
+    compile::Report done = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    test::check_equal(contains(got, "#include \"geometry/core.h\"\n#ifdef __cplusplus"), true);
+    test::check_equal(
+        contains(got, "int64_t geometry_shapes_dot(const geometry_core_Point *a, geometry_core_Point *b)"), true);
     remove_all(folder);
 }
 
@@ -280,5 +302,26 @@ export void test_front_header_the_driver_writes_the_same_header() {
     Str want = with_dir(golden(""), as_str(format::push("")));
     Str got = text_of(header_path(folder));
     test::check_equal(got, replace_slash(want));
+    remove_all(folder);
+}
+
+// `@when(cond)` on a function and on a field is `#if` in the header (#1801).
+export void test_front_header_when_is_if() {
+    Str folder = folder_for("when");
+    Str source = "pub struct Point:\n    x: i64\n    @when(target.os == .macos)\n    y: i64\n\n"
+                 "@when(target.os == .macos)\npub fn open_window() -> i64:\n    1\n\n"
+                 "@when(target.os != .macos && target.os != .linux)\npub fn nothing() -> i64:\n    2\n\n"
+                 "@when(target.os != .macos)\npub fn open_window() -> i64:\n    3\n";
+    write_text(shapes_path(folder), source);
+    compile::Report done =
+        compile::header(shapes_path(folder), header_path(folder), "x86_64-unknown-linux-gnu", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    Str want = "typedef struct { int64_t x; \n#if defined(__APPLE__)\nint64_t y; \n#endif\n} geometry_shapes_Point;\n";
+    test::check_condition(contains(got, want));
+    test::check_condition(contains(got, "#if defined(__APPLE__)\nint64_t geometry_shapes_open_window(void)"));
+    test::check_condition(contains(got, "#if !defined(__APPLE__)\nint64_t geometry_shapes_open_window(void)"));
+    test::check_condition(
+        contains(got, "#if !defined(__APPLE__) && !defined(__linux__)\nint64_t geometry_shapes_nothing"));
     remove_all(folder);
 }

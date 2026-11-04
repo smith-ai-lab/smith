@@ -1,0 +1,7 @@
+import <stdio.h>;
+
+# `args` is a slice of the program's arguments: argc slices on the stack that point into argv's own characters.
+pub fn main(args: []str) -> i32:
+    let program = args[0]
+    let _ = c::printf("%zu argument, the program's name is not empty: %d\n", countof(args), countof(program) > 0)
+    5

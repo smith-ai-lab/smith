@@ -4,17 +4,24 @@
 // `#include` of a header have a spelling in smith's own syntax, so the error of that `#` carries one fix with the edits
 // of every such line in the file:
 //
-//   #define LIMIT 4                 const LIMIT := 4
-//   #include <sys/stat.h>           stat := import c <sys/stat.h>
+//   #define LIMIT 4                 const LIMIT = 4
+//   #include <sys/stat.h>           import c <sys/stat.h>   (`as name` only when the file's name is not a name)
 //
-// Everything else (`#if`, `#pragma`, `#error`, a function-like `#define`, a `#include "h"`) is left as it is: the lexer
-// stops there with the same message and no fix, and each is a ticket of its own.
+//   #if defined(__APPLE__)          @when(target.os == .macos)   (before each declaration of the branch;
+//   ...declarations...              the `#if`, `#else` and `#endif` lines are removed)
+//   #else                           @when(target.os != .macos)
+//
+// Only a block of whole declarations at the top level whose conditions are `defined(__APPLE__)` or
+// `defined(__linux__)` (also `#ifdef`, `#ifndef`, `!`, `#elif`, `#else`) is mended, and one that holds no other
+// directive and no nested `#if`. Everything else (`#if`, `#pragma`, `#error`, a function-like `#define`, a `#include
+// "h"`) is left as it is: the lexer stops there with the same message and no fix, and each is a ticket of its own.
 //
 //   fix_directive::edits(source)    the edits for the simple directives in `source` (none when it has none)
 module front::fix_directive;
 
 import front::ast;
 import front::parse;
+import std::arena;
 import std::ascii;
 import std::format;
 import std::mem;
@@ -66,7 +73,7 @@ static Bool define_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *ed
     while (last > value && (s[last - 1] == ' ' || s[last - 1] == '\t' || s[last - 1] == '\r'))
         last -= 1;
     if (value == last || s[last - 1] == '\\') return false;
-    push(edits, hash, last, as_str(format::push("const ", s[name_start:name_end], " := ", s[value:last])));
+    push(edits, hash, last, as_str(format::push("const ", s[name_start:name_end], " = ", s[value:last])));
     return true;
 }
 
@@ -90,7 +97,7 @@ static typeof(char[:]) binding_name(Str path) {
     return name;
 }
 
-// `#include <path>` on the line s[hash:end]: `name := import c <path>`; a quoted include has no spelling yet.
+// `#include <path>` on the line s[hash:end]: `import c <path>`; a quoted include has no spelling yet.
 static Bool include_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *edits) {
     Usize open = skip_blanks(s, at, end);
     if (open >= end || s[open] != '<') return false;
@@ -101,7 +108,18 @@ static Bool include_edit(Str s, Usize hash, Usize at, Usize end, parse::Edits *e
     Str path = s[open + 1:close];
     char name[:] = binding_name(path);
     if (countof(name) == 0 || ascii::digit(name[0])) return false;
-    push(edits, hash, close + 1, as_str(format::push(name, " := import c <", path, ">")));
+    // `as name` only when the header's own name is not a valid name (`x-y.h` binds `x_y`)
+    Bool plain = true;
+    Usize from = 0;
+    for (Usize i = 0; i < countof(path); i++) {
+        if (path[i] == '/') from = i + 1;
+    }
+    for (Usize i = from; i < countof(path) && path[i] != '.'; i++) {
+        if (!is_word_char(path[i])) plain = false;
+    }
+    char suffix[:] = {};
+    if (!plain) suffix = format::push(" as ", name);
+    push(edits, hash, close + 1, as_str(format::push("import c <", path, ">", suffix)));
     return true;
 }
 
@@ -117,15 +135,262 @@ static void line_edit(Str s, Usize start, Usize end, parse::Edits *edits) {
     }
 }
 
-// The edits of every simple `#define` and `#include` line of `source`, in order of position.
+// ---------------------------------------------------------------------------------------------------------------
+// `#if` around declarations (#1801)
+
+static Bool is_blank(Str s, Usize start, Usize end) {
+    return skip_blanks(s, start, end) >= end;
+}
+
+// The line's text without a trailing `\r` or blanks.
+static Usize trimmed_end(Str s, Usize start, Usize end) {
+    while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t' || s[end - 1] == '\r'))
+        end -= 1;
+    return end;
+}
+
+// The change in brace depth over the line, ignoring comments, strings and characters.
+static I64 brace_change(Str s, Usize start, Usize end) {
+    I64 change = 0;
+    Usize i = start;
+    while (i < end) {
+        char c = s[i];
+        if (c == '/' && i + 1 < end && s[i + 1] == '/') break;
+        if (c == '"' || c == '\'') {
+            i += 1;
+            while (i < end && s[i] != c) {
+                if (s[i] == '\\') i += 1;
+                i += 1;
+            }
+        } else if (c == '{') {
+            change += 1;
+        } else if (c == '}') {
+            change -= 1;
+        }
+        i += 1;
+    }
+    return change;
+}
+
+// What the macro `name` says about the system: 1 macos, 2 linux, 0 neither.
+static U32 system_of(Str name) {
+    if (starts_with(name, 0, countof(name), "__APPLE__") && countof(name) == 9) return 1;
+    if (starts_with(name, 0, countof(name), "__linux__") && countof(name) == 9) return 2;
+    return 0;
+}
+
+// The test `target.os == .macos` (or `!=`) for a system, as written in a `@when`.
+static Str system_test(U32 system, Bool negated) {
+    Str name = "linux";
+    if (system == 1) name = "macos";
+    Str op = "==";
+    if (negated) op = "!=";
+    return as_str(format::push("target.os ", op, " .", name));
+}
+
+// A condition of `#if`/`#elif` (the text after the word) as a system and whether it is negated; false when it is not
+// `defined(X)`, `defined X` or `!` of one with X a macro that names a system.
+static Bool read_condition(Str s, Usize at, Usize end, U32 *system, Bool *negated) {
+    Usize i = skip_blanks(s, at, end);
+    end = trimmed_end(s, i, end);
+    *negated = false;
+    if (i < end && s[i] == '!') {
+        *negated = true;
+        i = skip_blanks(s, i + 1, end);
+    }
+    if (!starts_with(s, i, end, "defined")) return false;
+    i = skip_blanks(s, i + 7, end);
+    Bool open = i < end && s[i] == '(';
+    if (open) i = skip_blanks(s, i + 1, end);
+    Usize stop = word_end(s, i, end);
+    if (stop == i) return false;
+    *system = system_of(s[i:stop]);
+    i = skip_blanks(s, stop, end);
+    if (open) {
+        if (i >= end || s[i] != ')') return false;
+        i = skip_blanks(s, i + 1, end);
+    }
+    return *system != 0 && i == end;
+}
+
+// `#ifdef X` and `#ifndef X`: the same, from the macro alone.
+static Bool read_macro(Str s, Usize at, Usize end, Bool negated, U32 *system, Bool *is_negated) {
+    Usize i = skip_blanks(s, at, end);
+    end = trimmed_end(s, i, end);
+    Usize stop = word_end(s, i, end);
+    if (stop == i || stop != end) return false;
+    *system = system_of(s[i:stop]);
+    *is_negated = negated;
+    return *system != 0;
+}
+
+struct Line {
+    Usize start; // first byte
+    Usize end;   // the byte of the newline, or the end of the text
+};
+
+struct Branch {
+    Usize head;  // the line of its directive
+    Usize first; // the first line of its body
+    Usize last;  // one past the last
+    Str text;    // its `@when` condition
+};
+
+// The word of the directive on the line (`if`, `ifdef`, `elif`, ...) and where its argument starts; "" when the line is
+// no directive.
+static Str directive_of(Str s, Line line, Usize *argument) {
+    Usize hash = skip_blanks(s, line.start, line.end);
+    if (hash >= line.end || s[hash] != '#') return "";
+    Usize word = skip_blanks(s, hash + 1, line.end);
+    Usize stop = word_end(s, word, line.end);
+    *argument = stop;
+    return s[word:stop];
+}
+
+static Bool is_word(Str a, Str b) {
+    return countof(a) == countof(b) && starts_with(a, 0, countof(a), b);
+}
+
+// The condition of one branch: the negation of every earlier one and its own (when it has one).
+static Bool branch_text(Str s, Line line, Str word, Usize argument, Str *earlier, Str *text, Bool *plain) {
+    U32 system = 0;
+    Bool negated = false;
+    Bool own = false;
+    *plain = false;
+    if (is_word(word, "if") || is_word(word, "elif")) {
+        own = read_condition(s, argument, line.end, &system, &negated);
+        if (!own) return false;
+    } else if (is_word(word, "ifdef")) {
+        own = read_macro(s, argument, line.end, false, &system, &negated);
+        if (!own) return false;
+    } else if (is_word(word, "ifndef")) {
+        own = read_macro(s, argument, line.end, true, &system, &negated);
+        if (!own) return false;
+    }
+    Str mine = "";
+    if (own) mine = system_test(system, negated);
+    Str before = *earlier;
+    if (countof(before) > 0 && countof(mine) > 0) {
+        *text = as_str(format::push(before, " && ", mine));
+    } else if (countof(before) > 0) {
+        *text = before;
+    } else {
+        *text = mine;
+    }
+    if (own) {
+        Str flipped = system_test(system, !negated);
+        *earlier = flipped;
+        if (countof(before) > 0) *earlier = as_str(format::push(before, " && ", flipped));
+    }
+    return countof(*text) > 0;
+}
+
+// The starts of the declarations in the lines [first, last) of a branch, at the left margin. A comment before a
+// declaration stays above the attribute.
+static void declaration_starts(Str s, Line lines[:], Usize first, Usize last, Usize starts[:], Usize *count) {
+    I64 depth = 0;
+    Bool complete = true;
+    for (Usize i = first; i < last; i++) {
+        Line line = lines[i];
+        if (is_blank(s, line.start, line.end)) continue;
+        Usize at = skip_blanks(s, line.start, line.end);
+        Bool margin = at == line.start;
+        Bool comment = starts_with(s, at, line.end, "//");
+        if (comment && depth == 0 && complete) continue; // the attribute goes between the comment and the declaration
+        if (depth == 0 && complete && margin && s[at] != '}') {
+            starts[(*count)++] = line.start;
+            complete = false;
+        }
+        if (comment) continue;
+        depth += brace_change(s, line.start, line.end);
+        Usize last_byte = trimmed_end(s, line.start, line.end);
+        if (depth == 0 && last_byte > line.start && (s[last_byte - 1] == ';' || s[last_byte - 1] == '}')) {
+            complete = true;
+        }
+    }
+}
+
+// The edits of the `#if` block that starts at line `open` and ends at `*close`, or none (and false) when the block is
+// not one this mends.
+static Bool block_edits(Str s, Line lines[:], Usize open, Usize *close, parse::Edits *edits) {
+    Branch branches[8];
+    Usize branch_count = 0;
+    Str earlier = "";
+    Usize argument = 0;
+    Str word = directive_of(s, lines[open], &argument);
+    Usize i = open;
+    while (i < countof(lines)) {
+        Str text = "";
+        Bool plain = false;
+        if (!branch_text(s, lines[i], word, argument, &earlier, &text, &plain)) return false;
+        if (branch_count == 8) return false;
+        branches[branch_count++] = (Branch){.head = i, .first = i + 1, .last = i + 1, .text = text};
+        Usize j = i + 1;
+        Str next = "";
+        while (j < countof(lines)) {
+            Str other = directive_of(s, lines[j], &argument);
+            if (countof(other) > 0) {
+                next = other;
+                break;
+            }
+            j += 1;
+        }
+        if (j >= countof(lines)) return false;
+        branches[branch_count - 1].last = j;
+        if (is_word(next, "endif")) {
+            *close = j;
+            break;
+        }
+        if (!is_word(next, "elif") && !is_word(next, "else")) return false;
+        word = next;
+        i = j;
+    }
+    if (*close >= countof(lines)) {
+        return false;
+    }
+    Usize starts[:] = {};
+    parse::Edits found = {};
+    for (Usize b = 0; b < branch_count; b++) {
+        Usize count = 0;
+        starts = mem::alloc_slice(Usize, branches[b].last - branches[b].first + 1);
+        declaration_starts(s, lines, branches[b].first, branches[b].last, starts, &count);
+        push(&found, lines[branches[b].head].start, lines[branches[b].head].end + 1, "");
+        for (Usize k = 0; k < count; k++)
+            push(&found, starts[k], starts[k], as_str(format::push("@when(", branches[b].text, ")\n")));
+    }
+    push(&found, lines[*close].start, lines[*close].end + 1, "");
+    for (Usize k = 0; k < countof(found); k++)
+        push(edits, found[k].span.start, found[k].span.end, found[k].text);
+    return true;
+}
+
+// The edits of every simple `#define` and `#include` line of `source` and of every `#if` block of whole declarations,
+// in order of position.
 export parse::Edits edits(Str source) {
     parse::Edits found = {};
+    Line lines[:] = mem::alloc_slice(Line, 0);
     Usize start = 0;
     for (Usize i = 0; i <= countof(source); i++) {
         if (i == countof(source) || source[i] == '\n') {
-            line_edit(source, start, i, &found);
+            lines = mem::realloc(lines, countof(lines) + 1);
+            lines[countof(lines) - 1] = (Line){.start = start, .end = i};
             start = i + 1;
         }
+    }
+    I64 depth = 0;
+    Usize i = 0;
+    while (i < countof(lines)) {
+        Usize argument = 0;
+        Str word = directive_of(source, lines[i], &argument);
+        Bool conditional = is_word(word, "if") || is_word(word, "ifdef") || is_word(word, "ifndef");
+        Usize close = countof(lines);
+        if (conditional && depth == 0 && block_edits(source, lines, i, &close, &found)) {
+            i = close + 1;
+            continue;
+        }
+        line_edit(source, lines[i].start, lines[i].end, &found);
+        if (countof(word) == 0) depth += brace_change(source, lines[i].start, lines[i].end);
+        i += 1;
     }
     return found;
 }

@@ -31,33 +31,11 @@ struct Scenario {
     types::Checked checked;
 };
 
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static void begin(Scenario *s, Str source) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     if (s->checked.error_count > 0) {
@@ -116,29 +94,49 @@ static char *emit_source(Str source, emit_jit::Jit *host, Scenario *s) {
 export void test_front_emit_block_each_form_index_row_and_countof() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    emit_source(
-        "fn cell(g: [,]i32, i: usize, j: usize) -> i32 {\n    g[i, j]\n}\n"
-        "fn row_sum(r: []i32) -> i32 {\n    mut sum := 0\n    for x in r {\n        sum += x\n    }\n    sum\n}\n"
-        "fn rows(g: [,3]i32) -> usize {\n    countof(g)\n}\n"
-        "pub fn run() -> i32 {\n"
-        "    mut raw: [2][3]i32\n    raw[0][0] = 1\n    raw[0][1] = 2\n    raw[0][2] = 3\n    raw[1][0] = 4\n    "
-        "raw[1][1] = 5\n    raw[1][2] = 6\n"
-        "    fixed: [2,3]i32 = raw\n"
-        "    if fixed[1][2] != 6 || fixed[0, 1] != 2 {\n        return 1\n    }\n"
-        "    grid: [,]i32 = raw\n"
-        "    if countof(grid) != 2 || countof(grid[0]) != 3 {\n        return 2\n    }\n"
-        "    if cell(grid, 1, 2) != 6 || grid[0, 0] != 1 || grid[1][1] != 5 {\n        return 3\n    }\n"
-        "    if row_sum(grid[1]) != 15 {\n        return 4\n    }\n"
-        "    sliced: [,3]i32 = raw\n"
-        "    if rows(sliced) != 2 || sliced[1][0] != 4 {\n        return 5\n    }\n"
-        "    grid[1, 1] = 50\n"
-        "    if raw[1][1] != 50 {\n        return 6\n    }\n"
-        "    mut cube: [2][2][2]i32\n    cube[0][1][1] = 4\n    cube[1][0][1] = 6\n"
-        "    t: [,,]i32 = cube\n"
-        "    if countof(t) != 2 || countof(t[0]) != 2 || countof(t[0][0]) != 2 {\n        return 7\n    }\n"
-        "    if t[1, 0, 1] != 6 || t[0][1][1] != 4 {\n        return 8\n    }\n"
-        "    0\n}\n",
-        &host, &s);
+    emit_source("fn cell(g: [,]i32, i: usize, j: usize) -> i32:\n"
+                "    g[i, j]\n"
+                "fn row_sum(r: []i32) -> i32:\n"
+                "    let mut sum = 0\n"
+                "    for x in r:\n"
+                "        sum += x\n"
+                "    sum\n"
+                "fn rows(g: [,3]i32) -> usize:\n"
+                "    countof(g)\n"
+                "pub fn run() -> i32:\n"
+                "    let mut raw: [2][3]i32 = undefined\n"
+                "    raw[0][0] = 1\n"
+                "    raw[0][1] = 2\n"
+                "    raw[0][2] = 3\n"
+                "    raw[1][0] = 4\n"
+                "    raw[1][1] = 5\n"
+                "    raw[1][2] = 6\n"
+                "    let fixed: [2,3]i32 = raw\n"
+                "    if fixed[1][2] != 6 || fixed[0, 1] != 2:\n"
+                "        return 1\n"
+                "    let grid: [,]i32 = raw\n"
+                "    if countof(grid) != 2 || countof(grid[0]) != 3:\n"
+                "        return 2\n"
+                "    if cell(grid, 1, 2) != 6 || grid[0, 0] != 1 || grid[1][1] != 5:\n"
+                "        return 3\n"
+                "    if row_sum(grid[1]) != 15:\n"
+                "        return 4\n"
+                "    let sliced: [,3]i32 = raw\n"
+                "    if rows(sliced) != 2 || sliced[1][0] != 4:\n"
+                "        return 5\n"
+                "    grid[1, 1] = 50\n"
+                "    if raw[1][1] != 50:\n"
+                "        return 6\n"
+                "    let mut cube: [2][2][2]i32 = undefined\n"
+                "    cube[0][1][1] = 4\n"
+                "    cube[1][0][1] = 6\n"
+                "    let t: [,,]i32 = cube\n"
+                "    if countof(t) != 2 || countof(t[0]) != 2 || countof(t[0][0]) != 2:\n"
+                "        return 7\n"
+                "    if t[1, 0, 1] != 6 || t[0][1][1] != 4:\n"
+                "        return 8\n"
+                "    0\n",
+                &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
     test::check_equal(run(), (I32)0);
     emit_jit::stop(&host);
@@ -147,7 +145,9 @@ export void test_front_emit_block_each_form_index_row_and_countof() {
 export void test_front_emit_block_golden_ir_and_index_report() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = emit_source("pub fn at(g: [,]i32, i: usize, j: usize) -> i32 {\n    g[i, j]\n}\n", &host, &s);
+    char *ir = emit_source("pub fn at(g: [,]i32, i: usize, j: usize) -> i32:\n"
+                           "    g[i, j]\n",
+                           &host, &s);
     test::check_equal(contains(ir, "{ ptr, [2 x i64] }"), true);
     test::check_equal(contains(ir, "call void @smith_contract_fail_index(i64 %"), true);
     test::check_equal(contains(ir, "%stride = mul i64"), true);

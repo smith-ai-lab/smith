@@ -8,6 +8,8 @@
 //   header(path, output, triple, roots) the C header of one file in smith's own syntax (#1621): `pub struct`s and
 //                                       `pub fn`s with a C spelling, from the declarations alone (no checker), written
 //                                       only when its bytes change; `run_header` is its C entry (`--smith-header`)
+//   diagnose(path, source, roots)       the parser's and the checker's findings on a text, as `Problems` (spans and
+//                                       messages), for the language server (#1887)
 //   run(sources, outputs, count, triple)
 //                                       what the driver calls (C: `front_compile_run`): every file of the command line
 //                                       with the default roots, diagnostics on stderr, 0 when every object was written
@@ -30,10 +32,12 @@ import front::cimport;
 import front::emit;
 import front::emit_object;
 import front::emit_state as state;
+import front::lint;
 import front::parser;
 import front::roots;
 import front::types;
 import front::types_decl;
+import front::when;
 import front::parse;
 import std::arena;
 import std::ascii;
@@ -41,6 +45,7 @@ import std::clock;
 import std::files;
 import std::format;
 import std::mem;
+import <llvm-c/BitWriter.h>;
 import <llvm-c/Core.h>;
 import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
@@ -86,6 +91,36 @@ static Str diagnostic(Str file, Str source, ast::Span span, Str severity, Str me
     return as_str(format::push(file, ":", position(source, span.start), ": ", severity, ": ", message, "\n"));
 }
 
+// The 1-based line of the byte `offset` of `source`.
+static U64 line_of(Str source, U32 offset) {
+    U64 line = 1;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') line += 1;
+    }
+    return line;
+}
+
+// `message` with its `$line` made the line of `related` (a check's message that names another place, #1986).
+static Str with_line(Str source, Str message, ast::Span related) {
+    for (Usize i = 0; i + 5 <= countof(message); i++) {
+        if (message[i] == '$' && message[i + 1] == 'l' && message[i + 2] == 'i' && message[i + 3] == 'n' &&
+            message[i + 4] == 'e') {
+            return as_str(format::push(message[0:i], line_of(source, related.start), message[i + 5:countof(message)]));
+        }
+    }
+    return message;
+}
+
+// The report of one error of the checker: its line, then its note when it has one.
+static Str error_lines(Str file, Str source, const types::Error *e) {
+    Str message = e->has_related ? with_line(source, e->message, e->related) : e->message;
+    Str text = diagnostic(file, source, e->span, "error", message);
+    if (e->has_related) {
+        text = as_str(format::push(text, diagnostic(file, source, e->related, "note", e->related_message)));
+    }
+    return text;
+}
+
 // The lines of `list`, in order, as `severity`.
 static Str lines_of(Str file, Str source, parse::Errors list, Str severity) {
     Str all = "";
@@ -112,7 +147,7 @@ static Bool word_at(Str source, Usize at, Str word) {
 }
 
 // Whether the first token of `source` is the keyword `module`: today's syntax (every file in it has the line).
-static Bool starts_with_module(Str source) {
+export Bool starts_with_module(Str source) {
     Usize i = 0;
     while (i < countof(source)) {
         if (ascii::space(source[i])) {
@@ -176,7 +211,9 @@ static Str name_module(ast::Module *m, Str path, roots::Roots folders) {
     for (Usize i = 0; i < countof(m->name.segments); i++) {
         line_name = as_str(format::push(line_name, i == 0 ? "" : "::", m->name.segments[i].text));
     }
-    roots::Named named = roots::name_for(path, folders);
+    roots::Roots held = folders;
+    if (countof(line_name) > 0) held.local = ""; // a `module` line keeps the old meaning: only src and lib name a file
+    roots::Named named = roots::name_for(path, held);
     if (!named.rooted) return "";
     Str problem = roots::disagreement(path, named.name, line_name);
     if (countof(problem) > 0) {
@@ -204,6 +241,38 @@ static files::BytesResult load(Str path) {
     return files::read_file(path);
 }
 
+// The embedded sources of smith's `.smith` libraries (shim/cimport_std.cpp, filled by smith.c from `smith_libraries`):
+// the source of `std.<name>` and its size, or null when this program has no such module (#2041).
+extern const char *smith_std_source(const char *name, Usize *size);
+
+// The tree of `std.<name>` (`dotted` is `std.name`) read from the source inside the program, named `std::name`, or
+// null when `dotted` is not a one-level `std` module this program embeds, or the source does not parse. A file on disk
+// under a root wins over this (smith's developers compile against the library they edit).
+static const ast::Module *load_embedded(Str dotted) {
+    if (countof(dotted) <= 4 || !roots::same(dotted[0:4], "std.")) return nullptr;
+    Str name = dotted[4:countof(dotted)];
+    for (Usize i = 0; i < countof(name); i++) {
+        if (name[i] == '.') return nullptr;
+    }
+    Str terminated = as_str(format::push(name));
+    Usize size = 0;
+    const char *found = smith_std_source(terminated.data, &size);
+    if (found == nullptr) return nullptr;
+    Str path = as_str(format::push("lib/std/", name, ".smith"));
+    Str source = found[0:size];
+    parser::Parsed parsed = starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return nullptr;
+    ast::Identifier parts[:] = {};
+    parts = mem::realloc(parts, 2);
+    Str lead = "std";
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = parsed.module;
+    copy->name.segments = parts;
+    return copy;
+}
+
 // The folders `load_module` looks in: those of the file being compiled (the checker's loader takes no context).
 static roots::Roots import_roots;
 
@@ -218,8 +287,9 @@ static const ast::Module *load_module(const char *dotted) {
         if (relative[i] == '.') piece = "/";
         inside = as_str(format::push(inside, piece));
     }
-    Str folders[2] = {import_roots.source, import_roots.library};
-    for (Usize k = 0; k < 2; k++) {
+    Str folders[3] = {import_roots.source, import_roots.library, import_roots.local};
+    for (Usize k = 0; k < 3; k++) {
+        if (countof(folders[k]) == 0) continue;
         Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
         files::BytesResult loaded = load(path);
@@ -234,7 +304,7 @@ static const ast::Module *load_module(const char *dotted) {
         *copy = parsed.module;
         return copy;
     }
-    return nullptr;
+    return load_embedded(relative);
 }
 
 // The folder of the file being compiled and the arena that holds what a header reads (`load_header` takes no context).
@@ -272,8 +342,586 @@ static const ast::Module *load_header(Str header, Bool angled) {
     return module;
 }
 
+// The text of the C header `import c <h>` names, for smith's own lint check of library headers (#1976): a quoted
+// header is looked for in the folder of the file being compiled; any header under the project's `include` and
+// `.smith/include` (the libraries' generated headers) and smith's (`<library>/../include`). Empty when none is found.
+static Str read_header_in(Str folder, Str header) {
+    Str path = as_str(format::push(folder, "/", header));
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return "";
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str text = chars;
+    return text;
+}
+
+static Str read_header_text(Str header, Bool angled) {
+    Str found = "";
+    if (!angled) found = read_header_in(header_folder, header);
+    if (countof(found) == 0) found = read_header_in("include", header);
+    if (countof(found) == 0) found = read_header_in(".smith/include", header);
+    if (countof(found) == 0) found = read_header_in(as_str(format::push(import_roots.library, "/../include")), header);
+    return found;
+}
+
+// Gives smith's lint checks the text of the file and where to read headers from (`# NOLINT`, smith-module-library).
+static void lint_inputs(Str source) {
+    lint::set_source(source);
+    lint::set_header_text(read_header_text);
+}
+
+// Takes them back, so the next check (or a caller's own) starts with none.
+static void lint_inputs_done() {
+    lint::set_source("");
+    lint::set_header_text(nullptr);
+}
+
 static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
+}
+
+// One finding of `diagnose`: the bytes it covers, whether it is an error (else a warning), and its message.
+export struct Problem {
+    U32 start;
+    U32 end;
+    Bool error;
+    Str message;
+};
+
+export typedef typeof(Problem[:]) Problems;
+
+static Problems problems_of(Problems list, parse::Errors found, Bool error) {
+    for (Usize i = 0; i < countof(found); i++) {
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] = (Problem){
+            .start = found[i].span.start, .end = found[i].span.end, .error = error, .message = found[i].message};
+    }
+    return list;
+}
+
+// The findings of the parser and the checker on the text `source` of the file `path`, no file read and nothing written
+// (the language server's diagnostics, #1887): the parser's errors (and the warnings of a file in smith's own syntax),
+// or, when it parsed, the checker's errors. The module's name is not compared with its path. The findings are the
+// current allocator's.
+export Problems diagnose(Str path, Str source, roots::Roots folders) {
+    Problems list = {};
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (!today) list = problems_of(list, parsed.warnings, false);
+    list = problems_of(list, parsed.errors, true);
+    if (countof(parsed.errors) > 0) return list;
+    import_roots = folders;
+    header_folder = folder_of(path);
+    lint_inputs(source);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    lint_inputs_done();
+    for (Usize i = 0; i < checked.error_count; i++) {
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] =
+            (Problem){.start = checked.errors[i].span.start,
+                      .end = checked.errors[i].span.end,
+                      .error = true,
+                      .message = checked.errors[i].has_related
+                                     ? with_line(source, checked.errors[i].message, checked.errors[i].related)
+                                     : checked.errors[i].message};
+    }
+    return list;
+}
+
+// What a hover finds: the bytes of the expression under the cursor and its type as text; `found` is false when the
+// text does not parse, or no checked expression covers the offset.
+export struct Hover {
+    Bool found;
+    U32 start;
+    U32 end;
+    Str type;
+    Str doc; // the comment above the name's declaration in a C header, without its markers; empty when there is none
+};
+
+// The symbol of a name that a C header declared (`c::printf`, or `c.printf` in smith's own syntax), or null: headers
+// declare their names as `c::name`, whatever the import is called, so the member of a plain name reads the same row.
+static const types::Symbol *header_symbol(const types::Checked *checked, const ast::Expr *at) {
+    const types::Symbol *found = nullptr;
+    if (at->kind == .name) {
+        found = types::lookup_path(&checked->scopes, at->kind.name.path);
+    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
+        found = types::lookup(&checked->scopes, as_str(format::push("c::", at->kind.member.name)));
+    }
+    if (found == nullptr || found->decl == nullptr || !found->decl->from_c) return nullptr;
+    return found;
+}
+
+// The innermost checked expression of the text `source` of `path` that covers the byte `offset`, with its type (the
+// language server's hover, #1892). Nothing is read or written; the result is the current allocator's.
+export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return (Hover){};
+    import_roots = folders;
+    header_folder = folder_of(path);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    const ast::Expr *at = ast::expr_at(&parsed.module, offset);
+    if (at == nullptr) return (Hover){};
+    types::TypeRef type = types::type_of(&checked, at);
+    const types::Symbol *named = header_symbol(&checked, at);
+    if (type == nullptr && named != nullptr) type = named->type; // `c.f` before the checker binds `c` (#1961)
+    if (type == nullptr) return (Hover){};
+    Str doc = "";
+    if (named != nullptr) doc = named->decl->doc;
+    return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
+}
+
+// One thing completion offers: its name, what the editor draws for it (LSP's `CompletionItemKind`: 2 method, 3
+// function, 5 field, 6 variable, 7 type, 9 module), its type as text and, for a C header's name, the comment above it.
+export struct Candidate {
+    Str label;
+    U32 kind;
+    Str detail;
+    Str doc;
+};
+
+export typedef typeof(Candidate[:]) Candidates;
+
+static Bool starts_with_text(Str text, Str prefix) {
+    if (countof(prefix) > countof(text)) return false;
+    for (Usize i = 0; i < countof(prefix); i++)
+        if (text[i] != prefix[i]) return false;
+    return true;
+}
+
+static Bool equal_text(Str a, Str b) {
+    return countof(a) == countof(b) && starts_with_text(a, b);
+}
+
+static Candidates offer(Candidates list, Candidate item) {
+    for (Usize i = 0; i < countof(list); i++)
+        if (equal_text(list[i].label, item.label)) return list;
+    list = mem::realloc(list, countof(list) + 1);
+    list[countof(list) - 1] = item;
+    return list;
+}
+
+static Bool is_word(char ch) {
+    return ascii::alpha(ch) || ascii::digit(ch) || ch == '_';
+}
+
+// Whether the variable `v` may be written at `offset`: a variable declared inside a function (its scope is the whole
+// file in the list) is a local of that function, seen after its declaration and nowhere else; any other is a global.
+static Bool visible_variable(ast::Symbols names, ast::Symbol v, U32 offset) {
+    for (Usize i = 0; i < countof(names); i++) {
+        ast::Symbol f = names[i];
+        if (f.kind != ast::sym_function || f.at.start > v.at.start || v.at.end > f.at.end) continue;
+        if (f.at.start == v.at.start) continue;
+        return f.at.start <= offset && offset <= f.at.end && v.at.start < offset;
+    }
+    return true;
+}
+
+// The names a position can write unqualified: the names of the file whose scope covers `offset` (a local only after
+// its declaration), that start with `prefix`.
+static Candidates names_at(Candidates list, const ast::Module *m, Str source, U32 offset, Str prefix) {
+    ast::Span everywhere = {.start = 0, .end = (U32)countof(source)};
+    ast::Symbols names = ast::symbols(m, everywhere);
+    for (Usize i = 0; i < countof(names); i++) {
+        ast::Symbol s = names[i];
+        if (s.kind == ast::sym_field || s.kind == ast::sym_variant) continue;
+        if (s.scope.start > offset || offset > s.scope.end) continue;
+        if (s.kind == ast::sym_variable && !visible_variable(names, s, offset)) continue;
+        if (s.scope.start != everywhere.start || s.scope.end != everywhere.end) {
+            if (s.at.start >= offset) continue;
+        }
+        if (!starts_with_text(s.name, prefix) || countof(s.name) == 0) continue;
+        U32 kind = 6;
+        if (s.kind == ast::sym_function) kind = 3;
+        if (s.kind == ast::sym_type) kind = 7;
+        if (s.kind == ast::sym_module) kind = 9;
+        list = offer(list, (Candidate){.label = s.name, .kind = kind});
+    }
+    return list;
+}
+
+// Whether `name` is the name an `import c <header>` is reached by: `c`, or the alias of one.
+static Bool header_qualifier(const ast::Module *m, Str name) {
+    if (equal_text(name, "c")) return true;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_c && countof(d->kind.import_c.alias) > 0 && equal_text(d->kind.import_c.alias, name))
+            return true;
+    }
+    return false;
+}
+
+// What follows the `.` after the receiver `base`: its fields and its methods (a function of the module that defines
+// its type or of this one, whose first parameter is the receiver, seen through one pointer), or, when `base` names a C
+// header, that header's names.
+static Candidates members_of(Candidates list, const types::Checked *checked, const ast::Module *m,
+                             const ast::Expr *base, Str prefix) {
+    if (base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
+        header_qualifier(m, base->kind.name.path.segments[0].text) && types::type_of(checked, base) == nullptr) {
+        for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
+            const types::Symbol *s = &checked->scopes.symbols[i];
+            if (s->decl == nullptr || !s->decl->from_c || !starts_with_text(s->name, "c::")) continue;
+            Str label = s->name[3:countof(s->name)];
+            if (!starts_with_text(label, prefix) || s->type == nullptr) continue;
+            U32 kind = s->kind == .function_symbol ? 3 : 6;
+            if (s->kind == .type_name) kind = 7;
+            list = offer(
+                list, (Candidate){.label = label, .kind = kind, .detail = types::show(s->type), .doc = s->decl->doc});
+        }
+        return list;
+    }
+    types::TypeRef type = types::type_of(checked, base);
+    if (type == nullptr) return list;
+    types::TypeRef self = type->kind == .pointer ? type->element : type;
+    Str module = "";
+    if (self->kind == .record) {
+        for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
+            if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
+        for (Usize i = 0; i < countof(self->slots); i++) {
+            if (!types::field_visible(self, &self->slots[i]) || !starts_with_text(self->slots[i].name, prefix))
+                continue;
+            list = offer(
+                list, (Candidate){.label = self->slots[i].name, .kind = 5, .detail = types::show(self->slots[i].type)});
+        }
+    }
+    for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
+        const types::Symbol *s = &checked->scopes.symbols[i];
+        if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
+        if (countof(s->type->slots) == 0 || s->generic) continue;
+        types::TypeRef takes = s->type->slots[0].type;
+        if (takes->kind == .pointer) takes = takes->element;
+        if (takes != self) continue;
+        Str label = s->name;
+        if (starts_with_text(label, module) && countof(module) > 0) {
+            if (!types::is_public(s)) continue;
+            label = label[countof(module):countof(label)];
+        }
+        Bool qualified = false;
+        for (Usize k = 0; k + 1 < countof(label); k++)
+            if (label[k] == ':' && label[k + 1] == ':') qualified = true;
+        if (qualified || !starts_with_text(label, prefix)) continue;
+        list = offer(list, (Candidate){.label = label, .kind = 2, .detail = types::show(s->type)});
+    }
+    return list;
+}
+
+// What the editor may offer at the byte `offset` of the text `source` of `path` (the language server's completion,
+// #1894): after a `.`, the fields and methods of the receiver, or a C header's names; else the names in scope. The
+// word being typed is dropped from the text first (a `.` and a word do not parse alone); the result is the current
+// allocator's.
+export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    if (offset > countof(source)) offset = (U32)countof(source);
+    U32 word = offset;
+    while (word > 0 && is_word(source[word - 1]))
+        word -= 1;
+    Str prefix = source[word:offset];
+    Bool dot = word > 0 && source[word - 1] == '.';
+    Str edited = as_str(format::push(source[0:dot ? word - 1 : word], dot ? "" : "_", source[offset:countof(source)]));
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, edited) : parser::parse_new(path, edited);
+    Candidates list = {};
+    if (countof(parsed.errors) > 0) return list;
+    if (!dot) return names_at(list, &parsed.module, edited, offset, prefix);
+    import_roots = folders;
+    header_folder = folder_of(path);
+    types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    if (word < 2) return list;
+    const ast::Expr *base = ast::expr_at(&parsed.module, word - 2);
+    if (base == nullptr) return list;
+    return members_of(list, &checked, &parsed.module, base, prefix);
+}
+
+// Where a name is declared (the language server's go-to-definition, #1893): in `file` (empty: the file asked about),
+// the bytes `start` to `end`, or, for a declaration read from a C header, the `line` and `column` (1-based) clang gives
+// when `by_line` is set.
+export struct Location {
+    Bool found;
+    Str file;
+    U32 start;
+    U32 end;
+    Bool by_line;
+    U32 line;
+    U32 column;
+};
+
+// The name a declaration introduces, empty when it introduces none (an import, a static assertion).
+static Str declared_name(const ast::Decl *d) {
+    if (d->kind == .function) return d->kind.function.name;
+    if (d->kind == .record) return d->kind.record.name;
+    if (d->kind == .enumeration) return d->kind.enumeration.name;
+    if (d->kind == .type_alias) return d->kind.type_alias.name;
+    if (d->kind == .variable) return d->kind.variable.name;
+    return "";
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+// The place of the declaration called `name` in `m`; not found when there is none.
+static Location declaration_in(const ast::Module *m, Str name) {
+    for (Usize i = 0; m != nullptr && i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (countof(name) == 0 || !same_text(declared_name(d), name)) continue;
+        if (d->from_c) {
+            return (Location){.found = true,
+                              .file = d->place.file,
+                              .by_line = true,
+                              .line = d->place.line,
+                              .column = d->place.column};
+        }
+        return (Location){.found = true, .file = m->file, .start = d->span.start, .end = d->span.end};
+    }
+    return (Location){};
+}
+
+// The dotted name of an import's path (`std.math`), NUL-terminated.
+static Str dotted_of(ast::Path path) {
+    Str out = "";
+    for (Usize i = 0; i < countof(path.segments); i++)
+        out = as_str(format::push(out, i == 0 ? "" : ".", path.segments[i].text));
+    return out;
+}
+
+// The path an import declaration reads, empty when `d` is no import.
+static ast::Path imported_path(const ast::Decl *d) {
+    ast::Path path = {};
+    if (d->kind == .import_module) path = d->kind.import_module.path;
+    if (d->kind == .import_from) path = d->kind.import_from.path;
+    return path;
+}
+
+// The dotted name an import declaration reads, empty when `d` is no import or names a standard module (the library
+// has no cycles, and reading it twice would cost the compile).
+static Str imported_name(const ast::Decl *d) {
+    Str name = dotted_of(imported_path(d));
+    if (starts_with_text(name, "std.") || same_text(name, "std")) return "";
+    return name;
+}
+
+// A module the cycle search will read the imports of, and the chain that reached it.
+struct Visit {
+    const ast::Module *module;
+    Str name;
+    Str chain;
+};
+
+// The shortest chain from the module `first` (reached by `chain`, which ends in its name) back to `target` through
+// imports, as `a -> b -> a` (dotted names), or empty when `first` leads nowhere near it. Each module is read once.
+static Str cycle_through(const ast::Module *first, Str first_name, Str chain, Str target) {
+    Visit queue[:] = {};
+    queue = mem::realloc(queue, 1);
+    queue[0] = (Visit){.module = first, .name = first_name, .chain = chain};
+    for (Usize head = 0; head < countof(queue); head++) {
+        const ast::Module *m = queue[head].module;
+        for (Usize i = 0; i < countof(m->decls); i++) {
+            Str name = imported_name(m->decls[i]);
+            if (countof(name) == 0) continue;
+            Str next = as_str(format::push(queue[head].chain, " -> ", name));
+            if (same_text(name, target)) return next;
+            Bool entered = false;
+            for (Usize k = 0; k < countof(queue); k++)
+                if (same_text(queue[k].name, name)) entered = true;
+            if (entered) continue;
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded == nullptr) continue;
+            queue = mem::realloc(queue, countof(queue) + 1);
+            queue[countof(queue) - 1] = (Visit){.module = loaded, .name = name, .chain = next};
+        }
+    }
+    return "";
+}
+
+// `chain` with its dots written `::` (today's syntax names a module that way).
+static Str colons(Str chain) {
+    Str out = "";
+    for (Usize i = 0; i < countof(chain); i++) {
+        Str piece = chain[i:i + 1];
+        if (chain[i] == '.') piece = "::";
+        out = as_str(format::push(out, piece));
+    }
+    return out;
+}
+
+// The report of the imports of `m` (the module of `path`, named already) that close a cycle: one line at each such
+// `import`, `file:line:column: error: import cycle: a -> b -> a`, the column that of the module's name. Empty when
+// none does. `import_roots` says where the modules are.
+static Str import_cycles(Str path, Str source, const ast::Module *m, roots::Roots folders) {
+    import_roots = folders;
+    Str self = dotted_of(m->name);
+    if (countof(self) == 0) return "";
+    Bool old = starts_with_module(source);
+    Str all = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        Str name = imported_name(m->decls[i]);
+        if (countof(name) == 0) continue;
+        Str chain = "";
+        if (same_text(name, self)) {
+            chain = as_str(format::push(self, " -> ", self));
+        } else {
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded != nullptr) chain = cycle_through(loaded, name, as_str(format::push(self, " -> ", name)), self);
+        }
+        if (countof(chain) == 0) continue;
+        Str shown = old ? colons(chain) : chain;
+        Str message = as_str(format::push("import cycle: ", shown));
+        all = as_str(format::push(all, diagnostic(path, source, imported_path(m->decls[i]).span, "error", message)));
+    }
+    return all;
+}
+
+// The module the name `qualifier` stands for in `m`: an `import a.b` is reached as `b`, `import a.b as q` as `q`, an
+// `import c <h>` as `c` (or its alias), and a name brought in by `from a.b import n` is not a qualifier.
+static const ast::Module *qualified_module(const ast::Module *m, Str qualifier) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_module) {
+            Usize n = countof(d->kind.import_module.path.segments);
+            if (n == 0) continue;
+            Str last = d->kind.import_module.path.segments[n - 1].text;
+            Str reached = last;
+            if (countof(d->kind.import_module.alias) > 0) reached = d->kind.import_module.alias;
+            if (same_text(reached, qualifier)) return load_module(dotted_of(d->kind.import_module.path).data);
+        }
+        if (d->kind == .import_c) {
+            Str reached = "c";
+            if (countof(d->kind.import_c.alias) > 0) reached = d->kind.import_c.alias;
+            if (same_text(reached, qualifier)) return load_header(d->kind.import_c.header, d->kind.import_c.angled);
+        }
+    }
+    return nullptr;
+}
+
+// The module that `from a.b import n` takes `name` from, when one does.
+static const ast::Module *from_module(const ast::Module *m, Str name) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_from) continue;
+        for (Usize k = 0; k < countof(d->kind.import_from.names); k++) {
+            if (!same_text(d->kind.import_from.names[k].text, name)) continue;
+            if (countof(d->kind.import_from.header) > 0)
+                return load_header(d->kind.import_from.header, d->kind.import_from.angled);
+            return load_module(dotted_of(d->kind.import_from.path).data);
+        }
+    }
+    return nullptr;
+}
+
+// Where the name under the byte `offset` of the text `source` of `path` is declared (go-to-definition, #1893): a name
+// of this file, `q.name` or `q::name` through an import (a module, or a C header with the place clang records), or a
+// name a `from ... import` brought in. Nothing is read but the imported files; the result is the current allocator's.
+export Location definition_at(Str path, Str source, roots::Roots folders, U32 offset) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return (Location){};
+    import_roots = folders;
+    header_folder = folder_of(path);
+    const ast::Expr *at = ast::expr_at(&parsed.module, offset);
+    if (at == nullptr) return (Location){};
+    Location found = {};
+    if (at->kind == .name) {
+        ast::Path name = at->kind.name.path;
+        Usize n = countof(name.segments);
+        if (n == 0) return (Location){};
+        if (n >= 2) {
+            found =
+                declaration_in(qualified_module(&parsed.module, name.segments[n - 2].text), name.segments[n - 1].text);
+        } else {
+            Str word = name.segments[0].text;
+            found = declaration_in(&parsed.module, word);
+            if (!found.found) found = declaration_in(from_module(&parsed.module, word), word);
+        }
+    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
+        ast::Path base = at->kind.member.base->kind.name.path;
+        if (countof(base.segments) == 1) {
+            found = declaration_in(qualified_module(&parsed.module, base.segments[0].text), at->kind.member.name);
+        }
+    }
+    if (found.found && countof(found.file) == 0) found.file = path;
+    return found;
+}
+
+// One declaration of a file for the outline: its name, what it is (`function`, `struct`, `enum`, `constant`,
+// `variable`, `type`) and the bytes it covers.
+export struct Symbol {
+    Str name;
+    Str kind;
+    U32 start;
+    U32 end;
+};
+
+export typedef typeof(Symbol[:]) Symbols;
+
+// The declarations of the text `source` of `path` that have a name, in order (document symbols, #1893); none when the
+// text does not parse. The result is the current allocator's.
+export Symbols symbols(Str path, Str source) {
+    Bool today = starts_with_module(source);
+    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    Symbols list = {};
+    if (countof(parsed.errors) > 0) return list;
+    for (Usize i = 0; i < countof(parsed.module.decls); i++) {
+        const ast::Decl *d = parsed.module.decls[i];
+        Str name = declared_name(d);
+        if (countof(name) == 0) continue;
+        Str kind = "variable";
+        if (d->kind == .function) kind = "function";
+        if (d->kind == .record) kind = "struct";
+        if (d->kind == .enumeration) kind = "enum";
+        if (d->kind == .type_alias) kind = "type";
+        if (d->kind == .variable && d->kind.variable.is_constexpr) kind = "constant";
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] = (Symbol){.name = name, .kind = kind, .start = d->span.start, .end = d->span.end};
+    }
+    return list;
+}
+
+static Bool ends_with_bc(Str name) {
+    return countof(name) > 3 && roots::same(name[countof(name) - 3:countof(name)], ".bc");
+}
+
+// The module as bitcode in `output`, for an output named `*.bc`: `smith prove` (#1974) reads bitcode, not an object.
+static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warned, Times times) {
+    char *bitcode_path = state::cstr(output);
+    defer mem::free(bitcode_path);
+    Times timed = times;
+    U64 mark = clock::monotonic();
+    I32 failed_write = c::LLVMWriteBitcodeToFile(ir, bitcode_path);
+    timed.write = clock::monotonic() - mark;
+    if (failed_write != 0) {
+        return failed(as_str(format::push(warned, path, ": error: cannot write the bitcode\n")), timed);
+    }
+    return (Report){.ok = true, .text = warned, .times = timed};
+}
+
+// The emitter's options for one file: objects are made at optimization 0, a debug build, and `smith cc -g` sets
+// SMITH_FRONT_DEBUG (runtime/front_flag.c), which gives the object debug info (#1979).
+static emit::Options emit_options(Str wanted, Str source, types::Checked *checked) {
+    emit::Options options = {};
+    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
+    options.source = source;
+    options.checked = checked;
+    options.fill_undefined = true;
+    options.debug_info = c::getenv("SMITH_FRONT_DEBUG") != nullptr;
+    return options;
+}
+
+// The name of the file being compiled: it keeps its plain symbol names, so `local` (which only finds its imports,
+// #2041) is left out of the roots that name it.
+static Str name_compiled(ast::Module *m, Str path, roots::Roots folders) {
+    roots::Roots named_by = folders;
+    named_by.local = "";
+    return name_module(m, path, named_by);
+}
+
+// `triple`, or the default triple of this machine when it is empty.
+static Str wanted_triple(Str triple) {
+    if (countof(triple) > 0) return triple;
+    char *default_triple = c::LLVMGetDefaultTargetTriple();
+    Str found = as_str(format::push((const char *)default_triple));
+    c::LLVMDisposeMessage(default_triple);
+    return found;
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
@@ -294,35 +942,29 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     if (countof(parsed.errors) > 0) {
         return failed(as_str(format::push(warned, lines_of(path, source, parsed.errors, "error"))), times);
     }
-    Str problem = name_module(&parsed.module, path, folders);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
-    Str wanted = triple;
-    char *default_triple = nullptr;
-    if (countof(wanted) == 0) {
-        default_triple = c::LLVMGetDefaultTargetTriple();
-        wanted = as_str(format::push((const char *)default_triple));
-        c::LLVMDisposeMessage(default_triple);
-    }
+    Str cycles = import_cycles(path, source, &parsed.module, folders);
+    if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
+    Str wanted = wanted_triple(triple);
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
+    lint_inputs(source);
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
+    lint_inputs_done();
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
         Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
-            all = as_str(format::push(
-                all, diagnostic(path, source, checked.errors[i].span, "error", checked.errors[i].message)));
+            all = as_str(format::push(all, error_lines(path, source, &checked.errors[i])));
         }
         return failed(all, times);
     }
 
-    emit::Options options = {};
-    options.target = (emit::Target){.triple = wanted, .data_layout = layout_of(wanted)};
-    options.source = source;
-    options.checked = &checked;
+    emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
@@ -335,6 +977,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     c::LLVMModuleRef ir = emitted.ok;
     defer c::LLVMDisposeModule(ir);
 
+    if (ends_with_bc(output)) return write_bitcode(ir, path, output, warned, times);
     emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);
@@ -374,7 +1017,9 @@ static Str stage_of(Times times) {
     I32 status = 0;
     for (Usize i = 0; i < count; i++) {
         Str output = as_str(format::push((const char *)outputs[i]));
-        Report done = file(paths[i].path, output, target, folders);
+        roots::Roots beside = folders;
+        beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
+        Report done = file(paths[i].path, output, target, beside);
         if (countof(done.text) > 0) report(done.text);
         if (!done.ok) status = 1;
         // With SMITH_FRONT_STAGE set, a failed file also names the stage that stopped it (frontend-coverage, #1730).
@@ -465,25 +1110,156 @@ static Bool is_struct_name(Str name, ast::Identifier structs[:]) {
 struct Spelled {
     Str text;
     Bool by_value;
+    Str suffix;   // the array sizes after the name: `xs[4]`, `m[3][2]`; empty for every other type
+    Str bindings; // the header bindings (`k` of `k.SIDE`) the sizes name, a line each
+    Str defs;     // the struct a slice or block type needs defined before it (guarded, so a repeat is harmless)
 };
 
+// The struct of a run-time array: named after its element and shape (`n` is a run-time size), one count per run-time
+// size, as the old lowering wrote it (`[]f32` is `smith_array_f32_n`, `[, 2]i32` is `smith_array_i32_n_2`).
+static Spelled spell_dimensional(const ast::TypeExpr *t);
+
+static Bool is_integer(const ast::Expr *e) {
+    return e != nullptr && e->kind == .integer;
+}
+
+// The value of an integer literal, or 0 for any other expression (test `is_integer` first).
+static U64 integer_value(const ast::Expr *e) {
+    if (e == nullptr || e->kind != .integer) return 0;
+    return e->kind.integer.value;
+}
+
+static Spelled spell_dimensional(const ast::TypeExpr *t) {
+    Spelled none = {.text = "", .by_value = false, .suffix = ""};
+    Str shape = "";
+    Usize runtime = 0;
+    const ast::TypeExpr *at = t;
+    Bool is_const = t->qualifiers.is_const;
+    for (Usize guard = 0; guard < 8; guard++) {
+        if (at->kind == .slice) {
+            shape = as_str(format::push(shape, "_n"));
+            runtime += 1;
+            at = at->kind.slice.element;
+        } else if (at->kind == .block_type) {
+            ast::ExprRef dims[:] = at->kind.block_type.dims;
+            for (Usize i = 0; i < countof(dims); i++) {
+                if (dims[i] == nullptr) {
+                    shape = as_str(format::push(shape, "_n"));
+                    runtime += 1;
+                } else if (is_integer(dims[i])) {
+                    shape = as_str(format::push(shape, "_", integer_value(dims[i])));
+                } else {
+                    return none;
+                }
+            }
+            at = at->kind.block_type.element;
+        } else if (at->kind == .array && is_integer(at->kind.array.count)) {
+            shape = as_str(format::push(shape, "_", integer_value(at->kind.array.count)));
+            at = at->kind.array.element;
+        } else {
+            break;
+        }
+    }
+    if (at->kind == .slice || at->kind == .block_type || at->kind == .array) return none;
+    is_const = is_const || at->qualifiers.is_const;
+    // The element is a scalar: a pointer or a struct here would call `spell` back, and the checker allows no recursion.
+    if (at->kind != .named || countof(at->kind.named.path.segments) != 1) return none;
+    Spelled element = {.text = scalar_spelling(at->kind.named.path.segments[0].text), .by_value = false, .suffix = ""};
+    if (countof(element.text) == 0) return none;
+    // The name of the struct uses the type's smith name, lowercase (`f32`, `char`), not the C spelling.
+    Str written = at->kind.named.path.segments[0].text;
+    Str name_part = written;
+    if (written[0] >= 'A' && written[0] <= 'Z') {
+        Usize at_letter = (Usize)(written[0] - 'A');
+        Str letters = "abcdefghijklmnopqrstuvwxyz";
+        name_part = as_str(format::push(letters[at_letter:at_letter + 1], written[1:]));
+    }
+    Str name = as_str(format::push(is_const ? "const_" : "", name_part, shape));
+    Str guard_name = as_str(format::push("SMITH_ARRAY_", name));
+    Str data = as_str(format::push(is_const ? "const " : "", element.text, " * data"));
+    Str defs =
+        as_str(format::push(element.defs, "\n#ifndef ", guard_name, "\n#define ", guard_name, "\nstruct smith_array_",
+                            name, " { ", data, "; size_t count [", runtime, "]; };\n#endif\n"));
+    return (Spelled){
+        .text = as_str(format::push("struct smith_array_", name)), .by_value = false, .suffix = "", .defs = defs};
+}
+
+// What a header knows while it spells types: the module's own `pub struct`s, its `import`s of other modules and the
+// `#include` lines the spelled types of those modules need (each once).
+struct HeaderScope {
+    ast::Identifier structs[:];
+    const ast::Decl *imports[:];
+    Str includes;
+};
+
+// The `import`ed module a path like `core.Thing` names (its path, or the alias of the import, spelled before the last
+// segment), or null.
+static const ast::Decl *imported_module(const ast::Path *path, HeaderScope *scope) {
+    Usize n = countof(path->segments);
+    for (Usize i = 0; i < countof(scope->imports); i++) {
+        const ast::Decl *d = scope->imports[i];
+        if (d->kind != .import_module) continue;
+        Usize m = countof(d->kind.import_module.path.segments);
+        if (countof(d->kind.import_module.alias) > 0) {
+            if (n == 2 && roots::same(d->kind.import_module.alias, path->segments[0].text)) return d;
+            continue;
+        }
+        if (m != n - 1) continue;
+        Bool same = true;
+        for (Usize k = 0; k < m; k++) {
+            if (!roots::same(d->kind.import_module.path.segments[k].text, path->segments[k].text)) same = false;
+        }
+        if (same) return d;
+    }
+    return nullptr;
+}
+
+static Str path_joined(const ast::Path *path, Usize count, Str separator) {
+    Str all = "";
+    for (Usize i = 0; i < count; i++) {
+        if (i > 0) all = as_str(format::push(all, separator));
+        all = as_str(format::push(all, path->segments[i].text));
+    }
+    return all;
+}
+
+// `core.Thing` behind a pointer: the other module's struct under its C name, `core_Thing`, with the include of that
+// module's header added to the scope; "" when no import names it.
+static Str imported_spelling(const ast::TypeExpr *t, HeaderScope *scope) {
+    if (t->kind != .named) return "";
+    const ast::Path *path = &t->kind.named.path;
+    const ast::Decl *module_import = imported_module(path, scope);
+    if (module_import == nullptr || module_import->kind != .import_module) return "";
+    const ast::Path *module_path = &module_import->kind.import_module.path;
+    Usize count = countof(module_path->segments);
+    Str include = as_str(format::push("#include \"", path_joined(module_path, count, "/"), ".h\"\n"));
+    if (!contains(scope->includes, include)) scope->includes = as_str(format::push(scope->includes, include));
+    return as_str(
+        format::push(path_joined(module_path, count, "_"), "_", path->segments[countof(path->segments) - 1].text));
+}
+
 // The base of a chain of pointers: a scalar or one of the module's structs (by value only when no pointer is above it).
-static Spelled spell_base(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix, Bool under_pointer) {
-    Spelled none = {.text = "", .by_value = false};
+static Spelled spell_base(const ast::TypeExpr *t, HeaderScope *scope, Str prefix, Bool under_pointer) {
+    Spelled none = {.text = "", .by_value = false, .suffix = ""};
+    if (t->kind == .slice || t->kind == .block_type) return spell_dimensional(t);
+    if (t->kind == .named && countof(t->kind.named.path.segments) > 1 && under_pointer) {
+        Str imported = imported_spelling(t, scope);
+        return (Spelled){.text = imported, .by_value = false, .suffix = ""};
+    }
     if (t->kind != .named || countof(t->kind.named.path.segments) != 1) return none;
     Str name = t->kind.named.path.segments[0].text;
     Str scalar = scalar_spelling(name);
-    if (countof(scalar) > 0) return (Spelled){.text = scalar, .by_value = false};
-    if (!is_struct_name(name, structs)) return none;
-    if (!under_pointer) return (Spelled){.text = "", .by_value = true};
-    return (Spelled){.text = as_str(format::push(prefix, name)), .by_value = false};
+    if (countof(scalar) > 0) return (Spelled){.text = scalar, .by_value = false, .suffix = ""};
+    if (!is_struct_name(name, scope->structs)) return none;
+    if (!under_pointer) return (Spelled){.text = "", .by_value = true, .suffix = ""};
+    return (Spelled){.text = as_str(format::push(prefix, name)), .by_value = false, .suffix = ""};
 }
 
 constexpr Usize pointer_depth_max = 8;
 
 // The spelling of a type: `*T` is `const T *`, `*mut T` is `T *`, a pointer to a pointer `const T * const *` (a chain
 // of at most 8 pointers, written as a loop).
-static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix) {
+static Spelled spell(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
     Bool mutable_level[8] = {};
     Usize depth = 0;
     const ast::TypeExpr *at = t;
@@ -492,7 +1268,7 @@ static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str pre
         depth += 1;
         at = at->kind.pointer.pointee;
     }
-    Spelled base = spell_base(at, structs, prefix, depth > 0);
+    Spelled base = spell_base(at, scope, prefix, depth > 0);
     if (countof(base.text) == 0) return base;
     Str text = base.text;
     for (Usize level = depth; level > 0; level--) {
@@ -505,7 +1281,34 @@ static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str pre
         else
             text = as_str(format::push("const ", text, " *"));
     }
-    return (Spelled){.text = text, .by_value = false};
+    return (Spelled){.text = text, .by_value = false, .suffix = "", .defs = base.defs};
+}
+
+// The spelling of a type that may be an array: `[4]i32` is `int32_t` with the suffix `[4]`, `[3][2]f32` is `float`
+// with `[3][2]` (the outer size first, as C writes it). A size is an integer literal or constants of a header (see
+// `length_text`); C has no array of a size it cannot read, and no array behind a pointer here.
+static Str length_text(const ast::Expr *e, Str *binding);
+
+static Spelled spell_declarator(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
+    Str suffix = "";
+    Str bindings = "";
+    Usize depth = 0;
+    const ast::TypeExpr *at = t;
+    while (at->kind == .array && depth < pointer_depth_max) {
+        const ast::Expr *count = at->kind.array.count;
+        Str binding = "";
+        Str text = length_text(count, &binding);
+        if (countof(text) == 0) return (Spelled){.text = "", .by_value = false, .suffix = ""};
+        if (countof(binding) > 0) bindings = as_str(format::push(bindings, binding, "\n"));
+        suffix = as_str(format::push(suffix, "[", text, "]"));
+        depth += 1;
+        at = at->kind.array.element;
+    }
+    Spelled base = spell(at, scope, prefix);
+    if (countof(base.text) == 0 || depth == 0) return base;
+    base.suffix = suffix;
+    base.bindings = bindings;
+    return base;
 }
 
 // One error of the header at `span`.
@@ -519,8 +1322,19 @@ static Str source_of(Str source, ast::Span span) {
     return source[span.start:span.end];
 }
 
+// The reason a type has no spelling: an option or a result has no C layout defined yet (its tag and payload follow the
+// emitter's, not the old lowering's), any other type is just not spelled yet.
+static Str no_spelling_reason(const ast::TypeExpr *t) {
+    Bool optional = t->kind == .option;
+    if (t->kind == .applied && countof(t->kind.applied.name.segments) == 1) {
+        Str last = t->kind.applied.name.segments[0].text;
+        optional = roots::same(last, "Option") || roots::same(last, "Result");
+    }
+    return optional ? ", whose C layout is not defined yet" : ", which has no C spelling in a header yet";
+}
+
 // The line of a `pub fn` in the header, or "" with a message in `*problems`.
-static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifier structs[:], Str prefix, Str module_c,
+static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *scope, Str prefix, Str module_c,
                          Str module_label, Str label_start, Str *problems) {
     if (d->kind != .function) {
         return "";
@@ -528,8 +1342,9 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
     ast::Param params[:] = d->kind.function.params;
     Str name = d->kind.function.name;
     Str args = "";
+    Str needed = "";
     for (Usize i = 0; i < countof(params); i++) {
-        Spelled spelled = spell(params[i].type, structs, prefix);
+        Spelled spelled = spell_declarator(params[i].type, scope, prefix);
         if (countof(spelled.text) == 0) {
             Str message =
                 spelled.by_value
@@ -537,17 +1352,19 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
                                           "` by value; C passes a struct by value by the target's ABI, which the "
                                           "emitter does not follow yet: take `*",
                                           source_of(source, params[i].type->span), "`"))
-                    : as_str(format::push("`", name, "` takes `", source_of(source, params[i].type->span),
-                                          "`, which has no C spelling in a header yet"));
+                    : as_str(format::push("`", name, "` takes `", source_of(source, params[i].type->span), "`",
+                                          no_spelling_reason(params[i].type)));
             *problems = as_str(format::push(*problems, header_error(path, source, params[i].span, message)));
             return "";
         }
+        needed = as_str(format::push(needed, spelled.defs));
         Bool star = spelled.text[countof(spelled.text) - 1] == '*';
-        args = as_str(format::push(args, i == 0 ? "" : ", ", spelled.text, star ? "" : " ", params[i].name));
+        args = as_str(
+            format::push(args, i == 0 ? "" : ", ", spelled.text, star ? "" : " ", params[i].name, spelled.suffix));
     }
     Str result = "void";
     if (d->kind.function.result != nullptr) {
-        Spelled spelled = spell(d->kind.function.result, structs, prefix);
+        Spelled spelled = spell(d->kind.function.result, scope, prefix);
         if (countof(spelled.text) == 0) {
             Str shown = source_of(source, d->kind.function.result->span);
             Str message = spelled.by_value
@@ -555,13 +1372,14 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
                                                     "` by value; C returns a struct by value by the target's ABI, "
                                                     "which the emitter does not follow yet: return it through a `*mut ",
                                                     shown, "` parameter"))
-                              : as_str(format::push("`", name, "` returns `", shown,
-                                                    "`, which has no C spelling in a header yet"));
+                              : as_str(format::push("`", name, "` returns `", shown, "`",
+                                                    no_spelling_reason(d->kind.function.result)));
             *problems =
                 as_str(format::push(*problems, header_error(path, source, d->kind.function.result->span, message)));
             return "";
         }
         result = spelled.text;
+        needed = as_str(format::push(needed, spelled.defs));
     }
     Str own = header_c_name(d);
     Bool star = result[countof(result) - 1] == '*';
@@ -571,8 +1389,90 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
     Str separator = " ";
     if (star) separator = "";
     Str head = as_str(format::push(result, separator, c_name, "(", args, ")"));
-    if (countof(own) > 0) return as_str(format::push(head, ";\n"));
-    return as_str(format::push(head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
+    if (countof(own) > 0) return as_str(format::push(needed, head, ";\n"));
+    return as_str(format::push(needed, head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
+}
+
+// `text` between `#if cond` and `#endif` when the declaration or field carries `@when(cond)` (#1801).
+static Str guarded(ast::Attribute list[:], Str text, Bool own_lines) {
+    const ast::Attribute *when_here = when::find(list);
+    if (when_here == nullptr || countof(when_here->args) != 1) return text;
+    Str condition = when::c_text(when_here->args[0]);
+    if (countof(condition) == 0) return text;
+    if (own_lines) return as_str(format::push("\n#if ", condition, "\n", text, "\n#endif\n"));
+    return as_str(format::push("#if ", condition, "\n", text, "#endif\n"));
+}
+
+// The C text of one operand of an array length: an integer, or a name a header binding gives (`k.SIDE` is `SIDE`, and
+// `*binding` the binding's name). Empty when it has no C spelling (a constant of smith's own is no C name).
+static Str length_leaf(const ast::Expr *e, Str *binding) {
+    if (e == nullptr) return "";
+    if (e->kind == .integer) return as_str(format::push((U64)e->kind.integer.value));
+    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
+        countof(e->kind.member.base->kind.name.path.segments) == 1) {
+        *binding = e->kind.member.base->kind.name.path.segments[0].text;
+        return e->kind.member.name;
+    }
+    ast::Path path = {};
+    if (e->kind == .name) path = e->kind.name.path;
+    if (e->kind == .type_value && e->kind.type_value.type->kind == .named)
+        path = e->kind.type_value.type->kind.named.path;
+    if (countof(path.segments) != 2) return "";
+    *binding = path.segments[0].text;
+    return path.segments[1].text;
+}
+
+static Str length_operator(ast::BinaryOp op) {
+    if (op == .add) return " + ";
+    if (op == .subtract) return " - ";
+    if (op == .multiply) return " * ";
+    if (op == .divide) return " / ";
+    return "";
+}
+
+// The C text of an array length: one operand, or two joined by `+ - * /`. Empty when it has no C spelling.
+static Str length_text(const ast::Expr *e, Str *binding) {
+    if (e != nullptr && e->kind == .binary) {
+        Str op = length_operator(e->kind.binary.op);
+        Str left = length_leaf(e->kind.binary.left, binding);
+        Str right = length_leaf(e->kind.binary.right, binding);
+        if (countof(op) == 0 || countof(left) == 0 || countof(right) == 0) return "";
+        return as_str(format::push(left, op, right));
+    }
+    return length_leaf(e, binding);
+}
+
+// The `#include` lines for the header bindings (`k` of `import c "k.h"`) that array lengths used.
+static Str length_includes(const ast::Module *m, Str bindings) {
+    Str lines = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_c) continue;
+        Str name = d->kind.import_c.header;
+        Usize begin = 0;
+        Usize end = countof(name);
+        for (Usize k = 0; k < countof(name); k++) {
+            if (name[k] == '/') begin = k + 1;
+        }
+        for (Usize k = begin; k < countof(name); k++) {
+            if (name[k] == '.') end = k;
+        }
+        Str binding = countof(d->kind.import_c.alias) > 0 ? d->kind.import_c.alias : name[begin:end];
+        Bool used = false;
+        Usize at = 0;
+        while (at < countof(bindings)) {
+            Usize stop = at;
+            while (stop < countof(bindings) && bindings[stop] != '\n')
+                stop += 1;
+            if (roots::same(bindings[at:stop], binding)) used = true;
+            at = stop + 1;
+        }
+        if (!used) continue;
+        Str quote_open = d->kind.import_c.angled ? "<" : "\"";
+        Str quote_close = d->kind.import_c.angled ? ">" : "\"";
+        lines = as_str(format::push(lines, "#include ", quote_open, name, quote_close, "\n"));
+    }
+    return lines;
 }
 
 // The header's text for the parsed module, or "" with the errors in `*problems`.
@@ -580,21 +1480,28 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     Str module_c = joined(m, "_");
     Str module_label = joined(m, "::");
     Str prefix = as_str(format::push(module_c, "_"));
-    ast::Identifier structs[:] = {};
+    HeaderScope scope = {};
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_module) {
+            scope.imports = mem::realloc(scope.imports, countof(scope.imports) + 1);
+            scope.imports[countof(scope.imports) - 1] = d;
+        }
         if (d->kind != .record || !d->is_pub) continue;
-        structs = mem::realloc(structs, countof(structs) + 1);
-        structs[countof(structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
+        scope.structs = mem::realloc(scope.structs, countof(scope.structs) + 1);
+        scope.structs[countof(scope.structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
     }
     Str types = "";
+    Str used_bindings = "";
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         if (d->kind != .record || !d->is_pub) continue;
         Str fields = "";
+        Str needed = "";
         for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
             ast::FieldDecl field = d->kind.record.fields[k];
-            Spelled spelled = spell(field.type, structs, prefix);
+            Spelled spelled = spell_declarator(field.type, &scope, prefix);
+            used_bindings = as_str(format::push(used_bindings, spelled.bindings));
             if (countof(spelled.text) == 0) {
                 Str message = as_str(format::push("field `", field.name, "` of `", d->kind.record.name, "` is `",
                                                   source_of(source, field.type->span),
@@ -602,10 +1509,13 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
                 *problems = as_str(format::push(*problems, header_error(path, source, field.span, message)));
                 continue;
             }
+            needed = as_str(format::push(needed, spelled.defs));
             Bool star = spelled.text[countof(spelled.text) - 1] == '*';
-            fields = as_str(format::push(fields, spelled.text, star ? "" : " ", field.name, "; "));
+            Str one = as_str(format::push(spelled.text, star ? "" : " ", field.name, spelled.suffix, "; "));
+            fields = as_str(format::push(fields, guarded(d->kind.record.fields[k].attributes, one, true)));
         }
-        types = as_str(format::push(types, "typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
+        Str made = as_str(format::push("typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
+        types = as_str(format::push(types, needed, guarded(d->attributes, made, false)));
     }
     Str body = "";
     Str label_start = label_prefix(triple);
@@ -614,18 +1524,18 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         const ast::Decl *d = m->decls[i];
         if (d->kind != .function || !d->is_pub || d->kind.function.body == nullptr) continue;
         if (roots::same(d->kind.function.name, "main")) continue;
-        Str line = function_line(path, source, d, structs, prefix, module_c, module_label, label_start, problems);
+        Str line = function_line(path, source, d, &scope, prefix, module_c, module_label, label_start, problems);
         if (countof(line) == 0) continue;
-        body = as_str(format::push(body, count == 0 ? "" : "\n", line));
+        body = as_str(format::push(body, count == 0 ? "" : "\n", guarded(d->attributes, line, false)));
         count += 1;
     }
     if (countof(*problems) > 0) return "";
     Str gap = "";
     if (countof(types) > 0 && countof(body) > 0) gap = "\n";
-    return as_str(format::push("// clang-format off\n// Generated by smith from ", path,
-                               ". Do not edit.\n// clang-format on\n",
-                               "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n#ifdef __cplusplus\n",
-                               "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
+    return as_str(format::push(
+        "// clang-format off\n// Generated by smith from ", path, ". Do not edit.\n// clang-format on\n",
+        "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings), scope.includes,
+        "#ifdef __cplusplus\n", "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
 }
 
 // Writes `text` to `output` unless the file already holds those bytes. Returns an error text, empty when it worked.
@@ -661,7 +1571,7 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     times.parse = clock::monotonic() - mark;
     if (countof(parsed.errors) > 0)
         return failed(as_str(format::push(lines_of(path, source, parsed.errors, "error"))), times);
-    Str problem = name_module(&parsed.module, path, folders);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
     Str wanted = triple;
     if (countof(wanted) == 0) {
@@ -685,8 +1595,9 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     roots::Roots folders = roots::default_roots();
     Str target = "";
     if (triple != nullptr) target = as_str(format::push((const char *)triple));
-    Report done =
-        header(as_str(format::push((const char *)source)), as_str(format::push((const char *)output)), target, folders);
+    Str given = as_str(format::push((const char *)source));
+    folders.local = folder_of(given);
+    Report done = header(given, as_str(format::push((const char *)output)), target, folders);
     if (countof(done.text) > 0) report(done.text);
     return done.ok ? 0 : 1;
 }

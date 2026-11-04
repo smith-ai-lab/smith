@@ -1,0 +1,185 @@
+// Tests of named tuples (piece 1 of #1820): `(count = 3, ms = 1.5)`, the type `(count: i32, ms: f64)`, `.name`, and
+// the identity of the types (names and types in order). Each scenario is source text in smith's own syntax, parsed,
+// checked, emitted and run through the JIT.
+module front_named_tuple_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_tuple;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool contains(const char *text, Str needle) {
+    return text != nullptr && c::strstr(text, needle.data) != nullptr;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+typedef I32 (*Pick)(I32);
+
+// The checker's error count for `source`.
+static Usize errors_of(Str source) {
+    Scenario s = {};
+    s.memory = test::memory(1U << 22);
+    s.allocator = arena::allocator(&s.memory);
+    mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
+    s.parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s.parsed.errors), (Usize)0);
+    s.checked = types_decl::check_module(&s.parsed.module, types::lp64());
+    mem::set_allocator(outside);
+    return s.checked.error_count;
+}
+
+export void test_front_named_tuple_literal_type_and_fields_read_back() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn make(n: i32) -> (count: i32, ms: i64) {\n    (count = n, ms = 7)\n}\n"
+                     "pub fn count(n: i32) -> i32 {\n    let r = make(n)\n    r.count\n}\n"
+                     "pub fn ms(n: i32) -> i32 {\n    let r = make(n)\n    r.ms.to(i32)\n}\n"
+                     "pub fn typed(n: i32) -> i32 {\n    let r: (count: i32, ms: i64) = (count = n, ms = 1)\n"
+                     "    r.count + r.ms.to(i32)\n}\n"
+                     "pub fn empty(n: i32) -> i32 {\n    let u: () = ()\n    n\n}\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "{ i32, i64 }"), true);
+    Pick count = (Pick)symbol_of(&host, "count");
+    Pick ms = (Pick)symbol_of(&host, "ms");
+    Pick typed = (Pick)symbol_of(&host, "typed");
+    Pick empty = (Pick)symbol_of(&host, "empty");
+    test::check_equal(count(5), (I32)5);
+    test::check_equal(ms(5), (I32)7);
+    test::check_equal(typed(4), (I32)5);
+    test::check_equal(empty(3), (I32)3);
+    emit_jit::stop(&host);
+}
+
+static types::Checked fresh() {
+    ast::DeclRef none[1] = {};
+    ast::Module m = ast::new_module("sample", none[0:0]);
+    return types::check(&m, (types::Options){.target = types::lp64()});
+}
+
+static types::Slot slot(Str name, types::TypeRef type) {
+    types::Slot made = {.type = type};
+    made.name = name;
+    return made;
+}
+
+static Bool says(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+export void test_front_named_tuple_identity_is_names_and_types_in_order() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef int32 = types::builtin(&r.table, "I32");
+    types::TypeRef flag = types::builtin(&r.table, "Bool");
+    types::Slot xy[2] = {slot("x", int32), slot("y", flag)};
+    types::Slot yx[2] = {slot("y", flag), slot("x", int32)};
+    types::Slot xz[2] = {slot("x", int32), slot("z", flag)};
+    types::Slot plain[2] = {{.type = int32}, {.type = flag}};
+    types::TypeRef shape = types::tuple_of(&r.table, xy);
+    test::check_condition(shape == types::tuple_of(&r.table, xy));
+    test::check_condition(shape != types::tuple_of(&r.table, yx));
+    test::check_condition(shape != types::tuple_of(&r.table, xz));
+    test::check_condition(shape != types::tuple_of(&r.table, plain));
+    test::check_condition(says(types::show(shape), "(x: I32, y: Bool)"));
+    test::check_condition(says(types::show(types::tuple_of(&r.table, plain)), "(I32, Bool)"));
+}
+
+export void test_front_named_tuple_a_missing_name_is_an_error() {
+    test::check_equal(errors_of("fn f(r: (x: i32, y: i32)) -> i32 {\n    r.z\n}\n") > 0, true);
+}
+
+export void test_front_named_tuple_naming_some_elements_is_a_parse_error() {
+    Scenario s = {};
+    s.memory = test::memory(1U << 22);
+    s.allocator = arena::allocator(&s.memory);
+    mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
+    parser::Parsed a = parser::parse_new("t.smith", "fn f() -> i32 {\n    let r = (x = 1, 2)\n    0\n}\n");
+    parser::Parsed b = parser::parse_new("t.smith", "fn f(r: (x: i32, i64)) -> i32 {\n    0\n}\n");
+    mem::set_allocator(outside);
+    test::check_equal(countof(a.errors) > 0, true);
+    test::check_equal(countof(b.errors) > 0, true);
+}

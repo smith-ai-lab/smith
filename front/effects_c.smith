@@ -1,0 +1,150 @@
+// front::effects_c: C, C++ and Objective-C through the IR pass (#2021, piece 4 of #1939). A translation unit is
+// compiled to unoptimized LLVM IR by `smith cc` (or `smith c++`), with line tables, and added to the same graph as
+// smith's own modules, so a `@pure` smith function that calls a C function has the effects of that function and the
+// chain names the C line. The leaves are the table's (libSystem on macOS, musl on Linux); the runtime of C++ and
+// Objective-C is not in the table, so `add_runtime` gives the graph a module that defines its entry points by what
+// they do:
+//
+//   operator new, new[] (every size and alignment form), __cxa_allocate_exception    alloc
+//   operator delete, delete[]                                                        alloc
+//   __cxa_throw, __cxa_rethrow, std::terminate                                       fails
+//   objc_msgSend and its super, stret and fpret forms                                unknown (the target is not known)
+//   objc_alloc, objc_alloc_init, objc_allocWithZone, objc_opt_new                    alloc
+//   objc_retain, objc_release and the autorelease family                             nothing
+//
+// The ObjC message is `unknown`, as the plugin (shim/effects_infer.cpp) says for a message; the others are new here:
+// the plugin does not look at `new`, `delete` or `throw`.
+//
+//   let graph = effects_pass::make();
+//   effects_c::add_runtime(&graph, context, &cache);                 // once for a build
+//   effects_c::add_source(&graph, context, "util.c", &cache);        // for each C, C++ or ObjC file
+//   effects_pass::solve(&graph);
+//
+// `add_source` is false when the compiler stops (the file has an error), and then the graph is as it was.
+module front::effects_c;
+
+import <llvm-c/Core.h>;
+import <llvm-c/IRReader.h>;
+import <string.h>;
+
+import front::effects_cache;
+import front::effects_pass;
+import std::env;
+import std::format;
+import std::mem;
+import std::process;
+
+// The definitions of the runtime's entry points as IR: each calls what it does in the world, so the pass reads its
+// set from the table (`malloc`, `free`), from `llvm.trap` or from a call through a pointer.
+static const char *runtime_ir =
+    "declare ptr @malloc(i64)\n"
+    "declare void @free(ptr)\n"
+    "declare void @llvm.trap()\n"
+    "declare void @smith.objc_dispatch()\n"
+    "define ptr @_Znwm(i64 %n) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define ptr @_Znam(i64 %n) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define ptr @_ZnwmSt11align_val_t(i64 %n, i64 %a) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define ptr @_ZnamSt11align_val_t(i64 %n, i64 %a) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define ptr @_ZnwmRKSt9nothrow_t(i64 %n, ptr %t) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define ptr @_ZnamRKSt9nothrow_t(i64 %n, ptr %t) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define void @_ZdlPv(ptr %p) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define void @_ZdaPv(ptr %p) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define void @_ZdlPvm(ptr %p, i64 %n) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define void @_ZdaPvm(ptr %p, i64 %n) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define void @_ZdlPvSt11align_val_t(ptr %p, i64 %a) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define void @_ZdaPvSt11align_val_t(ptr %p, i64 %a) {\n  call void @free(ptr %p)\n  ret void\n}\n"
+    "define ptr @__cxa_allocate_exception(i64 %n) {\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n"
+    "define void @__cxa_throw(ptr %a, ptr %b, ptr %c) {\n  call void @llvm.trap()\n  unreachable\n}\n"
+    "define void @__cxa_rethrow() {\n  call void @llvm.trap()\n  unreachable\n}\n"
+    "define void @_ZSt9terminatev() {\n  call void @llvm.trap()\n  unreachable\n}\n"
+    "define void @objc_msgSend(ptr %f) {\n  call void @smith.objc_dispatch()\n  ret void\n}\n"
+    "define void @objc_msgSendSuper(ptr %f) {\n  call void @smith.objc_dispatch()\n  ret void\n}\n"
+    "define void @objc_msgSendSuper2(ptr %f) {\n  call void @smith.objc_dispatch()\n  ret void\n}\n"
+    "define void @objc_msgSend_stret(ptr %f) {\n  call void @smith.objc_dispatch()\n  ret void\n}\n"
+    "define void @objc_msgSend_fpret(ptr %f) {\n  call void @smith.objc_dispatch()\n  ret void\n}\n"
+    "define ptr @objc_alloc(ptr %c) {\n  %p = call ptr @malloc(i64 16)\n  ret ptr %p\n}\n"
+    "define ptr @objc_alloc_init(ptr %c) {\n  %p = call ptr @malloc(i64 16)\n  ret ptr %p\n}\n"
+    "define ptr @objc_allocWithZone(ptr %c) {\n  %p = call ptr @malloc(i64 16)\n  ret ptr %p\n}\n"
+    "define ptr @objc_opt_new(ptr %c) {\n  %p = call ptr @malloc(i64 16)\n  ret ptr %p\n}\n"
+    "define ptr @objc_retain(ptr %o) {\n  ret ptr %o\n}\n"
+    "define void @objc_release(ptr %o) {\n  ret void\n}\n"
+    "define ptr @objc_autorelease(ptr %o) {\n  ret ptr %o\n}\n"
+    "define ptr @objc_retainAutorelease(ptr %o) {\n  ret ptr %o\n}\n"
+    "define ptr @objc_retainAutoreleasedReturnValue(ptr %o) {\n  ret ptr %o\n}\n"
+    "define ptr @objc_autoreleaseReturnValue(ptr %o) {\n  ret ptr %o\n}\n"
+    "define void @objc_storeStrong(ptr %l, ptr %o) {\n  ret void\n}\n";
+
+static c::LLVMModuleRef parse(c::LLVMContextRef context, const char *text, Usize length, const char *name) {
+    c::LLVMMemoryBufferRef buffer = c::LLVMCreateMemoryBufferWithMemoryRangeCopy(text, length, name);
+    c::LLVMModuleRef module = nullptr;
+    char *problem = nullptr;
+    if (c::LLVMParseIRInContext(context, buffer, &module, &problem) != 0) {
+        c::LLVMDisposeMessage(problem);
+        return nullptr;
+    }
+    return module;
+}
+
+// Gives the graph the definitions of the C++ and Objective-C runtime above. Once for a build; a second call adds
+// nothing, as the graph keeps the first definition of a name.
+export void add_runtime(effects_pass::Graph *g, c::LLVMContextRef context, effects_cache::Cache *cache) {
+    c::LLVMModuleRef module = parse(context, runtime_ir, c::strlen(runtime_ir), "<runtime>");
+    if (module == nullptr) return;
+    effects_pass::add_module(g, module, cache);
+    c::LLVMDisposeModule(module);
+}
+
+static Bool ends_with(Str text, Str suffix) {
+    if (countof(text) < countof(suffix)) return false;
+    return mem::equal(text[countof(text) - countof(suffix):countof(text)], suffix);
+}
+
+// How the file is compiled: `smith cc` for C, `smith c++` for C++, with `-x` for Objective-C and Objective-C++.
+export constexpr U32 lang_c = 0;
+export constexpr U32 lang_cpp = 1;
+export constexpr U32 lang_objc = 2;
+export constexpr U32 lang_objcpp = 3;
+
+export U32 language_of(Str path) {
+    if (ends_with(path, ".mm")) return lang_objcpp;
+    if (ends_with(path, ".m")) return lang_objc;
+    if (ends_with(path, ".cpp") || ends_with(path, ".cc") || ends_with(path, ".cxx")) return lang_cpp;
+    return lang_c;
+}
+
+// Compiles the file to unoptimized IR, so the result does not change with `-O`, with line tables for the lines of
+// the chain. Null when the compiler stops.
+export c::LLVMModuleRef compile(c::LLVMContextRef context, Str path) {
+    const char *self = c::getenv("SMITH_SELF");
+    const char *smith = self != nullptr ? self : "smith";
+    U32 language = language_of(path);
+    const char *driver = (language == lang_cpp || language == lang_objcpp) ? "c++" : "cc";
+    const char *kind = "";
+    if (language == lang_objc) kind = "objective-c";
+    if (language == lang_objcpp) kind = "objective-c++";
+    Str file = effects_cache::as_str(format::push(path, "\0"));
+    defer effects_cache::free_text(file);
+    const char *name = (const char *)file.data;
+    const char *const plain[9] = {smith, driver, "-S", "-emit-llvm", "-O0", "-gline-tables-only", "-o", "-", name};
+    const char *const typed[11] = {smith, driver, "-x", kind, "-S", "-emit-llvm", "-O0", "-gline-tables-only",
+                                   "-o",  "-",    name};
+    process::OutputResult done = {};
+    if (c::strlen(kind) == 0) {
+        done = process::run(plain[0:9]);
+    } else {
+        done = process::run(typed[0:11]);
+    }
+    if (done != .ok) return nullptr;
+    if (done.ok.exit.status != 0 || done.ok.exit.signal != 0) return nullptr;
+    return parse(context, (const char *)done.ok.output.data, countof(done.ok.output), (const char *)file.data);
+}
+
+// Adds every function the file defines to the graph, as add_module does for smith's own modules. False, with the
+// graph as it was, when the file does not compile.
+export Bool add_source(effects_pass::Graph *g, c::LLVMContextRef context, Str path, effects_cache::Cache *cache) {
+    c::LLVMModuleRef module = compile(context, path);
+    if (module == nullptr) return false;
+    effects_pass::add_module(g, module, cache);
+    c::LLVMDisposeModule(module);
+    return true;
+}

@@ -35,6 +35,7 @@ export struct Options {
     Target target;
     Str source; // the file's text, for debug info's lines (B5)
     Bool debug_info;
+    Bool fill_undefined;           // a debug build fills an `undefined` local with the byte 0xAA
     const types::Checked *checked; // the checker's result for the module; null: no cast is checked (K2, #1329)
 };
 
@@ -87,13 +88,15 @@ export typedef enum {
     pointer;
     array;
     record;
-    option;   // `?T`: `element` is the payload
-    tuple;    // `parts` are the elements
-    fn_value; // `parts` are the parameters, `element` the result
-    slice;    // next batch
-    floating; // next batch
-    block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
-    vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
+    option;       // `?T`: `element` is the payload
+    tuple;        // `parts` are the elements
+    fn_value;     // `parts` are the parameters, `element` the result
+    slice;        // next batch
+    floating;     // next batch
+    block;        // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
+    vector;       // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
+    result;       // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
+    variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
 } TyKind;
 
 export struct Ty;
@@ -160,12 +163,15 @@ export struct LoopTarget {
 export struct DeferEntry {
     const ast::Stmt *body;
     Usize scope_depth;
+    Bool on_error; // an `errdefer`: it runs only on the early return of a `try`
 };
 
 // An enumeration of the module: its enumerators and their values (filled by emit_match).
 export struct Enumerator {
     Str name;
     U64 value;
+    Bool has_payload; // a payload enumeration's variant `circle: Circle`
+    Ty payload;
 };
 
 // (A slice of `Str` is not a field type today, so the enumerators are one slice of pairs, not `names` and `values`.)
@@ -178,6 +184,7 @@ export struct EnumType {
 export struct FieldInfo {
     Str name;
     Ty ty;
+    ast::Expr *default_value; // `x: T = 3`: written for a construction that leaves the field out (null: none)
 };
 
 export struct RecordType {
@@ -299,6 +306,7 @@ export struct Emitter {
     SavedFunction lambda_frames[:]; // the enclosing functions of the lambda being emitted, innermost last (#1620)
     Usize lambda_frame_count;
 
+    Str import_scope; // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
@@ -441,6 +449,13 @@ export c::LLVMTypeRef pointer_type(Emitter *e, U32 address_space) {
 }
 
 // A zeroed slot in the entry block.
+// The LLVM type a parameter of type `ty` has in a function's signature: an array is passed as a pointer to its first
+// element (C's rule, so a header's `int32_t xs[4]` is what a C caller can call); every other type as it is.
+export c::LLVMTypeRef abi_type(Emitter *e, Ty ty) {
+    if (ty.kind == .array) return c::LLVMPointerTypeInContext(e->context, 0);
+    return ty.llvm;
+}
+
 export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
     char *label = cstr(name);
     c::LLVMValueRef slot = c::LLVMBuildAlloca(e->alloca_builder, ty.llvm, label);
@@ -536,4 +551,23 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     t.llvm = c::LLVMIntTypeInContext(e->context, bits);
     *ty = t;
     return true;
+}
+
+// `@c_name` or today's `[[std::c_name]]`.
+export Bool is_c_name(ast::Attribute attribute) {
+    ast::Path name = attribute.name;
+    Usize n = countof(name.segments);
+    if (n == 1) return same_text(name.segments[0].text, "c_name");
+    return n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name");
+}
+
+// The function's c_name, or "" when it has none (checked by `check_function`).
+export Str c_name_of(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        if (!is_c_name(attribute) || countof(attribute.args) == 0) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
 }

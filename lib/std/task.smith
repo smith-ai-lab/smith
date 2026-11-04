@@ -833,17 +833,25 @@ void finish_managed(Task *task) {
 
 // The file calls the pool has finished for this worker's tasks: each task is ready again. Holds the lock. Only the
 // worker queues its tasks, so a task is never queued while it is still switching out.
+void finish_done(Worker *worker, Task *ready) {
+    ready->pool_next = nullptr;
+    ready->io_waiting = false;
+    worker->io_parked -= 1;
+    io_total -= 1;
+    if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
+}
+
 void drain_done(Worker *worker) {
     while (worker->done != nullptr) { // NOLINT(smith-bounded-loop): the list is finite
         Task *ready = worker->done;
         worker->done = ready->pool_next;
-        ready->pool_next = nullptr;
-        ready->io_waiting = false;
-        worker->io_parked -= 1;
-        io_total -= 1;
-        if (ready->resumer != nullptr) push_ready(worker, ready); // `main` sees the flag and goes on by itself
+        finish_done(worker, ready);
     }
 }
+
+// Events one read of the system's queue returns, on both systems. (Declared here, not in each branch below: the lint
+// measures a function up to the next declaration it sees, and the branch not taken hides the next one.)
+constexpr Usize events_max = 16;
 
 // ---- Waiting on the system: a kqueue per worker on macOS, an epoll instance per worker on Linux. ----
 //
@@ -859,8 +867,6 @@ if constexpr (target::os == target::macos) {
     constexpr I32 add_clear = c::EV_ADD | c::EV_CLEAR;
     constexpr U32 trigger = c::NOTE_TRIGGER;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr Usize events_max = 16;
-
     void queue_open(Worker *worker) {
         contract::trusted(); // the system's queue is the edge
         worker->queue = c::kqueue();
@@ -922,7 +928,6 @@ if constexpr (target::os == target::macos) {
     constexpr I32 close_on_exec = c::EPOLL_CLOEXEC;
     constexpr I32 event_fd_flags = c::EFD_CLOEXEC | c::EFD_NONBLOCK;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr Usize events_max = 16;
 
     void queue_open(Worker *worker) {
         contract::trusted(); // the system's queue is the edge

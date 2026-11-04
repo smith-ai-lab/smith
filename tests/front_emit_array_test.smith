@@ -31,33 +31,11 @@ struct Scenario {
     types::Checked checked;
 };
 
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static void begin(Scenario *s, Str source) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     if (s->checked.error_count > 0) {
@@ -112,16 +90,20 @@ static char *emit_source(Str source, emit_jit::Jit *host, Scenario *s) {
 export void test_front_emit_array_literal_fixed_nested_and_widened() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    emit_source("pub fn run() -> i32 {\n"
-                "    primes: [4]i32 = [2, 3, 5, 7]\n"
-                "    if primes[3] != 7 || primes[0] != 2 {\n        return 1\n    }\n"
-                "    grid: [2][3]i64 = [[1, 2, 3], [4, 5, 6]]\n"
-                "    if grid[1][2] != 6 || grid[0][1] != 2 {\n        return 2\n    }\n"
-                "    wide: [3]i64 = [1, 2, 3]\n"
-                "    if wide[2] != 3 {\n        return 3\n    }\n"
-                "    inferred := [10, 20, 30]\n"
-                "    if inferred[1] != 20 {\n        return 4\n    }\n"
-                "    0\n}\n",
+    emit_source("pub fn run() -> i32:\n"
+                "    let primes: [4]i32 = [2, 3, 5, 7]\n"
+                "    if primes[3] != 7 || primes[0] != 2:\n"
+                "        return 1\n"
+                "    let grid: [2][3]i64 = [[1, 2, 3], [4, 5, 6]]\n"
+                "    if grid[1][2] != 6 || grid[0][1] != 2:\n"
+                "        return 2\n"
+                "    let wide: [3]i64 = [1, 2, 3]\n"
+                "    if wide[2] != 3:\n"
+                "        return 3\n"
+                "    let inferred = [10, 20, 30]\n"
+                "    if inferred[1] != 20:\n"
+                "        return 4\n"
+                "    0\n",
                 &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
     test::check_equal(run(), (I32)0);
@@ -131,13 +113,17 @@ export void test_front_emit_array_literal_fixed_nested_and_widened() {
 export void test_front_emit_array_literal_as_a_slice_has_its_array_in_the_entry_block() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = emit_source(
-        "fn total(xs: []i32) -> i32 {\n    mut sum := 0\n    for x in xs {\n        sum += x\n    }\n    sum\n}\n"
-        "pub fn run() -> i32 {\n"
-        "    kept: []i32 = [4, 5]\n"
-        "    if total([1, 2, 3]) != 6 || total(kept) != 9 {\n        return 1\n    }\n"
-        "    0\n}\n",
-        &host, &s);
+    char *ir = emit_source("fn total(xs: []i32) -> i32:\n"
+                           "    let mut sum = 0\n"
+                           "    for x in xs:\n"
+                           "        sum += x\n"
+                           "    sum\n"
+                           "pub fn run() -> i32:\n"
+                           "    let kept: []i32 = [4, 5]\n"
+                           "    if total([1, 2, 3]) != 6 || total(kept) != 9:\n"
+                           "        return 1\n"
+                           "    0\n",
+                           &host, &s);
     test::check_equal(contains(ir, "alloca [3 x i32]"), true);
     test::check_equal(contains(ir, "alloca [2 x i32]"), true);
     if (ir != nullptr) c::LLVMDisposeMessage(ir);
@@ -149,16 +135,23 @@ export void test_front_emit_array_literal_as_a_slice_has_its_array_in_the_entry_
 export void test_front_emit_array_literal_empty_slice_and_each_turn_of_a_loop() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    emit_source(
-        "fn total(xs: []i32) -> i32 {\n    mut sum := 0\n    for x in xs {\n        sum += x\n    }\n    sum\n}\n"
-        "pub fn run() -> i32 {\n"
-        "    empty: []i32 = []\n"
-        "    if countof(empty) != 0 || total(empty) != 0 {\n        return 1\n    }\n"
-        "    mut runs := 0\n"
-        "    for i in range(0, 3) {\n        row := [i, i + 1]\n        runs += total(row)\n    }\n"
-        "    if runs != 9 {\n        return 2\n    }\n"
-        "    0\n}\n",
-        &host, &s);
+    emit_source("fn total(xs: []i32) -> i32:\n"
+                "    let mut sum = 0\n"
+                "    for x in xs:\n"
+                "        sum += x\n"
+                "    sum\n"
+                "pub fn run() -> i32:\n"
+                "    let empty: []i32 = []\n"
+                "    if countof(empty) != 0 || total(empty) != 0:\n"
+                "        return 1\n"
+                "    let mut runs = 0\n"
+                "    for i in range(0, 3):\n"
+                "        let row = [i, i + 1]\n"
+                "        runs += total(row)\n"
+                "    if runs != 9:\n"
+                "        return 2\n"
+                "    0\n",
+                &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
     test::check_equal(run(), (I32)0);
     emit_jit::stop(&host);
@@ -170,7 +163,9 @@ export void test_front_emit_array_literal_empty_without_a_type_is_refused() {
     s.memory = test::memory(1U << 22);
     s.allocator = arena::allocator(&s.memory);
     mem::Allocator *outside = mem::set_allocator(&s.allocator.base);
-    s.parsed = parse_new("pub fn run() -> i32 {\n    x := []\n    0\n}\n");
+    s.parsed = parser::parse_new("t.smith", "pub fn run() -> i32:\n"
+                                            "    let x = []\n"
+                                            "    0\n");
     s.checked = types_decl::check_module(&s.parsed.module, types::lp64());
     test::check_equal(s.checked.error_count > 0, true);
     mem::set_allocator(outside);

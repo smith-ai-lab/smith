@@ -614,6 +614,33 @@ static bool smith_lang_tag_bare(SmithLang *lang, const SmithHost *host, const Sm
     return smith_lang_tuple_replace(lang, 0, made, 2);
 }
 
+// `[[nodiscard]] export int f();` drops the export without a word (its header stays empty, #1459): an attribute goes
+// after `export`. Reads past the `[[...]]` groups and reports when `export` follows them.
+static void smith_lang_attribute_before_export(SmithLang *lang, const SmithHost *host, const SmithToken *open) {
+    size_t at = 0; // `open` is the first `[` of the first group and is no longer in the queue
+    for (size_t groups = 0; groups < 8; groups++) {
+        bool first = groups == 0;
+        if (!smith_lang_punct(smith_lang_peek(lang, host, at, false), "[") ||
+            (!first && !smith_lang_punct(smith_lang_peek(lang, host, at + 1, false), "["))) {
+            return;
+        }
+        int depth = first ? 1 : 0;
+        for (size_t guard = 0; guard < 64; guard++, at++) {
+            const SmithToken *token = smith_lang_peek(lang, host, at, false);
+            if (token->kind == SmithTokenKind_Eof) return;
+            depth += smith_lang_punct(token, "[") ? 1 : smith_lang_punct(token, "]") ? -1 : 0;
+            if (depth == 0) break;
+        }
+        at++;
+        const SmithToken *after = smith_lang_peek(lang, host, at, false);
+        if (smith_lang_ident(after, "export") && !smith_lang_is_own_word(lang, host, after)) {
+            smith_lang_error(lang, host, open->location,
+                             "an attribute goes after `export`, not before it: `export [[...]] int f()`");
+            return;
+        }
+    }
+}
+
 static void smith_lang_start(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->due_count > 0) smith_lang_typedefs_write(lang, host);
     if (token->kind == SmithTokenKind_Identifier) {
@@ -641,6 +668,7 @@ static void smith_lang_start(SmithLang *lang, const SmithHost *host, const Smith
         return;
     }
     if (smith_lang_punct(token, "[") && smith_lang_c_name_attribute(lang, host, token)) return;
+    if (lang->is_module && smith_lang_punct(token, "[")) smith_lang_attribute_before_export(lang, host, token);
     smith_lang_begin_declaration(lang, host, token);
 }
 

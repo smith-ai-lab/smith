@@ -1,0 +1,409 @@
+// front::lsp_server: `smith lsp --smith`, the language server for `.smith` files on smith's own front end (#1887, slice
+// 1 of its pieces; design in knowledge/front-end.md). JSON-RPC 2.0 over stdio with LSP's `Content-Length` framing.
+//
+//   handle(body)   one message (the JSON text, no header) in, the replies out as framed messages (empty: none); what
+//   the
+//                  tests drive, with no pipe
+//   run()          C: `front_lsp_run`: reads messages from stdin until `exit` or the end of the input, writes the
+//   replies
+//                  to stdout; returns 0 after `shutdown` then `exit`, else 1
+//
+// Served: `textDocument/completion` (#1894), `textDocument/definition` and `documentSymbol` (#1893), `initialize` (full
+// document sync), `shutdown`,
+// `exit`, `textDocument/didOpen` and `didChange` (each answered by `textDocument/publishDiagnostics` from
+// front::compile::diagnose) and `didClose` (clears them). Any other request is answered with the error -32601; any
+// other notification is ignored. A position is a line and a byte count in the line (LSP asks for UTF-16 units; the two
+// agree on ASCII). One thread, one message at a time; the memory of a message is the current allocator's, which `run`
+// makes an arena that it resets after each one.
+module front::lsp_server;
+
+import front::compile;
+import front::lsp_completion;
+import front::lsp_definition;
+import front::lsp_hover;
+import front::lsp_symbols;
+import front::lsp_semantic;
+import front::roots;
+import std::arena;
+import std::format;
+import std::mem;
+import <smith/json.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+constexpr c::SmithJsonLimits limits = {.depth = 64, .string_length = 1 << 24, .count = 1 << 20};
+
+// Set by `exit`, and by `shutdown` before it.
+static Bool exiting = false;
+static Bool shut_down = false;
+
+// Whether `exit` has been handled.
+export Bool finished() {
+    return exiting;
+}
+
+// The text of `body` as a framed message: the header, a blank line and the body.
+export Str frame(Str body) {
+    return as_str(format::push("Content-Length: ", countof(body), "\r\n\r\n", body));
+}
+
+// `text` as the inside of a JSON string.
+static Str escape(Str text) {
+    Str out = "";
+    for (Usize i = 0; i < countof(text); i++) {
+        char ch = text[i];
+        if (ch == '"') {
+            out = as_str(format::push(out, "\\\""));
+        } else if (ch == '\\') {
+            out = as_str(format::push(out, "\\\\"));
+        } else if (ch == '\n') {
+            out = as_str(format::push(out, "\\n"));
+        } else if (ch == '\r') {
+            out = as_str(format::push(out, "\\r"));
+        } else if (ch == '\t') {
+            out = as_str(format::push(out, "\\t"));
+        } else if ((U8)ch < 32) {
+            out = as_str(format::push(out, " "));
+        } else {
+            out = as_str(format::push(out, text[i:i + 1]));
+        }
+    }
+    return out;
+}
+
+// The member `key` of the object `from` as text, empty when it is missing or not a string.
+static Str string_of(const c::SmithJsonValue *from, const char *key) {
+    if (from == nullptr) return "";
+    const c::SmithJsonValue *member = c::smith_json_member(from, key);
+    if (member == nullptr || member->kind != c::SmithJsonKind_String) return "";
+    return member->text;
+}
+
+// The id of a request as JSON text; empty for a notification.
+static Str id_of(const c::SmithJsonValue *message) {
+    const c::SmithJsonValue *id = c::smith_json_member(message, "id");
+    if (id == nullptr) return "";
+    if (id->kind == c::SmithJsonKind_Number) return id->text;
+    if (id->kind == c::SmithJsonKind_String) return as_str(format::push("\"", escape(id->text), "\""));
+    return "null";
+}
+
+static Str reply(Str id, Str result) {
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"result\":", result, "}")));
+}
+
+static Str failure(Str id, Str code, Str message) {
+    return frame(as_str(format::push("{\"jsonrpc\":\"2.0\",\"id\":", id, ",\"error\":{\"code\":", code,
+                                     ",\"message\":\"", escape(message), "\"}}")));
+}
+
+// `file:///a/b.smith` as `/a/b.smith`; any other text as it is.
+static Str path_of(Str uri) {
+    Str prefix = "file://";
+    if (countof(uri) < countof(prefix)) return uri;
+    for (Usize i = 0; i < countof(prefix); i++) {
+        if (uri[i] != prefix[i]) return uri;
+    }
+    return uri[countof(prefix):countof(uri)];
+}
+
+// The 0-based line and the byte column of the byte `offset` of `source`, as `"line":L,"character":C`.
+static Str position(Str source, U32 offset) {
+    U64 line = 0;
+    U64 column = 0;
+    for (Usize i = 0; i < countof(source) && i < offset; i++) {
+        if (source[i] == '\n') {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    return as_str(format::push("{\"line\":", line, ",\"character\":", column, "}"));
+}
+
+// A `textDocument/publishDiagnostics` notification for the text `source` of the document `uri`.
+export Str diagnostics(Str uri, Str source) {
+    compile::Problems found = compile::diagnose(path_of(uri), source, roots::default_roots());
+    Str list = "";
+    for (Usize i = 0; i < countof(found); i++) {
+        U32 severity = found[i].error ? 1 : 2;
+        list = as_str(format::push(list, i == 0 ? "" : ",", "{\"range\":{\"start\":", position(source, found[i].start),
+                                   ",\"end\":", position(source, found[i].end), "},\"severity\":", severity,
+                                   ",\"source\":\"smith\",\"message\":\"", escape(found[i].message), "\"}"));
+    }
+    return frame(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                     escape(uri), "\",\"diagnostics\":[", list, "]}}")));
+}
+
+static Str cleared(Str uri) {
+    return frame(as_str(
+        format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",
+                     escape(uri), "\",\"diagnostics\":[]}}")));
+}
+
+// The open documents, by uri: a request such as hover names a document by its uri and position only. Fixed sizes keep
+// the text out of the arena that `run` resets after each message; a document past the limits is not kept.
+constexpr Usize max_documents = 8;
+constexpr Usize max_uri = 512;
+constexpr Usize max_text = 1 << 18;
+
+struct Document {
+    Bool used;
+    Usize uri_length;
+    Usize text_length;
+    char uri[512];
+    char text[262144];
+};
+
+static Document documents[max_documents];
+
+static Document *find_document(Str uri) {
+    for (Usize i = 0; i < max_documents; i++) {
+        if (!documents[i].used || documents[i].uri_length != countof(uri)) continue;
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(uri); k++)
+            same = documents[i].uri[k] == uri[k];
+        if (same) return &documents[i];
+    }
+    return nullptr;
+}
+
+// Keeps `text` as the text of `uri`, in its slot or a free one.
+static void store_document(Str uri, Str text) {
+    if (countof(uri) > max_uri || countof(text) > max_text) return;
+    Document *slot = find_document(uri);
+    for (Usize i = 0; slot == nullptr && i < max_documents; i++)
+        if (!documents[i].used) slot = &documents[i];
+    if (slot == nullptr) return;
+    slot->used = true;
+    slot->uri_length = countof(uri);
+    slot->text_length = countof(text);
+    for (Usize i = 0; i < countof(uri); i++)
+        slot->uri[i] = uri[i];
+    for (Usize i = 0; i < countof(text); i++)
+        slot->text[i] = text[i];
+}
+
+static void forget_document(Str uri) {
+    Document *slot = find_document(uri);
+    if (slot != nullptr) slot->used = false;
+}
+
+// A number of a JSON value read as digits (0 when it is not one).
+static U64 number_of(const c::SmithJsonValue *value) {
+    U64 n = 0;
+    if (value == nullptr) return 0;
+    for (Usize i = 0; i < countof(value->text); i++)
+        if (value->text[i] >= '0' && value->text[i] <= '9') n = n * 10 + (U64)(value->text[i] - '0');
+    return n;
+}
+
+// The `result` of `textDocument/semanticTokens/full` (no `range`) and `/range`: null for a document that is not open.
+static Str semantic_result(Str uri, const c::SmithJsonValue *range) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr) return "null";
+    Str source = as_str(slot->text[0:slot->text_length]);
+    U32 from = 0;
+    U32 to = (U32)countof(source);
+    if (range != nullptr) {
+        const c::SmithJsonValue *start = c::smith_json_member(range, "start");
+        const c::SmithJsonValue *end = c::smith_json_member(range, "end");
+        if (start == nullptr || end == nullptr) return "null";
+        from = lsp_hover::offset_of(source, number_of(c::smith_json_member(start, "line")),
+                                    number_of(c::smith_json_member(start, "character")));
+        to = lsp_hover::offset_of(source, number_of(c::smith_json_member(end, "line")),
+                                  number_of(c::smith_json_member(end, "character")));
+    }
+    return lsp_semantic::result(path_of(uri), source, from, to);
+}
+
+// The `result` of a `textDocument/hover` request: null for a document that is not open.
+static Str hover_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr || position_param == nullptr) return "null";
+    const c::SmithJsonValue *line = c::smith_json_member(position_param, "line");
+    const c::SmithJsonValue *character = c::smith_json_member(position_param, "character");
+    if (line == nullptr || character == nullptr) return "null";
+    U64 l = 0;
+    U64 ch = 0;
+    for (Usize i = 0; i < countof(line->text); i++)
+        if (line->text[i] >= '0' && line->text[i] <= '9') l = l * 10 + (U64)(line->text[i] - '0');
+    for (Usize i = 0; i < countof(character->text); i++)
+        if (character->text[i] >= '0' && character->text[i] <= '9') ch = ch * 10 + (U64)(character->text[i] - '0');
+    Str source = as_str(slot->text[0:slot->text_length]);
+    return lsp_hover::result(path_of(uri), source, l, ch);
+}
+
+// The open document of `uri` and the line and character a request's `position` names; false when the document is not
+// open or the position is missing.
+static Bool locate(Str uri, const c::SmithJsonValue *position_param, Document **slot, U64 *l, U64 *ch) {
+    *slot = find_document(uri);
+    if (*slot == nullptr || position_param == nullptr) return false;
+    const c::SmithJsonValue *line = c::smith_json_member(position_param, "line");
+    const c::SmithJsonValue *character = c::smith_json_member(position_param, "character");
+    if (line == nullptr || character == nullptr) return false;
+    for (Usize i = 0; i < countof(line->text); i++)
+        if (line->text[i] >= '0' && line->text[i] <= '9') *l = *l * 10 + (U64)(line->text[i] - '0');
+    for (Usize i = 0; i < countof(character->text); i++)
+        if (character->text[i] >= '0' && character->text[i] <= '9') *ch = *ch * 10 + (U64)(character->text[i] - '0');
+    return true;
+}
+
+// The `result` of a `textDocument/completion` request: null for a document that is not open.
+static Str completion_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = nullptr;
+    U64 l = 0;
+    U64 ch = 0;
+    if (!locate(uri, position_param, &slot, &l, &ch)) return "null";
+    return lsp_completion::result(path_of(uri), as_str(slot->text[0:slot->text_length]), l, ch);
+}
+
+// The `result` of a `textDocument/definition` request: null for a document that is not open.
+static Str definition_result(Str uri, const c::SmithJsonValue *position_param) {
+    Document *slot = nullptr;
+    U64 l = 0;
+    U64 ch = 0;
+    if (!locate(uri, position_param, &slot, &l, &ch)) return "null";
+    return lsp_definition::result(path_of(uri), as_str(slot->text[0:slot->text_length]), l, ch);
+}
+
+// The `result` of a `textDocument/documentSymbol` request: an empty list for a document that is not open.
+static Str symbols_result(Str uri) {
+    Document *slot = find_document(uri);
+    if (slot == nullptr) return "[]";
+    return lsp_symbols::result(path_of(uri), as_str(slot->text[0:slot->text_length]));
+}
+
+// The text of the last change of a `didChange` (full sync: it is the whole document).
+static Str last_change(const c::SmithJsonValue *params) {
+    const c::SmithJsonValue *changes = c::smith_json_member(params, "contentChanges");
+    if (changes == nullptr || changes->kind != c::SmithJsonKind_Array || changes->count == 0) return "";
+    return string_of(changes->items[changes->count - 1], "text");
+}
+
+// One message in, its replies out, framed.
+export Str handle(Str body) {
+    const c::SmithJsonValue *message = nullptr;
+    c::SmithJsonError problem = {};
+    if (!c::smith_json_parse(body, limits, &message, &problem) || message->kind != c::SmithJsonKind_Object) {
+        return failure("null", "-32700", "parse error");
+    }
+    Str method = string_of(message, "method");
+    Str id = id_of(message);
+    const c::SmithJsonValue *params = c::smith_json_member(message, "params");
+    const c::SmithJsonValue *document = params == nullptr ? nullptr : c::smith_json_member(params, "textDocument");
+    if (roots::same(method, "initialize")) {
+        return reply(id,
+                     as_str(format::push("{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,"
+                                         "\"definitionProvider\":true,\"documentSymbolProvider\":true,"
+                                         "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
+                                         "\"semanticTokensProvider\":{\"legend\":",
+                                         lsp_semantic::legend(),
+                                         ",\"full\":true,\"range\":true}},\"serverInfo\":{\"name\":\"smith lsp\"}}")));
+    }
+    if (roots::same(method, "shutdown")) {
+        shut_down = true;
+        return reply(id, "null");
+    }
+    if (roots::same(method, "exit")) {
+        exiting = true;
+        return "";
+    }
+    if (roots::same(method, "textDocument/didOpen")) {
+        store_document(string_of(document, "uri"), string_of(document, "text"));
+        return diagnostics(string_of(document, "uri"), string_of(document, "text"));
+    }
+    if (roots::same(method, "textDocument/didChange")) {
+        store_document(string_of(document, "uri"), last_change(params));
+        return diagnostics(string_of(document, "uri"), last_change(params));
+    }
+    if (roots::same(method, "textDocument/didClose")) {
+        forget_document(string_of(document, "uri"));
+        return cleared(string_of(document, "uri"));
+    }
+    if (roots::same(method, "textDocument/hover")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, hover_result(string_of(document, "uri"), at));
+    }
+    if (roots::same(method, "textDocument/definition")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, definition_result(string_of(document, "uri"), at));
+    }
+    if (roots::same(method, "textDocument/completion")) {
+        const c::SmithJsonValue *at = params == nullptr ? nullptr : c::smith_json_member(params, "position");
+        return reply(id, completion_result(string_of(document, "uri"), at));
+    }
+    if (roots::same(method, "textDocument/documentSymbol"))
+        return reply(id, symbols_result(string_of(document, "uri")));
+    if (roots::same(method, "textDocument/semanticTokens/full")) {
+        return reply(id, semantic_result(string_of(document, "uri"), nullptr));
+    }
+    if (roots::same(method, "textDocument/semanticTokens/range")) {
+        const c::SmithJsonValue *range = params == nullptr ? nullptr : c::smith_json_member(params, "range");
+        if (range == nullptr) return reply(id, "null");
+        return reply(id, semantic_result(string_of(document, "uri"), range));
+    }
+    if (countof(id) == 0) return "";
+    return failure(id, "-32601", as_str(format::push("method not found: ", method)));
+}
+
+// The bytes of stdin into `into`, all of them or false at the end of the input.
+static Bool read_exact(char *into, Usize count) {
+    Usize done = 0;
+    while (done < count) {
+        Isize n = c::read(0, into + done, count - done);
+        if (n <= 0) return false;
+        done += (Usize)n;
+    }
+    return true;
+}
+
+// The length a header announces: reads header lines up to the blank one; 0 at the end of the input or without one.
+static Usize read_header() {
+    Usize length = 0;
+    char line[256];
+    Usize used = 0;
+    for (Usize guard = 0; guard < 4096; guard++) {
+        char ch = 0;
+        if (!read_exact(&ch, 1)) return 0;
+        if (ch != '\n') {
+            if (used < sizeof line && ch != '\r') line[used++] = ch;
+            continue;
+        }
+        if (used == 0) return length;
+        Str name = "Content-Length:";
+        Bool matches = used > countof(name);
+        for (Usize i = 0; matches && i < countof(name); i++)
+            matches = line[i] == name[i];
+        if (matches) {
+            for (Usize i = countof(name); i < used; i++) {
+                if (line[i] >= '0' && line[i] <= '9') length = length * 10 + (Usize)(line[i] - '0');
+            }
+        }
+        used = 0;
+    }
+    return 0;
+}
+
+[[std::c_name("front_lsp_run")]] export I32 run() {
+    arena::Arena memory = arena::growing(1U << 22, nullptr);
+    defer arena::release(&memory);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    while (!exiting) {
+        arena::reset(&memory);
+        Usize length = read_header();
+        if (length == 0) break;
+        char body[:] = mem::alloc_slice(char, length);
+        if (!read_exact(body.data, length)) break;
+        Str out = handle(body);
+        if (countof(out) > 0) (void)c::write(1, out.data, countof(out));
+    }
+    return exiting && shut_down ? 0 : 1;
+}

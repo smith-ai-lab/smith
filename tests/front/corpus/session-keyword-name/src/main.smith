@@ -1,0 +1,4 @@
+import foo
+
+fn main() -> i32:
+    return foo.double(1)

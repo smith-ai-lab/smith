@@ -1,0 +1,47 @@
+// Tests of the last step of `smith lint --fix`, braces written as `:` and indentation (#2014, part of #1845).
+module front_fix_blocks_test;
+
+import front::fix_blocks;
+import std::test;
+
+static void check(Str before, Str want) {
+    test::check_equal(fix_blocks::convert(before), want);
+}
+
+export void test_front_fix_blocks_a_function_body() {
+    check("fn f() -> i32 {\n    return 1\n}\n", "fn f() -> i32:\n    return 1\n");
+}
+
+export void test_front_fix_blocks_else_if_and_else() {
+    check("fn f(a: i32) {\n    if a > 1 {\n        g()\n    } else if a > 0 {\n        h()\n    } else {\n        "
+          "k()\n    }\n}\n",
+          "fn f(a: i32):\n    if a > 1:\n        g()\n    else if a > 0:\n        h()\n    else:\n        k()\n");
+}
+
+export void test_front_fix_blocks_a_one_line_body_moves_down() {
+    check("fn make() -> Node { return Node() }\n", "fn make() -> Node:\n    return Node()\n");
+    check("fn f(a: i32) {\n    if a { g() } else { h() }\n}\n",
+          "fn f(a: i32):\n    if a:\n        g()\n    else:\n        h()\n");
+}
+
+export void test_front_fix_blocks_one_field_to_a_line() {
+    check("struct Node { a: i32, b: i32 }\n", "struct Node:\n    a: i32\n    b: i32\n");
+}
+
+export void test_front_fix_blocks_an_empty_body() {
+    check("fn f() {\n}\n", "fn f():\n");
+    check("fn f() {}\n", "fn f():\n");
+}
+
+export void test_front_fix_blocks_a_lambda_in_a_call_stays_on_its_line() {
+    check("fn f() {\n    run(fn(a: i32) { work(a) })\n}\n", "fn f():\n    run(fn(a: i32): work(a))\n");
+    check("fn f() {\n    run(fn(a: i32) -> i32 { return a })\n}\n", "fn f():\n    run(fn(a: i32) -> i32: a)\n");
+}
+
+export void test_front_fix_blocks_a_list_is_not_a_block() {
+    check("fn f() {\n    let a = [1, 2]\n    g({1, 2})\n}\n", "fn f():\n    let a = [1, 2]\n    g({1, 2})\n");
+}
+
+export void test_front_fix_blocks_a_text_with_no_braces_is_the_same() {
+    check("fn f() -> i32:\n    return 1\n", "fn f() -> i32:\n    return 1\n");
+}

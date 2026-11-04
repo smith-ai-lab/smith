@@ -83,53 +83,70 @@ function tests.parser()
   local again = parser_ready()
   equal(path, again, "the second use finds the same parser")
   equal(before, vim.uv.fs_stat(path).mtime.nsec, "the parser is not written twice")
-  local _, root = captures("module a::b;\nimport lib::text as tx;\nexport U32 f(void) { return c::strlen(\"x\"); }\n")
-  check(not root:has_error(), "a module parses without an error node: " .. root:sexpr())
+  local _, root = captures("import std.math as m\nfn f(x: i32) -> i32:\n    return m.abs(x)\n")
+  check(not root:has_error(), "a file in the new syntax parses without an error node: " .. root:sexpr())
 end
 
 function tests.highlights()
   local found = captures(table.concat({
-    "module game::replay;",
-    "import lib::text as tx;",
-    "import <string.h>;",
-    "export tx::Text open(const char *path) {",
-    "    return tx::make(c::strlen(path));",
-    "}",
-    "T max(constexpr Type T, T a, T b);",
-    "export int kind(constexpr Type T, T v) {",
-    "    if constexpr (is_integer(T) && sizeof(T) == 8) { return 1; }",
-    "    return tx::make(v);",
-    "}",
+    "import std.math as m",
+    "from std.text import split",
+    "import c <string.h>",
+    "",
+    "## A point.",
+    "pub struct Point:",
+    "    x: i32",
+    "    y: i32 = 0",
+    "",
+    "enum Color(u8):",
+    "    red",
+    "    green",
+    "",
+    "@inline",
+    "pub fn dist(p: Point, mut n: i32 = 1) -> ?*mut Point:",
+    "    let mut total = 0",
+    "    for i in range(n):",
+    "        total = total + p.x",
+    "    if total > 0:",
+    "        return total",
+    "    else:",
+    "        return m.abs(total)",
   }, "\n"))
-  check(has(found["keyword.import"], "module"), "module is a keyword.import: " .. vim.inspect(found))
-  check(has(found["keyword.import"], "import"), "import is a keyword.import")
+  check(has(found["keyword.import"], "import"), "import is a keyword.import: " .. vim.inspect(found))
+  check(has(found["keyword.import"], "from"), "from is a keyword.import")
   check(has(found["keyword.import"], "as"), "as is a keyword.import")
-  check(has(found["keyword.modifier"], "export"), "export is a keyword.modifier")
-  for _, name in ipairs({ "game", "replay", "lib", "text", "tx", "c" }) do
+  for _, name in ipairs({ "std", "math", "text" }) do
     check(has(found["module"], name), name .. " is a module: " .. vim.inspect(found["module"]))
   end
-  check(#(found["punctuation.delimiter"] or {}) >= 5, "the :: of paths are punctuation.delimiter")
-  check(has(found["punctuation.delimiter"], "::"), "'::' is punctuation.delimiter")
-  check(has(found["function.call"], "make") and has(found["function.call"], "strlen"), "called paths are function.call")
-  check(has(found["keyword.type"], "Type"), "the type parameter keyword")
-  check(has(found["keyword.modifier"], "constexpr"), "constexpr in a parameter list is a keyword.modifier")
-  check(has(found["keyword.conditional"], "constexpr"), "if constexpr: constexpr is a keyword.conditional")
-  check(has(found["function.builtin"], "is_integer"), "the type questions of if constexpr are function.builtin")
-  check(has(found["type"], "Text"), "a type from a module is a type")
-  -- C's own captures come through `inherits: c`.
-  check(has(found["keyword.return"], "return"), "return is highlighted by the inherited C query: " .. vim.inspect(found))
-  check(found["type.builtin"] ~= nil, "the C query highlights builtin types")
+  check(has(found["keyword.function"], "fn"), "fn is a keyword.function")
+  check(has(found["function"], "dist"), "the name of a function is a function: " .. vim.inspect(found["function"]))
+  for _, word in ipairs({ "let", "mut", "pub", "struct", "enum", "in" }) do
+    check(has(found["keyword"], word), word .. " is a keyword: " .. vim.inspect(found["keyword"]))
+  end
+  check(has(found["keyword.conditional"], "if") and has(found["keyword.conditional"], "else"), "if and else are keyword.conditional")
+  check(has(found["keyword.repeat"], "for"), "for is a keyword.repeat")
+  check(has(found["keyword.return"], "return"), "return is a keyword.return")
+  check(has(found["keyword.modifier"], "mut"), "mut in a pointer type is a keyword.modifier")
+  check(has(found["type"], "Point") and has(found["type"], "Color"), "the names of types are types: " .. vim.inspect(found["type"]))
+  check(has(found["type"], "i32"), "a type written in a field is a type")
+  check(has(found["variable.member"], "x"), "a field is a variable.member")
+  check(has(found["constant"], "red") and has(found["constant"], "green"), "the variants of an enum are constants")
+  check(has(found["variable.parameter"], "p") and has(found["variable.parameter"], "n"), "the parameters of a function")
+  check(has(found["attribute"], "inline"), "an attribute is an attribute: " .. vim.inspect(found["attribute"]))
+  check(has(found["comment.documentation"], "## A point."), "## starts a doc comment")
+  check(has(found["variable"], "total"), "a let binds a variable")
+  check(has(found["punctuation.delimiter"], "->"), "'->' is punctuation.delimiter")
 end
 
 function tests.highlight_buffer()
   local path = vim.fn.tempname() .. ".smith"
-  vim.fn.writefile({ "module a;", "import b::c;" }, path)
+  vim.fn.writefile({ "import std.math", "from std.text import split" }, path)
   vim.cmd("edit " .. vim.fn.fnameescape(path))
   wait("highlighting to start", function() return vim.treesitter.highlighter.active[vim.api.nvim_get_current_buf()] ~= nil end)
   vim.treesitter.get_parser(0, "smith"):parse()
   local names = {}
   for _, capture in ipairs(vim.treesitter.get_captures_at_pos(0, 0, 0)) do table.insert(names, capture.capture) end
-  check(vim.tbl_contains(names, "keyword.import"), "module is highlighted in the buffer: " .. vim.inspect(names))
+  check(vim.tbl_contains(names, "keyword.import"), "import is highlighted in the buffer: " .. vim.inspect(names))
 end
 
 function tests.plain_c()

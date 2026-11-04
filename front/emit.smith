@@ -42,8 +42,8 @@
 // path and its name joined by `::` (`front::test::add`), the label the generated headers give, unless the function has
 // `@c_name("x")` (then `x`) or is `main` (then `main`); `pub`, exported, a c_name and `main` are external linkage, the
 // rest internal. `@inline`, `@noinline` and `@cold` (or `[[std::...]]`) are LLVM attributes. The last line of a body
-// that is an expression is its value, `_ := f()` drops the value, and a local `const X := v` is a constant slot. At the
-// end it runs the verifier; its message becomes an `Error`.
+// that is an expression is its value, `let _ = f()` drops the value, and a local `const X = v` is a constant slot. At
+// the end it runs the verifier; its message becomes an `Error`.
 //
 // THE WALK has no recursion (a compile error in a module): an explicit work stack and a value stack, both in the
 // `Emitter` (emit_state.smith, with every field the later tickets need; one that is missing is an escalation, not an
@@ -145,6 +145,61 @@ static state::TyResult type_of_header(state::Emitter *e, const ast::TypeExpr *t)
     return type_of_checked(e, symbol->type, t->span);
 }
 
+// `let Plain = fn(u64) -> u64`: a name for a type, which the checker declared as that type (#2190).
+static Bool is_alias_symbol(const types::Symbol *s) {
+    return s != nullptr && s->kind == .type_name && s->decl != nullptr && s->decl->kind == .variable;
+}
+
+// The alias's written type, emitted as any written type is (a function type has no checker form to emit yet).
+static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) {
+    const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
+    // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
+    if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
+    if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
+    return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
+}
+
+// `v.Vec`, a record of an imported module: `v` is the module's alias, and the checker declared the record under the
+// module's path (`geom::vec::Vec`).
+static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .named || e->options.checked == nullptr)
+        return state::ty_fail("not emitted yet: qualified type", t->span);
+    ast::Path path = t->kind.named.path;
+    const types::Scopes *scopes = &e->options.checked->scopes;
+    const types::Symbol *module = types::lookup(scopes, path.segments[0].text);
+    if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module)
+        return state::ty_fail("unknown module", path.segments[0].span);
+    ast::Path via = module->decl->kind.import_module.path;
+    Str full = state::msg(format::push(path.segments[1].text));
+    for (Usize i = countof(via.segments); i > 0; i--) {
+        Str longer = state::msg(format::push(via.segments[i - 1].text, "::", full));
+        state::free_text(full);
+        full = longer;
+    }
+    const types::Symbol *target = types::lookup(scopes, full);
+    state::free_text(full);
+    if (is_alias_symbol(target)) return type_of_alias(e, target);
+    if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
+        return state::ty_fail("unknown type", t->span);
+    return memory::imported_record(e, target->decl, target->type->name);
+}
+
+// A record named by its bare name inside an imported function's signature (`fn dot(a: Vec, ...)` of `geom::vec`): the
+// record of that module, declared as `type_of_imported` declares one. False for any other name.
+static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyResult *made) {
+    Str full = state::msg(format::push(e->import_scope, path.segments[0].text));
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    state::free_text(full);
+    if (is_alias_symbol(target)) {
+        *made = type_of_alias(e, target);
+        return true;
+    }
+    if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
+        return false;
+    *made = memory::imported_record(e, target->decl, target->type->name);
+    return true;
+}
+
 // The LLVM type of a type expression.
 export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     // Chains of `if`, not a `switch`: a `case` label that spells the name of one of front::ast's functions (`named`,
@@ -153,6 +208,10 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         ast::Path path = t->kind.named.path;
         state::Ty ty = {};
         if (countof(path.segments) == 2 && state::same_text(path.segments[0].text, "c")) return type_of_header(e, t);
+        if (countof(path.segments) == 2 && e->options.checked != nullptr &&
+            types::header_binding(e->options.checked, path.segments[0].text) != nullptr)
+            return type_of_header(e, t); // `stdio.size_t` is the header's `c::size_t`
+        if (countof(path.segments) == 2) return type_of_imported(e, t);
         if (countof(path.segments) == 1 && state::scalar_type(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && arith::type_float(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 && state::same_text(path.segments[0].text, "Void")) return void_type(e);
@@ -160,6 +219,13 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         if (countof(path.segments) == 1 &&
             (state::same_text(path.segments[0].text, "str") || state::same_text(path.segments[0].text, "Str")))
             return memory::type_slice(e, t);
+        state::TyResult scoped = {};
+        if (countof(path.segments) == 1 && countof(e->import_scope) > 0 && type_in_import_scope(e, path, &scoped))
+            return scoped;
+        if (countof(path.segments) == 1 && e->options.checked != nullptr) {
+            const types::Symbol *alias = types::lookup(&e->options.checked->scopes, path.segments[0].text);
+            if (is_alias_symbol(alias)) return type_of_alias(e, alias);
+        }
         return memory::type_record(e, t);
     }
     if (t->kind == .slice) return memory::type_slice(e, t);
@@ -170,6 +236,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind == .pointer) return memory::type_pointer(e, t);
     if (t->kind == .array) return memory::type_array(e, t);
     if (streams::is_stream_type(t)) return streams::type_stream(e, t);
+    if (optional::is_applied(t)) return optional::type_applied(e, t);
     if (t->kind == .applied) return vectors::type_vector(e, t);
     if (t->kind == .auto_type) return state::ty_fail("`auto` where a type is needed", t->span);
     return state::ty_fail("not emitted yet: this kind of type", t->span);
@@ -254,11 +321,14 @@ static state::Status character_literal(state::Emitter *e, const ast::Expr *x) {
     return state::success();
 }
 
-// `t.0`: a member whose name starts with a digit.
-static Bool is_tuple_member(const ast::Expr *x) {
+// `t.0` (a member whose name starts with a digit) or `t.count` on a named tuple the checker typed.
+static Bool is_tuple_member(const state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .member) return false;
     Str name = x->kind.member.name;
-    return countof(name) > 0 && name[0] >= '0' && name[0] <= '9';
+    if (countof(name) > 0 && name[0] >= '0' && name[0] <= '9') return true;
+    if (e->options.checked == nullptr || x->kind.member.arrow) return false;
+    types::TypeRef base = types::type_of(e->options.checked, x->kind.member.base);
+    return base != nullptr && base->kind == .tuple;
 }
 
 // Whether the checker typed `x` as an option (false with no checker result).
@@ -297,16 +367,82 @@ static state::Status dispatch_stmt_expr(state::Emitter *e, const ast::Expr *x, s
 // `c::EOF`, `c::O_RDONLY`: a constant a header declared (an enumerator, a macro with a value, a `static const`),
 // emitted where it is used as its initializer, typed as the checker typed it (#1762). Null when `x` is no such name.
 static const ast::Expr *c_constant(state::Emitter *e, const ast::Expr *x) {
-    if (x->kind != .name || e->options.checked == nullptr) return nullptr;
-    ast::Path path = x->kind.name.path;
-    if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
-    Str full = state::msg(format::push("c::", path.segments[1].text));
+    if (e->options.checked == nullptr) return nullptr;
+    Str full = "";
+    if (x->kind == .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
+        state::Local local = {};
+        Str name = types::c_member_name(e->options.checked, x);
+        if (countof(name) == 0 || state::find_local(e, types::c_member_base(x), &local)) return nullptr;
+        full = state::msg(format::push("c::", name));
+    } else if (x->kind == .name) {
+        ast::Path path = x->kind.name.path;
+        if (countof(path.segments) != 2 || !state::same_text(path.segments[0].text, "c")) return nullptr;
+        full = state::msg(format::push("c::", path.segments[1].text));
+    } else {
+        return nullptr;
+    }
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
     state::free_text(full);
     if (symbol == nullptr || symbol->kind != .variable || symbol->decl == nullptr || !symbol->decl->from_c)
         return nullptr;
     if (symbol->decl->kind != .variable) return nullptr;
     return symbol->decl->kind.variable.init;
+}
+
+// The names of `autodiff::out` (a path) or `autodiff.out` (a chain of `.`), the module first; none for anything else.
+static types::Names qualified_names(const ast::Expr *x) {
+    types::Names names = {};
+    if (x->kind == .member) return types::member_names(x);
+    if (x->kind != .name) return names;
+    ast::Path path = x->kind.name.path;
+    if (countof(path.segments) < 2 || countof(path.segments) > 8) return names;
+    for (Usize i = 0; i < countof(path.segments); i++)
+        names.items[i] = path.segments[i].text;
+    names.count = countof(path.segments);
+    return names;
+}
+
+// `autodiff::out`: a global of an imported module (not a header's: `c_constant` took those). The declaration it names
+// and its key, `std::autodiff::out`, as the checker keeps it (#1975).
+static Bool imported_global(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *key) {
+    if (e->options.checked == nullptr) return false;
+    types::Names names = qualified_names(x);
+    if (names.count < 2) return false;
+    const types::Scopes *scopes = &e->options.checked->scopes;
+    Str prefix = "";
+    for (Usize i = 0; i + 1 < names.count; i++) {
+        const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
+        if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
+        Str module_path = "";
+        for (Usize j = 0; j < countof(module->decl->kind.import_module.path.segments); j++)
+            module_path =
+                state::msg(format::push(module_path, module->decl->kind.import_module.path.segments[j].text, "::"));
+        prefix = module_path;
+    }
+    Str full = state::msg(format::push(prefix, names.items[names.count - 1]));
+    const types::Symbol *target = types::lookup(scopes, full);
+    if (target == nullptr || target->kind != .variable || target->decl == nullptr || target->decl->from_c ||
+        target->decl->kind != .variable)
+        return false;
+    *found = target->decl;
+    *key = full;
+    return true;
+}
+
+// Reads an imported module's global: declared external under its `@c_name` (else its key) when first read, then loaded.
+static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x, const ast::Decl *d, Str key) {
+    types::TypeRef wanted = types::type_of(e->options.checked, x);
+    if (wanted == nullptr) return state::fail("the global has no type", x->span);
+    state::TyResult made = state::type_of_checked(e, wanted, x->span);
+    if (made == .error) return {.error = made.error};
+    Str own = state::c_name_of(d);
+    char *label = state::cstr(countof(own) > 0 ? own : key);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
+    if (global == nullptr) global = c::LLVMAddGlobal(e->module, made.ok.llvm, label);
+    mem::free(label);
+    c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, made.ok.llvm, global, "");
+    state::push_value(e, (state::Value){.llvm = loaded, .ty = made.ok});
+    return state::success();
 }
 
 // The handler of an expression's kind: it pushes work or one Value. Every kind of front::ast's Expr is named here; the
@@ -317,6 +453,9 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         return memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
+    const ast::Decl *imported = nullptr;
+    Str imported_key = "";
+    if (imported_global(e, x, &imported, &imported_key)) return imported_global_read(e, x, imported, imported_key);
     const ast::Expr *constant = c_constant(e, x);
     if (constant != nullptr) {
         types::TypeRef wanted = types::type_of(e->options.checked, x);
@@ -349,7 +488,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
     if (x->kind == .index) return memory::index(e, x, hint);
     if (x->kind == .member) {
-        if (is_tuple_member(x)) return tupled::member(e, x, hint);
+        if (is_tuple_member(e, x)) return tupled::member(e, x, hint);
         return memory::member(e, x, hint);
     }
     if (x->kind == .variant) return dispatch_variant(e, x, hint);
@@ -362,11 +501,12 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
         return memory::cast(e, x, hint);
     }
+    if (x->kind == .try_expr) return optional::try_expr(e, x);
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
     if (x->kind == .string) return memory::string_literal(e, x, hint);
     if (x->kind == .slice_of) return memory::slice_of(e, x, hint);
-    // type_value, try_expr
+    // type_value
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -379,7 +519,7 @@ static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
     if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
     if (x->kind == .index) return memory::place_index(e, x);
     if (x->kind == .member) {
-        if (is_tuple_member(x)) return tupled::place_member(e, x);
+        if (is_tuple_member(e, x)) return tupled::place_member(e, x);
         return memory::place_member(e, x);
     }
     return state::fail("this expression is not assignable", x->span);
@@ -446,13 +586,14 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
-// `T t;` is the zero value of `T`, stored where the declaration stands (a loop zeroes it again each iteration).
-static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Span span, Bool zero) {
+// `let mut x: T = undefined`: the slot, and no store, except that with `Options.fill_undefined` (a debug build) the
+// slot is filled with the byte 0xAA so that a read before a write shows. There is no zero value (#1428).
+static state::Status declare_undefined(state::Emitter *e, const ast::Decl *d, ast::Span span) {
     if (d->kind != .variable) {
         return state::fail("not a variable", span);
     }
     const ast::TypeExpr *type = d->kind.variable.type;
-    if (type->kind == .auto_type) return state::fail("`auto` needs an initializer", span);
+    if (type->kind == .auto_type) return state::fail("`undefined` has no type to take: write the type", span);
     state::TyResult made = type_of(e, type);
     if (made == .error) {
         return {.error = made.error};
@@ -460,14 +601,16 @@ static state::Status declare_zero(state::Emitter *e, const ast::Decl *d, ast::Sp
     state::Ty ty = made.ok;
     Str name = d->kind.variable.name;
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
-    if (zero) c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
+    if (e->options.fill_undefined) {
+        c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
+        c::LLVMBuildMemSet(e->builder, slot, c::LLVMConstInt(byte, 0xAA, 0), c::LLVMSizeOf(ty.llvm), 1);
+    }
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
     try debug::declare_local(e, name, ty, slot, span);
     return state::success();
 }
 
-// `T x = undefined;` (K3b, #1334): the slot and no store. The emitter has no debug/release switch (`debug_info` is
-// only the DWARF flag), so there is no fill pattern.
+// `x = undefined`: the word, unless a local of that name hides it.
 static Bool is_undefined(const ast::Expr *init) {
     if (init == nullptr || !(init->kind == .name)) return false;
     ast::Path path = init->kind.name.path;
@@ -480,7 +623,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     }
     const ast::TypeExpr *type = d->kind.variable.type;
     if (state::same_text(d->kind.variable.name, "_") && d->kind.variable.init != nullptr) {
-        // `_ := f()`: the value is computed and dropped; no slot, no local.
+        // `let _ = f()`: the value is computed and dropped; no slot, no local.
         state::Hint dropped = state::no_hint();
         if (type->kind != .auto_type) {
             state::TyResult made = type_of(e, type);
@@ -493,7 +636,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
         state::push_eval(e, d->kind.variable.init, dropped);
         return state::success();
     }
-    // A local `const X := v` is a constant local; today's `constexpr T x` is not emitted yet.
+    // A local `const X = v` is a constant local; today's `constexpr T x` is not emitted yet.
     Bool is_const_local = d->kind.variable.is_constexpr && d->kind.variable.is_new;
     if ((d->kind.variable.is_constexpr && !is_const_local) || d->kind.variable.is_thread_local || d->is_static ||
         d->is_extern)
@@ -503,10 +646,11 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
             return state::failf(span, d->kind.variable.name, " is declared twice in one scope");
     }
     Bool is_auto = type->kind == .auto_type;
-    if (d->kind.variable.init == nullptr) return declare_zero(e, d, span, true);
+    if (d->kind.variable.init == nullptr)
+        return state::failf(span, "`", d->kind.variable.name, "` needs a value: give one, or write `= undefined`");
     state::Local shadow = {};
     if (is_undefined(d->kind.variable.init) && !state::find_local(e, "undefined", &shadow))
-        return declare_zero(e, d, span, false);
+        return declare_undefined(e, d, span);
     state::Ty ty = {};
     state::Hint hint = state::no_hint();
     if (!is_auto) {
@@ -564,6 +708,30 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
     return state::success();
 }
 
+// `static_assert(c, "m")` in a body: the condition is built and must fold to a constant; false stops the compile with
+// the message.
+static state::Status static_assert_finish(state::Emitter *e, const state::Work *w) {
+    state::Value condition = state::pop_value(e);
+    if (w->stmt->kind != .static_assert_stmt) return state::fail("not a static_assert", w->span);
+    if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
+    if (c::LLVMIsAConstantInt(condition.llvm) == nullptr)
+        return state::fail("static_assert needs a condition known at compile time", w->span);
+    if (c::LLVMConstIntGetZExtValue(condition.llvm) == 0) {
+        if (countof(w->stmt->kind.static_assert_stmt.message) == 0) return state::fail("static_assert failed", w->span);
+        return state::fail(w->stmt->kind.static_assert_stmt.message, w->span);
+    }
+    return state::success();
+}
+
+static state::Status static_assert_statement(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .static_assert_stmt) {
+        return state::fail("not a static_assert", s->span);
+    }
+    state::push_then(e, (state::Work){.then = static_assert_finish, .stmt = s, .span = s->span});
+    state::push_eval(e, s->kind.static_assert_stmt.condition, state::no_hint());
+    return state::success();
+}
+
 // A statement after `return` goes into a block nothing jumps to: instructions after a terminator are not valid.
 static void start_block_if_ended(state::Emitter *e) {
     c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
@@ -587,15 +755,17 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .break_stmt) return control::break_stmt(e, s);
     if (s->kind == .continue_stmt) return control::continue_stmt(e, s);
     if (s->kind == .defer_stmt) return control::defer_stmt(e, s);
+    if (s->kind == .errdefer_stmt) return control::errdefer_stmt(e, s);
     if (s->kind == .goto_stmt) return control::goto_stmt(e, s);
     if (s->kind == .labeled) return control::labeled(e, s);
     if (s->kind == .empty) return state::success();
     if (s->kind == .match_stmt) return matching::match_stmt(e, s);
     if (s->kind == .for_in) return looping::for_in(e, s);
-    if (s->kind == .if_let) return optional::if_let(e, s);
+    if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
-    return state::not_emitted("static_assert", s->span); // the one kind left
+    if (s->kind == .static_assert_stmt) return static_assert_statement(e, s);
+    return state::not_emitted("this kind of statement", s->span);
 }
 
 // Run the work stack until it is empty or a handler fails.
@@ -636,33 +806,14 @@ static Str symbol_of(const ast::Module *m, Str name) {
     return symbol;
 }
 
-// `@c_name` or today's `[[std::c_name]]`.
-static Bool is_c_name(ast::Attribute attribute) {
-    ast::Path name = attribute.name;
-    Usize n = countof(name.segments);
-    if (n == 1) return state::same_text(name.segments[0].text, "c_name");
-    return n == 2 && state::same_text(name.segments[0].text, "std") &&
-           state::same_text(name.segments[1].text, "c_name");
-}
-
 static Bool is_string(const ast::Expr *x) {
     return x->kind == .string;
-}
-
-// The function's c_name, or "" when it has none (checked by `check_function`).
-static Str c_name_of(const ast::Decl *d) {
-    for (Usize i = 0; i < countof(d->attributes); i++) {
-        if (!is_c_name(d->attributes[i])) continue;
-        const ast::Expr *argument = d->attributes[i].args[0];
-        if (argument->kind == .string) return argument->kind.string.bytes;
-    }
-    return "";
 }
 
 // The LLVM name: the c_name if there is one, `main` for a `main`, else the module path joined with `::`. A fresh
 // string the caller frees.
 static Str function_symbol(const ast::Module *m, const ast::Decl *d, Str name) {
-    Str own = c_name_of(d);
+    Str own = state::c_name_of(d);
     if (countof(own) > 0) return state::msg(format::push(own));
     if (state::same_text(name, "main")) return state::msg(format::push(name));
     return symbol_of(m, name);
@@ -675,12 +826,13 @@ static state::Status check_function(const ast::Decl *d) {
     Bool variadic = d->kind.function.variadic;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(d->attributes); i++) {
-        if (!is_c_name(d->attributes[i])) continue;
+        if (!state::is_c_name(d->attributes[i])) continue;
         ast::Attribute attribute = d->attributes[i];
         if (countof(attribute.args) != 1 || !is_string(attribute.args[0]))
             return state::fail("`@c_name` takes one string", attribute.span);
     }
-    if (variadic) return state::not_emitted("variadic function", d->span);
+    if (variadic && d->kind.function.body != nullptr)
+        return state::not_emitted("variadic function with a body", d->span);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_constexpr || params[i].is_rest)
             return state::not_emitted("constexpr or rest parameter", params[i].span);
@@ -716,6 +868,59 @@ static void add_function_attributes(state::Emitter *e, const ast::Decl *d, c::LL
     }
 }
 
+static Bool is_slice(state::Ty ty) {
+    return ty.kind == .slice;
+}
+
+// `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
+// argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
+static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, state::Ty args) {
+    c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
+    if (e->target_data != nullptr) word = c::LLVMIntPtrTypeInContext(e->context, e->target_data);
+    c::LLVMTypeRef pointer = c::LLVMPointerTypeInContext(e->context, 0);
+    c::LLVMTypeRef int32 = c::LLVMInt32TypeInContext(e->context);
+    c::LLVMTypeRef main_params[2] = {int32, pointer};
+    c::LLVMTypeRef main_type = c::LLVMFunctionType(int32, main_params, 2, 0);
+    c::LLVMValueRef main_function = c::LLVMAddFunction(e->module, "main", main_type);
+    c::LLVMSetLinkage(main_function, c::LLVMExternalLinkage);
+    c::LLVMTypeRef length_params[1] = {pointer};
+    c::LLVMTypeRef length_type = c::LLVMFunctionType(word, length_params, 1, 0);
+    c::LLVMValueRef length = c::LLVMGetNamedFunction(e->module, "strlen");
+    if (length == nullptr) length = c::LLVMAddFunction(e->module, "strlen", length_type);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, main_function, "entry");
+    c::LLVMBasicBlockRef test = c::LLVMAppendBasicBlockInContext(e->context, main_function, "test");
+    c::LLVMBasicBlockRef step = c::LLVMAppendBasicBlockInContext(e->context, main_function, "step");
+    c::LLVMBasicBlockRef done = c::LLVMAppendBasicBlockInContext(e->context, main_function, "done");
+    c::LLVMValueRef argc = c::LLVMGetParam(main_function, 0);
+    c::LLVMValueRef argv = c::LLVMGetParam(main_function, 1);
+    c::LLVMPositionBuilderAtEnd(b, entry);
+    c::LLVMValueRef count = c::LLVMBuildSExt(b, argc, word, "count");
+    c::LLVMValueRef cells = c::LLVMBuildArrayAlloca(b, args.element->llvm, count, "cells");
+    c::LLVMValueRef index = c::LLVMBuildAlloca(b, word, "index");
+    c::LLVMBuildStore(b, c::LLVMConstInt(word, 0, 0), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, test);
+    c::LLVMValueRef at = c::LLVMBuildLoad2(b, word, index, "at");
+    c::LLVMBuildCondBr(b, c::LLVMBuildICmp(b, c::LLVMIntULT, at, count, "more"), step, done);
+    c::LLVMPositionBuilderAtEnd(b, step);
+    c::LLVMValueRef from[1] = {at};
+    c::LLVMValueRef slot = c::LLVMBuildGEP2(b, pointer, argv, from, 1, "slot");
+    c::LLVMValueRef text = c::LLVMBuildLoad2(b, pointer, slot, "text");
+    c::LLVMValueRef size = c::LLVMBuildCall2(b, length_type, length, &text, 1, "size");
+    c::LLVMValueRef cell = c::LLVMBuildGEP2(b, args.element->llvm, cells, from, 1, "cell");
+    c::LLVMBuildStore(b, text, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 0, "data"));
+    c::LLVMBuildStore(b, size, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 1, "count"));
+    c::LLVMBuildStore(b, c::LLVMBuildAdd(b, at, c::LLVMConstInt(word, 1, 0), "next"), index);
+    c::LLVMBuildBr(b, test);
+    c::LLVMPositionBuilderAtEnd(b, done);
+    c::LLVMValueRef slice = c::LLVMGetUndef(args.llvm);
+    slice = c::LLVMBuildInsertValue(b, slice, cells, 0, "data");
+    slice = c::LLVMBuildInsertValue(b, slice, count, 1, "count");
+    c::LLVMBuildRet(b, c::LLVMBuildCall2(b, body_type, body, &slice, 1, "result"));
+    c::LLVMDisposeBuilder(b);
+}
+
 // Pass 2: the function's symbol, type and linkage.
 static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) {
@@ -738,7 +943,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
             return {.error = made.error};
         }
         params[i] = made.ok;
-        types[i] = params[i].llvm;
+        types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
     if (result_type != nullptr) {
@@ -749,16 +954,73 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         result = made_result.ok;
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
+    Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
     Str symbol = function_symbol(e->tree, d, name);
+    if (takes_args) symbol = state::msg(format::push("main.args"));
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
     add_function_attributes(e, d, function);
-    Bool external = d->exported || d->is_pub || countof(c_name_of(d)) > 0 || state::same_text(name, "main");
+    Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
+    if (takes_args) external = false;
     if (external)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
         c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    add_function(e, (state::FunctionInfo){.name = name,
+                                          .symbol = symbol,
+                                          .llvm = function,
+                                          .llvm_type = type,
+                                          .result = result,
+                                          .params = params[0:count]});
+    if (takes_args) add_args_entry(e, function, type, params[0]);
+    return state::success();
+}
+
+// Whether `d` is a generic function: a template emits nothing, its instances are emitted (#1909).
+static Bool is_template(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) return true;
+    }
+    return false;
+}
+
+// Pass 2 for an instance the checker made: its symbol is `module::alloc.i32`, its types are the checker's.
+static state::Status declare_instance(state::Emitter *e, const types::Instance *instance) {
+    const ast::Decl *d = instance->decl;
+    if (d->kind != .function) {
+        return state::fail("not a function", d->span);
+    }
+    Str name = d->kind.function.name;
+    types::TypeRef signature = instance->signature;
+    Usize count = countof(signature->slots);
+    if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
+    state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
+    c::LLVMTypeRef llvm_types[64];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = type_of_checked(e, signature->slots[i].type, d->span);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        params[i] = made.ok;
+        llvm_types[i] = state::abi_type(e, params[i]);
+    }
+    state::Ty result = void_type(e);
+    if (signature->element != nullptr && signature->element != e->options.checked->table.void_type) {
+        state::TyResult made_result = type_of_checked(e, signature->element, d->span);
+        if (made_result == .error) {
+            return {.error = made_result.error};
+        }
+        result = made_result.ok;
+    }
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, llvm_types, (U32)count, 0);
+    Str symbol = function_symbol(e->tree, d, name);
+    char *label = state::cstr(symbol);
+    c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
     add_function(e, (state::FunctionInfo){.name = name,
                                           .symbol = symbol,
                                           .llvm = function,
@@ -780,6 +1042,9 @@ static void start_function(state::Emitter *e, state::FunctionInfo info) {
     c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(e->context, info.llvm, "entry");
     c::LLVMBasicBlockRef body = c::LLVMAppendBasicBlockInContext(e->context, info.llvm, "body");
     c::LLVMPositionBuilderAtEnd(e->builder, entry);
+    // The previous function's location must not reach this function's branch (its subprogram is another one, #1979).
+    c::LLVMSetCurrentDebugLocation2(e->builder, nullptr);
+    c::LLVMSetCurrentDebugLocation2(e->alloca_builder, nullptr);
     c::LLVMValueRef jump = c::LLVMBuildBr(e->builder, body);
     c::LLVMPositionBuilderBefore(e->alloca_builder, jump);
     c::LLVMPositionBuilderAtEnd(e->builder, body);
@@ -797,6 +1062,9 @@ static state::Status declare_params(state::Emitter *e, const ast::Decl *d, state
         c::LLVMValueRef value = c::LLVMGetParam(info.llvm, (U32)i);
         c::LLVMSetValueName2(value, p.name.data, countof(p.name));
         c::LLVMValueRef slot = state::new_alloca(e, info.params[i], p.name);
+        // An array arrives as a pointer to the caller's elements: the parameter is a copy of them, in its own slot.
+        state::Ty param = info.params[i];
+        if (param.kind == .array) value = c::LLVMBuildLoad2(e->builder, param.llvm, value, "copy");
         c::LLVMBuildStore(e->builder, value, slot);
         state::add_local(e, (state::Local){.name = p.name, .ty = info.params[i], .address = slot});
         try debug::declare_local(e, p.name, info.params[i], slot, p.span);
@@ -928,7 +1196,25 @@ static state::Status emit_generator(state::Emitter *e, const ast::Decl *d, state
 }
 
 // Pass 3: one body.
-static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info) {
+// The compile-time constants of an instance (`n` of `table(64)`) are locals holding their value.
+static state::Status declare_constants(state::Emitter *e, const types::Instance *instance, ast::Span span) {
+    for (Usize i = 0; i < countof(instance->bindings); i++) {
+        types::Binding binding = instance->bindings[i];
+        if (binding.is_type) continue;
+        state::TyResult made = type_of_checked(e, binding.type, span);
+        if (made == .error) {
+            return {.error = made.error};
+        }
+        state::Ty ty = made.ok;
+        c::LLVMValueRef slot = state::new_alloca(e, ty, binding.name);
+        c::LLVMBuildStore(e->builder, c::LLVMConstInt(ty.llvm, binding.value, 0), slot);
+        state::add_local(e, (state::Local){.name = binding.name, .ty = ty, .address = slot});
+    }
+    return state::success();
+}
+
+static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state::FunctionInfo info,
+                                   const types::Instance *instance) {
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
     }
@@ -938,6 +1224,7 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     state::begin_scope(e);
     try debug::begin_function(e, d);
     try declare_params(e, d, info);
+    if (instance != nullptr) try declare_constants(e, instance, d->span);
     Bool is_void_result = c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind;
     if (!is_void_result && ends_in_value_statement(body)) {
         try value_statement_block(e, body);
@@ -979,6 +1266,14 @@ static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
             *ty = e->records[i].ty;
             return true;
         }
+    }
+    return false;
+}
+
+// Whether a checker name has a module before it, `words::Pair`: a record of another smith module.
+static Bool in_module(Str name) {
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return true;
     }
     return false;
 }
@@ -1124,7 +1419,8 @@ static void ensure_c_record(state::Emitter *e, types::TypeRef t) {
         base = next;
     }
     state::Ty found = {};
-    if (base->kind == .record && !find_record_by_name(e, base->name, &found) && from_header(base->name)) {
+    if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
+        (from_header(base->name) || in_module(base->name))) {
         make_c_record(e, base);
     }
 }
@@ -1203,16 +1499,26 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 // ---------------------------------------------------------------------------------------------------------------
 // The module
 
-// `sin := m.sin` or `Point := m.Point`: a name for a declaration of an imported module (#1714). The checker has typed
-// it; there is nothing to emit, a call through it reaches the function itself.
+// `let sin = m.sin` or `let Point = m.Point`: a name for a declaration of an imported module (#1714). The checker has
+// typed it; there is nothing to emit, a call through it reaches the function itself.
 static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     const ast::Expr *init = d->kind.variable.init;
+    if (init != nullptr && init->kind == .type_value) return true; // `let Plain = fn(u64) -> u64`: the checker's alias
     if (init == nullptr || init->kind != .member) return false;
     types::Names names = types::member_names(init);
     if (names.count < 2) return false;
     const types::Symbol *first = types::lookup(&e->options.checked->scopes, names.items[0]);
     return first != nullptr && first->kind == .module_name;
+}
+
+// `const Pair = (i32, f32)`: the checker declared a type for the name, with this declaration as its source. A `let Line
+// = []u8` is skipped by the same test; there is no value to emit.
+static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
+    if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
+    if (d->kind.variable.init == nullptr || d->kind.variable.init->kind != .tuple_lit) return false;
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
+    return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }
 
 // Pass 1: types, then every function and global.
@@ -1227,12 +1533,18 @@ static state::Status declare_all(state::Emitter *e) {
         if (d->kind == .function) {
             if (d->kind.function.body == nullptr)
                 try call::prototype(e, d);
-            else
+            else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            if (!is_module_alias(e, d)) try memory::global_variable(e, d);
-        } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c) {
+            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try memory::global_variable(e, d);
+        } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
+                   d->kind != .import_from) {
             return state::not_emitted("this kind of declaration", d->span);
+        }
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            try declare_instance(e, &e->options.checked->instances[i]);
         }
     }
     return state::success();
@@ -1244,8 +1556,15 @@ static state::Status emit_all(state::Emitter *e) {
     Usize next = 0;
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
-        if (d->kind == .function && d->kind.function.body != nullptr) {
-            try emit_function(e, d, e->functions[next]);
+        if (d->kind == .function && d->kind.function.body != nullptr && !is_template(d)) {
+            try emit_function(e, d, e->functions[next], nullptr);
+            next += 1;
+        }
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            try emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
+                              &e->options.checked->instances[i]);
             next += 1;
         }
     }

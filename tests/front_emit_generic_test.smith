@@ -1,0 +1,95 @@
+// Tests of generic functions in the emitter (#1909, piece 3 of #1700): a call of a generic function targets the
+// instance the checker made (`pick.i32`, `table.64`); each instance is emitted once, the template emits nothing.
+module front_emit_generic_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+static parser::Parsed parse_new(Str source) {
+    return parser::parse_new("t.smith", source);
+}
+
+typedef I32 (*Run)();
+
+// Parses and checks under the arena as front_emit_option_test.smith does; emission and the JIT use the system's
+// allocator, and the arena stays alive until the function has run.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parse_new(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_generic_a_type_parameter_is_an_instance() {
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n"
+                 "    a\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    pick(i32, 7, 9)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)7);
+}
+
+export void test_front_emit_generic_a_constant_parameter_is_an_instance() {
+    Str source = "fn table(const n: usize) -> usize:\n"
+                 "    n\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    table(64).to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)64);
+}
+
+export void test_front_emit_generic_two_instances_of_one_function() {
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n"
+                 "    b\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let x = pick(i64, 3, 4)\n"
+                 "    let y = pick(i32, 5, 6)\n"
+                 "    x.to(i32) + y\n";
+    test::check_equal(run(source, "front::test::run"), (I32)10);
+}
+
+export void test_front_emit_generic_an_instance_calls_another() {
+    Str source = "fn pick(T: type, a: T, b: T) -> T:\n"
+                 "    a\n"
+                 "\n"
+                 "fn twice(T: type, a: T) -> T:\n"
+                 "    pick(T, a, a)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    twice(i32, 21) * 2\n";
+    test::check_equal(run(source, "front::test::run"), (I32)42);
+}
