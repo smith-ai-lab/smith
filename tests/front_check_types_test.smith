@@ -128,6 +128,20 @@ export void test_front_check_types_array_length_division_by_zero_is_refused() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// typeof of an expression
+
+export void test_front_check_types_typeof_expression_arithmetic() {
+    clean("fn f(a: i32, b: i32):\n    let c: typeof(a + b) = a\n    c\n");
+}
+
+export void test_front_check_types_typeof_expression_result_type() {
+    clean("fn f(a: i64, b: i64) -> typeof(a * b):\n    return a * b\n");
+}
+
+export void test_front_check_types_typeof_expression_mismatch_is_reported() {
+    fails("fn f(a: i32, b: i32):\n    let c: typeof(a + b) = \"x\"\n    c\n", "I32", "Str");
+}
+
 // Anonymous struct and union types (a payload variant): written in today's C-like spelling, which is the only one the
 // parser reads for them.
 
