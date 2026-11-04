@@ -60,3 +60,8 @@ export void test_front_fix_two_array_globals_in_a_row() {
     expect_fixed("module m;\nconst I32 a[2] = {1, 2};\nconst I32 b[2] = {3, 4};\n",
                  "let mut a: [2]i32 = [1, 2]\nlet mut b: [2]i32 = [3, 4]\n");
 }
+
+export void test_front_fix_an_extern_with_an_asm_label() {
+    expect_fixed("module m;\nextern I32 loader(const void *a) __asm__(\"dladdr\");\n",
+                 "extern @c_name(\"dladdr\") fn loader(a: *void) -> i32\n");
+}
