@@ -35,7 +35,7 @@ runs:
   steps:
     - name: Free disk on a hosted Linux runner
       # the image's toolchains this repository never uses take about 30 GB of the 14 free; removing them in the
-      # background while the caches restore costs no time, and the last step waits for it (#2242: `release-linux` and a
+      # background while the caches restore costs no time, and the last step waits for 40 GB free or its end (#2242: `release-linux` and a
       # test part died with "No space left on device")
       if: runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
@@ -158,7 +158,12 @@ runs:
       if: always() && runner.os == 'Linux' && runner.environment == 'github-hosted'
       shell: bash
       run: |
-        # the background removal of the first step must be done before the job fills the disk
+        # the background removal of the first step must have freed enough before the job fills the disk: wait for
+        # 40 GB free on `/`, or for the removal to end, whichever comes first (#2255; waiting for the whole removal cost
+        # about 127 s per job, when 108 GB were free at the end)
         pid=$(cat "$RUNNER_TEMP/free-disk.pid" 2>/dev/null || true)
-        [ -n "$pid" ] && while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+        start=$(date +%s)
+        free() { df --output=avail -BG / | tail -n 1 | tr -dc '0-9'; }
+        while [ "$(free)" -lt 40 ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; do sleep 1; done
+        echo "disk wait: $(( $(date +%s) - start )) s, $(free) GB free" | tee -a "$GITHUB_STEP_SUMMARY"
         echo "disk: $(df -h / | tail -n 1)" | tee -a "$GITHUB_STEP_SUMMARY"
