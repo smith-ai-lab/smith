@@ -87,6 +87,8 @@ struct Style {
     Bool saw_new;
     Bool top;     // the record or enum is a declaration of the file: its old members carry fixes
     Bool unfixed; // an old member that has no mechanical fix: the `;` after the `}` stays
+    Bool capability; // `struct [[clang::annotate("std::capability")]] ...`: `@capability` in front of the declaration
+    ast::Span capability_span; // where that attribute is written
 };
 
 typedef Str StrList[:];
@@ -1841,10 +1843,31 @@ static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
     return ast::new_type(node);
 }
 
+// `[[clang::annotate("std::capability")]]` between `struct` and its name: read past it, and kept in `style` for the
+// fix of the declaration, which writes it as `@capability` in front.
+static void skip_capability(parse::Parser *p, Style *style) {
+    if (!parse::at(p, lex::left_bracket) || parse::peek_at(p, 1).kind != lex::left_bracket) return;
+    U32 start = parse::peek(p).span.start;
+    Usize close = 2;
+    while (parse::peek_at(p, close).kind != lex::end_of_file &&
+           !(parse::peek_at(p, close).kind == lex::right_bracket && parse::peek_at(p, close + 1).kind == lex::right_bracket))
+        close += 1;
+    if (parse::peek_at(p, close).kind == lex::end_of_file) return;
+    U32 end = parse::peek_at(p, close + 1).span.end;
+    for (Usize i = 0; i < close + 2; i += 1)
+        parse::advance(p);
+    Str written = source_between(p, start, end);
+    if (same_text(written, "[[clang::annotate(\"std::capability\")]]")) {
+        style->capability = true;
+        style->capability_span = (ast::Span){.start = start, .end = end};
+    }
+}
+
 // `struct Name { fields }` or `union`, the position at the keyword. A `typedef struct {...} Name;` has no tag name: the
 // caller gives it.
 static ast::DeclKind record_kind(parse::Parser *p, Style *style) {
     Bool is_union = parse::advance(p).kind == lex::kw_union;
+    skip_capability(p, style);
     Str name = tag_name(p);
     FieldList fields = {};
     Bool opaque = false;
@@ -2085,7 +2108,8 @@ static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, le
 // tag, and the `Name;` after the `}` goes. A tag with another name than the alias, or a member with no fix, is a
 // warning with no edits.
 static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_index, lex::Token alias, lex::Token semi,
-                            Bool renamed, Bool unfixed) {
+                            Bool renamed, const Style *style, U32 decl_start) {
+    Bool unfixed = style->unfixed;
     lex::Token typedef_token = p->tokens[typedef_index];
     lex::Token keyword = p->tokens[typedef_index + 1];
     lex::Token close = p->tokens[close_index];
@@ -2107,6 +2131,12 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
         edits = with_edit(edits, edit(typedef_token.span.start, keyword.span.end, head));
     }
     edits = with_edit(edits, edit(close.span.end, semi.span.end, ""));
+    if (style->capability) {
+        U32 after = style->capability_span.end;
+        if (after < countof(p->source) && p->source[after] == ' ') after += 1;
+        edits = with_edit(edits, edit(style->capability_span.start, after, ""));
+        edits = with_edit(edits, edit(decl_start, decl_start, "@capability "));
+    }
     char message[:] =
         format::push("a type is declared as `", parse::text(p, keyword), " ", name, " {...}`, not with `typedef`");
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
@@ -2169,7 +2199,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         if (kind == .enumeration && countof(kind.enumeration.name) == 0) kind.enumeration.name = name;
         lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
         if (pre->top && !failed_since(p, errors_before))
-            fix_typedef_tag(p, typedef_index, close_index, alias, semi, renamed, style.unfixed);
+            fix_typedef_tag(p, typedef_index, close_index, alias, semi, renamed, &style, start);
         return make(p, start, pre, kind);
     }
     U32 type_start = parse::peek(p).span.start;
