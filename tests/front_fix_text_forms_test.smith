@@ -1,0 +1,58 @@
+// Tests of the fixer on the forms of lib/std/text.smith (#2224): a `do { } while (c);` is `while true` with a break, a
+// C `for` whose condition has more than `i < n` is a `while`, an unbraced `if` chain keeps its `else` at the `if`, a
+// positional list of a named type is a call of the type, a constant written already keeps its `const` while old forms
+// are left in the file, and an `if` value is an index.
+module front_fix_text_forms_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_do_while_is_a_loop_with_a_break() {
+    expect_fixed(
+        "module m;\nUsize g(U64 v) {\n    Usize n = 0;\n    do {\n        n += 1;\n        v /= 10;\n    } while (v != "
+        "0 && n < 20);\n"
+        "    return n;\n}\n",
+        "fn g(mut v: u64) -> usize:\n    let mut n: usize = 0\n    while true:\n        n += 1\n        v /= 10\n"
+        "        if !(v != 0 && n < 20):\n            break\n    return n\n");
+}
+
+export void test_front_fix_for_with_a_longer_condition_is_a_while() {
+    expect_fixed(
+        "module m;\nvoid h(char out[:], Usize count) {\n    for (Usize i = 0; i < count && i < countof(out); i++) {\n"
+        "        out[i] = 1;\n    }\n}\n",
+        "fn h(out: []char, count: usize):\n    let mut i: usize = 0\n    while i < count && i < countof(out):\n"
+        "        out[i] = 1\n        i += 1\n");
+}
+
+export void test_front_fix_unbraced_if_chain_keeps_its_else() {
+    expect_fixed("module m;\nI32 f(I32 c) {\n    I32 d = 0;\n    if (c > 1)\n        d = 1;\n    else if (c > 2)\n     "
+                 "   d = 2;\n"
+                 "    else\n        return 0;\n    return d;\n}\n",
+                 "fn f(c: i32) -> i32:\n    let mut d: i32 = 0\n    if c > 1:\n        d = 1\n    else if c > 2:\n     "
+                 "   d = 2\n"
+                 "    else:\n        return 0\n    return d\n");
+}
+
+export void test_front_fix_positional_list_of_a_named_type_is_a_call() {
+    expect_fixed("module m;\ntypedef struct {\n    U32 a;\n    I64 b;\n} Pair;\nconstexpr Pair p = {24, -149};\nU32 "
+                 "xs[2] = {1, 2};\n",
+                 "struct Pair:\n    a: u32\n    b: i64\nconst p = Pair(24, -149)\nlet mut xs: [2]u32 = [1, 2]\n");
+}
+
+export void test_front_fix_index_by_an_if_value() {
+    expect_fixed("module m;\nF64 pick(const F64 t[:], I32 e) {\n    return t[e < 0 ? -e : e];\n}\n",
+                 "fn pick(t: []f64, e: i32) -> f64:\n    return t[if e < 0: -e else: e]\n");
+}

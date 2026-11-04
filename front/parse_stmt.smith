@@ -462,8 +462,10 @@ static void end_statement(parse::Parser *p) {
     if (p->layout && (parse::at(p, lex::newline) || parse::at(p, lex::dedent) || parse::at(p, lex::end_of_file) ||
                       parse::at(p, lex::kw_else)))
         return;
-    // An `if c: a else: b` in an argument list ends with its `,` or `)` (#2224).
-    if (p->layout && p->in_value && (parse::at(p, lex::comma) || parse::at(p, lex::right_paren))) return;
+    // An `if c: a else: b` in an argument list or an index ends with its `,`, `)` or `]` (#2224).
+    if (p->layout && p->in_value &&
+        (parse::at(p, lex::comma) || parse::at(p, lex::right_paren) || parse::at(p, lex::right_bracket)))
+        return;
     parse::expect(p, lex::semicolon, "`;`");
 }
 
@@ -1025,6 +1027,7 @@ static ast::Stmt *match_statement(parse::Parser *p) {
 
 static Frame open_simple(parse::Parser *p, FrameKind kind) {
     Frame frame = {.kind = kind, .start = parse::advance(p).span.start};
+    if (kind == do_body) frame.body_from = p->position;
     if (p->layout && kind != do_body) parse::accept(p, lex::colon); // `defer:` and then an indented block
     return frame;
 }
@@ -1081,6 +1084,18 @@ static RangeText range_of_collection(const parse::Parser *p, Usize close) {
     return found;
 }
 
+// Whether the tokens from `from` to `stop` hold, outside any group, an operator that binds looser than the `<` of the
+// loop's condition: `i < n && ok` is not `range(0, n && ok)`.
+static Bool has_looser_operator(const parse::Parser *p, Usize from, Usize stop) {
+    lex::TokenKind kinds[_] = {
+        lex::ampersand_ampersand, lex::pipe_pipe,     lex::question,    lex::less,      lex::greater,
+        lex::less_equal,          lex::greater_equal, lex::equal_equal, lex::bang_equal};
+    for (Usize k = 0; k < countof(kinds); k += 1) {
+        if (find_at_depth_0(p, from, stop, kinds[k]) != stop) return true;
+    }
+    return false;
+}
+
 // `(T i = a; i < b; i++)`, and `<=`, `++i`, `i += 1`, is `i in range(a, b)` (`b + 1` for `<=`).
 static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first_semicolon) {
     RangeText none = {};
@@ -1091,7 +1106,9 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
     Str name = parse::text(p, parse::peek_at(p, equal - 1));
     Usize cond = first_semicolon + 1;
     lex::TokenKind op = parse::peek_at(p, cond + 1).kind;
-    if (!same_name(p, cond, name) || (op != lex::less && op != lex::less_equal) || second <= cond + 2) return none;
+    if (!same_name(p, cond, name) || (op != lex::less && op != lex::less_equal) || second <= cond + 2 ||
+        has_looser_operator(p, cond + 2, second))
+        return none;
     Usize step = second + 1;
     Usize length = close - step;
     Bool plain = length == 2 && same_name(p, step, name) && parse::peek_at(p, step + 1).kind == lex::plus_plus;
@@ -1450,6 +1467,33 @@ static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
     return spanned(p, frame.start, new_stmt({.block = {.items = frame.items[0:frame.item_count]}}));
 }
 
+// `do { body } while (c);` is `while true { body  if !(c) { break } }`: smith has no `do`-`while` (a `do:` is a value).
+// A body with a `continue` has no such form (the `continue` would skip the test): a warning with no fix.
+static void do_while_fix(parse::Parser *p, Frame frame, ast::Stmt *body, const ast::Expr *condition) {
+    ast::Span whole = {.start = frame.start, .end = p->tokens[p->position - 1].span.end};
+    if (body->kind != .block || has_continue(p, frame.body_from)) {
+        parse::Edits none = {};
+        parse::warning_fix(p, whole, "this `do` has no `while true` form here: write it by hand with `while`", none);
+        return;
+    }
+    Usize at = frame.start;
+    while (at > 0 && p->source[at - 1] != '\n')
+        at -= 1;
+    Usize indent = 0;
+    while (at + indent < countof(p->source) && p->source[at + indent] == ' ')
+        indent += 1;
+    Str margin = p->source[at:at + indent];
+    Str text = p->source[condition->span.start:condition->span.end];
+    ast::Span keyword = {.start = frame.start, .end = frame.start + 2};
+    ast::Span tail = {.start = body->span.end, .end = whole.end};
+    parse::Edits edits = edit_list(3);
+    edits[0] = edit(keyword, "while true");
+    char inserted[:] = format::push("    if !(", text, ") { break }\n", margin);
+    edits[1] = edit(point(body->span.end - 1), inserted);
+    edits[2] = edit(tail, "");
+    parse::warning_fix(p, whole, "smith has no `do` `while`: write `while true { ...; if !(c) { break } }`", edits);
+}
+
 // `while (c);` after the body of a do.
 static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
     Usize before = countof(p->errors);
@@ -1458,6 +1502,7 @@ static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
     if (countof(p->errors) == before) condition = header(p).condition;
     if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
     ast::Stmt *built = new_stmt({.do_while = {.body = done, .condition = condition}});
+    if (countof(p->errors) == before && !p->layout) do_while_fix(p, frame, done, condition);
     if (countof(p->errors) > before) skip_statement(p);
     return spanned(p, frame.start, built);
 }
