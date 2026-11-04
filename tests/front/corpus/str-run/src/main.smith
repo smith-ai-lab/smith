@@ -1,0 +1,47 @@
+import c <stdio.h>
+
+# `str` is a type of every module, `const char[:]` (issue #85), as `u8` is a type: no typedef, no import.
+
+struct Named:
+    name: str
+    id: i32
+
+fn length(xs: str) -> usize:
+    countof(xs)
+
+fn tail(xs: str) -> str:
+    xs[1:]
+
+fn next(p: *mut str) -> bool:
+    if countof(p.*) == 0:
+        return false
+    p.* = p.*[1:]
+    true
+
+fn poke(b: *mut []char):
+    b.*[0] = 'Z'
+
+pub fn main() -> i32:
+    let mut s: str = "abc"
+    let _ = stdio.printf("%zu %c %zu %zu\n", countof(s), s[1], length(s), length(s[1:]))
+    let cut: str = s[0:2]
+    let p: *mut str = &s
+    let mut steps: usize = 0
+    while next(p):
+        steps += 1
+    let _ = stdio.printf("%zu %zu %zu\n", countof(cut), steps, countof(s))
+
+    let mut raw: [4]char = ['a', 'b', 'c', 'd']
+    let mut w: []char = raw
+    let r: str = w
+    let pr: *mut str = (&w).cast(*mut str)
+    poke(&w)
+    let _ = stdio.printf("%zu %c %zu %c\n", length(w), pr.*[0], countof(tail(r)), tail(w)[0])
+
+    let n = Named(name = "field", id = 3)
+    let same: str = n.name
+    let _ = stdio.printf("%zu %zu %d\n", countof(n.name), countof(same), n.id)
+    let k: str = "k"
+    let fixed: str = "hello"
+    let _ = stdio.printf("%zu %zu %zu\n", countof(k), countof(fixed), sizeof(k))
+    0
