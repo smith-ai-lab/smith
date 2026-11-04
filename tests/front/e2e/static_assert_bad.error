@@ -1,0 +1,1 @@
+<dir>/src/static_assert_bad.smith:2:5: error: three is not below two

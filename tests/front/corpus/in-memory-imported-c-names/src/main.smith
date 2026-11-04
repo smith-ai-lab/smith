@@ -1,0 +1,8 @@
+import c <stdio.h>
+import core
+import rolls
+
+pub fn main() -> i32:
+    let mut thing = core.make(40)
+    let _ = stdio.printf("%d\n", rolls.total(&thing, 2))
+    0

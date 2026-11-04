@@ -167,3 +167,22 @@ export void test_front_check_types_anonymous_union_as_a_payload() {
 export void test_front_check_types_anonymous_struct_repeats_a_field_name() {
     c_fails("typedef enum { struct { i32 a; u8 a; } one; empty } Shape;\n", "the field `a` is declared twice");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Concepts in today's spelling: `Int` is the concept `int`, so both spellings are one type.
+
+export void test_front_check_types_capitalized_concepts_are_typed() {
+    clean("fn f(a: Int, b: Num, c: Signed, d: Unsigned, e: Float, g: Pointer):\n    return\n");
+}
+
+export void test_front_check_types_capitalized_concept_is_the_lowercase_one() {
+    clean("fn f(a: Int):\n    return\n\nfn g(a: int):\n    return\n");
+}
+
+export void test_front_check_types_capitalized_concept_is_no_field_type() {
+    fails("struct S:\n    n: Int\n", "concept", "int");
+}
+
+export void test_front_check_types_struct_concept_is_not_yet_typed() {
+    fails("fn f(a: Struct):\n    return\n", "not yet typed: the concept `Struct`", "");
+}
