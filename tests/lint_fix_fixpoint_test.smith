@@ -1,0 +1,30 @@
+// One `smith lint --fix` reaches the fixpoint (#2224): the checker's fixes (`mut`) read only a text that parses, and a
+// text with an uppercase enum variant parses only after the variants are renamed, which happens after the passes. The
+// fixer mends the renamed text again, so the file is complete at once and a second run applies nothing.
+// smith-covers: front/fix.smith
+module lint_fix_fixpoint_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+export void test_lint_fix_one_run_adds_mut_to_a_file_with_uppercase_variants() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = scratch::sh(
+        &p, "printf 'module a;\\n\\nexport typedef enum {\\n    Empty,\\n    Range,\\n    Invalid,\\n} Error;\\n\\n"
+            "static Error pick(const char word[:]) {\\n"
+            "    if (countof(word) == 0 || (countof(word) == 1 && (word[0] == 45 || word[0] == 43))) return Empty;\\n"
+            "    return word[0] == 49 ? Range : Invalid;\\n}\\n\\n"
+            "export Usize count(Usize n) {\\n    Usize total = 0;\\n    total += n;\\n    return total;\\n}\\n' > "
+            "a.smith && "
+            "smith lint --fix a.smith 2>&1 && cat a.smith && smith lint --fix a.smith 2>&1");
+    scratch::expect_status("the file is fixed", 0, &run);
+    scratch::expect_contains("the local is mut at once", run.out, "let mut total: usize = 0");
+    scratch::expect_contains("a second run applies nothing", run.out, "a.smith: 0 fixes applied");
+}

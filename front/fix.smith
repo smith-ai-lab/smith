@@ -431,7 +431,15 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
     for (Usize i = 0; i < count; i++) {
         Str path = as_str(format::push((const char *)paths[i]));
         I64 n = applied[i];
-        if (n >= 0 && !mem::equal(renamed[i].text, texts[i].text)) n += 1;
+        if (n >= 0 && !mem::equal(renamed[i].text, texts[i].text)) {
+            n += 1;
+            // The renamed variants are what makes the text parse, and the checker's fixes (`mut`, `*mut`) read only a
+            // text that parses: a second run mends them in the same `--fix` (#2224: a second `lint --fix` gave
+            // `format` 32 more).
+            Fixed again = fix_text(path, renamed[i].text);
+            renamed[i].text = again.text;
+            n += (I64)again.applied;
+        }
         if (n > 0 && !store(path, renamed[i].text)) n = -1;
         Str line = n < 0 ? as_str(format::push(path, ": cannot read or write the file\n"))
                          : as_str(format::push(path, ": ", n, n == 1 ? " fix applied\n" : " fixes applied\n"));
