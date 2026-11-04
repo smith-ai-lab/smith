@@ -3912,6 +3912,23 @@ static int smith_version_main() {
     return 0;
 }
 
+// `smith build [--front-end=new] ...`: the flag becomes -DSMITH_FRONT_END=new, as for the project verbs
+// (runtime/verbs.c).
+static int smith_build_main_front(int count, char **args, const char *self) {
+    static char *rewritten[smith_build_args_max + 1];
+    static char front_end[] = "-DSMITH_FRONT_END=new";
+    if ((size_t)count > smith_build_args_max) return smith_build_main(count, args, self, nullptr);
+    int used = 0;
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strcmp(args[i], "--") == 0 || !smith_front_end_flag(args[i])) {
+            rewritten[used++] = args[i];
+        } else {
+            rewritten[used++] = front_end;
+        }
+    }
+    return smith_build_main(used, rewritten, self, nullptr);
+}
+
 static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
     switch (verb->kind) {
     case SmithVerb_Cc:
@@ -3919,7 +3936,7 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
     case SmithVerb_Cxx:
         return smith_compile_main(argc, argv, 1, true, self);
     case SmithVerb_Build:
-        return smith_build_main(argc - 2, argv + 2, self, nullptr);
+        return smith_build_main_front(argc - 2, argv + 2, self);
     case SmithVerb_New:
         return smith_new_main(argc - 2, argv + 2, self);
     case SmithVerb_Fetch:
@@ -3946,7 +3963,8 @@ static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const ch
         return smith_version_main();
     case SmithVerb_ToolOrProject: // with arguments it is the tool, with none (or only -D options) the project's
         if (strcmp(verb->name, "lint") == 0 && smith_lint_fix_requested(argc - 2, argv + 2))
-            return smith_lint_fix(argc - 3, argv + 3); // .smith files, on smith's own front end (runtime/front_flag.c)
+            return smith_lint_fix(argc - 3, argv + 3,
+                                  self); // .smith files, on smith's own front end (runtime/front_flag.c)
         if (!smith_project_arguments(verb->name, argc - 2, argv + 2)) {
             if (strcmp(verb->name, "prove") == 0) return smith_prove(argc - 2, argv + 2, self);
             return smith_tool_main(smith_find_tool(verb->name), argc, argv, self);

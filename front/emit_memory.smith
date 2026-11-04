@@ -282,6 +282,16 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     return ty_failf(base->span, "unknown type ", name);
 }
 
+// The length an array type writes: an integer literal, or constants the checker folded (`[k.SIDE * 2]u8`).
+static Bool array_count(const state::Emitter *e, const ast::Expr *count, U64 *out) {
+    if (count == nullptr) return false;
+    if (count->kind == .integer) {
+        *out = count->kind.integer.value;
+        return true;
+    }
+    return e->options.checked != nullptr && types::length_of(e->options.checked, count, out);
+}
+
 // `[5,3]T` (nested arrays), `[,3]T` (a slice of `[3]T`), `[,]T` and `[,,]T` (a block): the checker's `build_block`.
 export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind != .block_type) {
@@ -296,9 +306,9 @@ export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
     state::Ty cell = found.ok;
     for (Usize i = countof(dims); i > empty; i--) {
         const ast::Expr *size = dims[i - 1];
-        if (size == nullptr || size->kind != .integer)
-            return ty_failf(t->span, "an array length is an integer literal", "");
-        cell = array_of(e, cell, size->kind.integer.value);
+        U64 length = 0;
+        if (!array_count(e, size, &length)) return ty_failf(t->span, "an array length is an integer literal", "");
+        cell = array_of(e, cell, length);
     }
     if (empty == 0) {
         state::Ty whole = cell;
@@ -340,9 +350,10 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
         if (node->kind == .pointer) ty = pointer_to(e, ty, 0);
         if (node->kind == .array) {
             const ast::Expr *count = node->kind.array.count;
-            if (count == nullptr || count->kind != .integer)
+            U64 length = 0;
+            if (!array_count(e, count, &length))
                 return ty_failf(node->span, "an array length is an integer literal", "");
-            ty = array_of(e, ty, count->kind.integer.value);
+            ty = array_of(e, ty, length);
         }
     }
     return ty;
@@ -1394,8 +1405,36 @@ static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMVa
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
+// An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
+static state::Status array_constant(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .string && ty.element->kind == .integer && ty.element->bits == 8) {
+        Str bytes = x->kind.string.bytes;
+        if (countof(bytes) + 1 > ty.count) return state::failf(x->span, "the string does not fit ", ty.name);
+        if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+        c::LLVMValueRef values[256]; // the bytes, then zeros up to the length
+        for (Usize i = 0; i < ty.count; i++)
+            values[i] = c::LLVMConstInt(ty.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+        return state::success();
+    }
+    if (x->kind != .array_lit)
+        return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
+    ast::ExprRef items[:] = x->kind.array_lit.items;
+    if (countof(items) > ty.count)
+        return state::failf(x->span, "the array has ", ty.count, " elements, the literal ", countof(items));
+    if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+    c::LLVMValueRef values[256];
+    for (Usize i = 0; i < ty.count; i++) {
+        values[i] = c::LLVMConstNull(ty.element->llvm);
+        if (i < countof(items)) try scalar_constant(*ty.element, items[i], &values[i]);
+    }
+    *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+    return state::success();
+}
+
 // A record's constant from a compound of scalar constants; fields left out are zero.
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind == .array) return array_constant(ty, x, out);
     if (x->kind != .compound) {
         return scalar_constant(ty, x, out);
     }
@@ -1433,8 +1472,6 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     }
     Str name = d->kind.variable.name;
     const ast::Expr *init = d->kind.variable.init;
-    // `let Numbers = []i32`: an alias of a type has no storage; the checker substituted it.
-    if (d->kind.variable.is_new && init != nullptr && init->kind == .type_value) return state::success();
     if (d->kind.variable.is_thread_local) return state::not_emitted("this kind of global", d->span);
     Bool constant = d->kind.variable.is_constexpr;
     state::TyResult made = global_type(e, d);
