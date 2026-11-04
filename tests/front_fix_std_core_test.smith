@@ -45,3 +45,8 @@ export void test_front_fix_a_tag_of_the_file_named_with_struct() {
     expect_fixed("module m;\nstruct Pair {\n    I32 a;\n};\nvoid f(struct Pair *p) {\n    struct Pair r;\n}\n",
                  "struct Pair:\n    a: i32\nfn f(p: *Pair):\n    let mut r: Pair = undefined\n");
 }
+
+export void test_front_fix_a_type_alias_before_a_comment_and_a_constexpr() {
+    expect_fixed("module m;\nexport typedef Result(Line, Error) LR;\n// c\nconstexpr I32 a = 1;\n",
+                 "pub let LR = Result(Line, Error)\n# c\nconst a: i32 = 1\n");
+}
