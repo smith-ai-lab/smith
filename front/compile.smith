@@ -907,6 +907,23 @@ static emit::Options emit_options(Str wanted, Str source, types::Checked *checke
     return options;
 }
 
+// The name of the file being compiled: it keeps its plain symbol names, so `local` (which only finds its imports,
+// #2041) is left out of the roots that name it.
+static Str name_compiled(ast::Module *m, Str path, roots::Roots folders) {
+    roots::Roots named_by = folders;
+    named_by.local = "";
+    return name_module(m, path, named_by);
+}
+
+// `triple`, or the default triple of this machine when it is empty.
+static Str wanted_triple(Str triple) {
+    if (countof(triple) > 0) return triple;
+    char *default_triple = c::LLVMGetDefaultTargetTriple();
+    Str found = as_str(format::push((const char *)default_triple));
+    c::LLVMDisposeMessage(default_triple);
+    return found;
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
@@ -925,20 +942,12 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     if (countof(parsed.errors) > 0) {
         return failed(as_str(format::push(warned, lines_of(path, source, parsed.errors, "error"))), times);
     }
-    roots::Roots named_by = folders;
-    named_by.local = ""; // the file being compiled keeps its plain symbol names; `local` only finds its imports (#2041)
-    Str problem = name_module(&parsed.module, path, named_by);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
     Str cycles = import_cycles(path, source, &parsed.module, folders);
     if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
-    Str wanted = triple;
-    char *default_triple = nullptr;
-    if (countof(wanted) == 0) {
-        default_triple = c::LLVMGetDefaultTargetTriple();
-        wanted = as_str(format::push((const char *)default_triple));
-        c::LLVMDisposeMessage(default_triple);
-    }
+    Str wanted = wanted_triple(triple);
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
@@ -1562,9 +1571,7 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     times.parse = clock::monotonic() - mark;
     if (countof(parsed.errors) > 0)
         return failed(as_str(format::push(lines_of(path, source, parsed.errors, "error"))), times);
-    roots::Roots named_by = folders;
-    named_by.local = ""; // the file being compiled keeps its plain symbol names; `local` only finds its imports (#2041)
-    Str problem = name_module(&parsed.module, path, named_by);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
     Str wanted = triple;
     if (countof(wanted) == 0) {
