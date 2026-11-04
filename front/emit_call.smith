@@ -105,7 +105,6 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     ast::Param source[:] = d->kind.function.params;
     const ast::TypeExpr *result_type = d->kind.function.result;
     Bool variadic = d->kind.function.variadic;
-    if (result_type == nullptr) return signature_failed(state::not_emitted("function without a result", d->span));
     Usize count = countof(source);
     if (count > 64) return signature_failed(state::not_emitted("more than 64 parameters", d->span));
     for (Usize i = 0; i < count; i++) {
@@ -127,7 +126,9 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         all[i] = made.ok;
         types[i] = state::abi_type(e, made.ok);
     }
-    state::TyResult made_result = type_for(e, result_type);
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::TyResult made_result = {.ok = none};
+    if (result_type != nullptr) made_result = type_for(e, result_type);
     if (made_result == .error) {
         mem::free(all.data);
         return {.error = made_result.error};
