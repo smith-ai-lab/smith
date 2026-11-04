@@ -1,0 +1,32 @@
+import c <stdio.h>
+
+# A conditional runs one arm: only the chosen arm's call happens (#1018).
+let mut calls: i32 = 0
+
+fn first() -> i32:
+    calls += 1
+    1
+
+fn second() -> i32:
+    calls += 10
+    2
+
+fn pick(h: u64) -> i32:
+    if h == 0:
+        second()
+    else:
+        first()
+
+fn name(code: i32) -> str:
+    if code == 2:
+        "second"
+    else:
+        "first"
+
+pub fn main() -> i32:
+    let a = pick(0)
+    let b = pick(1)
+    let left = name(a)
+    let right = name(b)
+    let _ = stdio.printf("%s %s %d\n", &left[0], &right[0], calls)
+    0

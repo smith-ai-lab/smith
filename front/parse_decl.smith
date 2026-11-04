@@ -872,7 +872,11 @@ static void slice_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
     Str kind = is_slice ? "a slice" : "an array";
     char message[:] = format::push("a pointer to ", kind, " is written `", lead, text, brackets, " ", stars, name,
                                    "`, not `", lead, text, " (", stars, name, ")", brackets, "`");
-    parse::error(p, parse::span_from(p, start), message);
+    // The fix moves the brackets in front of the stars, from the end of the type: `auto (*xs)[:]` is `auto[:] *xs`.
+    char moved[:] = format::push(brackets, " ", stars, name);
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(type->span.end, brackets_end, moved));
+    parse::error_fix(p, parse::span_from(p, start), message, edits);
 }
 
 // `I32 (*f)(I32)`: the position is at the `(` after the type. Says what to write and skips the rest.
@@ -1150,15 +1154,18 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     to = strip_suffixes(p, at, to, &dims);
     if (to == 0 || to <= at + 1) return "";
     lex::Token last = p->tokens[to - 1];
-    if (last.kind != lex::name && !(is_const && last.kind == lex::type_name)) return "";
+    Bool type_param = to == at + 2 && last.kind == lex::type_name &&
+                      same_text(source_between(p, p->tokens[at].span.start, p->tokens[at].span.end), "Type");
+    if (last.kind != lex::name && !(is_const && last.kind == lex::type_name) && !type_param) return "";
     Str name = parse::text(p, last);
+    if (same_text(name, "type")) name = "ty"; // `type` is reserved like `i32` (#1901): the body follows in rename_type
     if (unused) name = as_str(format::push("_", name));
     if (to == at + 3 && p->tokens[at].kind == lex::kw_auto && p->tokens[at + 1].kind == lex::ellipsis)
         return as_str(format::push(prefix, name, ": ..."));
     Str type = trimmed(parse::mended(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return "";
-    if (is_const && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
+    if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
     type = as_str(format::push(dims, type));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
     return as_str(format::push(prefix, name, ": ", type));
@@ -1191,11 +1198,11 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
 
 // `R f(A a) { ... }` is `fn f(a: A) -> R { ... }` (no `-> void`); the parameters are the tokens `open` to `close`. A
 // prototype, and a head with a parameter that has no mechanical fix, are a warning with no edits.
-static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize open, Usize close, Bool has_body) {
+static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize open, Usize close, Bool has_body) {
     U32 end = p->tokens[close].span.end;
     // `fn run() {` read with today's tokenizer (`smith lint --fix` does until the switch) is a function whose type is
     // the name `fn`: it is smith's own form already.
-    if (same_text(trimmed(source_between(p, head.type_start, head.name.span.start)), "fn")) return;
+    if (same_text(trimmed(source_between(p, head.type_start, head.name.span.start)), "fn")) return false;
     Str name = named(pre, parse::text(p, head.name));
     Str params = "";
     Bool fixable = new_parameters(p, open, close, &params) && has_body;
@@ -1206,7 +1213,7 @@ static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
                                        "parameter with no name, an array suffix or `auto`): write it by hand");
         parse::Edits none = {};
         warn(p, head.type_start, end, message, none);
-        return;
+        return false;
     }
     Str result = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str written = as_str(format::push("fn ", name, "(", params, ")"));
@@ -1217,6 +1224,31 @@ static void fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     edits = with_unused(pre, edits);
     char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");
     warn(p, head.type_start, end, message, edits);
+    return true;
+}
+
+// A parameter named `type` is written `ty` by the fix of the head; the uses of it in the body (the tokens from
+// `from` to `to`) follow, as a fix of their own. A body that already has a `ty`, or a use after a `.` or `::`, is left
+// as it is: the fix of the head is skipped by the checker then and the parameter stays to be written by hand.
+static void rename_type(parse::Parser *p, Usize open, Usize close, Usize to) {
+    Bool found = false;
+    for (Usize i = open + 1; i < close; i++) {
+        if (p->tokens[i].kind == lex::name && same_text(parse::text(p, p->tokens[i]), "type")) found = true;
+    }
+    if (!found) return;
+    parse::Edits edits = {};
+    for (Usize i = close + 1; i < to && i < countof(p->tokens); i++) {
+        if (p->tokens[i].kind != lex::name) continue;
+        Str word = parse::text(p, p->tokens[i]);
+        if (same_text(word, "ty")) return;
+        if (!same_text(word, "type")) continue;
+        lex::TokenKind before = p->tokens[i - 1].kind;
+        if (before == lex::dot || before == lex::arrow || before == lex::colon_colon) continue;
+        edits = with_edit(edits, edit(p->tokens[i].span.start, p->tokens[i].span.end, "ty"));
+    }
+    if (countof(edits) == 0) return;
+    warn(p, p->tokens[close].span.end, p->tokens[to - 1].span.end,
+         "a parameter is not named `type`, which is reserved like `i32`: the fix writes `ty`", edits);
 }
 
 // Whether the initializer is an untyped list of `.field = value` items that ends at the `;`, for a variable of a
@@ -1344,10 +1376,12 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
         return nullptr;
     }
     Str name = parse::text(p, head.name);
-    if (pre->top) fix_function(p, pre, head, open, p->position - 1, parse::at(p, lex::left_brace));
+    Usize close = p->position - 1;
+    Bool renamed = pre->top && fix_function(p, pre, head, open, close, parse::at(p, lex::left_brace));
     ast::Stmt *body = nullptr;
     if (parse::at(p, lex::left_brace)) {
         body = parse::statement(p);
+        if (renamed) rename_type(p, open, close, p->position);
     } else {
         parse::expect(p, lex::semicolon, "`{` or `;` after the parameters");
     }
@@ -1415,9 +1449,11 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
         recover(p);
         return nullptr;
     }
-    // `constexpr Type Meters = F64;`: a type value is named like a type.
+    // `constexpr Type Meters = F64;`: a type value is named like a type. So is a type function, `Type Option(Type T)`.
     Str type_word = "Type";
-    Bool type_value = pre->is_constexpr && parse::at(p, lex::type_name) && mem::equal(type_text(p, type), type_word);
+    Bool type_function = parse::peek_at(p, 1).kind == lex::left_paren;
+    Bool type_value = (pre->is_constexpr || type_function) && parse::at(p, lex::type_name) &&
+                      mem::equal(type_text(p, type), type_word);
     lex::Token name_token = type_value ? parse::advance(p) : parse::expect(p, lex::name, "a name");
     if (name_token.kind != lex::name && !type_value) {
         recover(p);

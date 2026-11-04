@@ -209,3 +209,56 @@ export void test_front_emit_tuple_a_member_past_the_end_or_of_a_non_tuple_is_an_
                "    0\n",
                false, ".0 needs a tuple, found i32", "t.0");
 }
+
+export void test_front_emit_tuple_countof_a_tuple_is_its_element_count() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("pub fn count(n: i32) -> i32:\n"
+                     "    let t = (n, 7, 9)\n"
+                     "    let k = countof(t)\n"
+                     "    k.to(i32)\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick count = (Pick)symbol_of(&host, "count");
+    test::check_equal(count(1), (I32)3);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_tuple_an_alias_of_a_tuple_type_names_the_tuple() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("const Pair = (i32, f32)\n"
+                     "const Wide = (Pair, i64)\n"
+                     "fn make(n: i32) -> Pair:\n"
+                     "    (n, 1.5)\n"
+                     "pub fn first(n: i32) -> i32:\n"
+                     "    let p: Pair = make(n)\n"
+                     "    p.0\n"
+                     "pub fn nested(n: i32) -> i64:\n"
+                     "    let w: Wide = ((n, 2.5), 40)\n"
+                     "    w.1\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick first = (Pick)symbol_of(&host, "first");
+    test::check_equal(first(5), (I32)5);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_tuple_a_pointer_to_a_tuple_reads_and_writes_through() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn scale(t: *mut (f64, f32), by: f64):\n"
+                     "    let p = t.*\n"
+                     "    t.* = (p.0 * by, p.1)\n"
+                     "pub fn run(n: i32) -> i32:\n"
+                     "    let mut t: (f64, f32) = (1.0, 2.0)\n"
+                     "    scale(&t, 3.0)\n"
+                     "    if t.0 == 3.0:\n"
+                     "        return n\n"
+                     "    0\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick run = (Pick)symbol_of(&host, "run");
+    test::check_equal(run(7), (I32)7);
+    emit_jit::stop(&host);
+}

@@ -12,8 +12,9 @@
     (field weights (array (named F32) (integer 4))))
   (struct Flags from_c
     (field ready (unsupported_c "bit-field int")))
-  (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
   (typedef Id from_c (named U64))
+  (typedef Compare from_c (applied Fn (type_arg (function_type (pointer (named Void const)) (pointer (named Void const)) (result (named I32))))))
+  (typedef Width from_c (named U16))
   (enum Color from_c
     (named I32)
     (enumerator Red (integer 0))

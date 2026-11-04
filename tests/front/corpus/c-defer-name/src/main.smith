@@ -1,0 +1,15 @@
+import c <stdio.h>
+
+# `defer` is a keyword in the new syntax, so a name close to it is the ordinary-name case: a variable, a function, a
+# field, all spelled `deferred`.
+struct Hold:
+    deferred: i32
+
+fn deferred_twice(deferred: i32) -> i32:
+    deferred * 2
+
+pub fn main() -> i32:
+    let deferred = 1
+    let h = Hold(deferred = 4)
+    let _ = stdio.printf("%d %d %d\n", deferred, deferred_twice(h.deferred), deferred + h.deferred)
+    0

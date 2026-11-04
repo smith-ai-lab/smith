@@ -1008,7 +1008,11 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     for (Usize i = 0; i < count; i += 1) {
         ast::Span span = params[i]->span;
         // The inner types are mended first: `Fn(U32 (U32 x))` is `fn(u32) -> u32`, not `fn(U32) -> U32`.
-        joined = format::push(joined, i > 0 ? ", " : "", parse::mended(p, span.start, span.end));
+        // A name after the type (`void *context`) leaves the space the mended star wants (`*void `): it goes.
+        Str inner = parse::mended(p, span.start, span.end);
+        while (countof(inner) > 0 && inner[countof(inner) - 1] == ' ')
+            inner = inner[0:countof(inner) - 1];
+        joined = format::push(joined, i > 0 ? ", " : "", inner);
     }
     if (kind.function.variadic) {
         r->problem = "a variadic function type has no spelling in smith's own syntax yet: write the function by hand";
