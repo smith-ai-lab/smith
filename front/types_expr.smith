@@ -324,7 +324,19 @@ static types::TypeRef resolve_written(types::Checked *c, const ast::TypeExpr *t)
 // Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
 static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     const types::Symbol *s = root_symbol(c, e);
-    return s != nullptr && s->is_new;
+    if (s != nullptr) {
+        return s->is_new;
+    }
+    // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
+    const ast::Expr *at = e;
+    while (at != nullptr && (at->kind == .member || at->kind == .index)) {
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        }
+    }
+    return at != nullptr && at->kind == .call && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -2122,10 +2134,23 @@ static void stream_after(types::Checked *c, Frame f) {
 
 // The record a call constructs when its callee names a struct (or an alias of one), else null.
 static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
-    if (callee->kind != .name) {
+    ast::Path path = {};
+    ast::Identifier parts[8];
+    if (callee->kind == .name) {
+        path = callee->kind.name.path;
+    } else if (callee->kind == .member && !callee->kind.member.arrow && callee->kind.member.base->kind == .name) {
+        // `words.Pair(...)`: a record of another module, written with the module's name.
+        ast::Path base = callee->kind.member.base->kind.name.path;
+        Usize count = countof(base.segments);
+        if (count >= 8) return nullptr;
+        for (Usize i = 0; i < count; i++)
+            parts[i] = base.segments[i];
+        parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
+        path = (ast::Path){.segments = parts[0:count + 1], .span = callee->span};
+    } else {
         return nullptr;
     }
-    const types::Symbol *s = types::lookup_path(&c->scopes, callee->kind.name.path);
+    const types::Symbol *s = types::lookup_path(&c->scopes, path);
     if (s == nullptr || s->kind != .type_name || s->type == nullptr || s->type->kind != .record) {
         return nullptr;
     }
