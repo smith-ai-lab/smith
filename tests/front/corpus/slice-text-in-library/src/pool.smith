@@ -1,0 +1,15 @@
+# A library module whose comment says xs[:] and whose string says "ys[:]": neither is a slice (issue #121).
+
+struct Pair:
+    a: i32
+    b: f64
+
+fn grab(T: type, value: T) -> T:
+    value
+
+pub fn note() -> str:
+    "a string with zs[:] in it"
+
+pub fn first() -> f64:
+    let p = grab(Pair, Pair(a = 1, b = 2.5))
+    p.b + grab(usize, 3).to(f64)

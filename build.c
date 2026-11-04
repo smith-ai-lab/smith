@@ -833,6 +833,7 @@ static const char *const build_front_modules[] = {
     "types_undefined",
     "lint",
     "affine",
+    "affine_loops",
     "types_fn",
     "types_iter",
     "emit_state",
@@ -866,6 +867,7 @@ static const char *const build_front_modules[] = {
     "format_space",
     "format",
     "effects_table",
+    "fix_variants",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 

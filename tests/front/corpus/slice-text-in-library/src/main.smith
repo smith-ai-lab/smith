@@ -1,0 +1,6 @@
+import c <stdio.h>
+import pool
+
+pub fn main() -> i32:
+    let _ = stdio.printf("%g %zu\n", pool.first(), countof(pool.note()))
+    0
