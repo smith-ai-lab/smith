@@ -247,11 +247,50 @@ export void test_front_emit_match_over_an_option_binds_the_payload() {
     emit_jit::stop(&host);
 }
 
-export void test_front_emit_match_a_payload_enumeration_is_an_error_at_its_declaration() {
-    stops_with("enum Shape:\n"
-               "    circle: i32\n"
-               "    none\n",
-               false, "not emitted yet: a payload enumeration", "enum Shape");
+export void test_front_emit_match_a_payload_enumeration_is_a_tag_and_a_payload() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("struct Circle:\n"
+                     "    radius: i32\n"
+                     "struct Rect:\n"
+                     "    w: i32\n"
+                     "    h: i32\n"
+                     "enum Shape:\n"
+                     "    circle: Circle\n"
+                     "    rect: Rect\n"
+                     "    empty\n"
+                     "fn make(n: i32) -> Shape:\n"
+                     "    if n == 0:\n"
+                     "        return .circle(Circle(radius = 2))\n"
+                     "    if n == 1:\n"
+                     "        return .rect(Rect(w = 3, h = 4))\n"
+                     "    return .empty\n"
+                     "fn area(s: Shape) -> i32:\n"
+                     "    match s:\n"
+                     "        .circle(c): c.radius * c.radius\n"
+                     "        .rect(r): r.w * r.h\n"
+                     "        .empty: 0 - 1\n"
+                     "pub fn by_match(n: i32) -> i32:\n"
+                     "    area(make(n))\n"
+                     "pub fn by_if_let(n: i32) -> i32:\n"
+                     "    let s = make(n)\n"
+                     "    let mut out = 100\n"
+                     "    if let .rect(r) = s:\n"
+                     "        out = r.w + r.h\n"
+                     "    else:\n"
+                     "        out = 7\n"
+                     "    out\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick by_match = (Pick)symbol_of(&host, "by_match");
+    test::check_equal(by_match(0), (I32)4);
+    test::check_equal(by_match(1), (I32)12);
+    test::check_equal(by_match(2), (I32)-1);
+    Pick by_if_let = (Pick)symbol_of(&host, "by_if_let");
+    test::check_equal(by_if_let(0), (I32)7);
+    test::check_equal(by_if_let(1), (I32)7);
+    test::check_equal(by_if_let(2), (I32)7);
+    emit_jit::stop(&host);
 }
 
 export void test_front_emit_match_an_enumerator_value_that_is_not_a_literal_is_an_error() {
