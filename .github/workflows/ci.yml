@@ -156,10 +156,11 @@ jobs:
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
     needs: [changes, pack]
-    # Not on a pull request (owner, 2026-11-03: "we need to get CI moving"): macOS runs in the merge queue only. A pull
-    # request's runs filled the free plan's 5 hosted macOS slots (133 of 287 hosted minutes in 90 minutes), and jobs
-    # queued behind them were cancelled with no step run.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
+    # On pull requests too: a green PR should mean a green queue run, and each queue failure fails every group behind
+    # it. Capacity is never saved by dropping a check (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac
+    # runners. We should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS
+    # slots are full, `pick-mac` sends the job to the owner's Mac. From 2026-11-03 it had run in the merge queue only.
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
     # does all of it in about 4 (#1709). The job's limit counts time spent queued for a slot: at 30 minutes, jobs waiting
@@ -474,8 +475,6 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
-          # a pull request owes no macOS: the merge queue runs it (2026-11-03)
-          [ "$EVENT" = pull_request ] && owed="${owed/MACOS/}"
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
@@ -613,9 +612,9 @@ jobs:
               grep -E '^  failed at ' "$out"
               echo '```'
               echo
-              echo 'Top 10 causes (count, files, cause):'
+              echo 'Top 20 causes, by the files each stops first (first, count, files, cause):'
               echo '```'
-              awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+  / {print; n++} n==10 {exit}' "$out"
+              awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+ +[0-9]+  / {print; n++} n==20 {exit}' "$out"
               echo '```'
             else
               echo "### Front-end coverage: not measured"
@@ -627,6 +626,8 @@ jobs:
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
+          # the top 20 causes, one fixed line each (#2247): frontend-cause: <first> <files> <count> <cause>
+          grep '^frontend-cause: ' "$out" 2>/dev/null
       - name: Save the table
         if: always()
         uses: actions/upload-artifact@v4
