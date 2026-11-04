@@ -4055,6 +4055,19 @@ static void pack_before(types::Checked *c, Work *w, Frame f, const types::Symbol
     auto_before(c, w, inner, template);
 }
 
+// Stage 0 of a call of a function whose instance depends on the arguments' types: `; kw...`, `rest...` or `auto`.
+static void rewritten_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    if (template->decl->kind != .function) return;
+    ast::Param params[:] = template->decl->kind.function.params;
+    if (gather_param(params) != nullptr) {
+        gather_before(c, w, f, template);
+    } else if (pack_param(params) != nullptr) {
+        pack_before(c, w, f, template);
+    } else {
+        auto_before(c, w, f, template);
+    }
+}
+
 // Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
 static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
     const ast::Expr *e = f.node;
@@ -4063,16 +4076,8 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
-    if (gather_param(params) != nullptr) {
-        gather_before(c, w, f, template);
-        return;
-    }
-    if (pack_param(params) != nullptr) {
-        pack_before(c, w, f, template);
-        return;
-    }
-    if (has_auto_param(params)) {
-        auto_before(c, w, f, template);
+    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params)) {
+        rewritten_before(c, w, f, template);
         return;
     }
     if (countof(args) != countof(params)) {

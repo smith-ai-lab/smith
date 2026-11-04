@@ -64,7 +64,7 @@ export void test_front_a_call_has_one_semicolon() {
     test::check_equal(message, expected);
 }
 
-export void test_front_checker_says_not_yet_for_packs_and_gathers() {
+export void test_front_checker_declares_packs_and_gathers_as_templates() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -72,7 +72,5 @@ export void test_front_checker_says_not_yet_for_packs_and_gathers() {
     parser::Parsed p = parser::parse_new("t.smith", "fn f(x: str, xs...) {\n}\nfn g(x: str; kw...) {\n}\n");
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked c = types_decl::check_module(&p.module, types::lp64());
-    test::check_equal(c.error_count, (Usize)1); // a function with `; kw...` is a template now (#1985)
-    Str first = "not yet: positional packs";
-    test::check_equal(c.errors[0].message, first);
+    test::check_equal(c.error_count, (Usize)0); // `rest...` (#1821) and `; kw...` (#1985) make templates
 }
