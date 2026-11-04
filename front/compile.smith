@@ -1001,9 +1001,11 @@ static Spelled spell_dimensional(const ast::TypeExpr *t) {
     Str name = as_str(format::push(is_const ? "const_" : "", name_part, shape));
     Str guard_name = as_str(format::push("SMITH_ARRAY_", name));
     Str data = as_str(format::push(is_const ? "const " : "", element.text, " * data"));
-    Str defs = as_str(format::push(element.defs, "\n#ifndef ", guard_name, "\n#define ", guard_name,
-                                   "\nstruct smith_array_", name, " { ", data, "; size_t count [", runtime, "]; };\n#endif\n"));
-    return (Spelled){.text = as_str(format::push("struct smith_array_", name)), .by_value = false, .suffix = "", .defs = defs};
+    Str defs =
+        as_str(format::push(element.defs, "\n#ifndef ", guard_name, "\n#define ", guard_name, "\nstruct smith_array_",
+                            name, " { ", data, "; size_t count [", runtime, "]; };\n#endif\n"));
+    return (Spelled){
+        .text = as_str(format::push("struct smith_array_", name)), .by_value = false, .suffix = "", .defs = defs};
 }
 
 // The base of a chain of pointers: a scalar or one of the module's structs (by value only when no pointer is above it).
