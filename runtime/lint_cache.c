@@ -3,12 +3,13 @@
 // before runtime/verbs.c, which asks it about each file and runs clang-tidy only on a miss.
 //
 // Two levels, as a compiler cache with a manifest does. The FIRST key is the SHA-256 of what is known before the run:
-// smith itself (build-id or LC_UUID: clang-tidy and smith's own checks are in the binary), the environment that moves
-// a compile, the file's name and compile command, and the chain of `.clang-tidy` files from its folder up to /. Under
-// it, `m/<xx>/<key>` is the MANIFEST of the last run: the files clang-tidy read (its own dependency file, written by a
-// miss through `-Xclang -dependency-file`). The SECOND key adds the content of those files, and `r/<xx>/<key>` holds
-// the RESULT: the exit status and the output. A .smith file's first key also holds the generated headers of the
-// modules (.smith/include), which its imports read without the preprocessor. So a header edited, a file edited, a
+// the lint identity (the LLVM pack and the sources of smith's own checks, hashed by `smith build`; the binary's
+// build-id or LC_UUID when smith has none), the environment that moves a compile, the file's name and compile command,
+// and the chain of `.clang-tidy` files from its folder up to /. Under it, `m/<xx>/<key>` is the MANIFEST of the last
+// run: the files clang-tidy read (its own dependency file, written by a miss through `-Xclang -dependency-file`). The
+// SECOND key adds the content of those files, and `r/<xx>/<key>` holds the RESULT: the exit status and the output. A
+// .smith file's first key also holds the generated headers of the modules (.smith/include), which its imports read
+// without the preprocessor. So a header edited, a file edited, a
 // `.clang-tidy` edited or another smith make another key, and a hit needs no build and no object. The project's root is
 // replaced by a fixed word in the command and the output, so a clone in another folder shares the entries. A result is
 // stored only when the run completed (exit status 0 or 1) and no file it read was changed during or just before the
@@ -128,6 +129,26 @@ static const char *smith_lc_relative(const char *path) {
 
 static void smith_lc_text_add(SmithSha256 *sha, const char *text) {
     smith_sha256_update(sha, (const uint8_t *)text, strlen(text) + 1);
+}
+
+// What smith's lint is, apart from the files and the environment: the lint identity `smith build` hashed (the LLVM pack
+// and the sources of smith's own checks, #2236), or nullptr when this smith has none (a build with no LLVM install, a
+// test of the core), and the key then holds the binary's own id.
+#ifdef SMITH_LINT_IDENTITY_LINKED
+extern const char smith_lint_identity[];
+#endif
+#ifdef SMITH_CORE
+static const char
+    *smith_lc_core_identity; // the units runner's identity: a test sets what `smith build` would compile in
+#endif
+static const char *smith_lc_lint_identity(void) {
+#ifdef SMITH_CORE
+    if (smith_lc_core_identity != nullptr) return smith_lc_core_identity;
+#endif
+#ifdef SMITH_LINT_IDENTITY_LINKED
+    if (smith_lint_identity[0] != '\0') return smith_lint_identity;
+#endif
+    return nullptr;
 }
 
 // Adds a file's name and digest to a key (a file that cannot be read adds "-": no stored key has that).
@@ -306,10 +327,11 @@ static bool smith_lc_start(void) {
         !smith_cache_join(temporary, smith_lc.folder, "t", "") || !smith_lc_make_folder(temporary))
         return false;
     char identity[2 * smith_platform_id_bytes + 1] = "";
-    smith_platform_self_id(identity, sizeof identity);
+    const char *lint_identity = smith_lc_lint_identity();
+    if (lint_identity == nullptr) smith_platform_self_id(identity, sizeof identity);
     smith_sha256_init(&smith_lc.base);
     smith_lc_text_add(&smith_lc.base, smith_lc_header);
-    smith_lc_text_add(&smith_lc.base, identity);
+    smith_lc_text_add(&smith_lc.base, lint_identity != nullptr ? lint_identity : identity);
     smith_lc_add_environment(&smith_lc.base);
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
@@ -696,6 +718,11 @@ static void smith_lc_fake_run(size_t number, const SmithCoreLintFile *file, FILE
     smith_lc_store(number, file->status << 8, log);
     fclose(log);
     fputs(file->output, out);
+}
+
+// include/smith_core_lint_cache.h: the lint identity of the runs that follow, or nullptr for the binary's own id.
+void smith_core_lint_set_identity(const char *identity) {
+    smith_lc_core_identity = identity;
 }
 
 // include/smith_core_lint_cache.h: the decisions of a `smith lint` run, in process.

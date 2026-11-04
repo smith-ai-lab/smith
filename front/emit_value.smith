@@ -233,12 +233,13 @@ static state::Status if_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValue
     return state::success();
 }
 
-// `if` and block branches store into the slot.
+// `if` and block branches store into the slot, and so does any other statement as the last line of a branch.
 static state::Status into_start(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind == .block) return block_into(e, s, w->value, w->ty);
     if (s->kind == .if_stmt) return if_into(e, s, w->value, w->ty);
-    return state::not_emitted("this statement as a branch of a value", s->span);
+    // A one-line branch (`if c: a else: b`) is a statement of its own: an expression stores, `return` and the like end.
+    return last_line_into(e, s, w->value, w->ty);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

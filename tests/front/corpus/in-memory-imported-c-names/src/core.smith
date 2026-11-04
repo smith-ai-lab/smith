@@ -1,0 +1,7 @@
+@c_name("CoreThing")
+pub struct Thing:
+    pub x: i32
+
+@c_name("core_make")
+pub fn make(x: i32) -> Thing:
+    return Thing(x = x)
