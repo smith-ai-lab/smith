@@ -2,7 +2,7 @@ name: pick-mac
 description: >
   Where a macOS job runs (knowledge/ci-hosted.md): a hosted macos-26 by default; the owner's Mac only as overflow, when
   a runner labelled self-hosted, macOS, ARM64 is online and idle AND the hosted macOS pool is saturated (a macos-26 job
-  of another run is queued, or 5 are running). No token, a fork pull request or a failed call: hosted. Shared by
+  of another run is queued, 5 are running, or one was abandoned with no runner in the last hour). No token, a fork pull request or a failed call: hosted. Shared by
   ci.yml and llvm.yml, so the rule is written once. With linux-jobs it also tells, when a run's Linux jobs are about to start, how
   many of them the Mac's Linux runners take.
 inputs:
@@ -74,7 +74,19 @@ runs:
                 queued=$((queued + ${counts% *})); running=$((running + ${counts#* }))
               done
             done
+            # hosted macOS that gave no runner in the last hour also counts as saturated: on 2026-11-04 macos-26 jobs sat
+            # 15 minutes with no runner and were abandoned while this repository ran nothing else (the pool is shared with
+            # other repositories this token cannot see), and every pull request's `ci` failed on it
+            since=$(date -u -d '-60 min' +%FT%TZ)
+            for id in $(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs?status=completed&created=>$since&per_page=30" --jq '.workflow_runs[].id' 2>/dev/null); do
+              n=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq \
+                '[.jobs[] | select((.labels | index("macos-26")) and .conclusion == "cancelled" and (.runner_name // "") == "")] | length' 2>/dev/null) || continue
+              abandoned=$(( ${abandoned:-0} + n ))
+            done
             if [ "$ok" = 0 ]; then why="jobs call failed"
+            elif [ "${abandoned:-0}" -gt 0 ]; then
+              mac='["self-hosted","macOS","ARM64"]'; cores=5
+              why="hosted macOS gave no runner to $abandoned job(s) in the last hour; Mac idle: $free"
             elif [ "$queued" -gt 0 ] || [ "$running" -ge 5 ]; then
               mac='["self-hosted","macOS","ARM64"]'; cores=5
               why="hosted macOS saturated ($queued queued, $running running); Mac idle: $free"
