@@ -19,9 +19,10 @@
 //
 // The summary: files passed out of total, the failed files per stage, then the causes: a diagnostic's message with
 // its names (`...`) and numbers replaced by `<name>` and `<n>`, the biggest first, each with its occurrences, its
-// files and up to 3 example locations. A parse error is the only one of its file (the parser stops at the first,
-// parser recovery is not counted here): the summary says how many files are stopped there. The real files are never
-// changed: only the copies are.
+// files, the files it stops first (their first diagnostic) and up to 3 example locations, the cause that stops most
+// files first; then 20 `frontend-cause:` lines for the CI log. A parse error is the only one of its file (the parser
+// stops at the first, parser recovery is not counted here): the summary says how many files are stopped there. The real
+// files are never changed: only the copies are.
 module main;
 
 import std::console;
@@ -37,6 +38,7 @@ constexpr Usize files_max = 4096;
 constexpr Usize entries_max = 32768;
 constexpr Usize groups_max = 2048;
 constexpr Usize examples_max = 3;
+constexpr Usize causes_listed = 20;
 constexpr Usize path_size = 256;
 constexpr Usize message_size = 240;
 constexpr Usize stage_size = 16;
@@ -54,7 +56,8 @@ struct Group {
     Usize count;
     Usize files;
     Usize last_file;
-    Usize first;
+    Usize stopped;
+    Usize appeared;
     Usize examples[examples_max];
 };
 
@@ -204,7 +207,8 @@ static struct Group *group_of(const char cause[:]) {
     made->count = 0;
     made->files = 0;
     made->last_file = 0;
-    made->first = group_count;
+    made->stopped = 0;
+    made->appeared = group_count;
     group_count += 1;
     return made;
 }
@@ -220,6 +224,8 @@ static void group_failures() {
         struct Group *group = group_of(text_of(cause[0:message_size]));
         if (group->count < examples_max) group->examples[group->count] = i;
         group->count += 1;
+        // the first diagnostic of a file is what stops it (#2247)
+        if (starts_file(i)) group->stopped += 1;
         if (group->last_file != file) {
             group->last_file = file;
             group->files += 1;
@@ -227,13 +233,21 @@ static void group_failures() {
     }
 }
 
-// Groups in order: the biggest first, ties in the order they first appeared (an insertion sort of a few hundred).
+// Whether group `a` ranks below group `b`: fewer files stopped at it (#2247), then fewer files, then fewer
+// occurrences, then it appeared later.
+static Bool ranks_below(const struct Group *a, const struct Group *b) {
+    if (a->stopped != b->stopped) return a->stopped < b->stopped;
+    if (a->files != b->files) return a->files < b->files;
+    if (a->count != b->count) return a->count < b->count;
+    return a->appeared > b->appeared;
+}
+
+// Groups in order: the most files stopped first, then the ordering of ranks_below (an insertion sort of a few hundred).
 static void sort_groups() {
     for (Usize i = 1; i < group_count; i++) {
         struct Group moved = groups[i];
         Usize at = i;
-        while (at > 0 && (groups[at - 1].count < moved.count ||
-                          (groups[at - 1].count == moved.count && groups[at - 1].first > moved.first))) {
+        while (at > 0 && ranks_below(&groups[at - 1], &moved)) {
             groups[at] = groups[at - 1];
             at -= 1;
         }
@@ -302,10 +316,10 @@ static void print_causes() {
     for (Usize g = 0; g < group_count; g++)
         diagnostics += groups[g].count;
     console::print("\nfailures by cause (", group_count, " causes, ", diagnostics, " diagnostics):\n");
-    console::print("  count  files  cause\n");
+    console::print("  first  count  files  cause\n");
     for (Usize g = 0; g < group_count; g++) {
-        console::print(format::pad(groups[g].count, 7), format::pad(groups[g].files, 7), "  ",
-                       (const char *)groups[g].message, "\n");
+        console::print(format::pad(groups[g].stopped, 7), format::pad(groups[g].count, 7),
+                       format::pad(groups[g].files, 7), "  ", (const char *)groups[g].message, "\n");
         Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
         for (Usize e = 0; e < shown; e++) {
             const struct Entry *at = &entries[groups[g].examples[e]];
@@ -315,6 +329,15 @@ static void print_causes() {
                 console::print("                e.g. ", (const char *)at->path, "\n");
             }
         }
+    }
+}
+
+// One fixed line per cause for the top 20, for the CI log: `frontend-cause: <first> <files> <count> <cause>`.
+static void print_cause_lines() {
+    Usize shown = group_count < causes_listed ? group_count : causes_listed;
+    for (Usize g = 0; g < shown; g++) {
+        console::print("frontend-cause: ", groups[g].stopped, " ", groups[g].files, " ", groups[g].count, " ",
+                       (const char *)groups[g].message, "\n");
     }
 }
 
@@ -346,6 +369,8 @@ static I32 summarize(const char file[:], const char *smith) {
     console::print("frontend-coverage: ", passed, " of ", files, " files pass\n");
     print_stages();
     print_causes();
+    console::print("\n");
+    print_cause_lines();
     return 0;
 }
 
