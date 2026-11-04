@@ -401,6 +401,26 @@ static ast::TypeExpr *tuple(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.tuple = {.elements = elements}});
 }
 
+// `struct Pair *next` and `const struct Pair *p`: the type is the name, the keyword goes (a tag is a type name). The
+// declaration reader drops the keyword at the head of a declaration itself; this covers a field and a type that
+// `const` starts, and does nothing where a warning already drops that keyword.
+static void drop_tag_keyword(parse::Parser *p, lex::Token keyword, lex::Token name) {
+    for (Usize i = 0; i < countof(p->warnings); i += 1) {
+        parse::Edits fix = p->warnings[i].fix;
+        for (Usize k = 0; k < countof(fix); k += 1) {
+            if (fix[k].span.start == keyword.span.start) return;
+        }
+    }
+    parse::Edits drop = {};
+    drop = mem::realloc(drop, 1);
+    ast::Span gap = keyword.span;
+    gap.end = name.span.start;
+    Str nothing = "";
+    parse::Edit change = {.span = gap, .text = nothing};
+    drop[0] = change;
+    parse::warning_fix(p, name.span, "a type is named without `struct`, `union` or `enum`", drop);
+}
+
 // The base of a type without an applied form: `auto`, `struct X`, a keyword type, `typeof`, a path. Null after an
 // error.
 static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
@@ -414,8 +434,11 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
     case lex::kw_enum:
         if (tuple_ahead(p)) return tuple(p, start, q);
         parse::advance(p);
+        lex::Token tag = parse::peek(p);
         if (!parse::accept(p, lex::name) && !parse::accept(p, lex::type_name)) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");
+        } else if (tag.kind == lex::type_name && !parse::at(p, lex::colon_colon)) {
+            drop_tag_keyword(p, token, tag);
         }
         return spelled(p, token.span.start, q);
     case lex::kw_typeof:
@@ -721,6 +744,8 @@ static ast::TypeArg argument(parse::Parser *p, Bool is_function) {
 // `Name(A, B)`: the path was read, and `(` is at the position.
 static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, ast::Path name) {
     parse::advance(p);
+    Bool in_result = p->in_result;
+    p->in_result = false;
     Bool is_function = countof(name.segments) == 1 &&
                        (text::is(name.segments[0].text, "Fn") || text::is(name.segments[0].text, "Lambda"));
     ast::TypeArg args[:] = {};
@@ -730,6 +755,7 @@ static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, as
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the type's arguments");
+    p->in_result = in_result;
     return node(start, p, q, {.applied = {.name = name, .args = args}});
 }
 
@@ -1185,7 +1211,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
         Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
         Bool capital = countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z';
         Bool is_vec = countof(name.segments) == 1 && text::is(last, "vec");
-        if (capital || is_lambda || is_vec || qualified_call || group_then_name(p, 0))
+        // A function's result is a type: `-> slice_of(T, n)` is the type function applied, whatever its case.
+        if (capital || is_lambda || is_vec || qualified_call || p->in_result || group_then_name(p, 0))
             base = applied(p, start, q, name);
     }
     old.after = p->position;

@@ -1,0 +1,259 @@
+// front::fix_zero, the fix-it for the empty list of a struct (#2224, decided on #1406): `P x = {}` of C is `let x: P =
+// {}` after the declaration's own fix, and `{}` with no type has no form in smith.
+//
+//   let x: P = {}              let x: P = P(a = 0, p = nullptr)     every field given, zero values from the types
+//   let mut x: P = {}          let mut x: P = undefined             when the statements right after the declaration, in
+//   x.a = 1                    x.a = 1                              the same block, assign every field by name and
+//   x.p = q                    x.p = q                              none reads `x`
+//
+// A zero value is written for a number (`0`, `0.0`), a `Bool`, a pointer, an array of those (`[0, 0]`, up to
+// `array_limit` elements) and a struct of those, one level down. A struct with any other field (an enum, a slice, a
+// union, a struct two levels down) keeps its warning: it needs a spelling smith has not settled. A list that has no
+// struct type (`struct smith_array_T_n`, `typeof(xs)`) is left alone too.
+//
+//   fix_zero::edits(module, checked)   one fix for each declaration whose initializer is `{}` of a struct
+module front::fix_zero;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::arena;
+import std::format;
+import std::mem;
+
+constexpr Usize array_limit = 64;
+
+struct Work {
+    const ast::Stmt *items[:];
+    Usize top;
+};
+
+static void push(Work *w, const ast::Stmt *stmt) {
+    if (stmt == nullptr) return;
+    if (w->top == countof(w->items)) {
+        Usize capacity = countof(w->items) * 2;
+        if (capacity < 32) capacity = 32;
+        w->items = mem::realloc(w->items, capacity);
+    }
+    w->items[w->top] = stmt;
+    w->top += 1;
+}
+
+static void push_children(Work *w, const ast::Stmt *s) {
+    if (s->kind == .block) {
+        for (Usize i = countof(s->kind.block.items); i > 0; i--)
+            push(w, s->kind.block.items[i - 1]);
+    } else if (s->kind == .if_stmt) {
+        push(w, s->kind.if_stmt.then_branch);
+        push(w, s->kind.if_stmt.else_branch);
+    } else if (s->kind == .while_stmt) {
+        push(w, s->kind.while_stmt.body);
+    } else if (s->kind == .do_while) {
+        push(w, s->kind.do_while.body);
+    } else if (s->kind == .for_stmt) {
+        push(w, s->kind.for_stmt.body);
+    } else if (s->kind == .for_in) {
+        push(w, s->kind.for_in.body);
+    } else if (s->kind == .if_let) {
+        push(w, s->kind.if_let.then_branch);
+        push(w, s->kind.if_let.else_branch);
+    } else if (s->kind == .defer_stmt) {
+        push(w, s->kind.defer_stmt.body);
+    } else if (s->kind == .errdefer_stmt) {
+        push(w, s->kind.errdefer_stmt.body);
+    } else if (s->kind == .labeled) {
+        push(w, s->kind.labeled.body);
+    } else if (s->kind == .switch_stmt) {
+        for (Usize i = 0; i < countof(s->kind.switch_stmt.cases); i++) {
+            ast::StmtRef body[:] = s->kind.switch_stmt.cases[i].body;
+            for (Usize k = 0; k < countof(body); k++)
+                push(w, body[k]);
+        }
+    }
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The zero value of a type that is a number, a `Bool` or a pointer; empty for any other.
+static Str scalar_zero(types::TypeRef t) {
+    if (t->kind == .integer) return "0";
+    if (t->kind == .floating) return "0.0";
+    if (t->kind == .bool_type) return "false";
+    if (t->kind == .pointer) return "nullptr";
+    return "";
+}
+
+// The zero value of a scalar or of an array of scalars; empty for any other.
+static Str flat_zero(types::TypeRef t) {
+    Str one = scalar_zero(t);
+    if (countof(one) > 0) return one;
+    if (t->kind != .array || t->count == 0 || t->count > array_limit) return "";
+    Str item = scalar_zero(t->element);
+    if (countof(item) == 0) return "";
+    Str out = "[";
+    for (Usize i = 0; i < t->count; i++)
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", item));
+    return types::message_of(format::push(out, "]"));
+}
+
+// `T(a = 0, b = nullptr)` of a struct whose fields are all flat; empty when one is not (`allow_nested` false), or, with
+// it, `T(a = 0, inner = U(x = 0))` where a field is a struct of flat fields.
+static Str construct_flat(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        Str zero = flat_zero(t->slots[i].type);
+        if (countof(zero) == 0) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+static Str construct(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
+        if (countof(zero) == 0) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+// Whether `text` holds `name` as a whole word.
+static Bool mentions(Str text, Str name) {
+    Usize n = countof(name);
+    if (n == 0) return false;
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (!same(text[i:i + n], name)) continue;
+        Bool before =
+            i > 0 && (text[i - 1] == '_' || (text[i - 1] >= 'a' && text[i - 1] <= 'z') ||
+                      (text[i - 1] >= 'A' && text[i - 1] <= 'Z') || (text[i - 1] >= '0' && text[i - 1] <= '9'));
+        Usize e = i + n;
+        Bool after = e < countof(text) && (text[e] == '_' || (text[e] >= 'a' && text[e] <= 'z') ||
+                                           (text[e] >= 'A' && text[e] <= 'Z') || (text[e] >= '0' && text[e] <= '9'));
+        if (!before && !after) return true;
+    }
+    return false;
+}
+
+// The index of the field that the statement `x.f = v` assigns, when it is one and `v` does not mention `x`; else the
+// number of fields.
+static Usize assigned_field(Str source, const ast::Stmt *s, Str name, types::TypeRef t) {
+    Usize none = countof(t->slots);
+    if (s->kind != .expression) return none;
+    const ast::Expr *e = s->kind.expression.value;
+    if (e == nullptr || e->kind != .assign || e->kind.assign.op != .plain) return none;
+    const ast::Expr *target = e->kind.assign.target;
+    if (target->kind != .member || target->kind.member.arrow) return none;
+    const ast::Expr *base = target->kind.member.base;
+    if (base->kind != .name || countof(base->kind.name.path.segments) != 1) return none;
+    if (!same(base->kind.name.path.segments[0].text, name)) return none;
+    const ast::Expr *value = e->kind.assign.value;
+    if (value == nullptr || mentions(source[value->span.start:value->span.end], name)) return none;
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        if (same(t->slots[i].name, target->kind.member.name)) return i;
+    }
+    return none;
+}
+
+// Whether the statements after `items[at]` assign every field of `t` by name before anything else.
+static Bool written_first(Str source, ast::StmtRef items[:], Usize at, Str name, types::TypeRef t) {
+    Usize total = countof(t->slots);
+    if (total > 64) return false;
+    U64 seen = 0;
+    Usize covered = 0;
+    for (Usize k = at + 1; k < countof(items) && covered < total; k++) {
+        Usize field = assigned_field(source, items[k], name, t);
+        if (field == total) return false;
+        if ((seen & ((U64)1 << field)) != 0) return false;
+        seen |= (U64)1 << field;
+        covered += 1;
+    }
+    return covered == total;
+}
+
+// Whether `e` is `{}`: an empty list with no type, or (in braces, new syntax) an empty block used as a value.
+static Bool is_empty_braces(const ast::Expr *e) {
+    if (e->kind == .compound) return e->kind.compound.type == nullptr && countof(e->kind.compound.items) == 0;
+    if (e->kind != .stmt_expr) return false;
+    const ast::Stmt *s = e->kind.stmt_expr.stmt;
+    return s != nullptr && s->kind == .block && countof(s->kind.block.items) == 0;
+}
+
+constexpr Usize no_block = ~(Usize)0;
+
+// The fix of the variable `d`, which is `items[at]` of a block (`at` is `no_block` for a global).
+static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d, ast::StmtRef items[:], Usize at) {
+    core::ParseError none = {};
+    if (d->kind != .variable) return none;
+    const ast::Expr *init = d->kind.variable.init;
+    ast::TypeExpr *written = d->kind.variable.type;
+    if (init == nullptr || written == nullptr || !is_empty_braces(init)) return none;
+    // The declared type: in braces (`let x: P = {}` before the blocks are indented) `{}` reads as an empty block, so
+    // the initializer has no type of its own. Resolving it again must not leave an error behind.
+    Usize errors_before = c->error_count;
+    types::TypeRef t = types::resolve(c, written);
+    c->error_count = errors_before;
+    if (t == nullptr || t->kind != .record) return none;
+    Str name = d->kind.variable.name;
+    Str text = "";
+    if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
+        written_first(source, items, at, name, t)) {
+        text = "undefined";
+    } else {
+        text = construct(source[written->span.start:written->span.end], t);
+    }
+    if (countof(text) == 0) return none;
+    core::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = (core::Edit){.span = init->span, .text = text};
+    core::ParseError found = {};
+    found.span = init->span;
+    found.message = "an empty `{}` of a struct is written out";
+    found.fix = edits;
+    return found;
+}
+
+static core::Errors add(core::Errors out, core::ParseError found) {
+    if (countof(found.fix) == 0) return out;
+    out = mem::realloc(out, countof(out) + 1);
+    out[countof(out) - 1] = found;
+    return out;
+}
+
+// The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
+export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
+    core::Errors out = {};
+    Work w = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .function) push(&w, d->kind.function.body);
+        if (d->kind == .variable) {
+            ast::StmtRef none[:] = {};
+            out = add(out, fix_of(source, c, d, none, no_block));
+        }
+    }
+    while (w.top > 0) {
+        w.top -= 1;
+        const ast::Stmt *s = w.items[w.top];
+        if (s->kind == .block) {
+            ast::StmtRef items[:] = s->kind.block.items;
+            for (Usize i = 0; i < countof(items); i++) {
+                const ast::Stmt *item = items[i];
+                if (item->kind == .declaration)
+                    out = add(out, fix_of(source, c, item->kind.declaration.decl, items, i));
+            }
+        }
+        push_children(&w, s);
+    }
+    return out;
+}
