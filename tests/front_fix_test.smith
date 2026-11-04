@@ -288,6 +288,18 @@ export void test_a_top_level_if_constexpr_on_the_processor_becomes_when() {
                            "@when(target.arch != .aarch64)\nlet mut a: i32 = 2\n");
 }
 
+// A condition that names a constant is kept as written, and its `else` is `!(...)` (#2142).
+export void test_a_top_level_if_constexpr_on_a_constant_becomes_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "constexpr bool wide = true;\n\nif constexpr (wide) {\n"
+                                                "    int a = 1;\n} else {\n    int a = 2;\n}\n");
+    check_text(fixed.text, "const wide: bool = true\n\n@when(wide)\nlet mut a: i32 = 1\n"
+                           "@when(!(wide))\nlet mut a: i32 = 2\n");
+}
+
 // In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
 // system keeps the block of the old syntax (its declarations mended, the block not).
 export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
@@ -298,8 +310,8 @@ export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
     parser::Parsed new_file =
         parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    let a: i32 = 1\n}\n");
     check_count(countof(new_file.errors) > 0 ? 1 : 0, 1);
-    fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (wide) {\n    int a = 1;\n}\n");
-    check_text(kept.text, "if constexpr (wide) {\n    let mut a: i32 = 1\n}\n");
+    fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (sizeof(int) == 4) {\n    int a = 1;\n}\n");
+    check_text(kept.text, "if constexpr (sizeof(i32) == 4) {\n    let mut a: i32 = 1\n}\n");
 }
 
 // An `#if` that is not about the system, is inside a function or holds another directive stays as it is.
@@ -504,6 +516,18 @@ export void test_a_bare_c_member_becomes_the_header_binding() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "import c <stdlib.h>\n\npub fn f() -> i32:\n    c.abs(-1)\n");
+    check_text(fixed.text, "import c <stdlib.h>\n\npub fn f() -> i32:\n    stdlib.abs(-1)\n");
+    check_count(fixed.applied, 1);
+}
+
+// A bare `abs` that `import c <stdlib.h>` declares is written `stdlib.abs` (#2287); a name no header has is left.
+export void test_a_bare_c_function_becomes_the_header_binding() {
+    use_header_flags();
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "import c <stdlib.h>\n\npub fn f() -> i32:\n    abs(-1)\n");
     check_text(fixed.text, "import c <stdlib.h>\n\npub fn f() -> i32:\n    stdlib.abs(-1)\n");
     check_count(fixed.applied, 1);
 }
