@@ -915,7 +915,8 @@ static Bool named_construction(const parse::Parser *p) {
 
 // A name or path as a value, or a type as a value.
 static ast::Expr *name_or_type(parse::Parser *p) {
-    if (parse_type::starts_type(p, 0) && !named_construction(p)) return type_value(p);
+    if (parse_type::starts_type(p, 0) && !named_construction(p) && !parse_type::path_then_product(p, 0))
+        return type_value(p);
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind != lex::name && kind != lex::type_name) {
         not_an_expression(p);

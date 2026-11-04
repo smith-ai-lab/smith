@@ -1,0 +1,30 @@
+import c "k.h"
+
+struct Plain:
+    cells: [k.SIDE]u8
+
+struct Typed:
+    cells: [k.SIDE][k.depth]u8
+    n: u32
+
+struct Inner:
+    x: [k.SIDE * 2]u8
+
+struct Nested:
+    inside: Inner
+    y: [k.SIDE + 1]u8
+
+# The old case had a global array `table` here; a global array constant waits for #2113, so a struct of the same size
+# keeps the 33.
+struct Table:
+    items: [k.SIDE]u8
+
+pub struct Board:
+    pub cells: [k.SIDE * k.SIDE]u8
+    pub n: u32
+
+pub fn board_size() -> usize:
+    sizeof(Board)
+
+pub fn other_sizes() -> usize:
+    sizeof(Plain) + sizeof(Typed) + sizeof(Nested) + sizeof(Table)
