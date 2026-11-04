@@ -2812,6 +2812,16 @@ static Bool system_word(Str word) {
            same_text(word, "true") || same_text(word, "false");
 }
 
+// Whether result[at:end] can be the name of a constant: it starts with a letter or `_` and no `(` follows it (a
+// call is not a constant).
+static Bool constant_word(Str text, Usize at, Usize end) {
+    char c = text[at];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')) return false;
+    while (end < countof(text) && text[end] == ' ')
+        end += 1;
+    return end >= countof(text) || text[end] != '(';
+}
+
 // The condition as `@when` writes it: `target::os` is `target.os` and `target::macos` is `.macos`. Gives "" when it
 // says anything but the system, and then "" (the words `target`, `os`, `macos`, `linux`, `true`, `false`, and `==`,
 // `!=`, `!`, `&&`,
@@ -2841,7 +2851,7 @@ static Str when_text(Str condition) {
         if (word_char(c)) {
             while (end < countof(result) && word_char(result[end]))
                 end += 1;
-            if (!system_word(result[at:end])) return "";
+            if (!system_word(result[at:end]) && !constant_word(result, at, end)) return "";
         } else if (c != ' ' && c != '.' && c != '=' && c != '!' && c != '&' && c != '|' && c != '(' && c != ')') {
             return "";
         }

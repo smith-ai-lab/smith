@@ -175,6 +175,42 @@ static Bool is_target(const ast::Expr *e, Str fact) {
     return same_text(base->kind.name.path.segments[0].text, "target");
 }
 
+// The module's boolean constants (`constexpr Bool wide = true;`, `const wide = true`), which a condition may name
+// (#2142). `live_module`, `reads_guarded_header` and `dead_names` set them from the module they are given.
+static Str known_names[16];
+static Bool known_values[16];
+static Usize known_count = 0;
+
+static void read_constants(const ast::Module *m) {
+    known_count = 0;
+    for (Usize i = 0; i < countof(m->decls) && known_count < 16; i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .variable || !d->kind.variable.is_constexpr) continue;
+        const ast::Expr *init = d->kind.variable.init;
+        if (init == nullptr || init->kind != .boolean) continue;
+        known_names[known_count] = d->kind.variable.name;
+        known_values[known_count] = init->kind.boolean.value;
+        known_count += 1;
+    }
+}
+
+// Whether `e` names one of the module's boolean constants, and its value.
+static Bool known_constant(const ast::Expr *e, Bool *value) {
+    if (e->kind != .name || countof(e->kind.name.path.segments) != 1) return false;
+    for (Usize i = 0; i < known_count; i++) {
+        if (same_text(e->kind.name.path.segments[0].text, known_names[i])) {
+            *value = known_values[i];
+            return true;
+        }
+    }
+    return false;
+}
+
+static Str constant_name(const ast::Expr *e) {
+    if (e->kind != .name) return "";
+    return e->kind.name.path.segments[0].text;
+}
+
 struct Frame {
     const ast::Expr *e;
     U32 stage;
@@ -201,8 +237,12 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
         const ast::Expr *lhs = nullptr;
         const ast::Expr *rhs = nullptr;
         Bool is_and = false;
+        Bool named = false;
         if (is_target(e, "static_analyzer")) {
             values[count++] = false; // the new front end never runs under clang's analyzer (#2277)
+            top -= 1;
+        } else if (known_constant(e, &named)) {
+            values[count++] = named;
             top -= 1;
         } else if (e->kind == .boolean) {
             values[count++] = e->kind.boolean.value;
@@ -358,8 +398,11 @@ static Str render(const ast::Expr *cond, Bool as_c) {
         Piece seq[6]; // in the order written
         Usize n = 0;
         if (p.paren) seq[n++] = word("(");
+        Bool named = false;
         if (is_target(e, "static_analyzer")) {
             seq[n++] = word(as_c ? "defined(__clang_analyzer__)" : "target.static_analyzer");
+        } else if (known_constant(e, &named)) {
+            seq[n++] = word(as_c ? pick(named, "1", "0") : constant_name(e));
         } else if (e->kind == .boolean) {
             Bool value = e->kind.boolean.value;
             seq[n++] = word(as_c ? pick(value, "1", "0") : pick(value, "true", "false"));
@@ -455,6 +498,7 @@ static Bool has_when(const ast::Module *m) {
 // Whether the module reads a C header on `os` through an import under `@when` (#2142): a header of another system
 // than the one smith runs on is not there to read, so the module is not checked as it is on that system.
 export Bool reads_guarded_header(const ast::Module *m, Os os) {
+    read_constants(m);
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         Bool header = d->kind == .import_c || (d->kind == .import_from && countof(d->kind.import_from.header) > 0);
@@ -500,6 +544,7 @@ static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
 }
 
 export const ast::Module *live_module(const ast::Module *m, Os os) {
+    read_constants(m);
     Bool changed = has_when(m);
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = *m;
@@ -534,6 +579,7 @@ export const ast::Module *live_module(const ast::Module *m, Os os) {
 }
 
 export typeof(Dead[:]) dead_names(const ast::Module *m, Os os) {
+    read_constants(m);
     Dead dead[:] = {};
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
