@@ -1206,8 +1206,36 @@ static Bool new_pointer_init(const parse::Parser *p) {
         at += 1;
     if (at == 0) return false;
     lex::TokenKind type = parse::peek_at(p, at).kind;
-    if (type != lex::name && type != lex::type_name) return false;
+    if (type != lex::name && type != lex::type_name && !parse_type::is_keyword_type(type)) return false;
     return parse::peek_at(p, at + 1).kind == lex::name && parse::peek_at(p, at + 2).kind == lex::equal;
+}
+
+// `*T name = v;` as a statement: a declaration whose type an earlier pass wrote in smith's own form (the init of a
+// `for` that became a `while`), not the dereference `*T` (#2224). It is `let mut name: *T = v`.
+static ast::Stmt *pointer_statement(parse::Parser *p) {
+    U32 start = parse::peek(p).span.start;
+    Usize stars = 0;
+    while (parse::peek_at(p, stars).kind == lex::star)
+        stars += 1;
+    ast::Span type = parse::peek_at(p, stars).span;
+    Str name = parse::text(p, parse::peek_at(p, stars + 1));
+    U32 equal_end = parse::peek_at(p, stars + 2).span.end;
+    Str pointer = p->source[start:type.end];
+    for (Usize i = 0; i < stars + 3; i += 1)
+        parse::advance(p);
+    Usize before = countof(p->errors);
+    ast::Expr *value = expression(p);
+    lex::Token semicolon = parse::peek(p);
+    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    if (countof(p->errors) == before) {
+        parse::Edits edits = edit_list(2);
+        char text[:] = format::push("let mut ", name, ": ", pointer, " =");
+        edits[0] = edit((ast::Span){.start = start, .end = equal_end}, text);
+        edits[1] = edit(semicolon.span, "");
+        ast::Span whole = {.start = start, .end = semicolon.span.end};
+        parse::warning_fix(p, whole, "a pointer variable is written `let mut p: *T = v`", edits);
+    }
+    return settle(p, start, before, new_stmt({.expression = {.value = value}}));
 }
 
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
@@ -1388,6 +1416,7 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     }
     if (extended_asm(p)) return asm_statement(p);
     if (starts_declaration(p)) return declaration_statement(p);
+    if (new_pointer_init(p)) return pointer_statement(p);
     habit_warning(p);
     return expression_statement(p);
 }

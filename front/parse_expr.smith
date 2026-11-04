@@ -1817,7 +1817,7 @@ static Bool starts_bare_operand(lex::TokenKind kind) {
     }
 }
 
-// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase, not `c::`) alone in the parentheses, then a
+// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase; a `c::` path too) alone in the parentheses, then a
 // token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference and
 // `(x)(y)` a call. Whether `x` IS a type is the checker's.
 static Bool type_value_cast(const parse::Parser *p) {
@@ -1828,9 +1828,16 @@ static Bool type_value_cast(const parse::Parser *p) {
         if (next != lex::name && next != lex::type_name) break;
         last += 2;
     }
-    if (text::is(parse::text(p, parse::peek_at(p, 0)), "c")) return false;
-    if (parse::peek_at(p, last + 1).kind != lex::right_paren) return false;
-    return starts_bare_operand(parse::peek_at(p, last + 2).kind);
+    Bool is_c = text::is(parse::text(p, parse::peek_at(p, 0)), "c");
+    if (is_c && last == 0) return false;
+    Usize close = last + 1;
+    // A `c::` type is lowercase (`c::pid_t`), so it reads as a value; one or more `*` before the `)` make it a pointer
+    // type (`(c::rusage_info_t *)&usage`), which no value is.
+    while (is_c && parse::peek_at(p, close).kind == lex::star)
+        close += 1;
+    if (parse::peek_at(p, close).kind != lex::right_paren) return false;
+    if (close > last + 1) return true;
+    return starts_bare_operand(parse::peek_at(p, close + 1).kind);
 }
 
 // Whether `(c::T) {` starts a compound literal of a C name: a `c::` path alone in the parentheses and a `{` after them.

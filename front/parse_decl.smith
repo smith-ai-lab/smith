@@ -1380,6 +1380,15 @@ static U32 list_length(const parse::Parser *p, U32 from, U32 to) {
     return 0;
 }
 
+// Whether the dimensions text is one pair of brackets (`[5]`), not `[2][3]`.
+static Bool single_dimension(Str text) {
+    Usize brackets = 0;
+    for (Usize i = 0; i < countof(text); i += 1) {
+        if (text[i] == '[') brackets += 1;
+    }
+    return brackets == 1;
+}
+
 // `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `let a = v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1402,9 +1411,11 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (suffixed && countof(value) > 0 && value[0] == '{') {
         // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
         // elements is written; any other `{...}` list on an array has no spelling yet.
-        U32 count = same_text(dims.text, "[_]") ? list_length(p, equal_end, last.span.start) : 0;
-        if (count == 0) fixable = false;
-        dims.text = as_str(format::push("[", count, "]"));
+        // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
+        // checker's error, not a silent zero fill.
+        U32 count = list_length(p, equal_end, last.span.start);
+        if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
+        if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
     }
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
