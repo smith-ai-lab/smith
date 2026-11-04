@@ -126,7 +126,8 @@ export Bool call_type_ahead(const parse::Parser *p, Usize offset) {
     Usize last = path_last(p, offset);
     if (last == no_path) return false;
     // `Fn(U32 (void *)) f`: what the fix of a function-pointer declarator wrote.
-    Bool fn_call = parse::peek_at(p, last).kind == lex::type_name && text::is(parse::text(p, parse::peek_at(p, last)), "Fn");
+    Bool fn_call =
+        parse::peek_at(p, last).kind == lex::type_name && text::is(parse::text(p, parse::peek_at(p, last)), "Fn");
     if (parse::peek_at(p, last).kind != lex::name && !fn_call) return false;
     if (last != offset && text::is(parse::text(p, parse::peek_at(p, offset)), "c")) return false;
     return group_then_name(p, last + 1);
@@ -442,7 +443,8 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");
         } else if (tag.kind == lex::name && text::is(parse::text(p, tag), "c") && parse::at(p, lex::colon_colon)) {
             // `struct c::pollfd`: a C tag through the header's namespace is the type `c.pollfd`.
-            while (parse::at(p, lex::colon_colon) && (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
+            while (parse::at(p, lex::colon_colon) &&
+                   (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
                 parse::warn_separator(p, parse::advance(p));
                 parse::advance(p);
             }

@@ -159,8 +159,7 @@ left over: `}`
   (function f
     (result (named I32))
     (block
-      (return (name c::size_t)))))
-left over: `x`
+      (return (cast (named c::size_t) (name x))))))
 
 [](a, b) { }
 (module m

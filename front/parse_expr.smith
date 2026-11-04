@@ -1199,8 +1199,8 @@ static void conditional_warning(Stack *st, const Pending *op, const ast::Expr *c
     // A `?` or `:` that starts a line leaves the line break out: `if c {` and `} else {` stay on their lines.
     Bool head_breaks = has_break(st->parser->source, condition->span.end, op->head.start);
     Bool colon_breaks = has_break(st->parser->source, op->middle->span.end, op->colon.start);
-    edits = with_edit(edits, head_breaks ? from_to(condition->span.end, op->head.end) : op->head,
-                      head_breaks ? " {" : "{");
+    edits =
+        with_edit(edits, head_breaks ? from_to(condition->span.end, op->head.end) : op->head, head_breaks ? " {" : "{");
     edits = with_edit(edits, colon_breaks ? from_to(op->middle->span.end, op->colon.end) : op->colon,
                       colon_breaks ? " } else {" : "} else {");
     ast::Span span = from_to(condition->span.start, last->span.end);
@@ -1216,7 +1216,8 @@ static void note_bump(Stack *st, ast::Expr *expr, ast::Span token) {
 // The fix of `x = y++;`, `x = ++y;` as the whole statement of a line: the step is a statement of its own, after the
 // assignment (`y++`) or before it (`++y`). Nothing when the statement shares its line with anything else (an unbraced
 // `if (c) x = y++;` would take only the first).
-static parse::Edits bump_in_assignment(const parse::Parser *p, Bump bump, const ast::Expr *whole, Bool is_post, Str step) {
+static parse::Edits bump_in_assignment(const parse::Parser *p, Bump bump, const ast::Expr *whole, Bool is_post,
+                                       Str step) {
     parse::Edits none = {};
     if (whole == nullptr || whole->kind != .assign || whole->kind.assign.op != .plain) return none;
     if (whole->kind.assign.value != bump.expr || bump.expr->kind != .unary) return none;
@@ -1788,8 +1789,8 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     case lex::left_bracket:
         // A `[` that starts a line is not an index where the line before it ends a statement (`[[noreturn]] fn` after
         // a constant's value, #2224).
-        if (p->new_syntax && !p->layout && p->position > 0 &&
-            lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
+        if (p->new_syntax && !p->layout && p->position > 0 && lex::ends_statement(p->tokens[p->position - 1]) &&
+            !inside_brackets(p))
             return .absent;
         result = index_or_slice(p, base);
         break;
@@ -1869,8 +1870,9 @@ static Bool starts_bare_operand(lex::TokenKind kind) {
     }
 }
 
-// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase; a `c::` path too) alone in the parentheses, then a
-// token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference and
+// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase; a `c::` path too) alone in the parentheses,
+// then a token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference
+// and
 // `(x)(y)` a call. Whether `x` IS a type is the checker's.
 static Bool type_value_cast(const parse::Parser *p) {
     Usize last = 0;
@@ -1908,8 +1910,8 @@ static Bool c_literal_type(const parse::Parser *p) {
 }
 
 // `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
-// Whether `(fn(A))operand` is ahead, the `(` taken: a cast to a function type (`(void (*)(i32))0` after a pass), read as
-// a cast whose fix writes `operand.cast(fn(A))`.
+// Whether `(fn(A))operand` is ahead, the `(` taken: a cast to a function type (`(void (*)(i32))0` after a pass), read
+// as a cast whose fix writes `operand.cast(fn(A))`.
 static Bool fn_type_cast(const parse::Parser *p) {
     lex::Token word = parse::peek_at(p, 0);
     Bool is_fn = word.kind == lex::kw_fn || (word.kind == lex::name && text::is(parse::text(p, word), "fn"));
@@ -1940,7 +1942,8 @@ static Bool old_pointer_cast(const parse::Parser *p) {
     return stars > 0 && parse::peek_at(p, at + stars).kind == lex::right_paren;
 }
 
-// Whether `(T){.x = ...` is ahead, the `(` taken: a compound literal of today's syntax in a text a pass has half mended.
+// Whether `(T){.x = ...` is ahead, the `(` taken: a compound literal of today's syntax in a text a pass has half
+// mended.
 static Bool old_literal_ahead(const parse::Parser *p) {
     Usize at = 0;
     lex::TokenKind first = parse::peek_at(p, 0).kind;

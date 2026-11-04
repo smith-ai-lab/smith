@@ -85,8 +85,8 @@ struct Prefixes {
 struct Style {
     Bool saw_old;
     Bool saw_new;
-    Bool top;     // the record or enum is a declaration of the file: its old members carry fixes
-    Bool unfixed; // an old member that has no mechanical fix: the `;` after the `}` stays
+    Bool top;        // the record or enum is a declaration of the file: its old members carry fixes
+    Bool unfixed;    // an old member that has no mechanical fix: the `;` after the `}` stays
     Bool capability; // `struct [[clang::annotate("std::capability")]] ...`: `@capability` in front of the declaration
     ast::Span capability_span; // where that attribute is written
 };
@@ -1862,7 +1862,8 @@ static void skip_capability(parse::Parser *p, Style *style) {
     U32 start = parse::peek(p).span.start;
     Usize close = 2;
     while (parse::peek_at(p, close).kind != lex::end_of_file &&
-           !(parse::peek_at(p, close).kind == lex::right_bracket && parse::peek_at(p, close + 1).kind == lex::right_bracket))
+           !(parse::peek_at(p, close).kind == lex::right_bracket &&
+             parse::peek_at(p, close + 1).kind == lex::right_bracket))
         close += 1;
     if (parse::peek_at(p, close).kind == lex::end_of_file) return;
     U32 end = parse::peek_at(p, close + 1).span.end;
