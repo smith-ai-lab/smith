@@ -945,7 +945,7 @@ export void test_parse_decl_old_functions() {
     expect_fixed("I32 f(I32 a, I32 b) { }\n", "fn f(a: i32, b: i32) -> i32:\n", 1);
     expect_fixed("void g(void) { }\n", "fn g():\n", 1);
     expect_fixed("constexpr I32 h(I32 a) { }\n", "fn h(a: i32) -> i32:\n", 1);
-    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest: ...) -> i32:\n", 1);
+    expect_fixed("I32 t(constexpr Type T, auto... rest) { }\n", "fn t(T: type, rest...) -> i32:\n", 1);
     expect_fixed("I32 p(I32 a);\n", "i32 p(i32 a);\n", 2);
     expect_fixed("I32 s(I32 xs[:]) { }\n", "fn s(xs: []i32) -> i32:\n", 1);
     expect_fixed("void k(U64 key, U64 keys[3]) { }\n", "fn k(key: u64, keys: [3]u64):\n", 1);

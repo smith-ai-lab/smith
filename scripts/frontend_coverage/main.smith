@@ -35,7 +35,7 @@ import <stdlib.h>;
 import <unistd.h>;
 
 constexpr Usize files_max = 4096;
-constexpr Usize entries_max = 32768;
+constexpr Usize entries_max = 262144;
 constexpr Usize groups_max = 2048;
 constexpr Usize examples_max = 3;
 constexpr Usize causes_listed = 20;
@@ -63,6 +63,8 @@ struct Group {
 
 static struct Entry entries[entries_max];
 static Usize entry_count = 0;
+// Rows that did not fit in the table: any makes the run an error, never a smaller count (#2264).
+static Usize entries_dropped = 0;
 static struct Group groups[groups_max];
 static Usize group_count = 0;
 
@@ -105,9 +107,13 @@ static typeof(const char[:]) text_of(const char buffer[:]) {
     return buffer[0:length_of(buffer)];
 }
 
-// Adds a result to the table; a table that is full drops the rest (files_max is far beyond the tree).
+// Adds a result to the table. A table that is full counts the row in entries_dropped, and run fails on it (#2264: a
+// full table once dropped every file after the 700th without a word).
 static void add_entry(const char path[:], const char stage[:], const char message[:], const char position[:]) {
-    if (entry_count == entries_max) return;
+    if (entry_count == entries_max) {
+        entries_dropped += 1;
+        return;
+    }
     struct Entry *entry = &entries[entry_count];
     copy_text(entry->path[0:path_size], path);
     copy_text(entry->stage[0:stage_size], stage);
@@ -406,8 +412,11 @@ static Bool list_tree(const char *root) {
     defer mem::free(done.ok.output.data);
     if (done.ok.errors.data != nullptr) mem::free(done.ok.errors.data);
     Usize at = 0;
-    while (at < countof(text) && tree_count < files_max) {
+    while (at < countof(text)) {
+        // a tree beyond files_max is an error, not a smaller tree (#2264)
+        if (tree_count == files_max) return false;
         Usize end = find(text, '\n', at);
+        if (end == at) break;
         copy_text(tree[tree_count][0:path_size], text[at:end]);
         tree_count += 1;
         at = end + 1;
@@ -540,7 +549,7 @@ static typeof(const char[:]) position_of(const char line[:], Usize error) {
 
 // Every error of a compile's output, as an entry each: `a.smith:3:7: error: message` is `message` at `3:7`. Output
 // with no `error:` line (a crash, a missing tool) is one entry with the text as it stands. Returns how many.
-static Usize record_errors(const char *path, const char output[:], const char stage[:]) {
+static Usize record_errors(const char *path, const char output[:], const char stage[:], I32 status) {
     Usize made = 0;
     Usize at = 0;
     while (at < countof(output)) {
@@ -557,7 +566,11 @@ static Usize record_errors(const char *path, const char output[:], const char st
     }
     if (made == 0) {
         char message[message_size];
-        copy_text(message[0:message_size], output);
+        char shown[message_size];
+        // a compile that died (killed by the memory cap, a signal, no output) names its status as its cause (#2264)
+        (void)format::to(shown, sizeof shown, "compile ended with status ", status, status > 128 ? " (signal)" : "",
+                         countof(output) > 0 ? ": " : "", output[0:countof(output) < 120 ? countof(output) : 120]);
+        copy_text(message[0:message_size], text_of(shown[0:message_size]));
         add_entry(view_of(path), stage, message[0:message_size], "");
         made = 1;
     }
@@ -618,9 +631,32 @@ static void measure(const char *smith, const char *scratch, const char *path) {
         add_entry(view_of(path), "pass", "", "");
     } else {
         stage_named(compiled.text, stage[0:stage_size]);
-        (void)record_errors(path, compiled.text, text_of(stage[0:stage_size]));
+        (void)record_errors(path, compiled.text, text_of(stage[0:stage_size]), compiled.status);
     }
     release(&compiled);
+}
+
+// The count must be the file list: one group of rows per tracked .smith file, none dropped, none missing. A mismatch is
+// an error (exit 1), never a smaller total (#2264).
+static I32 check_total() {
+    Usize expected = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (is_smith(tree[i])) expected += 1;
+    }
+    Usize measured = 0;
+    for (Usize i = 0; i < entry_count; i++) {
+        if (starts_file(i)) measured += 1;
+    }
+    if (entries_dropped > 0) {
+        console::print_error("frontend_coverage: error: the table is full, ", entries_dropped, " rows were dropped\n");
+        return 1;
+    }
+    if (measured != expected) {
+        console::print_error("frontend_coverage: error: ", measured, " files measured, ", expected,
+                             " tracked .smith files\n");
+        return 1;
+    }
+    return 0;
 }
 
 static I32 run(const char *smith, const char *root, const char *scratch) {
@@ -653,7 +689,7 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
     }
-    return 0;
+    return check_total();
 }
 
 I32 main(Str args[:]) {

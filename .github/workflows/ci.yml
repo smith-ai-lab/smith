@@ -439,6 +439,13 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
+      - name: Restore the proof cache
+        # main's `warm` saves it (#2237): a proof is keyed by the IR the prover checks, so only what changed is proved again
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/smith/proofs
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
         shell: bash
         run: |
@@ -483,6 +490,13 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
+      - name: Restore the lint cache
+        # main's `warm` saves it (#2237): an entry is keyed by the lint identity and the file's content (#2236)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/smith/lint
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Lint
         shell: bash
         run: |
@@ -490,6 +504,7 @@ jobs:
           code=0
           "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || code=$?
           echo "took lint $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          grep 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
           if [ "$code" != 0 ]; then
             tail -n 60 "$RUNNER_TEMP/lint.log"
             echo "FAIL lint"
@@ -556,7 +571,7 @@ jobs:
           - os: ubuntu-latest
             test-flags: ""
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -575,6 +590,37 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
+      - name: Restore the lint and proof caches
+        # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
+        # entry is the last main's, so the runs below only redo what the merge changed
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smith-lintprove-${{ runner.os }}-
+      - name: Fill the lint and proof caches
+        # a failure here must not fail main's push: the queue already checked this commit, and the entries that did
+        # complete are still worth saving
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          "$SMITH" lint >"$RUNNER_TEMP/lint.log" 2>&1 || true
+          grep 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          "$SMITH" prove >"$RUNNER_TEMP/prove.log" 2>&1 || true
+          tail -n 3 "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY"
+          du -sh ~/.cache/smith/lint ~/.cache/smith/proofs | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save the lint and proof caches
+        if: runner.os == 'Linux' && always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
