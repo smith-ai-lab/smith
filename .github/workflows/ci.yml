@@ -39,9 +39,6 @@ jobs:
       mac: ${{ steps.mac.outputs.mac }}
       # SMITH_CORES of a macOS job: the Mac's 16 cores shared by its 3 runners (overflow only); a hosted runner has 3
       cores: ${{ steps.mac.outputs.cores }}
-      # where the Linux test shards run: hosted ubuntu-latest, the Mac's Linux runners (#1140) only as overflow
-      linux-runner: ${{ steps.mac.outputs.linux }}
-      linux-cores: ${{ steps.mac.outputs.linux-cores }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -270,6 +267,12 @@ jobs:
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
+      # (#1140) for the ones that would not fit in the hosted slots (#2259)
+      matrix: ${{ steps.runners.outputs.matrix }}
+      runner-fmt-prove: ${{ steps.runners.outputs.fmt-prove }}
+      runner-lint: ${{ steps.runners.outputs.lint }}
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -298,19 +301,53 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: Pick the Mac's Linux runners
+        # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
+        # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
+        # ran hosted while parts waited 5 minutes for a slot). In this job, so no job and no slot is added.
+        id: pick
+        continue-on-error: true
+        uses: ./.github/actions/pick-mac
+        with:
+          token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          github-token: ${{ github.token }}
+          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          linux-jobs: "10"
+      - name: Give each job its runner
+        id: runners
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MATRIX: ${{ needs.changes.outputs.linux }}
+          MAC: ${{ steps.pick.outputs.linux-mac }}
+        run: |
+          # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then lint, then fmt-prove. An empty
+          # or failed pick is 0: everything hosted.
+          hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
+          n=${MAC:-0}; case "$n" in *[!0-9]*) n=0 ;; esac
+          [ "$n" -gt 10 ] && n=10
+          parts=$(( n > 8 ? 8 : n )); rest=$(( n - parts ))
+          lint=$hosted; fmt=$hosted
+          [ "$rest" -ge 1 ] && lint=$mac
+          [ "$rest" -ge 2 ] && fmt=$mac
+          matrix=$(printf '%s' "$MATRIX" | jq -c --argjson parts "$parts" --argjson hosted "$hosted" --argjson mac "$mac" \
+            '.include |= map(. + {runner: (if .shard > (.count - $parts) then ($mac | tojson) else ($hosted | tojson) end)})') \
+            || matrix=$(printf '%s' "$MATRIX" | jq -c --argjson hosted "$hosted" '.include |= map(. + {runner: ($hosted | tojson)})')
+          { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
+          echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
 
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
     needs: [changes, pack, build-linux]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.linux-runner) }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.linux) }}
+      matrix: ${{ fromJSON(needs.build-linux.outputs.matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.linux-cores }}
+      SMITH_CORES: "4"
       SMITH_OUTPUT: full
       SMITH_TEST_STATS: "1"
     permissions:
@@ -385,11 +422,11 @@ jobs:
     # cannot share one tree) and each runs even when an earlier one failed.
     needs: [changes, pack, build-linux]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.linux-runner) }}
+    runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-fmt-prove) }}
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.linux-cores }}
+      SMITH_CORES: "4"
       SMITH_OUTPUT: full
     permissions:
       contents: read
@@ -429,11 +466,11 @@ jobs:
     # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't
     needs: [changes, pack, build-linux]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.linux-runner) }}
+    runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-lint) }}
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.linux-cores }}
+      SMITH_CORES: "4"
       SMITH_OUTPUT: full
     permissions:
       contents: read
