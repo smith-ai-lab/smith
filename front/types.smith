@@ -1224,6 +1224,26 @@ static Str c_type_fix(Str name) {
     return "";
 }
 
+// The concept a written type names (`int`, `Num`): its lowercase name, or empty when it is no concept (#1821).
+export Str written_concept(const ast::TypeExpr *t) {
+    if (t == nullptr || t->kind != .named || countof(t->kind.named.path.segments) != 1) return "";
+    Str written = t->kind.named.path.segments[0].text;
+    if (is_own_concept(written)) return written;
+    return lowercase_concept(written);
+}
+
+// Whether the type satisfies the concept: `int` any integer, `signed` and `unsigned` by sign, `float`, `num` either,
+// `pointer` any pointer (#1821).
+export Bool concept_holds(Str concept, TypeRef t) {
+    if (same_text(concept, "int")) return t->kind == .integer;
+    if (same_text(concept, "signed")) return t->kind == .integer && t->is_signed;
+    if (same_text(concept, "unsigned")) return t->kind == .integer && !t->is_signed;
+    if (same_text(concept, "float")) return t->kind == .floating;
+    if (same_text(concept, "num")) return t->kind == .integer || t->kind == .floating;
+    if (same_text(concept, "pointer")) return t->kind == .pointer;
+    return false;
+}
+
 // The concept a capitalized concept name of today's spelling stands for (`Int` is `int`), or empty.
 static Str concept_lower(Str name) {
     if (same_text(name, "Int")) return "int";
