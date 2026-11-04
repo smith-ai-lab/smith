@@ -1,0 +1,37 @@
+# A compile-time `if` on a fact of the target keeps one branch (#2277): the other is neither checked nor emitted, so
+# it may name what does not exist on this system.
+
+fn page_size() -> usize:
+    if target.os == .macos:
+        return 16384
+    else:
+        return 4096
+
+fn analyzed(x: i32) -> i32:
+    if target.static_analyzer:
+        __builtin_assume(x > 0)
+        return no_such_function(x)
+    x + 1
+
+fn word_bits() -> i32:
+    if target.os == .macos || target.os == .linux:
+        return 64
+    32
+
+fn only_then() -> i32:
+    let mut n = 1
+    if !target.static_analyzer:
+        n = 2
+    n
+
+pub fn check() -> i32:
+    let size = page_size()
+    if size != 16384 && size != 4096:
+        return 1
+    if analyzed(4) != 5:
+        return 2
+    if only_then() != 2:
+        return 3
+    if word_bits() != 64:
+        return 4
+    0

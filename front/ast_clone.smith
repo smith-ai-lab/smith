@@ -30,6 +30,10 @@ typedef ast::SwitchCase SwitchCaseList[:];
 typedef ast::GenericAssoc GenericAssocList[:];
 typedef ast::TypeArg TypeArgList[:];
 
+// Gives the statement a copy holds in place of `s`: `s` itself, or another (never null). A compile-time `if` is
+// copied as the branch it keeps (#2277).
+export typedef const ast::Stmt *(*Choose)(const ast::Stmt *s);
+
 // One copy whose children are not copied yet.
 typedef enum {
     ast::Decl *decl;
@@ -68,8 +72,16 @@ static ast::Expr *take_expr(Work *work, const ast::Expr *old) {
     return copy;
 }
 
+// What a statement is copied as, when set (`clone_decl_choosing`): the statement itself, or another in its place.
+static Choose choosing = nullptr;
+
 static ast::Stmt *take_stmt(Work *work, const ast::Stmt *old) {
     if (old == nullptr) return nullptr;
+    for (Usize k = 0; choosing != nullptr && k < 64; k++) {
+        const ast::Stmt *chosen = choosing(old);
+        if (chosen == old) break;
+        old = chosen;
+    }
     ast::Stmt *copy = ast::new_stmt(*old);
     add(work, {.stmt = copy});
     return copy;
@@ -472,4 +484,13 @@ export ast::Decl *clone_decl(const ast::Decl *d) {
         if (node == .type) visit_type(&work, node.type);
     }
     return root;
+}
+
+// `clone_decl`, with each statement copied as what `choose` gives for it (the statements of the branch chosen are
+// copied the same way).
+export ast::Decl *clone_decl_choosing(const ast::Decl *d, Choose choose) {
+    choosing = choose;
+    ast::Decl *copy = clone_decl(d);
+    choosing = nullptr;
+    return copy;
 }

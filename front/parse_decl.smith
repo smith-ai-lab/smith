@@ -1049,6 +1049,20 @@ static lex::Token after_tag_path(const parse::Parser *p) {
     return parse::peek_at(p, at);
 }
 
+// Whether the name after the tag keyword ends its line (or the file): in smith's own syntax, before the blocks are
+// indented, `struct Name` alone on a line is the opaque type, not the type of a variable (the fixer reads its own
+// output in this form).
+static Bool tag_ends_line(const parse::Parser *p) {
+    Usize at = 1;
+    for (Usize step = 0; step < 64; step++) {
+        if (!is_name(parse::peek_at(p, at).kind)) return false;
+        if (parse::peek_at(p, at + 1).kind != lex::colon_colon) break;
+        at += 2;
+    }
+    if (parse::peek_at(p, at + 1).kind == lex::end_of_file) return true;
+    return p->position + at < countof(p->tokens) && p->tokens[p->position + at].line_break;
+}
+
 // Whether the tag keyword at the position starts a use of the type (`struct Pair a = {...};`, `struct c::stat info;`),
 // not the declaration of the type by itself (`struct Pair {...};`, `struct Pair;`, `enum Small : U8 {...}`).
 static Bool at_tag_use(const parse::Parser *p) {
@@ -1059,6 +1073,7 @@ static Bool at_tag_use(const parse::Parser *p) {
     // the layout path: `enum Small(u8):`, and `struct Name` alone on its line
     if (next == lex::left_paren && kind == lex::kw_enum) return false;
     if (next == lex::newline || next == lex::dedent) return false;
+    if (p->new_syntax && tag_ends_line(p)) return false;
     return next != lex::left_brace && next != lex::semicolon && next != lex::colon;
 }
 
@@ -2713,7 +2728,11 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     }
     if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");
     ast::TypeExpr *result = nullptr;
-    if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) result = parse::type(p);
+    if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) {
+        p->in_result = true;
+        result = parse::type(p);
+        p->in_result = false;
+    }
     if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
         !parse::at(p, lex::left_brace))
         return extern_function(p, pre, start, parse::text(p, name), params, result, variadic);
@@ -2789,6 +2808,7 @@ static Bool prefix_at(Str text, Usize at, Str prefix) {
 // Whether `word` is one a system condition is made of.
 static Bool system_word(Str word) {
     return same_text(word, "target") || same_text(word, "os") || same_text(word, "macos") || same_text(word, "linux") ||
+           same_text(word, "arch") || same_text(word, "aarch64") || same_text(word, "x86_64") ||
            same_text(word, "true") || same_text(word, "false");
 }
 
@@ -2803,6 +2823,9 @@ static Str when_text(Str condition) {
         if (prefix_at(condition, i, "target::os")) {
             result = format::push(result, "target.os");
             i += 10;
+        } else if (prefix_at(condition, i, "target::arch")) {
+            result = format::push(result, "target.arch");
+            i += 12;
         } else if (prefix_at(condition, i, "target::")) {
             result = format::push(result, ".");
             i += 8;
@@ -2843,6 +2866,8 @@ static Str negated(Str text) {
     Bool simple = !contains(text, "&") && !contains(text, "|");
     if (simple && prefix_at(text, 0, "target.os == ")) return str_of(format::push("target.os != ", text[13:]));
     if (simple && prefix_at(text, 0, "target.os != ")) return str_of(format::push("target.os == ", text[13:]));
+    if (simple && prefix_at(text, 0, "target.arch == ")) return str_of(format::push("target.arch != ", text[15:]));
+    if (simple && prefix_at(text, 0, "target.arch != ")) return str_of(format::push("target.arch == ", text[15:]));
     return str_of(format::push("!(", text, ")"));
 }
 
