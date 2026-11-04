@@ -1,0 +1,10 @@
+import c <stdio.h>
+
+# A parameter `_t` in two public functions of a library module (issue #600): the second `_t` is a declaration, not a
+# read of the first.
+pub fn wait(_t: *i32) -> i32:
+    return 0
+
+pub fn wait_for(_t: *i32, n: i32) -> i32:
+    let _ = stdio.printf("%d\n", n)
+    return 0
