@@ -19,7 +19,7 @@ Every ticket has exactly one difficulty label and one priority label, set when i
 - `task` marks a ticket in the backlog; `friction` marks a friction ticket; its priority is its comment count, not a `p` label. `mac` marks a ticket that needs the macOS SDK.
 
 ## Split rule
-A ticket is one PR of about an hour, with its files listed. No two tickets share a file. A bigger ticket is split before anyone claims it: each piece gets its own files, difficulty and the parent's priority.
+A ticket is one cause, fixed completely in one PR, with its files listed: a failure cause from the goal's measure (for the switch-over, a first error in the count, with the number of files it holds back in **Why**), a feature, or a fix. Size it by the cause, not by the clock; a few hours is fine. Don't slice one cause into pieces by count ("7 of 19 cases"): each slice pays a full queue build and touches the same files (owner, 2026-11-04: "We can definitely combine"). Split only when one cause needs two areas that can merge on their own. No two tickets share a file. Each piece gets its own files, difficulty and the parent's priority.
 
 ## Sections
 1. **Why**: one paragraph. The problem and what it costs.
@@ -28,7 +28,7 @@ A ticket is one PR of about an hour, with its files listed. No two tickets share
 4. **Interactions**: for a ticket that adds or changes a language or library feature, list each existing feature it meets (effects and their ceilings, generics, lambdas and function pointers, linear and affine types, autodiff, GPU kernels, C, C++ and Objective-C interop, contracts and `smith prove`, `smith lsp`). For each one, give one test of the two together, or one line saying why they don't meet. Owner, 2026-11-03, agreeing after the new front end shipped without effect inference: "I think that's a great idea." For a ticket that touches no feature, write "none".
 5. **Files and areas**: where the change goes and what it must not touch, so tickets in a batch do not overlap.
 6. **Escalate before building**: what the builder must ask about rather than decide. If nothing, say "nothing".
-7. **Done when**: the commands that show it, and what they print. For a feature, also the docs it updates (the skill, the concept, the README if users reach for it), so future agents learn it without reading the code. Never write "No docs here" on a `feat` ticket: the docs gate fails any `feat` commit that changes nothing under `knowledge/` or `.agents/skills/`. Name the concept row to edit (for front-end work, `knowledge/front-end.md`), or say the commit type is `refactor`, `test` or `fix`. A ticket that edits a corpus case lists every test that reads one in its checklist ([smith-dev-language](../smith-dev-language/SKILL.md) names them).
+7. **Done when**: the commands that show it, and what they print; for a cause from the count, the cause gone from the first errors and the new count in the PR. For a feature, also the docs it updates (the skill, the concept, the README if users reach for it), so future agents learn it without reading the code. Never write "No docs here" on a `feat` ticket: the docs gate fails any `feat` commit that changes nothing under `knowledge/` or `.agents/skills/`. Name the concept row to edit (for front-end work, `knowledge/front-end.md`), or say the commit type is `refactor`, `test` or `fix`. A ticket that edits a corpus case lists every test that reads one in its checklist ([smith-dev-language](../smith-dev-language/SKILL.md) names them).
 
 ## Bad
 > Add caching as discussed. Make it fast. Follow the usual conventions.
