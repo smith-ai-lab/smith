@@ -1,0 +1,33 @@
+name: queue-guard
+description: >
+  Cancels the run when it is a merge-queue run whose group left the queue (#2241, #2256). GitHub deletes the group's
+  branch `gh-readonly-queue/...` when it drops the group (a jump to the front, a removal, a failure ahead) but does
+  not cancel its run, which then holds hosted runners for nothing. One check, no waiting: each job of a `merge_group`
+  run calls this before its long steps, so a dropped group's run is cancelled by the next job to start (a job already
+  running cancels it at its next call). A job that calls it needs `actions: write` and `GH_TOKEN`; it does nothing
+  on any other event.
+
+runs:
+  using: composite
+  steps:
+    - name: Cancel the run when the group left the queue
+      if: github.event_name == 'merge_group'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # `git ls-remote --exit-code` exits 2 when the ref is missing; any other failure (network) is not a miss.
+        # Two misses 5 s apart are needed: a live group's branch exists until the queue merges or drops it.
+        misses=0
+        for try in 1 2; do
+          rc=0
+          git ls-remote --exit-code "https://github.com/$GITHUB_REPOSITORY" "$GITHUB_REF" >/dev/null || rc=$?
+          [ "$rc" = 2 ] && misses=$((misses + 1))
+          [ "$try" = 1 ] && [ "$misses" = 1 ] && sleep 5
+        done
+        if [ "$misses" = 2 ]; then
+          echo "group $GITHUB_REF left the queue: cancelling run $GITHUB_RUN_ID"
+          gh run cancel "$GITHUB_RUN_ID"
+          sleep 60
+          exit 1
+        fi
