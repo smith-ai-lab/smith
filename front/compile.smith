@@ -1064,7 +1064,77 @@ struct Spelled {
     Bool by_value;
     Str suffix;   // the array sizes after the name: `xs[4]`, `m[3][2]`; empty for every other type
     Str bindings; // the header bindings (`k` of `k.SIDE`) the sizes name, a line each
+    Str defs;     // the struct a slice or block type needs defined before it (guarded, so a repeat is harmless)
 };
+
+// The struct of a run-time array: named after its element and shape (`n` is a run-time size), one count per run-time
+// size, as the old lowering wrote it (`[]f32` is `smith_array_f32_n`, `[, 2]i32` is `smith_array_i32_n_2`).
+static Spelled spell_dimensional(const ast::TypeExpr *t);
+
+static Bool is_integer(const ast::Expr *e) {
+    return e != nullptr && e->kind == .integer;
+}
+
+// The value of an integer literal, or 0 for any other expression (test `is_integer` first).
+static U64 integer_value(const ast::Expr *e) {
+    if (e == nullptr || e->kind != .integer) return 0;
+    return e->kind.integer.value;
+}
+
+static Spelled spell_dimensional(const ast::TypeExpr *t) {
+    Spelled none = {.text = "", .by_value = false, .suffix = ""};
+    Str shape = "";
+    Usize runtime = 0;
+    const ast::TypeExpr *at = t;
+    Bool is_const = t->qualifiers.is_const;
+    for (Usize guard = 0; guard < 8; guard++) {
+        if (at->kind == .slice) {
+            shape = as_str(format::push(shape, "_n"));
+            runtime += 1;
+            at = at->kind.slice.element;
+        } else if (at->kind == .block_type) {
+            ast::ExprRef dims[:] = at->kind.block_type.dims;
+            for (Usize i = 0; i < countof(dims); i++) {
+                if (dims[i] == nullptr) {
+                    shape = as_str(format::push(shape, "_n"));
+                    runtime += 1;
+                } else if (is_integer(dims[i])) {
+                    shape = as_str(format::push(shape, "_", integer_value(dims[i])));
+                } else {
+                    return none;
+                }
+            }
+            at = at->kind.block_type.element;
+        } else if (at->kind == .array && is_integer(at->kind.array.count)) {
+            shape = as_str(format::push(shape, "_", integer_value(at->kind.array.count)));
+            at = at->kind.array.element;
+        } else {
+            break;
+        }
+    }
+    if (at->kind == .slice || at->kind == .block_type || at->kind == .array) return none;
+    is_const = is_const || at->qualifiers.is_const;
+    // The element is a scalar: a pointer or a struct here would call `spell` back, and the checker allows no recursion.
+    if (at->kind != .named || countof(at->kind.named.path.segments) != 1) return none;
+    Spelled element = {.text = scalar_spelling(at->kind.named.path.segments[0].text), .by_value = false, .suffix = ""};
+    if (countof(element.text) == 0) return none;
+    // The name of the struct uses the type's smith name, lowercase (`f32`, `char`), not the C spelling.
+    Str written = at->kind.named.path.segments[0].text;
+    Str name_part = written;
+    if (written[0] >= 'A' && written[0] <= 'Z') {
+        Usize at_letter = (Usize)(written[0] - 'A');
+        Str letters = "abcdefghijklmnopqrstuvwxyz";
+        name_part = as_str(format::push(letters[at_letter:at_letter + 1], written[1:]));
+    }
+    Str name = as_str(format::push(is_const ? "const_" : "", name_part, shape));
+    Str guard_name = as_str(format::push("SMITH_ARRAY_", name));
+    Str data = as_str(format::push(is_const ? "const " : "", element.text, " * data"));
+    Str defs =
+        as_str(format::push(element.defs, "\n#ifndef ", guard_name, "\n#define ", guard_name, "\nstruct smith_array_",
+                            name, " { ", data, "; size_t count [", runtime, "]; };\n#endif\n"));
+    return (Spelled){
+        .text = as_str(format::push("struct smith_array_", name)), .by_value = false, .suffix = "", .defs = defs};
+}
 
 // What a header knows while it spells types: the module's own `pub struct`s, its `import`s of other modules and the
 // `#include` lines the spelled types of those modules need (each once).
@@ -1123,6 +1193,7 @@ static Str imported_spelling(const ast::TypeExpr *t, HeaderScope *scope) {
 // The base of a chain of pointers: a scalar or one of the module's structs (by value only when no pointer is above it).
 static Spelled spell_base(const ast::TypeExpr *t, HeaderScope *scope, Str prefix, Bool under_pointer) {
     Spelled none = {.text = "", .by_value = false, .suffix = ""};
+    if (t->kind == .slice || t->kind == .block_type) return spell_dimensional(t);
     if (t->kind == .named && countof(t->kind.named.path.segments) > 1 && under_pointer) {
         Str imported = imported_spelling(t, scope);
         return (Spelled){.text = imported, .by_value = false, .suffix = ""};
@@ -1162,7 +1233,7 @@ static Spelled spell(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
         else
             text = as_str(format::push("const ", text, " *"));
     }
-    return (Spelled){.text = text, .by_value = false, .suffix = ""};
+    return (Spelled){.text = text, .by_value = false, .suffix = "", .defs = base.defs};
 }
 
 // The spelling of a type that may be an array: `[4]i32` is `int32_t` with the suffix `[4]`, `[3][2]f32` is `float`
@@ -1223,6 +1294,7 @@ static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *
     ast::Param params[:] = d->kind.function.params;
     Str name = d->kind.function.name;
     Str args = "";
+    Str needed = "";
     for (Usize i = 0; i < countof(params); i++) {
         Spelled spelled = spell_declarator(params[i].type, scope, prefix);
         if (countof(spelled.text) == 0) {
@@ -1237,6 +1309,7 @@ static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *
             *problems = as_str(format::push(*problems, header_error(path, source, params[i].span, message)));
             return "";
         }
+        needed = as_str(format::push(needed, spelled.defs));
         Bool star = spelled.text[countof(spelled.text) - 1] == '*';
         args = as_str(
             format::push(args, i == 0 ? "" : ", ", spelled.text, star ? "" : " ", params[i].name, spelled.suffix));
@@ -1258,6 +1331,7 @@ static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *
             return "";
         }
         result = spelled.text;
+        needed = as_str(format::push(needed, spelled.defs));
     }
     Str own = header_c_name(d);
     Bool star = result[countof(result) - 1] == '*';
@@ -1267,8 +1341,8 @@ static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *
     Str separator = " ";
     if (star) separator = "";
     Str head = as_str(format::push(result, separator, c_name, "(", args, ")"));
-    if (countof(own) > 0) return as_str(format::push(head, ";\n"));
-    return as_str(format::push(head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
+    if (countof(own) > 0) return as_str(format::push(needed, head, ";\n"));
+    return as_str(format::push(needed, head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
 }
 
 // `text` between `#if cond` and `#endif` when the declaration or field carries `@when(cond)` (#1801).
@@ -1375,6 +1449,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         const ast::Decl *d = m->decls[i];
         if (d->kind != .record || !d->is_pub) continue;
         Str fields = "";
+        Str needed = "";
         for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
             ast::FieldDecl field = d->kind.record.fields[k];
             Spelled spelled = spell_declarator(field.type, &scope, prefix);
@@ -1386,12 +1461,13 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
                 *problems = as_str(format::push(*problems, header_error(path, source, field.span, message)));
                 continue;
             }
+            needed = as_str(format::push(needed, spelled.defs));
             Bool star = spelled.text[countof(spelled.text) - 1] == '*';
             Str one = as_str(format::push(spelled.text, star ? "" : " ", field.name, spelled.suffix, "; "));
             fields = as_str(format::push(fields, guarded(d->kind.record.fields[k].attributes, one, true)));
         }
         Str made = as_str(format::push("typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
-        types = as_str(format::push(types, guarded(d->attributes, made, false)));
+        types = as_str(format::push(types, needed, guarded(d->attributes, made, false)));
     }
     Str body = "";
     Str label_start = label_prefix(triple);
