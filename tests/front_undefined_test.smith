@@ -71,22 +71,22 @@ static void new_errors(Str source, Usize count, Str needle) {
 }
 
 export void test_front_undefined_a_read_before_any_write_is_an_error() {
-    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    return a\n}\n", 1,
+    new_errors("fn f() -> i32:\n    let mut a: i32 = undefined\n    return a\n", 1,
                "`a` is read before it is written");
-    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a = a + 1\n    return a\n}\n", 1, "read before");
-    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a += 1\n    return a\n}\n", 1, "read before");
+    new_errors("fn f() -> i32:\n    let mut a: i32 = undefined\n    a = a + 1\n    return a\n", 1, "read before");
+    new_errors("fn f() -> i32:\n    let mut a: i32 = undefined\n    a += 1\n    return a\n", 1, "read before");
 }
 
 export void test_front_undefined_a_read_the_checker_cannot_order_is_allowed() {
     new_errors(
-        "fn g(c: bool) -> i32 {\n    let mut a: i32 = undefined\n    if c {\n        a = 1\n    }\n    return a\n}\n",
+        "fn g(c: bool) -> i32:\n    let mut a: i32 = undefined\n    if c:\n        a = 1\n    return a\n",
         0, "");
-    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    a = 1\n    return a\n}\n", 0, "");
-    new_errors("fn f() -> i32 {\n    let mut a: i32 = undefined\n    let mut i: i32 = 0\n    while i < 3 {\n        a "
-               "= i\n        i = i + 1\n    }\n    return a\n}\n",
+    new_errors("fn f() -> i32:\n    let mut a: i32 = undefined\n    a = 1\n    return a\n", 0, "");
+    new_errors("fn f() -> i32:\n    let mut a: i32 = undefined\n    let mut i: i32 = 0\n    while i < 3:\n        a "
+               "= i\n        i = i + 1\n    return a\n",
                0, "");
     new_errors(
-        "fn fill(p: *mut i32) {\n}\nfn f() -> i32 {\n    let mut a: i32 = undefined\n    fill(&a)\n    return a\n}\n",
+        "fn fill(p: *mut i32):\nfn f() -> i32:\n    let mut a: i32 = undefined\n    fill(&a)\n    return a\n",
         0, "");
 }
 

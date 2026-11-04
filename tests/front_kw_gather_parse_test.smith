@@ -35,31 +35,31 @@ static Str parsed(Str source, Bool dumped) {
 }
 
 export void test_front_kw_gather_declaration_parses() {
-    Str dump = parsed("fn info(msg: str; ctx...) {\n}\n", true);
+    Str dump = parsed("fn info(msg: str; ctx...):\n", true);
     test::check_equal(has(dump, "gather"), true);
     test::check_equal(has(dump, "pack"), false);
 }
 
 export void test_front_positional_pack_parses() {
-    Str dump = parsed("fn f(x: str, xs...; kw...) {\n}\n", true);
+    Str dump = parsed("fn f(x: str, xs...; kw...):\n", true);
     test::check_equal(has(dump, "pack"), true);
     test::check_equal(has(dump, "gather"), true);
 }
 
 export void test_front_gather_is_the_last_parameter() {
-    Str message = parsed("fn f(x: str; kw..., y: i32 = 1) {\n}\n", false);
+    Str message = parsed("fn f(x: str; kw..., y: i32 = 1):\n", false);
     Str expected = "`name...` after the `;` gathers the named arguments: it is the last parameter";
     test::check_equal(message, expected);
 }
 
 export void test_front_spread_after_semicolon_parses() {
-    Str dump = parsed("fn g() {\n    f(1; opts..., retry = 3)\n}\n", true);
+    Str dump = parsed("fn g():\n    f(1; opts..., retry = 3)\n", true);
     test::check_equal(has(dump, "expand named"), true);
     test::check_equal(has(dump, "named_arg retry"), true);
 }
 
 export void test_front_a_call_has_one_semicolon() {
-    Str message = parsed("fn g() {\n    f(1; a...; b...)\n}\n", false);
+    Str message = parsed("fn g():\n    f(1; a...; b...)\n", false);
     Str expected = "a call has one `;`: put every spread after it";
     test::check_equal(message, expected);
 }
@@ -69,7 +69,7 @@ export void test_front_checker_says_not_yet_for_packs_and_gathers() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed p = parser::parse_new("t.smith", "fn f(x: str, xs...) {\n}\nfn g(x: str; kw...) {\n}\n");
+    parser::Parsed p = parser::parse_new("t.smith", "fn f(x: str, xs...):\nfn g(x: str; kw...):\n");
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked c = types_decl::check_module(&p.module, types::lp64());
     test::check_equal(c.error_count, (Usize)1); // a function with `; kw...` is a template now (#1985)

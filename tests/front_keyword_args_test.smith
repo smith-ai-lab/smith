@@ -114,18 +114,18 @@ static Str joined(Str a, Str b) {
 }
 
 static Str declaration() {
-    return "fn connect(host: i32, port: i32 = 443; timeout: i32 = 30, retry: i32) -> i32 {\n"
-           "    host + port + timeout * 10 + retry * 100\n}\n";
+    return "fn connect(host: i32, port: i32 = 443; timeout: i32 = 30, retry: i32) -> i32:\n"
+           "    host + port + timeout * 10 + retry * 100\n";
 }
 
 export void test_front_keyword_args_by_name_run() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("fn connect(host: i32, port: i32 = 443; timeout: i32 = 30, retry: i32) -> i32 {\n"
-                     "    host + port + timeout * 10 + retry * 100\n}\n"
-                     "pub fn all(n: i32) -> i32 {\n    connect(n, 1, timeout = 2, retry = 3)\n}\n"
-                     "pub fn defaulted(n: i32) -> i32 {\n    connect(n, retry = 1)\n}\n"
-                     "pub fn reordered(n: i32) -> i32 {\n    connect(n, retry = 3, timeout = 2)\n}\n",
+    char *ir = ir_of("fn connect(host: i32, port: i32 = 443; timeout: i32 = 30, retry: i32) -> i32:\n"
+                     "    host + port + timeout * 10 + retry * 100\n"
+                     "pub fn all(n: i32) -> i32:\n    connect(n, 1, timeout = 2, retry = 3)\n"
+                     "pub fn defaulted(n: i32) -> i32:\n    connect(n, retry = 1)\n"
+                     "pub fn reordered(n: i32) -> i32:\n    connect(n, retry = 3, timeout = 2)\n",
                      &host, &s);
     test::check_equal(ir != nullptr, true);
     Pick all = (Pick)symbol_of(&host, "all");
@@ -138,21 +138,21 @@ export void test_front_keyword_args_by_name_run() {
 }
 
 export void test_front_keyword_only_positional_is_an_error() {
-    Str call = "fn run(n: i32) -> i32 {\n    connect(n, 1, 5, retry = 1)\n}\n";
+    Str call = "fn run(n: i32) -> i32:\n    connect(n, 1, 5, retry = 1)\n";
     Str message = first_error(joined(declaration(), call));
     Str expected = "`timeout` is keyword-only; write `timeout = ...`";
     test::check_equal(message, expected);
 }
 
 export void test_front_keyword_only_name_given_twice_is_an_error() {
-    Str call = "fn run(n: i32) -> i32 {\n    connect(n, retry = 1, retry = 2)\n}\n";
+    Str call = "fn run(n: i32) -> i32:\n    connect(n, retry = 1, retry = 2)\n";
     Str message = first_error(joined(declaration(), call));
     Str expected = "the parameter `retry` is given twice; give each parameter once";
     test::check_equal(message, expected);
 }
 
 export void test_front_keyword_only_without_default_must_be_named() {
-    Str call = "fn run(n: i32) -> i32 {\n    connect(n, timeout = 1)\n}\n";
+    Str call = "fn run(n: i32) -> i32:\n    connect(n, timeout = 1)\n";
     Str message = first_error(joined(declaration(), call));
     Str expected = "`retry` is keyword-only and has no default; write `retry = ...` in the call";
     test::check_equal(message, expected);
