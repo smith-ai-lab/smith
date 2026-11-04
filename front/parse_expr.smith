@@ -80,6 +80,9 @@ static Number decode_integer(Str t) {
         } else if (c == 'b' || c == 'B') {
             base = 2;
             i = 2;
+        } else if (c == 'o' || c == 'O') {
+            base = 8;
+            i = 2;
         } else {
             base = 8;
             i = 1;
@@ -401,7 +404,7 @@ static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
 static ast::Expr *variant_value(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     lex::Token name = parse::peek(p);
-    if (name.kind != lex::name && name.kind != lex::type_name) {
+    if (name.kind != lex::name && name.kind != lex::type_name && !(p->new_syntax && lex::is_keyword(name.kind))) {
         parse::expect(p, lex::name, "a variant name after `.`");
         return nullptr;
     }
@@ -539,8 +542,18 @@ static ast::Initializer item(parse::Parser *p, ListFix *fix) {
     return result;
 }
 
+// Whether the length of an array type, `_` or an integer, is the number of items of its literal: then the type adds
+// nothing, and `[a, b]` says the same.
+static Bool length_fits(const ast::Expr *count, Usize items) {
+    if (count == nullptr) return false;
+    if (count->kind == .integer) return count->kind.integer.value == items;
+    if (count->kind != .name || countof(count->kind.name.path.segments) != 1) return false;
+    return text::is(count->kind.name.path.segments[0].text, "_");
+}
+
 // The warning of a braced list. A typed one `(P){.x = 1}` is `P(x = 1)` when every item has a field designator and the
-// type is a name, and `(P){}` is `P()`; an untyped one `{1, 2}` is `[1, 2]` when no item has a designator; any other
+// type is a name, and `(P){}` is `P()`; one of an array type, `([_]T){a, b}` or `([2]T){a, b}`, is `[a, b]` (#2105);
+// an untyped one `{1, 2}` is `[1, 2]` when no item has a designator; any other
 // has no mechanical fix
 // (`P p = {.x = 1};` gets its type from the declaration's rewrite, F2).
 static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 rparen, lex::Token open,
@@ -549,12 +562,26 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
     Bool plain = !fix->complex && countof(fix->edits) + fix->positional > 0;
     if (type != nullptr) {
         Bool empty = !fix->complex && countof(fix->edits) + fix->positional + fix->designated == 0;
-        if ((plain || empty) && fix->positional == 0 && type->kind == .named) {
+        // Every item named, or none named: `(P){a, b}` is `P(a, b)` (#1958). A mix has no fix.
+        Bool unmixed = fix->positional == 0 || fix->designated == 0;
+        if (plain && fix->designated == 0 && type->kind == .array &&
+            length_fits(type->kind.array.count, fix->positional)) {
+            // `([_]F64){3.5}` and `([3]I32){1, 2, 3}` are the array values `[3.5]` and `[1, 2, 3]` (#2105).
+            parse::Edits edits = fix->edits;
+            edits = with_edit(edits, from_to(start, open.span.end), "[");
+            edits = with_edit(edits, close.span, "]");
+            parse::warning_fix(p, whole, "a compound literal of an array type `([N]T){a, b}` is written `[a, b]`",
+                               edits);
+            return;
+        }
+        if ((plain || empty) && unmixed && type->kind == .named) {
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, start + 1), "");
             edits = with_edit(edits, from_to(rparen, open.span.end), "(");
             edits = with_edit(edits, close.span, ")");
-            parse::warning_fix(p, whole, "a compound literal `(P){.x = 1}` is written `P(x = 1)`", edits);
+            Str message = fix->positional > 0 ? "a compound literal `(P){a, b}` is written `P(a, b)`"
+                                              : "a compound literal `(P){.x = 1}` is written `P(x = 1)`";
+            parse::warning_fix(p, whole, message, edits);
             return;
         }
         parse::warning_fix(p, whole, "a compound literal is written `P(x = 1, y = 2)`: name each field", no_edits());
@@ -567,10 +594,30 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
         parse::warning_fix(p, whole, "an array value `{1, 2}` is written `[1, 2]`", edits);
         return;
     }
+    if (!fix->complex && fix->designated > 0 && fix->positional == 0) {
+        parse::NamedList named = {.plain = true, .open = open.span, .close = close.span, .edits = fix->edits};
+        p->named_list = named;
+    }
     parse::warning_fix(
         p, whole,
         "a braced list with no type has no form in Smith: write the type, `P(x = 1)`, or `[1, 2]` for an array",
         no_edits());
+}
+
+// Whether the `{` at the position opens a list whose first item is `.name =`: in smith's own syntax a block never
+// starts that way, so it is today's initializer list (`P p = {.x = 1};`), which has a fix (#1767).
+static Bool designated_list_ahead(const parse::Parser *p) {
+    lex::TokenKind name = parse::peek_at(p, 2).kind;
+    return parse::peek_at(p, 1).kind == lex::dot && (name == lex::name || name == lex::type_name) &&
+           parse::peek_at(p, 3).kind == lex::equal;
+}
+
+// Whether the items are the single integer `0`, C's way to zero a struct.
+static Bool is_lone_zero(ast::Initializer items[:]) {
+    if (countof(items) != 1) return false;
+    ast::Initializer only = items[0];
+    if (countof(only.designators) > 0 || only.value == nullptr) return false;
+    return only.value->kind == .integer && only.value->kind.integer.value == 0;
 }
 
 // `{ items }`: the position is at the brace. `type` is null for a list alone; `rparen` is where the `)` of a typed
@@ -587,6 +634,7 @@ static ast::Expr *initializer_list(parse::Parser *p, ast::TypeExpr *type, U32 st
         if (!parse::accept(p, lex::comma)) break;
     }
     lex::Token close = parse::expect(p, lex::right_brace, "`}` to end the list");
+    if (type != nullptr && is_lone_zero(items)) fix.complex = true; // `(P){0}` zeroes P: it is no argument list
     if (close.kind == lex::right_brace) list_warning(p, type, start, rparen, open, close, &fix);
     return make(parse::span_from(p, start), {.compound = {.type = type, .items = items}});
 }
@@ -640,6 +688,15 @@ static void lambda_warning(parse::Parser *p, U32 start, U32 bracket_end, const a
                        edits);
 }
 
+// Whether the position is at the head of a lambda in today's form: `[`, names and commas, `]`, then `(`. In smith's own
+// syntax a `[` otherwise starts an array literal, and an array literal is never called (#1786).
+static Bool at_old_lambda(const parse::Parser *p) {
+    Usize at = 1;
+    while (parse::peek_at(p, at).kind == lex::name || parse::peek_at(p, at).kind == lex::comma)
+        at += 1;
+    return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
+}
+
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
@@ -679,20 +736,6 @@ static ast::Expr *lambda(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Smith's own forms (#1446): arrays, tuples, lambdas and blocks
 
-// `[1, 2, 3]`: the position is at the bracket.
-static ast::Expr *array_literal(parse::Parser *p) {
-    U32 start = parse::advance(p).span.start;
-    ast::ExprRef items[:] = {};
-    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *next = parse::expression(p);
-        if (next == nullptr) return nullptr;
-        items = parse_type::with_expr(items, next);
-        if (!parse::accept(p, lex::comma)) break;
-    }
-    if (!expect_ok(p, lex::right_bracket, "`]` to end the array")) return nullptr;
-    return make(parse::span_from(p, start), {.array_lit = {.items = items}});
-}
-
 // The offset just past the group that opens at `offset` (an `open` token), counting depth.
 static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind open, lex::TokenKind close) {
     Usize depth = 0;
@@ -707,13 +750,52 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
     return offset;
 }
 
+// `[1, 2, 3]`: the position is at the bracket.
+static ast::Expr *array_literal(parse::Parser *p) {
+    // `[n]T` is an array type written as a value (`no_rule([n + 1]char)`): a type follows the closing bracket.
+    Usize after = after_group(p, 0, lex::left_bracket, lex::right_bracket);
+    if (after > 0 && parse_type::starts_type(p, after)) return type_value(p);
+    U32 start = parse::advance(p).span.start;
+    ast::ExprRef items[:] = {};
+    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
+        ast::Expr *next = parse::expression(p);
+        if (next == nullptr) return nullptr;
+        items = parse_type::with_expr(items, next);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!expect_ok(p, lex::right_bracket, "`]` to end the array")) return nullptr;
+    return make(parse::span_from(p, start), {.array_lit = {.items = items}});
+}
+
+// The token that opens a lambda's body: the `:` of the layout path, a `{` otherwise.
+static lex::TokenKind body_opener(const parse::Parser *p) {
+    return p->layout ? lex::colon : lex::left_brace;
+}
+
+// The body of a lambda or a `do:` in the layout path, after its `:`: an indented block on the lines that follow, or
+// one expression on the same line, which is a block of that one statement.
+static ast::Stmt *layout_body(parse::Parser *p) {
+    if (parse::at(p, lex::newline)) return parse::statement(p);
+    U32 start = parse::peek(p).span.start;
+    ast::Expr *value = parse::expression(p);
+    if (value == nullptr) return nullptr;
+    ast::Stmt *line = ast::new_stmt((ast::Stmt){.kind = {.expression = {.value = value}}});
+    line->span = parse::span_from(p, start);
+    ast::StmtRef list[:] = {};
+    list = mem::realloc(list, 1);
+    list[0] = line;
+    ast::Stmt *body = ast::block(list);
+    body->span = line->span;
+    return body;
+}
+
 // Whether the `fn` at the position starts a lambda (a body follows its parameters and result) and not a function type.
 static Bool fn_has_body(const parse::Parser *p) {
     Usize at = 1;
     if (parse::peek_at(p, at).kind == lex::left_bracket) at = after_group(p, at, lex::left_bracket, lex::right_bracket);
     if (parse::peek_at(p, at).kind != lex::left_paren) return false;
     at = after_group(p, at, lex::left_paren, lex::right_paren);
-    if (parse::peek_at(p, at).kind == lex::left_brace) return true;
+    if (parse::peek_at(p, at).kind == body_opener(p)) return true;
     if (parse::peek_at(p, at).kind != lex::arrow) return false;
     Usize depth = 0;
     for (Usize i = at + 1; i < at + 1 + countof(p->tokens); i += 1) {
@@ -724,10 +806,10 @@ static Bool fn_has_body(const parse::Parser *p) {
             depth -= 1;
         }
         if (depth > 0) continue;
-        if (kind == lex::left_brace) return true;
+        if (kind == body_opener(p)) return true;
         if (kind == lex::comma || kind == lex::semicolon || kind == lex::equal || kind == lex::right_brace)
             return false;
-        if (kind == lex::end_of_file) return false;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::dedent) return false;
     }
     return false;
 }
@@ -775,10 +857,26 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
         result = parse::type(p);
         if (result == nullptr) return nullptr;
     }
-    ast::Stmt *body = parse::statement(p);
+    ast::Stmt *body = nullptr;
+    if (p->layout) {
+        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) return nullptr;
+        body = layout_body(p);
+    } else {
+        body = parse::statement(p);
+    }
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
+}
+
+// `do:` and then an indented block, or one expression: a block used as a value, its last line the value. The position
+// is at `do`.
+static ast::Expr *do_block(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    if (!expect_ok(p, lex::colon, "`:` after `do`")) return nullptr;
+    ast::Stmt *body = layout_body(p);
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start), {.stmt_expr = {.stmt = body}});
 }
 
 // An `if`, `match`, `for` or block in expression position: the statement it is.
@@ -792,24 +890,34 @@ static ast::Expr *statement_value(parse::Parser *p) {
 // ---------------------------------------------------------------------------------------------------------------
 // Primary expressions
 
-// Whether the path at the position is called with a named argument: `Point(x = 1)`, a construction in smith's own
-// syntax (an applied type never has `name =` inside).
+// Whether the path at the position is called as a construction: `Point(x = 1)`, `Point(1, 2)` or the empty `Point()`,
+// in smith's own syntax (an applied type never has `name =` inside, and `T()` names no type with arguments).
 static Bool named_construction(const parse::Parser *p) {
     Usize last = 0;
     lex::TokenKind first = parse::peek_at(p, 0).kind;
     if (!p->new_syntax || (first != lex::name && first != lex::type_name)) return false;
-    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+    // `words.Pair(...)`: a record of another module is named through the module (a dot joins the path).
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon || parse::peek_at(p, last + 1).kind == lex::dot) {
         lex::TokenKind next = parse::peek_at(p, last + 2).kind;
         if (next != lex::name && next != lex::type_name) break;
         last += 2;
     }
     if (parse::peek_at(p, last + 1).kind != lex::left_paren) return false;
-    return parse::peek_at(p, last + 2).kind == lex::name && parse::peek_at(p, last + 3).kind == lex::equal;
+    lex::TokenKind second = parse::peek_at(p, last + 2).kind;
+    if (second == lex::right_paren) return true;
+    // A type function takes a type first (`Option(i32)`, `vec(f32, 4)`), so a literal first is a positional field
+    // (`Point(1, 2)`, #1813). A name first (`Point(a, b)`) stays a type until the checker can tell.
+    if (second == lex::integer || second == lex::floating || second == lex::string || second == lex::character ||
+        second == lex::kw_true || second == lex::kw_false) {
+        return true;
+    }
+    return second == lex::name && parse::peek_at(p, last + 3).kind == lex::equal;
 }
 
 // A name or path as a value, or a type as a value.
 static ast::Expr *name_or_type(parse::Parser *p) {
-    if (parse_type::starts_type(p, 0) && !named_construction(p)) return type_value(p);
+    if (parse_type::starts_type(p, 0) && !named_construction(p) && !parse_type::path_then_product(p, 0))
+        return type_value(p);
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind != lex::name && kind != lex::type_name) {
         not_an_expression(p);
@@ -880,13 +988,19 @@ static ast::Expr *primary(parse::Parser *p) {
     case lex::dot:
         return variant_value(p);
     case lex::left_brace:
-        if (p->new_syntax) return statement_value(p);
+        if (p->new_syntax && !p->layout && !designated_list_ahead(p)) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
-        if (p->new_syntax) return array_literal(p);
+        // `[]i32` and `[3]f32` as a value are types (`let Numbers = []i32`); a bracket group followed by a type is no
+        // array.
+        if (p->new_syntax && !at_old_lambda(p) && parse_type::starts_new_type(p, 0)) return type_value(p);
+        if (p->new_syntax && !at_old_lambda(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
         return fn_lambda(p);
+    case lex::kw_do:
+        if (p->layout) return do_block(p);
+        return name_or_type(p);
     case lex::kw_fn_once:
         return type_value(p);
     case lex::kw_if:
@@ -986,14 +1100,6 @@ static ast::Span between(U32 start, const ast::Expr *last) {
     return span;
 }
 
-// Whether the operator pending below the one just taken applies to the value that comes next (a prefix operator, a
-// `sizeof`, a `try`): `as` binds tighter than those, so a cast that is their operand is written in parentheses.
-static Bool prefix_above(const Stack *st) {
-    if (st->op_count == 0) return false;
-    Form form = st->ops[st->op_count - 1].form;
-    return form == .prefix || form == .query_form || form == .try_form;
-}
-
 // Records a fix whose last edit inserts `tail` at `end`. When the warning recorded last is a fix of something inside
 // (its last edit inserts at the same `end`), the two are one fix: two inserts at one offset clash, and `smith lint
 // --fix` reads the text between its passes with today's lexer, which does not know `as` or `if`, so a nested form
@@ -1017,23 +1123,31 @@ static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits ed
     parse::warning_fix(p, span, message, edits);
 }
 
-// `(T)x` is `x as T`, and `(x as T)` as the operand of a prefix operator.
-static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
-    parse::Parser *p = st->parser;
-    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
-    Bool wrap = prefix_above(st);
-    parse::Edits edits = {};
-    edits = with_edit(edits, from_to(op->head.start, operand->span.start), wrap ? "(" : "");
-    Str tail = as_str(format::push(" as ", type_text, wrap ? ")" : ""));
-    Str message = as_str(format::push("a cast is `x as T`: write `x as ", type_text, "`"));
-    tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
-}
-
 // Whether a value reads as a postfix chain (`p.x`, `f(x)`, a name, a group), so `.*` can follow it as it is.
 static Bool is_postfix_level(Str source, const ast::Expr *e) {
     if (source[e->span.start] == '(') return true;
     if (e->kind == .unary) return e->kind.unary.op == .dereference;
-    return e->kind != .query && e->kind != .try_expr && e->kind != .cast;
+    return e->kind != .query && e->kind != .try_expr;
+}
+
+// The conversion function that writes a cast to `type`: `cast` for a pointer, else `to` (#1811).
+static Str conversion_name(const ast::TypeExpr *type) {
+    if (type->kind == .pointer) return "cast";
+    return "to";
+}
+
+// `(T)x` is `x.to(T)`, or `p.cast(T)` when T is a pointer type; the operand is parenthesized when it is not a postfix
+// chain (`(-x).to(T)`).
+static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Parser *p = st->parser;
+    Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
+    Str name = conversion_name(op->type);
+    Bool plain = is_postfix_level(p->source, operand);
+    parse::Edits edits = {};
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
+    Str tail = as_str(format::push(plain ? "" : ")", ".", name, "(", type_text, ")"));
+    Str message = as_str(format::push("a cast is `x.", name, "(T)`: write `x.", name, "(", type_text, ")`"));
+    tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
 }
 
 // `*p` is `p.*`, and `(-x).*` when the operand is not a postfix chain.
@@ -1396,12 +1510,13 @@ static ast::Expr *argument(parse::Parser *p) {
     return make(parse::span_from(p, name.span.start), {.named_arg = {.name = parse::text(p, name), .value = value}});
 }
 
-// The trailing block of a call, `f(x) { ... }`: a `{` on the line of the `)` is a lambda with no parameters, the call's
-// last argument. The position is at the `{`.
+// The trailing block of a call, `f(x) { ... }` (layout path: `f(x):` and an indented block): a `{` on the line of the
+// `)` is a lambda with no parameters, the call's last argument. The position is at the `{`, or at the `:`.
 static ast::Expr *trailing_block(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     ast::Identifier captures[:] = {};
     ast::Param params[:] = {};
+    if (p->layout) parse::advance(p);
     ast::Stmt *body = parse::statement(p);
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
@@ -1411,18 +1526,41 @@ static ast::Expr *trailing_block(parse::Parser *p) {
 // Whether a trailing block follows the `)` just taken: smith's own syntax, not in a condition head, and the `{` on the
 // same line (a line break after the `)` ends the statement).
 static Bool has_trailing_block(const parse::Parser *p, Bool head) {
+    if (p->layout) {
+        // `f(x):` at the end of the line, with an indented block under it; a `:` followed by more on the line is a
+        // slice, a conditional or an arm.
+        return !head && parse::at(p, lex::colon) && parse::peek_at(p, 1).kind == lex::newline &&
+               parse::peek_at(p, 2).kind == lex::indent;
+    }
     if (!p->new_syntax || head || !parse::at(p, lex::left_brace) || p->position == 0) return false;
     return !p->tokens[p->position - 1].line_break;
+}
+
+// Whether a trailing lambda follows the `)` just taken (layout path): `fn(a, b): ...` on the same line.
+static Bool has_trailing_lambda(const parse::Parser *p, Bool head) {
+    if (!p->layout || head || !parse::at(p, lex::kw_fn) || p->position == 0) return false;
+    if (p->tokens[p->position - 1].line_break) return false;
+    return fn_has_body(p);
 }
 
 // `f(a, b)` and `f(a) { ... }`: the position is at the parenthesis.
 static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
     parse::advance(p);
     ast::ExprRef args[:] = {};
+    Bool after_semicolon = false;
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        // `f(x; s...)`: after the `;`, a `s...` passes the fields of `s` as named arguments.
+        if (p->new_syntax && parse::at(p, lex::semicolon)) {
+            if (after_semicolon) parse::error(p, parse::peek(p).span, "a call has one `;`: put every spread after it");
+            parse::advance(p);
+            after_semicolon = true;
+            continue;
+        }
         ast::Expr *arg = argument(p);
         if (arg == nullptr) return nullptr;
+        if (after_semicolon && arg->kind == .expand) arg->kind.expand.named = true;
         args = parse_type::with_expr(args, arg);
+        if (parse::at(p, lex::semicolon) && p->new_syntax) continue;
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the arguments");
@@ -1430,6 +1568,10 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
         ast::Expr *block = trailing_block(p);
         if (block == nullptr) return nullptr;
         args = parse_type::with_expr(args, block);
+    } else if (has_trailing_lambda(p, head)) {
+        ast::Expr *lambda_arg = fn_lambda(p); // `sort(xs) fn(a, b): a < b`: the trailing lambda
+        if (lambda_arg == nullptr) return nullptr;
+        args = parse_type::with_expr(args, lambda_arg);
     }
     chain_warning(p, callee);
     return make(parse::span_from(p, callee->span.start), {.call = {.callee = callee, .args = args}});
@@ -1506,20 +1648,82 @@ static ast::Expr *member(parse::Parser *p, ast::Expr *base) {
                 {.member = {.base = base, .name = parse::text(p, name), .arrow = arrow}});
 }
 
-// `x as T`: binds tighter than every binary operator, so pending prefix operators apply first (`-x as T` is `(-x) as
-// T`). The position is at `as`.
+// `x as T` is no longer a cast (#1811): it still reads, as an error whose fix writes `x.to(T)` (`p.cast(T)` for a
+// pointer type), the operand in parentheses when it is not a postfix chain. Pending prefix operators apply first. The
+// position is at `as`.
 static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
     reduce_above(st, prefix_prec, false);
     ast::Expr *operand = st->values[st->value_count - 1];
     parse::advance(p);
     ast::TypeExpr *type = parse::type(p);
     if (type == nullptr) return nullptr;
-    return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand}});
+    ast::Span whole = parse::span_from(p, operand->span.start);
+    Bool plain = is_postfix_level(p->source, operand);
+    parse::Edits edits = {};
+    if (!plain) edits = with_edit(edits, at_offset(operand->span.start), "(");
+    Str name = conversion_name(type);
+    Str type_text = parse::mended(p, type->span.start, whole.end);
+    Str call_text = as_str(format::push(plain ? "" : ")", ".", name, "(", type_text, ")"));
+    edits = with_edit(edits, from_to(operand->span.end, whole.end), call_text);
+    Str message = as_str(format::push("`as` is gone: write `x.", name, "(T)`"));
+    parse::error_fix(p, whole, message, edits);
+    return make(whole, {.cast = {.type = type, .operand = operand}});
+}
+
+static Bool same_text(Str a, Str b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
+// Whether a conversion call `.to(T)`, `.wrap(T)` or `.cast(T)` starts at the `.` the position is at: the three are
+// built-in functions, so the argument is always a type.
+static Bool conversion_ahead(const parse::Parser *p, const ast::Expr *base) {
+    if (parse::peek(p).kind != lex::dot) return false;
+    // `format.to(out, n, x)`: `format` is a module bound by an import, so this is that module's function (#2104).
+    if (base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
+        parse::is_module(p, base->kind.name.path.segments[0].text))
+        return false;
+    lex::Token name = parse::peek_at(p, 1);
+    if (name.kind != lex::name || parse::peek_at(p, 2).kind != lex::left_paren) return false;
+    Str word = parse::text(p, name);
+    Bool known = same_text(word, "to") || same_text(word, "wrap") || same_text(word, "cast");
+    return known;
+}
+
+// `x.to(T)`, `x.wrap(T)`, `p.cast(T)`: the position is at the `.`.
+static ast::Expr *conversion(parse::Parser *p, ast::Expr *operand) {
+    parse::advance(p);
+    Str word = parse::text(p, parse::advance(p));
+    parse::advance(p);
+    ast::CastForm form = .convert;
+    if (same_text(word, "wrap")) form = .wrapping;
+    if (same_text(word, "cast")) form = .reinterpret;
+    ast::TypeExpr *type = parse::type(p);
+    if (type == nullptr) return nullptr;
+    parse::expect(p, lex::right_paren, "`)` to end the type");
+    return make(parse::span_from(p, operand->span.start), {.cast = {.type = type, .operand = operand, .form = form}});
+}
+
+// Whether the position lies inside an unclosed `(` or `[` of the statement, so a line break there ends nothing: the
+// tokens before it are read back to the nearest unmatched opener (a `{` or `;` first means no, a `(` or `[` yes).
+static Bool inside_brackets(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = p->position; i > 0; i--) {
+        lex::TokenKind kind = p->tokens[i - 1].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) depth += 1;
+        if (depth == 0 && (kind == lex::semicolon || kind == lex::left_brace)) return false;
+        if (kind != lex::left_paren && kind != lex::left_bracket && kind != lex::left_brace) continue;
+        if (depth == 0) return true;
+        depth -= 1;
+    }
+    return false;
 }
 
 // A postfix operator applied to the last operand, if one is at the position.
 static Outcome postfix_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
+    // A block that ends the operand (`do:` or a lambda in an arm) is the end of it: `.b` after its `dedent` starts the
+    // next line.
+    if (p->layout && p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent) return .absent;
     ast::Expr *base = st->values[st->value_count - 1];
     ast::Expr *result = nullptr;
     switch (token.kind) {
@@ -1532,11 +1736,12 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
     case lex::dot:
     case lex::arrow:
         // A `.` that starts a line is not a continuation where the line before it ends a statement (`.b => x` after
-        // `.a => f(1)` in a match, the Go rule of lex::ends_statement).
+        // `.a => f(1)` in a match, the Go rule of lex::ends_statement). Inside parentheses or brackets a line break
+        // ends nothing, so `f(g(x)\n.name)` continues (#1773).
         if (p->new_syntax && token.kind == lex::dot && p->position > 0 &&
-            lex::ends_statement(p->tokens[p->position - 1]))
+            lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
             return .absent;
-        result = member(p, base);
+        result = conversion_ahead(p, base) ? conversion(p, base) : member(p, base);
         break;
     case lex::dot_star:
         parse::advance(p);
@@ -1619,18 +1824,43 @@ static Bool type_value_cast(const parse::Parser *p) {
     return starts_bare_operand(parse::peek_at(p, last + 2).kind);
 }
 
+// Whether `(c::T) {` starts a compound literal of a C name: a `c::` path alone in the parentheses and a `{` after them.
+// `(c::name)` is a value otherwise, but a brace after it can only be an initializer list (`(c::Handler){.fill = f}`).
+static Bool c_literal_type(const parse::Parser *p) {
+    Usize last = 0;
+    if (parse::peek_at(p, 0).kind != lex::name) return false;
+    if (!text::is(parse::text(p, parse::peek_at(p, 0)), "c")) return false;
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) break;
+        last += 2;
+    }
+    if (last == 0 || parse::peek_at(p, last + 1).kind != lex::right_paren) return false;
+    return parse::peek_at(p, last + 2).kind == lex::left_brace;
+}
+
 // `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     ast::ExprRef items[:] = {};
     Bool is_tuple = parse::at(p, lex::right_paren);
+    Usize named_count = 0;
     for (Usize i = 0; i <= countof(p->tokens) && !parse::at(p, lex::right_paren); i += 1) {
-        ast::Expr *item = parse::expression(p);
+        Bool named = parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::equal;
+        ast::Expr *item = named ? argument(p) : parse::expression(p);
         if (item == nullptr) return .failed;
         items = parse_type::with_expr(items, item);
+        if (named) {
+            is_tuple = true;
+            named_count += 1;
+        }
         if (!parse::accept(p, lex::comma)) break;
         is_tuple = true;
     }
     if (!expect_ok(p, lex::right_paren, "`)` to close the `(`")) return .failed;
+    if (named_count > 0 && named_count != countof(items)) {
+        parse::error(p, parse::span_from(p, start), "a tuple names all its elements or none: `(count = 3, ms = 1.5)`");
+        return .failed;
+    }
     ast::Span span = parse::span_from(p, start);
     if (is_tuple) {
         push_value(st, make(span, {.tuple_lit = {.items = items}}));
@@ -1641,11 +1871,18 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     return .value;
 }
 
+// Whether the `[` at the position starts the array type of a compound literal that a pass has already written
+// (`([_]F64){3.5}`), not a lambda's capture list (`[x](I32 a) {...}`): a type follows its bracket group, not a `(`.
+static Bool array_type_ahead(const parse::Parser *p) {
+    if (!parse::at(p, lex::left_bracket) || !parse_type::starts_new_type(p, 0)) return false;
+    return parse::peek_at(p, after_group(p, 0, lex::left_bracket, lex::right_bracket)).kind != lex::left_paren;
+}
+
 // `(`: a cast `(T)x`, a compound literal `(T){...}` or a parenthesized expression.
 static Step paren(parse::Parser *p, Stack *st) {
     U32 start = parse::advance(p).span.start;
     if (p->new_syntax) return group_or_tuple(p, st, start);
-    if (parse_type::starts_type(p, 0) || type_value_cast(p)) {
+    if (parse_type::starts_type(p, 0) || type_value_cast(p) || c_literal_type(p) || array_type_ahead(p)) {
         ast::TypeExpr *type = parse::type(p);
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;

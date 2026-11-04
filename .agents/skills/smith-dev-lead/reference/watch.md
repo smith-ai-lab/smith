@@ -35,22 +35,54 @@ fix() {
   done
   # a green PR that is not queued: merge main in and turn auto-merge on
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and .draft==false and (.updated_at|fromdateiso8601<now-300))|.number' 2>/dev/null); do
-    [ "$(gh api repos/$R/pulls/$p --jq .mergeable_state 2>/dev/null)" = clean ] || continue
+    # PRs the lead took out for good (a duplicate, or one GitHub left open after merging it) wait for the owner to close
+    # them: never re-arm (#2179 and #2171 went back into the queue twice on 2026-11-04)
+    grep -qx "$p" "$(dirname "$SEEN")/norearm.txt" 2>/dev/null && continue
+    # GitHub often reports `unknown` for a green PR (2026-11-03: #2033 and #2031 sat green and unqueued for 50 minutes):
+    # go by the ci check, skipping only a PR that conflicts
+    [ "$(gh api repos/$R/pulls/$p --jq .mergeable_state 2>/dev/null)" = dirty ] && continue
+    # a PR in the merge queue has auto_merge null too; updating its branch would throw it out of the queue
+    [ "$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last' 2>/dev/null)" = added_to_merge_queue ] && continue
+    hs=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
+    [ "$(gh api repos/$R/commits/$hs/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = success ] || continue
+    # the queue failed this head: re-arming re-queues broken code (#2148, 2026-11-04); its runner has ended, so a fresh one takes it over
+    hd=$(gh api repos/$R/commits/$hs --jq .commit.committer.date 2>/dev/null)
+    qf=$(gh api "repos/$R/actions/runs?event=merge_group&per_page=60" --jq "[.workflow_runs[]|select((.head_branch|contains(\"/pr-$p-\")) and .conclusion==\"failure\" and .created_at > \"$hd\")]|length" 2>/dev/null)
+    if [ "${qf:-0}" -gt 0 ]; then seen "qfail$p-$hs" && echo "URGENT PR #$p: the merge queue failed its head $hs and it is out of the queue: start a runner to take it over"; continue; fi
     gh api -X PUT "repos/$R/pulls/$p/update-branch" >/dev/null 2>&1
     gh api -X PUT "repos/$R/pulls/$p/ccr/auto_merge" >/dev/null 2>&1 && did "re-armed PR #$p" || { seen "arm$p-$(date +%H)" && echo "PR #$p is green but auto-merge would not turn on"; }
   done
-  # a PR red or conflicted and untouched for 30 minutes: release its ticket to the next runner
-  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.draft==false and .head.ref!="claude/vibrant-mendel-tvpj1l" and (.updated_at|fromdateiso8601<now-1800))|.number' 2>/dev/null); do
-    sha=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
+  # A PR red for 30 minutes, or conflicted for 60, with no push: release its ticket to the next runner. A conflict does
+  # not wake the PR's runner (a red check does), so after 10 minutes the lead is told which session owns the PR and
+  # messages it to merge main; the release is the fallback (owner, 2026-11-03: four takeovers in an hour, each a fresh
+  # session only to merge main).
+  for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.draft==false and .head.ref!="claude/vibrant-mendel-tvpj1l" and (.updated_at|fromdateiso8601<now-600))|.number' 2>/dev/null); do
+    pr=$(gh api repos/$R/pulls/$p 2>/dev/null)
+    sha=$(echo "$pr" | jq -r .head.sha)
+    age=$(echo "$pr" | jq -r '(now - (.updated_at|fromdateiso8601))/60|floor')
     why=
-    [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ] && why="its ci is red"
-    [ "$(gh api repos/$R/pulls/$p --jq .mergeable 2>/dev/null)" = false ] && why="it has a merge conflict with main"
+    if [ "$(echo "$pr" | jq -r .mergeable)" = false ]; then
+      why="it has a merge conflict with main"
+      # never released by script: a conflict on an old PR is often a runner still at work (six false releases, 2026-11-04)
+      owner=$(echo "$pr" | jq -r '.body // ""' | grep -oE 'session_[A-Za-z0-9]+' | tail -1)
+      if [ "$age" -lt 60 ]; then
+        seen "nudge$p-$sha" && echo "PR #$p conflicts with main (no push for $age min): send_message to ${owner:-its runner (no session link in the body)} to merge main and push"
+      else
+        seen "conf$p-$sha" && echo "PR #$p has conflicted with main for $age min with no push: get_session ${owner:-its runner}; release its ticket by hand only if that session is not working"
+      fi
+      continue
+    elif [ "$age" -ge 30 ] && [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ]; then
+      why="its ci is red"
+    fi
     [ -z "$why" ] && continue
     seen "rel$p-$sha" || continue
+    # a ticket labeled blocked waits on purpose (its PR stays red until what it waits for merges): never release it
     t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | { b=$(cat); echo "$b" | grep -oiE '(closes|fixes|resolves) #[0-9]+'; echo "$b" | grep -oiE 'part of #[0-9]+|\(#[0-9]+'; } | grep -oE '[0-9]+' | head -1)
-    [ -z "$t" ] && { echo "PR #$p: $why, untouched for 30 minutes, and no ticket found to release"; continue; }
+    [ -z "$t" ] && { echo "PR #$p: $why, untouched for $age minutes, and no ticket found to release"; continue; }
+    gh api "repos/$R/issues/$t" --jq '[.labels[].name]|index("blocked")' 2>/dev/null | grep -q '[0-9]' && continue
     gh api -X DELETE "repos/$R/issues/$t/labels/claimed" >/dev/null 2>&1
-    say "$t" "Claim released (lead's watcher): PR #$p has gone 30 minutes with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)"
+    say "$t" "Claim released (lead's watcher): PR #$p has gone $age minutes with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)" &&
+      echo "released #$t (PR #$p: $why): start a runner if none is free to take it over (2026-11-03: two releases sat 1-2 hours with no runner)"
   done
 }
 
@@ -65,6 +97,10 @@ health() {
   for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?status=completed&per_page=40" --jq '.workflow_runs[]|select(.conclusion=="failure" and (.event=="pull_request" or .event=="merge_group"))|"\(.id),\(.pull_requests[0].number // (.head_branch|capture("pr-(?<n>[0-9]+)").n? // "?"))"' 2>/dev/null); do
     id=${run%,*}; pr=${run#*,}
     seen "run$id" || continue
+    # a queue group carries every PR ahead of its own: blame the first PR in the group, the oldest one not on main
+    # (2026-11-03: one bad PR, #2074, read as a test failing on 4 PRs)
+    first=$(gh api "repos/$R/actions/runs/$id" --jq .head_sha 2>/dev/null | xargs -I{} gh api "repos/$R/compare/main...{}" --jq '.commits[0].commit.message|split("\n")[0]|capture("\\(#(?<n>[0-9]+)\\)$").n' 2>/dev/null)
+    [ -n "$first" ] && pr=$first
     gh api "repos/$R/actions/runs/$id/jobs?per_page=60" --jq '.jobs[]|select(.name!="ci" and (.conclusion=="failure" or .conclusion=="cancelled"))|"\(.id) \(.conclusion) \(.runner_name // "") \(.name|split(" ")[0])"' 2>/dev/null |
     while read -r job how runner name; do
       if [ "$how" = cancelled ]; then
@@ -77,7 +113,7 @@ health() {
   done
   today=$(date -u +%F)
   awk -v d="$today" '$1==d && $2=="fail" {print $3, $4}' "$FAILS" | sort -u | awk '{n[$1]++; p[$1]=p[$1]" #"$2} END {for (t in n) if (n[t]>=3) print t p[t]}' |
-    while read -r test prs; do seen "flake$test-$today" && echo "the test $test failed on 3 or more different PRs today ($prs): shared, not theirs; file a p0 ticket for it"; done
+    while read -r test prs; do seen "flake$test-$today" && echo "the test $test failed on 3 or more different PRs today ($prs): shared, not theirs, unless one queued PR sits in every failing merge group (compare the queue branches); file a p0 ticket for it"; done
   awk -v d="$today" '$1==d && $2=="cancel" {print $3, $4}' "$FAILS" | sort -u | awk '{n[$1]++; p[$1]=p[$1]" #"$2} END {for (j in n) if (n[j]>=2) print j p[j]}' |
     while read -r job prs; do seen "cancel$job-$today" && echo "the job $job was cancelled without a runner on different PRs today ($prs): runner starvation, not their code"; done
 }
@@ -90,6 +126,28 @@ prs_state() {
   done
 }
 
+# The front-end coverage count (#2073): CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on
+# every push to main (`unmeasured` in place of the numbers when it could not count). Wake the lead when the passed
+# count of a main commit is lower than that of the commit measured before it, naming both. Read through `gh api`: the
+# newest push runs of ci.yml on main, each one's job log; a run with no number (job skipped, unmeasured) is passed over.
+coverage() {
+  prev=
+  for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
+    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage")|.id' 2>/dev/null | head -1)
+    [ -z "$job" ] && continue
+    got=$(gh api "repos/$R/actions/jobs/$job/logs" 2>/dev/null | grep -oE 'frontend-coverage: [0-9a-f]{40} [0-9]+ [0-9]+$' | tail -1)
+    [ -z "$got" ] && continue
+    set -- $got   # frontend-coverage: sha passed total
+    # runs come newest first: $prev is the newer commit, $got the one measured before it
+    if [ -n "$prev" ]; then
+      set -- $prev; nsha=$2; npass=$3; ntotal=$4; set -- $got; osha=$2; opass=$3
+      [ "$npass" -lt "$opass" ] && seen "cov-$nsha" && echo "the front-end coverage count dropped from $opass (main $osha) to $npass of $ntotal (main $nsha): a regression; the job summary of that run has the top causes"
+      return
+    fi
+    prev=$got
+  done
+}
+
 # Only what needs the lead.
 check() {
   top=$(gh api repos/$R/issues/73 --jq '.body|split("\n")[0]' 2>/dev/null)
@@ -99,28 +157,80 @@ check() {
     # Waits-for line in its body (on 2026-11-02 this counted 20 "ready" while five fresh runners found nothing to take)
     inpr=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[].body // ""' 2>/dev/null | grep -oE '#[0-9]+' | tr -d '#' | sort -u | tr '\n' ' ')
     ready=$(issues task '.[]|select(.pull_request==null and ([.labels[].name]|(index("claimed") or index("blocked") or index("later") or index("mac"))|not) and (((.body // "")|test("(?i)waits for #"))|not))|.number' | while read -r i; do case " $inpr " in *" $i "*) ;; *) echo "$i";; esac; done | wc -l)
-    [ -n "$ready" ] && [ "$ready" -lt "${n:-0}" ] && seen "ready$ready-$(date +%F)" && echo "only $ready ready tickets for N=$n: write or split tickets"
+    [ -n "$ready" ] && ! gh api "repos/$R/issues/73" --jq .body 2>/dev/null | grep -q "^\*\*Chain first" && [ "$ready" -lt "${n:-0}" ] && seen "ready-$(date -u +%F)-$(( $(date -u +%-H) / 3 ))" && echo "only $ready ready tickets for N=$n: write or split tickets"
     # each lane of the pool must be claiming: a cloud successor started without its repository stalled and the cloud
     # lane was empty from 14:20 to 20:30 on 2026-11-02 with nobody noticing. No claim in 90 minutes from a lane wakes the lead.
     since=$(date -u -d '-90 min' +%FT%TZ)
     who=$(gh api "repos/$R/issues/comments?since=$since&sort=created&direction=desc&per_page=100" --jq '.[].body|select(startswith("claimed by "))|split(" ")[2]' 2>/dev/null)
     [ "$ready" -gt 0 ] 2>/dev/null && {
       echo "$who" | grep -v -e '^mac-runner' -e '^the$' | grep -q . || { seen "cloud-$(date -u +%F-%H)" && echo "no cloud runner has claimed a ticket in 90 minutes while $ready are ready: the cloud chain is broken; start runners (create_session with source_url)"; }
-      echo "$who" | grep -q '^mac-runner' || { seen "mac-$(date -u +%F-%H)" && echo "no Mac runner has claimed a ticket in 90 minutes while $ready are ready: the Mac loops may be down; ask on #1406"; }
+      : # Mac runners stopped by the owner 2026-11-03:       echo "$who" | grep -q '^mac-runner' || { seen "mac-$(date -u +%F-%H)" && echo "no Mac runner has claimed a ticket in 90 minutes while $ready are ready: the Mac loops may be down; ask on #1406"; }
     }
   fi
+  # a claim with no open PR and no word on its ticket for 30 minutes: its runner may have stopped. Wake the lead, who
+  # checks the session before releasing (a first build is ~15 min and smith check 10+ with nothing on GitHub).
+  # 2026-11-03: 40 tickets were claimed while 6 runners worked; three had stopped hours before. Owner: "60 minutes
+  # might be too long. Do you think we should do 30 minutes?"
+  inprs=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[].body // ""' 2>/dev/null | grep -oE '#[0-9]+' | tr -d '#' | sort -u | tr '\n' ' ')
+  idle=$(issues claimed '.[]|select(.pull_request==null and (.updated_at|fromdateiso8601<now-1800))|.number' | while read -r i; do case " $inprs " in *" $i "*) ;; *) seen "idle-$i-$(date -u +%F-%H)" && echo "#$i";; esac; done | tr '\n' ' ')
+  [ -n "$idle" ] && echo "claimed, no open PR, nothing on the ticket for 30+ min: $idle- check each runner's session (list_sessions); release the claim if it stopped, then look at the whole factory"
+  # the focus on #73: no claim, comment or PR push on any of its tickets for 45 minutes while some are open means no
+  # runner is working the chain (2026-11-03: every runner had ended and the chain sat 90 minutes unseen)
+  focus=$(gh api "repos/$R/issues/73" --jq .body 2>/dev/null | grep -m1 '^\*\*Chain first' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
+  if [ -n "$focus" ]; then
+    q=$(date -u -d '-45 min' +%FT%TZ); live=0; anyopen=0
+    for f in $focus; do
+      [ "$(gh api repos/$R/issues/$f --jq .state 2>/dev/null)" = open ] || continue; anyopen=1
+      [ "$(gh api repos/$R/issues/$f --jq '.updated_at' 2>/dev/null)" \> "$q" ] && live=1
+      # only PRs that name this ticket count: any open PR's activity masked #1869's 2.5-hour stall (2026-11-03)
+      prs=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open $f in:body" --jq '[.items[]|.updated_at]' 2>/dev/null)
+      [ "$(echo "$prs" | jq --arg q "$q" '[.[]|select(. > $q)]|length' 2>/dev/null)" -gt 0 ] 2>/dev/null && live=1
+      # a claimed focus ticket whose last word is a handover, with no open PR naming it, sits until someone takes it up
+      last=$(gh api "repos/$R/issues/$f/comments?per_page=100" --jq 'last|"\(.created_at) \(.body|.[0:12])"' 2>/dev/null)
+      lab=$(gh api repos/$R/issues/$f --jq '[.labels[].name]|index("claimed")' 2>/dev/null)
+      h=$(date -u -d '-30 min' +%FT%TZ)
+      case "${last#* }" in Handover*|handover*) [ "$lab" != null ] && [ "${last%% *}" \< "$h" ] && [ "$(echo "$prs" | jq length 2>/dev/null)" = 0 ] &&
+        seen "handover-$f-${last%% *}" && echo "focus ticket #$f is claimed, its last comment is a handover from ${last%% *} and no open PR names it: release it and start a runner";; esac
+    done
+    [ $anyopen = 1 ] && [ $live = 0 ] && seen "quiet-$(date -u +%F-%H)" && echo "the chain is quiet: no activity on any #73 focus ticket or a PR naming one for 45 minutes; start runners"
+  fi
+  coverage
   # the `ci` check of main's tip, not the workflow's conclusion: a cancelled cache-warming job (warm) fails the
   # workflow while every gate passed
   sha=$(gh api "repos/$R/commits/main" --jq .sha 2>/dev/null)
   run="$(gh api "repos/$R/commits/$sha/check-runs?check_name=ci" --jq '[.check_runs[]|select(.status=="completed")|.conclusion]|first // "pending"' 2>/dev/null) $sha"
   [ "${run%% *}" = failure ] && seen "red${run##* }" && echo "main's ci is red at ${run##* }"
+  # jobs outside `ci` that run only on main (install, release): #1695 broke install for 6 hours unseen (2026-11-03)
+  bad=$(gh api "repos/$R/commits/$sha/check-runs?per_page=100" --jq '[.check_runs[]|select(.conclusion=="failure")|.name]|unique|join(",")' 2>/dev/null)
+  [ -n "$bad" ] && seen "jobs$sha" && echo "main has failing jobs at $sha: $bad (outside the ci gate too)"
   for i in $(issues blocked '.[]|select(.pull_request==null)|.number'); do
     w=$( { gh api "repos/$R/issues/$i" --jq .body; gh api "repos/$R/issues/$i/comments?per_page=100" --jq '.[].body'; } 2>/dev/null | grep -oiE 'waits for #[0-9]+')
     [ -z "$w" ] && seen "w$i" && echo "#$i is blocked with no Waits-for line (a runner's question?): answer it, name what unlocks it, or remove blocked"
   done
-  main=$(gh api "repos/$R/commits/main" --jq '"\(.sha) \((now-(.commit.committer.date|fromdateiso8601))>3600)"' 2>/dev/null)
+  # a squash commit's committer date is when the PR entered the queue, not when it merged (2026-11-03): count PRs merged
+  main=$(gh api "repos/$R/commits/main" --jq .sha 2>/dev/null)
+  last=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" --jq .total_count 2>/dev/null)
+  main="$main $([ "${last:-1}" = 0 ] && echo true)"
   [ "${main##* }" = true ] && [ "$(gh api "repos/$R/pulls?state=open&per_page=1" --jq length 2>/dev/null)" -gt 0 ] &&
     seen "stall${main%% *}" && { echo "no merge into main for an hour with PRs open; what each waits on:"; prs_state; }
+  # only the lead archives runners (a runner's archive_session is denied): name each merged PR's runner session once
+  h3=$(date -u -d '-180 min' +%FT%TZ)
+  gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h3" -f per_page=100 --jq '.items[]|"\(.number) \([(.body // "")|scan("session_[A-Za-z0-9]{20,}")][0] // "")"' 2>/dev/null |
+    while read -r n s; do [ -n "$s" ] && [ "$s" != "${LEAD_SESSION:-none}" ] && seen "merged-runner-$n" && echo "merged #$n: archive its runner $s unless it is working or asking"; done
+  # flow (owner, 2026-11-04): produce no faster than the queue consumes. 2026-11-03 opened 27 PRs in an hour while 5
+  # merged and open PRs reached 64 with no alarm. WIP = open PRs + claimed tickets with no PR, against W on #73.
+  h=$(date -u -d '-60 min' +%FT%TZ)
+  opened=$(gh api -X GET search/issues -f q="repo:$R is:pull-request created:>=$h" --jq .total_count 2>/dev/null)
+  merged=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
+  [ "${opened:-0}" -gt $(( ${merged:-0} + 2 )) ] 2>/dev/null && seen "flow-$(date -u +%F-%H)" &&
+    echo "flow: $opened PRs opened and $merged merged in the last hour: production outruns the queue; start no runner, find why merges are slow"
+  w=$(echo "$top" | sed -n 's/.*WIP=\([0-9]*\).*/\1/p')
+  openprs=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
+  named=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[]|"\(.body // "") \(.head.ref)"' 2>/dev/null | grep -oE '#[0-9]+|/[0-9]+-' | tr -d '#/-' | sort -u | tr '\n' ' ')
+  held=$(issues claimed '.[]|select(.pull_request==null)|.number' | while read -r i; do case " $named " in *" $i "*) ;; *) echo "$i";; esac; done | wc -l)
+  wip=$(( ${openprs:-0} + ${held:-0} ))
+  [ -n "$w" ] && [ "$wip" -gt "$w" ] && seen "wip-$(date -u +%F-%H)" && echo "WIP is $wip ($openprs open PRs + $held claimed with no open PR), over the limit $w: start no runner; find what holds the PRs"
+  [ -n "$w" ] && [[ $top == *"pool: running"* ]] && [ "$wip" -lt $(( w - 2 )) ] && seen "room-$(date -u +%F-%H)" && echo "WIP is $wip, under the limit $w: start runners for the top tickets until it reaches $w"
   # a ticket with no real body (a split that left `x`, 2026-11-02): runners skip it and the pool idles
   issues task '.[]|select(.pull_request==null and ((.body // "")|length) < 150)|.number' | while read -r i; do
     seen "thin$i" && echo "#$i is a task with an empty or near-empty body: write its body (files, design, Done when)"
@@ -135,30 +245,62 @@ vitals() {
   merges=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
   open=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
   wait=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[].created_at|fromdate]|if length>0 then ((now-min)/60|floor|tostring)+" min" else "none" end' 2>/dev/null)
-  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}"
+  held=$(issues claimed '[.[]|select(.pull_request==null)]|length')
+  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
 }
 
+# The queue stalled 10:51-11:31 on 2026-11-04 with its front groups green and nothing building; taking the front PR
+# out restarted it. PRs queued and no merge_group run created or running for 15 minutes wakes the lead at once.
+stall() {
+  q=0; for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null)|.number' 2>/dev/null); do
+    [ "$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last' 2>/dev/null)" = added_to_merge_queue ] && q=$((q+1))
+  done
+  [ $q = 0 ] && return
+  idle=$(gh api "repos/$R/actions/runs?event=merge_group&per_page=5" --jq '[.workflow_runs[]|select(.status!="completed" or (.updated_at|fromdateiso8601>now-900))]|length' 2>/dev/null)
+  [ "${idle:-1}" = 0 ] && seen "stall-$(date -u +%F-%H)" && echo "URGENT the merge queue holds $q PRs and nothing has built for 15 minutes: take the front PR out (close and reopen) so it rebuilds"
+}
+
+# Batched wakes (owner, 2026-11-04, after the lead woke about 140 times in 12 hours at about 200k tokens a wake):
+# the mailbox and lines marked URGENT (main's ci red, no merge for an hour, a queue failure, a stalled queue) wake the lead at once; everything else
+# collects in $PEND and wakes it at most every 30 minutes.
+PEND=$(dirname "$SEEN")/pending-wake; : > "$PEND"; start=$(date +%s)
+wake() { [ -s "$PEND" ] && cat "$PEND"; echo "$1"; vitals; exit 0; }
 t=0
 while :; do
   new=$(mail); if [ -n "$new" ] && [ "$(echo "$new" | jq length)" -gt 0 ]; then
-    echo "new @lead: on #1406"; echo "$new" | jq -r '.[]|"--- \(.created_at)\n\(.body|split("\n")[:40]|join("\n"))"'
-    echo "$new" | jq -r '.[-1].created_at' > "$MARK"; vitals; exit 0
+    echo "$new" | jq -r '.[-1].created_at' > "$MARK"
+    wake "new @lead: on #1406$(echo "$new" | jq -r '.[]|"\n--- \(.created_at)\n\(.body|split("\n")[:40]|join("\n"))"')"
   fi
-  if [ $((t % 10)) = 0 ]; then why=$(fix; health); [ -n "$why" ] && { echo "$why"; vitals; exit 0; }; fi
-  if [ $((t % 60)) = 0 ]; then why=$(check); [ -n "$why" ] && { echo "$why"; vitals; exit 0; }; fi
+  why=
+  [ $((t % 10)) = 0 ] && why=$(fix; health; stall)
+  [ $((t % 15)) = 0 ] && why="$why${why:+$'\n'}$(check)"
+  if [ -n "$why" ]; then
+    echo "$why" | grep -q "URGENT\|main's ci is red\|no merge into main" && wake "$why"
+    echo "$why" >> "$PEND"
+  fi
+  [ -s "$PEND" ] && [ $(( $(date +%s) - start )) -ge 1800 ] && wake "(batched: 30 minutes of non-urgent lines above)"
   t=$((t+1)); sleep 60
 done
 ```
+- **Batched wakes (owner, 2026-11-04):** the mailbox and `URGENT` lines (main red, a queue failure on a PR's head, a stalled queue) wake the lead at once; every other line waits in `pending-wake` and wakes it at most every 30 minutes. Overnight on 2026-11-03 the lead woke about 140 times in 12 hours, each wake several calls at about 200k tokens.
+- **A PR the queue failed is not re-armed:** when a `merge_group` run for the PR failed after its head commit, the watcher wakes the lead (`URGENT`) to start a takeover runner instead of re-queuing broken code (#2148 re-entered the queue at 12:36 on 2026-11-04 with the code that failed at 12:03). Runners end once their PR is queued (smith-dev-runner step 5), so nobody else is watching it.
+- **A stalled queue (every ten minutes, `stall`):** PRs queued and no `merge_group` run created or running for 15 minutes wakes the lead to take the front PR out (2026-11-04, 10:51-11:31).
 - **Done without the lead (every ten minutes):**
   - Everything a blocked ticket waits for is closed: it removes `blocked` and says so on the ticket.
-  - A green PR not in the merge queue (GitHub ignores auto-merge on a PR that is already green; the queue drops a PR whose queue run fails): it merges main in and turns auto-merge on through `PUT pulls/N/ccr/auto_merge` (#1522 sat green for 90 minutes).
-  - A PR red or conflicted and untouched for 30 minutes: its runner has ended. It removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over before any new ticket (smith-dev-runner step 1; #1562 sat conflicted for four hours).
+  - A green PR not in the merge queue (GitHub ignores auto-merge on a PR that is already green; the queue drops a PR whose queue run fails): it merges main in and turns auto-merge on through `PUT pulls/N/ccr/auto_merge` (#1522 sat green for 90 minutes). Green means the `ci` check passed, not `mergeable_state=clean`: GitHub often reports `unknown` (#2033 and #2031 sat green and unqueued for 50 minutes, 2026-11-03). A PR whose last queue event is `added_to_merge_queue` is skipped: its `auto_merge` is null too, and updating its branch would throw it out of the queue.
+  - A PR red and untouched for 30 minutes: it removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over before any new ticket (smith-dev-runner step 1; #1562 sat conflicted for four hours). Never a ticket labeled `blocked`: its PR is red on purpose until what it waits for merges.
+  - **A conflict is never released by script.** After 60 minutes the watcher wakes the lead, who checks the PR's session with `get_session` and releases by hand only if it is not working: on 2026-11-04 six conflict releases (#2142, #2193, #2186 twice, #1918, #2041) hit runners still at work, and each claim had to be restored.
+  - **A conflict first goes to the PR's own session.** A red check wakes the PR's runner; a conflict does not. After 10 minutes with no push, the watcher wakes the lead with the session named in the PR body's footer, and the lead sends it `send_message` to merge main and push. At 60 minutes it wakes the lead again (owner, 2026-11-03, after four takeovers in an hour, each a fresh session only to merge main: "I think we need a watcher to send a message to the session").
 - **Wakes the lead (every hour, once per problem):** fewer ready tickets than N (write or split tickets); main's ci red; a blocked ticket with no Waits-for line (likely a runner's question; owner, 2026-11-02, "we should never let you mark something as blocked unless you have a ticket saying what unlocks it"); no merge into main for an hour with PRs open; a PR it could not re-arm or release.
-- **Failures that are not the PR's (every ten minutes, `health`):** it reads each failed ci run once, records each failed test (its `FAIL <name>` check-run annotation) and each job cancelled without ever getting a runner, with the PR, in `failures.txt` beside `SEEN`. The same test failing on three PRs in a day wakes the lead (two gave a false alarm: a PR that changes the lowering legitimately fails the lowering tests) as shared (a flake or a break on main: file a p0 ticket); so does the same job cancelled with no runner on two PRs (starvation). On 2026-11-02 `task_test` failed on four PRs before anyone looked (#1718).
+- **Failures that are not the PR's (every ten minutes, `health`):** it reads each failed ci run once, records each failed test (its `FAIL <name>` check-run annotation) and each job cancelled without ever getting a runner, with the PR, in `failures.txt` beside `SEEN`. The same test failing on three PRs in a day wakes the lead (first check whether one queued PR sits in every failing merge group: a PR in the queue fails every group behind it, and on 2026-11-04 #2033 broke #2158's tests in three groups) (two gave a false alarm: a PR that changes the lowering legitimately fails the lowering tests) as shared (a flake or a break on main: file a p0 ticket); so does the same job cancelled with no runner on two PRs (starvation). On 2026-11-02 `task_test` failed on four PRs before anyone looked (#1718).
 - **Stall wakes carry their cause:** the stall message lists each open PR's ci state and its failed or cancelled jobs, so a wake starts from why the queue is stuck, not from the alarm.
 - **Thin tickets:** a `task` with a body under 150 characters wakes the lead once (a split on 2026-11-02 left bodies of `x`, and runners skip them).
 - **Both runner lanes must claim (hourly):** no `claimed by` comment from a cloud runner, or from a Mac runner, in 90 minutes while tickets are ready wakes the lead. On 2026-11-02 the cloud lane was empty from 14:20 to 20:30, unseen.
 - **Ready means takeable:** the ready count leaves out tickets that are claimed, blocked, `later`, `mac`, named by an open PR, or that have a Waits-for line. It said 20 while five fresh runners found nothing.
-- **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, and the oldest queued CI run, so each wake shows the whole factory.
+- **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, the oldest queued CI run, and how many tickets are claimed now, so each wake shows the whole factory The claimed count is compared with the sessions that are `working`: on 2026-11-03 it was 40 against 6.
+- **A claim gone quiet (every 15 minutes):** a `claimed` ticket with no open PR naming it and no change on the ticket for 30 minutes wakes the lead, at most once an hour per ticket. The lead checks the runner's session before releasing: a first build takes about 15 minutes and `smith check` 10 or more, with nothing on GitHub.
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
+- **Flow (hourly, owner 2026-11-04):** more than two PRs opened in the last hour beyond those merged wakes the lead: production outruns the queue, so start no runner and find why merges are slow (on 2026-11-03, 27 opened in an hour against 5 merged and 64 piled up unseen). Work in progress (open PRs plus `claimed` tickets no open PR names) over `WIP=` on #73 wakes it the same way; under the limit by more than two while the pool is `running`, it wakes the lead to start runners up to the limit, since runners start at most their own replacement.
+- **Merged PRs' runners:** each PR merged in the last three hours with a runner session in its body wakes the lead once to archive that session (unless it is working or asking). Only the lead can: a runner's `archive_session` is denied, and the old rule, successors archive predecessors, left 73 finished runners in the owner's sidebar on 2026-11-04. Set `LEAD_SESSION` to the lead's own session id so its PRs are skipped.
+- **The front-end coverage count (every 15 minutes, `coverage`):** CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on each push to main (#2073). The watcher reads the log of the two newest main runs that have a number through `gh api` and wakes the lead once when the passed count dropped, naming both commits. A run that logged `unmeasured` or has no such job is passed over.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.

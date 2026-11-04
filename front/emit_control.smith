@@ -303,7 +303,7 @@ static void leave_loop(state::Emitter *e, c::LLVMBasicBlockRef target, ast::Span
     next.blocks[0] = target;
     state::push_then(e, next);
     for (Usize i = first; i < e->defer_count; i++)
-        state::push_statement(e, e->defers[i].body);
+        if (!e->defers[i].on_error) state::push_statement(e, e->defers[i].body);
 }
 
 export state::Status break_stmt(state::Emitter *e, const ast::Stmt *s) {
@@ -545,20 +545,31 @@ export state::Status labeled(state::Emitter *_, const ast::Stmt *s) {
     return state::not_emitted("label", s->span);
 }
 
-// `defer body`: the body waits on `defers` with the depth of the block it is in, and emits nothing now.
-export state::Status defer_stmt(state::Emitter *e, const ast::Stmt *s) {
-    if (s->kind != .defer_stmt) {
-        return state::fail("not a defer", s->span);
-    }
-    const ast::Stmt *body = s->kind.defer_stmt.body;
+static state::Status push_defer(state::Emitter *e, const ast::Stmt *body, Bool on_error) {
     if (e->defer_count == countof(e->defers)) {
         Usize capacity = countof(e->defers) * 2;
         if (capacity < 4) capacity = 4;
         e->defers = mem::realloc(e->defers, capacity);
     }
-    e->defers[e->defer_count] = (state::DeferEntry){.body = body, .scope_depth = e->scope_count};
+    e->defers[e->defer_count] = (state::DeferEntry){.body = body, .scope_depth = e->scope_count, .on_error = on_error};
     e->defer_count += 1;
     return state::success();
+}
+
+// `defer body`: the body waits on `defers` with the depth of the block it is in, and emits nothing now.
+export state::Status defer_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .defer_stmt) {
+        return state::fail("not a defer", s->span);
+    }
+    return push_defer(e, s->kind.defer_stmt.body, false);
+}
+
+// `errdefer body`: like `defer`, but it runs only on the early return of a `try`.
+export state::Status errdefer_stmt(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .errdefer_stmt) {
+        return state::fail("not an errdefer", s->span);
+    }
+    return push_defer(e, s->kind.errdefer_stmt.body, true);
 }
 
 // Called when a block ends, before its locals go out of scope: the `defer`s of this scope run here, the newest first,
@@ -570,7 +581,7 @@ export state::Status end_of_block(state::Emitter *e, ast::Span _) {
     c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
     if (c::LLVMGetBasicBlockTerminator(here) == nullptr) {
         for (Usize i = first; i < e->defer_count; i++)
-            state::push_statement(e, e->defers[i].body);
+            if (!e->defers[i].on_error) state::push_statement(e, e->defers[i].body);
     }
     e->defer_count = first;
     if (first == 0 && countof(e->defers) > 0) e->defers = mem::realloc(e->defers, 0);
@@ -580,6 +591,13 @@ export state::Status end_of_block(state::Emitter *e, ast::Span _) {
 // Called by `return` after its value is computed, before `ret`: every pending `defer` runs, the newest first. None is
 // removed: the function's other paths still need them.
 export state::Status before_return(state::Emitter *e, ast::Span _) {
+    for (Usize i = 0; i < e->defer_count; i++)
+        if (!e->defers[i].on_error) state::push_statement(e, e->defers[i].body);
+    return state::success();
+}
+
+// The early return of a `try`: every pending `defer` and `errdefer` runs, the newest first.
+export state::Status before_error_return(state::Emitter *e, ast::Span _) {
     for (Usize i = 0; i < e->defer_count; i++)
         state::push_statement(e, e->defers[i].body);
     return state::success();

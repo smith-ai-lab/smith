@@ -19,10 +19,11 @@
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
 // Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
-// as a value, `try`, and `==` between options.
+// as a value, `try` on a `Result`, and `==` between options.
 module front::emit_option;
 
 import front::ast;
+import front::emit_control as control;
 import front::emit_state as state;
 import front::types;
 import std::format;
@@ -61,6 +62,66 @@ export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
         return {.error = made.error};
     }
     return build(e, made.ok, t->span);
+}
+
+// Whether `t` is `Option(T)` or `Result(T, E)` written as an applied type.
+export Bool is_applied(const ast::TypeExpr *t) {
+    if (t->kind != .applied) return false;
+    ast::Path name = t->kind.applied.name;
+    if (countof(name.segments) != 1) return false;
+    Str last = name.segments[0].text;
+    return state::same_text(last, "Option") || state::same_text(last, "Result") || state::same_text(last, "Checked");
+}
+
+// The type argument `i` of an applied type, or the reason there is none.
+static state::TyResult applied_argument(state::Emitter *e, const ast::TypeExpr *t, Usize i) {
+    if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
+    ast::TypeArg args[:] = t->kind.applied.args;
+    if (i >= countof(args)) return state::ty_fail("not emitted yet: this applied type", t->span);
+    const ast::TypeArg *arg = &args[i];
+    if (!(*arg == .type)) return state::ty_fail("not emitted yet: this applied type", t->span);
+    return state::type_of(e, arg->type.type);
+}
+
+typedef state::Ty TyList[:];
+
+// `Result(ok, error)`: `{ i8 tag, ok, error }`, tag 0 is ok. One block whose first two slots are the header of its
+// link in the chain (as a tuple's), then `ok` and `error`, so `memory::release` frees it.
+static state::TyResult build_result(state::Emitter *e, state::Ty ok, state::Ty error) {
+    TyList block = {};
+    block = mem::realloc(block, 4);
+    state::OwnedTy *head = (state::OwnedTy *)(Usize)block.data;
+    head->next = e->owned;
+    e->owned = head;
+    block[2] = ok;
+    block[3] = error;
+    c::LLVMTypeRef fields[3];
+    fields[0] = c::LLVMInt8TypeInContext(e->context);
+    fields[1] = ok.llvm;
+    fields[2] = error.llvm;
+    state::Ty ty = {.kind = .result,
+                    .llvm = c::LLVMStructTypeInContext(e->context, fields, 3, false),
+                    .name = state::msg(format::push("Result(", ok.name, ", ", error.name, ")")),
+                    .parts = &block[2],
+                    .part_count = 2};
+    return ty;
+}
+
+// `Option(T)` and `Result(T, E)` written as types.
+export state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
+    if (t->kind != .applied) return state::ty_fail("not an applied type", t->span);
+    ast::Path name = t->kind.applied.name;
+    ast::TypeArg args[:] = t->kind.applied.args;
+    state::TyResult first = applied_argument(e, t, 0);
+    if (first == .error) return {.error = first.error};
+    if (state::same_text(name.segments[0].text, "Option")) {
+        if (countof(args) != 1) return state::ty_fail("`Option` takes one type", t->span);
+        return build(e, first.ok, t->span);
+    }
+    if (countof(args) != 2) return state::ty_fail("`Result` takes two types", t->span);
+    state::TyResult second = applied_argument(e, t, 1);
+    if (second == .error) return {.error = second.error};
+    return build_result(e, first.ok, second.ok);
 }
 
 // The payload the checker names, as a `Ty`: a `bool`, an integer, or a record of the module (an option is walked by
@@ -214,7 +275,7 @@ static state::Status branch_end(state::Emitter *e, const state::Work *w) {
 }
 
 // The scrutinee is on the value stack: test its tag, bind the payload, and run the branches.
-static state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
+export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .if_let) {
         return state::fail("not an if let", s->span);
@@ -272,6 +333,49 @@ export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
     }
     state::push_then(e, (state::Work){.then = if_let_branch, .stmt = s, .span = s->span});
     state::push_eval(e, s->kind.if_let.value, state::no_hint());
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `try`
+
+static state::Status ret_none(state::Emitter *e, const state::Work *w) {
+    c::LLVMBuildRet(e->builder, w->value);
+    return state::success();
+}
+
+// After the early return: the code goes on in the block of `.some`, with the payload as the value of the `try`.
+static state::Status try_continue(state::Emitter *e, const state::Work *w) {
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    state::push_value(e, payload(e, (state::Value){.llvm = w->value, .ty = w->ty}));
+    return state::success();
+}
+
+// The operand is on the value stack: on `.none` every `defer` and `errdefer` runs and the function returns `.none`.
+static state::Status try_branch(state::Emitter *e, const state::Work *w) {
+    state::Value o = state::pop_value(e);
+    if (o.ty.kind != .option || e->result.kind != .option) {
+        return state::fail("`try` needs a `?T` operand in a function that returns a `?U`", w->span);
+    }
+    c::LLVMBasicBlockRef some_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_some");
+    c::LLVMBasicBlockRef none_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_none");
+    c::LLVMBuildCondBr(e->builder, is_some(e, o), some_block, none_block);
+    c::LLVMPositionBuilderAtEnd(e->builder, none_block);
+    state::Work next = {.then = try_continue, .value = o.llvm, .ty = o.ty, .span = w->span};
+    next.blocks[0] = some_block;
+    state::push_then(e, next);
+    state::push_then(e, (state::Work){.then = ret_none, .value = c::LLVMConstNull(e->result.llvm), .span = w->span});
+    try control::before_error_return(e, w->span);
+    return state::success();
+}
+
+// `try o` on a `?T` in a function that returns a `?U`: `.none` returns `.none`, `.some(x)` is `x`.
+export state::Status try_expr(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .try_expr) {
+        return state::fail("not a try", x->span);
+    }
+    state::push_then(e, (state::Work){.then = try_branch, .span = x->span});
+    state::push_eval(e, x->kind.try_expr.operand, state::no_hint());
     return state::success();
 }
 

@@ -9,23 +9,36 @@
 //                                     8 passes); the number of fixes applied, -1 when the file cannot be read or
 //                                     written
 //   fix::fix_text(file, source)       the same on a text; `store(path, text)` writes a file
-//   fix::fix_run(paths, count)        what the driver calls (C: `front_parser_fix_run`): `path: N fixes applied` on
-//                                     standard output for each file, 0 when every file could be read and written
+//   fix::set_loader(load)             the reader of imported modules the checker's fixes use (#1797): `fix_run` sets
+//   the
+//                                     project's and smith's folders; with none, a call is not rewritten to the method
+//                                     form, which needs the types of another module
+//   fix::fix_run(paths, count)        what the driver calls (C: `front_parser_fix_run`): each file fixed, then the enum
+//                                     variants of all the files renamed lowercase (front::fix_variants, #2098);
+//                                     `path: N fixes applied` on standard output for each file, 0 when every file
+//                                     could be read and written
 module front::fix;
 
 import front::ast;
+import front::cimport;
 import front::parse as core;
+import front::fix_blocks;
+import front::fix_method;
+import front::fix_variants;
 import front::lex;
 import front::parse_decl;
 import front::parse_expr;
 import front::parse_stmt;
 import front::parse_type;
 import front::parser;
+import front::roots;
 import front::types;
 import front::types_decl;
+import std::arena;
 import std::files;
 import std::format;
 import std::mem;
+import <stdlib.h>;
 import <unistd.h>;
 
 // The text with the fixes applied, and how many fixes that was and how many were left out because an edit of theirs
@@ -122,15 +135,66 @@ export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings)
 
 constexpr Usize fix_passes = 8;
 
+// Reads the modules a file imports (#1797): without one the checker knows nothing of an import, and the fixes that need
+// another module's types (a call written in the method form) are not made. A test supplies its own; the driver's reads
+// the project's and smith's folders.
+static types::ModuleLoader loader = nullptr;
+
+export void set_loader(types::ModuleLoader load) {
+    loader = load;
+}
+
+static arena::Arena header_arena;
+static Bool header_arena_made = false;
+static Str header_folder = ".";
+
+// The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
+// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
+static const ast::Module *load_header(Str header, Bool angled) {
+    Str name = as_str(format::push(header));
+    Str folder = as_str(format::push(header_folder));
+    if (!header_arena_made) {
+        header_arena = arena::growing(1U << 20, nullptr);
+        header_arena_made = true;
+    }
+    Str empty = "";
+    const char *flags = empty.data;
+    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    if (given != nullptr) flags = given;
+    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
+    if (countof(got.error) > 0) return nullptr;
+    ast::Module *module = mem::alloc(ast::Module);
+    module->decls = got.decls;
+    return module;
+}
+
+// Whether the module imports a header with a language (`import c <h>`): only then does the checker need clang.
+static Bool imports_header(const ast::Module *module) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_c) continue;
+        if (countof(d->kind.import_c.language) > 0) return true;
+    }
+    return false;
+}
+
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
-static core::Errors checker_fixes(const ast::Module *module) {
+static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
-    types::Checked checked = types_decl::check_module(module, types::lp64());
+    types::HeaderLoader headers = imports_header(module) ? load_header : nullptr;
+    types::Checked checked = types_decl::check_module_headers(module, types::lp64(), loader, headers);
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
         if (countof(e.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
+    }
+    if (checked.error_count == 0 && loader != nullptr) {
+        core::Errors methods = fix_method::edits(source, &checked);
+        for (Usize i = 0; i < countof(methods); i++) {
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = methods[i];
+        }
     }
     return out;
 }
@@ -141,6 +205,9 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     if (lex::tokenize_new(source) != .error) {
         parser::Parsed own = parser::parse_new(file, source);
         if (countof(own.errors) == 0) return own;
+        // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
+        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106).
+        if (lex::tokenize(source) == .error) return own;
     }
     return parser::parse(file, source);
 }
@@ -155,15 +222,107 @@ export Bool store(Str path, Str text) {
     return written != .error;
 }
 
+// The text of a `/* */` comment written as `#` lines: each line of `content` gets a `#` in front of it.
+static Str block_as_hashes(Str content) {
+    Str out = "#";
+    for (Usize k = 0; k < countof(content); k++) {
+        if (content[k] == '\n') {
+            out = as_str(format::push(out, "\n#"));
+        } else {
+            out = as_str(format::push(out, content[k:k + 1]));
+        }
+    }
+    return out;
+}
+
+// The index of the `/` after `*/` closing the block comment that opens at i, or the length of the text when none does.
+static Usize block_end(Str source, Usize i) {
+    Usize n = countof(source);
+    for (Usize k = i + 2; k + 1 < n; k++) {
+        if (source[k] == '*' && source[k + 1] == '/') return k + 1;
+    }
+    return n;
+}
+
+// The index after the closing quote of the string or character literal that opens at i, on the same line; i itself
+// when the line holds no closing quote, so the quote is text (an apostrophe in a comment).
+static Usize quoted_end(Str source, Usize i) {
+    Usize n = countof(source);
+    Usize k = i + 1;
+    while (k < n && source[k] != '\n') {
+        if (source[k] == '\\') {
+            k += 2;
+            continue;
+        }
+        if (source[k] == source[i]) return k + 1;
+        k += 1;
+    }
+    return i;
+}
+
+// The text with every `//` comment written as a `#` comment (a space after it when there is none), and every
+// `/* */` comment as `#` lines. The text is read as characters, not tokens: once the fixer has written `#` comments
+// the text no longer tokenizes as today's syntax, and the `//` left would hide the causes behind it. A string or a
+// character literal is left, so a `//` in a string stays.
+static Str hash_comments(Str source) {
+    Usize n = countof(source);
+    Str out = "";
+    Usize copied = 0;
+    Usize i = 0;
+    while (i < n) {
+        if (source[i] == '"' || source[i] == '\'') {
+            Usize end = quoted_end(source, i);
+            i = end > i ? end : i + 1;
+            continue;
+        }
+        if (source[i] == '#' && (i + 1 >= n || source[i + 1] == ' ' || source[i + 1] == '\n' || source[i + 1] == '#')) {
+            // A `#` comment written already: what is in it stays (the pass that wrote it may run again, #1956).
+            while (i < n && source[i] != '\n') {
+                i += 1;
+            }
+            continue;
+        }
+        if (i + 1 < n && source[i] == '/' && source[i + 1] == '/') {
+            Bool blank = i + 2 >= n || source[i + 2] == ' ' || source[i + 2] == '\n';
+            Str spaced = blank ? "#" : "# ";
+            out = as_str(format::push(out, source[copied:i], spaced));
+            copied = i + 2;
+            while (i < n && source[i] != '\n') {
+                i += 1;
+            }
+            continue;
+        }
+        if (i + 1 < n && source[i] == '/' && source[i + 1] == '*') {
+            Usize close = block_end(source, i);
+            if (close >= n) {
+                i = n;
+                continue;
+            }
+            out = as_str(format::push(out, source[copied:i], block_as_hashes(source[i + 2:close - 1])));
+            copied = close + 1;
+            i = copied;
+            continue;
+        }
+        i += 1;
+    }
+    return as_str(format::push(out, source[copied:n]));
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 8 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = source};
+    header_folder = ".";
+    for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
+        if (file[i - 1] != '/') continue;
+        header_folder = i == 1 ? file[0:1] : file[0:i - 1];
+        break;
+    }
     for (Usize pass = 0; pass < fix_passes; pass++) {
         parser::Parsed parsed = parse_for_fix(file, total.text);
         core::Errors errors = parsed.errors;
         if (countof(errors) == 0) {
-            core::Errors more = checker_fixes(&parsed.module);
+            core::Errors more = checker_fixes(total.text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);
                 errors[countof(errors) - 1] = more[i];
@@ -172,10 +331,54 @@ export Fixed fix_text(Str file, Str source) {
         Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
         if (fixed.applied == 0) break;
         total.text = fixed.text;
+        // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
+        // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
+        // an old declaration and mends it again (#1956).
+        Str hashed = hash_comments(total.text);
+        if (!mem::equal(hashed, total.text) && lex::tokenize_new(hashed) != .error) total.text = hashed;
         total.applied += fixed.applied;
         total.skipped = fixed.skipped;
     }
+    if (header_arena_made) { // what the headers declared is not needed once the passes are done
+        arena::release(&header_arena);
+        header_arena_made = false;
+    }
+    // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
+    if (total.applied > 0) total.text = hash_comments(total.text);
+    // The blocks last (#2014): the passes above read their own output with braces, so only now do `:` and the
+    // indentation replace them, and only for a text that reads cleanly.
+    if (total.applied > 0 && countof(parser::parse_new_braces(file, total.text).errors) == 0)
+        total.text = fix_blocks::convert(total.text);
     return total;
+}
+
+// The tree of the module at the dotted `path` (`std.list`, NUL-terminated) for the checker: the file under the
+// project's source folder, else under smith's library folder (`front::roots`); null when neither holds it or it does
+// not read.
+static const ast::Module *load_from_folders(const char *dotted) {
+    Str relative = as_str(format::push((const char *)dotted));
+    Str inside = "";
+    for (Usize i = 0; i < countof(relative); i++) {
+        Str piece = relative[i:i + 1];
+        if (relative[i] == '.') piece = "/";
+        inside = as_str(format::push(inside, piece));
+    }
+    roots::Roots folders = roots::default_roots();
+    Str where[2] = {folders.source, folders.library};
+    for (Usize k = 0; k < 2; k++) {
+        Str path = as_str(format::push(where[k], "/", inside, ".smith"));
+        if (!files::exists(path)) continue;
+        files::BytesResult loaded = files::read_file(path);
+        if (loaded == .error) return nullptr;
+        format::Chars chars = mem::view(loaded.ok, char);
+        Str source = chars;
+        parser::Parsed parsed = parse_for_fix(path, source);
+        if (countof(parsed.errors) > 0) return nullptr;
+        ast::Module *copy = mem::alloc(ast::Module);
+        *copy = parsed.module;
+        return copy;
+    }
+    return nullptr;
 }
 
 // Fixes one file in place. Returns the number of fixes applied, or -1 when the file cannot be read or written.
@@ -189,13 +392,36 @@ export I64 fix_file(Str path) {
     return (I64)fixed.applied;
 }
 
-// The driver's entry for `smith lint --fix FILE...`: each file fixed, `path: N fixes applied` on standard output,
-// 0 when every file could be read and written.
+// The text of the file at `path` mended, or an empty text and false when it cannot be read.
+static Bool fix_to_text(Str path, Fixed *fixed) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return false;
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str source = chars;
+    *fixed = fix_text(path, source);
+    return true;
+}
+
+// The driver's entry for `smith lint --fix FILE...`: each file fixed, then the enum variants of all the files renamed
+// to lowercase together (#2098: a variant is declared in one file and used in others), `path: N fixes applied` on
+// standard output for each file (the renamed file counts one more), 0 when every file could be read and written.
 [[std::c_name("front_parser_fix_run")]] export I32 fix_run(const char *const *paths, Usize count) {
     I32 status = 0;
+    loader = load_from_folders;
+    fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
+    I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {
         Str path = as_str(format::push((const char *)paths[i]));
-        I64 n = fix_file(path);
+        Fixed fixed = {};
+        applied[i] = fix_to_text(path, &fixed) ? (I64)fixed.applied : -1;
+        texts[i].text = fixed.text;
+    }
+    fix_variants::Words renamed = fix_variants::rename_all(texts);
+    for (Usize i = 0; i < count; i++) {
+        Str path = as_str(format::push((const char *)paths[i]));
+        I64 n = applied[i];
+        if (n >= 0 && !mem::equal(renamed[i].text, texts[i].text)) n += 1;
+        if (n > 0 && !store(path, renamed[i].text)) n = -1;
         Str line = n < 0 ? as_str(format::push(path, ": cannot read or write the file\n"))
                          : as_str(format::push(path, ": ", n, n == 1 ? " fix applied\n" : " fixes applied\n"));
         (void)c::write(n < 0 ? 2 : 1, line.data, countof(line));

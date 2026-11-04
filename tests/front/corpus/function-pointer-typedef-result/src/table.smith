@@ -1,0 +1,16 @@
+pub let Hook = fn(u64) -> u64
+pub let Plain = fn(u64) -> u64
+let Private = fn(u64) -> u64
+
+fn twice(bits: u64) -> u64:
+    return bits * 2
+
+pub fn plain() -> Plain:
+    let private_twice: Private = fn(bits): bits * 2
+    return private_twice
+
+pub fn call(f: Hook, bits: u64) -> u64:
+    return f(bits)
+
+pub fn chosen_value(bits: u64) -> u64:
+    return twice(bits)

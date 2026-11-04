@@ -1,0 +1,882 @@
+// front::lint: smith's own lint checks on the new checker (#1976, part of #1631 and #1964). `smith lint` on a `.smith`
+// file used to run clang-tidy over the lowered code; once the lowered code is gone, a check that is not ported stops
+// silently. These are the ones that stay, reported as checker errors with the same message text.
+//
+// THE RULES
+//
+//   smith-unsafe        a call of setjmp, longjmp, sigsetjmp or siglongjmp (the jump skips every `defer`), or of
+//                       alloca (the stack cannot hold a size known only at run time).
+//   smith-mem           a call of C's memcpy, memmove, memset, memcmp, malloc, calloc, realloc or free: each has a
+//                       checked replacement in std::mem.
+//   smith-bounded-loop  a `for` with no condition, or a `while`, `do ... while` or `for` whose condition is the
+//                       constant `true` (or a non-zero integer), outside `main`.
+//   smith-module-library  `import c <smith/arena.h>`, or a `c::name` the header lists, where the header is a library
+//                       that is a module: its generated header says `// smith-module: std::arena` and `// smith-names:
+//                       push_raw=smith_arena_push ...`, and the module is imported by name instead. The checker
+//                       does not read files: `set_header_text` gives it the text of a header (empty: none), and with
+//                       none given the check is off. Names are looked for in expressions, in the types of
+//                       parameters, results, fields and `let`s, not in casts.
+//
+// A call counts as C's when it is written `c::name`, through the alias or the name of a C header the module
+// imports (`stdlib::malloc`), or is a bare `name` brought in by `from c <header> import name`. `mem::free` and a
+// module's own `free` are not C's. A function that calls `contract::trusted()` implements a wrapper and is not
+// checked. The opt-out comment `# NOLINT(smith-...)` is read from the text `set_source` gives.
+// No recursion: expressions and statements are walked with a work stack that grows.
+module front::lint;
+
+import front::ast;
+import front::types;
+import std::format;
+import std::mem;
+
+struct Item {
+    const ast::Stmt *stmt;
+    const ast::Expr *expr;
+};
+
+struct Work {
+    Item items[:];
+    Usize top;
+};
+
+// The C names a module reaches: the aliases and stems of its C headers, and the names imported from them.
+struct CNames {
+    Str spaces[16];
+    Usize space_count;
+    Str names[32];
+    Usize name_count;
+};
+
+static void push(Work *w, const ast::Stmt *stmt, const ast::Expr *expr) {
+    if (stmt == nullptr && expr == nullptr) {
+        return;
+    }
+    if (w->top == countof(w->items)) {
+        Usize capacity = countof(w->items) * 2;
+        if (capacity < 32) {
+            capacity = 32;
+        }
+        w->items = mem::realloc(w->items, capacity);
+    }
+    w->items[w->top] = (Item){.stmt = stmt, .expr = expr};
+    w->top += 1;
+}
+
+static void push_exprs(Work *w, ast::ExprRef list[:]) {
+    for (Usize i = 0; i < countof(list); i++) {
+        push(w, nullptr, list[i]);
+    }
+}
+
+static void push_stmts(Work *w, ast::StmtRef list[:]) {
+    for (Usize i = 0; i < countof(list); i++) {
+        push(w, list[i], nullptr);
+    }
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static Bool listed(Str name, const Str *names, Usize count) {
+    for (Usize i = 0; i < count; i++) {
+        if (same(name, names[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The expressions an expression holds.
+static void expr_parts(Work *w, const ast::Expr *e) {
+    if (e->kind == .binary) {
+        push(w, nullptr, e->kind.binary.left);
+        push(w, nullptr, e->kind.binary.right);
+    } else if (e->kind == .unary) {
+        push(w, nullptr, e->kind.unary.operand);
+    } else if (e->kind == .assign) {
+        push(w, nullptr, e->kind.assign.target);
+        push(w, nullptr, e->kind.assign.value);
+    } else if (e->kind == .conditional) {
+        push(w, nullptr, e->kind.conditional.condition);
+        push(w, nullptr, e->kind.conditional.then_value);
+        push(w, nullptr, e->kind.conditional.else_value);
+    } else if (e->kind == .call) {
+        push(w, nullptr, e->kind.call.callee);
+        push_exprs(w, e->kind.call.args);
+    } else if (e->kind == .index) {
+        push(w, nullptr, e->kind.index.base);
+        push(w, nullptr, e->kind.index.index);
+    } else if (e->kind == .slice_of) {
+        push(w, nullptr, e->kind.slice_of.base);
+        push(w, nullptr, e->kind.slice_of.start);
+        push(w, nullptr, e->kind.slice_of.end);
+    } else if (e->kind == .member) {
+        push(w, nullptr, e->kind.member.base);
+    } else if (e->kind == .cast) {
+        push(w, nullptr, e->kind.cast.operand);
+    }
+}
+
+// The expressions of the rarer kinds.
+static void expr_parts_more(Work *w, const ast::Expr *e) {
+    if (e->kind == .variant) {
+        push(w, nullptr, e->kind.variant.payload);
+    } else if (e->kind == .try_expr) {
+        push(w, nullptr, e->kind.try_expr.operand);
+    } else if (e->kind == .named_arg) {
+        push(w, nullptr, e->kind.named_arg.value);
+    } else if (e->kind == .expand) {
+        push(w, nullptr, e->kind.expand.pattern);
+    } else if (e->kind == .tuple_lit) {
+        push_exprs(w, e->kind.tuple_lit.items);
+    } else if (e->kind == .array_lit) {
+        push_exprs(w, e->kind.array_lit.items);
+    } else if (e->kind == .compound) {
+        for (Usize i = 0; i < countof(e->kind.compound.items); i++) {
+            push(w, nullptr, e->kind.compound.items[i].value);
+        }
+    } else if (e->kind == .stmt_expr) {
+        push(w, e->kind.stmt_expr.stmt, nullptr);
+    }
+}
+
+// The statements and expressions a statement holds.
+static void stmt_parts(Work *w, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        push(w, nullptr, s->kind.expression.value);
+    } else if (s->kind == .declaration) {
+        const ast::Decl *d = s->kind.declaration.decl;
+        if (d->kind == .variable) {
+            push(w, nullptr, d->kind.variable.init);
+        }
+    } else if (s->kind == .block) {
+        push_stmts(w, s->kind.block.items);
+    } else if (s->kind == .if_stmt) {
+        push(w, nullptr, s->kind.if_stmt.condition);
+        push(w, s->kind.if_stmt.then_branch, nullptr);
+        push(w, s->kind.if_stmt.else_branch, nullptr);
+    } else if (s->kind == .while_stmt) {
+        push(w, nullptr, s->kind.while_stmt.condition);
+        push(w, s->kind.while_stmt.body, nullptr);
+    } else if (s->kind == .do_while) {
+        push(w, nullptr, s->kind.do_while.condition);
+        push(w, s->kind.do_while.body, nullptr);
+    } else if (s->kind == .for_stmt) {
+        push(w, s->kind.for_stmt.init, s->kind.for_stmt.condition);
+        push(w, nullptr, s->kind.for_stmt.step);
+        push(w, nullptr, s->kind.for_stmt.range);
+        push(w, s->kind.for_stmt.index, nullptr);
+        push(w, s->kind.for_stmt.body, nullptr);
+    }
+}
+
+// The rest of the statements.
+static void stmt_parts_more(Work *w, const ast::Stmt *s) {
+    if (s->kind == .for_in) {
+        push(w, nullptr, s->kind.for_in.iterable);
+        push(w, s->kind.for_in.body, nullptr);
+    } else if (s->kind == .match_stmt) {
+        push(w, nullptr, s->kind.match_stmt.value);
+        for (Usize i = 0; i < countof(s->kind.match_stmt.arms); i++) {
+            push(w, nullptr, s->kind.match_stmt.arms[i].value);
+        }
+    } else if (s->kind == .switch_stmt) {
+        push(w, nullptr, s->kind.switch_stmt.value);
+        for (Usize i = 0; i < countof(s->kind.switch_stmt.cases); i++) {
+            push_stmts(w, s->kind.switch_stmt.cases[i].body);
+        }
+    } else if (s->kind == .destructure) {
+        push(w, nullptr, s->kind.destructure.init);
+    } else if (s->kind == .if_let) {
+        push(w, nullptr, s->kind.if_let.value);
+        push(w, s->kind.if_let.then_branch, nullptr);
+        push(w, s->kind.if_let.else_branch, nullptr);
+    } else if (s->kind == .return_stmt) {
+        push(w, nullptr, s->kind.return_stmt.value);
+    } else if (s->kind == .yield_stmt) {
+        push(w, nullptr, s->kind.yield_stmt.value);
+    } else if (s->kind == .defer_stmt) {
+        push(w, s->kind.defer_stmt.body, nullptr);
+    } else if (s->kind == .errdefer_stmt) {
+        push(w, s->kind.errdefer_stmt.body, nullptr);
+    } else if (s->kind == .labeled) {
+        push(w, s->kind.labeled.body, nullptr);
+    }
+}
+
+// A callee written as a name or a path: its last segment, and the one before it.
+struct Callee {
+    Str space;
+    Str name;
+};
+
+static Callee callee_of(const ast::Expr *callee) {
+    Callee out = {};
+    if (callee == nullptr || !(callee->kind == .name)) {
+        return out;
+    }
+    ast::Identifier segments[:] = callee->kind.name.path.segments;
+    if (countof(segments) == 0) {
+        return out;
+    }
+    if (countof(segments) >= 2) {
+        out.space = segments[countof(segments) - 2].text;
+    }
+    out.name = segments[countof(segments) - 1].text;
+    return out;
+}
+
+// Whether the call is C's: `c::name`, `header::name`, or a bare name imported from a C header.
+static Bool is_c(const CNames *c, Str space, Str name) {
+    if (countof(space) == 0) {
+        return listed(name, c->names, c->name_count);
+    }
+    return same(space, "c") || listed(space, c->spaces, c->space_count);
+}
+
+static Bool is_jump(Str name) {
+    return same(name, "setjmp") || same(name, "_setjmp") || same(name, "longjmp") || same(name, "_longjmp") ||
+           same(name, "sigsetjmp") || same(name, "siglongjmp");
+}
+
+// The C memory functions and what each is replaced by: name, why, use.
+struct Replacement {
+    Str name;
+    Str why;
+    Str use;
+};
+
+static Replacement replacement(Str name) {
+    Str apart = "its type and its length travel apart from the data";
+    Str untyped = "it returns an untyped block that may be null";
+    if (same(name, "memcpy")) {
+        return (Replacement){name, apart, "`mem::copy(dst, src)`, two slices of one element type and one length"};
+    } else if (same(name, "memmove")) {
+        return (Replacement){name, apart, "`mem::move(dst, src)`, as mem::copy and the slices may overlap"};
+    } else if (same(name, "memset")) {
+        return (Replacement){name, apart, "`mem::zero(xs)` or `mem::zero(&x)` to clear, `mem::fill(xs, value)` to set"};
+    } else if (same(name, "memcmp")) {
+        return (Replacement){
+            name, apart,
+            "`mem::equal(a, b)`, two slices of one element type; `mem::bytes(&x)` is the bytes of a value"};
+    } else if (same(name, "malloc")) {
+        return (Replacement){name, untyped,
+                             "`mem::alloc(T)` for one value, `mem::alloc_slice(T, n)` for n, never null"};
+    } else if (same(name, "calloc")) {
+        return (Replacement){name, untyped, "`mem::alloc_slice(T, n)`, zeroed like calloc and never null"};
+    }
+    return (Replacement){};
+}
+
+static Replacement replacement_more(Str name) {
+    if (same(name, "realloc")) {
+        return (Replacement){name,
+                             "it takes a pointer and a byte count apart from the count it describes, returns null "
+                             "on refusal and leaves the tail uninitialized",
+                             "`mem::realloc(xs, n)` on a slice, never null and with a zeroed tail"};
+    } else if (same(name, "free")) {
+        return (Replacement){name, "the block's type and length are not part of the pointer",
+                             "`mem::free(xs)` on the slice or pointer `mem::alloc` gave"};
+    }
+    return (Replacement){};
+}
+
+// ---- the opt-out comment
+
+// `# NOLINT` on a finding's line, or `# NOLINTNEXTLINE` on the line before it, silences it; `(smith-unsafe, smith-mem)`
+// after the word names the checks (`*` or no list: all of them). `set_source` gives the checker the text of the file
+// (empty: none, and nothing is silenced), since the checker has no comments of its own.
+static Str source_text = "";
+
+export void set_source(Str text) {
+    source_text = text;
+}
+
+// The check each finding of this module belongs to, by the index of its error.
+static Usize tag_index[256];
+static Str tag_check[256];
+static Usize tag_count = 0;
+
+static void tag(types::Checked *r, Str check) {
+    if (tag_count < 256 && r->error_count > 0) {
+        tag_index[tag_count] = r->error_count - 1;
+        tag_check[tag_count] = check;
+        tag_count++;
+    }
+}
+
+static Bool at(Str s, Usize i, Str word) {
+    if (i + countof(word) > countof(s)) {
+        return false;
+    }
+    for (Usize k = 0; k < countof(word); k++) {
+        if (s[i + k] != word[k]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether the list `(a, b)` that starts at i (or no list) names the check.
+static Bool names_check(Str line, Usize i, Str check) {
+    if (i >= countof(line) || line[i] != '(') {
+        return true;
+    }
+    Usize k = i + 1;
+    while (k < countof(line) && line[k] != ')') {
+        while (k < countof(line) && (line[k] == ' ' || line[k] == ',')) {
+            k++;
+        }
+        Usize begin = k;
+        while (k < countof(line) && line[k] != ' ' && line[k] != ',' && line[k] != ')') {
+            k++;
+        }
+        Usize n = k - begin;
+        if (n == 1 && line[begin] == '*') {
+            return true;
+        }
+        if (n == countof(check) && at(line, begin, check)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether the line holds `# word` (word is NOLINT or NOLINTNEXTLINE) that silences the check.
+static Bool line_opts_out(Str line, Str word, Str check) {
+    for (Usize i = 0; i < countof(line); i++) {
+        if (line[i] != '#') {
+            continue;
+        }
+        Usize k = i + 1;
+        while (k < countof(line) && (line[k] == ' ' || line[k] == '#')) {
+            k++;
+        }
+        if (!at(line, k, word)) {
+            continue;
+        }
+        Usize after = k + countof(word);
+        if (same(word, "NOLINT") && at(line, after, "NEXTLINE")) {
+            continue;
+        }
+        return names_check(line, after, check);
+    }
+    return false;
+}
+
+// Whether an opt-out on the line that holds byte `pos`, or on the line before it, silences the check.
+static Bool silenced(Usize pos, Str check) {
+    Str text = source_text;
+    if (pos > countof(text)) {
+        return false;
+    }
+    Usize begin = pos;
+    while (begin > 0 && text[begin - 1] != '\n') {
+        begin--;
+    }
+    Usize end = pos;
+    while (end < countof(text) && text[end] != '\n') {
+        end++;
+    }
+    if (line_opts_out(text[begin:end], "NOLINT", check)) {
+        return true;
+    }
+    if (begin == 0) {
+        return false;
+    }
+    Usize before = begin - 1;
+    while (before > 0 && text[before - 1] != '\n') {
+        before--;
+    }
+    return line_opts_out(text[before:begin - 1], "NOLINTNEXTLINE", check);
+}
+
+// Drops the findings of this module (from error `first` on) that an opt-out comment silences.
+static void drop_silenced(types::Checked *r, Usize first) {
+    Usize kept = first;
+    for (Usize i = first; i < r->error_count; i++) {
+        Bool drop = false;
+        for (Usize t = 0; t < tag_count; t++) {
+            if (tag_index[t] == i && silenced(r->errors[i].span.start, tag_check[t])) {
+                drop = true;
+            }
+        }
+        if (!drop) {
+            r->errors[kept] = r->errors[i];
+            kept++;
+        }
+    }
+    r->error_count = kept;
+    tag_count = 0;
+}
+
+static void report_call(types::Checked *r, const ast::Expr *e, const CNames *c) {
+    if (!(e->kind == .call)) {
+        return;
+    }
+    Callee callee = callee_of(e->kind.call.callee);
+    Str name = callee.name;
+    if (countof(name) == 0 || !is_c(c, callee.space, name)) {
+        return;
+    }
+    if (is_jump(name)) {
+        types::failf(r, e->span, "`", name,
+                     "` skips every `defer` and `errdefer` on the way, so cleanup silently does not run: return a "
+                     "`result`, or let the task fail");
+        tag(r, "smith-unsafe");
+    } else if (same(name, "alloca")) {
+        types::failf(r, e->span,
+                     "the stack cannot hold a size known only at run time: use `arena::push_slice(&a, I32, n)`, or "
+                     "a fixed array when `n` has a maximum");
+        tag(r, "smith-unsafe");
+    } else {
+        Replacement row = replacement(name);
+        if (countof(row.name) == 0) {
+            row = replacement_more(name);
+        }
+        if (countof(row.name) > 0) {
+            types::failf(r, e->span, "`", name, "` is unchecked, since ", row.why, ": use ", row.use,
+                         " (import std::mem;), or mark the function `contract::trusted()` if it implements a "
+                         "wrapper");
+            tag(r, "smith-mem");
+        }
+    }
+}
+
+// Whether the condition is the constant `true` or a non-zero integer.
+static Bool always(const ast::Expr *e) {
+    if (e == nullptr) {
+        return false;
+    }
+    if (e->kind == .boolean) {
+        return e->kind.boolean.value;
+    }
+    if (e->kind == .integer) {
+        return e->kind.integer.value != 0;
+    }
+    return false;
+}
+
+static void report_loop(types::Checked *r, const ast::Stmt *s) {
+    Str spelled = "";
+    if (s->kind == .for_stmt && s->kind.for_stmt.range == nullptr && s->kind.for_stmt.condition == nullptr &&
+        s->kind.for_stmt.init == nullptr && s->kind.for_stmt.step == nullptr) {
+        spelled = "a `for` with no condition";
+    } else if (s->kind == .for_stmt && always(s->kind.for_stmt.condition)) {
+        spelled = "a `for` with a constant condition";
+    } else if (s->kind == .while_stmt && always(s->kind.while_stmt.condition)) {
+        spelled = "a `while` with a constant condition";
+    } else if (s->kind == .do_while && always(s->kind.do_while.condition)) {
+        spelled = "a `do ... while` with a constant condition";
+    }
+    if (countof(spelled) > 0) {
+        types::failf(r, s->span, spelled,
+                     " never ends on its own: bound the loop by a count (`for i in range(limit)`); only `main` "
+                     "runs forever");
+        tag(r, "smith-bounded-loop");
+    }
+}
+
+// Whether the body calls `contract::trusted()` (or `smith_trusted`): a wrapper that may use the C names.
+static Bool is_trusted(const ast::Stmt *root) {
+    Work w = {};
+    push(&w, root, nullptr);
+    Bool found = false;
+    while (w.top > 0 && !found) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt != nullptr) {
+            stmt_parts(&w, item.stmt);
+            stmt_parts_more(&w, item.stmt);
+        }
+        if (item.expr != nullptr) {
+            if (item.expr->kind == .call) {
+                Str name = callee_of(item.expr->kind.call.callee).name;
+                found = same(name, "trusted") || same(name, "smith_trusted");
+            }
+            expr_parts(&w, item.expr);
+            expr_parts_more(&w, item.expr);
+        }
+    }
+    return found;
+}
+
+// ---- smith-module-library
+
+// Gives the text of the C header `import c <h>` names, or an empty string when it cannot be read.
+export typedef Str (*HeaderText)(Str header, Bool angled);
+
+static HeaderText header_text = nullptr;
+
+// Sets where the check reads headers from; null turns it off.
+export void set_header_text(HeaderText reader) {
+    header_text = reader;
+}
+
+// A library that is a module: its module (`std::arena`), the name to call it by (`arena`), the C name and the
+// module's name of each export, and the module's generic functions.
+struct Library {
+    Str module;
+    Str binding;
+    Str c_names[96];
+    Str names[96];
+    Usize count;
+    Str generics[32];
+    Usize generic_count;
+};
+
+struct Libraries {
+    Library items[6];
+    Usize count;
+};
+
+// Whether `line` starts with `head`; `rest` is what follows.
+static Bool after(Str line, Str head, Str *rest) {
+    if (countof(head) > countof(line)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(head); i++) {
+        if (line[i] != head[i]) {
+            return false;
+        }
+    }
+    *rest = line[countof(head):];
+    return true;
+}
+
+// The words of `text`, split at spaces, one at a time: the word that starts at `from`, and where the next starts.
+static Str word_at(Str text, Usize *from) {
+    while (*from < countof(text) && text[*from] == ' ') {
+        *from += 1;
+    }
+    Usize start = *from;
+    while (*from < countof(text) && text[*from] != ' ') {
+        *from += 1;
+    }
+    return text[start:*from];
+}
+
+// `push_raw=smith_arena_push ...`: the pairs of the `// smith-names:` line.
+static void read_names(Library *lib, Str rest) {
+    Usize from = 0;
+    while (from < countof(rest) && lib->count < countof(lib->names)) {
+        Str word = word_at(rest, &from);
+        for (Usize i = 0; i < countof(word); i++) {
+            if (word[i] == '=') {
+                lib->names[lib->count] = word[:i];
+                lib->c_names[lib->count] = word[i + 1:];
+                lib->count += 1;
+                break;
+            }
+        }
+    }
+}
+
+// The member of `// smith-generic: std::test check_equal`.
+static void read_generic(Library *lib, Str rest) {
+    Usize from = 0;
+    word_at(rest, &from);
+    Str member = word_at(rest, &from);
+    if (countof(member) > 0 && lib->generic_count < countof(lib->generics)) {
+        lib->generics[lib->generic_count] = member;
+        lib->generic_count += 1;
+    }
+}
+
+// `arena` of `std::arena`.
+static Str binding_of(Str module) {
+    Usize from = 0;
+    for (Usize i = 0; i < countof(module); i++) {
+        if (module[i] == ':') {
+            from = i + 1;
+        }
+    }
+    return module[from:];
+}
+
+// Reads the lines of a header that name its module; false when it names none.
+static Bool read_library(Str text, Library *lib) {
+    Bool found = false;
+    Usize from = 0;
+    Usize line_number = 0;
+    for (Usize i = 0; i <= countof(text) && line_number < 4096; i++) {
+        if (i < countof(text) && text[i] != '\n') {
+            continue;
+        }
+        Str line = text[from:i];
+        Str rest = "";
+        if (after(line, "// smith-generic: ", &rest)) {
+            read_generic(lib, rest);
+        } else if (line_number < 8 && after(line, "// smith-module: ", &rest)) {
+            lib->module = rest;
+            lib->binding = binding_of(rest);
+            found = true;
+        } else if (line_number < 8 && after(line, "// smith-names: ", &rest)) {
+            read_names(lib, rest);
+        }
+        from = i + 1;
+        line_number += 1;
+    }
+    return found;
+}
+
+static Str example_of(const Library *lib) {
+    if (same(lib->module, "std::arena")) {
+        return " (a typed push is `arena::push(&a, T)`)";
+    }
+    return "";
+}
+
+// `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
+// generic's, which takes the type from its first argument.
+static Str generic_of(const Library *lib, Str name) {
+    Str types = "bool char i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 pointer ptr";
+    Usize from = 0;
+    while (from < countof(types)) {
+        Str type = word_at(types, &from);
+        Usize size = countof(type) + 1;
+        if (countof(name) <= size || name[countof(name) - size] != '_' ||
+            !same(name[countof(name) - size + 1:], type)) {
+            continue;
+        }
+        Str base = name[:countof(name) - size];
+        if (listed(base, lib->generics, lib->generic_count)) {
+            char text[:] = format::push(" (or, better, the generic `", lib->binding, "::", base,
+                                        "(a, b)`, which takes the type from its first argument)");
+            return text;
+        }
+    }
+    return "";
+}
+
+// The libraries the module's `import c <h>` lines reach, reported once each.
+static Libraries libraries_of(types::Checked *r, const ast::Module *m) {
+    Libraries libs = {};
+    if (header_text == nullptr) {
+        return libs;
+    }
+    for (Usize i = 0; i < countof(m->decls) && libs.count < countof(libs.items); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_c) {
+            continue;
+        }
+        Str header = d->kind.import_c.header;
+        Bool angled = d->kind.import_c.angled;
+        Library lib = {};
+        if (!read_library(header_text(header, angled), &lib)) {
+            continue;
+        }
+        Str open = "\"";
+        Str close = "\"";
+        if (angled) {
+            open = "<";
+            close = ">";
+        }
+        types::failf(r, d->span, "`import ", open, header, close, ";` reads ", lib.module,
+                     ", a module, through its C header: write `import ", lib.module, ";` and call it as `", lib.binding,
+                     "::name(...)`", example_of(&lib));
+        tag(r, "smith-module-library");
+        libs.items[libs.count] = lib;
+        libs.count += 1;
+    }
+    return libs;
+}
+
+// Reports `c::name` when `name` is an export of a library the module reached through its header.
+static void report_library_path(types::Checked *r, const Libraries *libs, ast::Path path) {
+    ast::Identifier segments[:] = path.segments;
+    if (countof(segments) != 2 || !same(segments[0].text, "c")) {
+        return;
+    }
+    Str name = segments[1].text;
+    for (Usize i = 0; i < libs->count; i++) {
+        const Library *lib = &libs->items[i];
+        for (Usize k = 0; k < lib->count; k++) {
+            if (!same(name, lib->c_names[k])) {
+                continue;
+            }
+            types::failf(r, path.span, "`c::", name, "` is `", lib->binding, "::", lib->names[k], "` of the module ",
+                         lib->module, ", reached through its C header: write `import ", lib->module, ";` and `",
+                         lib->binding, "::", lib->names[k], "`", example_of(lib), generic_of(lib, lib->names[k]));
+            tag(r, "smith-module-library");
+            return;
+        }
+    }
+}
+
+// The names a type writes: its pointee, element, parameters and result, with a work stack that grows.
+static void report_type(types::Checked *r, const Libraries *libs, const ast::TypeExpr *root) {
+    if (libs->count == 0 || root == nullptr) {
+        return;
+    }
+    const ast::TypeExpr *stack[64];
+    Usize top = 0;
+    stack[top] = root;
+    top += 1;
+    while (top > 0) {
+        top -= 1;
+        const ast::TypeExpr *t = stack[top];
+        const ast::TypeExpr *parts[8] = {};
+        Usize count = 0;
+        if (t->kind == .named) {
+            report_library_path(r, libs, t->kind.named.path);
+        } else if (t->kind == .pointer) {
+            parts[0] = t->kind.pointer.pointee;
+            count = 1;
+        } else if (t->kind == .array) {
+            parts[0] = t->kind.array.element;
+            count = 1;
+        } else if (t->kind == .slice) {
+            parts[0] = t->kind.slice.element;
+            count = 1;
+        } else if (t->kind == .option) {
+            parts[0] = t->kind.option.inner;
+            count = 1;
+        } else if (t->kind == .function) {
+            parts[0] = t->kind.function.result;
+            count = 1;
+            for (Usize i = 0; i < countof(t->kind.function.params) && count < countof(parts); i++) {
+                parts[count] = t->kind.function.params[i];
+                count += 1;
+            }
+        }
+        for (Usize i = 0; i < count && top < countof(stack); i++) {
+            if (parts[i] != nullptr) {
+                stack[top] = parts[i];
+                top += 1;
+            }
+        }
+    }
+}
+
+// The type of a `let` or a variable inside a function.
+static void report_local_type(types::Checked *r, const Libraries *libs, const ast::Stmt *s) {
+    if (s->kind == .declaration) {
+        const ast::Decl *d = s->kind.declaration.decl;
+        if (d->kind == .variable) {
+            report_type(r, libs, d->kind.variable.type);
+        }
+    }
+}
+
+// The types a declaration of the module writes outside a function body.
+static void report_decl_types(types::Checked *r, const Libraries *libs, const ast::Decl *d) {
+    if (d->kind == .variable) {
+        report_type(r, libs, d->kind.variable.type);
+    } else if (d->kind == .function) {
+        for (Usize i = 0; i < countof(d->kind.function.params); i++) {
+            report_type(r, libs, d->kind.function.params[i].type);
+        }
+        report_type(r, libs, d->kind.function.result);
+    } else if (d->kind == .record) {
+        for (Usize i = 0; i < countof(d->kind.record.fields); i++) {
+            report_type(r, libs, d->kind.record.fields[i].type);
+        }
+    }
+}
+
+// Checks every call and loop under `root`.
+static void check_function(types::Checked *r, const CNames *c, const Libraries *libs, const ast::Stmt *root,
+                           Bool is_main) {
+    if (is_trusted(root)) {
+        return;
+    }
+    Work w = {};
+    push(&w, root, nullptr);
+    while (w.top > 0) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt != nullptr) {
+            if (!is_main) {
+                report_loop(r, item.stmt);
+            }
+            report_local_type(r, libs, item.stmt);
+            stmt_parts(&w, item.stmt);
+            stmt_parts_more(&w, item.stmt);
+        }
+        if (item.expr != nullptr) {
+            if (item.expr->kind == .call) {
+                report_call(r, item.expr, c);
+            }
+            if (item.expr->kind == .name) {
+                report_library_path(r, libs, item.expr->kind.name.path);
+            }
+            expr_parts(&w, item.expr);
+            expr_parts_more(&w, item.expr);
+        }
+    }
+}
+
+// The stem of a header's file name: `stdlib` for `<stdlib.h>`, `stat` for `<sys/stat.h>`.
+static Str stem(Str header) {
+    Usize from = 0;
+    for (Usize i = 0; i < countof(header); i++) {
+        if (header[i] == '/') {
+            from = i + 1;
+        }
+    }
+    Usize to = countof(header);
+    for (Usize i = from; i < countof(header); i++) {
+        if (header[i] == '.') {
+            to = i;
+            break;
+        }
+    }
+    return header[from:to];
+}
+
+static void add_space(CNames *c, Str name) {
+    if (countof(name) > 0 && c->space_count < countof(c->spaces)) {
+        c->spaces[c->space_count] = name;
+        c->space_count += 1;
+    }
+}
+
+static void add_name(CNames *c, Str name) {
+    if (c->name_count < countof(c->names)) {
+        c->names[c->name_count] = name;
+        c->name_count += 1;
+    }
+}
+
+// The C names the module's imports bring in.
+static CNames c_names(const ast::Module *m) {
+    CNames c = {};
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_c) {
+            add_space(&c, d->kind.import_c.alias);
+            add_space(&c, stem(d->kind.import_c.header));
+        } else if (d->kind == .import_from && countof(d->kind.import_from.header) > 0) {
+            for (Usize k = 0; k < countof(d->kind.import_from.names); k++) {
+                add_name(&c, d->kind.import_from.names[k].text);
+            }
+        }
+    }
+    return c;
+}
+
+// Checks every function body of the module.
+export void check_module(types::Checked *r, const ast::Module *m) {
+    Usize first = r->error_count;
+    tag_count = 0;
+    CNames c = c_names(m);
+    Libraries libs = libraries_of(r, m);
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        report_decl_types(r, &libs, d);
+        if (d->kind == .function && d->kind.function.body != nullptr) {
+            check_function(r, &c, &libs, d->kind.function.body, same(d->kind.function.name, "main"));
+        }
+    }
+    drop_silenced(r, first);
+}

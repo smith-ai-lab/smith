@@ -204,7 +204,7 @@ export void test_front_e2e_a_warning_line_says_warning() {
     test::check_equal(has(line, "error"), false);
 }
 
-// Two files (#1714): `app` calls `m.scale` and `mul := m.scale` of the module `mathlib` (a file under the library
+// Two files (#1714): `app` calls `m.scale` and `let mul = m.scale` of the module `mathlib` (a file under the library
 // root), the two objects link, and the program runs. The importer's object leaves `mathlib::scale` undefined and
 // the importer's object defines it.
 export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
@@ -212,11 +212,11 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
     c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
     c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
     Str library = as_str(format::push(folder, "/lib/mathlib.smith"));
-    write_text(library, "pub fn scale(x: f64, k: f64) -> f64 {\n    x * k\n}\n");
+    write_text(library, "pub fn scale(x: f64, k: f64) -> f64:\n    x * k\n");
     Str app = as_str(format::push(folder, "/src/app.smith"));
-    write_text(app, "m := import mathlib\nmul := m.scale\n\n"
-                    "pub fn check() -> i32 {\n    a := m.scale(2.0, 3.0)\n    b := mul(k = 3.0, x = 2.0)\n"
-                    "    if a != 6.0 {\n        return 1\n    }\n    if b != a {\n        return 2\n    }\n    0\n}\n");
+    write_text(app, "import mathlib as m\nlet mul = m.scale\n\n"
+                    "pub fn check() -> i32:\n    let a = m.scale(2.0, 3.0)\n    let b = mul(k = 3.0, x = 2.0)\n"
+                    "    if a != 6.0:\n        return 1\n    if b != a:\n        return 2\n    0\n");
     roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
                             .library = as_str(format::push(folder, "/lib"))};
     compile::Report imported = compile::file(library, as_str(format::push(folder, "/mathlib.o")), "", folders);
@@ -237,5 +237,228 @@ export void test_front_e2e_a_call_through_a_module_value_links_and_runs() {
         test::check_equal(linked, 0);
         if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     }
+    remove_all(folder);
+}
+
+// A function with no result across modules (#2172): `barrier.wait(&x)` is a call to a `Void` prototype, and the
+// library's object defines it.
+export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs() {
+    Str folder = folder_for("void_call");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/barrier.smith"));
+    write_text(library, "pub fn wait(t: *mut i32):\n    t.* = 4\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import barrier\n\npub fn check() -> i32:\n    let mut x = 0\n    barrier.wait(&x)\n"
+                    "    if x != 4:\n        return 1\n    0\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/barrier.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        write_text(as_str(format::push(folder, "/main.c")),
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/barrier.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
+// A qualified type (#1935): `app` takes a `v.Vec` of the module `vecs` as a parameter and passes it to `v.dot`; the
+// record is declared in the importer's object under the module's path, and a C program passes a struct by value.
+export void test_front_e2e_a_qualified_type_names_the_record_of_an_imported_module() {
+    Str folder = folder_for("qualified");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/vecs.smith"));
+    write_text(library, "pub struct Vec:\n    pub x: f64\n    pub y: f64\n\n"
+                        "pub fn dot(a: Vec, b: Vec) -> f64:\n    a.x * b.x + a.y * b.y\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import vecs as v\n\npub fn norm(a: v.Vec) -> f64:\n    v.dot(a, a)\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/vecs.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        write_text(
+            as_str(format::push(folder, "/main.c")),
+            as_str(format::push("struct V { double x; double y; };\n", "double norm(struct V) __asm__(\"", prefix(),
+                                "app::norm\");\n", stand_ins("__builtin_trap();"),
+                                "int main(void) { struct V v = {3.0, 4.0}; return norm(v) == 25.0 ? 0 : 1; }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/vecs.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
+// Names from C headers (#1762): `import <h>;` declares what the header has as `c::name`, and the checker and the
+// emitter use them. The flags clang reads a header with are smith's own (the resource directory, the SDK), as `smith
+// cc` passes them in $SMITH_FRONT_CIMPORT_FLAGS.
+static Str line_of(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    if (done != .ok) return "";
+    Usize n = countof(done.ok.output);
+    while (n > 0 && done.ok.output[n - 1] == '\n')
+        n -= 1;
+    return as_str(format::push(format::bytes((const char *)done.ok.output.data, n)));
+}
+
+static void use_header_flags() {
+    const char *const resource_argv[3] = {smith_path(), "cc", "-print-resource-dir"};
+    Str flags = as_str(format::push("-resource-dir\n", line_of(resource_argv[0:3]), "\n"));
+    const char *const sdk_argv[3] = {"xcrun", "--show-sdk-path", nullptr};
+    Str sdk = line_of(sdk_argv[0:2]);
+    if (countof(sdk) > 0) flags = as_str(format::push(flags, "-isysroot\n", sdk, "\n"));
+    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", flags.data, 1);
+}
+
+static Str c_header() {
+    return "enum color { red, green = 5, blue };\n"
+           "struct point { int x; int y; };\n"
+           "typedef struct point point_t;\n"
+           "#define SCALE 3\n"
+           "static const int answer = 42;\n"
+           "int sum(point_t *p);\n";
+}
+
+// `body` is the body of `check`, in a module that imports the header above and <stdio.h> and <stdlib.h>. Its exit
+// status, -1 when it did not compile or link.
+static I32 run_with_header(Str name, Str body) {
+    use_header_flags();
+    Str folder = folder_for(name);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/kinds.h")), c_header());
+    Str source = as_str(format::push("import \"kinds.h\";\nimport <stdio.h>;\nimport <stdlib.h>;\n\n",
+                                     "pub fn check() -> i32:\n", body));
+    compile::Report report = compile_module(folder, name, source);
+    I32 status = -1;
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    if (report.ok) {
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
+                                         stand_ins("__builtin_trap();"),
+                                         "struct point { int x; int y; };\n"
+                                         "int sum(struct point *p) { return p->x + p->y; }\n"
+                                         "int main(void) { return check(); }\n"));
+        status = link_and_run(folder, name, main_c);
+    }
+    remove_all(folder);
+    return status;
+}
+
+export void test_front_e2e_c_function_and_constant_macro() {
+    Str body = "    if c::abs(-5) != 5:\n        return 1\n    if c::SCALE != 3:\n        return 2\n    0\n";
+    test::check_equal(run_with_header("c_function", body), 0);
+}
+
+export void test_front_e2e_c_struct_typedef_and_constant() {
+    Str body = "    let mut p: c::point_t = c::point(x = 3, y = 4)\n    if c::sum(&p) != 7:\n        return 1\n"
+               "    if c::answer != 42:\n        return 2\n    0\n";
+    test::check_equal(run_with_header("c_struct", body), 0);
+}
+
+export void test_front_e2e_c_enum() {
+    Str body = "    let k: c::color = c::blue\n    if k != c::blue:\n        return 1\n"
+               "    if c::green == c::blue:\n        return 2\n    0\n";
+    test::check_equal(run_with_header("c_enum", body), 0);
+}
+
+// The call is variadic: `printf` gets its arguments after C's promotions and the text reaches stdout.
+export void test_front_e2e_c_printf_prints() {
+    use_header_flags();
+    Str folder = folder_for("c_print");
+    Str source = "import <stdio.h>;\n\npub fn main() -> i32:\n"
+                 "    let _ = c::printf(\"hello %d %s\\n\", 42, \"world\")\n    0\n";
+    compile::Report report = compile_module(folder, "hello", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    if (report.ok) {
+        test::check_equal(
+            sh_status(as_str(format::push(smith_path(), " cc ", folder, "/hello.o -o ", folder, "/prog"))), 0);
+        test::check_equal(sh_status(as_str(format::push(folder, "/prog | grep -q '^hello 42 world$'"))), 0);
+    }
+    remove_all(folder);
+}
+
+// `import c <stdlib.h>` binds `stdlib` (#1678): `stdlib.abs(...)` is the header's `abs`, and there is no global `c`.
+export void test_front_e2e_import_c_names_are_read_through_the_binding() {
+    use_header_flags();
+    Str folder = folder_for("c_dot");
+    Str source =
+        "import c <stdlib.h>\n\npub fn check() -> i32:\n    if stdlib.abs(-5) != 5:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "dot", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// `c.abs` with no binding named `c` is an error that says which binding to write.
+export void test_front_e2e_a_bare_c_is_an_error_naming_the_binding() {
+    use_header_flags();
+    Str folder = folder_for("c_bare");
+    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    c.abs(-5)\n    0\n";
+    compile::Report report = compile_module(folder, "bare", source);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, "there is no global `c`: write `stdlib.abs`"), true);
+    remove_all(folder);
+}
+
+// A name the binding's header does not declare is an error.
+export void test_front_e2e_a_name_the_binding_lacks_is_an_error() {
+    use_header_flags();
+    Str folder = folder_for("c_lacks");
+    Str source = "import c <stdlib.h>\n\npub fn check() -> i32:\n    stdlib.not_a_c_function(1)\n    0\n";
+    compile::Report report = compile_module(folder, "lacks", source);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, "`stdlib.not_a_c_function` is not declared by that header"), true);
+    remove_all(folder);
+}
+
+// Two bindings: a `size_t` from `string` goes to a `stdlib` function, and `as` picks another binding name.
+export void test_front_e2e_two_bindings_share_the_entities_they_reach() {
+    use_header_flags();
+    Str folder = folder_for("c_two");
+    Str source = "import c <stdio.h>\nimport c <stdlib.h>\nimport c <string.h> as str\n\n"
+                 "pub fn check(f: *stdio.FILE) -> i32:\n    let p = stdlib.calloc(str.strlen(\"abc\"), 1)\n"
+                 "    stdlib.free(p)\n    0\n";
+    compile::Report report = compile_module(folder, "two", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// A name no imported header declares is an error that names it.
+export void test_front_e2e_a_c_name_no_header_declares_is_an_error() {
+    use_header_flags();
+    Str folder = folder_for("c_missing");
+    Str source = "import <stdio.h>;\n\npub fn check() -> i32:\n    c::missing_function_name()\n    0\n";
+    compile::Report report = compile_module(folder, "missing", source);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, "`c::missing_function_name` is not declared by any C header"), true);
+    remove_all(folder);
+}
+
+// A quoted header next to the source is found in the new spelling, as a binding and by name (point 4 of #2145).
+export void test_front_e2e_a_local_header_next_to_the_source_is_found() {
+    use_header_flags();
+    Str folder = folder_for("c_local");
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/kinds.h")), c_header());
+    Str source = "import c \"kinds.h\"\nfrom c \"kinds.h\" import sum\n\n"
+                 "pub fn check(p: *mut kinds.point_t) -> i32:\n    if sum(p) != 7:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "local", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
     remove_all(folder);
 }

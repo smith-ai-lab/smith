@@ -1,0 +1,129 @@
+// Tests of `@when(cond)` in the checker (#1801, part of #1428): a declaration or a field that exists on some systems
+// only, checked for macOS and for Linux whichever system builds. Each scenario is source text in smith's own syntax.
+module front_when_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// The errors of `source`, one per line.
+static Str checked(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    return errors_of(&r);
+}
+
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = checked(source);
+    Str none = "";
+    test::check_equal(errors, none);
+}
+
+// `source` gives errors that say each of `first` and `second`.
+static void says(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = checked(source);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+export void test_when_two_declarations_of_one_name_with_opposite_conditions_are_clean() {
+    clean("@when(target.os == .macos)\nfn open_window() -> i32:\n    1\n\n"
+          "@when(target.os != .macos)\nfn open_window() -> i32:\n    2\n\n"
+          "fn main() -> i32:\n    open_window()\n");
+}
+
+export void test_when_conditions_combine_and_a_field_can_have_one() {
+    clean("struct Window:\n    id: i32\n    @when(target.os == .macos && !(target.os == .linux))\n    layer: i32\n\n"
+          "@when(target.os == .macos || target.os == .linux)\nfn both() -> i32:\n    1\n");
+}
+
+export void test_when_a_duplicate_that_only_the_other_target_has_is_an_error_naming_it() {
+    says("@when(target.os == .macos)\nfn f() -> i32:\n    1\n\n"
+         "@when(target.os != .linux)\nfn f() -> i32:\n    2\n",
+         "on macos: ", "`f` is declared twice");
+}
+
+export void test_when_a_use_with_no_live_declaration_names_the_condition() {
+    says("@when(target.os == .macos)\nfn open_window() -> i32:\n    1\n\n"
+         "fn main() -> i32:\n    open_window()\n",
+         "on linux: `open_window` is not declared on linux", "declared only when target.os == .macos");
+}
+
+export void test_when_on_an_import_is_clean_and_on_an_enumerator_or_a_parameter_points_at_if_constexpr() {
+    clean("@when(target.os == .macos)\nimport std.mem\n\nfn f() -> i32:\n    1\n");
+    says("enum Kind:\n    a\n    @when(target.os == .macos)\n    b\n", "`@when` is for an import, function",
+         "if constexpr");
+    says("fn f(@when(target.os == .macos) x: i32) -> i32:\n    x\n", "`@when` is for an import, function",
+         "if constexpr");
+}
+
+export void test_when_needs_one_condition_the_checker_can_read() {
+    says("@when(1 + 2)\nfn f() -> i32:\n    1\n", "`@when` reads `target.os == .macos`", "`&&` and `||`");
+    says("@when()\nfn f() -> i32:\n    1\n", "`@when` takes one condition", "target.os");
+    says("@when(target.os == .windows)\nfn f() -> i32:\n    1\n", "`@when` reads", "`||`");
+}
+
+// A file-scope `if` on `target.os` holds declarations for the systems its condition picks (#2191).
+export void test_when_a_file_scope_if_picks_its_branch_on_each_system() {
+    clean("if target.os == .macos:\n    fn name() -> i32:\n        1\nelse if target.os == .linux:\n"
+          "    fn name() -> i32:\n        2\nelse:\n    fn other() -> i32:\n        3\n\n"
+          "if target.os == .macos || target.os != .macos:\n    struct Pair:\n        a: i32\n"
+          "    fn first(p: *Pair) -> i32:\n        p.a\n\n"
+          "fn main() -> i32:\n    name()\n");
+}
+
+export void test_when_a_file_scope_if_the_checker_cannot_read_is_reported() {
+    says("if 1 + 2:\n    fn f() -> i32:\n        1\n", "not yet typed: if constexpr", "");
+}

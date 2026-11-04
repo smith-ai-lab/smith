@@ -156,6 +156,14 @@ export void test_lex_the_longest_punctuator_wins_and_slices_are_three_tokens() {
     expect_dump("<:%>", "1:1 less <\n1:2 colon :\n1:3 percent %\n1:4 greater >\n1:5 end_of_file\n");
 }
 
+// The error of source in smith's own syntax, or an empty one.
+static lex::LexError error_of_new(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    lex::LexError none = {};
+    if (lexed == .error) return lexed.error;
+    return none;
+}
+
 // The tokens of source in smith's own syntax (#1428); an error fails the test.
 static lex::Tokens new_tokens_of(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
@@ -250,11 +258,121 @@ export void test_lex_golden_the_new_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source =
-        "pub fn main() -> I32 {\n    mut x := 1\n    y := p.* as I32\n    match x {\n        1 => return 0\n    }\n"
-        "    for (i in xs) f(@i)\n    return y\n}\ntype Point = struct { I32 x }\nfn_once g\n";
+    Str source = "pub fn main() -> I32:\n    let mut x = 1\n    let y = p.* as I32\n    match x:\n        1: "
+                 "return 0\n"
+                 "    for i in xs: f(@i)\n    return y\ntype Point = struct:\n    I32 x\nfn_once g\n";
     lex::Tokens tokens = new_tokens_of(source);
     test::golden("tests/front/lex/new-syntax.tokens", lex::dump_lines(tokens, source));
+}
+
+// The layout of source as one line: a layout token by its name, any other by its text, and the first lexing error.
+static Str layout_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return lexed.error.message;
+    lex::Lexed laid = lex::layout(source, lexed.ok);
+    if (laid == .error) return laid.error.message;
+    char shown[:] = format::push("");
+    for (lex::Token token : laid.ok) {
+        Str piece = lex::text(source, token);
+        if (token.kind == lex::end_of_file) piece = "eof";
+        if (token.kind == lex::newline || token.kind == lex::indent || token.kind == lex::dedent) {
+            piece = lex::kind_name(token.kind);
+        }
+        shown = format::push(shown, piece, " ");
+    }
+    Str result = shown[0:countof(shown)];
+    return result;
+}
+
+static void expect_layout(Str source, Str expected) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(layout_of(source), expected);
+}
+
+export void test_lex_layout_a_line_ends_with_a_newline_and_a_colon_opens_a_block() {
+    expect_layout("", "eof ");
+    expect_layout("a\nb\n", "a newline b newline eof ");
+    expect_layout("a b", "a b newline eof ");
+    expect_layout("f:\n    a\nb", "f : newline indent a newline dedent b newline eof ");
+}
+
+export void test_lex_layout_each_level_dropped_is_a_newline_and_a_dedent() {
+    expect_layout("a:\n    b:\n        c\nd",
+                  "a : newline indent b : newline indent c newline dedent newline dedent d newline eof ");
+    expect_layout("a:\n    b:\n        c\n    d\ne",
+                  "a : newline indent b : newline indent c newline dedent d newline dedent e newline eof ");
+}
+
+export void test_lex_layout_the_end_of_the_file_closes_every_open_level() {
+    expect_layout("a:\n    b:\n        c\n",
+                  "a : newline indent b : newline indent c newline dedent newline dedent eof ");
+    expect_layout("a:\n    b", "a : newline indent b newline dedent eof ");
+}
+
+export void test_lex_layout_blank_and_comment_lines_are_ignored() {
+    expect_layout("a:\n\n    # note\n    b\n  # x\n\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a # end\n    # deeper note\nb", "a newline b newline eof ");
+}
+
+export void test_lex_layout_brackets_ignore_newlines_and_indentation() {
+    expect_layout("let cfg = Config{\n    host = 1,\n  port = 2,\n}\nx",
+                  "let cfg = Config { host = 1 , port = 2 , } newline x newline eof ");
+    expect_layout("f(a,\n        b)\n[1,\n 2]", "f ( a , b ) newline [ 1 , 2 ] newline eof ");
+}
+
+export void test_lex_layout_an_operator_at_the_end_of_a_line_continues_it() {
+    expect_layout("let total = price * count +\n    shipping\nx",
+                  "let total = price * count + shipping newline x newline eof ");
+    expect_layout("a =\n        b\nc", "a = b newline c newline eof ");
+}
+
+export void test_lex_layout_a_one_line_block_opens_no_level() {
+    expect_layout("fn sign(x: i32) -> i32:\n    if x < 0: -1 else: 1\ny",
+                  "fn sign ( x : i32 ) -> i32 : newline indent if x < 0 : - 1 else : 1 newline dedent y newline eof ");
+}
+
+export void test_lex_layout_error_a_tab_in_the_indentation() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "a:\n\tb";
+    lex::Lexed laid = lex::layout(source, new_tokens_of(source));
+    if (laid != .error) {
+        Str none = "an error";
+        Str got = "no error";
+        test::check_equal(got, none);
+        return;
+    }
+    Str message = "indent with spaces, not a tab";
+    test::check_equal(laid.error.message, message);
+    test::check_equal(laid.error.span.start, 3);
+    test::check_equal(laid.error.span.end, 4);
+}
+
+export void test_lex_layout_any_consistent_width_opens_a_block() {
+    expect_layout("a:\n  b\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a:\n   b\nc", "a : newline indent b newline dedent c newline eof ");
+    expect_layout("a:\n        b\nc", "a : newline indent b newline dedent c newline eof ");
+}
+
+export void test_lex_layout_blocks_may_differ_in_width() {
+    expect_layout("a:\n  b:\n      c\n  d\ne",
+                  "a : newline indent b : newline indent c newline dedent d newline dedent e newline eof ");
+}
+
+export void test_lex_layout_error_a_dedent_that_matches_no_open_block() {
+    expect_layout("a:\n    b:\n        c\n      d", "this line's indentation matches no open block");
+    expect_layout("a:\n    b\n  c", "this line's indentation matches no open block");
+}
+
+export void test_lex_layout_error_an_unexpected_indent() {
+    expect_layout("a\n    b", "unexpected indent");
+    expect_layout("    a", "unexpected indent");
+    expect_layout("a:\n    b\n      c", "unexpected indent");
 }
 
 export void test_lex_integers_and_floating_constants() {
@@ -267,6 +385,8 @@ export void test_lex_integers_and_floating_constants() {
     expect_one("0x1F", lex::integer);
     expect_one("0XdeadBEEF", lex::integer);
     expect_one("0b1010", lex::integer);
+    expect_one("0o755", lex::integer);
+    expect_one("0O17", lex::integer);
     expect_one("0777", lex::integer);
     expect_one("1'000'000", lex::integer);
     expect_one("0xFF'FF", lex::integer);
@@ -283,8 +403,14 @@ export void test_lex_integers_and_floating_constants() {
     expect_one("0x1.8p3", lex::floating);
     expect_one("0x1p-2", lex::floating);
     expect_one("0x.8p1", lex::floating);
+    expect_one("0x1.fffffep+127F", lex::floating);
+    expect_one("0x1.fffffep+127", lex::floating);
     expect_one("3.14f16", lex::floating);
     expect_one("1e5L", lex::floating);
+    expect_one("1.e5", lex::floating);
+    expect_dump("0x1.to", "1:1 integer 0x1\n1:4 dot .\n1:5 name to\n1:7 end_of_file\n");
+    expect_dump("3.to", "1:1 integer 3\n1:2 dot .\n1:3 name to\n1:5 end_of_file\n");
+    expect_dump("0o7.wrap", "1:1 integer 0o7\n1:4 dot .\n1:5 name wrap\n1:9 end_of_file\n");
     expect_dump("1+2", "1:1 integer 1\n1:2 plus +\n1:3 integer 2\n1:4 end_of_file\n");
     expect_dump("p.x .5", "1:1 name p\n1:2 dot .\n1:3 name x\n1:5 floating .5\n1:7 end_of_file\n");
 }
@@ -416,6 +542,7 @@ export void test_lex_error_a_malformed_number() {
     expect_error("08", "an octal constant has no digit 8 or 9", 0, 2);
     expect_error("0x", "a number prefix needs digits after it", 0, 2);
     expect_error("0b2", "a number prefix needs digits after it", 0, 2);
+    expect_error("0o", "a number prefix needs digits after it", 0, 2);
     expect_error("1e+", "the exponent of a number has no digits", 0, 3);
     expect_error("0x1.8", "a hexadecimal floating constant needs an exponent", 0, 5);
     expect_error("12abc", "an integer constant has an invalid suffix", 0, 5);
@@ -636,4 +763,32 @@ export void test_lex_a_tuple_index_is_an_integer_after_a_dot_in_the_new_syntax()
                    "1\n1:11 name f\n1:12 left_paren (\n1:13 name x\n1:14 right_paren )\n1:15 dot .\n1:16 integer "
                    "2\n1:18 floating .5\n1:21 floating 1.5\n1:24 end_of_file\n";
     test::check_equal(actual, expected);
+}
+
+// Comments in smith's own syntax (#1428 revision): `#` and `##` to the end of the line; `//` and `/* */` are errors.
+export void test_lex_new_hash_comments_end_at_the_line() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Tokens tokens = new_tokens_of("a # note\n## doc\n#\nb # \"x\" // y\n");
+    test::check_equal(countof(tokens), (Usize)3);
+    test::check_equal(tokens[0].kind == lex::name, true);
+    test::check_equal(tokens[1].kind == lex::name, true);
+    test::check_equal(tokens[2].kind == lex::end_of_file, true);
+}
+
+export void test_lex_new_slash_comments_and_hash_words_are_errors() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str slash = "`//` and `/* */` are not comments in smith: write `#`";
+    test::check_equal(error_of_new("a // b\n").message, slash);
+    test::check_equal(error_of_new("a /* b */\n").message, slash);
+    test::check_equal(error_of_new("a // b\n").span.start, (U32)2);
+    lex::LexError directive = error_of_new("#if X\n");
+    test::check_equal(directive.span.end, (U32)1);
+    lex::LexError fine = error_of_new("a # fine\n");
+    test::check_equal(fine.span.end, (U32)0);
 }

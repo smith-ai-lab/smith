@@ -13,8 +13,9 @@
 //
 // Named arguments (`connect(host = x, retry = true)`) fill the parameter of that name, by position until the first
 // named one (the checker's `argument_slot`); they are evaluated in the order written and passed in parameter order. A
-// call of a name that is a record of the module builds a value of it, `Point(x = 1, y = 2)`: every field named, in any
-// order, a field left out zero; the value starts as `LLVMConstNull` and each field is inserted in the order written.
+// call of a name that is a record of the module builds a value of it, `Point(1, y = 2)`: positional fields in order,
+// then named ones in any order, a field left out zero; the value starts as `LLVMConstNull` and each field is inserted
+// in the order written.
 //
 // `Void` is a type of its own here (an LLVM `void`, kind `integer`, zero bits, named `Void`): a call of a function
 // that returns it pushes one value of that type, so an expression statement drops it like any other.
@@ -33,6 +34,8 @@ import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
 
+typedef ast::ExprRef ArgumentList[:];
+
 export struct Signature;
 
 // A function as a call sees it. `params` is the callee's own when `owned` is false, else it is allocated.
@@ -42,6 +45,7 @@ export struct Signature {
     state::Ty result;
     state::Ty params[:];
     Bool owned;
+    Bool variadic; // a C function's `...`: arguments past `params` are passed after C's default promotions
 };
 
 export typedef Result(Signature, state::Error) SignatureResult;
@@ -101,14 +105,6 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     ast::Param source[:] = d->kind.function.params;
     const ast::TypeExpr *result_type = d->kind.function.result;
     Bool variadic = d->kind.function.variadic;
-    if (variadic) return signature_failed(state::not_emitted("variadic function", d->span));
-    if (d->is_extern) return signature_failed(state::not_emitted("extern C function", d->span));
-    for (Usize i = 0; i < countof(d->attributes); i++) {
-        ast::Path name = d->attributes[i].name;
-        if (state::same_text(name.segments[countof(name.segments) - 1].text, "c_name"))
-            return signature_failed(state::not_emitted("c_name", d->attributes[i].span));
-    }
-    if (result_type == nullptr) return signature_failed(state::not_emitted("function without a result", d->span));
     Usize count = countof(source);
     if (count > 64) return signature_failed(state::not_emitted("more than 64 parameters", d->span));
     for (Usize i = 0; i < count; i++) {
@@ -128,37 +124,134 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
             return signature_failed(state::fail("a parameter cannot be Void", source[i].span));
         }
         all[i] = made.ok;
-        types[i] = made.ok.llvm;
+        types[i] = state::abi_type(e, made.ok);
     }
-    state::TyResult made_result = type_for(e, result_type);
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::TyResult made_result = {.ok = none};
+    if (result_type != nullptr) made_result = type_for(e, result_type);
     if (made_result == .error) {
         mem::free(all.data);
         return {.error = made_result.error};
     }
-    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true};
-    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, 0);
+    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = variadic};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, variadic ? 1 : 0);
     return sig;
 }
 
-// The prototype of a function of an imported module, declared when the first call needs it (#1714): an external
-// function named by `key`, the symbol the module's own object defines.
-static SignatureResult imported_function(state::Emitter *e, Str key, const ast::Decl *d) {
-    SignatureResult made = signature(e, d);
-    if (made == .error) return made;
-    Signature sig = made.ok;
-    char *label = state::cstr(key);
+// A function of a C header (#1762), `c::printf`: its type is the checker's (the header's own names are typedefs the
+// emitter has no declaration for), and its symbol is its C name. Declared when the first call needs it.
+static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .function) return signature_failed(state::fail("not a function", d->span));
+    Str name = d->kind.function.name;
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, state::msg(format::push("c::", name)));
+    if (symbol == nullptr || symbol->type->kind != .function) {
+        return signature_failed(state::fail("not a C function", d->span));
+    }
+    types::TypeRef type = symbol->type;
+    Usize count = countof(type->slots);
+    if (count > 64) {
+        return signature_failed(state::not_emitted("more than 64 parameters", d->span));
+    }
+    state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
+    c::LLVMTypeRef llvm_types[64];
+    for (Usize i = 0; i < count; i++) {
+        state::TyResult made = state::type_of_checked(e, type->slots[i].type, d->span);
+        if (made == .error) {
+            mem::free(all.data);
+            return {.error = made.error};
+        }
+        all[i] = made.ok;
+        llvm_types[i] = made.ok.llvm;
+    }
+    state::TyResult made_result = state::type_of_checked(e, type->element, d->span);
+    if (made_result == .error) {
+        mem::free(all.data);
+        return {.error = made_result.error};
+    }
+    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = type->variadic};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, llvm_types, (U32)count, type->variadic ? 1 : 0);
+    char *label = state::cstr(name);
     sig.function = c::LLVMGetNamedFunction(e->module, label);
     if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
     mem::free(label);
     return sig;
 }
 
+// The prototype of a function of an imported module, declared when the first call needs it (#1714): an external
+// function named by `key`, the symbol the module's own object defines.
+// `geom::vec::` for the key `geom::vec::dot`: the text up to and including the last `::`.
+static Str module_prefix(Str key) {
+    for (Usize i = countof(key); i >= 2; i--) {
+        if (key[i - 1] == ':' && key[i - 2] == ':') return key[0:i];
+    }
+    return "";
+}
+
+static SignatureResult imported_function(state::Emitter *e, Str key, const ast::Decl *d) {
+    if (d->from_c) return c_function(e, d);
+    e->import_scope = module_prefix(key);
+    SignatureResult made = signature(e, d);
+    e->import_scope = "";
+    if (made == .error) return made;
+    Signature sig = made.ok;
+    Str own = state::c_name_of(d); // `@c_name("__enzyme_autodiff")`: the symbol is the C name, not the module's path
+    Str named = key;
+    if (d->is_extern && d->kind == .function) named = d->kind.function.name; // an extern's symbol is its own name
+    char *label = state::cstr(countof(own) > 0 ? own : named);
+    sig.function = c::LLVMGetNamedFunction(e->module, label);
+    if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);
+    mem::free(label);
+    return sig;
+}
+
+static Bool is_c_path(ast::Path path) {
+    return countof(path.segments) == 2 && state::same_text(path.segments[0].text, "c");
+}
+
+// `c::name` where `name` is a function a header declared.
+static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
+    Str full = "";
+    if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
+        // `abs` after `from c <stdlib.h> import abs`: the checker bound the header's `c::abs` under the bare name
+        state::Local local = {};
+        Str bare = callee->kind.name.path.segments[0].text;
+        const types::Symbol *alias = types::lookup(&e->options.checked->scopes, bare);
+        if (alias == nullptr || alias->kind != .function_symbol || alias->decl == nullptr) return false;
+        if (alias->decl->kind != .function || !alias->decl->from_c || state::find_local(e, bare, &local)) return false;
+        full = state::msg(format::push("c::", alias->decl->kind.function.name));
+    } else if (callee->kind == .name) {
+        full = join(callee->kind.name.path);
+    } else if (callee->kind ==
+                   .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
+        state::Local local = {};
+        Str name = types::c_member_name(e->options.checked, callee);
+        if (countof(name) == 0 || state::find_local(e, types::c_member_base(callee), &local)) return false;
+        full = state::msg(format::push("c::", name)); // an owned copy, as `join` makes
+    } else {
+        return false;
+    }
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
+        state::free_text(full);
+        return false;
+    }
+    *found = target->decl;
+    *symbol = full;
+    return true;
+}
+
 // The function of an imported module a callee names: `m.sin`, `r.math.sin` (a module imported by another), or `sin`
-// after `sin := m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
+// after `let sin = m.sin`. The checker has declared each under its module's path (`lib::math::sin`), which is also the
 // symbol the module's object defines. Returns false for any other callee.
 static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
     if (e->options.checked == nullptr) return false;
     types::Names names = {};
+    if (callee->kind == .name && is_c_path(callee->kind.name.path)) {
+        return c_callee(e, callee, found, symbol);
+    }
+    if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1 && c_callee(e, callee, found, symbol))
+        return true;
+    if (callee->kind == .member && c_callee(e, callee, found, symbol)) return true;
     if (callee->kind == .member) {
         names = types::member_names(callee);
     } else if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
@@ -185,6 +278,103 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     return true;
 }
 
+// The call a method call `x.f(a)` stands for, `f(x, a)`, which the checker recorded (#1795); `x` itself for any other
+// call.
+static const ast::Expr *method_form(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return x;
+    const ast::Expr *made = types::method_of(e->options.checked, x);
+    return made != nullptr ? made : x;
+}
+
+// The function of the type's module a method call `x.f(a)` names, when `f` is not one of the current module: the
+// symbol `lib::list::f`, found as the checker found it. Returns false for a function of this module.
+static Bool method_callee(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *symbol) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .member) return false;
+    types::TypeRef t = types::type_of(e->options.checked, callee->kind.member.base);
+    if (t == nullptr) return false;
+    if (t->kind == .pointer) t = t->element;
+    if (t->kind != .record) return false;
+    Str type_name = t->name;
+    Usize cut = 0;
+    for (Usize i = countof(type_name); i >= 2; i--) {
+        if (type_name[i - 1] == ':' && type_name[i - 2] == ':') {
+            cut = i;
+            break;
+        }
+    }
+    if (cut == 0) return false;
+    Str full = state::msg(format::push(type_name[0:cut], callee->kind.member.name));
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) return false;
+    *found = target->decl;
+    *symbol = full;
+    return true;
+}
+
+// `imported_callee` for a call that may be a method call.
+static Bool call_target(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *symbol) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (method_form(e, x) != x) return method_callee(e, x, found, symbol);
+    return imported_callee(e, callee, found, symbol);
+}
+
+// The instance of a generic function that `x` calls, or null.
+// The name of an instance's function: `pick.i32`.
+static Str instance_key(const types::Instance *instance) {
+    if (instance->decl->kind != .function) return state::msg(format::push(""));
+    return state::msg(format::push(instance->decl->kind.function.name));
+}
+
+static const types::Instance *instance_call(state::Emitter *e, const ast::Expr *x) {
+    if (e->options.checked == nullptr) return nullptr;
+    Usize at = types::instance_called(e->options.checked, x);
+    if (at >= e->options.checked->instance_count) return nullptr;
+    return &e->options.checked->instances[at];
+}
+
+// The arguments of a call of an instance: those of the runtime parameters, the type and constant arguments left out.
+static ArgumentList runtime_arguments(const types::Instance *instance, ast::ExprRef args[:]) {
+    ArgumentList kept = {};
+    if (instance->template->kind != .function) return args;
+    ast::Param params[:] = instance->template->kind.function.params;
+    kept = mem::realloc(kept, countof(args));
+    Usize count = 0;
+    for (Usize i = 0; i < countof(args) && i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) {
+            continue;
+        }
+        kept[count] = args[i];
+        count += 1;
+    }
+    return kept[0:count];
+}
+
+// What a call names when it calls an instance of a generic function: the instance, its key and the runtime arguments;
+// or, for any other call, the imported function `call_target` finds (and null).
+static const types::Instance *callee_of(state::Emitter *e, const ast::Expr *written, ast::ExprRef args[:],
+                                        ArgumentList *runtime, const ast::Decl **imported, Str *key, Bool *found) {
+    const types::Instance *instance = instance_call(e, written);
+    *found = false;
+    if (instance == nullptr) {
+        *found = call_target(e, written, imported, key);
+        return nullptr;
+    }
+    *runtime = runtime_arguments(instance, args);
+    *key = instance_key(instance);
+    return instance;
+}
+
+// The symbol of a prototype of this module: its `@c_name`, else the module's path and its name.
+static Str prototype_symbol(state::Emitter *e, const ast::Decl *d, Str name) {
+    Str own = state::c_name_of(d);
+    if (countof(own) > 0) return state::msg(format::push(own));
+    if (d->is_extern) return state::msg(format::push(name)); // an extern's symbol is its own name
+    return symbol_for(e, name);
+}
+
 // The function a call names: one of the module's with a body, or a prototype of the module.
 static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const ast::Decl *imported) {
     if (imported != nullptr) return imported_function(e, key, imported);
@@ -203,7 +393,7 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const as
         SignatureResult made = signature(e, d);
         if (made == .error) return made;
         Signature sig = made.ok;
-        Str symbol = symbol_for(e, key);
+        Str symbol = prototype_symbol(e, d, key);
         char *label = state::cstr(symbol);
         state::free_text(symbol);
         sig.function = c::LLVMGetNamedFunction(e->module, label);
@@ -233,6 +423,12 @@ static const ast::Decl *find_decl(state::Emitter *e, Str key, const ast::Decl *i
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+    }
+    if (e->options.checked != nullptr) {
+        for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            const ast::Decl *d = e->options.checked->instances[i].decl;
+            if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+        }
     }
     return nullptr;
 }
@@ -281,6 +477,46 @@ static state::Status assign_slots(state::Emitter *e, Str key, ast::ExprRef args[
     return state::success();
 }
 
+// The arguments of a call with every parameter it leaves out and that has a default given as a named argument at the
+// end. A new slice; the same arguments when the callee has no declaration here (a C function) or nothing is left out.
+static ArgumentList filled_arguments(state::Emitter *e, Str key, ast::ExprRef args[:], const ast::Decl *imported) {
+    const ast::Decl *d = find_decl(e, key, imported);
+    if (d == nullptr || d->kind != .function) return args;
+    ast::Param params[:] = d->kind.function.params;
+    if (countof(params) > 64) return args;
+    Bool given[64];
+    for (Usize i = 0; i < 64; i++)
+        given[i] = false;
+    Bool by_name = false;
+    for (Usize i = 0; i < countof(args); i++) {
+        if (is_named(args[i])) by_name = true;
+        if (!by_name) {
+            if (i < 64) given[i] = true;
+            continue;
+        }
+        for (Usize k = 0; k < countof(params); k++) {
+            if (state::same_text(params[k].name, given_name(args[i]))) given[k] = true;
+        }
+    }
+    Usize extra = 0;
+    for (Usize k = 0; k < countof(params); k++) {
+        if (!given[k] && params[k].default_value != nullptr) extra += 1;
+    }
+    if (extra == 0) return args;
+    ArgumentList filled = {};
+    filled = mem::realloc(filled, countof(args) + extra);
+    for (Usize i = 0; i < countof(args); i++)
+        filled[i] = args[i];
+    Usize at = countof(args);
+    for (Usize k = 0; k < countof(params); k++) {
+        if (!given[k] && params[k].default_value != nullptr) {
+            filled[at] = ast::named_arg(params[k].name, params[k].default_value);
+            at += 1;
+        }
+    }
+    return filled;
+}
+
 // The argument's expression: the value of a named one.
 static const ast::Expr *value_of(const ast::Expr *arg) {
     if (arg->kind == .named_arg) return arg->kind.named_arg.value;
@@ -297,6 +533,22 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
     return false;
 }
 
+// `c::point` where a header declared the struct `point`: the record, made when first named.
+static Bool c_record(state::Emitter *e, ast::Path path, Usize *at) {
+    if (e->options.checked == nullptr) return false;
+    Str full = join(path);
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    Bool made = false;
+    if (symbol != nullptr && symbol->kind == .type_name && symbol->type->kind == .record) {
+        ast::Span nowhere = {};
+        state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
+        if (ty == .error) state::free_text(ty.error.message);
+        made = ty != .error && find_record(e, symbol->type->name, at);
+    }
+    state::free_text(full);
+    return made;
+}
+
 static Bool find_field(state::RecordType record, Str name, Usize *found) {
     for (Usize i = 0; i < countof(record.fields); i++) {
         if (state::same_text(record.fields[i].name, name)) {
@@ -307,32 +559,91 @@ static Bool find_field(state::RecordType record, Str name, Usize *found) {
     return false;
 }
 
+// The field argument `i` fills: the one at its position, or the one it names.
+static Bool field_for(state::RecordType record, ast::ExprRef args[:], Usize i, Usize *found) {
+    if (!is_named(args[i])) {
+        *found = i;
+        return i < countof(record.fields);
+    }
+    return find_field(record, given_name(args[i]), found);
+}
+
+// The arguments of a construction with every field they leave out and that has a default given as a named argument
+// (the checker already refused a field left out that has none). A new slice.
+static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]) {
+    Bool given[64];
+    for (Usize i = 0; i < 64; i++)
+        given[i] = false;
+    for (Usize i = 0; i < countof(args); i++) {
+        Usize field = 0;
+        if (field_for(record, args, i, &field) && field < 64) given[field] = true;
+    }
+    Usize extra = 0;
+    for (Usize k = 0; k < countof(record.fields) && k < 64; k++) {
+        if (!given[k] && record.fields[k].default_value != nullptr) extra += 1;
+    }
+    ArgumentList filled = {};
+    filled = mem::realloc(filled, countof(args) + extra);
+    for (Usize i = 0; i < countof(args); i++)
+        filled[i] = args[i];
+    Usize at = countof(args);
+    for (Usize k = 0; k < countof(record.fields) && k < 64; k++) {
+        if (!given[k] && record.fields[k].default_value != nullptr) {
+            filled[at] = ast::named_arg(record.fields[k].name, record.fields[k].default_value);
+            at += 1;
+        }
+    }
+    return filled;
+}
+
+// `words.Pair(key = w)`: a record of another module, named through the module.
+static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
+    if (callee->kind != .member || callee->kind.member.arrow || callee->kind.member.base->kind != .name) return false;
+    ast::Path base = callee->kind.member.base->kind.name.path;
+    ast::Identifier parts[8];
+    Usize count = countof(base.segments);
+    if (count >= 8) return false;
+    for (Usize i = 0; i < count; i++)
+        parts[i] = base.segments[i];
+    parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
+    ast::Path path = {.segments = parts[0:count + 1], .span = callee->span};
+    return c_record(e, path, at);
+}
+
+// The record a construction's callee names: one of the module's, a C one or one of another module (`words.Pair`,
+// or `Pair` after `from words import Pair`).
+static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
+    if (callee->kind == .name) {
+        ast::Path path = callee->kind.name.path;
+        if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
+        return c_record(e, path, at);
+    }
+    return member_record(e, callee, at);
+}
+
 // The field values are on the value stack, the first deepest: start from zero and insert each.
 static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *x = w->expr;
     if (x->kind != .call) {
         return state::fail("not a call", w->span);
     }
-    ast::ExprRef args[:] = x->kind.call.args;
+    ast::ExprRef written[:] = x->kind.call.args;
     const ast::Expr *callee = x->kind.call.callee;
-    if (callee->kind != .name) {
-        return state::fail("not a name", w->span);
-    }
-    Str name = callee->kind.name.path.segments[0].text;
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
     Usize at = 0;
-    if (!find_record(e, name, &at)) return state::failf(w->span, "unknown record ", name);
+    if (!callee_record(e, callee, &at)) return state::fail("unknown record", w->span);
     state::RecordType record = e->records[at];
+    ast::ExprRef args[:] = filled_fields(record, written);
     c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
     for (Usize i = 0; i < count; i++) {
         Usize field = 0;
-        if (!find_field(record, given_name(args[i]), &field))
-            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", name);
+        if (!field_for(record, args, i, &field))
+            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", record.name);
         if (!state::same_type(values[i].ty, record.fields[field].ty))
-            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", name, " is ",
+            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name, " is ",
                                 record.fields[field].ty.name, ", the value is ", values[i].ty.name);
         built = c::LLVMBuildInsertValue(e->builder, built, values[i].llvm, (U32)field, "");
     }
@@ -340,57 +651,89 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
-// `Point(x = 1, y = 2)`: a record of the module built by a call whose arguments are all named fields.
+// `Point(1, y = 2)`: a record of the module built by a call: positional fields in order, then named ones.
 static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) {
     if (x->kind != .call) {
         return state::fail("not a call", x->span);
     }
-    ast::ExprRef args[:] = x->kind.call.args;
     state::RecordType record = e->records[at];
+    ast::ExprRef args[:] = filled_fields(record, x->kind.call.args);
     Usize count = countof(args);
     if (count > 64) return state::not_emitted("more than 64 fields in one construction", x->span);
     Bool seen[64];
     for (Usize i = 0; i < 64; i++)
         seen[i] = false;
+    Bool by_name = false;
     for (Usize i = 0; i < count; i++) {
-        if (!is_named(args[i]))
-            return state::failf(args[i]->span, "a field of ", record.name, " is always named; write ", record.name,
-                                "(x = ...)");
-        Str given = given_name(args[i]);
+        if (is_named(args[i]))
+            by_name = true;
+        else if (by_name)
+            return state::fail("a positional argument cannot follow a named one", args[i]->span);
         Usize field = 0;
-        if (!find_field(record, given, &field))
-            return state::failf(args[i]->span, "no field ", given, " in ", record.name);
-        if (seen[field]) return state::failf(args[i]->span, "field ", given, " of ", record.name, " is given twice");
+        if (!field_for(record, args, i, &field))
+            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", record.name);
+        if (seen[field])
+            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name,
+                                " is given twice");
         seen[field] = true;
     }
     state::push_then(e, (state::Work){.then = construct_finish, .expr = x, .number = count, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         Usize field = 0;
-        find_field(record, given_name(args[i - 1]), &field);
+        field_for(record, args, i - 1, &field);
         state::push_eval(e, value_of(args[i - 1]), state::hint_of(record.fields[field].ty));
     }
     return state::success();
 }
 
+// The value of an argument that has no parameter: an integer narrower than `int` widened to `int`, a `float` to
+// `double` (C's default argument promotions).
+static c::LLVMValueRef promoted(state::Emitter *e, state::Value value) {
+    state::Ty ty = value.ty;
+    c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
+    if (ty.kind == .boolean) return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
+    if (ty.kind == .integer && ty.bits < 32) {
+        if (ty.is_signed) return c::LLVMBuildSExt(e->builder, value.llvm, word, "promote");
+        return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
+    }
+    if (ty.kind == .floating && ty.bits < 64)
+        return c::LLVMBuildFPExt(e->builder, value.llvm, c::LLVMDoubleTypeInContext(e->context), "promote");
+    return value.llvm;
+}
+
+// What the call passes for an argument of the parameter type `param`: an array goes through a temporary, as a pointer.
+static c::LLVMValueRef passed(state::Emitter *e, state::Value value, state::Ty param) {
+    if (param.kind != .array) return value.llvm;
+    c::LLVMValueRef temporary = state::new_alloca(e, param, "argument");
+    c::LLVMBuildStore(e->builder, value.llvm, temporary);
+    return temporary;
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
-    const ast::Expr *x = w->expr;
+    const ast::Expr *written = w->expr;
+    if (written->kind != .call) {
+        return state::fail("not a call", w->span);
+    }
+    const ast::Expr *x = method_form(e, written);
     if (x->kind != .call) {
         return state::fail("not a call", w->span);
     }
-    ast::ExprRef args[:] = x->kind.call.args;
+    ast::ExprRef written_args[:] = x->kind.call.args;
     const ast::Expr *callee = x->kind.call.callee;
     const ast::Decl *imported = nullptr;
     Str key = "";
-    Bool is_imported = imported_callee(e, callee, &imported, &key);
-    if (!is_imported && callee->kind != .name) {
+    Bool is_imported = false;
+    const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
+    if (!is_imported && instance == nullptr && callee->kind != .name) {
         return state::fail("not a name", w->span);
     }
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
-    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
+    ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
         state::free_text(key);
@@ -406,12 +749,16 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     }
     c::LLVMValueRef argv[64];
     for (Usize i = 0; i < count; i++) {
+        if (i >= countof(sig.params)) { // a variadic argument: C's default argument promotions
+            argv[i] = promoted(e, values[i]);
+            continue;
+        }
         if (!state::same_type(values[i].ty, sig.params[slot[i]])) {
             // A value the parameter takes (an integer widened, a payload wrapped in its option) is converted.
             state::Status converted = state::convert(e, values[i], sig.params[slot[i]], args[i]->span, .initialize);
             if (converted == .ok) {
                 values[i] = state::pop_value(e);
-                argv[slot[i]] = values[i].llvm;
+                argv[slot[i]] = passed(e, values[i], sig.params[slot[i]]);
                 continue;
             }
             state::free_text(converted.error.message);
@@ -421,7 +768,7 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
             release(sig);
             return wrong;
         }
-        argv[slot[i]] = values[i].llvm;
+        argv[slot[i]] = passed(e, values[i], sig.params[slot[i]]);
     }
     c::LLVMValueRef made = nullptr;
     if (is_void(sig.result))
@@ -449,39 +796,43 @@ static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint h
 }
 
 // `Expr.call`.
-export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
+    if (written->kind != .call) {
+        return state::fail("not a call", written->span);
+    }
+    const ast::Expr *x = method_form(e, written);
     if (x->kind != .call) {
-        return state::fail("not a call", x->span);
+        return state::fail("not a call", written->span);
     }
     const ast::Expr *callee = x->kind.call.callee;
-    ast::ExprRef args[:] = x->kind.call.args;
+    ast::ExprRef written_args[:] = x->kind.call.args;
     const ast::Decl *imported = nullptr;
     Str key = "";
     Bool is_imported = false;
+    Usize record = 0;
+    if (callee_record(e, callee, &record)) return construct(e, x, record);
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
-        Usize record = 0;
-        if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record))
-            return construct(e, x, record);
         state::Local local = {};
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             local.ty.kind == .fn_value)
             return lambdas::call_value(e, x, local.ty);
         if (streams::is_call(x)) return streams::call(e, x);
     }
-    is_imported = imported_callee(e, callee, &imported, &key);
-    if (!is_imported && callee->kind != .name) {
+    const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
+    if (!is_imported && instance == nullptr && callee->kind != .name) {
         return state::not_emitted("call of something that is not a name", x->span);
     }
-    if (!is_imported && callee->kind == .name) key = join(callee->kind.name.path);
+    if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     SignatureResult found = find(e, key, callee->span, imported);
     if (found == .error) {
         state::free_text(key);
         return {.error = found.error};
     }
     Signature sig = found.ok;
+    ast::ExprRef args[:] = filled_arguments(e, key, written_args, imported);
     Usize count = countof(args);
-    if (count != countof(sig.params)) {
+    if (count != countof(sig.params) && !(sig.variadic && count > countof(sig.params))) {
         state::Status wrong =
             state::failf(x->span, key, " takes ", (U64)countof(sig.params), " arguments, the call has ", (U64)count);
         state::free_text(key);
@@ -495,10 +846,12 @@ export state::Status call(state::Emitter *e, const ast::Expr *x, state::Hint _) 
         release(sig);
         return slotted;
     }
-    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .span = x->span});
+    state::push_then(e, (state::Work){.then = call_finish, .expr = written, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
-    for (Usize i = count; i > 0; i--)
-        push_argument(e, args[i - 1], state::hint_of(sig.params[slot[i - 1]]));
+    for (Usize i = count; i > 0; i--) {
+        Bool extra = i - 1 >= countof(sig.params); // a variadic argument has no parameter to give it a type
+        push_argument(e, args[i - 1], extra ? state::no_hint() : state::hint_of(sig.params[slot[i - 1]]));
+    }
     state::free_text(key);
     release(sig);
     return state::success();
@@ -529,7 +882,7 @@ export state::Status prototype(state::Emitter *e, const ast::Decl *d) {
     SignatureResult made = signature(e, d);
     if (made == .error) return {.error = made.error};
     Signature sig = made.ok;
-    Str symbol = symbol_for(e, name);
+    Str symbol = prototype_symbol(e, d, name);
     char *label = state::cstr(symbol);
     state::free_text(symbol);
     if (c::LLVMGetNamedFunction(e->module, label) != nullptr) {

@@ -25,6 +25,14 @@
 //                 (the magnitude), 1 floating (the magnitude's IEEE double), 2 string (low = byte offset in the pool,
 //                 high = byte count). The enumerators of an anonymous enum, the object-like macros whose value clang
 //                 folds to a constant, and the header's `static const` variables with a constant initializer.)
+//   words[23..24] places: first word, count     (6 words each: kind, ordinal, file, line, column, doc; where a
+//                 declaration is and the comment above it (#1941). The file, line and column are clang's presumed
+//                 location (the header as written, after `#line`); file and doc are string offsets, doc is 0 when
+//                 there is no comment, and its text has no `//`, `///` or `/** */` markers. A declaration with no
+//                 location (a builtin) has no row. kind 0 function (ordinal = its index in functions), 1 struct, 2
+//                 field (index in fields), 3 enum, 4 enum item (index in enum items), 5 constant (index in constants:
+//                 an anonymous enum's enumerator, a macro, a `static const` variable), 6 typedef (ordinal = the
+//                 string offset of its name).)
 //
 // Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed); 3 floating (a = bits); 4 pointer (a = pointee);
 // 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct index); 8 function
@@ -50,6 +58,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -59,6 +68,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/RawCommentList.h"
 #include "clang/AST/Type.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/SourceManager.h"
@@ -118,6 +128,9 @@ enum Kind : uint32_t {
 struct Macro {
     std::string name;
     bool function_like;
+    std::string file; // where it is defined, and the comment above it
+    unsigned line = 0, column = 0;
+    std::string doc;
 };
 
 constexpr const char *source_name = "smith_cimport.c";
@@ -138,6 +151,8 @@ struct Reader {
     std::vector<std::array<uint32_t, 3>> not_imported;
     std::vector<std::array<uint32_t, 4>> enums, enum_items;
     std::vector<std::array<uint32_t, 6>> constants;
+    std::vector<std::array<uint32_t, 6>> places;
+    std::set<uint32_t> typedef_placed;
     std::string failure; // why the first type of the declaration in hand could not be imported
     void fail(const std::string &why) {
         if (failure.empty()) failure = why;
@@ -164,6 +179,25 @@ struct Reader {
         types.push_back(node);
         type_index[node] = at;
         return at;
+    }
+
+    // The place and comment of `decl`, as a row of `places`; nothing for a declaration with no location.
+    void place(uint32_t kind, uint32_t ordinal, const clang::Decl *decl) {
+        const clang::SourceManager &sm = context().getSourceManager();
+        clang::PresumedLoc loc = sm.getPresumedLoc(decl->getLocation());
+        if (!loc.isValid() || loc.getFilename()[0] == '<' || std::strcmp(loc.getFilename(), source_name) == 0) return;
+        std::string doc;
+        // Clang gives an enumerator the comment of the one before it; only a comment that ends on the line above the
+        // declaration, or on its line, is its own.
+        const clang::RawComment *raw = context().getRawCommentForAnyRedecl(decl);
+        if (raw != nullptr &&
+            sm.getPresumedLineNumber(raw->getEndLoc()) + 1 >= sm.getPresumedLineNumber(decl->getBeginLoc()))
+            doc = llvm::StringRef(raw->getFormattedText(sm, context().getDiagnostics())).trim().str();
+        place_at(kind, ordinal, loc.getFilename(), loc.getLine(), loc.getColumn(), doc);
+    }
+    void place_at(uint32_t kind, uint32_t ordinal, const std::string &file, unsigned line, unsigned column,
+                  const std::string &doc) {
+        places.push_back({kind, ordinal, text(file), line, column, text(doc)});
     }
 
     void skip(uint32_t kind, const std::string &name, const std::string &reason) {
@@ -249,7 +283,9 @@ uint32_t Reader::convert_inner(clang::QualType type, bool behind) {
         const clang::TypedefNameDecl *name = t->getDecl();
         uint32_t under = convert(name->getUnderlyingType(), behind);
         if (under == bad) return bad;
-        return type_node(Typedef, flags, text(name->getName().str()), under, 0);
+        uint32_t spelled = text(name->getName().str());
+        if (typedef_placed.insert(spelled).second) place(6, spelled, name);
+        return type_node(Typedef, flags, spelled, under, 0);
     }
     type = type.getUnqualifiedType();
     if (const auto *t = type->getAs<clang::BuiltinType>()) return builtin(t, flags);
@@ -301,11 +337,14 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
     if (name.empty())
         if (const clang::TypedefNameDecl *t = key->getTypedefNameForAnonDecl()) name = t->getName().str();
     structs.push_back({text(name), 0, 0, 1});
+    place(1, index, key);
     if (definition == nullptr) return index; // opaque
     std::string outer = failure;             // the declaration that met this struct keeps its own reason
     failure.clear();
     std::vector<std::array<uint32_t, 2>> read;
+    std::vector<const clang::FieldDecl *> read_decls;
     for (const clang::FieldDecl *field : definition->fields()) {
+        read_decls.push_back(field);
         uint32_t t;
         if (field->isBitField()) {
             fail("the field `" + field->getName().str() + "` is a bit-field");
@@ -320,8 +359,10 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
     structs[index][1] = static_cast<uint32_t>(fields.size());
     structs[index][2] = static_cast<uint32_t>(read.size());
     structs[index][3] = 0;
-    for (auto &f : read)
-        fields.push_back(f);
+    for (size_t i = 0; i < read.size(); i++) {
+        place(2, static_cast<uint32_t>(fields.size()), read_decls[i]);
+        fields.push_back(read[i]);
+    }
     return index;
 }
 
@@ -351,6 +392,7 @@ void Reader::function(const clang::FunctionDecl *decl) {
         parameters.push_back(p);
     functions.push_back(
         {text(name), result, first, static_cast<uint32_t>(params.size()), proto->isVariadic() ? 1U : 0U});
+    place(0, static_cast<uint32_t>(functions.size() - 1), decl);
     for (const clang::Attr *a : decl->attrs())
         if (!a->isImplicit()) skip(1, name, a->getSpelling());
 }
@@ -431,13 +473,18 @@ void Reader::enumeration(const clang::EnumDecl *decl) {
         bool negative = value.isSigned() && value.isNegative();
         std::array<uint32_t, 3> parts = split(negative ? llvm::APInt(-value) : llvm::APInt(value), negative);
         if (named) {
+            place(4, static_cast<uint32_t>(enum_items.size()), item);
             enum_items.push_back({text(item->getName().str()), parts[0], parts[1], parts[2]});
             count++;
         } else {
+            place(5, static_cast<uint32_t>(constants.size()), item);
             constants.push_back({text(item->getName().str()), underlying, 0, parts[2], parts[0], parts[1]});
         }
     }
-    if (named) enums.push_back({text(name), underlying, first, count});
+    if (named) {
+        place(3, static_cast<uint32_t>(enums.size()), decl);
+        enums.push_back({text(name), underlying, first, count});
+    }
 }
 
 void Reader::macros_of(const clang::TranslationUnitDecl *unit, const std::vector<Macro> &list,
@@ -461,7 +508,12 @@ void Reader::macros_of(const clang::TranslationUnitDecl *unit, const std::vector
         std::string why;
         const clang::VarDecl *v = found != values.end() ? found->second : nullptr;
         if (v != nullptr && !v->isInvalidDecl() && v->getInit() != nullptr) {
-            if (constant(macro.name, v->getType(), v->getInit(), why)) continue;
+            if (constant(macro.name, v->getType(), v->getInit(), why)) {
+                if (macro.line != 0)
+                    place_at(5, static_cast<uint32_t>(constants.size() - 1), macro.file, macro.line, macro.column,
+                             macro.doc);
+                continue;
+            }
         } else {
             auto error = errors.find(here);
             why = "not a constant" + (error != errors.end() ? ": " + error->second : std::string());
@@ -491,11 +543,21 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             if (r->isThisDeclarationADefinition() || r->getDefinition() == nullptr) record(r);
         } else if (const auto *e = llvm::dyn_cast<clang::EnumDecl>(d)) {
             enumeration(e);
+        } else if (const auto *t = llvm::dyn_cast<clang::TypedefNameDecl>(d)) {
+            // A typedef no function mentions is still the header's (stdint.int32_t, declared by an include of it).
+            uint32_t spelled = text(t->getName().str());
+            uint32_t under = typedef_placed.count(spelled) ? bad : convert(t->getUnderlyingType(), false);
+            if (under != bad && typedef_placed.insert(spelled).second) {
+                type_node(Typedef, 0, spelled, under, 0);
+                place(6, spelled, t);
+            }
+            failure.clear();
         } else if (const auto *v = llvm::dyn_cast<clang::VarDecl>(d)) {
             // A `static const` or `constexpr` variable with a constant initializer; other variables are not read.
             std::string why;
-            if (v->getType().isConstQualified() && v->getInit() != nullptr && !v->getType()->isPointerType())
-                constant(v->getName().str(), v->getType(), v->getInit(), why);
+            if (v->getType().isConstQualified() && v->getInit() != nullptr && !v->getType()->isPointerType() &&
+                constant(v->getName().str(), v->getType(), v->getInit(), why))
+                place(5, static_cast<uint32_t>(constants.size() - 1), v);
         }
     }
     macros_of(unit, macros, errors);
@@ -549,6 +611,50 @@ class Capture : public clang::DiagnosticConsumer {
     }
 };
 
+// The comment right above the line of `at`: the `//` or `///` lines directly before it, or one `/* */` block that
+// ends on the line before, with the markers taken off. Empty when there is none.
+std::string comment_above(const clang::SourceManager &sm, clang::SourceLocation at) {
+    auto [id, offset] = sm.getDecomposedLoc(sm.getFileLoc(at));
+    llvm::StringRef text = sm.getBufferData(id);
+    std::vector<std::string> above;
+    size_t end = text.rfind('\n', offset); // the end of the previous line
+    bool block = false;
+    while (end != llvm::StringRef::npos && end > 0) {
+        size_t start = text.rfind('\n', end - 1);
+        start = start == llvm::StringRef::npos ? 0 : start + 1;
+        llvm::StringRef line = text.slice(start, end).trim();
+        if (block) {
+            above.push_back(line.str());
+            if (line.contains("/*")) break;
+        } else if (line.starts_with("//")) {
+            above.push_back(line.ltrim('/').ltrim().str());
+        } else if (line.ends_with("*/") && above.empty()) {
+            block = true;
+            above.push_back(line.str());
+            if (line.contains("/*")) break;
+        } else {
+            break;
+        }
+        if (start == 0) break;
+        end = start - 1;
+    }
+    std::string doc;
+    for (size_t i = above.size(); i-- > 0;) {
+        std::string line = above[i];
+        if (block) {
+            for (const char *marker : {"/**", "/*", "*/"}) {
+                size_t at_marker = line.find(marker);
+                if (at_marker != std::string::npos) line.erase(at_marker, std::strlen(marker));
+            }
+            size_t first = line.find_first_not_of(" \t*");
+            line = first == std::string::npos ? "" : line.substr(first);
+        }
+        if (!doc.empty()) doc += '\n';
+        doc += line;
+    }
+    return doc;
+}
+
 // A preprocess-only run that lists the header's macros: no parse, so it costs a fraction of one.
 class ScanMacros : public clang::PreprocessOnlyAction {
   public:
@@ -569,7 +675,11 @@ class ScanMacros : public clang::PreprocessOnlyAction {
             bool value = info->isFunctionLike();
             for (const clang::Token &t : info->tokens())
                 if (t.isLiteral() || t.is(clang::tok::identifier)) value = true;
-            if (value) found.push_back({info->getDefinitionLoc(), {name, info->isFunctionLike()}});
+            if (value) {
+                Macro macro{name, info->isFunctionLike(), loc.getFilename(), loc.getLine(), loc.getColumn(), ""};
+                macro.doc = comment_above(sm, info->getDefinitionLoc());
+                found.push_back({info->getDefinitionLoc(), macro});
+            }
         }
         std::sort(found.begin(), found.end(),
                   [&](const auto &a, const auto &b) { return sm.isBeforeInTranslationUnit(a.first, b.first); });
@@ -591,7 +701,13 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     std::vector<std::string> flags = lines(request->flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
                        (request->quoted != 0 ? "\"" : ">") + "\n";
-    std::vector<std::string> args = {"-x", "c", "-std=gnu23", "-fno-color-diagnostics", "-ferror-limit=0"};
+    std::vector<std::string> args = {"-x",
+                                     "c",
+                                     "-std=gnu23",
+                                     "-fno-color-diagnostics",
+                                     "-ferror-limit=0",
+                                     "-fparse-all-comments",
+                                     "-fretain-comments-from-system-headers"};
     if (request->quoted != 0 && request->folder != nullptr && request->folder[0] != '\0') {
         args.push_back("-iquote");
         args.push_back(request->folder);
@@ -633,14 +749,15 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     if (!error.empty()) error_at = reader.text(error);
 
     // Lay the tables out: header, types, functions, structs, fields, parameters, not imported, then the pool.
-    constexpr size_t head = 23;
+    constexpr size_t head = 25;
     size_t at = head;
     size_t types_at = at, functions_at = types_at + reader.types.size() * 5,
            structs_at = functions_at + reader.functions.size() * 5;
     size_t fields_at = structs_at + reader.structs.size() * 4, parameters_at = fields_at + reader.fields.size() * 2;
     size_t skipped_at = parameters_at + reader.parameters.size() * 2,
            enums_at = skipped_at + reader.not_imported.size() * 3, items_at = enums_at + reader.enums.size() * 4,
-           constants_at = items_at + reader.enum_items.size() * 4, pool_at = constants_at + reader.constants.size() * 6;
+           constants_at = items_at + reader.enum_items.size() * 4,
+           places_at = constants_at + reader.constants.size() * 6, pool_at = places_at + reader.places.size() * 6;
     size_t pool_words = (reader.pool.size() + 3) / 4, total = pool_at + pool_words;
     if (total > capacity || words == nullptr) return total;
     std::memset(words, 0, total * 4);
@@ -659,6 +776,7 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     w[17] = static_cast<uint32_t>(enums_at), w[18] = static_cast<uint32_t>(reader.enums.size());
     w[19] = static_cast<uint32_t>(items_at), w[20] = static_cast<uint32_t>(reader.enum_items.size());
     w[21] = static_cast<uint32_t>(constants_at), w[22] = static_cast<uint32_t>(reader.constants.size());
+    w[23] = static_cast<uint32_t>(places_at), w[24] = static_cast<uint32_t>(reader.places.size());
     auto copy = [&](size_t where, const auto &rows) {
         for (const auto &row : rows)
             for (uint32_t v : row)
@@ -673,6 +791,7 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     copy(enums_at, reader.enums);
     copy(items_at, reader.enum_items);
     copy(constants_at, reader.constants);
+    copy(places_at, reader.places);
     std::memcpy(reinterpret_cast<char *>(w) + pool_at * 4, reader.pool.data(), reader.pool.size());
     return total;
 }

@@ -1,0 +1,33 @@
+// Tests of the fixer's arrays with no length written (#2092, piece of #2053): `T xs[_] = {a, b};` is
+// `let xs: [2]T = [a, b]`, the count of the elements standing in for the `_` that smith has no spelling for.
+module front_fix_array_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", result.text);
+    test::check_equal(again.text, after);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_array_a_list_gives_the_length() {
+    expect("void f(void) {\n    I32 xs[_] = {1, 2, 3};\n}\n", "fn f():\n    let xs: [3]i32 = [1, 2, 3]\n");
+}
+
+export void test_front_fix_array_an_array_of_pointers_to_text() {
+    expect("void f(void) {\n    const char *const argv[_] = {\"build\", \"--fast\"};\n}\n",
+           "fn f():\n    let argv: [2]*char = [\"build\", \"--fast\"]\n");
+}
+
+export void test_front_fix_array_a_trailing_comma_is_not_an_element() {
+    expect("void f(void) {\n    I32 xs[_] = {1, 2,};\n}\n", "fn f():\n    let xs: [2]i32 = [1, 2,]\n");
+}

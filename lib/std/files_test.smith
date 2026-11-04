@@ -199,20 +199,20 @@ export void test_files_open_read_write_and_close_by_pieces() {
 
     files::OpenResult reopened = files::open("pieces.txt", files::Read);
     test::check_condition(reopened == .ok);
-    files::File in = value_file(reopened);
+    files::File input = value_file(reopened);
     U8 buffer[:] = mem::alloc_slice(U8, 3);
-    files::CountResult first = files::read(in, buffer);
+    files::CountResult first = files::read(input, buffer);
     test::check_condition(first == .ok);
     test::check_equal(value_count(first), 3);
     test::check_condition(is_text(buffer, "abc"));
-    files::CountResult second = files::read(in, buffer);
+    files::CountResult second = files::read(input, buffer);
     test::check_equal(value_count(second), 3);
-    files::CountResult third = files::read(in, buffer);
+    files::CountResult third = files::read(input, buffer);
     test::check_equal(value_count(third), 2);
-    files::CountResult end = files::read(in, buffer);
+    files::CountResult end = files::read(input, buffer);
     test::check_condition(end == .ok);
     test::check_equal(value_count(end), 0); // 0 is the end
-    files::CloseResult check5 = files::close(in);
+    files::CloseResult check5 = files::close(input);
     test::check_condition(check5 == .none);
     files::OpenResult check6 = files::open("absent.txt", files::Read);
     test::check_condition(check6 == .error);

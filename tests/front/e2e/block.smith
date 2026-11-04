@@ -1,44 +1,34 @@
-fn sum_row(r: []i32) -> i32 {
-    mut sum := 0
-    for x in r {
+fn sum_row(r: []i32) -> i32:
+    let mut sum = 0
+    for x in r:
         sum += x
-    }
     sum
-}
 
-fn trace(g: [,]i32) -> i32 {
-    mut sum := 0
-    mut i: usize = 0
-    while i < countof(g) {
+fn trace(g: [,]i32) -> i32:
+    let mut sum = 0
+    let mut i: usize = 0
+    while i < countof(g):
         sum += g[i, i]
         i += 1
-    }
     sum
-}
 
-pub fn check() -> i32 {
-    mut raw: [3][3]i32
-    mut n: i32 = 1
-    mut r: usize = 0
-    while r < 3 {
-        mut k: usize = 0
-        while k < 3 {
+pub fn check() -> i32:
+    let mut raw: [3][3]i32 = undefined
+    let mut n: i32 = 1
+    let mut r: usize = 0
+    while r < 3:
+        let mut k: usize = 0
+        while k < 3:
             raw[r][k] = n
             n += 1
             k += 1
-        }
         r += 1
-    }
-    grid: [,]i32 = raw
-    if countof(grid) != 3 || countof(grid[0]) != 3 {
+    let grid: [,]i32 = raw
+    if countof(grid) != 3 || countof(grid[0]) != 3:
         return 1
-    }
-    if trace(grid) != 15 || sum_row(grid[2]) != 24 {
+    if trace(grid) != 15 || sum_row(grid[2]) != 24:
         return 2
-    }
-    fixed: [3,3]i32 = raw
-    if fixed[2, 1] != 8 {
+    let fixed: [3,3]i32 = raw
+    if fixed[2, 1] != 8:
         return 3
-    }
     0
-}

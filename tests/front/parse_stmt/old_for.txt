@@ -9,23 +9,23 @@ for (;;) break;
 }
 ===
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `I32` as `i32` in smith's own syntax
-warning (fix): a variable is written `i: i32 = ...`: the name comes first and the `;` goes
+warning (no fix): a variable is written `i: T = value`, the type after the name: `i32 i` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` after the name, a `{...}` list, an array that C zeroes): write it by hand
 warning (no fix): `++` is a statement in Smith: write `i += 1`
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
 warning (fix): write the type `U8` as `u8` in smith's own syntax
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a `for` reads `for x in xs` or `for i in range(a, b)`: write it so
-warning (no fix): this `for` has no range form: write `for x in ...`, or `while`
 warning (fix): a statement ends with the line, not `;`: remove it
+warning (no fix): this `for` has no `while` form here: write it by hand with `while`
 ---
 {
 for i in range(0, n) { x = i }

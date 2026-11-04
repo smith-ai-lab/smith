@@ -1,0 +1,31 @@
+// Tests of the fix-it for a compound literal whose type is a name in a C header's namespace (#2092, part of #2053):
+// `(c::SmithEntropyHandler){.fill = f}` in lib/std/entropy.smith is `c.SmithEntropyHandler(fill = f)`.
+module front_fix_c_literal_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_compound_literal_of_a_c_name() {
+    expect_fixed("module m;\nvoid f(void) {\n    h = (c::Handler){.fill = g};\n}\n",
+                 "fn f():\n    h = c.Handler(fill = g)\n");
+}

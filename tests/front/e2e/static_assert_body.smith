@@ -1,0 +1,4 @@
+pub fn check() -> i32:
+    static_assert(2 < 3, "a comparison folds")
+    static_assert(true)
+    0

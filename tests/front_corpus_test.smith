@@ -1,0 +1,292 @@
+// The smith-lang corpus on the new front end (#1996, part of #1978): every folder of tests/front/corpus/ is a case,
+// laid out like a case of tests/smith-lang/cases but with `src/*.smith` in smith's own syntax. Each file of `src/` is
+// compiled through `compile::file` (one module per file, named by the file) and then, by the files under `expect/`:
+//   expect/error    compiling fails with exactly these diagnostics, the scratch folder left out (`src/main.smith:1:2:
+//   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file c/main.c   a C program that calls
+//   the case's headers, linked with the objects instead of a `pub fn main` expect/stdout   the objects are linked (the
+//   case has `pub fn main`) and the program prints exactly this
+// Add a case by adding a folder.
+module front_corpus_test;
+
+import front::compile;
+import front::roots;
+import std::console;
+import std::files;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static const char *smith_path() {
+    const char *self = c::getenv("SMITH_SELF");
+    return self != nullptr ? self : "smith";
+}
+
+static Str folder_for(Str name) {
+    Str path = as_str(format::push("/tmp/front_corpus_", (I64)c::getpid(), "_", name));
+    c::mkdir(path.data, 0o700);
+    return path;
+}
+
+static I32 sh_status(Str command) {
+    const char *const argv[4] = {"sh", "-c", command.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done != .ok || done.ok.exit.signal != 0) return -1;
+    return done.ok.exit.status;
+}
+
+static Str text_of(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return "";
+    format::Chars chars = mem::view(loaded.ok, char);
+    return chars;
+}
+
+static Bool ends_with(Str text, Str suffix) {
+    return countof(text) > countof(suffix) && roots::same(text[countof(text) - countof(suffix):], suffix);
+}
+
+static Str replace(Str text, Str from, Str to) {
+    Str result = "";
+    Usize i = 0;
+    while (i < countof(text)) {
+        if (i + countof(from) <= countof(text) && roots::same(text[i:i + countof(from)], from)) {
+            result = as_str(format::push(result, to));
+            i += countof(from);
+        } else {
+            result = as_str(format::push(result, text[i:i + 1]));
+            i += 1;
+        }
+    }
+    return result;
+}
+
+// The result of compiling every file of a case's `src/`: whether all went through, the diagnostics in file order, and
+// the objects as arguments for the linker.
+struct Built {
+    Bool ok;
+    Str text;
+    Str objects;
+    Str modules;
+};
+
+static Str line_at(Str lines, Usize start) {
+    Usize end = start;
+    while (end < countof(lines) && lines[end] != '\n')
+        end += 1;
+    return lines[start:end];
+}
+
+// The files under `root`, subfolders included, that end in `suffix`, each as its path under `root` without the
+// suffix, one per line, in the order `files::list` gives (`shape/board` for `src/shape/board.smith`).
+static Str scan(Str root, Str suffix) {
+    Str found = "";
+    Str pending = "\n"; // folders still to list, one per line, the first line the root itself
+    Usize at = 0;
+    while (at < countof(pending)) {
+        Str rel = line_at(pending, at);
+        at += countof(rel) + 1;
+        Str here = root;
+        if (countof(rel) > 0) here = as_str(format::push(root, "/", rel));
+        files::EntriesResult listing = files::list(here);
+        test::check_equal(listing == .ok, true);
+        if (listing != .ok) return found;
+        for (files::Entry entry : listing.ok) {
+            Str name = entry.name;
+            if (countof(rel) > 0) name = as_str(format::push(rel, "/", entry.name));
+            if (entry.folder) {
+                pending = as_str(format::push(pending, name, "\n"));
+            } else if (ends_with(name, suffix)) {
+                Str stem = name[0:countof(name) - countof(suffix)];
+                found = as_str(format::push(found, stem, "\n"));
+            }
+        }
+    }
+    return found;
+}
+
+// The modules of `<dir>/src`, one per line: `a/b` is the module `a::b`.
+static Str modules_of(Str dir) {
+    return scan(as_str(format::push(dir, "/src")), ".smith");
+}
+
+// The C sources of `<dir>/src`, compiled by `smith cc` and linked beside the modules (a module's C file calls its
+// exports, as `c-name` does).
+static Str c_sources_of(Str dir) {
+    return scan(as_str(format::push(dir, "/src")), ".c");
+}
+
+// Compiles each C source of the case to `<name>.c.o` and adds the object to the linker's arguments; a failure is
+// recorded in the case's diagnostics.
+static Built add_c_sources(Str folder, Str sources, Built built) {
+    Usize at = 0;
+    while (at < countof(sources)) {
+        Str name = line_at(sources, at);
+        at += countof(name) + 1;
+        Str object = as_str(format::push(folder, "/", replace(name, "/", "_"), ".c.o"));
+        I32 status = sh_status(
+            as_str(format::push(smith_path(), " cc -I ", folder, "/src -c ", folder, "/src/", name, ".c -o ", object)));
+        if (status != 0) {
+            built.ok = false;
+            built.text = as_str(format::push(built.text, "src/", name, ".c: the C compiler failed\n"));
+        }
+        built.objects = as_str(format::push(built.objects, object, " "));
+    }
+    return built;
+}
+
+static Built build_case(Str folder, Str modules) {
+    Built built = {.ok = true, .text = "", .objects = "", .modules = modules};
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    Usize at = 0;
+    while (at < countof(modules)) {
+        Str name = line_at(modules, at);
+        at += countof(name) + 1;
+        Str path = as_str(format::push(folder, "/src/", name, ".smith"));
+        Str object = as_str(format::push(folder, "/", replace(name, "/", "_"), ".o"));
+        compile::Report report = compile::file(path, object, "", folders);
+        built.ok = built.ok && report.ok;
+        built.text = as_str(format::push(built.text, report.text));
+        built.objects = as_str(format::push(built.objects, object, " "));
+    }
+    return built;
+}
+
+// The header without its three comment lines ("Generated by smith ... Do not edit."): a tracked file may not carry the
+// generator's marker (generated_files_test), and the lines name the scratch folder.
+static Str after_banner(Str header) {
+    Str mark = "// clang-format on\n";
+    for (Usize i = 0; i + countof(mark) <= countof(header); i++) {
+        if (roots::same(header[i:i + countof(mark)], mark)) return header[i + countof(mark):];
+    }
+    return header;
+}
+
+// `expect/header/<module>.h` for each module that has one: what `compile::header` writes.
+static void check_headers(Str dir, Str folder, Str modules) {
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    Usize at = 0;
+    while (at < countof(modules)) {
+        Str name = line_at(modules, at);
+        at += countof(name) + 1;
+        Str want_path = as_str(format::push(dir, "/expect/header/", replace(name, "/", "."), ".h"));
+        if (!files::exists(want_path)) continue;
+        Str made = as_str(format::push(folder, "/", replace(name, "/", "."), ".h"));
+        compile::Report report =
+            compile::header(as_str(format::push(folder, "/src/", name, ".smith")), made, "", folders);
+        test::check_equal(report.ok, true);
+        Str got = after_banner(text_of(made));
+        if (report.ok && !roots::same(got, text_of(want_path))) {
+            (void)console::print_error(got);
+            test::check_equal(got, text_of(want_path));
+        }
+    }
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+// The stand-ins of the six `smith_contract_fail_*` checks, as tests/front_emit_object_test.smith has them; `cast_body`
+// is what `smith_contract_fail_cast` does.
+static Str stand_ins(Str cast_body) {
+    return as_str(format::push(
+        "void _exit(int);\n", "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { ", cast_body,
+        " }\n", "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n",
+        "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, ",
+        "const char *e) { __builtin_trap(); }\n",
+        "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n",
+        "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); }\n",
+        "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, ",
+        "const char *f, const char *g) { __builtin_trap(); }\n"));
+}
+
+// Links the objects and runs the program: its standard output and status as the old corpus records them (`(exit N)`
+// after the output for a status other than 0).
+static void check_stdout(Str dir, Str folder, Built built) {
+    write_text(as_str(format::push(folder, "/stubs.c")), stand_ins("__builtin_trap();"));
+    // A case with `c/main.c` has a C program as its caller: it includes the headers this case wrote.
+    Str caller_path = as_str(format::push(dir, "/c/main.c"));
+    Str caller = "";
+    if (files::exists(caller_path)) caller = as_str(format::push("-I ", folder, " ", caller_path, " "));
+    I32 linked = sh_status(
+        as_str(format::push(smith_path(), " cc ", folder, "/stubs.c ", caller, built.objects, "-o ", folder, "/prog")));
+    test::check_equal(linked, 0);
+    if (linked != 0) return;
+    (void)sh_status(
+        as_str(format::push(folder, "/prog >", folder, "/stdout 2>&1 || echo \"(exit $?)\" >>", folder, "/stdout")));
+    test::check_equal(text_of(as_str(format::push(folder, "/stdout"))),
+                      text_of(as_str(format::push(dir, "/expect/stdout"))));
+}
+
+static void remove_all(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+static Str line_of(const char *const argv[:]) {
+    process::OutputResult done = process::run(argv);
+    if (done != .ok) return "";
+    Usize n = countof(done.ok.output);
+    while (n > 0 && done.ok.output[n - 1] == '\n')
+        n -= 1;
+    return as_str(format::push(format::bytes((const char *)done.ok.output.data, n)));
+}
+
+static void use_header_flags() {
+    const char *const resource_argv[3] = {smith_path(), "cc", "-print-resource-dir"};
+    Str flags = as_str(format::push("-resource-dir\n", line_of(resource_argv[0:3]), "\n"));
+    const char *const sdk_argv[3] = {"xcrun", "--show-sdk-path", nullptr};
+    Str sdk = line_of(sdk_argv[0:2]);
+    if (countof(sdk) > 0) flags = as_str(format::push(flags, "-isysroot\n", sdk, "\n"));
+    c::setenv("SMITH_FRONT_CIMPORT_FLAGS", flags.data, 1);
+}
+
+// One case of the corpus.
+static void run_case(Str name) {
+    use_header_flags();
+    Str dir = as_str(format::push("tests/front/corpus/", name));
+    Str folder = folder_for(name);
+    test::check_equal(sh_status(as_str(format::push("cp -r ", dir, "/src ", folder, "/src"))), 0);
+    Str modules = modules_of(dir);
+    Built built = add_c_sources(folder, c_sources_of(dir), build_case(folder, modules));
+    Str errors_path = as_str(format::push(dir, "/expect/error"));
+    if (files::exists(errors_path)) {
+        test::check_equal(built.ok, false);
+        Str got = replace(built.text, as_str(format::push(folder, "/")), "");
+        Str want = text_of(errors_path);
+        if (!roots::same(want, got)) test::check_equal(got, want);
+    } else {
+        if (!built.ok) (void)console::print_error(built.text, "\n");
+        if (!built.ok) test::check_equal(built.text, as_str(format::push("")));
+        test::check_equal(built.ok, true);
+        if (built.ok) check_headers(dir, folder, modules);
+        if (built.ok && files::exists(as_str(format::push(dir, "/expect/stdout")))) check_stdout(dir, folder, built);
+    }
+    remove_all(folder);
+}
+
+// Every case of tests/front/corpus/, one check each (a failure's message is the case's name).
+export void test_front_corpus_every_case() {
+    files::EntriesResult listing = files::list("tests/front/corpus");
+    test::check_equal(listing == .ok, true);
+    if (listing != .ok) return;
+    for (files::Entry entry : listing.ok) {
+        run_case(entry.name);
+    }
+}

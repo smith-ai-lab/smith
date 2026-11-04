@@ -1,0 +1,30 @@
+// The checker's fix for a discarded value (#1915, part of #1902): `(void)x;` is written `_ = x;`, from the
+// checker's own error, in the same passes as the other fix-its. A second run applies nothing.
+module front_check_discard_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    test::check(first.applied > 0);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, after);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_check_discard_a_discarded_name() {
+    expect("void f(U64 x) {\n    (void)x;\n}\n", "fn f(x: u64):\n    _ = x\n");
+}
+
+export void test_front_check_discard_a_discarded_call() {
+    expect("U64 g(U64 x) {\n    return x;\n}\nvoid f(U64 x) {\n    (void)g(x);\n}\n",
+           "fn g(x: u64) -> u64:\n    return x\nfn f(x: u64):\n    _ = g(x)\n");
+}

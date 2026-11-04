@@ -1,0 +1,1 @@
+<dir>/src/extern_variadic_str.smith:5:18: error: argument 2 is `Str`, cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read

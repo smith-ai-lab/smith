@@ -1,0 +1,4 @@
+pub const centimeters_per_meter: u32 = 100
+
+pub fn to_centimeters(meters: u32) -> u32:
+    meters * centimeters_per_meter

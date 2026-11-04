@@ -167,6 +167,17 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
     }
 }
 
+// Whether a path of the new syntax that ends in a `type_name` is followed by `* operand` where a value is read:
+// `k.SIDE * 2` is a product of a header's constant (the name is upper case, so it reads as a type), not a pointer to
+// a type, which the new syntax writes in front (`*T`).
+export Bool path_then_product(const parse::Parser *p, Usize offset) {
+    if (!p->new_syntax || !path_is_type(p, offset)) return false;
+    Usize last = path_last(p, offset);
+    if (parse::peek_at(p, last + 1).kind != lex::star) return false;
+    lex::TokenKind after = parse::peek_at(p, last + 2).kind;
+    return after == lex::integer || after == lex::name || after == lex::type_name || after == lex::left_paren;
+}
+
 // Whether `fn` or `fn_once` starts a function type `offset` tokens ahead. Today's lexer reads them as names, so while
 // fixing (`smith lint --fix` reads a text again after each pass) a name followed by `(` counts too, and a type that a
 // pass has already written is read.
@@ -200,8 +211,20 @@ export Bool starts_new_type(const parse::Parser *p, Usize offset) {
            after == lex::name || is_keyword_type(after);
 }
 
+static ast::Path read_path(parse::Parser *p, Bool in_type);
+
 // Reads a path: `x`, `ascii::digit`, `c::printf`. The caller has checked that one starts here.
 export ast::Path path(parse::Parser *p) {
+    return read_path(p, false);
+}
+
+// Reads the path of a type. After a lowercase name a `.` may also be followed by a lowercase name, since a type has no
+// member access: `stdio.size_t`, `stdlib.div_t` (a C type under a header binding, #1678).
+static ast::Path type_path(parse::Parser *p) {
+    return read_path(p, true);
+}
+
+static ast::Path read_path(parse::Parser *p, Bool in_type) {
     ast::Identifier segments[:] = {};
     ast::Path result = {.segments = segments};
     lex::Token first = parse::peek(p);
@@ -211,6 +234,10 @@ export ast::Path path(parse::Parser *p) {
         ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
         result.segments[countof(result.segments) - 1] = segment;
         Bool more = at_separator(p, 0, token.kind) && is_segment(parse::peek_at(p, 1).kind);
+        if (in_type && p->new_syntax && token.kind == lex::name && parse::peek_at(p, 0).kind == lex::dot &&
+            parse::peek_at(p, 1).kind == lex::name && parse::peek_at(p, 2).kind != lex::left_paren) {
+            more = true;
+        }
         if (!more) break;
         lex::Token separator = parse::advance(p);
         if (separator.kind == lex::colon_colon) parse::warn_separator(p, separator);
@@ -243,6 +270,18 @@ export TypeList with_type(ast::TypeRef list[:], ast::TypeExpr *t) {
         grown[i] = list[i];
     }
     grown[countof(list)] = t;
+    return grown;
+}
+
+export typedef ast::Identifier NameList[:];
+
+export NameList with_name(ast::Identifier list[:], ast::Identifier name) {
+    Usize count = countof(list) + 1;
+    NameList grown = mem::alloc_slice(ast::Identifier, count);
+    for (Usize i = 0; i < countof(list); i += 1) {
+        grown[i] = list[i];
+    }
+    grown[countof(list)] = name;
     return grown;
 }
 
@@ -382,7 +421,7 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         return spelled(p, token.span.start, q);
     }
     if (is_segment(token.kind)) {
-        ast::Path named = path(p);
+        ast::Path named = type_path(p);
         return node(start, p, q, {.named = {.path = named}});
     }
     if (token.kind == lex::end_of_file) {
@@ -595,6 +634,8 @@ static ast::TypeKind function_rest(parse::Parser *p, ast::TypeExpr *result) {
         }
         ast::TypeExpr *param = parse::type(p);
         params = with_type(params, param);
+        // A parameter's name (`Fn(void (Key key))`) is left out of the type: the fix writes only the types.
+        if (param != nullptr && parse::at(p, lex::name)) parse::advance(p);
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_paren, "`)` to end the parameters of the function type");
@@ -726,20 +767,31 @@ static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
 static ast::TypeExpr *new_tuple(parse::Parser *p, U32 start) {
     parse::advance(p);
     ast::TypeRef elements[:] = {};
+    NameList names = {};
     Bool comma = false;
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        if (p->new_syntax && parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
+            lex::Token field = parse::advance(p);
+            names = with_name(names, (ast::Identifier){.text = parse::text(p, field), .span = field.span});
+            parse::advance(p);
+        }
         elements = with_type(elements, parse::type(p));
         comma = parse::accept(p, lex::comma);
         if (!comma) break;
     }
     Bool closed = parse::at(p, lex::right_paren);
     parse::expect(p, lex::right_paren, "`)` to end the tuple type");
-    if (closed && countof(elements) == 1 && !comma) {
+    if (countof(names) > 0 && countof(names) != countof(elements)) {
+        parse::error(p, parse::span_from(p, start),
+                     "a tuple type names all its elements or none: `(count: i32, ms: f64)`");
+        names = names[0:0];
+    }
+    if (closed && countof(elements) == 1 && !comma && countof(names) == 0) {
         parse::error(p, parse::span_from(p, start),
                      "a tuple of one type is written with a comma, `(T,)`; a type needs no parentheses");
     }
     ast::Qualifiers none = {};
-    return node(start, p, none, {.tuple = {.elements = elements}});
+    return node(start, p, none, {.tuple = {.elements = elements, .names = names}});
 }
 
 // `fn(A, B) -> R` and `fn_once(A) -> R`: the position is at the keyword. Without `->` the function has no result.
@@ -955,7 +1007,12 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     if (count == 1 && text::is(p->source[params[0]->span.start:params[0]->span.end], "void")) count = 0;
     for (Usize i = 0; i < count; i += 1) {
         ast::Span span = params[i]->span;
-        joined = format::push(joined, i > 0 ? ", " : "", p->source[span.start:span.end]);
+        // The inner types are mended first: `Fn(U32 (U32 x))` is `fn(u32) -> u32`, not `fn(U32) -> U32`.
+        // A name after the type (`void *context`) leaves the space the mended star wants (`*void `): it goes.
+        Str inner = parse::mended(p, span.start, span.end);
+        while (countof(inner) > 0 && inner[countof(inner) - 1] == ' ')
+            inner = inner[0:countof(inner) - 1];
+        joined = format::push(joined, i > 0 ? ", " : "", inner);
     }
     if (kind.function.variadic) {
         r->problem = "a variadic function type has no spelling in smith's own syntax yet: write the function by hand";
@@ -963,7 +1020,7 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     char written[:] = format::push("fn(", joined, ")");
     ast::TypeExpr *result = kind.function.result;
     if (result == nullptr) return frozen(written);
-    Str shown = p->source[result->span.start:result->span.end];
+    Str shown = parse::mended(p, result->span.start, result->span.end);
     if (text::is(shown, "void") || text::is(shown, "Void")) return frozen(written);
     return frozen(format::push(written, " -> ", shown));
 }
@@ -1079,6 +1136,24 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
     parse::warning_fix(p, span, message, edits);
 }
 
+// In smith's own syntax a type function of a module is applied through a dot, `arena.slice_of(T, n)`: when the path
+// just read is followed by `.name(`, the dot and the name join the path and the result is true, so the arguments are
+// read as an applied type. Anywhere else a `.` after a type is not part of it.
+static Bool qualified_type_function(parse::Parser *p, ast::TypeExpr *base) {
+    if (!p->new_syntax || base->kind != .named) return false;
+    if (parse::peek(p).kind != lex::dot || parse::peek_at(p, 1).kind != lex::name) return false;
+    if (parse::peek_at(p, 2).kind != lex::left_paren) return false;
+    parse::advance(p);
+    lex::Token token = parse::advance(p);
+    ast::Path named = base->kind.named.path;
+    named.segments = mem::realloc(named.segments, countof(named.segments) + 1);
+    ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
+    named.segments[countof(named.segments) - 1] = segment;
+    named.span = parse::span_from(p, named.span.start);
+    base->kind.named.path = named;
+    return true;
+}
+
 // Reads one type: qualifiers, the base, the applied form of a type name followed by `(`, the suffixes.
 static ast::TypeExpr *read(parse::Parser *p) {
     if (at_new_type(p)) return new_type(p);
@@ -1090,6 +1165,7 @@ static ast::TypeExpr *read(parse::Parser *p) {
     old.base = p->position;
     ast::TypeExpr *base = plain(p, start, q);
     if (base == nullptr) return nullptr;
+    Bool qualified_call = qualified_type_function(p, base);
     Bool call_shape = parse::at(p, lex::left_paren) && !c_declarator_ahead(p);
     if (call_shape && base->kind == .named) {
         ast::Path name = base->kind.named.path;
@@ -1097,7 +1173,8 @@ static ast::TypeExpr *read(parse::Parser *p) {
         Bool is_lambda = countof(name.segments) == 1 && text::is(last, "Lambda");
         Bool capital = countof(last) > 0 && last[0] >= 'A' && last[0] <= 'Z';
         Bool is_vec = countof(name.segments) == 1 && text::is(last, "vec");
-        if (capital || is_lambda || is_vec || group_then_name(p, 0)) base = applied(p, start, q, name);
+        if (capital || is_lambda || is_vec || qualified_call || group_then_name(p, 0))
+            base = applied(p, start, q, name);
     }
     old.after = p->position;
     ast::TypeExpr *result = suffixes(p, start, base);

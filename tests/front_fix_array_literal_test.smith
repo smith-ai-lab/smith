@@ -1,0 +1,41 @@
+// Tests of the fix-it for a compound literal of an array type (#2105, part of #2093 and #1631): `(const F64[_]){3.5}`
+// and `(I32[7]){1, 2, ...}` go through `smith lint --fix` to the tour's array value `[3.5]` and `[1, 2, ...]`, and the
+// text they end with parses with no error. The type was already rewritten to `[_]f64` by an earlier pass in the fixed
+// copy of lib/std, so the form `([_]f64){3.5}` is fixed too.
+module front_fix_array_literal_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_array_literal_with_an_inferred_length() {
+    expect_fixed("module m;\nvoid f() {\n    g(([_]F64){3.5}, 1);\n}\n", "fn f():\n    g([3.5], 1)\n");
+}
+
+export void test_front_fix_array_literal_with_a_length() {
+    expect_fixed("module m;\nvoid f() {\n    let want = ([3]I32){1, 2, 3};\n}\n",
+                 "fn f():\n    let want = [1, 2, 3]\n");
+}
+
+export void test_front_fix_array_literal_in_the_c_spelling() {
+    expect_fixed("module m;\nvoid f() {\n    g((const F64[_]){3.5}, 1);\n}\n", "fn f():\n    g([3.5], 1)\n");
+}

@@ -19,7 +19,7 @@ const sized = ['U8', 'U16', 'U32', 'U64', 'I8', 'I16', 'I32', 'I64', 'Usize', 'I
 function commaSep(rule) { return optional(commaSep1(rule)); }
 function commaSep1(rule) { return seq(rule, repeat(seq(',', rule))); }
 
-const soft = ['module', 'import', 'export', 'Type'];
+const soft = ['module', 'import', 'export', 'Type', 'fn'];
 
 module.exports = grammar(C, {
   name: 'smith',
@@ -49,11 +49,148 @@ module.exports = grammar(C, {
     [$.field_designator, $.variant_expression],
     [$.call_expression, $.trailing_call_expression],
     [$.expression, $.lambda_capture_list],
+    [$.expression, $.fn_type, $.fn_lambda],
+    [$.expression, $.fn_lambda],
+    [$.macro_type_specifier, $.type_call],
+    [$.type_specifier, $.expression, $._new_type],
+    [$.array_type, $.array_literal, $.lambda_capture_list],
+    [$.array_type, $.array_literal],
+    [$.type_specifier, $.expression, $.macro_type_specifier, $.type_call],
+    [$.expression, $.dotted_type],
+    [$.expression, $.type_call],
+    [$.expression, $._new_type],
+    [$.binary_expression, $.fn_lambda],
+    [$.subscript_designator, $.array_literal],
+    [$.enum_specifier, $.layout_enum],
+    [$.dotted_path, $.module_path],
+    [$.array_literal, $.lambda_capture_list],
+    [$.type_specifier, $.layout_import, $.import_declaration],
+    [$.type_qualifier, $.layout_const_declaration],
   ]),
 
+  // The layout tokens of the syntax of #1428 come from scanner.c: they have no width and are returned only where a
+  // rule below asks for them.
+  externals: ($, original) => original.concat([$._indent, $._dedent, $._newline]),
+
   rules: {
+    // `#` and a space (or `##`) starts a comment in the syntax of #1428; `#word` stays a directive of C.
+    comment: ($, original) => choice(original, token(/#[ \t#][^\n]*/)),
+
+    // ---- The syntax of #1428 (layout blocks). Every rule here is new-syntax only; the rules of C stay while .c and
+    // .h files parse with this grammar.
+
+    // [pub] fn name[T, const n: usize](a: A, mut b: B = 1; kw: K) -> R: and its block
+    fn_declaration: $ => seq(
+      optional('pub'),
+      'fn', field('name', $.identifier),
+      optional($.generic_parameters),
+      field('parameters', $.fn_parameters),
+      optional(seq('->', field('type', $._new_type))),
+      choice(field('body', $.layout_block), $._newline)),
+    generic_parameters: $ => seq('[', commaSep1(seq(optional('const'), $.identifier, optional(seq(':', $._new_type)))), ']'),
+    fn_parameters: $ => seq('(', commaSep($._any_parameter), optional(seq(';', commaSep($._any_parameter))), ')'),
+    _any_parameter: $ => choice($._fn_parameter, seq($.identifier, ':', $._new_type, '...'), seq($.identifier, '...')),
+    _fn_parameter: $ => seq(optional('mut'), $.identifier, ':', $._new_type, optional(seq('=', $.expression))),
+
+    // The types: a name, ?T, *T, *mut T, [N]T, []T, []mut T, [,]T, [3, 3]T, (A, B), (n: A), fn(A) -> R, Name(T)
+    _new_type: $ => choice(
+      alias($.identifier, $.type_identifier),
+      alias('void', $.type_identifier),
+      $.dotted_type,
+      $.optional_type,
+      $.pointer_type,
+      $.array_type,
+      $.tuple_type,
+      $.fn_type,
+      $.type_call),
+    dotted_type: $ => prec.left(seq(alias($.identifier, $.type_identifier), repeat1(seq('.', alias($.identifier, $.type_identifier))))),
+    optional_type: $ => prec.right(seq('?', $._new_type)),
+    pointer_type: $ => prec.right(seq('*', optional('mut'), $._new_type)),
+    array_type: $ => prec.right(seq('[', optional($.expression), repeat(seq(',', optional($.expression))), ']', optional('mut'), $._new_type)),
+    tuple_type: $ => seq('(', $.tuple_type_item, repeat1(seq(',', $.tuple_type_item)), optional(','), ')'),
+    tuple_type_item: $ => seq(optional(seq($.identifier, ':')), $._new_type),
+    fn_type: $ => prec.right(seq(choice('fn', 'fn_once'), '(', commaSep($._new_type), ')', optional(seq('->', $._new_type)))),
+    type_call: $ => seq(alias($.identifier, $.type_identifier), '(', commaSep1(choice($._new_type, $.expression)), ')'),
+
+    // The body after a `:`: indented lines, or one statement on the same line
+    layout_block: $ => seq(':', choice(
+      seq($._indent, repeat1($._layout_statement), $._dedent),
+      $._layout_simple_statement)),
+    _layout_statement: $ => choice($._layout_simple_statement, $._layout_compound_statement),
+    _layout_simple_statement: $ => seq(choice(
+      $.layout_return_statement, $.layout_let_declaration, $.layout_const_declaration, $.layout_defer_statement,
+      $.layout_break_statement, $.layout_continue_statement, $.layout_expression_statement), $._newline),
+    _layout_compound_statement: $ => choice(
+      $.layout_if_statement, $.layout_while_statement, $.layout_for_statement, $.layout_match_statement,
+      $.layout_block_call_statement, $.layout_let_block),
+    layout_return_statement: $ => seq('return', optional($.expression)),
+    layout_break_statement: $ => 'break',
+    layout_continue_statement: $ => 'continue',
+    layout_expression_statement: $ => choice($.expression, $.try_expression),
+    layout_defer_statement: $ => seq(alias(token(prec(1, /defer|errdefer/)), 'defer'), choice($.expression, $.try_expression)),
+    // let [mut] x: T = v   and   let (q, mut r) = v   and   const n: T = v
+    layout_let_declaration: $ => seq('let', $.layout_pattern, optional(seq(':', $._new_type)), '=', choice($.expression, $.try_expression)),
+    layout_const_declaration: $ => seq('const', $.identifier, optional(seq(':', $._new_type)), '=', $.expression),
+    // let x: T = if c: ... else: ...  (a value that ends with a block, so no line end after it)
+    layout_let_block: $ => seq('let', $.layout_pattern, optional(seq(':', $._new_type)), '=', $.layout_if_statement),
+    layout_block_call_statement: $ => seq(choice($.call_expression, $.identifier), $.layout_block),
+    layout_if_statement: $ => seq(
+      'if', choice(field('condition', $.expression), seq('let', $.layout_pattern, '=', field('value', $.expression))),
+      field('consequence', $.layout_block),
+      optional(seq('else', field('alternative', choice($.layout_block, $.layout_if_statement))))),
+    layout_while_statement: $ => seq(
+      'while', choice(field('condition', $.expression), seq('let', $.layout_pattern, '=', field('value', $.expression))),
+      field('body', $.layout_block)),
+    layout_for_statement: $ => seq(
+      'for', commaSep1($.layout_pattern), 'in', field('range', $.expression), field('body', $.layout_block)),
+    layout_match_statement: $ => seq('match', field('value', $.expression), ':', $._indent, repeat1($.layout_match_arm), $._dedent),
+    layout_match_arm: $ => seq(commaSep1($.layout_pattern), field('body', $.layout_block)),
+
+    // Patterns: a name, `_`, `mut x`, a literal, `.variant` with payload names, a tuple of patterns
+    layout_pattern: $ => choice(
+      seq(optional('mut'), $.identifier),
+      $.number_literal, $.string_literal, $.char_literal, $.true, $.false,
+      seq($.variant_expression, optional(seq('(', commaSep($.layout_pattern), ')'))),
+      seq('(', commaSep1($.layout_pattern), ')')),
+
+    // struct Point: / enum Color(u8): and their members, one per line
+    layout_struct: $ => seq(optional('pub'), 'struct', field('name', $.identifier), optional($.generic_parameters), ':',
+      $._indent, repeat1($.layout_field), $._dedent),
+    layout_field: $ => seq(optional('pub'), $.identifier, ':', $._new_type, optional(seq('=', $.expression)), $._newline),
+    layout_enum: $ => seq(optional('pub'), 'enum', field('name', $.identifier), optional(seq('(', $._new_type, ')')), ':',
+      $._indent, repeat1($.layout_variant), $._dedent),
+    layout_variant: $ => seq($.identifier, optional(seq('(', commaSep1($._new_type), ')')), optional(seq('=', $.expression)), $._newline),
+
+    // import std.math   import std.math as m   from std.math import sin, cos   import c <stdio.h>   pub import a.b
+    layout_import: $ => seq(optional('pub'), choice(
+      seq('import', $.dotted_path, optional(seq('as', $.identifier))),
+      seq('import', $.identifier, $.system_lib_string, optional(seq('as', $.identifier))),
+      seq('from', $.dotted_path, 'import', commaSep1(seq($.identifier, optional(seq('as', $.identifier)))))), $._newline),
+    dotted_path: $ => seq($.identifier, repeat(seq('.', $.identifier))),
+
+    // @inline   @c_name("x")   @when(target.os == .macos)   @serial.rename(to = "id"): one line before a declaration
+    layout_attribute: $ => seq('@', $.dotted_path, optional($.argument_list), $._newline),
+
+    // let / const at the top level (a global)
+    layout_global: $ => seq(optional('pub'), choice($.layout_let_declaration, $.layout_const_declaration), $._newline),
+
+    // x.*  and  t.0.1
+    tuple_index: $ => token(prec(2, /\.[0-9]+/)),
+
+    // [1, 2, 3] and [] and [[1, 2], [3, 4]]
+    array_literal: $ => prec.dynamic(-10, seq('[', commaSep($.expression), optional(','), ']')),
+
+    // fn(x: i32) -> i32: x + 1
+    fn_lambda: $ => prec.dynamic(1, seq('fn', '(', commaSep($._fn_parameter), ')', optional(seq('->', $._new_type)), ':', $.expression)),
+
     _top_level_item: ($, original) => choice(
       original,
+      $.fn_declaration,
+      $.layout_struct,
+      $.layout_enum,
+      $.layout_import,
+      $.layout_attribute,
+      $.layout_global,
       $.module_declaration,
       $.import_declaration,
       $.export_declaration,
@@ -77,8 +214,9 @@ module.exports = grammar(C, {
     // x.[f] and x->[f]: the member named by a field f of fields(T)
     field_expression: $ => seq(
       prec(C.PREC.FIELD, seq(field('argument', $.expression), field('operator', choice('.', '->')))),
-      field('field', choice($._field_identifier, seq('[', $.expression, ']'))),
+      field('field', choice($._field_identifier, seq('[', $.expression, ']'), '*')),
     ),
+    tuple_field_expression: $ => prec(C.PREC.FIELD, seq(field('argument', $.expression), $.tuple_index)),
 
     // return {a, b}; in a function that returns a tuple
     return_statement: ($, original) =>
@@ -178,6 +316,10 @@ module.exports = grammar(C, {
       $.lambda_expression,
       $.trailing_call_expression,
       $.variant_expression,
+      $.array_literal,
+      $.index_list,
+      $.fn_lambda,
+      $.tuple_field_expression,
       alias(choice(...sized), $.identifier),
       alias(choice(...soft), $.identifier),
     ),
@@ -203,6 +345,8 @@ module.exports = grammar(C, {
     // module = 0; (an assignment's left side is a short list of its own)
     _assignment_left_expression: ($, original) => choice(
       original,
+      $.tuple_field_expression,
+      $.index_list,
       $.scoped_identifier,
       alias(choice(...sized), $.identifier),
       alias(choice(...soft), $.identifier),
@@ -337,6 +481,7 @@ module.exports = grammar(C, {
       prec.dynamic(3, $.pack_expansion),
       $.designated_list,
       $.compound_statement,
+      prec.dynamic(-1, alias(choice($.optional_type, $.pointer_type, $.array_type, $.fn_type), $.type_form)),
       prec.dynamic(-1, $.type_descriptor),
       alias(choice('==', '!=', '<', '>', '<=', '>=', '&&', '||'), $.operator),
     ),
@@ -387,6 +532,9 @@ module.exports = grammar(C, {
     )),
     subscript_expression: ($, original) => choice(original, prec(C.PREC.SUBSCRIPT, seq(
       field('argument', $.expression), '[', field('index', $.slice_range), ']'))),
+    // g[i, j]: a block's index, one index for each dimension
+    index_list: $ => prec(C.PREC.SUBSCRIPT, seq(
+      field('argument', $.expression), '[', $.expression, repeat1(seq(',', $.expression)), ']')),
     slice_range: $ => choice(
       seq($.expression, ':', optional($.expression), optional(seq(':', $.expression))),
       seq(':', optional($.expression)),

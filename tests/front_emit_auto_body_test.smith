@@ -1,0 +1,91 @@
+// Tests of the body of a function with an `auto` parameter in smith's own syntax (#2131, part of #1917): each call
+// makes an instance for the types of its arguments, the body is typed there (field access, `countof`, indexing, `==`),
+// a result `Option(...)` gives `.some(x)` and `.none` their type, and a call as the value of `if let` makes its
+// instance.
+module front_emit_auto_body_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+typedef I32 (*Run)();
+
+// Parses (smith's own syntax), checks and emits `source`, then runs `front::test::run` through the JIT.
+static I32 run(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, "front::test::run");
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_auto_body_a_field_and_countof_of_the_parameter() {
+    Str source = "struct Grid:\n"
+                 "    cells: [6]u32\n"
+                 "fn member(g: auto) -> u32:\n"
+                 "    (countof(g.cells)).to(u32)\n"
+                 "pub fn run() -> i32:\n"
+                 "    let g = Grid(cells = [1, 2, 3, 4, 5, 6])\n"
+                 "    member(g).to(i32)\n";
+    test::check_equal(run(source), (I32)6);
+}
+
+export void test_front_emit_auto_body_indexing_and_comparing_the_parameters() {
+    Str source = "fn find(xs: auto, v: auto) -> Option(usize):\n"
+                 "    let mut i: usize = 0\n"
+                 "    while i < countof(xs):\n"
+                 "        if xs[i] == v:\n"
+                 "            return .some(i)\n"
+                 "        i += 1\n"
+                 "    .none\n"
+                 "pub fn run() -> i32:\n"
+                 "    let xs: [3]i32 = [4, 5, 6]\n"
+                 "    let mut total = 0\n"
+                 "    if let .some(i) = find(xs[0:3], 6):\n"
+                 "        total += i.to(i32) + 10\n"
+                 "    if let .some(i) = find(xs[0:3], 9):\n"
+                 "        total += i.to(i32) + 100\n"
+                 "    total\n";
+    test::check_equal(run(source), (I32)12);
+}
+
+export void test_front_emit_auto_body_the_result_type_uses_typeof_of_the_parameter() {
+    Str source = "fn keep(v: auto) -> Option(typeof(v)):\n"
+                 "    .some(v)\n"
+                 "pub fn run() -> i32:\n"
+                 "    if let .some(x) = keep(7):\n"
+                 "        return x\n"
+                 "    0\n";
+    test::check_equal(run(source), (I32)7);
+}

@@ -1,19 +1,15 @@
 @inline
-fn twice(x: i64) -> i64 {
+fn twice(x: i64) -> i64:
     x * 2
-}
 
-fn widen(n: i32) -> i64 {
+fn widen(n: i32) -> i64:
     n
-}
 
-pub fn check() -> i32 {
-    mut total: i64 = 0
+pub fn check() -> i32:
+    let mut total: i64 = 0
     total = widen(20)
     const limit: i64 = 40
-    _ := twice(1)
-    if twice(total) != limit {
+    let _ = twice(1)
+    if twice(total) != limit:
         return 1
-    }
     0
-}

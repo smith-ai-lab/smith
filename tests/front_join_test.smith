@@ -270,6 +270,48 @@ export void test_front_join_driver_two_files_with_one_name_are_an_error_naming_b
     remove_all(folder);
 }
 
+// A global of an imported module is read under its `@c_name` (#1975): `probe.marker` is an undefined `enzyme_out` in
+// the importer's object, the symbol Enzyme looks for at link time, and the module's object defines nothing under that
+// name.
+export void test_front_join_driver_a_global_of_an_imported_module_is_read_under_its_c_name() {
+    Str folder = folder_for("global");
+    sh(as_str(format::push("mkdir -p ", folder, "/src/ad")));
+    write_text(as_str(format::push(folder, "/src/ad/probe.smith")),
+               "@c_name(\"enzyme_out\")\npub extern let marker: i32\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import ad.probe\n\npub fn read() -> i32:\n    probe.marker\n");
+    Ran ran = sh(as_str(
+        format::push("cd ", folder, " && ", smith_path(), " cc --front-end=new -c src/main.smith src/ad/probe.smith")));
+    test::check_equal(ran.status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_out'"))).status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/probe.o | grep -q enzyme_out"))).status != 0, true);
+    remove_all(folder);
+}
+
+// `gradient`'s call of Enzyme (#1975): a variadic C function from a header, called with a module function cast to
+// `*mut void` (`square.cast(*mut void)`), a marker read from an extern global under its `@c_name` and a pointer to a
+// float (`*f64`). The object calls `__enzyme_autodiff`, reads `enzyme_dup` and passes the address of `square`.
+export void test_front_join_driver_a_function_cast_to_a_pointer_is_passed_to_a_variadic_c_function() {
+    Str folder = folder_for("enzyme");
+    sh(as_str(format::push("mkdir -p ", folder, "/src ", folder, "/inc")));
+    write_text(as_str(format::push(folder, "/inc/probe.h")), "double __enzyme_autodiff(void *function, ...);\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import c <probe.h>\n\n@c_name(\"enzyme_dup\")\nextern let dup: i32\n\n"
+               "fn square(x: *f64) -> f64:\n    x.* * x.*\n\n"
+               "pub fn grad(x: *f64) -> f64:\n    let mut dx: f64 = 0.0\n"
+               "    let r = probe.__enzyme_autodiff(square.cast(*mut void), dup, x, dup, &dx)\n    r + dx\n");
+    Ran ran = sh(as_str(format::push("cd ", folder, " && env -u SMITH_FRONT_CIMPORT_FLAGS ", smith_path(),
+                                     " cc --front-end=new -I inc -c src/main.smith")));
+    if (ran.status != 0) c::printf("enzyme probe: %s\n", ran.errors.data);
+    test::check_equal(ran.status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U __enzyme_autodiff'"))).status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_dup'"))).status, 0);
+    test::check_equal(
+        sh(as_str(format::push("objdump -d ", folder, "/main.o | grep -A30 'grad>:' | grep -q 'lea.*square>'"))).status,
+        0);
+    remove_all(folder);
+}
+
 // The real lib/std/ascii.smith: parsed and checked clean, then front::emit stops at `char`. This documents the gap
 // (nothing is asserted about the outcome, so the day the emitter handles `char` this test needs no change).
 export void test_front_join_the_real_ascii_module_reports_where_it_stops() {
@@ -326,4 +368,42 @@ export void test_front_join_the_front_end_is_built_by_plain_steps_so_prove_leave
     Str build_file = chars;
     test::check_condition(has(build_file, "\"--smith-header\", source, \"-o\", header") &&
                           has(build_file, "build_front_objects"));
+}
+
+// The front end's table of embedded `std` sources (shim/cimport_std.cpp, #2041): smith.c fills it from the libraries
+// inside the binary; this runner has none, so the test adds a stand-in.
+extern void smith_std_source_add(const char *name, const char *source, Usize size);
+
+export void test_front_join_a_project_module_is_found_beside_the_file_and_std_comes_from_the_program() {
+    Str folder = folder_for("beside");
+    sh(as_str(format::push("mkdir -p ", folder)));
+    write_text(as_str(format::push(folder, "/primes.smith")), "pub fn three() -> i32:\n    return 3\n");
+    Str standin = "pub fn seven() -> i32:\n    return 7\n";
+    smith_std_source_add("standin", standin.data, countof(standin));
+    Str path = as_str(format::push(folder, "/main.smith"));
+    write_text(
+        path,
+        "import primes\nimport std.standin\n\npub fn total() -> i32:\n    return primes.three() + standin.seven()\n");
+    Str object = as_str(format::push(folder, "/main.o"));
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib")),
+                            .local = folder};
+    compile::Report report = compile::file(path, object, "", folders);
+    if (!report.ok) test::check_equal(report.text, report.text[0:0]);
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+export void test_front_join_a_module_nowhere_is_still_an_error() {
+    Str folder = folder_for("nowhere");
+    sh(as_str(format::push("mkdir -p ", folder)));
+    Str path = as_str(format::push(folder, "/main.smith"));
+    write_text(path, "import std.nope_nowhere\n\npub fn total() -> i32:\n    return 1\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib")),
+                            .local = folder};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/main.o")), "", folders);
+    test::check_equal(report.ok, false);
+    test::check_condition(has(report.text, "cannot find the module `std.nope_nowhere`"));
+    remove_all(folder);
 }

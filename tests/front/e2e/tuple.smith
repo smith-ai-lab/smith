@@ -1,28 +1,21 @@
-fn divmod(a: i32, b: i32) -> (i32, i32) {
+fn divmod(a: i32, b: i32) -> (i32, i32):
     (a / b, a % b)
-}
 
-fn widen(p: (i32, i64)) -> i64 {
-    p.0 as i64 + p.1
-}
+fn widen(p: (i32, i64)) -> i64:
+    (p.0).to(i64) + p.1
 
-pub fn check() -> i32 {
-    (q, r) := divmod(17, 5)
-    if q != 3 || r != 2 {
+pub fn check() -> i32:
+    let (q, r) = divmod(17, 5)
+    if q != 3 || r != 2:
         return 1
-    }
-    mut t: (i32, i64) = (1, 2)
+    let mut t: (i32, i64) = (1, 2)
     t.0 = 40
-    if widen(t) != 42 {
+    if widen(t) != 42:
         return 2
-    }
-    nested := ((1, 2), 3)
-    if nested.0.1 != 2 {
+    let nested = ((1, 2), 3)
+    if nested.0.1 != 2:
         return 3
-    }
-    (_, only) := divmod(9, 4)
-    if only != 1 {
+    let (_, only) = divmod(9, 4)
+    if only != 1:
         return 4
-    }
     0
-}

@@ -10,8 +10,10 @@
 //                                   when every name is its own
 //
 // The roots are folders given by the caller: the project's source folder and smith's library folder by default
-// (`default_roots`). Roots added in `build.smith` are a later ticket. A file under no root has no name from its path:
-// the caller falls back to its `module` line, or to the file's own name. Paths are compared as written, after a leading
+// (`default_roots`), and the folder of the file being compiled when no other root holds it (`local`, #2041:
+// `import primes` finds `primes.smith` beside `main.smith`; the driver does not name the compiled file by it). Roots
+// added in `build.smith` are a later ticket. A file under no root has no name from its path: the caller falls back to
+// its `module` line, or to the file's own name. Paths are compared as written, after a leading
 // `./` is dropped; no file is read here.
 module front::roots;
 
@@ -28,6 +30,7 @@ export struct Named {
 export struct Roots {
     Str source;  // the project's source folder
     Str library; // smith's library folder
+    Str local;   // the folder of the file being compiled when it is outside the other two (empty: none, #2041)
 };
 
 export Roots default_roots() {
@@ -60,9 +63,13 @@ static Str clean(Str path) {
     return result;
 }
 
-// What follows `root/` in `path`, or empty when `path` is not inside `root`.
+// What follows `root/` in `path`, or empty when `path` is not inside `root`. The root `.` holds every relative path.
 static Str below(Str path, Str root) {
     Str folder = clean(root);
+    if (countof(folder) == 0 || same(folder, ".")) {
+        if (countof(root) == 0 || countof(path) == 0 || path[0] == '/') return "";
+        return path;
+    }
     if (countof(path) <= countof(folder) + 1) return "";
     for (Usize i = 0; i < countof(folder); i++) {
         if (path[i] != folder[i]) return "";
@@ -95,6 +102,7 @@ export Named name_for(Str path, Roots roots) {
     Str clear = clean(path);
     Str relative = below(clear, roots.source);
     if (countof(relative) == 0) relative = below(clear, roots.library);
+    if (countof(relative) == 0) relative = below(clear, roots.local);
     if (countof(relative) > 0 && ends_with_smith(relative)) return (Named){.name = dotted(relative), .rooted = true};
     return (Named){.name = "", .rooted = false};
 }

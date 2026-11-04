@@ -43,31 +43,8 @@ static Str join(Str a, Str b) {
     return out;
 }
 
-// The module of `source`, read in smith's own syntax (parser::parse reads today's), with the real parsers' hooks.
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static types::Checked check_text(Str source) {
-    parser::Parsed p = parse_new(source);
+    parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module(&p.module, types::lp64());
 }
@@ -110,64 +87,63 @@ static void fails(Str source, Str first, Str second) {
 // fn_once
 
 export void test_front_types_fn_once_called_once_is_accepted() {
-    clean("fn run(f: fn_once() -> i32) -> i32 {\n    f()\n}\n");
+    clean("fn run(f: fn_once() -> i32) -> i32:\n    f()\n");
 }
 
 export void test_front_types_fn_once_called_twice_is_refused() {
-    fails("fn run(f: fn_once() -> i32) -> i32 {\n    f() + f()\n}\n", "`f` is `fn_once` and is used again here",
+    fails("fn run(f: fn_once() -> i32) -> i32:\n    f() + f()\n", "`f` is `fn_once` and is used again here",
           "call it once");
 }
 
 export void test_front_types_fn_once_called_on_each_branch_is_accepted() {
-    clean("fn run(c: bool, f: fn_once() -> i32) -> i32 {\n    if c {\n        f()\n    } else {\n        f()\n    "
-          "}\n}\n");
+    clean("fn run(c: bool, f: fn_once() -> i32) -> i32:\n    if c:\n        f()\n    else:\n        f()\n");
 }
 
 export void test_front_types_fn_once_unused_on_a_branch_is_refused() {
-    fails("fn run(c: bool, f: fn_once() -> i32) -> i32 {\n    if c {\n        return f()\n    }\n    0\n}\n",
+    fails("fn run(c: bool, f: fn_once() -> i32) -> i32:\n    if c:\n        return f()\n    0\n",
           "a path ends here without using it", "call it on every path");
 }
 
 export void test_front_types_fn_once_never_called_is_refused() {
-    fails("fn run(f: fn_once() -> i32) -> i32 {\n    0\n}\n", "must be called exactly once", "call it on every path");
+    fails("fn run(f: fn_once() -> i32) -> i32:\n    0\n", "must be called exactly once", "call it on every path");
 }
 
 export void test_front_types_fn_once_in_a_loop_is_refused() {
-    fails("fn run(n: i32, f: fn_once() -> i32) -> i32 {\n    mut total := 0\n    while total < n {\n        total = "
-          "total + f()\n    }\n    total\n}\n",
+    fails("fn run(n: i32, f: fn_once() -> i32) -> i32:\n    let mut total = 0\n    while total < n:\n        total = "
+          "total + f()\n    total\n",
           "is used inside a loop", "once per turn");
 }
 
 export void test_front_types_fn_once_passed_on_counts_as_its_use() {
-    clean("fn take(f: fn_once() -> i32) -> i32 {\n    f()\n}\nfn run(f: fn_once() -> i32) -> i32 {\n    take(f)\n}\n");
-    fails("fn take(f: fn_once() -> i32) -> i32 {\n    f()\n}\nfn run(f: fn_once() -> i32) -> i32 {\n    take(f) + "
-          "f()\n}\n",
+    clean("fn take(f: fn_once() -> i32) -> i32:\n    f()\nfn run(f: fn_once() -> i32) -> i32:\n    take(f)\n");
+    fails("fn take(f: fn_once() -> i32) -> i32:\n    f()\nfn run(f: fn_once() -> i32) -> i32:\n    take(f) + "
+          "f()\n",
           "is used again here", "call it once");
 }
 
 export void test_front_types_fn_parameter_may_run_any_number_of_times() {
-    clean("fn run(f: fn() -> i32) -> i32 {\n    f() + f()\n}\n");
+    clean("fn run(f: fn() -> i32) -> i32:\n    f() + f()\n");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Stored lambdas
 
 export void test_front_types_fn_lambda_as_an_argument_captures_the_stack() {
-    clean("fn each(f: fn() -> i32) -> i32 {\n    f()\n}\nfn run() -> i32 {\n    x := 3\n    p := &x\n    each(fn() { "
-          "*p })\n}\n");
+    clean("fn each(f: fn() -> i32) -> i32:\n    f()\nfn run() -> i32:\n    let x = 3\n    let p = &x\n    "
+          "each(fn(): *p)\n");
 }
 
 export void test_front_types_fn_stored_lambda_capturing_a_stack_pointer_is_refused() {
-    fails("fn run() -> i32 {\n    x := 3\n    p := &x\n    g: fn() -> i32 = fn() { *p }\n    g()\n}\n",
+    fails("fn run() -> i32:\n    let x = 3\n    let p = &x\n    let g: fn() -> i32 = fn(): *p\n    g()\n",
           "the stored lambda captures `p`, a pointer into this function's stack", "pass the lambda as an argument");
 }
 
 export void test_front_types_fn_stored_lambda_capturing_a_value_is_accepted() {
-    clean("fn run() -> i32 {\n    x := 3\n    g: fn() -> i32 = fn() { x }\n    g()\n}\n");
+    clean("fn run() -> i32:\n    let x = 3\n    let g: fn() -> i32 = fn(): x\n    g()\n");
 }
 
 export void test_front_types_fn_stored_lambda_capturing_a_pointer_parameter_is_accepted() {
-    clean("fn run(p: *i32) -> i32 {\n    g: fn() -> i32 = fn() { *p }\n    g()\n}\n");
+    clean("fn run(p: *i32) -> i32:\n    let g: fn() -> i32 = fn(): *p\n    g()\n");
 }
 
 // One check of `source` in its own arena, which is reset (poisoned under ASan) when the check is done.
@@ -184,9 +160,8 @@ static Usize errors_in_own_arena(Str source) {
 // The lambdas noted as arguments live in a buffer that outlives one check; each check has its own arena, freed after
 // it, so the next check must not write into the first one's buffer (use-after-poison under ASan, #1406).
 export void test_front_types_fn_two_modules_in_two_arenas_with_a_lambda_argument_each() {
-    Str source =
-        "fn each(f: fn() -> i32) -> i32 {\n    f()\n}\nfn run() -> i32 {\n    x := 3\n    p := &x\n    each(fn() { "
-        "*p })\n}\n";
+    Str source = "fn each(f: fn() -> i32) -> i32:\n    f()\nfn run() -> i32:\n    let x = 3\n    let p = &x\n    "
+                 "each(fn(): *p)\n";
     test::check_equal(errors_in_own_arena(source), (Usize)0);
     test::check_equal(errors_in_own_arena(source), (Usize)0);
 }

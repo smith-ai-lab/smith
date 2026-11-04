@@ -45,7 +45,7 @@ export void test_runner_checks_the_scan_writes_the_table_and_the_list_is_in_file
     }
 }
 
-export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_only() {
+export void test_runner_checks_a_passing_test_prints_its_line_its_output_and_the_summary() {
     scratch::Project p = checks_project();
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -54,13 +54,13 @@ export void test_runner_checks_a_passing_test_prints_its_line_and_the_summary_on
     defer mem::set_allocator(outside);
     for (Usize mode = 0; mode < 2; mode++) {
         const char *iso = runner::flag(mode);
-        scratch::expect_text(runner::label(iso, "pass: the line and the summary, nothing else"),
+        scratch::expect_text(runner::label(iso, "pass: the line and the summary (an expected abort hides its output)"),
                              "PASS passing\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test passing --verbose").out);
         scratch::expect_text(runner::label(iso, "pass: without --verbose only the summary"), "1 passed, 0 failed",
                              runner::plain(&p, iso, "--test passing").out);
-        scratch::expect_text(runner::label(iso, "pass: the C names pass too, and hide the output"),
-                             "PASS c_passing\n\n1 passed, 0 failed",
+        scratch::expect_text(runner::label(iso, "pass: a C test shows its output under the line"),
+                             "PASS c_passing\n    this output is shown\n\n1 passed, 0 failed",
                              runner::plain(&p, iso, "--test c_passing --verbose").out);
     }
 }

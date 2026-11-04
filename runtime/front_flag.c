@@ -13,8 +13,32 @@ int32_t front_compile_run(const char *const *sources, const char *const *outputs
 // front::compile's header entry (`front_header_run`), declared by hand for the same reason.
 int32_t front_header_run(const char *source, const char *output, const char *triple);
 
+// front::lsp_server's entry (`front_lsp_run`, `smith lsp --smith`), declared by hand for the same reason.
+int32_t front_lsp_run(void);
+
 // front::parser's fix entry (front/parser.smith, `front_parser_fix_run`), declared by hand for the same reason.
 int32_t front_parser_fix_run(const char *const *paths, size_t count);
+
+// front::format's entries (front/format.smith), declared by hand for the same reason: `front_format_accepts` is 1 for a
+// file in the new syntax, `front_format_run` formats files (in place when `write`, else it only reports).
+int32_t front_format_accepts(const char *path);
+int32_t front_format_run(const char *const *paths, size_t count, bool write);
+
+// shim/cimport_std.cpp: the table of the sources of `std.<name>` that front::compile's loader reads (#2041).
+void smith_std_source_add(const char *name, const char *source, size_t size);
+
+// Hands the front end the source of every `.smith` library embedded in this binary, so `import std.<name>` resolves
+// outside smith's repository. Once per process.
+static void smith_front_std_sources(void) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    for (size_t i = 0; i < sizeof smith_libraries / sizeof smith_libraries[0]; i++) { // bounded by the table
+        if (smith_libraries[i].lang)
+            smith_std_source_add(smith_libraries[i].name, (const char *)smith_libraries[i].source,
+                                 smith_libraries[i].source_size);
+    }
+}
 
 constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
@@ -58,6 +82,71 @@ static bool smith_front_requested(int count, char **args) {
     return requested;
 }
 
+// The include paths and macros of the command line, one on each line after `used` bytes of `flags`: a header is read
+// with the `-I`, `-isystem`, `-iquote`, `-D`, `-U`, `-include` and `-std=` the compile has. What does not fit is left
+// out.
+static void smith_front_command_flags(char *flags, size_t size, size_t used, int count, char **args) {
+    static const char *const separate[] = {"-I", "-isystem", "-iquote", "-D", "-U", "-include"};
+    for (int i = 0; i < count; i++) { // bounded by count
+        const char *argument = args[i];
+        bool take = strncmp(argument, "-std=", 5) == 0;
+        for (size_t k = 0; k < sizeof separate / sizeof separate[0] && !take; k++)
+            take = strncmp(argument, separate[k], strlen(separate[k])) == 0;
+        if (!take) continue;
+        bool pair = false;
+        for (size_t k = 0; k < sizeof separate / sizeof separate[0]; k++)
+            pair = pair || strcmp(argument, separate[k]) == 0;
+        if (pair && i + 1 >= count) break;
+        int more = snprintf(flags + used, size - used, pair ? "%s\n%s\n" : "%s\n", argument, pair ? args[i + 1] : "");
+        if (more < 0 || (size_t)more >= size - used) {
+            flags[used] = '\0'; // no room: leave it out
+            break;
+        }
+        used += (size_t)more;
+        if (pair) i++;
+    }
+}
+
+// The flags front::cimport reads a C header with (#1762), one on each line, in $SMITH_FRONT_CIMPORT_FLAGS for
+// front::compile: the compiler's resource directory and, where there is one, the SDK. The caller's own value stays.
+static void smith_front_cimport_flags(const char *self, int count, char **args) {
+    if (getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr) return;
+    char folder[PATH_MAX];
+    char programs[PATH_MAX];
+    char resource[PATH_MAX];
+    smith_resource_folder(folder);
+    smith_programs_folder(folder, programs);
+    smith_resource_ensure(folder, programs, self);
+    smith_resource_directory(folder, resource);
+#ifdef __APPLE__
+    smith_sdk_environment(self);
+#endif
+    static char flags[1U << 16];
+    int written = snprintf(flags, sizeof flags, "-resource-dir\n%s\n", resource);
+    SMITH_ASSERT(written > 0 && (size_t)written < sizeof flags);
+    const char *sdk = getenv("SDKROOT");
+    if (sdk != nullptr && *sdk != '\0' && strlen(sdk) < PATH_MAX)
+        written += snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
+    smith_front_command_flags(flags, sizeof flags, (size_t)written, count, args);
+    setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
+}
+
+// `-g` (or `-g<level>`, not `-g0`) on the command line sets $SMITH_FRONT_DEBUG to 1 for front::compile, which then
+// emits debug info (#1979): the line table, the source names and the variables `smith dbg`, `dap` and `symbolize`
+// read. Without `-g` it is unset, so an object has none.
+static void smith_front_debug_flag(int count, char **args) {
+    bool debug = false;
+    for (int i = 0; i < count; i++) { // bounded by count
+        if (strncmp(args[i], "-g", 2) != 0 || strcmp(args[i], "-g0") == 0) continue;
+        debug = strcmp(args[i], "-gdwarf-aranges") != 0;
+    }
+    if (debug) {
+        setenv("SMITH_FRONT_DEBUG", "1", 1);
+    } else {
+        unsetenv("SMITH_FRONT_DEBUG");
+    }
+}
+
 // Whether `--smith-header` is among the arguments: the new front end writes a header instead of an object (#1621).
 static bool smith_front_header_requested(int count, char **args) {
     for (int i = 0; i < count; i++) { // bounded by count
@@ -77,10 +166,33 @@ static int smith_front_header(int count, char **args, size_t sources, const char
     return front_header_run(smith_front_sources[0], output, triple) == 0 ? 0 : -1;
 }
 
+// Whether an argument names a file clang would compile or link (a source, an object, a library): after the front end
+// took the `.smith` files, an argument list without one has nothing left for clang to do.
+static bool smith_front_is_input(const char *argument) {
+    static const char *const suffixes[] = {".c", ".cc", ".cpp", ".cxx", ".m",  ".mm",
+                                           ".o", ".a",  ".s",   ".S",   ".bc", ".ll"};
+    size_t length = strlen(argument);
+    if (argument[0] == '-') return false;
+    for (size_t i = 0; i < sizeof suffixes / sizeof suffixes[0]; i++) { // bounded by the table
+        size_t n = strlen(suffixes[i]);
+        if (length > n && strcmp(argument + length - n, suffixes[i]) == 0) return true;
+    }
+    return false;
+}
+
+// The depfile a build's compile asked for (`-MD -MF file`): `output: source`, so the step reruns when the source
+// changes. The imports of a module are not listed: a change to one is picked up by the front end's own caches.
+static void smith_front_depfile(const char *depfile, const char *output, const char *source) {
+    FILE *file = fopen(depfile, "w");
+    if (file == nullptr) smith_die(smith_exit_missing, "cannot write the depfile", depfile);
+    fprintf(file, "%s: %s\n", output != nullptr ? output : "a.out", source);
+    fclose(file);
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
-static int smith_front_rewrite(char **argv, int first, int count, char **args) {
+static int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
     SMITH_ASSERT((size_t)count < smith_front_args_max && first >= 1 && first <= 8);
     for (int i = 0; i < first; i++) // bounded by 8
         smith_front_arguments[i] = argv[i];
@@ -88,26 +200,37 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args) {
     const char *output = nullptr;
     const char *triple = nullptr;
     size_t sources = 0;
+    const char *depfile = nullptr; // `-MD -MF file` of a build's compile: smith writes the file itself (#2042)
+    int source_at = 0;
     for (int i = 0; i < count; i++) { // bounded by count
+        if (strcmp(args[i], "-MF") == 0 && i + 1 < count) depfile = args[i + 1];
         if (strcmp(args[i], "-c") == 0) compile_only = true;
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) output = args[i + 1];
         if (strncmp(args[i], "--target=", 9) == 0) triple = args[i] + 9;
         if (smith_front_is_source(args[i]) && i > 0 && strcmp(args[i - 1], "-o") != 0) {
             if (sources == smith_front_sources_max) smith_die(smith_exit_usage, "too many .smith files", nullptr);
+            source_at = i;
             smith_front_sources[sources++] = args[i];
         }
     }
+    if (sources > 0) smith_front_std_sources();
     if (smith_front_header_requested(count, args)) return smith_front_header(count, args, sources, output, triple);
     bool single = compile_only && sources == 1;
     for (size_t i = 0; i < sources; i++) { // bounded by the arguments
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
         smith_front_objects[i] = smith_front_names[i];
     }
+    if (sources > 0) smith_front_cimport_flags(self, count, args);
+    if (sources > 0) smith_front_debug_flag(count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
     size_t seen = 0;
     for (int i = 0; i < count; i++) { // bounded by count
-        if (strncmp(args[i], "--front-end=", 12) == 0) continue;
+        if (strncmp(args[i], "--front-end=", 12) == 0 || strcmp(args[i], "-MD") == 0) continue;
+        if (strcmp(args[i], "-MF") == 0 && i + 1 < count) {
+            i++;
+            continue;
+        }
         if (smith_front_is_source(args[i]) && (i == 0 || strcmp(args[i - 1], "-o") != 0)) {
             if (!compile_only) smith_front_arguments[used++] = smith_front_names[seen];
             seen++;
@@ -115,13 +238,15 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args) {
         }
         smith_front_arguments[used++] = args[i];
     }
-    bool only_options = true;            // nothing but -c and -o <file> left: clang has no input to compile
+    bool only_options = true;            // nothing but options left: clang has no input to compile
     for (int i = first; i < used; i++) { // bounded by used
         if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
-            i++;
-        else if (strcmp(smith_front_arguments[i], "-c") != 0)
+            i++; // the value of -o is the output, not an input
+        else if (smith_front_is_input(smith_front_arguments[i]))
             only_options = false;
     }
+    if (compile_only && only_options && sources == 1 && depfile != nullptr)
+        smith_front_depfile(depfile, output, args[source_at]);
     return compile_only && only_options ? 0 : used;
 }
 #endif // SMITH_CORE
@@ -139,10 +264,11 @@ static bool smith_lint_fix_requested(int count, char **args) {
 // `smith lint --fix FILE...` (#1442): each `.smith` file is parsed by smith's own front end, the fixes its parse errors
 // carry are applied, and `path: N fixes applied` is printed; a file with nothing to fix reports 0. The units runner has
 // no front end, so it refuses.
-static int smith_lint_fix(int count, char **args) {
+static int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE
     (void)count;
     (void)args;
+    (void)self;
     smith_die(smith_exit_usage, "lint --fix needs the full smith (smith's own front end is not in this one)", nullptr);
 #else
     if (count < 1) smith_die(smith_exit_usage, "usage: smith lint --fix FILE.smith...", nullptr);
@@ -150,6 +276,58 @@ static int smith_lint_fix(int count, char **args) {
         if (!smith_ends_with(args[i], ".smith"))
             smith_die(smith_exit_usage, "lint --fix reads .smith files only", args[i]);
     }
+    smith_front_cimport_flags(self, 0, args); // the fixer reads the headers a file imports as `smith cc` does (#2209)
     return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
 }
+
+#ifndef SMITH_CORE
+#include <fnmatch.h>
+// `smith fmt` on `.smith` files (#1890): the files of `args` (argv[2 ..]) that are in the new syntax go to smith's own
+// formatter (front::format) and are taken out of the arguments, which clang-format then gets without them: `.c` files
+// and `.smith` files in today's syntax stay clang-format's until the switch-over (#1631). Writes in place unless
+// `--dry-run` or `-n` is among the arguments. Returns the formatter's status (0 when it had no file), and the number
+// of arguments left in *count; *only is set when it took files and no file argument is left for clang-format.
+// Whether `.clang-format-ignore` (in the current folder, as clang-format reads it: one glob a line, `#` comments, paths
+// relative to it) names `file`: such a file is left as it is.
+static bool smith_fmt_ignored(const char *file) {
+    FILE *list = fopen(".clang-format-ignore", "r");
+    if (list == nullptr) return false;
+    while (file[0] == '.' && file[1] == '/')
+        file += 2; // bounded by the name
+    char line[PATH_MAX];
+    bool ignored = false;
+    while (!ignored && fgets(line, sizeof line, list) != nullptr) { // bounded by the file
+        line[strcspn(line, "\n")] = '\0';
+        ignored = line[0] != '\0' && line[0] != '#' && fnmatch(line, file, 0) == 0;
+    }
+    fclose(list);
+    return ignored;
+}
+
+static int smith_fmt_front(int *count, char **args, bool *only) {
+    static const char *taken[smith_front_args_max];
+    size_t found = 0;
+    bool write = true;
+    int kept = 0;
+    bool found_ignored = false;
+    for (int i = 0; i < *count; i++) { // bounded by count
+        if (strcmp(args[i], "--dry-run") == 0 || strcmp(args[i], "-n") == 0) write = false;
+        if (i >= 2 && smith_front_is_source(args[i]) && access(args[i], R_OK) == 0 &&
+            front_format_accepts(args[i]) == 1 && found < smith_front_args_max) {
+            if (!smith_fmt_ignored(args[i]))
+                taken[found++] = args[i];
+            else
+                found_ignored = true;
+            continue;
+        }
+        args[kept++] = args[i];
+    }
+    *count = kept;
+    bool others = false;
+    for (int i = 2; i < kept; i++)
+        others = others || args[i][0] != '-';
+    *only = (found > 0 || found_ignored) && !others;
+    return found == 0 ? 0 : front_format_run(taken, found, write);
+}
+#endif

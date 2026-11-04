@@ -62,7 +62,7 @@ extern void smith_cimport_hash(const void *bytes, Usize count, U64 *out);
 extern I32 smith_cimport_file_hash(const char *path, U64 *out);
 
 // Changes whenever the stored form below changes.
-constexpr U32 format_version = 2;
+constexpr U32 format_version = 3; // 3: the place and the comment of each declaration, field and enumerator (#1941)
 constexpr U32 magic = 0x43494353; // "SCIC"
 constexpr U32 none = 0xFFFFFFFFU;
 constexpr I64 day = 86'400;
@@ -164,6 +164,13 @@ static void put_str(Bytes *w, Str text) {
     w->used += countof(text);
 }
 
+static void put_place(Bytes *w, ast::Place place, Str doc) {
+    put_str(w, place.file);
+    put_u32(w, place.line);
+    put_u32(w, place.column);
+    put_str(w, doc);
+}
+
 static void put_all(Bytes *w, const Bytes *other) {
     bytes_reserve(w, other->used);
     if (other->used > 0) {
@@ -221,6 +228,13 @@ static Str take_str(Cursor *r) {
     }
     r->at += length;
     return block[0:length];
+}
+
+static void take_place(Cursor *r, ast::Place *place, Str *doc) {
+    place->file = take_str(r);
+    place->line = take_u32(r);
+    place->column = take_u32(r);
+    *doc = take_str(r);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -709,6 +723,7 @@ static void emit_record(Builder *b, const ast::Decl *d) {
         put_str(w, fields[i].name);
         put_u32(w, add_type(b, fields[i].type));
         put_u32(w, add_expr(b, fields[i].bit_width));
+        put_place(w, fields[i].place, fields[i].doc);
     }
 }
 
@@ -725,6 +740,7 @@ static void emit_enumeration(Builder *b, const ast::Decl *d) {
         put_str(w, items[i].name);
         put_u32(w, add_expr(b, items[i].value));
         put_u32(w, add_type(b, items[i].payload));
+        put_place(w, items[i].place, items[i].doc);
     }
 }
 
@@ -763,6 +779,7 @@ static void add_decl(Builder *b, const ast::Decl *d) {
     put_bool(w, d->is_extern);
     put_bool(w, d->is_inline);
     put_bool(w, d->from_c);
+    put_place(w, d->place, d->doc);
     emit_decl_body(b, d);
     b->decl_count += 1;
 }
@@ -956,6 +973,7 @@ static ast::Decl *take_record(const Tables *t, Cursor *r) {
         Str field_name = take_str(r);
         fields[i] = ast::field(field_name, type_at(t, r, take_u32(r)));
         fields[i].bit_width = expr_at(t, r, take_u32(r));
+        take_place(r, &fields[i].place, &fields[i].doc);
     }
     ast::DeclKind kind = {.record = {.name = name, .is_union = is_union, .opaque = opaque, .fields = fields}};
     return ast::decl((ast::Decl){}, kind);
@@ -970,6 +988,7 @@ static ast::Decl *take_enumeration(const Tables *t, Cursor *r) {
         Str item_name = take_str(r);
         ast::Expr *value = expr_at(t, r, take_u32(r));
         items[i] = ast::enumerator(item_name, value, type_at(t, r, take_u32(r)));
+        take_place(r, &items[i].place, &items[i].doc);
     }
     return ast::enumeration(name, underlying, items);
 }
@@ -994,6 +1013,9 @@ static ast::Decl *take_decl(const Tables *t, Cursor *r) {
     Bool is_extern = take_bool(r);
     Bool is_inline = take_bool(r);
     Bool from_c = take_bool(r);
+    ast::Place place = {};
+    Str doc = "";
+    take_place(r, &place, &doc);
     U32 tag = take_u32(r);
     ast::Decl *d = nullptr;
     if (tag == decl_variable) d = take_variable(t, r);
@@ -1013,6 +1035,8 @@ static ast::Decl *take_decl(const Tables *t, Cursor *r) {
     d->is_extern = is_extern;
     d->is_inline = is_inline;
     d->from_c = from_c;
+    d->place = place;
+    d->doc = doc;
     return d;
 }
 

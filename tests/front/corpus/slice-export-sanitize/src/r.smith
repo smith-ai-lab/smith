@@ -1,0 +1,12 @@
+# An exported function with a slice parameter, compiled under -fsanitize=function (issue #152): the prototype and the
+# definition share one struct, defined at file scope; clang overflowed its stack mangling two in the parameter lists.
+pub fn first(xs: []i32) -> i32:
+    xs[0]
+
+pub fn total(xs: []i32, ys: []i32) -> i32:
+    let mut sum: i32 = 0
+    for x in xs:
+        sum += x
+    for y in ys:
+        sum += y
+    sum

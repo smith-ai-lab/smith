@@ -1,4 +1,4 @@
-// front::emit_tuple: tuples: types, literals, `t.0` and `(q, r) := f()` (#1619 of #1428).
+// front::emit_tuple: tuples: types, literals, `t.0` and `let (q, r) = f()` (#1619 of #1428).
 //
 // Layout. `(A, B)` is the LLVM literal (unnamed, not packed) struct `{ A, B }` of its elements' types in order, with
 // the data layout's padding. `(T,)` is a one-field struct and `()` the empty struct `{}`. The `Ty` is kind `tuple`,
@@ -14,7 +14,7 @@
 //                  element type and inserted into the zero struct.
 //   `member`       `t.0` as a value (`extractvalue`); `t.0.1` runs from the inside out through the work stack.
 //   `place_member` `t.0` as an address (a struct GEP), so `t.0 = v` works for a `mut t`.
-//   `destructure`  `(q, r) := f()`: the value is made once, then one local per name (`_` binds nothing).
+//   `destructure`  `let (q, r) = f()`: the value is made once, then one local per name (`_` binds nothing).
 //
 // Left: `==` between tuples, tuples of slices or `fn` values, and `for (i, x) in ...` (emit_iter).
 module front::emit_tuple;
@@ -120,6 +120,10 @@ static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
         }
     }
     if (t->kind == .option) return optional::from_checked(e, t);
+    // A float, a pointer, an array, a slice, an enumeration: whatever the emitter makes of the type elsewhere.
+    state::TyResult general = state::type_of_checked(e, t, (ast::Span){});
+    if (general == .ok) return general;
+    state::free_text(general.error.message);
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: a tuple of ", shown));
     state::free_text(shown);
@@ -234,7 +238,9 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
     }
     state::push_then(e, (state::Work){.then = literal_finish, .ty = ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
-        state::push_eval(e, items[i - 1], state::hint_of(ty.parts[i - 1]));
+        const ast::Expr *item = items[i - 1];
+        if (item->kind == .named_arg) item = item->kind.named_arg.value;
+        state::push_eval(e, item, state::hint_of(ty.parts[i - 1]));
     }
     return state::success();
 }
@@ -243,13 +249,23 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
 // `t.0`
 
 // The position a member's name says, saturated: a name too long to be an index is far past any tuple.
-static Usize index_of(Str name) {
+static Usize index_of_digits(Str name) {
     Usize index = 0;
     for (Usize i = 0; i < countof(name); i++) {
         if (index > 1000000) break;
         index = index * 10 + (Usize)(name[i] - '0');
     }
     return index;
+}
+
+// The position `x.name` reads: the digits of `t.0`, or the place of a name in the checker's named tuple.
+static Usize index_of(state::Emitter *e, Str name, const ast::Expr *base_node) {
+    if (countof(name) > 0 && name[0] >= '0' && name[0] <= '9') return index_of_digits(name);
+    types::TypeRef base = types::type_of(e->options.checked, base_node);
+    for (Usize i = 0; base != nullptr && i < countof(base->slots); i++) {
+        if (state::same_text(base->slots[i].name, name)) return i;
+    }
+    return 1000001;
 }
 
 // The element `index` of `base`, or the Error: `base` is a tuple and the index is inside it.
@@ -275,9 +291,10 @@ export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _
     if (x->kind != .member) {
         return state::fail("not a member access", x->span);
     }
-    Usize index = index_of(x->kind.member.name);
+    const ast::Expr *base_node = x->kind.member.base;
+    Usize index = index_of(e, x->kind.member.name, base_node);
     state::push_then(e, (state::Work){.then = member_finish, .number = index, .span = x->span});
-    state::push_eval(e, x->kind.member.base, state::no_hint());
+    state::push_eval(e, base_node, state::no_hint());
     return state::success();
 }
 
@@ -295,14 +312,15 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .member) {
         return state::fail("not a member access", x->span);
     }
-    Usize index = index_of(x->kind.member.name);
+    const ast::Expr *base_node = x->kind.member.base;
+    Usize index = index_of(e, x->kind.member.name, base_node);
     state::push_then(e, (state::Work){.then = place_finish, .number = index, .span = x->span});
-    state::push_place(e, x->kind.member.base);
+    state::push_place(e, base_node);
     return state::success();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// `(q, r) := f()`
+// `let (q, r) = f()`
 
 static state::Status destructure_finish(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;

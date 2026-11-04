@@ -43,3 +43,5 @@ enum { Anon_a, Anon_b = 7 };
 #define KEYWORD_ONLY const
 #define __INTERNAL 1
 static const int Limit = 99;
+
+typedef unsigned short Width; // no function or struct mentions it

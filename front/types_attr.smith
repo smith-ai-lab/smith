@@ -13,6 +13,8 @@
 //   other module  `@serial::rename(...)` names a struct of another module, which the checker of one module cannot
 //               see: it is reported as `not yet typed`, as every name from another module is (types_expr). A
 //               qualified name whose first part is no import is an error.
+//   @when       `@when(cond)` on a top-level declaration or a field is read by front::when and checked by
+//               check_when: one condition the checker can read, and a place where it means something.
 //   record      An attribute has no behaviour of its own: the parser already holds the written value in the
 //               `attributes` of the declaration, the field or the enumerator, for reflection (#332) and nothing else.
 //
@@ -20,8 +22,11 @@
 module front::types_attr;
 
 import front::ast;
+import front::effects_table;
+import front::parse as syntax;
 import front::types;
 import front::types_expr;
+import front::when;
 import std::format;
 import std::mem;
 
@@ -40,7 +45,7 @@ static Bool same_text(Str a, Str b) {
 static Bool is_built_in(Str name) {
     return same_text(name, "inline") || same_text(name, "noinline") || same_text(name, "cold") ||
            same_text(name, "pure") || same_text(name, "affine") || same_text(name, "c_name") ||
-           same_text(name, "attribute") || same_text(name, "effects");
+           same_text(name, "attribute") || same_text(name, "effects") || same_text(name, "when");
 }
 
 static Str path_text(ast::Path path) {
@@ -97,41 +102,88 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
     return true;
 }
 
-static Bool has_field(const types::Ty *type, Str name) {
-    for (Usize i = 0; i < countof(type->slots); i++) {
-        if (same_text(type->slots[i].name, name)) return true;
+// Whether argument `i` fills a field an earlier argument filled: the field at `at` is among the positional ones, or an
+// earlier argument names it.
+static Bool given_before(const ast::Attribute *a, Usize i, Usize at, Usize positional) {
+    const ast::Expr *arg = a->args[i];
+    if (arg->kind != .named_arg) return false;
+    if (at < positional) return true;
+    for (Usize j = 0; j < i; j++) {
+        const ast::Expr *earlier = a->args[j];
+        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, arg->kind.named_arg.name))
+            return true;
     }
     return false;
 }
 
-// The arguments of `@rename(...)` against the fields of its struct.
+// The arguments of `@rename(...)` against the fields of its struct: matched as a construction matches them (#1813),
+// by position or by name, positional ones first.
 static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name, const types::Ty *type) {
-    Usize count = countof(type->slots);
-    if (countof(a->args) > count) {
-        types::failf(r, a->span, "`", name, "` has ", count, " fields, but the attribute gives ", countof(a->args));
-    }
+    Bool by_name = false;
+    Usize positional = 0;
     for (Usize i = 0; i < countof(a->args); i++) {
         const ast::Expr *arg = a->args[i];
         const ast::Expr *value = arg;
-        Usize at = i;
-        if (arg->kind == .named_arg) {
-            Str field = arg->kind.named_arg.name;
-            value = arg->kind.named_arg.value;
-            if (!has_field(type, field)) {
-                types::failf(r, arg->span, "`", name, "` has no field `", field, "`");
-                continue;
-            }
-            for (Usize k = 0; k < count; k++) {
-                if (same_text(type->slots[k].name, field)) at = k;
-            }
+        if (arg->kind == .named_arg) value = arg->kind.named_arg.value;
+        Usize at = 0;
+        const types::Slot *field = types_expr::argument_field(r, a->args, i, type, name, by_name, &at);
+        if (arg->kind == .named_arg) by_name = true;
+        if (field == nullptr) continue;
+        if (arg->kind != .named_arg) positional += 1;
+        if (given_before(a, i, at, positional)) {
+            types::failf(r, arg->span, "the field `", field->name, "` of `", name, "` is given twice; remove one");
+            continue;
         }
-        if (at >= count) continue;
         if (!is_constant(r, value)) {
             types::fail(r, value->span, "an attribute's arguments are computed at compile time");
             continue;
         }
-        types_expr::check(r, value, type->slots[at].type);
+        types_expr::check(r, value, field->type);
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The effects ceiling (#2019)
+
+// The bit a name stands for (`alloc` is 1), or 0 for a name that is no effect.
+static U32 effect_bit(Str name) {
+    for (Usize i = 0; i < effects_table::bit_count; i++) {
+        if (same_text(name, effects_table::bit_name(i))) return 1u << i;
+    }
+    return 0;
+}
+
+// The effect an `@effects` argument names: `.alloc` or `alloc`.
+static U32 argument_bit(const ast::Expr *arg) {
+    if (arg->kind == .variant) return effect_bit(arg->kind.variant.name);
+    if (arg->kind == .name && countof(arg->kind.name.path.segments) > 0) {
+        Usize last = countof(arg->kind.name.path.segments) - 1;
+        return effect_bit(arg->kind.name.path.segments[last].text);
+    }
+    return 0;
+}
+
+// The ceiling a list of attributes gives: `@pure` is the empty set, `@effects(.alloc, .net)` the effects it lists
+// (`[[std::pure]]` and `[[std::effects(alloc)]]` the same). True and the mask when there is one; no attribute is no
+// ceiling. A name that is no effect adds nothing here: the checker reports it where it checks the attribute.
+export Bool ceiling_of(const ast::Attribute list[:], U32 *mask) {
+    Bool found = false;
+    U32 set = 0;
+    for (Usize i = 0; i < countof(list); i++) {
+        const ast::Attribute *a = &list[i];
+        if (countof(a->name.segments) == 0) continue;
+        Str name = a->name.segments[countof(a->name.segments) - 1].text;
+        if (same_text(name, "pure")) {
+            found = true;
+        } else if (same_text(name, "effects")) {
+            found = true;
+            for (Usize k = 0; k < countof(a->args); k++) {
+                set |= argument_bit(a->args[k]);
+            }
+        }
+    }
+    *mask = set;
+    return found;
 }
 
 // One `@name` attribute.
@@ -152,7 +204,7 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
         if (is_built_in(name)) return;
         types::failf(r, a->span, "unknown attribute `", name,
                      "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
-                     "`@attribute` and `@effects(...)`, and your own are structs marked `@attribute`");
+                     "`@attribute`, `@effects(...)` and `@when(...)`, and your own are structs marked `@attribute`");
         return;
     }
     if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
@@ -167,10 +219,55 @@ static void check_all(types::Checked *r, ast::Attribute list[:]) {
         check_attribute(r, &list[i]);
 }
 
+// A default (`x: T = 3`, a field's or a parameter's): known at compile time, and of the type it fills.
+static void check_default(types::Checked *r, const ast::Expr *value, types::TypeRef wanted) {
+    if (value == nullptr) return;
+    if (!is_constant(r, value)) {
+        types::fail(r, value->span, "a default must be a compile-time constant");
+        return;
+    }
+    if (wanted != nullptr) types_expr::check(r, value, wanted);
+}
+
+// The defaults of a struct's fields.
+static void check_field_defaults(types::Checked *r, const ast::Decl *d) {
+    if (!(d->kind == .record)) return;
+    const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.record.name);
+    if (symbol == nullptr || symbol->type == nullptr || symbol->type->kind != .record) return;
+    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(symbol->type->slots); k++)
+        check_default(r, d->kind.record.fields[k].default_value, symbol->type->slots[k].type);
+}
+
+// The defaults of a function's parameters; a parameter without one may not follow one with one.
+static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
+    if (!(d->kind == .function)) return;
+    const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.function.name);
+    ast::Param params[:] = d->kind.function.params;
+    Bool had_default = false;
+    for (Usize k = 0; k < countof(params); k++) {
+        const ast::Param *param = &params[k];
+        if (param->default_value == nullptr) {
+            if (had_default && param->is_new && !param->is_rest && !param->is_keyword) {
+                types::failf(r, param->span, "the parameter `", param->name,
+                             "` has no default but follows one that has; give it a default, or move it before the "
+                             "parameters with defaults");
+            }
+            continue;
+        }
+        had_default = true;
+        types::TypeRef wanted = nullptr;
+        if (symbol != nullptr && symbol->type != nullptr && k < countof(symbol->type->slots))
+            wanted = symbol->type->slots[k].type;
+        check_default(r, param->default_value, wanted);
+    }
+}
+
 export void check_module(types::Checked *r, const ast::Module *m) {
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         if (d->from_c) continue;
+        if (d->kind == .record && !d->kind.record.opaque) check_field_defaults(r, d);
+        if (d->kind == .function) check_parameter_defaults(r, d);
         check_all(r, d->attributes);
         if (d->kind == .record) {
             for (Usize k = 0; k < countof(d->kind.record.fields); k++)
@@ -178,6 +275,59 @@ export void check_module(types::Checked *r, const ast::Module *m) {
         } else if (d->kind == .enumeration) {
             for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
                 check_all(r, d->kind.enumeration.items[k].attributes);
+        }
+    }
+}
+
+const Str when_place =
+    "`@when` is for an import, function, variable, struct, enum or typedef at the top level, and for a "
+    "struct's field; inside a function choose with `if constexpr`";
+
+// One `@when(cond)`: exactly one argument, and a condition the checker can read.
+static void check_when_one(types::Checked *r, const ast::Attribute *a) {
+    if (countof(a->args) != 1) {
+        types::fail(r, a->span, "`@when` takes one condition, such as `@when(target.os == .macos)`");
+        return;
+    }
+    Str shown = when::smith_text(a->args[0]);
+    if (countof(shown) == 0) {
+        types::fail(r, a->args[0]->span,
+                    "`@when` reads `target.os == .macos`, `target.os != .linux`, `!`, `&&` and `||` of those");
+    }
+}
+
+// Where `@when` may not be written: on anything but a declaration or a field.
+static void refuse_when(types::Checked *r, ast::Attribute list[:]) {
+    const ast::Attribute *a = when::find(list);
+    if (a != nullptr) types::fail(r, a->span, when_place);
+}
+
+// `@when` on a module's declarations, fields, enumerators and parameters (a statement takes no attribute: the parser
+// refuses `@when` on a local).
+export void check_when(types::Checked *r, const ast::Module *m) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->from_c) continue;
+        const ast::Attribute *a = when::find(d->attributes);
+        if (a != nullptr) {
+            Bool is_import = d->kind == .import_c || d->kind == .import_module || d->kind == .import_from;
+            if (countof(when::name_of(d)) == 0 && !is_import) {
+                types::fail(r, a->span, when_place);
+            } else {
+                check_when_one(r, a);
+            }
+        }
+        if (d->kind == .record) {
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+                const ast::Attribute *f = when::find(d->kind.record.fields[k].attributes);
+                if (f != nullptr) check_when_one(r, f);
+            }
+        } else if (d->kind == .enumeration) {
+            for (Usize k = 0; k < countof(d->kind.enumeration.items); k++)
+                refuse_when(r, d->kind.enumeration.items[k].attributes);
+        } else if (d->kind == .function) {
+            for (Usize k = 0; k < countof(d->kind.function.params); k++)
+                refuse_when(r, d->kind.function.params[k].attributes);
         }
     }
 }

@@ -1,0 +1,47 @@
+// Tests of the fix-its for a cast and a compound literal inside another form (#1958, part of #1631): `(T)x` in the
+// header of a `for`, and `(P){a, b}` with positional items, go through `smith lint --fix` to `x.to(T)` and `P(a, b)`,
+// and the text they end with parses with no error. Before, the `for` header kept `(Usize)k` as written and the
+// positional list had no fix.
+module front_fix_cast_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_cast_in_a_for_range_header() {
+    expect_fixed("module m;\nvoid f(Usize k) {\n    for (Usize i = (Usize)k; i < 3; i++) work(i);\n}\n",
+                 "fn f(k: usize):\n    for i in range(k.to(usize), 3):\n        work(i)\n");
+}
+
+export void test_front_fix_cast_in_a_for_bound() {
+    expect_fixed("module m;\nvoid f(U64 n) {\n    for (Usize i = 0; i < (Usize)n; i++) work(i);\n}\n",
+                 "fn f(n: u64):\n    for i in range(0, n.to(usize)):\n        work(i)\n");
+}
+
+export void test_front_fix_cast_in_a_call_argument() {
+    expect_fixed("module m;\nvoid f(Usize k) {\n    g((Usize)k, 1);\n}\n", "fn f(k: usize):\n    g(k.to(usize), 1)\n");
+}
+
+export void test_front_fix_positional_compound_literal_in_a_return() {
+    expect_fixed("module m;\nHex f(U64 v, U32 w) {\n    return (Hex){v, w};\n}\n",
+                 "fn f(v: u64, w: u32) -> Hex:\n    return Hex(v, w)\n");
+}

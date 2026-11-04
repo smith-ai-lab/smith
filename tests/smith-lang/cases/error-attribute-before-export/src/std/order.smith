@@ -1,0 +1,7 @@
+module std::order;
+
+// an attribute before `export` used to drop the export without a word
+[[nodiscard]] export int first() { return 1; }
+
+// after `export` is the place
+export [[nodiscard]] int second() { return 2; }

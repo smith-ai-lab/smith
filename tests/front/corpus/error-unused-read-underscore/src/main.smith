@@ -1,0 +1,4 @@
+# `_` declares and discards; it is never read (issue #413).
+pub fn main() -> i32:
+    let _ = 3
+    _

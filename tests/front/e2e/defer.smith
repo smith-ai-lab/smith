@@ -1,39 +1,29 @@
-fn note(log: *mut i32, digit: i32) {
+fn note(log: *mut i32, digit: i32):
     log.* = log.* * 10 + digit
-}
 
-fn early(log: *mut i32, leave: bool) -> i32 {
+fn early(log: *mut i32, leave: bool) -> i32:
     defer note(log, 1)
-    if leave {
+    if leave:
         return 7
-    }
     defer note(log, 2)
     8
-}
 
-pub fn check() -> i32 {
-    mut log := 0
-    if early(&log, true) != 7 || log != 1 {
+pub fn check() -> i32:
+    let mut log = 0
+    if early(&log, true) != 7 || log != 1:
         return 1
-    }
     log = 0
-    if early(&log, false) != 8 || log != 21 {
+    if early(&log, false) != 8 || log != 21:
         return 2
-    }
     log = 0
-    mut i := 0
-    while i < 3 {
+    let mut i = 0
+    while i < 3:
         i += 1
         defer note(&log, 5)
-        if i == 2 {
+        if i == 2:
             continue
-        }
-        if i == 3 {
+        if i == 3:
             break
-        }
-    }
-    if log != 555 {
+    if log != 555:
         return 3
-    }
     0
-}

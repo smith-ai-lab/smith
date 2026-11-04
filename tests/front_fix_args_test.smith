@@ -1,0 +1,56 @@
+// Tests of the fix-its and the parse of call arguments that are types (#2104, piece 1 of #2093, part of #1631): an
+// array type `[n]T` written as an argument is a type value, not an array literal followed by a stray name. Each
+// case's text goes through `smith lint --fix` to the tour's form and parses with no error, and a second run applies
+// nothing.
+module front_fix_args_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", result.text);
+    test::check_equal(again.text, after);
+    test::check_equal(again.applied, (Usize)0);
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", after);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+}
+
+export void test_front_fix_args_an_array_type_argument_is_a_type_value() {
+    expect("void f(Usize i) {\n    no_rule(char[i + 1]);\n}\n", "fn f(i: usize):\n    no_rule([i + 1]char)\n");
+}
+
+static Usize errors_in(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+// `module.to(args)` is a call of the module's function: the left side is a name an import binds (#2104).
+export void test_front_fix_args_a_module_function_named_to_is_a_call() {
+    test::check_equal(
+        errors_in("import std.format\nimport std.wrapping\nfn f(pair: i32):\n    format.to(out, 8, pair)\n"
+                  "    wrapping.to(u8, 300)\n"),
+        (Usize)0);
+}
+
+export void test_front_fix_args_an_alias_binds_the_module_name() {
+    test::check_equal(errors_in("import std.format as fmt\nfn f(pair: i32):\n    fmt.to(out, 8, pair)\n"), (Usize)0);
+}
+
+export void test_front_fix_args_a_value_to_is_still_the_conversion() {
+    test::check_equal(errors_in("import std.format\nfn f(x: i32):\n    let y = x.to(i64)\n    let z = x.wrap(u8)\n"),
+                      (Usize)0);
+    test::check_equal(errors_in("fn f(pair: i32):\n    format.to(out, 8, pair)\n") > 0, true);
+}

@@ -1,0 +1,175 @@
+// Tests of front::affine_loops (#1987, piece 2 of #1972): the loop rules, the elements of arrays and slices of
+// `@affine` values, and the arrays a call fills. The sources are smith's own syntax; the cases are those of
+// tests/affine/*.smith (shim/affine.cpp, the old checker: affine_plain_loop, affine_loop_outer, affine_elements,
+// affine_bad_index, affine_slice_*, affine_range_for, affine_split_fills), with the same messages. The plain loop of
+// the old syntax, `for (Usize i = 0; i < countof(keys); i++)`, is `for i in range(countof(keys))`.
+module front_affine_loops_test;
+
+import front::compile;
+import front::parser;
+import front::roots;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str text_of(char chars[:]) {
+    return chars;
+}
+
+// The declarations every case shares: `Key` is affine, `Holder` holds one, `draw` takes one by value.
+static Str prelude() {
+    return "@affine\npub struct Key:\n    bits: u64\n\npub struct Holder:\n    key: Key\n    n: u64\n\n"
+           "fn draw(key: Key) -> u64:\n    key.bits\n\nfn take(key: *Key) -> u64:\n    key.bits\n\n"
+           "fn make(n: u64) -> Key:\n    return Key(bits = n)\n\n"
+           "fn split(key: Key, keys: []Key) -> usize:\n    countof(keys) + key.bits.to(usize)\n\n";
+}
+
+// `body` (after the prelude) gives `count` errors, the first of which says `needle`.
+static void cases(Str body, Usize count, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", text_of(format::push(prelude(), body)));
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, count);
+    if (count > 0 && r.error_count > 0) test::check_condition(has(r.errors[0].message, needle));
+}
+
+export void test_front_affine_loops_a_value_from_outside_is_used_once_per_turn() {
+    cases("fn loop(key: Key, n: usize) -> u64:\n    let mut total: u64 = 0\n    for i in range(n):\n"
+          "        total = total + draw(key)\n    total\n",
+          1, "'key' is used in a loop, so it would be used once per iteration");
+}
+
+export void test_front_affine_loops_a_value_the_loop_assigns_is_fresh_each_turn() {
+    cases("fn reassign(mut key: Key, n: usize) -> u64:\n    let mut total: u64 = 0\n    for i in range(n):\n"
+          "        total = total + draw(key)\n        key = make(total)\n    total\n",
+          0, "");
+}
+
+export void test_front_affine_loops_a_value_declared_in_the_loop_is_fresh_each_turn() {
+    cases("fn inner(n: usize) -> u64:\n    let mut total: u64 = 0\n    for i in range(n):\n"
+          "        let key = make(total)\n        total = total + draw(key)\n    total\n",
+          0, "");
+}
+
+export void test_front_affine_loops_a_while_loop_counts_too() {
+    cases("fn spin(key: Key, mut n: usize) -> u64:\n    let mut total: u64 = 0\n    while n > 0:\n"
+          "        total = total + draw(key)\n        n = n - 1\n    total\n",
+          1, "'key' is used in a loop");
+}
+
+export void test_front_affine_loops_the_plain_loop_uses_one_element_per_turn() {
+    cases("fn plain(keys: []Key) -> u64:\n    let mut total: u64 = 0\n    for i in range(countof(keys)):\n"
+          "        total = total + draw(keys[i])\n    total\n",
+          0, "");
+    cases("fn fixed(keys: [3]Key) -> u64:\n    let mut total: u64 = 0\n    for i in range(countof(keys)):\n"
+          "        total = total + draw(keys[i])\n    total\n",
+          0, "");
+}
+
+export void test_front_affine_loops_an_element_twice_in_a_turn_is_an_error() {
+    cases("fn plain(keys: []Key) -> u64:\n    let mut total: u64 = 0\n    for i in range(countof(keys)):\n"
+          "        total = total + draw(keys[i]) + draw(keys[i])\n    total\n",
+          1, "'keys[i]' is used again");
+}
+
+export void test_front_affine_loops_two_loops_may_use_the_same_counter() {
+    cases("fn twice(keys: []Key) -> u64:\n    let mut total: u64 = 0\n    for i in range(countof(keys)):\n"
+          "        total = total + draw(keys[i])\n    for i in range(countof(keys)):\n"
+          "        total = total + keys[i].bits\n    total\n",
+          0, "");
+}
+
+export void test_front_affine_loops_a_shifted_index_is_not_the_counter() {
+    cases("fn shifted(keys: [3]Key) -> u64:\n    let mut total: u64 = 0\n    for i in range(2):\n"
+          "        total = total + draw(keys[i + 1])\n    total\n",
+          1,
+          "'keys[...]': an element of an array of affine values is used through a constant index or the counter of "
+          "a plain loop");
+}
+
+export void test_front_affine_loops_a_counter_over_another_array_is_not_the_counter() {
+    cases("fn other(keys: []Key, more: []Key) -> u64:\n    let mut total: u64 = 0\n"
+          "    for i in range(countof(more)):\n        total = total + draw(keys[i])\n    total\n",
+          1, "'keys[...]'");
+}
+
+export void test_front_affine_loops_an_element_through_a_variable_index_is_an_error() {
+    cases("fn bad(keys: []Key, j: usize) -> u64:\n    draw(keys[j])\n", 1, "'keys[...]'");
+    cases("fn bad_array(keys: [3]Key, j: usize) -> u64:\n    draw(keys[j])\n", 1, "'keys[...]'");
+}
+
+export void test_front_affine_loops_each_constant_index_is_its_own_element() {
+    cases("fn elements(keys: [3]Key) -> u64:\n    let a = draw(keys[0])\n    let b = draw(keys[1])\n"
+          "    a + b\n",
+          0, "");
+    cases("fn elements(keys: [3]Key) -> u64:\n    let a = draw(keys[0])\n    let b = draw(keys[1])\n"
+          "    let c = draw(keys[0])\n    a + b + c\n",
+          1, "'keys[0]' is used again");
+    cases("fn slice(keys: []Key) -> u64:\n    let a = draw(keys[0])\n    let b = draw(keys[1])\n"
+          "    let c = draw(keys[0])\n    a + b + c\n",
+          1, "'keys[0]' is used again");
+}
+
+export void test_front_affine_loops_a_constant_index_in_a_loop_is_used_once_per_turn() {
+    cases("fn first(keys: []Key, n: usize) -> u64:\n    let mut total: u64 = 0\n    for i in range(n):\n"
+          "        total = total + draw(keys[0])\n    total\n",
+          1, "'keys[0]' is used in a loop");
+}
+
+export void test_front_affine_loops_a_member_of_an_element_is_free() {
+    cases("fn bits(keys: []Key) -> u64:\n    keys[0].bits + keys[0].bits\n", 0, "");
+}
+
+export void test_front_affine_loops_a_range_for_hands_out_one_element_per_turn() {
+    cases("fn once(keys: []Key) -> u64:\n    let mut total: u64 = 0\n    for k in keys:\n"
+          "        total = total + draw(k)\n    total\n",
+          0, "");
+    cases("fn twice(keys: []Key) -> u64:\n    let mut total: u64 = 0\n    for k in keys:\n"
+          "        total = total + draw(k)\n        total = total + draw(k)\n    total\n",
+          1, "'k' is used again");
+}
+
+export void test_front_affine_loops_a_call_that_fills_an_array_makes_its_elements_fresh() {
+    cases("fn refill(key: Key, again: Key, keys: []Key) -> u64:\n    let n = split(key, keys)\n"
+          "    let a = draw(keys[0])\n    let m = split(again, keys)\n    a + draw(keys[0])\n",
+          0, "");
+    cases("fn stale(key: Key, keys: []Key) -> u64:\n    let n = split(key, keys)\n"
+          "    let a = draw(keys[0])\n    a + draw(keys[0])\n",
+          1, "'keys[0]' is used again");
+}
+
+export void test_front_affine_loops_the_error_names_the_way_out() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = text_of(format::push(
+        prelude(), "fn loop(key: Key, n: usize) -> u64:\n    let mut total: u64 = 0\n    for i in range(n):\n"
+                   "        total = total + draw(key)\n    total\n"));
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(r.errors[0].has_related);
+    test::check_condition(has(r.errors[0].related_message, "reassign the value in the loop"));
+}

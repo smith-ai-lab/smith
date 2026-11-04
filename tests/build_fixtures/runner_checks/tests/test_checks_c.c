@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 void test_c_passing(void) {
-    printf("this output is hidden\n");
+    printf("this output is shown\n");
     smith_check(true);
     smith_check_equal_i32(1 + 1, 2);
     smith_check_near_f64(0.1 + 0.2, 0.3, 1e-9);

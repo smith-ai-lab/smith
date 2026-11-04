@@ -1,0 +1,1 @@
+src/main.smith:7:10: error: expected I32[:], found I32 *: there is no conversion between these types; write the value as the expected type

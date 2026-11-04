@@ -1,0 +1,48 @@
+x as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named f64) (name x))))))
+error 0-8: `as` is gone: write `x.to(T)`
+
+-x as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named f64) (unary negate (name x)))))))
+error 0-9: `as` is gone: write `x.to(T)`
+
+a + b as f64
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (binary add (name a) (cast (named f64) (name b)))))))
+error 4-12: `as` is gone: write `x.to(T)`
+
+x as u8 as i32
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (named i32) (cast (named u8) (name x)))))))
+error 0-7: `as` is gone: write `x.to(T)`
+error 0-14: `as` is gone: write `x.to(T)`
+
+x as *mut u8
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (cast (pointer mut (named u8)) (name x))))))
+error 0-12: `as` is gone: write `x.cast(T)`
+
+
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 0-0: expected an expression, found the end of the file
+

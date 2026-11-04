@@ -138,7 +138,7 @@ export void test_front_emit_debug_a_function_has_a_subprogram_and_a_location() {
     ast::Module m = add_module();
     tree_end(&trees);
     char *text = ir_of(&m, add_text(), true);
-    test::check_equal(has(text, "DISubprogram(name: \"add\", linkageName: \"front::test::add\""), true);
+    test::check_equal(has(text, "DISubprogram(name: \"front.test.add\", linkageName: \"front::test::add\""), true);
     test::check_equal(has(text, "line: 2,"), true);
     test::check_equal(has(text, "DICompileUnit(language: DW_LANG_C11, file: "), true);
     test::check_equal(has(text, "producer: \"smith\""), true);
@@ -304,4 +304,36 @@ export void test_front_emit_debug_an_object_file_has_debug_info() {
     c::remove(with.data);
     c::remove(without.data);
     emit_jit::stop(&host);
+}
+
+// Two functions in one module with debug info (#1979): the entry branch of the second must not carry the first
+// function's location, whose subprogram is another one (LLVM rejects that module). Each has its own subprogram.
+export void test_front_emit_debug_a_second_function_has_its_own_scope() {
+    TreeMemory trees = {};
+    tree_begin(&trees);
+    ast::DeclRef decls[2] = {};
+    for (Usize k = 0; k < 2; k++) {
+        ast::Expr *sum = ast::binary(.add, ast::name("a"), ast::name("b"));
+        put(sum, add_text(), "a + b");
+        ast::Stmt *give = ast::return_value(sum);
+        give->span.start = at(add_text(), "return");
+        ast::StmtRef items[1] = {give};
+        ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I32"))};
+        params[0].span.start = at(add_text(), "I32 a");
+        params[1].span.start = at(add_text(), "I32 b");
+        Str name = "first";
+        if (k == 1) name = "second";
+        ast::Decl *function = ast::function(name, params, ast::named("I32"), ast::block(items));
+        function->exported = true;
+        function->span.start = at(add_text(), "I32 add");
+        decls[k] = function;
+    }
+    ast::Module m = ast::new_module("front::test", decls);
+    Str file = "add.smith";
+    m.file = file;
+    tree_end(&trees);
+    char *text = ir_of(&m, add_text(), true); // ir_of checks that the module verified
+    test::check_equal(has(text, "name: \"front.test.first\"") || has(text, "name: \"first\""), true);
+    test::check_equal(has(text, "name: \"front.test.second\"") || has(text, "name: \"second\""), true);
+    c::LLVMDisposeMessage(text);
 }

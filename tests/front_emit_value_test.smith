@@ -29,34 +29,11 @@ struct Scenario {
     Bool has_checked;
 };
 
-// The module of `source`, read in smith's own syntax.
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static void begin(Scenario *s, Str source, Bool with_checker) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     if (with_checker) {
         s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
@@ -121,8 +98,13 @@ typedef I32 (*Choose)(I32, I32);
 export void test_front_emit_value_an_if_chain_is_the_functions_last_line() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn sign(n: i32) -> i32 {\n    if n < 0 {\n        -1\n    } else if n == 0 {\n        0\n"
-                     "    } else {\n        1\n    }\n}\n",
+    char *ir = ir_of("pub fn sign(n: i32) -> i32:\n"
+                     "    if n < 0:\n"
+                     "        -1\n"
+                     "    else if n == 0:\n"
+                     "        0\n"
+                     "    else:\n"
+                     "        1\n",
                      &host, &s);
     test::check_equal(contains(ir, "br i1"), true);
     test::check_equal(contains(ir, "endif"), true);
@@ -136,10 +118,27 @@ export void test_front_emit_value_an_if_chain_is_the_functions_last_line() {
 export void test_front_emit_value_an_if_initializes_a_local_with_and_without_a_type() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    ir_of("pub fn typed(c: bool) -> i32 {\n    x: i32 = if c { 7 } else { 9 }\n    x + 1\n}\n"
-          "pub fn inferred(a: i32, b: i32) -> i32 {\n    x := if a > b { a } else { b }\n    x * 2\n}\n"
-          "pub fn nested(a: i32) -> i32 {\n    x := if a > 0 {\n        if a > 10 { 100 } else { 10 }\n    } else {\n"
-          "        0\n    }\n    x\n}\n",
+    ir_of("pub fn typed(c: bool) -> i32:\n"
+          "    let x: i32 = if c:\n"
+          "        7\n"
+          "    else:\n"
+          "        9\n"
+          "    x + 1\n"
+          "pub fn inferred(a: i32, b: i32) -> i32:\n"
+          "    let x = if a > b:\n"
+          "        a\n"
+          "    else:\n"
+          "        b\n"
+          "    x * 2\n"
+          "pub fn nested(a: i32) -> i32:\n"
+          "    let x = if a > 0:\n"
+          "        if a > 10:\n"
+          "            100\n"
+          "        else:\n"
+          "            10\n"
+          "    else:\n"
+          "        0\n"
+          "    x\n",
           &host, &s);
     typedef I32 (*Flag)(I32);
     Flag typed = (Flag)symbol_of(&host, "typed");
@@ -158,10 +157,18 @@ export void test_front_emit_value_an_if_initializes_a_local_with_and_without_a_t
 export void test_front_emit_value_a_block_has_a_value_and_its_locals_stay_inside() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    ir_of("pub fn tail(n: i64, top: i64) -> i64 {\n    if n > top {\n        return top\n    }\n    {\n"
-          "        doubled := n * 2\n        doubled - n\n    }\n}\n"
-          "pub fn branch(n: i64, top: i64) -> i64 {\n    if n > top {\n        r := top\n        r + 1\n"
-          "    } else {\n        n\n    }\n}\n",
+    ir_of("pub fn tail(n: i64, top: i64) -> i64:\n"
+          "    if n > top:\n"
+          "        top\n"
+          "    else:\n"
+          "        let doubled = n * 2\n"
+          "        doubled - n\n"
+          "pub fn branch(n: i64, top: i64) -> i64:\n"
+          "    if n > top:\n"
+          "        let r = top\n"
+          "        r + 1\n"
+          "    else:\n"
+          "        n\n",
           &host, &s);
     Wide tail = (Wide)symbol_of(&host, "tail");
     Wide branch = (Wide)symbol_of(&host, "branch");
@@ -177,10 +184,18 @@ export void test_front_emit_value_a_block_has_a_value_and_its_locals_stay_inside
 export void test_front_emit_value_a_branch_that_returns_stores_nothing() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_with("pub fn early(n: i32) -> i32 {\n    x: i32 = if n < 0 {\n        return -1\n    } else {\n"
-                       "        n * 2\n    }\n    x + 1\n}\n"
-                       "pub fn both(n: i32) -> i32 {\n    x: i32 = if n < 0 {\n        return 1\n    } else {\n"
-                       "        return 2\n    }\n    x\n}\n",
+    char *ir = ir_with("pub fn early(n: i32) -> i32:\n"
+                       "    let x: i32 = if n < 0:\n"
+                       "        return -1\n"
+                       "    else:\n"
+                       "        n * 2\n"
+                       "    x + 1\n"
+                       "pub fn both(n: i32) -> i32:\n"
+                       "    let x: i32 = if n < 0:\n"
+                       "        return 1\n"
+                       "    else:\n"
+                       "        return 2\n"
+                       "    x\n",
                        &host, &s, false);
     test::check_equal(contains(ir, "unreachable"), true);
     Pick early = (Pick)symbol_of(&host, "early");
@@ -195,8 +210,13 @@ export void test_front_emit_value_a_branch_that_returns_stores_nothing() {
 export void test_front_emit_value_a_narrower_branch_widens_to_the_slot() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = ir_of("pub fn pick(c: bool, small: i32) -> i64 {\n    wide: i64 = 100\n"
-                     "    x: i64 = if c { small } else { wide }\n    x + 1\n}\n",
+    char *ir = ir_of("pub fn pick(c: bool, small: i32) -> i64:\n"
+                     "    let wide: i64 = 100\n"
+                     "    let x: i64 = if c:\n"
+                     "        small\n"
+                     "    else:\n"
+                     "        wide\n"
+                     "    x + 1\n",
                      &host, &s);
     test::check_equal(contains(ir, "sext i32"), true);
     typedef I64 (*Mixed)(Bool, I32);

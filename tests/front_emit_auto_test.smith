@@ -1,0 +1,77 @@
+// Tests of `auto` parameters in the emitter (#1934, part of #1917): a function with an `auto` parameter is a template,
+// each call targets the instance for the types of its arguments (`first.i32`, `first.i64`), and the instance is emitted
+// with the types the checker gave it. Sources are today's syntax, where `auto x` is written.
+module front_emit_auto_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+static parser::Parsed parse_old(Str source) {
+    return parser::parse("t.smith", source);
+}
+
+typedef I32 (*Run)();
+
+// Parses and checks under the arena as front_emit_option_test.smith does; emission and the JIT use the system's
+// allocator, and the arena stays alive until the function has run.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parse_old(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_auto_a_parameter_takes_the_type_of_the_argument() {
+    Str source = "export I32 first(auto a, auto b) { return a; }\n"
+                 "export I32 run() { return first(7, 9); }\n";
+    test::check_equal(run(source, "front::test::run"), (I32)7);
+}
+
+export void test_front_emit_auto_two_argument_types_are_two_instances() {
+    Str source = "export I64 second(auto a, auto b) { return b; }\n"
+                 "export I32 run() {\n"
+                 "    I64 x = second(1, (I64)40);\n"
+                 "    I64 y = second((I32)1, (I32)2);\n"
+                 "    return (I32)(x + y);\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)42);
+}
+
+export void test_front_emit_auto_an_unused_template_emits_nothing() {
+    Str source = "export Usize one(auto x) { return 1; }\n"
+                 "export I32 run() { return 5; }\n";
+    test::check_equal(run(source, "front::test::run"), (I32)5);
+}

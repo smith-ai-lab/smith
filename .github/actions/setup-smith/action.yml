@@ -12,6 +12,13 @@ inputs:
     description: build the tests too ("true" or "false")
     default: "false"
 
+  test-flags:
+    description: >
+      the options of the `smith test` that will run in this job (`--macos-only --shard 1/1 --costs <file>`), so the
+      step builds only the tests that run (#2242); the same options must be given to the run, or the runner is rebuilt.
+      Empty: every test
+    default: ""
+
   artifact:
     description: >
       the name of an artifact holding `build/` and `.smith/` of this run's `build-linux` job (#1758): restore it and
@@ -26,6 +33,18 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Free disk on a hosted Linux runner
+      # the image's toolchains this repository never uses take about 30 GB of the 14 free; removing them in the
+      # background while the caches restore costs no time, and the last step waits for it (#2242: `release-linux` and a
+      # test part died with "No space left on device")
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        nohup sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+          /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/share/swift >"$RUNNER_TEMP/free-disk.log" 2>&1 &
+        echo $! >"$RUNNER_TEMP/free-disk.pid"
+        df -h / | tail -n 1 | sed 's/^/disk before: /'
+
     - name: Cache keys
       id: llvm
       shell: bash
@@ -45,7 +64,9 @@ runs:
         key: ${{ steps.llvm.outputs.key }}
 
     - name: Restore the step cache
+      # a job that takes the build of `build-linux` compiles nothing: no step cache to carry (1 GB of disk and time)
       id: steps
+      if: inputs.artifact == ''
       uses: actions/cache/restore@v4
       with:
         path: |
@@ -90,10 +111,10 @@ runs:
         SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
-        # `--list` builds the runner and every test program and runs none of them. The compiler's errors go to stdout
+        # `--list` builds the runner and every test program (of the given `test-flags` part) and runs none of them. The compiler's errors go to stdout
         # (stderr only says `build stopped`), so the output is kept in a file, not dropped with the list (#1115, #1118):
         # a failure prints the end of smith's own output, then its error lines last, also in the job summary
-        if ! SMITH_OUTPUT=full "$SMITH" test --list >"$RUNNER_TEMP/list.out" 2>&1; then
+        if ! SMITH_OUTPUT=full "$SMITH" test --list ${{ inputs.test-flags }} >"$RUNNER_TEMP/list.out" 2>&1; then
           tail -n 300 "$RUNNER_TEMP/list.out"
           for runner in build/*/front-project/build/tests; do
             [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
@@ -132,3 +153,12 @@ runs:
         # the pack, when the cache above missed it (the first run of a configuration)
         "$smith" build llvm
         echo "restore: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Disk left
+      if: always() && runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        # the background removal of the first step must be done before the job fills the disk
+        pid=$(cat "$RUNNER_TEMP/free-disk.pid" 2>/dev/null || true)
+        [ -n "$pid" ] && while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+        echo "disk: $(df -h / | tail -n 1)" | tee -a "$GITHUB_STEP_SUMMARY"

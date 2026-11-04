@@ -1,0 +1,391 @@
+// front::when: `@when(cond)`, a declaration or a struct field that exists on some platforms only (#1801, part of #1428,
+// section Attributes).
+//
+//   find(list)                The `@when` attribute among `list`, or null.
+//   holds(cond, os, &ok)      Whether the condition is true on `os`; `ok` is false when it is not a condition this
+//                             module reads (the only forms are `target.os == .macos`, `target.os != .linux`,
+//                             `true`, `false`, `!`, `&&`, `||`).
+//   smith_text(cond)          The condition as it is written, for messages ("" when it is not readable).
+//   c_text(cond)              The condition as a C preprocessor condition (`defined(__APPLE__)`), "" when not readable.
+//   name_of(d)                The name a declaration declares, "" when it declares none.
+//   live_module(m, os)        The module as it is on `os`: a declaration or a field whose `@when` is false is gone.
+//                             The same module when nothing has a `@when`.
+//   dead_names(m, os)         The names of the declarations that are gone on `os`, with their conditions.
+//
+// No recursion: the walks over a condition have an explicit stack of at most 32 entries (deeper is not readable).
+module front::when;
+
+import front::ast;
+import std::arena;
+import std::format;
+import std::mem;
+import target;
+
+// The systems smith builds on. Plain numbers: `linux` is a macro of the C compiler in its GNU modes.
+export typedef U32 Os;
+export constexpr Os os_macos = 0;
+export constexpr Os os_linux = 1;
+
+export struct Dead {
+    Str name;
+    Str condition;
+};
+
+static Str msg(char chars[:]) {
+    return chars;
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+// The system smith runs on: the one whose headers it can read.
+export Os host() {
+    if constexpr (target::os == target::macos) {
+        return os_macos;
+    } else {
+        return os_linux;
+    }
+}
+
+export Str os_name(Os os) {
+    if (os == os_macos) return "macos";
+    return "linux";
+}
+
+export const ast::Attribute *find(ast::Attribute list[:]) {
+    for (Usize i = 0; i < countof(list); i++) {
+        const ast::Attribute *a = &list[i];
+        if (a->is_new && countof(a->name.segments) == 1 && same_text(a->name.segments[0].text, "when")) return a;
+    }
+    return nullptr;
+}
+
+// `target.os`.
+static Bool is_target_os(const ast::Expr *e) {
+    if (e->kind != .member || e->kind.member.arrow) return false;
+    if (!same_text(e->kind.member.name, "os")) return false;
+    const ast::Expr *base = e->kind.member.base;
+    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
+    return same_text(base->kind.name.path.segments[0].text, "target");
+}
+
+// `target.os == .macos` or `.linux != target.os`: which system, and whether the test is `!=`.
+static Bool os_test(const ast::Expr *e, Os *which, Bool *negated) {
+    if (e->kind != .binary) return false;
+    if (e->kind.binary.op != .equal && e->kind.binary.op != .not_equal) return false;
+    const ast::Expr *a = e->kind.binary.left;
+    const ast::Expr *b = e->kind.binary.right;
+    if (a == nullptr || b == nullptr) return false;
+    if (b->kind == .member) {
+        const ast::Expr *swap = a;
+        a = b;
+        b = swap;
+    }
+    if (!is_target_os(a) || b->kind != .variant || b->kind.variant.payload != nullptr) return false;
+    if (same_text(b->kind.variant.name, "macos")) {
+        *which = os_macos;
+    } else if (same_text(b->kind.variant.name, "linux")) {
+        *which = os_linux;
+    } else {
+        return false;
+    }
+    *negated = e->kind.binary.op == .not_equal;
+    return true;
+}
+
+static Bool is_logical(const ast::Expr *e) {
+    return e->kind == .binary && (e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or);
+}
+
+// `a && b` or `a || b` with both sides written.
+static Bool split(const ast::Expr *e, const ast::Expr **left, const ast::Expr **right, Bool *is_and) {
+    if (e->kind != .binary) return false;
+    if (e->kind.binary.op != .logical_and && e->kind.binary.op != .logical_or) return false;
+    if (e->kind.binary.left == nullptr || e->kind.binary.right == nullptr) return false;
+    *left = e->kind.binary.left;
+    *right = e->kind.binary.right;
+    *is_and = e->kind.binary.op == .logical_and;
+    return true;
+}
+
+struct Frame {
+    const ast::Expr *e;
+    U32 stage;
+};
+
+static Frame frame(const ast::Expr *e) {
+    return (Frame){.e = e, .stage = 0};
+}
+
+export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
+    Frame frames[32];
+    Bool values[32];
+    Usize top = 0;
+    Usize count = 0;
+    *ok = false;
+    if (cond == nullptr) return false;
+    frames[top++] = frame(cond);
+    while (top > 0) {
+        Frame *f = &frames[top - 1];
+        const ast::Expr *e = f->e;
+        Os which = os_macos;
+        Bool negated = false;
+        const ast::Expr *lhs = nullptr;
+        const ast::Expr *rhs = nullptr;
+        Bool is_and = false;
+        if (e->kind == .boolean) {
+            values[count++] = e->kind.boolean.value;
+            top -= 1;
+        } else if (os_test(e, &which, &negated)) {
+            values[count++] = ((os == which) != negated);
+            top -= 1;
+        } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
+            if (f->stage == 0) {
+                f->stage = 1;
+                if (top >= 32) return false;
+                frames[top++] = frame(e->kind.unary.operand);
+            } else {
+                values[count - 1] = !values[count - 1];
+                top -= 1;
+            }
+        } else if (split(e, &lhs, &rhs, &is_and)) {
+            if (f->stage == 0) {
+                f->stage = 1;
+                if (top >= 32) return false;
+                frames[top++] = frame(lhs);
+            } else if (f->stage == 1) {
+                f->stage = 2;
+                if (top >= 32) return false;
+                frames[top++] = frame(rhs);
+            } else {
+                Bool right = values[--count];
+                Bool left = values[count - 1];
+                values[count - 1] = is_and ? (left && right) : (left || right);
+                top -= 1;
+            }
+        } else {
+            return false;
+        }
+        if (count > 31) return false;
+    }
+    *ok = count == 1;
+    return values[0];
+}
+
+// One piece of a rendering still to write: an expression, or the text that goes between.
+struct Piece {
+    const ast::Expr *e;
+    Str text;
+    Bool paren;
+};
+
+static Piece word(Str text) {
+    return (Piece){.e = nullptr, .text = text, .paren = false};
+}
+
+static Piece sub(const ast::Expr *e, Bool paren) {
+    return (Piece){.e = e, .text = "", .paren = paren};
+}
+
+static Str pick(Bool first, Str a, Str b) {
+    if (first) return a;
+    return b;
+}
+
+static Str render(const ast::Expr *cond, Bool as_c) {
+    Piece pieces[48];
+    Usize top = 0;
+    Str out = "";
+    if (cond == nullptr) return "";
+    pieces[top++] = sub(cond, false);
+    while (top > 0) {
+        Piece p = pieces[--top];
+        if (p.e == nullptr) {
+            out = msg(format::push(out, p.text));
+            continue;
+        }
+        const ast::Expr *e = p.e;
+        Os which = os_macos;
+        Bool negated = false;
+        const ast::Expr *lhs = nullptr;
+        const ast::Expr *rhs = nullptr;
+        Bool is_and = false;
+        Piece seq[6]; // in the order written
+        Usize n = 0;
+        if (p.paren) seq[n++] = word("(");
+        if (e->kind == .boolean) {
+            Bool value = e->kind.boolean.value;
+            seq[n++] = word(as_c ? pick(value, "1", "0") : pick(value, "true", "false"));
+        } else if (os_test(e, &which, &negated)) {
+            if (as_c) {
+                Str macro = pick(which == os_macos, "defined(__APPLE__)", "defined(__linux__)");
+                seq[n++] = word(negated ? msg(format::push("!", macro)) : macro);
+            } else {
+                seq[n++] = word(msg(format::push("target.os ", pick(negated, "!=", "=="), " .", os_name(which))));
+            }
+        } else if (e->kind == .unary && e->kind.unary.op == .logical_not && e->kind.unary.operand != nullptr) {
+            const ast::Expr *inner = e->kind.unary.operand;
+            seq[n++] = word("!");
+            seq[n++] = sub(inner, is_logical(inner) || (!as_c && inner->kind == .binary));
+        } else if (split(e, &lhs, &rhs, &is_and)) {
+            seq[n++] = sub(lhs, is_logical(lhs));
+            seq[n++] = word(pick(is_and, " && ", " || "));
+            seq[n++] = sub(rhs, is_logical(rhs));
+        } else {
+            return "";
+        }
+        if (p.paren) seq[n++] = word(")");
+        if (top + n > 48) return "";
+        for (Usize i = n; i > 0; i--)
+            pieces[top++] = seq[i - 1];
+    }
+    return out;
+}
+
+export Str smith_text(const ast::Expr *cond) {
+    return render(cond, false);
+}
+
+export Str c_text(const ast::Expr *cond) {
+    return render(cond, true);
+}
+
+export Str name_of(const ast::Decl *d) {
+    if (d->kind == .function) return d->kind.function.name;
+    if (d->kind == .variable) return d->kind.variable.name;
+    if (d->kind == .record) return d->kind.record.name;
+    if (d->kind == .enumeration) return d->kind.enumeration.name;
+    if (d->kind == .type_alias) return d->kind.type_alias.name;
+    return "";
+}
+
+// The condition of a `@when` on a declaration or field, or null.
+static const ast::Expr *condition_of(ast::Attribute list[:]) {
+    const ast::Attribute *a = find(list);
+    if (a == nullptr || countof(a->args) != 1) return nullptr;
+    return a->args[0];
+}
+
+// Whether what carries `list` exists on `os`: no `@when`, or one that holds (or that cannot be read: the checker
+// reports it, and the declaration stays so the rest is still checked).
+static Bool exists(ast::Attribute list[:], Os os) {
+    const ast::Expr *cond = condition_of(list);
+    if (cond == nullptr) return true;
+    Bool ok = false;
+    Bool value = holds(cond, os, &ok);
+    return !ok || value;
+}
+
+static Bool has_when(const ast::Module *m) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (find(d->attributes) != nullptr || d->kind == .if_constexpr) return true;
+        if (d->kind == .record) {
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+                if (find(d->kind.record.fields[k].attributes) != nullptr) return true;
+            }
+        } else if (d->kind == .enumeration) {
+            for (Usize k = 0; k < countof(d->kind.enumeration.items); k++) {
+                if (find(d->kind.enumeration.items[k].attributes) != nullptr) return true;
+            }
+        } else if (d->kind == .function) {
+            for (Usize k = 0; k < countof(d->kind.function.params); k++) {
+                if (find(d->kind.function.params[k].attributes) != nullptr) return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Whether the module reads a C header on `os` through an import under `@when` (#2142): a header of another system
+// than the one smith runs on is not there to read, so the module is not checked as it is on that system.
+export Bool reads_guarded_header(const ast::Module *m, Os os) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        Bool header = d->kind == .import_c || (d->kind == .import_from && countof(d->kind.import_from.header) > 0);
+        if (header && find(d->attributes) != nullptr && exists(d->attributes, os)) return true;
+    }
+    return false;
+}
+
+export Bool uses_when(const ast::Module *m) {
+    return has_when(m);
+}
+
+// Pushes `list` on the stack of declarations still to read, last first so that the first comes off first.
+static typeof(ast::DeclRef[:]) push_reversed(ast::DeclRef pending[:], ast::DeclRef list[:]) {
+    for (Usize i = countof(list); i > 0; i--) {
+        pending = mem::realloc(pending, countof(pending) + 1);
+        pending[countof(pending) - 1] = list[i - 1];
+    }
+    return pending;
+}
+
+// The declarations of the module with each file-scope `if` replaced by the declarations of the branch its condition
+// picks on `os` (#2191). An `if` whose condition this module cannot read stays, and the checker reports it. The nested
+// ones are an explicit stack, so there is no recursion.
+static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
+    ast::DeclRef start[:] = {};
+    ast::DeclRef pending[:] = push_reversed(start, decls);
+    ast::DeclRef out[:] = {};
+    for (Usize step = 0; step < (1U << 24) && countof(pending) > 0; step++) {
+        ast::DeclRef d = pending[countof(pending) - 1];
+        pending = pending[0:countof(pending) - 1];
+        Bool ok = false;
+        Bool value = false;
+        if (d->kind == .if_constexpr) value = holds(d->kind.if_constexpr.condition, os, &ok);
+        if (d->kind == .if_constexpr && ok) {
+            pending = push_reversed(pending, value ? d->kind.if_constexpr.then_decls : d->kind.if_constexpr.else_decls);
+            continue;
+        }
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = d;
+    }
+    return out;
+}
+
+export const ast::Module *live_module(const ast::Module *m, Os os) {
+    if (!has_when(m)) return m;
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = *m;
+    ast::DeclRef none[:] = {};
+    copy->decls = none;
+    ast::DeclRef flat[:] = without_ifs(m->decls, os);
+    for (Usize i = 0; i < countof(flat); i++) {
+        const ast::Decl *d = flat[i];
+        if (!exists(d->attributes, os)) continue;
+        ast::DeclRef kept = flat[i];
+        if (d->kind == .record) {
+            ast::FieldDecl fields[:] = {};
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
+                if (!exists(d->kind.record.fields[k].attributes, os)) continue;
+                fields = mem::realloc(fields, countof(fields) + 1);
+                fields[countof(fields) - 1] = d->kind.record.fields[k];
+            }
+            ast::Decl *fresh = ast::new_decl(*d);
+            if (fresh->kind == .record) fresh->kind.record.fields = fields;
+            kept = fresh;
+        }
+        copy->decls = mem::realloc(copy->decls, countof(copy->decls) + 1);
+        copy->decls[countof(copy->decls) - 1] = kept;
+    }
+    return copy;
+}
+
+export typeof(Dead[:]) dead_names(const ast::Module *m, Os os) {
+    Dead dead[:] = {};
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (exists(d->attributes, os)) continue;
+        Str name = name_of(d);
+        if (countof(name) == 0) continue;
+        dead = mem::realloc(dead, countof(dead) + 1);
+        dead[countof(dead) - 1] = (Dead){.name = name, .condition = smith_text(condition_of(d->attributes))};
+    }
+    return dead;
+}

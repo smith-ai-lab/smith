@@ -12,6 +12,7 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -636,21 +637,62 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
     return object;
 }
 
+// The lint identity (#2236): what `smith lint` keys its cache on instead of the whole binary. clang-tidy is fixed by
+// the LLVM pack (its identity, smith-clang.id), and smith's own checks by the source files they are compiled from:
+// shim/tidy.cpp and every project file the preprocessor reads for it (`-MM`: the dependency file's list, never written
+// by hand, so a check that starts to use runtime code is in it from then on). The hash is of the pack, then each file's
+// name and SHA-256, in sorted order. A change to the compiler, the runtime or the libraries leaves it, so a lint result
+// survives it. Empty without an LLVM install (the cache then keys on the binary, as before).
+static const char *build_lint_identity(SmithBuild *b, const BuildConfig *config) {
+    if (!config->linkable) return "";
+    // The compiler's -MM lists the project files shim/tidy.cpp includes (system headers, LLVM's among them, are left
+    // out). A compiler that fails, or a list without shim/tidy.cpp, gives no identity: never a hash of the pack alone.
+    const char *script =
+        "set -e; pack=$1; cxx=$2; shift 2; deps=$(\"$cxx\" \"$@\" -MM shim/tidy.cpp); "
+        "files=$(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep . | sort -u); "
+        "case $files in *shim/tidy.cpp*) ;; *) exit 1 ;; esac; "
+        "{ printf 'smith-lint-identity 1\\n%s\\n' \"$pack\"; "
+        "for f in $files; do printf '%s ' \"$f\"; shasum -a 256 < \"$f\"; done; } | shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b,
+                            smith_cat(b,
+                                      (const char *[]){"sh", "-c", script, "sh", config->llvm_id, config->cxx, nullptr},
+                                      build_shim_flags(b, config), nullptr),
+                            "");
+}
+
+// runtime/lint_identity.c, the identity above in a translation unit of its own, as the commit's (build_commit_object).
+static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *identity = build_lint_identity(b, config);
+    SmithObject object = {
+        .compiler = config->cc,
+        .source = "runtime/lint_identity.c",
+        .output = smith_fmt(b, "%s/lint_identity.o", folder),
+        .flags =
+            smith_cat(b, config->cflags,
+                      smith_when(b, identity[0] != '\0',
+                                 (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+                      nullptr),
+    };
+    smith_object(b, &object);
+    return object;
+}
+
 static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
 
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
 // and the tools, and the prover when its libraries are there. `list` gets pointers to them, ended by nullptr.
 typedef struct {
-    SmithObject objects[22];
+    SmithObject objects[24];
     BuildProver prove;
 } BuildShims;
 
 static void build_shims(SmithBuild *b, const BuildConfig *config, const char *folder, const char *pack,
                         BuildShims *shims, const SmithObject **list) {
     build_pack_data(b, config, folder, pack, &shims->objects[0]);
-    const char *const sources[] = {"clang",  "lld",           "format",      "tidy",     "clangd",       "symbolize",
-                                   "hook",   "lsp",           "lldb",        "lldb_dap", "lldb_explain", "lldb_slices",
-                                   "affine", "effects_infer", "lldb_server", "coverage"};
+    const char *const sources[] = {"clang",        "lld",         "format",       "tidy",          "clangd",
+                                   "symbolize",    "hook",        "lsp",          "lldb",          "lldb_dap",
+                                   "lldb_explain", "lldb_slices", "affine",       "effects_infer", "lldb_server",
+                                   "coverage",     "cimport",     "cimport_deps", "cimport_std"};
     const char *pch = build_shim_pch(b, config, folder);
     size_t count = 0;
     for (size_t i = 0; i < sizeof sources / sizeof sources[0]; i++) {
@@ -812,12 +854,61 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 
 // The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
 static const char *const build_front_modules[] = {
-    "ast",        "lex",          "parse",       "parse_expr",  "parse_type",    "parse_stmt",
-    "parse_decl", "parser",       "types",       "types_expr",  "types_convert", "types_decl",
-    "types_attr", "types_stream", "types_fn",    "types_iter",  "emit_state",    "emit",
-    "emit_arith", "emit_control", "emit_call",   "emit_memory", "emit_debug",    "emit_object",
-    "roots",      "fix",          "compile",     "emit_option", "emit_match",    "emit_value",
-    "emit_iter",  "emit_tuple",   "emit_lambda", "emit_vector", "emit_stream",   "fix_directive",
+    "ast",
+    "ast_clone",
+    "when",
+    "lex",
+    "parse",
+    "parse_expr",
+    "parse_type",
+    "parse_stmt",
+    "parse_decl",
+    "parser",
+    "types",
+    "types_expr",
+    "types_convert",
+    "types_decl",
+    "types_attr",
+    "types_stream",
+    "types_undefined",
+    "lint",
+    "affine",
+    "affine_loops",
+    "types_fn",
+    "types_iter",
+    "emit_state",
+    "emit",
+    "emit_arith",
+    "emit_control",
+    "emit_call",
+    "emit_memory",
+    "emit_debug",
+    "emit_object",
+    "roots",
+    "fix",
+    "cimport",
+    "compile",
+    "emit_option",
+    "emit_match",
+    "emit_value",
+    "emit_iter",
+    "emit_tuple",
+    "emit_lambda",
+    "emit_vector",
+    "emit_stream",
+    "fix_directive",
+    "fix_blocks",
+    "fix_method",
+    "lsp_server",
+    "lsp_hover",
+    "lsp_semantic",
+    "lsp_definition",
+    "lsp_symbols",
+    "lsp_completion",
+    "format_space",
+    "format",
+    "effects_table",
+    "fix_variants",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -906,7 +997,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     const char *const *flags = smith_cat(
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
-                         "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
                          nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
@@ -928,6 +1019,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
+    SmithObject lint_identity = build_lint_identity_object(b, config, folder);
     BuildShims shims = {};
     const char *const *linked = build_linked_libraries(b);
     size_t linked_count = 0;
@@ -936,15 +1028,16 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject libraries[linked_count + 1];
     SmithObject runtime_io;
     build_io_object(b, config, folder, flags, &runtime_io);
-    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 16, the packed data and
+    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 19, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[3 + linked_count + 16 + 2 + 4 + 1];
+    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
     objects[1] = &commit;
     objects[2] = &runtime_io;
-    size_t count = 3;
+    objects[3] = &lint_identity;
+    size_t count = 4;
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
@@ -1382,16 +1475,43 @@ static void build_release(SmithBuild *b, const char *binary, const char *folder)
 // needs them), the token hook (#11), and the prover's libraries beside it. r14 is the fourteenth configuration
 // (patches/*.patch; r14 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
 // prover and Enzyme, #820); build_llvm_run_macos has the same name (SMITH_LLVM_NAME overrides both).
-static const char *build_llvm_folder(SmithBuild *b) {
+static const char *build_llvm_cache(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
+    return smith_fmt(b, "%s/smith/llvm", cache);
+}
+
+// The name of the configuration: SMITH_LLVM_NAME, else r14; when r14 is not installed but exactly one other pack is
+// (a cloud container's image has an older one, #1971), that one, so `smith build` works there for a change that does
+// not touch the pack or a patch (CI builds the right one).
+static const char *build_llvm_name(SmithBuild *b) {
+    // The literal default stays in this form: the CI workflows read the name from it with sed.
+    const char *name = smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14");
+    if (getenv("SMITH_LLVM_NAME") != nullptr) return name;
+    const char *dir = build_llvm_cache(b);
+    if (access(smith_fmt(b, "%s/%s/install/lib/smith-clang.id", dir, name), R_OK) == 0) return name;
+    DIR *d = opendir(dir);
+    if (d == nullptr) return name;
+    const char *only = nullptr;
+    size_t found = 0;
+    for (struct dirent *e = readdir(d); e != nullptr; e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        if (access(smith_fmt(b, "%s/%s/install/lib/smith-clang.id", dir, e->d_name), R_OK) != 0) continue;
+        only = smith_fmt(b, "%s", e->d_name);
+        found += 1;
+    }
+    closedir(d);
+    return found == 1 ? only : name;
+}
+
+static const char *build_llvm_folder(SmithBuild *b) {
+    return smith_fmt(b, "%s/%s", build_llvm_cache(b), build_llvm_name(b));
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
 // building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, build_llvm_name(b));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {
@@ -2780,12 +2900,13 @@ static int build_friction(SmithRun *run) {
 
 // The tree-sitter parser for .smith files (#466): a build output, never committed. A step generates parser.c,
 // grammar.json, node-types.json and the runtime's headers into tree-sitter/src/ (gitignored) from
-// tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c is compiled and linked into a shared
-// library, which smith embeds (runtime/tree_sitter_data.c) and `smith cc --smith-tree-sitter` unpacks for the Neovim
-// plugin. Everything is pinned and fetched by smith_package: the CLI by version and the sha256 of its release (a .gz of
-// one file, per platform), tree-sitter-c by version and the sha256 of its source archive. The CLI is kept in
-// $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on the machine that builds smith. ABI 15
-// is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the grammar's corpus tests.
+// tree-sitter/grammar.js and tree-sitter-c's, with the tree-sitter CLI; parser.c (and scanner.c, the layout tokens) is
+// compiled and linked into a shared library, which smith embeds (runtime/tree_sitter_data.c) and `smith cc
+// --smith-tree-sitter` unpacks for the Neovim plugin. Everything is pinned and fetched by smith_package: the CLI by
+// version and the sha256 of its release (a .gz of one file, per platform), tree-sitter-c by version and the sha256 of
+// its source archive. The CLI is kept in $XDG_CACHE_HOME/smith/tools (else ~/.cache/smith/tools), and is needed only on
+// the machine that builds smith. ABI 15 is what Neovim 0.12 loads. `smith build tree-sitter -Dcorpus` also runs the
+// grammar's corpus tests.
 typedef struct {
     const char *asset; // the release's file, without .gz
     const char *hash;
@@ -2826,6 +2947,11 @@ static int build_tree_sitter_run(SmithRun *run) {
     if (strcmp(run->args[0], "none") == 0) return 0;
     const char *cli = build_tree_sitter_cli(b);
     if (cli == nullptr) return 1;
+    // The CLI compiles the scanner from src/ when it tests the grammar: copy it there (-p keeps its time, so nothing
+    // after it reruns when it did not change).
+    if (build_make_folder(b, "tree-sitter/src") != 0 ||
+        build_exec(smith_list(b, "/bin/cp", "-p", "tree-sitter/scanner.c", "tree-sitter/src/scanner.c", nullptr)) != 0)
+        return 1;
     if (strcmp(run->args[0], "corpus") == 0)
         return build_spawn(&(BuildSpawn){.argv = smith_list(b, cli, "test", nullptr), .folder = "tree-sitter"});
     const char *c_source = build_package_path(
@@ -2869,10 +2995,12 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
     SmithStep generate = {
         .run = build_tree_sitter_run,
         .args = smith_list(b, "generate", nullptr),
-        .inputs = smith_list(b, "tree-sitter/grammar.js", "tree-sitter/tree-sitter.json", nullptr),
-        .outputs = smith_list(b, "tree-sitter/src/parser.c", "tree-sitter/src/grammar.json",
-                              "tree-sitter/src/node-types.json", "tree-sitter/src/tree_sitter/alloc.h",
-                              "tree-sitter/src/tree_sitter/array.h", "tree-sitter/src/tree_sitter/parser.h", nullptr),
+        .inputs =
+            smith_list(b, "tree-sitter/grammar.js", "tree-sitter/tree-sitter.json", "tree-sitter/scanner.c", nullptr),
+        .outputs =
+            smith_list(b, "tree-sitter/src/parser.c", "tree-sitter/src/grammar.json", "tree-sitter/src/node-types.json",
+                       "tree-sitter/src/tree_sitter/alloc.h", "tree-sitter/src/tree_sitter/array.h",
+                       "tree-sitter/src/tree_sitter/parser.h", "tree-sitter/src/scanner.c", nullptr),
         .description = "generating the tree-sitter parser",
         .restat =
             true, // a file whose bytes did not change keeps its time (build_tree_sitter_run): nothing after it reruns
@@ -2887,13 +3015,23 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
+    // The external scanner (layout tokens, tree-sitter/scanner.c) is compiled the same way and linked beside the
+    // parser.
+    SmithObject scanner = {
+        .compiler = config->cc,
+        .source = "tree-sitter/src/scanner.c",
+        .output = smith_fmt(b, "%s/tree-sitter-scanner.o", folder),
+        .flags = parser.flags,
+        .implicit_inputs = generate.outputs,
+    };
+    smith_object(b, &scanner);
     // Not smith_program: that links the handlers runtime into every program, which a library Neovim loads must not
     // need.
     const char *library = smith_fmt(b, "%s/smith-tree-sitter.%s", folder, build_is_linux(b) ? "so" : "dylib");
     SmithStep link = {
         .command = smith_cat(b, smith_list(b, config->cc, "-shared", nullptr), config->platform->deployment,
-                             smith_list(b, parser.output, "-o", library, nullptr), nullptr),
-        .inputs = parser.step.outputs,
+                             smith_list(b, parser.output, scanner.output, "-o", library, nullptr), nullptr),
+        .inputs = smith_cat(b, parser.step.outputs, scanner.step.outputs, nullptr),
         .implicit_inputs = smith_list(b, build_compiler_file(b, config), nullptr),
         .outputs = smith_list(b, library, nullptr),
         .description = smith_fmt(b, "link %s", library),
@@ -3270,8 +3408,9 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
     smith_task(b, "ci-times", &ci_times);
     SmithStep frontend_coverage = {
         .run = build_frontend_coverage,
-        .args =
-            smith_list(b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"), nullptr),
+        .args = smith_list(
+            b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
+            smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);

@@ -1,0 +1,2 @@
+src/main.smith:7:37: error: expected `]` to end the index, found `:`
+src/main.smith:7:37: error: a declaration is one line: expected a line break after it, found `:`

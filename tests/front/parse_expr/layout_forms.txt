@@ -1,0 +1,161 @@
+fn(x): x * 2
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param x)
+          (block
+            (expression (binary multiply (name x) (integer 2)))))))))
+
+fn(x: i32, y) -> i32: x
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param x (named i32))
+          (param y)
+          (result (named i32))
+          (block
+            (expression (name x))))))))
+
+fn(x):
+    g(x)
+    x
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (lambda
+          (param x)
+          (block
+            (expression (call (name g) (name x)))
+            (expression (name x))))))))
+
+f(1, fn(x): x)
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name f)
+          (integer 1)
+          (lambda
+            (param x)
+            (block
+              (expression (name x)))))))))
+
+sort(xs) fn(a, b): a < b
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name sort)
+          (name xs)
+          (lambda
+            (param a)
+            (param b)
+            (block
+              (expression (binary less (name a) (name b))))))))))
+
+retry(3):
+    fetch(url)
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (call
+          (name retry)
+          (integer 3)
+          (lambda
+            (block
+              (expression (call (name fetch) (name url))))))))))
+
+do: 1
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (statement_expr
+          (block
+            (expression (integer 1))))))))
+
+do:
+    g(2)
+    w * w
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (statement_expr
+          (block
+            (expression (call (name g) (integer 2)))
+            (expression (binary multiply (name w) (name w)))))))))
+
+fn(i32) -> i32
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type (named i32) (result (named i32))))))))
+
+match s:
+    .a: do:
+        f(1)
+    .b: fn(x): x
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return
+        (statement_expr
+          (match
+            (name s)
+            (arm
+              (pattern a)
+              (statement_expr
+                (block
+                  (expression (call (name f) (integer 1))))))
+            (arm
+              (pattern b)
+              (lambda
+                (param x)
+                (block
+                  (expression (name x)))))))))))
+
+fn(x)
+
+(module m
+  (function f
+    (result (named I32))
+    (block
+      (return (type_value (function_type (named x)))))))
+
+do 1
+
+(module m
+  (function f
+    (result (named I32))
+    (block)))
+error 3-4: expected `:` after `do`, found `1`
+

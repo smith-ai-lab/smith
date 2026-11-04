@@ -13,20 +13,24 @@
     (attribute inline)
     (attribute c_name (string "smith_log"))
     (param s new (named str))
-    (block))
+    (block
+      (return (name s))))
   (function table
     (param n new const (named usize))
     (param T new (named type))
     (param rest rest new (auto))
     (result (named T))
-    (block))
+    (block
+      (return (name n))))
   (function Pair
     (param T new (named type))
     (result (named type))
-    (block))
+    (block
+      (return (name T))))
   (function tagged
     (param p new (attribute cold) (pointer mut (named point)))
     (param q new (named i32))
-    (block))
+    (block
+      (return (name q))))
   (function none
     (block)))

@@ -31,33 +31,11 @@ struct Scenario {
     types::Checked checked;
 };
 
-static parser::Parsed parse_new(Str source) {
-    parser::Parsed result = {};
-    result.module.file = "t.smith";
-    lex::Lexed lexed = lex::tokenize_new(source);
-    switch (lexed) {
-    case .ok:
-        parse::Parser p = parse::make(lexed.ok, source);
-        p.new_syntax = true;
-        p.hooks.expression = parse_expr::expression;
-        p.hooks.type = parse_type::type;
-        p.hooks.statement = parse_stmt::statement;
-        p.hooks.declaration = parse_decl::declaration;
-        result.module = parse_decl::file(&p, "t.smith");
-        result.errors = p.errors;
-        break;
-    case .error:
-        Str expected = "no error";
-        test::check_equal(lexed.error.message, expected);
-    }
-    return result;
-}
-
 static void begin(Scenario *s, Str source) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parse_new(source);
+    s->parsed = parser::parse_new("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     if (s->checked.error_count > 0) {
@@ -112,9 +90,12 @@ static char *emit_source(Str source, emit_jit::Jit *host, Scenario *s) {
 export void test_front_emit_slice_types_literals_and_golden_ir() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = emit_source("pub fn name() -> str {\n    \"hi\"\n}\n"
-                           "pub fn pass(xs: []i32) -> []i32 {\n    xs\n}\n"
-                           "pub fn len() -> usize {\n    countof(name())\n}\n",
+    char *ir = emit_source("pub fn name() -> str:\n"
+                           "    \"hi\"\n"
+                           "pub fn pass(xs: []i32) -> []i32:\n"
+                           "    xs\n"
+                           "pub fn len() -> usize:\n"
+                           "    countof(name())\n",
                            &host, &s);
     if (ir != nullptr) {
         test::check_equal(contains(ir, "{ ptr, i64 }"), true);
@@ -127,16 +108,26 @@ export void test_front_emit_slice_types_literals_and_golden_ir() {
 export void test_front_emit_slice_index_slicing_and_countof() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    emit_source("fn at(s: str, i: usize) -> char {\n    s[i]\n}\n"
-                "fn tail(s: str) -> str {\n    s[1:]\n}\n"
-                "fn head(s: str) -> str {\n    s[:2]\n}\n"
-                "fn put(xs: []i32) -> i32 {\n    xs[1] = 7\n    xs[1]\n}\n"
-                "pub fn run() -> i32 {\n"
-                "    if at(\"abc\", 1) != 'b' {\n        return 1\n    }\n"
-                "    if countof(tail(\"abc\")) != 2 || countof(head(\"abc\")) != 2 {\n        return 2\n    }\n"
-                "    if at(tail(\"abc\"), 0) != 'b' {\n        return 3\n    }\n"
-                "    mut a: [3]i32\n    if put(a) != 7 || a[1] != 7 {\n        return 4\n    }\n"
-                "    0\n}\n",
+    emit_source("fn at(s: str, i: usize) -> char:\n"
+                "    s[i]\n"
+                "fn tail(s: str) -> str:\n"
+                "    s[1:]\n"
+                "fn head(s: str) -> str:\n"
+                "    s[:2]\n"
+                "fn put(xs: []i32) -> i32:\n"
+                "    xs[1] = 7\n"
+                "    xs[1]\n"
+                "pub fn run() -> i32:\n"
+                "    if at(\"abc\", 1) != 'b':\n"
+                "        return 1\n"
+                "    if countof(tail(\"abc\")) != 2 || countof(head(\"abc\")) != 2:\n"
+                "        return 2\n"
+                "    if at(tail(\"abc\"), 0) != 'b':\n"
+                "        return 3\n"
+                "    let mut a: [3]i32 = undefined\n"
+                "    if put(a) != 7 || a[1] != 7:\n"
+                "        return 4\n"
+                "    0\n",
                 &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
     test::check_equal(run(), (I32)0);
@@ -146,19 +137,41 @@ export void test_front_emit_slice_index_slicing_and_countof() {
 export void test_front_emit_slice_array_passed_as_a_slice_and_for_loops() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    emit_source(
-        "fn total(xs: []i32) -> i32 {\n    mut sum := 0\n    for x in xs {\n        sum += x\n    }\n    sum\n}\n"
-        "fn bump(xs: []i32) {\n    for p in refs(xs) {\n        p.* += 1\n    }\n}\n"
-        "fn make() -> [3]i32 {\n    mut a: [3]i32\n    a[0] = 1\n    a[1] = 2\n    a[2] = 3\n    a\n}\n"
-        "fn letters(s: str) -> usize {\n    mut n: usize = 0\n    for _ in s {\n        n += 1\n    }\n    n\n}\n"
-        "pub fn run() -> i32 {\n"
-        "    mut a: [3]i32\n    a[0] = 1\n    a[1] = 2\n    a[2] = 3\n"
-        "    if total(a) != 6 || total(a[1:]) != 5 {\n        return 1\n    }\n"
-        "    bump(a)\n    if a[0] != 2 {\n        return 2\n    }\n"
-        "    if total(make()) != 6 {\n        return 3\n    }\n"
-        "    if letters(\"hello\") != 5 || letters(\"\") != 0 {\n        return 4\n    }\n"
-        "    0\n}\n",
-        &host, &s);
+    emit_source("fn total(xs: []i32) -> i32:\n"
+                "    let mut sum = 0\n"
+                "    for x in xs:\n"
+                "        sum += x\n"
+                "    sum\n"
+                "fn bump(xs: []i32):\n"
+                "    for p in refs(xs):\n"
+                "        p.* += 1\n"
+                "fn make() -> [3]i32:\n"
+                "    let mut a: [3]i32 = undefined\n"
+                "    a[0] = 1\n"
+                "    a[1] = 2\n"
+                "    a[2] = 3\n"
+                "    a\n"
+                "fn letters(s: str) -> usize:\n"
+                "    let mut n: usize = 0\n"
+                "    for _ in s:\n"
+                "        n += 1\n"
+                "    n\n"
+                "pub fn run() -> i32:\n"
+                "    let mut a: [3]i32 = undefined\n"
+                "    a[0] = 1\n"
+                "    a[1] = 2\n"
+                "    a[2] = 3\n"
+                "    if total(a) != 6 || total(a[1:]) != 5:\n"
+                "        return 1\n"
+                "    bump(a)\n"
+                "    if a[0] != 2:\n"
+                "        return 2\n"
+                "    if total(make()) != 6:\n"
+                "        return 3\n"
+                "    if letters(\"hello\") != 5 || letters(\"\") != 0:\n"
+                "        return 4\n"
+                "    0\n",
+                &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
     test::check_equal(run(), (I32)0);
     emit_jit::stop(&host);
@@ -167,8 +180,10 @@ export void test_front_emit_slice_array_passed_as_a_slice_and_for_loops() {
 export void test_front_emit_slice_out_of_range_index_and_slicing_call_the_index_report() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
-    char *ir = emit_source("pub fn at(xs: []i32, i: usize) -> i32 {\n    xs[i]\n}\n"
-                           "pub fn part(s: str, a: usize, b: usize) -> str {\n    s[a:b]\n}\n",
+    char *ir = emit_source("pub fn at(xs: []i32, i: usize) -> i32:\n"
+                           "    xs[i]\n"
+                           "pub fn part(s: str, a: usize, b: usize) -> str:\n"
+                           "    s[a:b]\n",
                            &host, &s);
     test::check_equal(contains(ir, "call void @smith_contract_fail_index(i64 %"), true);
     test::check_equal(contains(ir, "%backwards = icmp ugt"), true);

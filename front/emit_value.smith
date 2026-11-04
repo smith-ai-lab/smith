@@ -1,15 +1,15 @@
 // front::emit_value: an `if` or a block used as a value (#1618 of #1428, spec "Statements and control flow": `if`,
 // `match` and blocks are expressions). `value_of(e, s, hint)` pushes exactly one Value: the value of `s`, an `if` with
-// an `else`, or a block whose last line is its value. A function's last line, `x := if c { a } else { b }` and a
+// an `else`, or a block whose last line is its value. A function's last line, `let x = if c { a } else { b }` and a
 // `match` arm's block all come here.
 //
 // THE SLOT. One slot per `value_of`, an alloca in the entry block. Its type is the hint's when there is one. With no
-// hint (`x := if c { a } else { b }`) it is chosen from the checker: the `state::type_of_node` of the last expression
-// of every branch (found with an explicit stack through nested `if`s and blocks; a branch whose last line is `return`,
-// `break` or `continue` has no value and is skipped), and the type every other one converts to (the same type, or an
-// integer that widens to it). None is an Error at the `if`: "the branches of this `if` have types X and Y". Each
-// branch converts its value to the slot's type (`state::convert`, `.initialize`) and stores it; after the `end` block
-// the slot is loaded and pushed.
+// hint (`let x = if c { a } else { b }`) it is chosen from the checker: the `state::type_of_node` of the last
+// expression of every branch (found with an explicit stack through nested `if`s and blocks; a branch whose last line is
+// `return`, `break` or `continue` has no value and is skipped), and the type every other one converts to (the same
+// type, or an integer that widens to it). None is an Error at the `if`: "the branches of this `if` have types X and Y".
+// Each branch converts its value to the slot's type (`state::convert`, `.initialize`) and stores it; after the `end`
+// block the slot is loaded and pushed.
 //
 // A BLOCK AS A VALUE opens a scope, emits its statements but the last, evaluates the last line with the slot's type as
 // hint, stores it, then runs `control::end_of_block` (pending `defer`s) and closes the scope, in that order, so its
@@ -233,12 +233,13 @@ static state::Status if_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValue
     return state::success();
 }
 
-// `if` and block branches store into the slot.
+// `if` and block branches store into the slot, and so does any other statement as the last line of a branch.
 static state::Status into_start(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind == .block) return block_into(e, s, w->value, w->ty);
     if (s->kind == .if_stmt) return if_into(e, s, w->value, w->ty);
-    return state::not_emitted("this statement as a branch of a value", s->span);
+    // A one-line branch (`if c: a else: b`) is a statement of its own: an expression stores, `return` and the like end.
+    return last_line_into(e, s, w->value, w->ty);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

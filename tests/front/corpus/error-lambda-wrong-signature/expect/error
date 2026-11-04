@@ -1,0 +1,1 @@
+src/main.smith:6:14: error: the lambda parameter `a` is `F64` but `I32` is expected; write `I32` or leave the type out

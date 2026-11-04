@@ -1,31 +1,24 @@
-fn dot(a: vec(f32, 4), b: vec(f32, 4)) -> f32 {
-    p := a * b
+fn dot(a: vec(f32, 4), b: vec(f32, 4)) -> f32:
+    let p = a * b
     p[0] + p[1] + p[2] + p[3]
-}
 
-pub fn check() -> i32 {
-    a := vec(f32, 4)(1, 2, 3, 4)
-    b := a * 2.0
-    c := a + b
-    if c[2] != 9.0 {
+pub fn check() -> i32:
+    let a = vec(f32, 4)(1, 2, 3, 4)
+    let b = a * 2.0
+    let c = a + b
+    if c[2] != 9.0:
         return 1
-    }
-    if dot(a, b) != 60.0 {
+    if dot(a, b) != 60.0:
         return 2
-    }
-    mut m: vec(i32, 3)
+    let mut m = vec(i32, 3)(0, 0, 0)
     m[0] = 5
     m[2] = m[0] + 1
-    if m[0] != 5 || m[1] != 0 || m[2] != 6 {
+    if m[0] != 5 || m[1] != 0 || m[2] != 6:
         return 3
-    }
-    lt := a < b
-    if !lt[0] || lt[3] != true {
+    let lt = a < b
+    if !lt[0] || lt[3] != true:
         return 4
-    }
-    l: vec(f32, 2) = [1.5, 2.5]
-    if (l + 1.0)[1] != 3.5 {
+    let l: vec(f32, 2) = [1.5, 2.5]
+    if (l + 1.0)[1] != 3.5:
         return 5
-    }
     0
-}
