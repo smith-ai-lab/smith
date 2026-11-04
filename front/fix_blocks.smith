@@ -534,15 +534,50 @@ static Bool has_continue_before(lex::Tokens tokens, Usize from, Usize offset) {
     return false;
 }
 
+// Whether the header line of the block opened at `open` starts with `for` or `while`.
+static Bool loop_block(lex::Tokens tokens, Usize open) {
+    Usize at = open;
+    while (at > 0 && !tokens[at - 1].line_break)
+        at -= 1;
+    return tokens[at].kind == lex::kw_for || tokens[at].kind == lex::kw_while;
+}
+
+// Whether the `continue` at `at` belongs to the loop whose block opens at `open`: no loop between them holds it.
+static Bool continues_loop(lex::Tokens tokens, Braces braces, Usize open, Usize at) {
+    for (Usize i = 0; i < countof(braces); i++) {
+        Brace inner = braces[i];
+        if (inner.open > open && inner.open < at && at < inner.close && loop_block(tokens, inner.open)) return false;
+    }
+    return true;
+}
+
+// The step is written before each `continue` of the loop, since the jump would skip the step at the end. False when
+// one of them does not start its line, where nothing can be put before it.
+static Bool step_before_continues(Str source, lex::Tokens tokens, Braces braces, Header h, Usize which, Cuts *cuts) {
+    Usize open = braces[which].open;
+    for (Usize i = open + 1; i < braces[which].close; i++) {
+        if (tokens[i].kind != lex::kw_continue || !continues_loop(tokens, braces, open, i)) continue;
+        if (!tokens[i - 1].line_break) return false;
+    }
+    for (Usize i = open + 1; i < braces[which].close; i++) {
+        if (tokens[i].kind != lex::kw_continue || !continues_loop(tokens, braces, open, i)) continue;
+        Str line = as_str(format::push(h.step, "\n", spaces(indent_of(source, tokens[i].span.start))));
+        add_cut(cuts, tokens[i].span.start, tokens[i].span.start, line);
+    }
+    return true;
+}
+
 // The body in braces: it is converted by the block pass, and the step becomes its tail. False when the loop is left.
-static Bool braced_for(Str source, lex::Tokens tokens, Braces braces, Header h) {
+static Bool braced_for(Str source, lex::Tokens tokens, Braces braces, Header h, Cuts *cuts) {
     Usize which = brace_at(braces, h.close + 1);
     if (which == countof(braces) || !braces[which].block || braces[which].skip) return false;
     Usize open = braces[which].open;
     Usize close = braces[which].close;
     Bool one_line = same_line(tokens, open, close);
     if (countof(h.step) == 0) return one_line || multi_line_ready(tokens, braces[which]);
-    if (one_line || !multi_line_ready(tokens, braces[which]) || has_continue(tokens, open, close)) return false;
+    if (one_line || !multi_line_ready(tokens, braces[which])) return false;
+    if (has_continue(tokens, open, close) && !step_before_continues(source, tokens, braces, h, which, cuts))
+        return false;
     Str line = as_str(format::push(spaces(indent_of(source, tokens[open + 1].span.start)), h.step));
     braces[which].tail =
         tokens[close - 1].line_break ? as_str(format::push(line, "\n")) : as_str(format::push("\n", line));
@@ -570,7 +605,7 @@ static void one_for(Str source, lex::Tokens tokens, Braces braces, Usize at, Dec
     Bool declare = h.has_type && !declared_before(braces, *seen, h.name, scope);
     Str head = while_head(h, declare, indent);
     if (h.close + 1 < countof(tokens) && tokens[h.close + 1].kind == lex::left_brace) {
-        if (!braced_for(source, tokens, braces, h)) return;
+        if (!braced_for(source, tokens, braces, h, cuts)) return;
     } else {
         if (!unbraced_for(source, tokens, h, indent, cuts)) return;
         head = as_str(format::push(head, ":"));
