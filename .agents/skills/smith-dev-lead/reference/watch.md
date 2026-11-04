@@ -201,6 +201,24 @@ check() {
   main="$main $([ "${last:-1}" = 0 ] && echo true)"
   [ "${main##* }" = true ] && [ "$(gh api "repos/$R/pulls?state=open&per_page=1" --jq length 2>/dev/null)" -gt 0 ] &&
     seen "stall${main%% *}" && { echo "no merge into main for an hour with PRs open; what each waits on:"; prs_state; }
+  # only the lead archives runners (a runner's archive_session is denied): name each merged PR's runner session once
+  h3=$(date -u -d '-180 min' +%FT%TZ)
+  gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h3" -f per_page=100 --jq '.items[]|"\(.number) \([(.body // "")|scan("session_[A-Za-z0-9]{20,}")][0] // "")"' 2>/dev/null |
+    while read -r n s; do [ -n "$s" ] && [ "$s" != "${LEAD_SESSION:-none}" ] && seen "merged-runner-$n" && echo "merged #$n: archive its runner $s unless it is working or asking"; done
+  # flow (owner, 2026-11-04): produce no faster than the queue consumes. 2026-11-03 opened 27 PRs in an hour while 5
+  # merged and open PRs reached 64 with no alarm. WIP = open PRs + claimed tickets with no PR, against W on #73.
+  h=$(date -u -d '-60 min' +%FT%TZ)
+  opened=$(gh api -X GET search/issues -f q="repo:$R is:pull-request created:>=$h" --jq .total_count 2>/dev/null)
+  merged=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
+  [ "${opened:-0}" -gt $(( ${merged:-0} + 2 )) ] 2>/dev/null && seen "flow-$(date -u +%F-%H)" &&
+    echo "flow: $opened PRs opened and $merged merged in the last hour: production outruns the queue; start no runner, find why merges are slow"
+  w=$(echo "$top" | sed -n 's/.*WIP=\([0-9]*\).*/\1/p')
+  openprs=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
+  named=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[]|"\(.body // "") \(.head.ref)"' 2>/dev/null | grep -oE '#[0-9]+|/[0-9]+-' | tr -d '#/-' | sort -u | tr '\n' ' ')
+  held=$(issues claimed '.[]|select(.pull_request==null)|.number' | while read -r i; do case " $named " in *" $i "*) ;; *) echo "$i";; esac; done | wc -l)
+  wip=$(( ${openprs:-0} + ${held:-0} ))
+  [ -n "$w" ] && [ "$wip" -gt "$w" ] && seen "wip-$(date -u +%F-%H)" && echo "WIP is $wip ($openprs open PRs + $held claimed with no open PR), over the limit $w: start no runner; find what holds the PRs"
+  [ -n "$w" ] && [[ $top == *"pool: running"* ]] && [ "$wip" -lt $(( w - 2 )) ] && seen "room-$(date -u +%F-%H)" && echo "WIP is $wip, under the limit $w: start runners for the top tickets until it reaches $w"
   # a ticket with no real body (a split that left `x`, 2026-11-02): runners skip it and the pool idles
   issues task '.[]|select(.pull_request==null and ((.body // "")|length) < 150)|.number' | while read -r i; do
     seen "thin$i" && echo "#$i is a task with an empty or near-empty body: write its body (files, design, Done when)"
@@ -244,5 +262,7 @@ done
 - **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, the oldest queued CI run, and how many tickets are claimed now, so each wake shows the whole factory The claimed count is compared with the sessions that are `working`: on 2026-11-03 it was 40 against 6.
 - **A claim gone quiet (every 15 minutes):** a `claimed` ticket with no open PR naming it and no change on the ticket for 30 minutes wakes the lead, at most once an hour per ticket. The lead checks the runner's session before releasing: a first build takes about 15 minutes and `smith check` 10 or more, with nothing on GitHub.
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
+- **Flow (hourly, owner 2026-11-04):** more than two PRs opened in the last hour beyond those merged wakes the lead: production outruns the queue, so start no runner and find why merges are slow (on 2026-11-03, 27 opened in an hour against 5 merged and 64 piled up unseen). Work in progress (open PRs plus `claimed` tickets no open PR names) over `WIP=` on #73 wakes it the same way; under the limit by more than two while the pool is `running`, it wakes the lead to start runners up to the limit, since runners start at most their own replacement.
+- **Merged PRs' runners:** each PR merged in the last three hours with a runner session in its body wakes the lead once to archive that session (unless it is working or asking). Only the lead can: a runner's `archive_session` is denied, and the old rule, successors archive predecessors, left 73 finished runners in the owner's sidebar on 2026-11-04. Set `LEAD_SESSION` to the lead's own session id so its PRs are skipped.
 - **The front-end coverage count (every 15 minutes, `coverage`):** CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on each push to main (#2073). The watcher reads the log of the two newest main runs that have a number through `gh api` and wakes the lead once when the passed count dropped, naming both commits. A run that logged `unmeasured` or has no such job is passed over.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.
