@@ -403,9 +403,31 @@ static Bool path_declaration(const parse::Parser *p) {
     return parse::peek_at(p, last + 1).kind == lex::name;
 }
 
+// Whether the `(` that is `offset` tokens ahead closes with a `)` that a name or a `*` follows: `Fn(I32 (I32)) f` is a
+// type called with a variable after it, `T(1)` alone is a construction (#2145).
+static Bool group_then_declarator(const parse::Parser *p, Usize offset) {
+    Usize depth = 0;
+    Usize at = offset;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::TokenKind kind = parse::peek_at(p, at).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_paren) depth += 1;
+        if (kind == lex::right_paren) depth -= 1;
+        at += 1;
+        if (depth == 0) break;
+    }
+    lex::TokenKind after = parse::peek_at(p, at).kind;
+    return after == lex::name || after == lex::star;
+}
+
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
+    // In smith's own syntax a type name and `(` is a construction, `T(1)`, not a declarator; `T (*f)(A)` is one
+    // (#2145).
+    if (kind == lex::type_name && p->new_syntax && parse::peek_at(p, 1).kind == lex::left_paren &&
+        parse::peek_at(p, 2).kind != lex::star && !group_then_declarator(p, 1))
+        return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
     if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);
@@ -567,7 +589,7 @@ static ast::Stmt *static_assert_statement(parse::Parser *p) {
         message = unquoted(p, text);
     }
     if (countof(p->errors) == before) parse::expect(p, lex::right_paren, "`)`");
-    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    if (countof(p->errors) == before) end_statement(p);
     ast::Stmt *built = new_stmt({.static_assert_stmt = {.condition = condition, .message = message}});
     return settle(p, start, before, built);
 }

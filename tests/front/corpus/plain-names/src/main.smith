@@ -1,0 +1,15 @@
+import c <stdio.h>
+
+struct Point:
+    x: i32
+    y: i32
+
+pub let mut global_value: i32 = 7
+
+fn main() -> i32:
+    let c = Point(1, 2)
+    let value = c.x + c.y
+    let modulus: i32 = value
+    let export_count = modulus
+    let _ = stdio.printf("%d %d %d\n", value, export_count, global_value)
+    return 0

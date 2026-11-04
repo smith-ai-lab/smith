@@ -650,6 +650,93 @@ static Str dotted_of(ast::Path path) {
     return out;
 }
 
+// The path an import declaration reads, empty when `d` is no import.
+static ast::Path imported_path(const ast::Decl *d) {
+    ast::Path path = {};
+    if (d->kind == .import_module) path = d->kind.import_module.path;
+    if (d->kind == .import_from) path = d->kind.import_from.path;
+    return path;
+}
+
+// The dotted name an import declaration reads, empty when `d` is no import or names a standard module (the library
+// has no cycles, and reading it twice would cost the compile).
+static Str imported_name(const ast::Decl *d) {
+    Str name = dotted_of(imported_path(d));
+    if (starts_with_text(name, "std.") || same_text(name, "std")) return "";
+    return name;
+}
+
+// A module the cycle search will read the imports of, and the chain that reached it.
+struct Visit {
+    const ast::Module *module;
+    Str name;
+    Str chain;
+};
+
+// The shortest chain from the module `first` (reached by `chain`, which ends in its name) back to `target` through
+// imports, as `a -> b -> a` (dotted names), or empty when `first` leads nowhere near it. Each module is read once.
+static Str cycle_through(const ast::Module *first, Str first_name, Str chain, Str target) {
+    Visit queue[:] = {};
+    queue = mem::realloc(queue, 1);
+    queue[0] = (Visit){.module = first, .name = first_name, .chain = chain};
+    for (Usize head = 0; head < countof(queue); head++) {
+        const ast::Module *m = queue[head].module;
+        for (Usize i = 0; i < countof(m->decls); i++) {
+            Str name = imported_name(m->decls[i]);
+            if (countof(name) == 0) continue;
+            Str next = as_str(format::push(queue[head].chain, " -> ", name));
+            if (same_text(name, target)) return next;
+            Bool entered = false;
+            for (Usize k = 0; k < countof(queue); k++)
+                if (same_text(queue[k].name, name)) entered = true;
+            if (entered) continue;
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded == nullptr) continue;
+            queue = mem::realloc(queue, countof(queue) + 1);
+            queue[countof(queue) - 1] = (Visit){.module = loaded, .name = name, .chain = next};
+        }
+    }
+    return "";
+}
+
+// `chain` with its dots written `::` (today's syntax names a module that way).
+static Str colons(Str chain) {
+    Str out = "";
+    for (Usize i = 0; i < countof(chain); i++) {
+        Str piece = chain[i:i + 1];
+        if (chain[i] == '.') piece = "::";
+        out = as_str(format::push(out, piece));
+    }
+    return out;
+}
+
+// The report of the imports of `m` (the module of `path`, named already) that close a cycle: one line at each such
+// `import`, `file:line:column: error: import cycle: a -> b -> a`, the column that of the module's name. Empty when
+// none does. `import_roots` says where the modules are.
+static Str import_cycles(Str path, Str source, const ast::Module *m, roots::Roots folders) {
+    import_roots = folders;
+    Str self = dotted_of(m->name);
+    if (countof(self) == 0) return "";
+    Bool old = starts_with_module(source);
+    Str all = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        Str name = imported_name(m->decls[i]);
+        if (countof(name) == 0) continue;
+        Str chain = "";
+        if (same_text(name, self)) {
+            chain = as_str(format::push(self, " -> ", self));
+        } else {
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded != nullptr) chain = cycle_through(loaded, name, as_str(format::push(self, " -> ", name)), self);
+        }
+        if (countof(chain) == 0) continue;
+        Str shown = old ? colons(chain) : chain;
+        Str message = as_str(format::push("import cycle: ", shown));
+        all = as_str(format::push(all, diagnostic(path, source, imported_path(m->decls[i]).span, "error", message)));
+    }
+    return all;
+}
+
 // The module the name `qualifier` stands for in `m`: an `import a.b` is reached as `b`, `import a.b as q` as `q`, an
 // `import c <h>` as `c` (or its alias), and a name brought in by `from a.b import n` is not a qualifier.
 static const ast::Module *qualified_module(const ast::Module *m, Str qualifier) {
@@ -806,6 +893,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Str problem = name_module(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
+    Str cycles = import_cycles(path, source, &parsed.module, folders);
+    if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
     Str wanted = triple;
     char *default_triple = nullptr;
     if (countof(wanted) == 0) {
@@ -977,14 +1066,72 @@ struct Spelled {
     Str bindings; // the header bindings (`k` of `k.SIDE`) the sizes name, a line each
 };
 
+// What a header knows while it spells types: the module's own `pub struct`s, its `import`s of other modules and the
+// `#include` lines the spelled types of those modules need (each once).
+struct HeaderScope {
+    ast::Identifier structs[:];
+    const ast::Decl *imports[:];
+    Str includes;
+};
+
+// The `import`ed module a path like `core.Thing` names (its path, or the alias of the import, spelled before the last
+// segment), or null.
+static const ast::Decl *imported_module(const ast::Path *path, HeaderScope *scope) {
+    Usize n = countof(path->segments);
+    for (Usize i = 0; i < countof(scope->imports); i++) {
+        const ast::Decl *d = scope->imports[i];
+        if (d->kind != .import_module) continue;
+        Usize m = countof(d->kind.import_module.path.segments);
+        if (countof(d->kind.import_module.alias) > 0) {
+            if (n == 2 && roots::same(d->kind.import_module.alias, path->segments[0].text)) return d;
+            continue;
+        }
+        if (m != n - 1) continue;
+        Bool same = true;
+        for (Usize k = 0; k < m; k++) {
+            if (!roots::same(d->kind.import_module.path.segments[k].text, path->segments[k].text)) same = false;
+        }
+        if (same) return d;
+    }
+    return nullptr;
+}
+
+static Str path_joined(const ast::Path *path, Usize count, Str separator) {
+    Str all = "";
+    for (Usize i = 0; i < count; i++) {
+        if (i > 0) all = as_str(format::push(all, separator));
+        all = as_str(format::push(all, path->segments[i].text));
+    }
+    return all;
+}
+
+// `core.Thing` behind a pointer: the other module's struct under its C name, `core_Thing`, with the include of that
+// module's header added to the scope; "" when no import names it.
+static Str imported_spelling(const ast::TypeExpr *t, HeaderScope *scope) {
+    if (t->kind != .named) return "";
+    const ast::Path *path = &t->kind.named.path;
+    const ast::Decl *module_import = imported_module(path, scope);
+    if (module_import == nullptr || module_import->kind != .import_module) return "";
+    const ast::Path *module_path = &module_import->kind.import_module.path;
+    Usize count = countof(module_path->segments);
+    Str include = as_str(format::push("#include \"", path_joined(module_path, count, "/"), ".h\"\n"));
+    if (!contains(scope->includes, include)) scope->includes = as_str(format::push(scope->includes, include));
+    return as_str(
+        format::push(path_joined(module_path, count, "_"), "_", path->segments[countof(path->segments) - 1].text));
+}
+
 // The base of a chain of pointers: a scalar or one of the module's structs (by value only when no pointer is above it).
-static Spelled spell_base(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix, Bool under_pointer) {
+static Spelled spell_base(const ast::TypeExpr *t, HeaderScope *scope, Str prefix, Bool under_pointer) {
     Spelled none = {.text = "", .by_value = false, .suffix = ""};
+    if (t->kind == .named && countof(t->kind.named.path.segments) > 1 && under_pointer) {
+        Str imported = imported_spelling(t, scope);
+        return (Spelled){.text = imported, .by_value = false, .suffix = ""};
+    }
     if (t->kind != .named || countof(t->kind.named.path.segments) != 1) return none;
     Str name = t->kind.named.path.segments[0].text;
     Str scalar = scalar_spelling(name);
     if (countof(scalar) > 0) return (Spelled){.text = scalar, .by_value = false, .suffix = ""};
-    if (!is_struct_name(name, structs)) return none;
+    if (!is_struct_name(name, scope->structs)) return none;
     if (!under_pointer) return (Spelled){.text = "", .by_value = true, .suffix = ""};
     return (Spelled){.text = as_str(format::push(prefix, name)), .by_value = false, .suffix = ""};
 }
@@ -993,7 +1140,7 @@ constexpr Usize pointer_depth_max = 8;
 
 // The spelling of a type: `*T` is `const T *`, `*mut T` is `T *`, a pointer to a pointer `const T * const *` (a chain
 // of at most 8 pointers, written as a loop).
-static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix) {
+static Spelled spell(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
     Bool mutable_level[8] = {};
     Usize depth = 0;
     const ast::TypeExpr *at = t;
@@ -1002,7 +1149,7 @@ static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str pre
         depth += 1;
         at = at->kind.pointer.pointee;
     }
-    Spelled base = spell_base(at, structs, prefix, depth > 0);
+    Spelled base = spell_base(at, scope, prefix, depth > 0);
     if (countof(base.text) == 0) return base;
     Str text = base.text;
     for (Usize level = depth; level > 0; level--) {
@@ -1023,7 +1170,7 @@ static Spelled spell(const ast::TypeExpr *t, ast::Identifier structs[:], Str pre
 // `length_text`); C has no array of a size it cannot read, and no array behind a pointer here.
 static Str length_text(const ast::Expr *e, Str *binding);
 
-static Spelled spell_declarator(const ast::TypeExpr *t, ast::Identifier structs[:], Str prefix) {
+static Spelled spell_declarator(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
     Str suffix = "";
     Str bindings = "";
     Usize depth = 0;
@@ -1038,7 +1185,7 @@ static Spelled spell_declarator(const ast::TypeExpr *t, ast::Identifier structs[
         depth += 1;
         at = at->kind.array.element;
     }
-    Spelled base = spell(at, structs, prefix);
+    Spelled base = spell(at, scope, prefix);
     if (countof(base.text) == 0 || depth == 0) return base;
     base.suffix = suffix;
     base.bindings = bindings;
@@ -1068,7 +1215,7 @@ static Str no_spelling_reason(const ast::TypeExpr *t) {
 }
 
 // The line of a `pub fn` in the header, or "" with a message in `*problems`.
-static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifier structs[:], Str prefix, Str module_c,
+static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *scope, Str prefix, Str module_c,
                          Str module_label, Str label_start, Str *problems) {
     if (d->kind != .function) {
         return "";
@@ -1077,7 +1224,7 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
     Str name = d->kind.function.name;
     Str args = "";
     for (Usize i = 0; i < countof(params); i++) {
-        Spelled spelled = spell_declarator(params[i].type, structs, prefix);
+        Spelled spelled = spell_declarator(params[i].type, scope, prefix);
         if (countof(spelled.text) == 0) {
             Str message =
                 spelled.by_value
@@ -1096,7 +1243,7 @@ static Str function_line(Str path, Str source, const ast::Decl *d, ast::Identifi
     }
     Str result = "void";
     if (d->kind.function.result != nullptr) {
-        Spelled spelled = spell(d->kind.function.result, structs, prefix);
+        Spelled spelled = spell(d->kind.function.result, scope, prefix);
         if (countof(spelled.text) == 0) {
             Str shown = source_of(source, d->kind.function.result->span);
             Str message = spelled.by_value
@@ -1211,12 +1358,16 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     Str module_c = joined(m, "_");
     Str module_label = joined(m, "::");
     Str prefix = as_str(format::push(module_c, "_"));
-    ast::Identifier structs[:] = {};
+    HeaderScope scope = {};
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
+        if (d->kind == .import_module) {
+            scope.imports = mem::realloc(scope.imports, countof(scope.imports) + 1);
+            scope.imports[countof(scope.imports) - 1] = d;
+        }
         if (d->kind != .record || !d->is_pub) continue;
-        structs = mem::realloc(structs, countof(structs) + 1);
-        structs[countof(structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
+        scope.structs = mem::realloc(scope.structs, countof(scope.structs) + 1);
+        scope.structs[countof(scope.structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
     }
     Str types = "";
     Str used_bindings = "";
@@ -1226,7 +1377,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         Str fields = "";
         for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
             ast::FieldDecl field = d->kind.record.fields[k];
-            Spelled spelled = spell_declarator(field.type, structs, prefix);
+            Spelled spelled = spell_declarator(field.type, &scope, prefix);
             used_bindings = as_str(format::push(used_bindings, spelled.bindings));
             if (countof(spelled.text) == 0) {
                 Str message = as_str(format::push("field `", field.name, "` of `", d->kind.record.name, "` is `",
@@ -1249,7 +1400,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         const ast::Decl *d = m->decls[i];
         if (d->kind != .function || !d->is_pub || d->kind.function.body == nullptr) continue;
         if (roots::same(d->kind.function.name, "main")) continue;
-        Str line = function_line(path, source, d, structs, prefix, module_c, module_label, label_start, problems);
+        Str line = function_line(path, source, d, &scope, prefix, module_c, module_label, label_start, problems);
         if (countof(line) == 0) continue;
         body = as_str(format::push(body, count == 0 ? "" : "\n", guarded(d->attributes, line, false)));
         count += 1;
@@ -1259,7 +1410,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     if (countof(types) > 0 && countof(body) > 0) gap = "\n";
     return as_str(format::push(
         "// clang-format off\n// Generated by smith from ", path, ". Do not edit.\n// clang-format on\n",
-        "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings),
+        "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings), scope.includes,
         "#ifdef __cplusplus\n", "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
 }
 

@@ -1,0 +1,17 @@
+import c <stdio.h>
+import a
+
+# A statement that begins with a keyword on the line after a trailing comment is a statement, even in a module that
+# exports an option type.
+
+fn pick(x: i32) -> i32:
+    let mut y = x # the comment
+    if y == 2:
+        return 1
+    while y > 5:
+        y -= 1 # another comment
+    a.pass(y)
+
+pub fn main() -> i32:
+    let _ = stdio.printf("%d %d\n", pick(2), pick(9))
+    0

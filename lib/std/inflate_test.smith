@@ -159,19 +159,19 @@ static Usize store_bound(Usize size, U32 block) {
 }
 
 static Usize store_raw(const U8 *input, Usize size, U32 block, U8 *output) {
-    Usize in = 0;
+    Usize consumed = 0;
     Usize out = 0;
     Bool last = false;
     while (!last) {
-        Usize length = size - in < block ? size - in : block;
-        last = in + length == size;
+        Usize length = size - consumed < block ? size - consumed : block;
+        last = consumed + length == size;
         output[out] = last ? 1 : 0;
         output[out + 1] = (U8)length;
         output[out + 2] = (U8)(length >> 8);
         output[out + 3] = (U8)~length;
         output[out + 4] = (U8)(~length >> 8);
-        if (length > 0) mem::copy(output[out + 5:out + 5 + length], input[in:in + length]);
-        in += length;
+        if (length > 0) mem::copy(output[out + 5:out + 5 + length], input[consumed:consumed + length]);
+        consumed += length;
         out += 5 + length;
     }
     return out;

@@ -29,3 +29,8 @@ typedef struct {
 // be entered, a buffer cannot be made or there are too many files.
 bool smith_core_lint_plan(const char *folder, const char *cache, const char *setting, const SmithCoreLintFile *files,
                           size_t count, SmithCoreLintResult *results, char *output, size_t output_size);
+
+// The lint identity (runtime/lint_identity.c, hashed by `smith build`) that the following runs key their cache on, as
+// if smith had been built with it; nullptr (the default) is the binary's own id. A test changes it to show that a hit
+// survives a change outside the identity and a run misses after a change inside it (#2236).
+void smith_core_lint_set_identity(const char *identity);
