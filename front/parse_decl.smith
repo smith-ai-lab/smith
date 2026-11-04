@@ -2780,6 +2780,7 @@ static Bool prefix_at(Str text, Usize at, Str prefix) {
 // Whether `word` is one a system condition is made of.
 static Bool system_word(Str word) {
     return same_text(word, "target") || same_text(word, "os") || same_text(word, "macos") || same_text(word, "linux") ||
+           same_text(word, "arch") || same_text(word, "aarch64") || same_text(word, "x86_64") ||
            same_text(word, "true") || same_text(word, "false");
 }
 
@@ -2794,6 +2795,9 @@ static Str when_text(Str condition) {
         if (prefix_at(condition, i, "target::os")) {
             result = format::push(result, "target.os");
             i += 10;
+        } else if (prefix_at(condition, i, "target::arch")) {
+            result = format::push(result, "target.arch");
+            i += 12;
         } else if (prefix_at(condition, i, "target::")) {
             result = format::push(result, ".");
             i += 8;
@@ -2834,6 +2838,8 @@ static Str negated(Str text) {
     Bool simple = !contains(text, "&") && !contains(text, "|");
     if (simple && prefix_at(text, 0, "target.os == ")) return str_of(format::push("target.os != ", text[13:]));
     if (simple && prefix_at(text, 0, "target.os != ")) return str_of(format::push("target.os == ", text[13:]));
+    if (simple && prefix_at(text, 0, "target.arch == ")) return str_of(format::push("target.arch != ", text[15:]));
+    if (simple && prefix_at(text, 0, "target.arch != ")) return str_of(format::push("target.arch == ", text[15:]));
     return str_of(format::push("!(", text, ")"));
 }
 
