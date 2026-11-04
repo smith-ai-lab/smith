@@ -15,6 +15,7 @@
 module front::fix_zero;
 
 import front::ast;
+import front::lex;
 import front::parse as core;
 import front::types;
 import std::arena;
@@ -80,6 +81,15 @@ static Bool same(Str a, Str b) {
     return true;
 }
 
+// Whether a field can be named in `T(f = 0)`: a keyword of smith's own syntax (`in`) cannot.
+static Bool nameable(Str field) {
+    lex::Lexed lexed = lex::tokenize_new(field);
+    if (lexed == .error) return false;
+    Bool ok = countof(lexed.ok) > 0 && lexed.ok[0].kind == lex::name;
+    mem::free(lexed.ok.data);
+    return ok;
+}
+
 // The zero value of a type that is a number, a `Bool` or a pointer; empty for any other.
 static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .integer) return "0";
@@ -109,7 +119,7 @@ static Str construct_flat(Str name, types::TypeRef t) {
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
         Str zero = flat_zero(t->slots[i].type);
-        if (countof(zero) == 0) return "";
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
     }
     return types::message_of(format::push(out, ")"));
@@ -122,7 +132,7 @@ static Str construct(Str name, types::TypeRef t) {
         types::TypeRef field = t->slots[i].type;
         Str zero = flat_zero(field);
         if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
-        if (countof(zero) == 0) return "";
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
     }
     return types::message_of(format::push(out, ")"));

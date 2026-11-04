@@ -437,7 +437,9 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         lex::Token tag = parse::peek(p);
         if (!parse::accept(p, lex::name) && !parse::accept(p, lex::type_name)) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");
-        } else if (tag.kind == lex::type_name && !parse::at(p, lex::colon_colon)) {
+        } else if (tag.kind == lex::type_name && !parse::at(p, lex::colon_colon) && !parse::at(p, lex::left_brace) &&
+                   !parse::at(p, lex::colon) && !parse::at(p, lex::semicolon)) {
+            // not the declaration of the tag itself (`struct Q {`), only a use of it
             drop_tag_keyword(p, token, tag);
         }
         return spelled(p, token.span.start, q);

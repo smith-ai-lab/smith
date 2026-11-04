@@ -73,3 +73,8 @@ export void test_front_fix_a_struct_tag_in_a_field_and_after_const_is_the_name()
                  "  g(q);\n}\n",
                  "struct R:\n    next: *R\n    n: i32\nfn f(q: *R):\n    g(q)\n");
 }
+
+export void test_front_fix_zero_leaves_a_field_named_like_a_keyword() {
+    expect_fixed("module m;\nstruct Q {\n    int in;\n};\nvoid f(void) {\n    Q z = {};\n    g(&z);\n}\n",
+                 "struct Q:\n    in: i32\nfn f():\n    let z: Q = {}\n    g(&z)\n");
+}
