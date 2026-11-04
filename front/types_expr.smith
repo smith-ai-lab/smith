@@ -3658,10 +3658,23 @@ static void tuple_after(types::Checked *c, Frame f) {
 
 // The template a call names, when the callee is a plain name of a function with compile-time parameters.
 static const types::Symbol *generic_callee(const types::Checked *c, const ast::Expr *callee) {
-    if (callee->kind != .name) {
+    const types::Symbol *s = nullptr;
+    if (callee->kind == .name) {
+        s = types::lookup_path(&c->scopes, callee->kind.name.path);
+    } else if (callee->kind == .member && !callee->kind.member.arrow) {
+        types::Names names = types::member_names(callee); // `pick.larger`: a template read through a module (#2070)
+        if (names.count < 2 || c->options.load == nullptr) {
+            return nullptr;
+        }
+        const types::Symbol *first = types::scoped(c, names.items[0]);
+        if (first == nullptr || first->kind != .module_name) {
+            return nullptr;
+        }
+        types::Through t = types::through_modules(c, &names);
+        s = t.stopped ? nullptr : t.symbol;
+    } else {
         return nullptr;
     }
-    const types::Symbol *s = types::lookup_path(&c->scopes, callee->kind.name.path);
     if (s != nullptr && s->kind == .function_symbol && s->generic && s->decl != nullptr) {
         return s;
     }
@@ -3786,6 +3799,13 @@ static void auto_resolved(types::Checked *c, Frame f) {
         if (!types::is_auto_param(&params[i])) continue;
         types::TypeRef t = typ(c, argument_value(args[i]));
         if (t == invalid(c)) {
+            poison(c, e);
+            return;
+        }
+        t = types::auto_binding(c, &params[i], t);
+        if (t == nullptr) {
+            types::failf(c, args[i]->span, "`", params[i].name,
+                         "` is a slice of `auto`, but this argument is not a slice");
             poison(c, e);
             return;
         }
