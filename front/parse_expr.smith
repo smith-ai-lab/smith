@@ -1900,9 +1900,54 @@ static Bool fn_type_cast(const parse::Parser *p) {
     return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
 }
 
+// Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax
+// never has before a `)`. A text a pass has half mended (the head of its function is new, the body is not) holds it.
+static Bool old_pointer_cast(const parse::Parser *p) {
+    Usize at = 0;
+    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    if (parse_type::is_keyword_type(first)) {
+        while (parse_type::is_keyword_type(parse::peek_at(p, at + 1).kind))
+            at += 1;
+    } else if (first == lex::name || first == lex::type_name) {
+        while ((parse::peek_at(p, at + 1).kind == lex::colon_colon || parse::peek_at(p, at + 1).kind == lex::dot) &&
+               (parse::peek_at(p, at + 2).kind == lex::name || parse::peek_at(p, at + 2).kind == lex::type_name))
+            at += 2;
+    } else {
+        return false;
+    }
+    at += 1;
+    Usize stars = 0;
+    while (parse::peek_at(p, at + stars).kind == lex::star)
+        stars += 1;
+    return stars > 0 && parse::peek_at(p, at + stars).kind == lex::right_paren;
+}
+
+// Whether `(T){.x = ...` is ahead, the `(` taken: a compound literal of today's syntax in a text a pass has half mended.
+static Bool old_literal_ahead(const parse::Parser *p) {
+    Usize at = 0;
+    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    if (first != lex::name && first != lex::type_name) return false;
+    while ((parse::peek_at(p, at + 1).kind == lex::colon_colon || parse::peek_at(p, at + 1).kind == lex::dot) &&
+           (parse::peek_at(p, at + 2).kind == lex::name || parse::peek_at(p, at + 2).kind == lex::type_name))
+        at += 2;
+    if (parse::peek_at(p, at + 1).kind != lex::right_paren || parse::peek_at(p, at + 2).kind != lex::left_brace)
+        return false;
+    return parse::peek_at(p, at + 3).kind == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
+}
+
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
-    if (fn_type_cast(p)) {
+    if (old_literal_ahead(p) && parse_type::path_is_type(p, 0)) {
         ast::TypeExpr *type = parse::type(p);
+        lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        if (type == nullptr) return .failed;
+        push_value(st, initializer_list(p, type, start, close.span.start));
+        return .value;
+    }
+    if (fn_type_cast(p) || old_pointer_cast(p)) {
+        Bool was_new = p->new_syntax;
+        p->new_syntax = !old_pointer_cast(p) && was_new;
+        ast::TypeExpr *type = parse::type(p);
+        p->new_syntax = was_new;
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
         Pending cast = {.form = .cast_form,
