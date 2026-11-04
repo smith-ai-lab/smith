@@ -1,8 +1,9 @@
 name: ci
 
 # The full check (#798, knowledge/ci-hosted.md): Linux carries the tests (8 hosted shards that restore the one build `build-linux` made, #1758)
-# and the checks (`check-fmt-prove`: fmt, docs, prove; `check-lint`: lint; same build, beside the shards, #2234); one macOS job
-# (`macos`) builds and runs what only macOS can (the `--macos-only` tests; a documents-only change: docs and their tests);
+# and the checks (`check-fmt-prove`: fmt, docs, prove; `check-lint`: lint; same build, beside the shards, #2234), on pull
+# requests too; one macOS job (`macos`) builds and runs what only macOS can (lint of the code only the Mac sees, the
+# `--macos-only` tests; a documents-only change: docs and their tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
@@ -159,8 +160,9 @@ jobs:
 
   macos:
     # everything macOS does in a run, in one job (#1709): build smith and the tests, then the macOS-only tests (a
-    # documents-only change: docs and the tests that read them). fmt, docs, lint and prove run on Linux beside the test
-    # parts (`check-fmt-prove`, `check-lint`, #2234): they took 6 of the Mac's 9 minutes of checks. It was five jobs
+    # documents-only change: docs and the tests that read them). fmt, docs and prove run on Linux beside the test
+    # parts (`check-fmt-prove`, #2234), and lint on both (`check-lint` too): each platform lints code the other can't see.
+    # It was five jobs
     # (build, mechanical, prove, test, docs) handing the build over as an artifact; four of them filled four of the five
     # hosted macOS slots the free plan allows, so a second run's jobs queued behind the first, and a job that waited
     # past its time limit was cancelled with no test failing (#1691: docs, #1648: prove). One job takes one slot, so
@@ -230,8 +232,10 @@ jobs:
             stage docs "$SMITH" docs
             stage readme "$SMITH" test --test readme_test,skills_test
           else
-            # fmt, docs, lint and prove run on Linux (`check-fmt-prove`, `check-lint`, #2234)
-            names="test"
+            # fmt, docs and prove run on Linux (`check-fmt-prove`, #2234); lint runs on both platforms, since each sees
+            # code the other can't (`@when(target.os == .macos)`, Objective-C and Metal here; glibc's macros there)
+            names="lint test"
+            stage lint "$SMITH" lint
             stage test macos_tests
           fi
           # the test stage's output, with the SMITH_TEST_STATS lines, is the log `smith build ci-times` reads (#1139)
@@ -416,7 +420,7 @@ jobs:
           exit $failed
 
   check-lint:
-    # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`: 193 s on the Mac
+    # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't
     needs: [changes, pack, build-linux]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.changes.outputs.linux-runner) }}
