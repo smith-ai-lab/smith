@@ -357,6 +357,7 @@ static ArgumentList runtime_arguments(const types::Instance *instance, ast::Expr
 static const types::Instance *callee_of(state::Emitter *e, const ast::Expr *written, ast::ExprRef args[:],
                                         ArgumentList *runtime, const ast::Decl **imported, Str *key, Bool *found) {
     const types::Instance *instance = instance_call(e, written);
+    if (instance == nullptr) instance = instance_call(e, method_form(e, written)); // a call the checker rewrote (#1985)
     *found = false;
     if (instance == nullptr) {
         *found = call_target(e, written, imported, key);
