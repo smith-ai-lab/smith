@@ -1,0 +1,8 @@
+import r
+import <stdio.h>;
+
+pub fn main() -> i32:
+    let a: [3]i32 = [4, 5, 6]
+    let b: [1]i32 = [10]
+    let _ = c::printf("%d %d\n", r.first(a[0:3]), r.total(a[0:3], b[0:1]))
+    0

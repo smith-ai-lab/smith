@@ -1,0 +1,10 @@
+pub let Step = fn(i32) -> i32
+
+fn apply(f: Step, x: i32) -> i32:
+    f(x)
+
+pub fn check() -> i32:
+    let twice: Step = fn(x): x * 2
+    if apply(twice, 21) != 42:
+        return 1
+    0

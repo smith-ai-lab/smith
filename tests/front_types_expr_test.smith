@@ -1203,6 +1203,30 @@ export void test_front_types_expr_a_pointer_is_written_through_only_when_it_is_m
     test::check_condition(says(last(&r), "`.` needs a record, found the pointer `Point *`; write `->` instead"));
 }
 
+export void test_front_types_expr_a_field_of_a_pointer_returned_by_a_call_needs_no_arrow() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef pt = point(&r);
+    types::TypeRef int32 = ty(&r, "I32");
+    types::Slot none[1] = {};
+    types::TypeRef signature = types::function_of(&r.table, none[0:0], types::pointer_to(&r.table, pt, true), false);
+    declare(&r, "unerase", .function_symbol, signature, false);
+    ast::ExprRef no_args[1] = {};
+    ast::ExprRef none_ref[:] = no_args[0:0];
+    ast::Expr *read = member(ast::call(ast::name("unerase"), none_ref), "y", false);
+    // in a body of smith's own syntax `unerase().y` reads through the pointer (#2219)
+    r.new_body = true;
+    test::check_condition(types_expr::infer(&r, read) == int32);
+    expect(r.error_count, 0);
+    // in today's syntax it still asks for `->`
+    r.new_body = false;
+    types_expr::infer(&r, member(ast::call(ast::name("unerase"), none_ref), "y", false));
+    expect(r.error_count, 1);
+}
+
 export void test_front_types_expr_as_casts_to_the_written_type() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
