@@ -461,6 +461,8 @@ static void end_statement(parse::Parser *p) {
     if (p->layout && (parse::at(p, lex::newline) || parse::at(p, lex::dedent) || parse::at(p, lex::end_of_file) ||
                       parse::at(p, lex::kw_else)))
         return;
+    // An `if c: a else: b` in an argument list ends with its `,` or `)` (#2224).
+    if (p->layout && p->in_value && (parse::at(p, lex::comma) || parse::at(p, lex::right_paren))) return;
     parse::expect(p, lex::semicolon, "`;`");
 }
 

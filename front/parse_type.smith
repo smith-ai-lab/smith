@@ -611,7 +611,10 @@ static Bool c_declarator_ahead(const parse::Parser *p);
 // The suffixes of a type: pointers (with the qualifiers after each) and runs of brackets.
 static ast::TypeExpr *suffixes(parse::Parser *p, U32 start, ast::TypeExpr *base) {
     ast::TypeExpr *type_so_far = base;
-    take_qualifiers(p, &type_so_far->qualifiers);
+    // In smith's own syntax a line break ends the type: a `const` on the next line (after a comment line, say) is the
+    // next declaration's (#2224).
+    if (!(p->new_syntax && p->position > 0 && p->tokens[p->position - 1].line_break))
+        take_qualifiers(p, &type_so_far->qualifiers);
     for (Usize i = 0; i < countof(p->tokens); i += 1) {
         if (parse::accept(p, lex::star)) {
             ast::Qualifiers q = {};
