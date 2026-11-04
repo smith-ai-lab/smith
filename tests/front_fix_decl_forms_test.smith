@@ -39,3 +39,19 @@ export void test_front_fix_parameter_named_type() {
 export void test_front_fix_pointer_to_a_slice_of_auto() {
     expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto):\n    g(xs)\n");
 }
+
+export void test_front_fix_struct_fields_with_several_names() {
+    expect_fixed("module m;\ntypedef struct {\n    F32 low, high;\n} Range;\n",
+                 "struct Range:\n    low: f32\n    high: f32\n");
+    expect_fixed("module m;\ntypedef struct {\n    U32 a, b, c;\n} Three;\n",
+                 "struct Three:\n    a: u32\n    b: u32\n    c: u32\n");
+}
+
+export void test_front_fix_static_assert_with_joined_strings() {
+    expect_fixed("module m;\nstatic_assert(1, \"one \"\n                  \"two\");\n",
+                 "static_assert(1, \"one \"\n                  \"two\");\n");
+}
+
+export void test_front_fix_bit_int_type_parses() {
+    expect_fixed("module m;\ntypedef unsigned _BitInt(128) Wide;\n", "let Wide = unsigned _BitInt(128)\n");
+}

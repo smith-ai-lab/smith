@@ -1,2 +1,2 @@
-type-value-import/main.smith: error: a tuple has types only: `struct { I32, F32 }`; a name makes a record field, `struct { I32 a; }` (23:9) [gap_a2]
+type-value-import/main.smith: error: one name per declaration: write `F64 a;` and `F64 b;` (23:10) [gap_a2]
 type-value-import/shapes.smith: ok

@@ -951,6 +951,30 @@ static void several_names_error(parse::Parser *p, const ast::TypeExpr *type, Str
     recover(p);
 }
 
+// `F32 low, high;` in a record: the same error, with the fix that turns the `,` into `;` and a new line of the same
+// indentation with `F32`, which the next pass repeats for a third name (#2224). The rest of the declaration is left to
+// be read again.
+static void several_field_names_error(parse::Parser *p, const ast::TypeExpr *type, Str first) {
+    lex::Token comma = parse::peek(p);
+    Str second = "b";
+    if (is_name(parse::peek_at(p, 1).kind)) second = parse::text(p, parse::peek_at(p, 1));
+    char message[:] = format::push("one name per declaration: write `", type_text(p, type), " ", first, ";` and `",
+                                   type_text(p, type), " ", second, ";`");
+    Usize line = comma.span.start;
+    for (Usize i = 0; i < comma.span.start && p->source[line - 1] != '\n'; i++)
+        line -= 1;
+    Usize indent = line;
+    for (Usize i = 0; i < comma.span.start && (p->source[indent] == ' ' || p->source[indent] == '\t'); i++)
+        indent += 1;
+    Str joiner = as_str(format::push(";\n", p->source[line:indent], type_text(p, type)));
+    parse::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    parse::Edit change = {.span = comma.span, .text = joiner};
+    fix[0] = change;
+    parse::error_fix(p, parse::span_from(p, comma.span.start), message, fix);
+    recover(p);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Functions and variables
 
@@ -1610,7 +1634,7 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
         parse::expect(p, lex::name, "a field name");
     }
     if (parse::at(p, lex::comma)) {
-        several_names_error(p, field.type, field.name);
+        several_field_names_error(p, field.type, field.name);
         return field;
     }
     Usize suffix_first = p->position;
@@ -2418,6 +2442,10 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
     if (parse::accept(p, lex::comma)) {
         lex::Token token = parse::expect(p, lex::string, "the message, a string");
         if (token.kind == lex::string) message = string_value(p, token);
+        // string literals side by side are one string
+        for (Usize i = 0; i < countof(p->tokens) && parse::at(p, lex::string); i++) {
+            message = as_str(format::push(message, string_value(p, parse::advance(p))));
+        }
     }
     parse::expect(p, lex::right_paren, "`)`");
     parse::expect(p, lex::semicolon, "`;` after `static_assert`");
