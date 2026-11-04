@@ -508,7 +508,7 @@ export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
     check_text(fixed.text, "@c_name(\"SmithChunk\") pub struct Chunk\nstruct Node\n");
 }
 
-// A value cast to `void` as a statement is `let _ = x`, whether it was written `(void)x` or `x.to(void)`: the second
+// A value cast to `void` as a statement is `_ = x`, whether it was written `(void)x` or `x.to(void)`: the second
 // form has nothing before the operand, so the fix must remove the cast after it too (#2224).
 export void test_a_cast_to_void_becomes_a_discard() {
     arena::Arena memory = test::memory(1U << 22);
@@ -516,5 +516,5 @@ export void test_a_cast_to_void_becomes_a_discard() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "pub fn f(x: i32):\n    x.to(void)\n");
-    check_text(fixed.text, "pub fn f(x: i32):\n    let _ = x\n");
+    check_text(fixed.text, "pub fn f(x: i32):\n    _ = x\n");
 }
