@@ -12,6 +12,14 @@
 //   header { a }      header:          a body on the line of the header moves to its own line, 4 deeper
 //   struct S { a: i32, b: i32 }        one field to a line
 //   f(fn(a) { b })    f(fn(a): b)      a block inside parentheses stays on its line, and a multi-line one is left
+//   header {          header:          a `}` that ends the last statement's line goes without a line of its own
+//   for (T i = a; c; s) { b }          `let mut i: T = a`, then `while c:` with `s` as the last line of the body
+//   (#2225);
+//                                      the names already declared in the scope get an assignment instead of a `let`; a
+//                                      loop with a `continue`, a comma, or a body on the header's line is left
+//   "a"\n"b"          ("a"\n"b")        adjacent literals on several lines are one parenthesized expression
+//   void f(auto x) {                   a C signature the fixer did not convert is left with its braces, all of it:
+//                                      a signature is converted whole or not at all
 module front::fix_blocks;
 
 import front::lex;
@@ -73,6 +81,8 @@ struct Brace {
     Usize close;
     Bool block;  // not a list
     Bool inside; // inside parentheses or brackets
+    Bool skip;   // in a function whose signature is still C's: left as it is
+    Str tail;    // the line a `for` loop's step becomes, placed where the closing `}` was
 };
 
 typedef typeof(Brace[:]) Braces;
@@ -164,20 +174,31 @@ static Bool open_ends_line(lex::Tokens tokens, Usize open) {
     return tokens[open].line_break;
 }
 
+// Whether a block that spans lines can be written as `:`: its `{` ends its line and its `}` ends a line (the last
+// statement's or its own) or is followed by `else`.
+static Bool multi_line_ready(lex::Tokens tokens, Brace brace) {
+    if (!open_ends_line(tokens, brace.open) || !closes_cleanly(tokens, brace.close)) return false;
+    if (tokens[brace.close - 1].line_break) return true;
+    return !(brace.close + 1 < countof(tokens) && !tokens[brace.close].line_break);
+}
+
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
-// `else` follows).
+// `else` follows, or the `}` alone when it ends the last statement's line).
 static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
-    if (!tokens[brace.close - 1].line_break || !closes_cleanly(tokens, brace.close)) return;
-    if (!open_ends_line(tokens, brace.open)) return;
+    if (!multi_line_ready(tokens, brace)) return;
     add_cut(cuts, spaces_before(source, open.span.start), open.span.end, ":");
+    if (!tokens[brace.close - 1].line_break) {
+        add_cut(cuts, spaces_before(source, close.span.start), close.span.end, brace.tail);
+        return;
+    }
     Bool other = brace.close + 1 < countof(tokens) && !close.line_break && tokens[brace.close + 1].kind == lex::kw_else;
     if (other) {
         add_cut(cuts, close.span.start, tokens[brace.close + 1].span.start, "");
         return;
     }
-    add_cut(cuts, line_start(source, close.span.start), after_line(source, close.span.end), "");
+    add_cut(cuts, line_start(source, close.span.start), after_line(source, close.span.end), brace.tail);
 }
 
 // The fields or statements between the braces of a one-line block, one to a line at `depth` spaces.
@@ -259,6 +280,306 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
         add_cut(cuts, close.span.end, tokens[brace.close + 1].span.start, as_str(format::push("\n", spaces(indent))));
 }
 
+// Whether the line of the `{` is a C signature that the fixer left as it is (`void f(auto x) {`, `pub usize g(auto y)
+// {`): it has parentheses and no `fn`, `struct`, `enum` or `union`.
+static Bool c_signature(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    Bool paren = false;
+    for (; i < open; i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::kw_fn || kind == lex::kw_struct || kind == lex::kw_enum || kind == lex::kw_union) return false;
+        if (kind == lex::left_paren) paren = true;
+    }
+    return paren;
+}
+
+// Marks every top-level block with a C signature, and the blocks inside it, as left alone.
+static void mark_c_functions(lex::Tokens tokens, Braces braces) {
+    Usize top = 0;
+    Usize skipped = 0;
+    for (Usize i = 0; i < countof(braces); i++) {
+        if (braces[i].open < top) {
+            braces[i].skip = braces[i].open < skipped;
+            continue;
+        }
+        top = braces[i].close;
+        if (braces[i].block && c_signature(tokens, braces[i].open)) {
+            braces[i].skip = true;
+            skipped = braces[i].close;
+        }
+    }
+}
+
+static Bool in_skipped(Braces braces, Usize at) {
+    for (Usize i = 0; i < countof(braces); i++) {
+        if (braces[i].skip && braces[i].open <= at && at <= braces[i].close) return true;
+    }
+    return false;
+}
+
+// Adjacent string literals on several lines are one expression; the lexer ends a statement after each, so they are
+// wrapped in parentheses, where a line break is not a statement's end.
+static void string_runs(lex::Tokens tokens, Braces braces, Cuts *cuts) {
+    Bool group[:] = {};
+    Usize i = 0;
+    while (i < countof(tokens)) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::string) {
+            Usize last = i;
+            while (last + 1 < countof(tokens) && tokens[last].line_break && tokens[last + 1].kind == lex::string)
+                last += 1;
+            Bool inside = countof(group) > 0 && group[countof(group) - 1];
+            if (last > i && !inside && !in_skipped(braces, i)) {
+                add_cut(cuts, tokens[i].span.start, tokens[i].span.start, "(");
+                add_cut(cuts, tokens[last].span.end, tokens[last].span.end, ")");
+            }
+            i = last + 1;
+            continue;
+        }
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) {
+            group = mem::realloc(group, countof(group) + 1);
+            group[countof(group) - 1] = kind != lex::left_brace;
+        }
+        if ((kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) && countof(group) > 0)
+            group = mem::realloc(group, countof(group) - 1);
+        i += 1;
+    }
+}
+
+// The first token of kind `kind` between `from` and `to` that is not inside brackets of its own, else `to`.
+static Usize find_flat(lex::Tokens tokens, Usize from, Usize to, lex::TokenKind kind) {
+    Usize nest = 0;
+    for (Usize i = from; i < to; i++) {
+        lex::TokenKind here = tokens[i].kind;
+        if (nest == 0 && here == kind) return i;
+        if (here == lex::left_paren || here == lex::left_bracket || here == lex::left_brace) nest += 1;
+        if (here == lex::right_paren || here == lex::right_bracket || here == lex::right_brace) nest -= 1;
+    }
+    return to;
+}
+
+// The `)` that closes the `(` at `open`.
+static Usize close_paren(lex::Tokens tokens, Usize open) {
+    Usize nest = 0;
+    for (Usize i = open; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::left_paren) nest += 1;
+        if (tokens[i].kind == lex::right_paren) {
+            nest -= 1;
+            if (nest == 0) return i;
+        }
+    }
+    return open;
+}
+
+// The header of a C `for (init; condition; step)`.
+struct Header {
+    Bool ok;
+    Usize close; // the `)`
+    Bool has_init;
+    Bool has_type; // the init declares its name: `usize i = 0`
+    Str name;
+    Str type;
+    Str value;
+    Str condition;
+    Str step;
+};
+
+// The step as the new syntax writes it: `i++` is `i += 1`.
+static Str step_text(Str source, lex::Tokens tokens, Usize from, Usize to) {
+    if (from >= to) return "";
+    Usize n = to - from;
+    lex::TokenKind a = tokens[from].kind;
+    lex::TokenKind b = tokens[to - 1].kind;
+    Str name = "";
+    if (n == 2) name = source[tokens[from + 1].span.start:tokens[from + 1].span.end];
+    if (n == 2 && a == lex::name && b == lex::plus_plus)
+        return as_str(format::push(source[tokens[from].span.start:tokens[from].span.end], " += 1"));
+    if (n == 2 && a == lex::name && b == lex::minus_minus)
+        return as_str(format::push(source[tokens[from].span.start:tokens[from].span.end], " -= 1"));
+    if (n == 2 && a == lex::plus_plus) return as_str(format::push(name, " += 1"));
+    if (n == 2 && a == lex::minus_minus) return as_str(format::push(name, " -= 1"));
+    return source[tokens[from].span.start:tokens[to - 1].span.end];
+}
+
+// The init `T name = value` (or `name = value`) of the header, between `from` and `to`.
+static void read_init(Str source, lex::Tokens tokens, Usize from, Usize to, Header *h) {
+    if (from >= to) {
+        h->ok = true;
+        return;
+    }
+    Usize equal = find_flat(tokens, from, to, lex::equal);
+    if (equal == to || equal == from || equal + 1 >= to || find_flat(tokens, from, to, lex::comma) != to) return;
+    lex::TokenKind kind = tokens[equal - 1].kind;
+    if (kind != lex::name && kind != lex::type_name) return;
+    h->has_init = true;
+    h->has_type = equal - 1 > from;
+    h->name = source[tokens[equal - 1].span.start:tokens[equal - 1].span.end];
+    if (h->has_type) h->type = source[tokens[from].span.start:spaces_before(source, tokens[equal - 1].span.start)];
+    h->value = source[tokens[equal + 1].span.start:tokens[to - 1].span.end];
+    h->ok = true;
+}
+
+// Reads `for (init; condition; step)` at the `for` token `at`; not `ok` for any other header.
+static Header read_header(Str source, lex::Tokens tokens, Usize at) {
+    Header h = {};
+    if (at + 1 >= countof(tokens) || tokens[at + 1].kind != lex::left_paren) return h;
+    Usize close = close_paren(tokens, at + 1);
+    Usize first = find_flat(tokens, at + 2, close, lex::semicolon);
+    Usize second = find_flat(tokens, first + 1, close, lex::semicolon);
+    if (close == at + 1 || first == close || second == close) return h;
+    if (find_flat(tokens, second + 1, close, lex::semicolon) != close) return h;
+    if (find_flat(tokens, second + 1, close, lex::comma) != close) return h;
+    h.close = close;
+    read_init(source, tokens, at + 2, first, &h);
+    h.condition = "true";
+    if (second > first + 1) h.condition = source[tokens[first + 1].span.start:tokens[second - 1].span.end];
+    h.step = step_text(source, tokens, second + 1, close);
+    return h;
+}
+
+// A name a loop declared, and the innermost block it is in (1 + the index in the list of braces, 0 for none).
+struct Declared {
+    Str name;
+    Usize scope;
+};
+
+typedef typeof(Declared[:]) Declareds;
+
+static Usize scope_of(Braces braces, Usize at) {
+    Usize found = 0;
+    for (Usize i = 0; i < countof(braces); i++) {
+        if (braces[i].open < at && at < braces[i].close) found = i + 1;
+    }
+    return found;
+}
+
+static Bool visible(Braces braces, Usize earlier, Usize here) {
+    if (earlier == here || earlier == 0) return true;
+    if (here == 0) return false;
+    return braces[earlier - 1].open < braces[here - 1].open && braces[here - 1].close < braces[earlier - 1].close;
+}
+
+static Bool declared_before(Braces braces, Declareds seen, Str name, Usize scope) {
+    for (Usize i = 0; i < countof(seen); i++) {
+        if (mem::equal(seen[i].name, name) && visible(braces, seen[i].scope, scope)) return true;
+    }
+    return false;
+}
+
+static Bool has_continue(lex::Tokens tokens, Usize from, Usize to) {
+    for (Usize i = from; i < to; i++) {
+        if (tokens[i].kind == lex::kw_continue) return true;
+    }
+    return false;
+}
+
+// The brace of the block that opens at the token `open`, or the length of the list.
+static Usize brace_at(Braces braces, Usize open) {
+    for (Usize i = 0; i < countof(braces); i++) {
+        if (braces[i].open == open) return i;
+    }
+    return countof(braces);
+}
+
+// The lines of an unbraced body: those after the header's line that are blank or indented deeper than the `for`. The
+// offset after the last one that holds text, or 0 when there is none; `indent` is the first one's indentation.
+static Usize unbraced_end(Str source, Usize header_end, Usize indent, Usize *body_indent) {
+    Usize at = after_line(source, header_end);
+    Usize end = 0;
+    *body_indent = 0;
+    while (at < countof(source)) {
+        Usize n = indent_of(source, at);
+        Bool blank = at + n >= countof(source) || source[at + n] == '\n';
+        if (!blank && n <= indent) break;
+        if (!blank && end == 0) *body_indent = n;
+        at = after_line(source, at);
+        if (!blank) end = at;
+    }
+    return end;
+}
+
+// What the header becomes: the declaration of the counter on its own line, then `while condition`.
+static Str while_head(Header h, Bool declare, Usize indent) {
+    Str out = "";
+    if (h.has_init) {
+        Str line = as_str(format::push(h.name, " = ", h.value));
+        if (declare) {
+            Str automatic = "auto";
+            Str kind = "";
+            if (h.has_type && !mem::equal(h.type, automatic)) kind = as_str(format::push(": ", h.type));
+            line = as_str(format::push("let mut ", h.name, kind, " = ", h.value));
+        }
+        out = as_str(format::push(line, "\n", spaces(indent)));
+    }
+    return as_str(format::push(out, "while ", h.condition));
+}
+
+static Bool has_continue_before(lex::Tokens tokens, Usize from, Usize offset) {
+    for (Usize i = from; i < countof(tokens) && tokens[i].span.start < offset; i++) {
+        if (tokens[i].kind == lex::kw_continue) return true;
+    }
+    return false;
+}
+
+// The body in braces: it is converted by the block pass, and the step becomes its tail. False when the loop is left.
+static Bool braced_for(Str source, lex::Tokens tokens, Braces braces, Header h) {
+    Usize which = brace_at(braces, h.close + 1);
+    if (which == countof(braces) || !braces[which].block || braces[which].skip) return false;
+    Usize open = braces[which].open;
+    Usize close = braces[which].close;
+    Bool one_line = same_line(tokens, open, close);
+    if (countof(h.step) == 0) return one_line || multi_line_ready(tokens, braces[which]);
+    if (one_line || !multi_line_ready(tokens, braces[which]) || has_continue(tokens, open, close)) return false;
+    Str line = as_str(format::push(spaces(indent_of(source, tokens[open + 1].span.start)), h.step));
+    braces[which].tail =
+        tokens[close - 1].line_break ? as_str(format::push(line, "\n")) : as_str(format::push("\n", line));
+    return true;
+}
+
+// The body of the lines under the header: the step is added after the last of them. False when the loop is left.
+static Bool unbraced_for(Str source, lex::Tokens tokens, Header h, Usize indent, Cuts *cuts) {
+    if (!tokens[h.close].line_break) return false;
+    Usize body_indent = 0;
+    Usize end = unbraced_end(source, tokens[h.close].span.end, indent, &body_indent);
+    if (end == 0) return false;
+    if (countof(h.step) == 0) return true;
+    if (has_continue_before(tokens, h.close, end)) return false;
+    add_cut(cuts, end, end, as_str(format::push(spaces(body_indent), h.step, "\n")));
+    return true;
+}
+
+// One C `for` at the token `at`, written as `while`: the cut of its header, and the line of the step.
+static void one_for(Str source, lex::Tokens tokens, Braces braces, Usize at, Declareds *seen, Cuts *cuts) {
+    Header h = read_header(source, tokens, at);
+    if (!h.ok) return;
+    Usize indent = indent_of(source, tokens[at].span.start);
+    Usize scope = scope_of(braces, at);
+    Bool declare = h.has_type && !declared_before(braces, *seen, h.name, scope);
+    Str head = while_head(h, declare, indent);
+    if (h.close + 1 < countof(tokens) && tokens[h.close + 1].kind == lex::left_brace) {
+        if (!braced_for(source, tokens, braces, h)) return;
+    } else {
+        if (!unbraced_for(source, tokens, h, indent, cuts)) return;
+        head = as_str(format::push(head, ":"));
+    }
+    add_cut(cuts, tokens[at].span.start, tokens[h.close].span.end, head);
+    if (!declare) return;
+    *seen = mem::realloc(*seen, countof(*seen) + 1);
+    (*seen)[countof(*seen) - 1] = (Declared){.name = h.name, .scope = scope};
+}
+
+// Every C `for (init; condition; step)` that starts its line, outside the functions left alone.
+static void c_for_loops(Str source, lex::Tokens tokens, Braces braces, Cuts *cuts) {
+    Declareds seen = {};
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::kw_for || in_skipped(braces, i)) continue;
+        if (i > 0 && !tokens[i - 1].line_break) continue;
+        one_for(source, tokens, braces, i, &seen, cuts);
+    }
+}
+
 static Str apply(Str source, Cuts cuts) {
     Str out = "";
     Usize from = 0;
@@ -282,10 +603,13 @@ export Str convert(Str source) {
     if (lexed == .error) return source;
     lex::Tokens tokens = lexed.ok;
     Braces braces = braces_of(tokens);
+    mark_c_functions(tokens, braces);
     Cuts cuts = {};
+    string_runs(tokens, braces, &cuts);
+    c_for_loops(source, tokens, braces, &cuts);
     for (Usize i = 0; i < countof(braces); i++) {
         Brace brace = braces[i];
-        if (!brace.block) continue;
+        if (!brace.block || brace.skip) continue;
         if (same_line(tokens, brace.open, brace.close)) {
             one_line(source, tokens, brace, &cuts);
         } else if (!brace.inside) {

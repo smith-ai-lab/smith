@@ -45,3 +45,46 @@ export void test_front_fix_blocks_a_list_is_not_a_block() {
 export void test_front_fix_blocks_a_text_with_no_braces_is_the_same() {
     check("fn f() -> i32:\n    return 1\n", "fn f() -> i32:\n    return 1\n");
 }
+
+export void test_front_fix_blocks_a_closing_brace_after_the_last_statement() {
+    check("fn f(e: *E) {\n    for i in range(0, e.n) {\n        free(e.items[i]) }\n    free(e)\n}\n",
+          "fn f(e: *E):\n    for i in range(0, e.n):\n        free(e.items[i])\n    free(e)\n");
+}
+
+export void test_front_fix_blocks_a_c_signature_is_left_whole() {
+    check("pub usize count(auto x) {\n    if x { return 1 }\n    return 0\n}\n",
+          "pub usize count(auto x) {\n    if x { return 1 }\n    return 0\n}\n");
+}
+
+export void test_front_fix_blocks_a_c_for_with_an_unbraced_body() {
+    check("fn f(uri: str) {\n    let mut same: bool = true\n    for (usize k = 0; same && k < n; k++)\n        same = "
+          "a[k] == uri[k]\n    done()\n}\n",
+          "fn f(uri: str):\n    let mut same: bool = true\n    let mut k: usize = 0\n    while same && k < n:\n        "
+          "same = a[k] == uri[k]\n        k += 1\n    done()\n");
+}
+
+export void test_front_fix_blocks_a_c_for_with_a_braced_body() {
+    check("fn f(xs: []i32) {\n    for (usize i = countof(xs); i > 0; i--) {\n        use(xs[i - 1])\n    }\n}\n",
+          "fn f(xs: []i32):\n    let mut i: usize = countof(xs)\n    while i > 0:\n        use(xs[i - 1])\n        i "
+          "-= 1\n");
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a()\n        b() }\n}\n",
+          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        a()\n        b()\n        i -= 1\n");
+}
+
+export void test_front_fix_blocks_a_second_loop_with_the_same_counter_assigns() {
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a()\n    }\n    for (usize i = 7; i > 0; i--) {\n    "
+          "    b()\n    }\n}\n",
+          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        a()\n        i -= 1\n    i = 7\n    while i > "
+          "0:\n        b()\n        i -= 1\n");
+}
+
+export void test_front_fix_blocks_a_c_for_with_a_continue_is_left() {
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        continue\n    }\n}\n",
+          "fn f():\n    for (usize i = 9; i > 0; i--):\n        continue\n");
+}
+
+export void test_front_fix_blocks_adjacent_strings_on_several_lines_are_parenthesized() {
+    check("fn f() -> str {\n    return \"ab \"\n           \"cd\"\n}\n",
+          "fn f() -> str:\n    return (\"ab \"\n           \"cd\")\n");
+    check("fn f() {\n    g(\"ab \"\n      \"cd\")\n}\n", "fn f():\n    g(\"ab \"\n      \"cd\")\n");
+}
