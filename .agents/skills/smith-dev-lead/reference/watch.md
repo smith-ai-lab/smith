@@ -35,6 +35,9 @@ fix() {
   done
   # a green PR that is not queued: merge main in and turn auto-merge on
   for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null and .draft==false and (.updated_at|fromdateiso8601<now-300))|.number' 2>/dev/null); do
+    # PRs the lead took out for good (a duplicate, or one GitHub left open after merging it) wait for the owner to close
+    # them: never re-arm (#2179 and #2171 went back into the queue twice on 2026-11-04)
+    grep -qx "$p" "$(dirname "$SEEN")/norearm.txt" 2>/dev/null && continue
     # GitHub often reports `unknown` for a green PR (2026-11-03: #2033 and #2031 sat green and unqueued for 50 minutes):
     # go by the ci check, skipping only a PR that conflicts
     [ "$(gh api repos/$R/pulls/$p --jq .mergeable_state 2>/dev/null)" = dirty ] && continue
@@ -42,6 +45,10 @@ fix() {
     [ "$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last' 2>/dev/null)" = added_to_merge_queue ] && continue
     hs=$(gh api repos/$R/pulls/$p --jq .head.sha 2>/dev/null)
     [ "$(gh api repos/$R/commits/$hs/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = success ] || continue
+    # the queue failed this head: re-arming re-queues broken code (#2148, 2026-11-04); its runner has ended, so a fresh one takes it over
+    hd=$(gh api repos/$R/commits/$hs --jq .commit.committer.date 2>/dev/null)
+    qf=$(gh api "repos/$R/actions/runs?event=merge_group&per_page=60" --jq "[.workflow_runs[]|select((.head_branch|contains(\"/pr-$p-\")) and .conclusion==\"failure\" and .created_at > \"$hd\")]|length" 2>/dev/null)
+    if [ "${qf:-0}" -gt 0 ]; then seen "qfail$p-$hs" && echo "URGENT PR #$p: the merge queue failed its head $hs and it is out of the queue: start a runner to take it over"; continue; fi
     gh api -X PUT "repos/$R/pulls/$p/update-branch" >/dev/null 2>&1
     gh api -X PUT "repos/$R/pulls/$p/ccr/auto_merge" >/dev/null 2>&1 && did "re-armed PR #$p" || { seen "arm$p-$(date +%H)" && echo "PR #$p is green but auto-merge would not turn on"; }
   done
@@ -242,17 +249,42 @@ vitals() {
   echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
 }
 
+# The queue stalled 10:51-11:31 on 2026-11-04 with its front groups green and nothing building; taking the front PR
+# out restarted it. PRs queued and no merge_group run created or running for 15 minutes wakes the lead at once.
+stall() {
+  q=0; for p in $(gh api "repos/$R/pulls?state=open&per_page=50" --jq '.[]|select(.auto_merge==null)|.number' 2>/dev/null); do
+    [ "$(gh api "repos/$R/issues/$p/timeline?per_page=100" --jq '[.[]|select(.event=="added_to_merge_queue" or .event=="removed_from_merge_queue")|.event]|last' 2>/dev/null)" = added_to_merge_queue ] && q=$((q+1))
+  done
+  [ $q = 0 ] && return
+  idle=$(gh api "repos/$R/actions/runs?event=merge_group&per_page=5" --jq '[.workflow_runs[]|select(.status!="completed" or (.updated_at|fromdateiso8601>now-900))]|length' 2>/dev/null)
+  [ "${idle:-1}" = 0 ] && seen "stall-$(date -u +%F-%H)" && echo "URGENT the merge queue holds $q PRs and nothing has built for 15 minutes: take the front PR out (close and reopen) so it rebuilds"
+}
+
+# Batched wakes (owner, 2026-11-04, after the lead woke about 140 times in 12 hours at about 200k tokens a wake):
+# the mailbox and lines marked URGENT (main's ci red, no merge for an hour, a queue failure, a stalled queue) wake the lead at once; everything else
+# collects in $PEND and wakes it at most every 30 minutes.
+PEND=$(dirname "$SEEN")/pending-wake; : > "$PEND"; start=$(date +%s)
+wake() { [ -s "$PEND" ] && cat "$PEND"; echo "$1"; vitals; exit 0; }
 t=0
 while :; do
   new=$(mail); if [ -n "$new" ] && [ "$(echo "$new" | jq length)" -gt 0 ]; then
-    echo "new @lead: on #1406"; echo "$new" | jq -r '.[]|"--- \(.created_at)\n\(.body|split("\n")[:40]|join("\n"))"'
-    echo "$new" | jq -r '.[-1].created_at' > "$MARK"; vitals; exit 0
+    echo "$new" | jq -r '.[-1].created_at' > "$MARK"
+    wake "new @lead: on #1406$(echo "$new" | jq -r '.[]|"\n--- \(.created_at)\n\(.body|split("\n")[:40]|join("\n"))"')"
   fi
-  if [ $((t % 10)) = 0 ]; then why=$(fix; health); [ -n "$why" ] && { echo "$why"; vitals; exit 0; }; fi
-  if [ $((t % 15)) = 0 ]; then why=$(check); [ -n "$why" ] && { echo "$why"; vitals; exit 0; }; fi
+  why=
+  [ $((t % 10)) = 0 ] && why=$(fix; health; stall)
+  [ $((t % 15)) = 0 ] && why="$why${why:+$'\n'}$(check)"
+  if [ -n "$why" ]; then
+    echo "$why" | grep -q "URGENT\|main's ci is red\|no merge into main" && wake "$why"
+    echo "$why" >> "$PEND"
+  fi
+  [ -s "$PEND" ] && [ $(( $(date +%s) - start )) -ge 1800 ] && wake "(batched: 30 minutes of non-urgent lines above)"
   t=$((t+1)); sleep 60
 done
 ```
+- **Batched wakes (owner, 2026-11-04):** the mailbox and `URGENT` lines (main red, a queue failure on a PR's head, a stalled queue) wake the lead at once; every other line waits in `pending-wake` and wakes it at most every 30 minutes. Overnight on 2026-11-03 the lead woke about 140 times in 12 hours, each wake several calls at about 200k tokens.
+- **A PR the queue failed is not re-armed:** when a `merge_group` run for the PR failed after its head commit, the watcher wakes the lead (`URGENT`) to start a takeover runner instead of re-queuing broken code (#2148 re-entered the queue at 12:36 on 2026-11-04 with the code that failed at 12:03). Runners end once their PR is queued (smith-dev-runner step 5), so nobody else is watching it.
+- **A stalled queue (every ten minutes, `stall`):** PRs queued and no `merge_group` run created or running for 15 minutes wakes the lead to take the front PR out (2026-11-04, 10:51-11:31).
 - **Done without the lead (every ten minutes):**
   - Everything a blocked ticket waits for is closed: it removes `blocked` and says so on the ticket.
   - A green PR not in the merge queue (GitHub ignores auto-merge on a PR that is already green; the queue drops a PR whose queue run fails): it merges main in and turns auto-merge on through `PUT pulls/N/ccr/auto_merge` (#1522 sat green for 90 minutes). Green means the `ci` check passed, not `mergeable_state=clean`: GitHub often reports `unknown` (#2033 and #2031 sat green and unqueued for 50 minutes, 2026-11-03). A PR whose last queue event is `added_to_merge_queue` is skipped: its `auto_merge` is null too, and updating its branch would throw it out of the queue.
