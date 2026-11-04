@@ -28,11 +28,14 @@ fn open_window() -> Window: ...
 
 @when(target.os != .macos)
 fn open_window() -> Window: ...
+
+@when(target.os == .macos)
+import c <sys/event.h>
 ```
 
 - Every attribute is a struct, written with call syntax on the line before what it marks. With no arguments the parentheses are left off (`@inline`, not `@inline()`; `smith fmt` drops them).
 - Built-ins are lowercase with no namespace: `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name("x")`, `@when(cond)`, `@effects(...)`. A new one (`@hot`, `@unroll`) exists once its own feature ticket decides it. `[[std::x]]` becomes `@x`.
-- `@when(cond)`: a top-level declaration or struct field that exists only where the compile-time `cond` holds. For each supported target (macOS and Linux), two live declarations of a name are an error, and so is a use with none. The generated header writes `#if`. Inside a function, a compile-time `if` chooses the code instead.
+- `@when(cond)`: a top-level declaration, struct field or import that exists only where the compile-time `cond` holds; it is the only top-level compile-time choice, there is no `if constexpr` (owner, 2026-11-04). A header imported under an untaken `@when` is never read. For each supported target (macOS and Linux), two live declarations of a name are an error, and so is a use with none. The generated header writes `#if`, around the `#include` for an import. Inside a function, a compile-time `if` chooses the code instead.
 - `[[nodiscard]]` is gone (an unused result is an error); `[[maybe_unused]]` becomes a `_` prefix on the name.
 
 ## User attributes
