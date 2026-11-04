@@ -29,8 +29,9 @@
 // The old and the new form are told apart by a fixed lookahead, no symbol table: `if (c) s` is the old form when the
 // `)` that closes the first `(` is followed by `{` or by the start of a statement, and `if c {` the new one when a `{`
 // comes before the end of the line; `for (` is a new `for` when its `)` is followed by `in`. Where `(` follows the
-// keyword and the token after the `)` could begin a statement or continue the condition (`-`, `*`, `&`, `(`: `if
-// (a) * b {`), the old form wins.
+// keyword and the token after the `)` could begin a statement (`(`: `if (a) (b) {`), the old form wins. After `-`, `*`
+// and
+// `&` a `{` before the end of the line makes it the new form: `if (a + 1) * 2 > n {` (#2226).
 //
 // A statement starts a declaration, and goes to `parse::declaration`, when it starts with a `type_name`, a path whose
 // last name is a `type_name` (`geometry::Box b`), a type or storage keyword (`const`, `static`, `auto`, `struct`,
@@ -639,14 +640,19 @@ static Bool brace_before_line_end(const parse::Parser *p, Usize from) {
     return false;
 }
 
-// Whether a token continues an expression and so can never begin a statement: the token after `if (a)` in `if (a) < b
-// {`.
+// Whether a token continues an expression where the new form has a `{` before the line ends: the token after `if (a)`
+// in `if (a) < b {`. `-`, `*` and `&` also begin a statement (`if (a) *p = 1;`), but that statement ends in `;` before
+// any `{`, which `new_header` checks; so `if (a + 1) * 2 > n {` is a product, as the fixer's first pass writes it
+// (#2226).
 static Bool continues_condition(lex::TokenKind kind) {
     switch (kind) {
     case lex::dot:
     case lex::dot_star:
     case lex::arrow:
     case lex::plus:
+    case lex::minus:
+    case lex::star:
+    case lex::ampersand:
     case lex::slash:
     case lex::percent:
     case lex::less_less:
