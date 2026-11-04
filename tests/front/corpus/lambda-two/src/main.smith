@@ -1,0 +1,8 @@
+import <stdio.h>;
+
+pub fn main() -> i32:
+    let add: fn(i32, i32) -> i32 = fn(a, b): a + b
+    let mul: fn(i32, i32) -> i32 = fn(a, b): a * b
+    let half: fn(f64) -> f64 = fn(x): x / 2.0
+    let _ = c::printf("%d %d %.1f\n", add(2, 3), mul(2, 3), half(5.0))
+    0

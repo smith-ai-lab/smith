@@ -1,0 +1,230 @@
+// front::fix_variants, the fixer's whole-tree rename of enum variants to lowercase (#2098, part of #2053).
+//
+// In the new syntax a variant is a value, so it is lowercase: `NotFound` is `not_found`, written `.not_found` where the
+// context expects the enum. The names are declared in one file and used in others (`files.NotFound`, `case NotFound:`,
+// `return NotFound`), so a per-file fix would break every other file. This pass reads all the files being fixed first,
+// collects the variants of every enum they declare, then rewrites the declaration and every use in every file.
+//
+//   fix_variants::collect(source)        the variants the enums of `source` declare (names, no duplicates)
+//   fix_variants::rename(source, names)  `source` with each of `names` written lowercase: a declaration or a name after
+//                                        `.` or `::` as `snake_case`, any other use as `.snake_case`
+//   fix_variants::rename_all(sources)    the same for a list of files (Words): the names of all of them, applied to
+//   each
+//
+// A name is left alone (and so are its uses) when it is also the name of a struct, enum or union in the files, since
+// text alone cannot tell which is meant. A lowercase result that is a keyword gets a `_` at the end (`Default` is
+// `default_`). The variants keep the attributes written before them, so a `@c_name` stays as it was. Tests:
+// `tests/front_fix_variants_test.smith`.
+module front::fix_variants;
+
+import front::lex;
+import std::arena;
+import std::format;
+import std::mem;
+
+// A text in a list: `Str xs[:]` would be a block of rows, not a list of texts (see front::ast's Identifier).
+export struct Word {
+    Str text;
+};
+
+export typedef typeof(Word[:]) Words;
+
+// The variants found in a text, and the offsets of the tokens that declare them.
+export struct Found {
+    Words names;
+    Usize declared[:];
+};
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Bool is_upper(char c) {
+    return c >= 'A' && c <= 'Z';
+}
+
+static Bool is_lower_or_digit(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+}
+
+// `NotFound` as `not_found`; `IOError` as `io_error`; a result that is a keyword gets a `_`.
+export Str snake(Str name) {
+    Str out = "";
+    for (Usize i = 0; i < countof(name); i++) {
+        char c = name[i];
+        if (!is_upper(c)) {
+            out = as_str(format::push(out, name[i:i + 1]));
+            continue;
+        }
+        Bool after_word = i > 0 && is_lower_or_digit(name[i - 1]);
+        Bool ends_acronym = i > 0 && is_upper(name[i - 1]) && i + 1 < countof(name) && is_lower_or_digit(name[i + 1]);
+        if (after_word || ends_acronym) out = as_str(format::push(out, "_"));
+        Str letters = "abcdefghijklmnopqrstuvwxyz";
+        Usize at = (Usize)(c - 'A');
+        out = as_str(format::push(out, letters[at:at + 1]));
+    }
+    lex::Lexed read = lex::tokenize_new(out);
+    if (read != .error && countof(read.ok) > 0 && lex::is_keyword(read.ok[0].kind)) {
+        out = as_str(format::push(out, "_"));
+    }
+    return out;
+}
+
+static Bool has(Words names, Str name) {
+    for (Usize i = 0; i < countof(names); i++) {
+        if (mem::equal(names[i].text, name)) return true;
+    }
+    return false;
+}
+
+// The spaces at the start of the line that holds `at`.
+static Usize indent_of(Str source, Usize at) {
+    Usize start = at;
+    while (start > 0 && source[start - 1] != '\n')
+        start -= 1;
+    Usize n = 0;
+    while (start + n < countof(source) && source[start + n] == ' ')
+        n += 1;
+    return n;
+}
+
+static Bool is_open(lex::TokenKind k) {
+    return k == lex::left_paren || k == lex::left_bracket || k == lex::left_brace;
+}
+
+static Bool is_close(lex::TokenKind k) {
+    return k == lex::right_paren || k == lex::right_bracket || k == lex::right_brace;
+}
+
+// Where the body of the enum whose keyword is token `at` starts: the token after its `{` or `:`, or the length of the
+// list when there is none within a few tokens (`enum Name;`).
+static Usize body_start(lex::Tokens tokens, Usize at, Bool *braced) {
+    Usize limit = at + 12;
+    for (Usize i = at + 1; i < countof(tokens) && i < limit; i++) {
+        if (tokens[i].kind == lex::left_brace || tokens[i].kind == lex::colon) {
+            *braced = tokens[i].kind == lex::left_brace;
+            return i + 1;
+        }
+        if (tokens[i].kind == lex::semicolon) break;
+    }
+    return countof(tokens);
+}
+
+static void note(Found *found, Str source, lex::Token token) {
+    Str name = lex::text(source, token);
+    found->declared = mem::realloc(found->declared, countof(found->declared) + 1);
+    found->declared[countof(found->declared) - 1] = token.span.start;
+    if (has(found->names, name)) return;
+    found->names = mem::realloc(found->names, countof(found->names) + 1);
+    found->names[countof(found->names) - 1] = (Word){.text = name};
+}
+
+// Whether token `i` starts an entry of the body: first after the `{` or a `,`, first on its line, or after the `]]`
+// of an attribute.
+static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first) {
+    if (tokens[i].kind != lex::type_name) return false;
+    if (i == first || tokens[i].line_break) return true;
+    lex::TokenKind before = tokens[i - 1].kind;
+    return before == lex::comma || before == lex::right_bracket;
+}
+
+// The variants of the enum whose keyword is token `at`, added to `found`.
+static void read_body(Found *found, Str source, lex::Tokens tokens, Usize at) {
+    Bool braced = false;
+    Usize first = body_start(tokens, at, &braced);
+    Usize base = indent_of(source, tokens[at].span.start);
+    Usize depth = braced ? 1 : 0;
+    for (Usize i = first; i < countof(tokens) && tokens[i].kind != lex::end_of_file; i++) {
+        lex::Token t = tokens[i];
+        if (!braced && t.line_break && indent_of(source, t.span.start) <= base) break;
+        if (braced && is_close(t.kind) && depth == 1) break;
+        Usize entry_depth = braced ? 1 : 0;
+        if (depth == entry_depth && starts_entry(tokens, i, first)) note(found, source, t);
+        if (is_open(t.kind)) depth += 1;
+        if (is_close(t.kind) && depth > 0) depth -= 1;
+    }
+}
+
+// The variants the enums of `source` declare. Text that does not tokenize declares none.
+export Found collect(Str source) {
+    Found found = {};
+    lex::Lexed read = lex::tokenize_new(source);
+    if (read == .error) return found;
+    lex::Tokens tokens = read.ok;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::kw_enum) read_body(&found, source, tokens, i);
+    }
+    return found;
+}
+
+static Words push_word(Words list, Str text) {
+    Words more = mem::realloc(list, countof(list) + 1);
+    more[countof(more) - 1] = (Word){.text = text};
+    return more;
+}
+
+// `tags` with the names `source` declares as a struct, enum or union tag added.
+static Words add_tags(Words tags, Str source) {
+    lex::Lexed read = lex::tokenize_new(source);
+    if (read == .error) return tags;
+    lex::Tokens tokens = read.ok;
+    for (Usize i = 0; i + 1 < countof(tokens); i++) {
+        lex::TokenKind k = tokens[i].kind;
+        if (k != lex::kw_struct && k != lex::kw_enum && k != lex::kw_union) continue;
+        if (tokens[i + 1].kind != lex::type_name) continue;
+        Str name = lex::text(source, tokens[i + 1]);
+        if (!has(tags, name)) tags = push_word(tags, name);
+    }
+    return tags;
+}
+
+static Bool declared_at(Found found, Usize offset) {
+    for (Usize i = 0; i < countof(found.declared); i++) {
+        if (found.declared[i] == offset) return true;
+    }
+    return false;
+}
+
+// `source` with each of `names` lowercase.
+export Str rename(Str source, Words names) {
+    lex::Lexed read = lex::tokenize_new(source);
+    if (read == .error || countof(names) == 0) return source;
+    lex::Tokens tokens = read.ok;
+    Found here = collect(source);
+    Str out = "";
+    Usize copied = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        lex::Token t = tokens[i];
+        if (t.kind != lex::type_name) continue;
+        Str name = lex::text(source, t);
+        if (!has(names, name)) continue;
+        lex::TokenKind before = i > 0 ? tokens[i - 1].kind : lex::end_of_file;
+        Bool qualified = before == lex::dot || before == lex::colon_colon;
+        Str spelled = snake(name);
+        if (!qualified && !declared_at(here, t.span.start)) spelled = as_str(format::push(".", spelled));
+        out = as_str(format::push(out, source[copied:t.span.start], spelled));
+        copied = t.span.end;
+    }
+    return as_str(format::push(out, source[copied:countof(source)]));
+}
+
+// `sources` with the variants of all of them renamed in each.
+export Words rename_all(Words sources) {
+    Words names = {};
+    Words tags = {};
+    for (Usize i = 0; i < countof(sources); i++) {
+        tags = add_tags(tags, sources[i].text);
+        Found found = collect(sources[i].text);
+        for (Usize j = 0; j < countof(found.names); j++) {
+            if (!has(names, found.names[j].text)) names = push_word(names, found.names[j].text);
+        }
+    }
+    Words kept = {};
+    for (Usize i = 0; i < countof(names); i++) {
+        if (!has(tags, names[i].text)) kept = push_word(kept, names[i].text);
+    }
+    Words renamed = mem::alloc_slice(Word, countof(sources));
+    for (Usize i = 0; i < countof(sources); i++)
+        renamed[i].text = rename(sources[i].text, kept);
+    return renamed;
+}

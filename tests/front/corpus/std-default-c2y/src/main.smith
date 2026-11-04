@@ -1,0 +1,8 @@
+import c <stdio.h>
+
+# `let` infers the type, and countof counts an array's elements.
+pub fn main() -> i32:
+    let numbers: [6]i32 = [4, 8, 15, 16, 23, 42]
+    let count = countof(numbers)
+    let _ = stdio.printf("%zu\n", count)
+    0
