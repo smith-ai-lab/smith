@@ -1163,6 +1163,14 @@ static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
     return false;
 }
 
+// Whether a checker name has a module before it, `words::Pair`: a record of another smith module.
+static Bool in_module(Str name) {
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return true;
+    }
+    return false;
+}
+
 // Whether a checker name starts with `c::`: it came from a C header.
 static Bool from_header(Str name) {
     return countof(name) > 3 && name[0] == 'c' && name[1] == ':' && name[2] == ':';
@@ -1304,7 +1312,8 @@ static void ensure_c_record(state::Emitter *e, types::TypeRef t) {
         base = next;
     }
     state::Ty found = {};
-    if (base->kind == .record && !find_record_by_name(e, base->name, &found) && from_header(base->name)) {
+    if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
+        (from_header(base->name) || in_module(base->name))) {
         make_c_record(e, base);
     }
 }
