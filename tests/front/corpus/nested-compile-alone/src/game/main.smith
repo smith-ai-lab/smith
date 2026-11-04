@@ -1,0 +1,4 @@
+import lib.text
+
+fn main() -> i32:
+    return text.length("abc").to(i32) - 3

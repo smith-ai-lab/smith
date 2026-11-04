@@ -1210,10 +1210,19 @@ static Str c_type_fix(Str name) {
     return "";
 }
 
+// The concept a capitalized concept name of today's spelling stands for (`Int` is `int`), or empty.
+static Str concept_lower(Str name) {
+    if (same_text(name, "Int")) return "int";
+    if (same_text(name, "Num")) return "num";
+    if (same_text(name, "Signed")) return "signed";
+    if (same_text(name, "Unsigned")) return "unsigned";
+    if (same_text(name, "Float")) return "float";
+    if (same_text(name, "Pointer")) return "pointer";
+    return "";
+}
+
 static Bool is_concept_name(Str name) {
-    return same_text(name, "Int") || same_text(name, "Num") || same_text(name, "Signed") ||
-           same_text(name, "Unsigned") || same_text(name, "Float") || same_text(name, "Pointer") ||
-           same_text(name, "Struct") || same_text(name, "Enum");
+    return same_text(name, "Struct") || same_text(name, "Enum");
 }
 
 // Whether `path` starts with `c::`: a name from a C header, which waits for the C importer (#1124).
@@ -1246,8 +1255,11 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
             }
             return r->table.invalid;
         }
-        if (is_concept_name(path.segments[0].text)) {
-            failf(r, span, "not yet typed: the concept `", path.segments[0].text, "`; only `Auto` is typed so far");
+        Str lower = concept_lower(written);
+        if (countof(lower) > 0) return concept_of(&r->table, lower);
+        if (is_concept_name(written)) {
+            failf(r, span, "not yet typed: the concept `", written, "`; only `Auto`, `Int`, `Num`, `Signed`, ",
+                  "`Unsigned`, `Float` and `Pointer` are typed so far");
             return r->table.invalid;
         }
     }
@@ -1454,17 +1466,18 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
 }
 
 // `[5,3]T` is `[5][3]T`; `[,3]T` is a slice of `[3]T`; `[,]T` and `[,,]T` are blocks of 2 and 3 dimensions known at run
-// time. A known size after an empty one, or a size that is not an integer literal, is not typed yet.
+// time. The sizes after the last empty one are the cell; a known size before it (`[,2,]T`) is a dimension counted at
+// run time. A size that is not an integer literal is not typed yet.
 static TypeRef build_block(Checked *r, ast::Span span, ast::ExprRef dims[:], TypeRef element) {
-    Usize empty = 0;
-    while (empty < countof(dims) && dims[empty] == nullptr)
-        empty += 1;
+    Usize empty = countof(dims);
+    while (empty > 0 && dims[empty - 1] != nullptr)
+        empty -= 1;
     TypeRef cell = element;
     for (Usize i = countof(dims); i > empty; i--) {
         const ast::Expr *size = dims[i - 1];
-        if (size == nullptr || size->kind != .integer) {
-            failf(r, span, "not yet typed: a block with a size that is not an integer literal, or an empty ",
-                  "size after a known one; write the empty sizes first, as `[,3]T`");
+        if (size->kind != .integer) {
+            failf(r, span, "not yet typed: a block with a size that is not an integer literal; write the integer, ",
+                  "for example `[,3]T`");
             return r->table.invalid;
         }
         cell = array_of(&r->table, cell, size->kind.integer.value, false);
@@ -1823,26 +1836,81 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     }
 }
 
-// `let Line = []u8`: an alias of smith's own syntax, a constant whose value is a type. It is plain substitution.
-static Bool is_own_alias(const ast::Decl *d) {
-    if (d->kind != .variable || !d->kind.variable.is_new) return false;
+// A name or a type value read where a value is read, as a type: null when it is neither. A name counts when it is a
+// builtin or a type in scope (`i32`, `Meters`), so `const origin = (x, y)` of values stays a value.
+static ast::TypeExpr *leaf_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind == .type_value) return e->kind.type_value.type;
+    if (e->kind != .name) return nullptr;
+    ast::Path path = e->kind.name.path;
+    Bool builtin_name = false;
+    if (countof(path.segments) == 1) {
+        Str own = own_builtin(path.segments[0].text);
+        builtin_name = countof(own) > 0 && builtin(&r->table, own) != nullptr;
+    }
+    const Symbol *found = builtin_name ? nullptr : type_through_modules(r, path);
+    if (!builtin_name && (found == nullptr || found->kind != .type_name)) return nullptr;
+    return ast::make_type({.named = {.path = path}});
+}
+
+typedef ast::TypeRef TypeRefList[:];
+
+static TypeRefList type_slice(Usize count) {
+    ast::TypeRef *block = (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
+    TypeRefList list = block[0:count];
+    return list;
+}
+
+// `(i32, f32)` where a value is read: the type it stands for, or null when an element is no type. `tuple_as_type` also
+// takes a tuple of such tuples (`(Meters, (f32, f32))`); deeper nesting is not an alias, since a checker function
+// cannot recurse.
+static ast::TypeExpr *pair_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind != .tuple_lit) return nullptr;
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (countof(items) < 2) return nullptr;
+    ast::TypeRef elements[:] = type_slice(countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        elements[i] = leaf_as_type(r, items[i]);
+        if (elements[i] == nullptr) return nullptr;
+    }
+    return ast::make_type({.tuple = {.elements = elements}});
+}
+
+static ast::TypeExpr *tuple_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind != .tuple_lit) return nullptr;
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (countof(items) < 2) return nullptr;
+    ast::TypeRef elements[:] = type_slice(countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        elements[i] = leaf_as_type(r, items[i]);
+        if (elements[i] == nullptr) elements[i] = pair_as_type(r, items[i]);
+        if (elements[i] == nullptr) return nullptr;
+    }
+    return ast::make_type({.tuple = {.elements = elements}});
+}
+
+// The type a `let`/`const` of smith's own syntax stands for, or null when it is a value: `let Line = []u8` is a type
+// value, `const Pair = (i32, f32)` a tuple of types. It is plain substitution.
+static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
+    if (d->kind != .variable || !d->kind.variable.is_new) return nullptr;
     const ast::Expr *init = d->kind.variable.init;
-    return init != nullptr && init->kind == .type_value;
+    if (init == nullptr) return nullptr;
+    if (init->kind == .type_value) return init->kind.type_value.type;
+    if (init->kind == .tuple_lit) return tuple_as_type(r, init);
+    return nullptr;
 }
 
 static void declare_own_alias(Checked *r, const ast::Decl *d) {
-    if (d->kind != .variable) return;
-    const ast::Expr *init = d->kind.variable.init;
-    if (init == nullptr || init->kind != .type_value) return;
+    ast::TypeExpr *written = own_alias_type(r, d);
+    if (written == nullptr || d->kind != .variable) return;
     r->new_syntax = true;
-    TypeRef target = resolve(r, init->kind.type_value.type);
+    TypeRef target = resolve(r, written);
     r->new_syntax = false;
     declare_in_module(r, type_symbol(qualified(r, false, d->kind.variable.name), target, d, d->exported), d->span);
 }
 
 // Pass 2: aliases in the order written.
 static void declare_alias(Checked *r, const ast::Decl *d) {
-    if (is_own_alias(d)) {
+    if (own_alias_type(r, d) != nullptr) {
         declare_own_alias(r, d);
         return;
     }
@@ -1956,11 +2024,11 @@ export Bool is_auto_slice(const ast::TypeExpr *t) {
     return t->kind.slice.element != nullptr && t->kind.slice.element->kind == .auto_type;
 }
 
-// Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
-// a template with one instance per set of argument types (#1934).
+// Whether a parameter is written `auto x` (today's syntax) or `x: auto` (smith's own): its type is the type each call
+// passes, so the function is a template with one instance per set of argument types (#1934).
 export Bool is_auto_param(const ast::Param *p) {
     if (p->type == nullptr || p->is_rest || p->is_pack || p->is_gather) return false;
-    return is_auto_slice(p->type) || (!p->is_new && p->type->kind == .auto_type);
+    return is_auto_slice(p->type) || p->type->kind == .auto_type;
 }
 
 // The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
@@ -2206,6 +2274,10 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     keep_params(r, all, bindings, auto_syntax, kept, slots);
+    for (Usize i = 0; i < kept_count; i++) { // the parameters, for a `typeof(v)` in the result
+        Symbol parameter = {.name = slots[i].name, .kind = .variable, .type = slots[i].type};
+        declare(&r->scopes, parameter);
+    }
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
         r->new_syntax = !auto_syntax;
@@ -2290,7 +2362,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
         Bool is_constexpr = d->kind.variable.is_constexpr;
         Bool is_new = d->kind.variable.is_new;
         const ast::Expr *init = d->kind.variable.init;
-        if (is_own_alias(d) || declare_module_alias(r, d)) return;
+        if (own_alias_type(r, d) != nullptr || declare_module_alias(r, d)) return;
         declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .if_constexpr) {
         failf(r, span, "not yet typed: if constexpr");

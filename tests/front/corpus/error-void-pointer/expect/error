@@ -1,1 +1,2 @@
+src/main.smith:12:5: error: expected const Ball *, found const Void *: a void pointer never converts to a typed pointer implicitly (#398); write a conversion: x.cast(const Ball *)
 src/main.smith:15:30: error: expected const Ball *, found const Void *: a void pointer never converts to a typed pointer implicitly (#398); write a conversion: x.cast(const Ball *)

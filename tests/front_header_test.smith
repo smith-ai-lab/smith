@@ -250,6 +250,21 @@ export void test_front_header_a_struct_by_value_is_an_error() {
     remove_all(folder);
 }
 
+// A pointer to a struct of an imported module is spelled by that module's C name, and its header is included once.
+export void test_front_header_a_pointer_to_an_imported_struct_is_spelled_and_included() {
+    Str folder = folder_for("imported");
+    write_text(shapes_path(folder),
+               "import geometry.core\n\npub fn dot(a: *geometry.core.Point, b: *mut geometry.core.Point) -> i64:\n"
+               "    a.x + b.x\n");
+    compile::Report done = compile::header(shapes_path(folder), header_path(folder), "", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    test::check_equal(contains(got, "#include \"geometry/core.h\"\n#ifdef __cplusplus"), true);
+    test::check_equal(
+        contains(got, "int64_t geometry_shapes_dot(const geometry_core_Point *a, geometry_core_Point *b)"), true);
+    remove_all(folder);
+}
+
 export void test_front_header_a_file_in_todays_syntax_is_an_error() {
     Str folder = folder_for("today");
     write_text(shapes_path(folder), "module geometry::shapes;\n\nexport I32 one() {\n    return 1;\n}\n");

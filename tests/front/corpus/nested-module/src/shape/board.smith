@@ -1,0 +1,2 @@
+pub fn side() -> i32:
+    8

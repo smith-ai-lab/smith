@@ -1824,6 +1824,21 @@ static Bool type_value_cast(const parse::Parser *p) {
     return starts_bare_operand(parse::peek_at(p, last + 2).kind);
 }
 
+// Whether `(c::T) {` starts a compound literal of a C name: a `c::` path alone in the parentheses and a `{` after them.
+// `(c::name)` is a value otherwise, but a brace after it can only be an initializer list (`(c::Handler){.fill = f}`).
+static Bool c_literal_type(const parse::Parser *p) {
+    Usize last = 0;
+    if (parse::peek_at(p, 0).kind != lex::name) return false;
+    if (!text::is(parse::text(p, parse::peek_at(p, 0)), "c")) return false;
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+        lex::TokenKind next = parse::peek_at(p, last + 2).kind;
+        if (next != lex::name && next != lex::type_name) break;
+        last += 2;
+    }
+    if (last == 0 || parse::peek_at(p, last + 1).kind != lex::right_paren) return false;
+    return parse::peek_at(p, last + 2).kind == lex::left_brace;
+}
+
 // `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     ast::ExprRef items[:] = {};
@@ -1867,7 +1882,7 @@ static Bool array_type_ahead(const parse::Parser *p) {
 static Step paren(parse::Parser *p, Stack *st) {
     U32 start = parse::advance(p).span.start;
     if (p->new_syntax) return group_or_tuple(p, st, start);
-    if (parse_type::starts_type(p, 0) || type_value_cast(p) || array_type_ahead(p)) {
+    if (parse_type::starts_type(p, 0) || type_value_cast(p) || c_literal_type(p) || array_type_ahead(p)) {
         ast::TypeExpr *type = parse::type(p);
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
