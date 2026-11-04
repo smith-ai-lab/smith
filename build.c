@@ -209,10 +209,11 @@ static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config
                                    smith_fmt(b, "%s/text.smith", build_library_folder),
                                    smith_fmt(b, "%s/mem.smith", build_library_folder),
                                    "lib/json.c",
-                                   "lib/trace.c"};
-    SmithObject objects[7] = {};
-    const SmithObject *linked[8] = {};
-    for (size_t i = 0; i < 7; i++) {
+                                   "lib/trace.c",
+                                   "lib/optimize_asm.c"};
+    SmithObject objects[8] = {};
+    const SmithObject *linked[9] = {};
+    for (size_t i = 0; i < 8; i++) {
         objects[i] = (SmithObject){
             .compiler = config->cc,
             .source = sources[i],
@@ -571,10 +572,19 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
 static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config, const char *folder) {
     // release/pack.smith with the modules it imports and the two C files under them, compiled and linked in one step
     // (as `smith cc` takes a few modules).
-    const char *const sources[] = {"release/pack.smith",     "lib/std/files.smith", "lib/std/console.smith",
-                                   "lib/std/format.smith",   "lib/std/mem.smith",   "lib/std/arena.smith",
-                                   "lib/std/contract.smith", "lib/std/env.smith",   "lib/std/text.smith",
-                                   "lib/handlers.c",         "lib/trace.c",         nullptr};
+    const char *const sources[] = {"release/pack.smith",
+                                   "lib/std/files.smith",
+                                   "lib/std/console.smith",
+                                   "lib/std/format.smith",
+                                   "lib/std/mem.smith",
+                                   "lib/std/arena.smith",
+                                   "lib/std/contract.smith",
+                                   "lib/std/env.smith",
+                                   "lib/std/text.smith",
+                                   "lib/handlers.c",
+                                   "lib/trace.c",
+                                   "lib/optimize_asm.c",
+                                   nullptr};
     SmithStep program = {
         .command = smith_cat(
             b, smith_list(b, config->cc, "-O1", "-w", "-I", "include", "-I", ".smith/include", nullptr), sources,
@@ -1465,7 +1475,7 @@ static void build_release(SmithBuild *b, const char *binary, const char *folder)
                               "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
                               "lib/std/mem.smith", "lib/std/arena.smith", "lib/std/contract.smith", "lib/std/env.smith",
                               "lib/std/text.smith", "lib/std/process.smith", "lib/std/clock.smith", "lib/handlers.c",
-                              "lib/trace.c", "-o", tool, nullptr),
+                              "lib/trace.c", "lib/optimize_asm.c", "-o", tool, nullptr),
         .description = "compiling the release tool",
         .inputs = (const char *[]){binary, nullptr},
     };
@@ -2710,6 +2720,7 @@ static int build_llvm_prune(SmithRun *run) {
                                    "lib/std/text.smith",
                                    "lib/handlers.c",
                                    "lib/trace.c",
+                                   "lib/optimize_asm.c",
                                    "-o",
                                    tool,
                                    nullptr};
