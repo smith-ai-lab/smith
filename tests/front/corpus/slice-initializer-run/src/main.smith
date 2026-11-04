@@ -1,0 +1,38 @@
+import <stdio.h>;
+
+# A slice member takes a slice expression where a struct is built as it does in an assignment (issue #173): a string
+# literal, an array or another slice, by name, by position, nested, as an alias, in a nested construction.
+
+pub struct Pair:
+    pub key: str
+    pub value: str
+
+pub struct Named:
+    pub name: str
+    pub id: i32
+
+pub struct Outer:
+    pub first: i32
+    pub pair: Pair
+    pub tag: str
+
+fn total(p: Pair) -> usize:
+    countof(p.key) * 10 + countof(p.value)
+
+pub fn main() -> i32:
+    let a = Pair(key = "k", value = "xyz")
+    let b = Pair("kk", "v")
+    let raw: [3]char = ['a', 'b', 'c']
+    let word: []char = raw
+    let c = Pair(value = word, key = raw)
+    let _ = c::printf("%zu %zu %zu\n", total(a), total(b), total(c))
+
+    let n = Named(id = 7, name = "five5")
+    let o = Outer(1, Pair(value = "ab", key = "c"), tag = "tag")
+    let o2 = Outer(first = 0, pair = Pair("x", "yz"), tag = "")
+    let _ = c::printf("%zu %zu %zu %zu %zu\n", countof(n.name), countof(o.pair.value), countof(o.tag), countof(o2.pair.key), countof(o2.pair.value))
+
+    let _ = c::printf("%zu %zu\n", total(Pair(key = "", value = "x")), total(Pair("ab", "c")))
+    let e = Pair(key = "", value = "")
+    let _ = c::printf("%zu %c\n", countof(e.key), a.value[2])
+    0

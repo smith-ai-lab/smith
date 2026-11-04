@@ -274,12 +274,29 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         state::Ty made = slice_type(e, character, "str");
         return made;
     }
-    if (state::scalar_type(e, name, &ty) || matching::type_enum(e, name, &ty)) return ty;
+    if (state::same_text(name, "void") || state::same_text(name, "Void")) { // only behind a pointer: `*void`
+        state::Ty byte = {};
+        state::scalar_type(e, "u8", &byte);
+        byte.name = "Void";
+        return byte;
+    }
+    if (state::scalar_type(e, name, &ty) || arith::type_float(e, name, &ty) || matching::type_enum(e, name, &ty))
+        return ty; // a pointer or array of floats too (`*f64`)
     if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
         return ty;
     }
     return ty_failf(base->span, "unknown type ", name);
+}
+
+// The length an array type writes: an integer literal, or constants the checker folded (`[k.SIDE * 2]u8`).
+static Bool array_count(const state::Emitter *e, const ast::Expr *count, U64 *out) {
+    if (count == nullptr) return false;
+    if (count->kind == .integer) {
+        *out = count->kind.integer.value;
+        return true;
+    }
+    return e->options.checked != nullptr && types::length_of(e->options.checked, count, out);
 }
 
 // `[5,3]T` (nested arrays), `[,3]T` (a slice of `[3]T`), `[,]T` and `[,,]T` (a block): the checker's `build_block`.
@@ -296,9 +313,9 @@ export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
     state::Ty cell = found.ok;
     for (Usize i = countof(dims); i > empty; i--) {
         const ast::Expr *size = dims[i - 1];
-        if (size == nullptr || size->kind != .integer)
-            return ty_failf(t->span, "an array length is an integer literal", "");
-        cell = array_of(e, cell, size->kind.integer.value);
+        U64 length = 0;
+        if (!array_count(e, size, &length)) return ty_failf(t->span, "an array length is an integer literal", "");
+        cell = array_of(e, cell, length);
     }
     if (empty == 0) {
         state::Ty whole = cell;
@@ -340,9 +357,10 @@ static state::TyResult resolve(state::Emitter *e, const ast::TypeExpr *t) {
         if (node->kind == .pointer) ty = pointer_to(e, ty, 0);
         if (node->kind == .array) {
             const ast::Expr *count = node->kind.array.count;
-            if (count == nullptr || count->kind != .integer)
+            U64 length = 0;
+            if (!array_count(e, count, &length))
                 return ty_failf(node->span, "an array length is an integer literal", "");
-            ty = array_of(e, ty, count->kind.integer.value);
+            ty = array_of(e, ty, length);
         }
     }
     return ty;

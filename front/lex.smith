@@ -1065,6 +1065,8 @@ static void open_or_close(Layout *l, TokenKind kind) {
 export Lexed layout(Str source, Tokens tokens) {
     Layout l = {.out = mem::alloc_slice(Token, countof(tokens) * 6 + 4)};
     TokenKind before = end_of_file;
+    TokenKind before_that = end_of_file;
+    Bool header = false; // inside the `<...>` of `import c <stdio.h>`: its `>` ends the line, it is no operator
     Usize previous_end = 0;
     for (Token token : tokens) {
         Bool first = before == end_of_file || has_newline(source[previous_end:token.span.start]);
@@ -1085,7 +1087,13 @@ export Lexed layout(Str source, Tokens tokens) {
         l.out[l.count] = token;
         l.count += 1;
         open_or_close(&l, token.kind);
+        if (token.kind == less && before == name && before_that == kw_import) header = true;
+        before_that = before;
         before = token.kind;
+        if (header && token.kind == greater) {
+            header = false;
+            before = name;
+        }
         previous_end = token.span.end;
     }
     Tokens shrunk = mem::realloc(l.out, l.count);

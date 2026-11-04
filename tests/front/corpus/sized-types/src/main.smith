@@ -1,0 +1,32 @@
+import <stdio.h>;
+
+# The sized types have their sizes everywhere, and `usize` and `isize` are pointer-sized. (The sizes are read from
+# values: `sizeof` of a type name is not typed yet, a gap listed in the pull request, as is `static_assert` in a body, which the old case used to check that
+# `u64`, `usize` and `isize` are the C types.)
+pub fn main() -> i32:
+    let a8: u8 = 0
+    let a16: u16 = 0
+    let a32: u32 = 0
+    let a64: u64 = 0
+    let b8: i8 = 0
+    let b16: i16 = 0
+    let b32: i32 = 0
+    let b64: i64 = 0
+    let u: usize = 0
+    let s: isize = 0
+    let h: f16 = 0.0
+    let f: f32 = 0.0
+    let d: f64 = 0.0
+    let _ = c::printf("%zu %zu %zu %zu\n", sizeof(a8), sizeof(a16), sizeof(a32), sizeof(a64))
+    let _ = c::printf("%zu %zu %zu %zu\n", sizeof(b8), sizeof(b16), sizeof(b32), sizeof(b64))
+    let _ = c::printf("%zu %zu\n", sizeof(u), sizeof(s))
+    let _ = c::printf("%zu %zu %zu\n", sizeof(h), sizeof(f), sizeof(d))
+    let minus: i8 = -1
+    let wrap = minus.wrap(u8)
+    let _ = c::printf("%d %u\n", minus.to(i32), wrap.to(u32))
+    let half: f32 = 0.5
+    let wide: f64 = half.to(f64)
+    let _ = c::printf("%.2f %.2f\n", half.to(f64), wide)
+    let flag: bool = true
+    let _ = c::printf("%d\n", flag.to(i32))
+    0
