@@ -766,7 +766,8 @@ static Bool strchr_in(Str set, char c) {
 static Bool is_plain_name(Str s, Usize start, Usize end, Str word) {
     char before = before_on_line(s, start);
     char after = next_on_line(s, end);
-    if (same(word, "module")) return !(before == '\n' && (is_identifier_start(after) || after == 0 || after == '\n' || after == ';'));
+    if (same(word, "module"))
+        return !(before == '\n' && (is_identifier_start(after) || after == 0 || after == '\n' || after == ';'));
     if (before == '.') return true;
     if (follows_word(s, start, "let") || follows_word(s, start, "mut")) return true;
     Usize at = end;
@@ -774,7 +775,8 @@ static Bool is_plain_name(Str s, Usize start, Usize end, Str word) {
         at += 1;
     Bool assigns = after == '=' && (at + 1 >= countof(s) || (s[at + 1] != '=' && s[at + 1] != '>'));
     if ((before == '(' || before == ',') && assigns) return true;
-    if (after == ':' && (before == '(' || before == ',' || before == '\n')) return true; // `type: str`, a field or a parameter
+    if (after == ':' && (before == '(' || before == ',' || before == '\n'))
+        return true; // `type: str`, a field or a parameter
     // A value: `f(type, 3)`, `type.size`, `a == type`, `return type`.
     if (before == '\n' && (after == '=' || after == '.' || after == '[')) return true; // `type = x`, `type.size`
     Bool value_before = before != 0 && (strchr_in("(,=!&|+*/%<[?", before) || follows_word(s, start, "return") ||
