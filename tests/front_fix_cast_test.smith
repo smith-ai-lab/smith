@@ -45,3 +45,25 @@ export void test_front_fix_positional_compound_literal_in_a_return() {
     expect_fixed("module m;\nHex f(U64 v, U32 w) {\n    return (Hex){v, w};\n}\n",
                  "fn f(v: u64, w: u32) -> Hex:\n    return Hex(v, w)\n");
 }
+
+// A parenthesized expression before a binary operator is a group, not a cast and a dereference (#2226): the first pass
+// takes the parentheses off the `if`, and the next pass must read `if (a + 1) * 2 > n {` as a product.
+export void test_front_fix_group_times_in_an_if_condition() {
+    expect_fixed("module m;\nvoid f(Usize *c, Usize n) {\n    if ((c[0] + 1) * 2 > n) {\n        work(n);\n    }\n}\n",
+                 "fn f(c: *usize, n: usize):\n    if (c[0] + 1) * 2 > n:\n        work(n)\n");
+}
+
+export void test_front_fix_group_times_in_a_while_condition() {
+    expect_fixed("module m;\nvoid f(Usize n) {\n    while ((n + 1) * 2 > 9) {\n        n -= 1;\n    }\n}\n",
+                 "fn f(mut n: usize):\n    while (n + 1) * 2 > 9:\n        n -= 1\n");
+}
+
+export void test_front_fix_group_times_in_an_assignment() {
+    expect_fixed("module m;\nvoid f(Usize a, Bool *x) {\n    *x = ((a + 1) * 2 > 3);\n}\n",
+                 "fn f(a: usize, x: *mut bool):\n    x.* = ((a + 1) * 2 > 3)\n");
+}
+
+export void test_front_fix_old_if_with_a_dereference_body() {
+    expect_fixed("module m;\nvoid f(Bool c, Usize *p) {\n    if (c) *p = 1;\n}\n",
+                 "fn f(c: bool, p: *mut usize):\n    if c:\n        p.* = 1\n");
+}
