@@ -2730,7 +2730,12 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
                 r->options.load(msg(format::push(joined(path, ".")))
                                     .data); // a copy: one name is a slice of the source, with no terminator
             if (loaded == nullptr && countof(load_failure_text) > 0) {
-                failf(r, d->span, "the module `", joined(path, "."), "` does not parse: ", load_failure_text);
+                if (at != m && countof(at->name.segments) > 0) {
+                    failf(r, d->span, "`", joined(at->name, "."), "` imports `", joined(path, "."),
+                          "`, which does not parse: ", load_failure_text);
+                } else {
+                    failf(r, d->span, "the module `", joined(path, "."), "` does not parse: ", load_failure_text);
+                }
             } else if (loaded == nullptr) {
                 failf(r, d->span, "cannot find the module `", joined(path, "."), "`; check its path under the roots");
             } else if (count == countof(list)) {

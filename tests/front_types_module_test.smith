@@ -77,6 +77,8 @@ static const ast::Module *load(const char *name) {
         source = re_source();
     else if (same(path, "lib.cycle"))
         source = cycle_source();
+    else if (same(path, "lib.uses_broken"))
+        source = "pub import lib.broken\n\npub fn one() -> i32:\n    1\n";
     else if (same(path, "lib.broken"))
         source = "pub fn ok() -> i32:\n    1\n\nfn bad( -> :\n";
     else
@@ -88,6 +90,13 @@ static const ast::Module *load(const char *name) {
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
+    ast::Identifier parts[:] = {};
+    parts = mem::realloc(parts, 2);
+    Str lead = "lib";
+    Str rest = path[4:countof(path)];
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = rest};
+    copy->name.segments = parts;
     return copy;
 }
 
@@ -181,6 +190,10 @@ export void test_front_types_module_missing_module_is_reported() {
 
 export void test_front_types_module_that_does_not_parse_says_so() {
     fails("import lib.broken as b\n", "the module `lib.broken` does not parse: lib/broken.smith: ", "");
+}
+
+export void test_front_types_module_names_the_importer_of_one_that_does_not_parse() {
+    fails("import lib.uses_broken as u\n", "`lib.uses_broken` imports `lib.broken`, which does not parse", "");
 }
 
 export void test_front_types_module_that_does_not_parse_is_not_missing() {
