@@ -929,6 +929,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     if (symbol == nullptr || symbol->decl != d) {
         return;
     }
+    if (symbol->kind == .type_name) {
+        return; // `const Pair = (i32, f32)`: a tuple of types, an alias declared with the aliases
+    }
     state.function = name;
     types::TypeRef type = symbol->type;
     if (d->kind.variable.is_constexpr) {

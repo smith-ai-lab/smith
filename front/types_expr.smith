@@ -2566,7 +2566,7 @@ static void cast_after(types::Checked *c, Frame f) {
 }
 
 static Bool countable(types::TypeRef t) {
-    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block;
+    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block || t->kind == .tuple;
 }
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {

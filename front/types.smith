@@ -1766,26 +1766,81 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     }
 }
 
-// `let Line = []u8`: an alias of smith's own syntax, a constant whose value is a type. It is plain substitution.
-static Bool is_own_alias(const ast::Decl *d) {
-    if (d->kind != .variable || !d->kind.variable.is_new) return false;
+// A name or a type value read where a value is read, as a type: null when it is neither. A name counts when it is a
+// builtin or a type in scope (`i32`, `Meters`), so `const origin = (x, y)` of values stays a value.
+static ast::TypeExpr *leaf_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind == .type_value) return e->kind.type_value.type;
+    if (e->kind != .name) return nullptr;
+    ast::Path path = e->kind.name.path;
+    Bool builtin_name = false;
+    if (countof(path.segments) == 1) {
+        Str own = own_builtin(path.segments[0].text);
+        builtin_name = countof(own) > 0 && builtin(&r->table, own) != nullptr;
+    }
+    const Symbol *found = builtin_name ? nullptr : type_through_modules(r, path);
+    if (!builtin_name && (found == nullptr || found->kind != .type_name)) return nullptr;
+    return ast::make_type({.named = {.path = path}});
+}
+
+typedef ast::TypeRef TypeRefList[:];
+
+static TypeRefList type_slice(Usize count) {
+    ast::TypeRef *block = (ast::TypeRef *)mem::alloc_array_raw(sizeof(ast::TypeRef), count, alignof(ast::TypeRef));
+    TypeRefList list = block[0:count];
+    return list;
+}
+
+// `(i32, f32)` where a value is read: the type it stands for, or null when an element is no type. `tuple_as_type` also
+// takes a tuple of such tuples (`(Meters, (f32, f32))`); deeper nesting is not an alias, since a checker function
+// cannot recurse.
+static ast::TypeExpr *pair_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind != .tuple_lit) return nullptr;
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (countof(items) < 2) return nullptr;
+    ast::TypeRef elements[:] = type_slice(countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        elements[i] = leaf_as_type(r, items[i]);
+        if (elements[i] == nullptr) return nullptr;
+    }
+    return ast::make_type({.tuple = {.elements = elements}});
+}
+
+static ast::TypeExpr *tuple_as_type(Checked *r, const ast::Expr *e) {
+    if (e->kind != .tuple_lit) return nullptr;
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (countof(items) < 2) return nullptr;
+    ast::TypeRef elements[:] = type_slice(countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        elements[i] = leaf_as_type(r, items[i]);
+        if (elements[i] == nullptr) elements[i] = pair_as_type(r, items[i]);
+        if (elements[i] == nullptr) return nullptr;
+    }
+    return ast::make_type({.tuple = {.elements = elements}});
+}
+
+// The type a `let`/`const` of smith's own syntax stands for, or null when it is a value: `let Line = []u8` is a type
+// value, `const Pair = (i32, f32)` a tuple of types. It is plain substitution.
+static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
+    if (d->kind != .variable || !d->kind.variable.is_new) return nullptr;
     const ast::Expr *init = d->kind.variable.init;
-    return init != nullptr && init->kind == .type_value;
+    if (init == nullptr) return nullptr;
+    if (init->kind == .type_value) return init->kind.type_value.type;
+    if (init->kind == .tuple_lit) return tuple_as_type(r, init);
+    return nullptr;
 }
 
 static void declare_own_alias(Checked *r, const ast::Decl *d) {
-    if (d->kind != .variable) return;
-    const ast::Expr *init = d->kind.variable.init;
-    if (init == nullptr || init->kind != .type_value) return;
+    ast::TypeExpr *written = own_alias_type(r, d);
+    if (written == nullptr || d->kind != .variable) return;
     r->new_syntax = true;
-    TypeRef target = resolve(r, init->kind.type_value.type);
+    TypeRef target = resolve(r, written);
     r->new_syntax = false;
     declare_in_module(r, type_symbol(qualified(r, false, d->kind.variable.name), target, d, d->exported), d->span);
 }
 
 // Pass 2: aliases in the order written.
 static void declare_alias(Checked *r, const ast::Decl *d) {
-    if (is_own_alias(d)) {
+    if (own_alias_type(r, d) != nullptr) {
         declare_own_alias(r, d);
         return;
     }
@@ -2215,7 +2270,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
         Bool is_constexpr = d->kind.variable.is_constexpr;
         Bool is_new = d->kind.variable.is_new;
         const ast::Expr *init = d->kind.variable.init;
-        if (is_own_alias(d) || declare_module_alias(r, d)) return;
+        if (own_alias_type(r, d) != nullptr || declare_module_alias(r, d)) return;
         declare_variable(r, d, name, written, is_constexpr, is_new, init);
     } else if (d->kind == .if_constexpr) {
         failf(r, span, "not yet typed: if constexpr");
