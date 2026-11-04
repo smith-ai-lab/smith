@@ -8,7 +8,7 @@
 //
 // The lowering keeps state in the process (counters, caches of the modules it read, tables); a call resets it
 // (smith_lang_reset), and `test_lowering_twice_is_the_same` and `test_a_lowering_does_not_remember_the_last` lower the
-// whole corpus a second time, in the other order, and compare with the first. The corpus is checked in four shards so
+// whole corpus a second time, in the other order, and compare with the first. The corpus is checked in eight shards so
 // that the tests run side by side. A case added to the folder needs no test here: every case is read.
 module smith_lang_lowering_test;
 
@@ -24,7 +24,7 @@ import <string.h>;
 constexpr Usize lowered_capacity = 1U << 23;
 constexpr Usize header_capacity = 1U << 21;
 constexpr Usize report_capacity = 1U << 16;
-constexpr Usize shards = 4;
+constexpr Usize shards = 8;
 constexpr Usize slots_per_case = 16;
 
 static char lowered_text[lowered_capacity];
@@ -369,12 +369,28 @@ export void test_corpus_lowering_shard_3() {
     check_shard(3);
 }
 
+export void test_corpus_lowering_shard_4() {
+    check_shard(4);
+}
+
+export void test_corpus_lowering_shard_5() {
+    check_shard(5);
+}
+
+export void test_corpus_lowering_shard_6() {
+    check_shard(6);
+}
+
+export void test_corpus_lowering_shard_7() {
+    check_shard(7);
+}
+
 static const char *seen_lowered[cases_max * slots_per_case];
 
-constexpr Usize twice_shards = 8;
+constexpr Usize twice_shards = 16;
 
 // A shard of the corpus lowered, then lowered again from the last case to the first: each file's C is the same both
-// times, so a lowering depends on its file and nothing else in the process. Eight shards keep each test far from the
+// times, so a lowering depends on its file and nothing else in the process. Sixteen shards keep each test far from the
 // CPU limit, and together they lower every case twice.
 static void check_twice_shard(Usize shard) {
     arena::Arena memory = test::memory(1U << 27);
@@ -428,4 +444,36 @@ export void test_lowering_twice_is_the_same_shard_6() {
 
 export void test_lowering_twice_is_the_same_shard_7() {
     check_twice_shard(7);
+}
+
+export void test_lowering_twice_is_the_same_shard_8() {
+    check_twice_shard(8);
+}
+
+export void test_lowering_twice_is_the_same_shard_9() {
+    check_twice_shard(9);
+}
+
+export void test_lowering_twice_is_the_same_shard_10() {
+    check_twice_shard(10);
+}
+
+export void test_lowering_twice_is_the_same_shard_11() {
+    check_twice_shard(11);
+}
+
+export void test_lowering_twice_is_the_same_shard_12() {
+    check_twice_shard(12);
+}
+
+export void test_lowering_twice_is_the_same_shard_13() {
+    check_twice_shard(13);
+}
+
+export void test_lowering_twice_is_the_same_shard_14() {
+    check_twice_shard(14);
+}
+
+export void test_lowering_twice_is_the_same_shard_15() {
+    check_twice_shard(15);
 }
