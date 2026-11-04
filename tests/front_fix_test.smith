@@ -383,7 +383,7 @@ export void test_a_three_part_for_with_an_init_becomes_a_while() {
     check_flag(slice::find_slice(fixed.text, word) == .some, true);
 }
 
-export void test_a_for_with_a_continue_gets_no_while() {
+export void test_a_for_with_a_continue_gets_a_while_with_the_step_before_it() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -391,7 +391,9 @@ export void test_a_for_with_a_continue_gets_no_while() {
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "static void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        continue;\n    }\n}\n");
     Str word = "while";
-    check_flag(slice::find_slice(fixed.text, word) == .some, false);
+    Str step = "i += 3\n        continue";
+    check_flag(slice::find_slice(fixed.text, step) == .some, true);
+    check_flag(slice::find_slice(fixed.text, word) == .some, true);
 }
 
 // `Node n = {.a = 1};` is `let n = Node(a = 1)`: a variable of a named type whose untyped list only has
