@@ -229,6 +229,9 @@ static Bool statement_line(lex::Tokens tokens, Usize open) {
     Usize i = open;
     while (i > 0 && !tokens[i - 1].line_break)
         i -= 1;
+    // `} else {`: the line is the `else` after the closers (#2225).
+    while (i < open && tokens[i].kind == lex::right_brace)
+        i += 1;
     switch (tokens[i].kind) {
     case lex::kw_if:
     case lex::kw_else:
@@ -644,7 +647,49 @@ static Str apply(Str source, Cuts cuts) {
     return as_str(format::push(out, source[from:countof(source)]));
 }
 
+// Whether the `.` starts a line that goes on the line before it: `.name` after a `)`, `]` or a name.
+static Bool continues_line(lex::Tokens tokens, Usize dot) {
+    if (dot == 0 || dot + 1 >= countof(tokens) || !tokens[dot - 1].line_break) return false;
+    if (tokens[dot].kind != lex::dot) return false;
+    lex::TokenKind before = tokens[dot - 1].kind;
+    if (before != lex::right_paren && before != lex::right_bracket && before != lex::name) return false;
+    return tokens[dot + 1].kind == lex::name;
+}
+
+// The text with the forms that stop `convert` from reading a block made plain (#2225): a `}` that follows the last
+// statement of a block and is not followed by `else` or the end of its line, or follows another `}` (`g(i) } }`,
+// `{ a } }`), goes to a line of its own, at the indentation of the block's header; and a line that starts with `.name` after a `)`, `]` or a name
+// (`format.push(a,\n b)\n    .data`) joins the line before it. The same text when neither is there.
+static Str plain_forms(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Braces braces = braces_of(tokens);
+    Cuts cuts = {};
+    for (Usize i = 0; i < countof(braces); i++) {
+        Brace brace = braces[i];
+        if (!brace.block || brace.inside || !open_ends_line(tokens, brace.open)) continue;
+        if (tokens[brace.close - 1].line_break) continue;
+        if (closes_cleanly(tokens, brace.close) && tokens[brace.close - 1].kind != lex::right_brace) continue;
+        lex::Token close = tokens[brace.close];
+        Usize indent = indent_of(source, tokens[brace.open].span.start);
+        add_cut(&cuts, spaces_before(source, close.span.start), close.span.start,
+                as_str(format::push("\n", spaces(indent))));
+    }
+    for (Usize i = 1; i < countof(tokens); i++) {
+        if (!continues_line(tokens, i)) continue;
+        add_cut(&cuts, tokens[i - 1].span.end, tokens[i].span.start, "");
+    }
+    if (countof(cuts) == 0) return source;
+    return apply(source, cuts);
+}
+
 export Str convert(Str source) {
+    for (Usize round = 0; round < 8; round++) {
+        Str plain = plain_forms(source);
+        if (mem::equal(plain, source)) break;
+        source = plain;
+    }
     lex::Lexed lexed = lex::tokenize_new(source);
     if (lexed == .error) return source;
     lex::Tokens tokens = lexed.ok;

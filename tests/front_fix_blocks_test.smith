@@ -126,3 +126,26 @@ export void test_front_fix_blocks_a_file_with_another_gap_still_gets_its_blocks(
     Str block = "if n > 0:\n";
     test::check_equal(slice::find_slice(fixed.text, block) == .some, true);
 }
+
+export void test_front_fix_blocks_a_one_line_block_before_the_closing_brace_of_its_parent() {
+    check("fn f() {\n    for i in r {\n        if y { z() } }\n}\n", "fn f():\n    for i in r:\n        if y:\n            z()\n");
+    check("fn f() {\n    while x {\n        if y { z() } else { w() } }\n}\n",
+          "fn f():\n    while x:\n        if y:\n            z()\n        else:\n            w()\n");
+}
+
+export void test_front_fix_blocks_two_closing_braces_then_else() {
+    check("fn f() {\n    if a {\n        for i in r {\n            g(i) } } else { h() }\n}\n",
+          "fn f():\n    if a:\n        for i in r:\n            g(i)\n    else:\n        h()\n");
+}
+
+export void test_front_fix_blocks_an_else_chain_ending_in_a_one_line_block() {
+    check("fn f() -> bool {\n    if c >= 1 {\n        d = 1\n    } else if c >= 2 {\n        d = 2\n    } else { return "
+          "false }\n    return true\n}\n",
+          "fn f() -> bool:\n    if c >= 1:\n        d = 1\n    else if c >= 2:\n        d = 2\n    else:\n        "
+          "return false\n    return true\n");
+}
+
+export void test_front_fix_blocks_a_dot_line_joins_the_line_before() {
+    check("fn f() {\n    let s = push(a,\n                 b)\n        .data\n    g(s)\n}\n",
+          "fn f():\n    let s = push(a,\n                 b).data\n    g(s)\n");
+}
