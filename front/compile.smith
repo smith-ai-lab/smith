@@ -872,6 +872,15 @@ static emit::Options emit_options(Str wanted, Str source, types::Checked *checke
     return options;
 }
 
+// `triple`, or the driver's default target when it is empty.
+static Str triple_or_default(Str triple) {
+    if (countof(triple) > 0) return triple;
+    char *default_triple = c::LLVMGetDefaultTargetTriple();
+    Str wanted = as_str(format::push((const char *)default_triple));
+    c::LLVMDisposeMessage(default_triple);
+    return wanted;
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
@@ -895,13 +904,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
 
     Str cycles = import_cycles(path, source, &parsed.module, folders);
     if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
-    Str wanted = triple;
-    char *default_triple = nullptr;
-    if (countof(wanted) == 0) {
-        default_triple = c::LLVMGetDefaultTargetTriple();
-        wanted = as_str(format::push((const char *)default_triple));
-        c::LLVMDisposeMessage(default_triple);
-    }
+    Str wanted = triple_or_default(triple);
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
