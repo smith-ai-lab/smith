@@ -1,0 +1,9 @@
+import c <stdio.h>
+import c "helper.h"
+
+# A case's own C file is compiled and linked beside the modules: the program calls it through its header.
+pub fn main() -> i32:
+    let bytes: [3]u8 = [1, 2, 3]
+    let sum = helper.checksum(&bytes[0], 3)
+    let _ = stdio.printf("%lu\n", sum)
+    0

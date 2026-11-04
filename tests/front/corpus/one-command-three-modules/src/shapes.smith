@@ -1,0 +1,12 @@
+import units
+
+pub struct Rect:
+    pub width_m: u32
+    pub height_m: u32
+
+pub fn area_cm2(r: Rect) -> u32:
+    units.to_centimeters(r.width_m) * units.to_centimeters(r.height_m)
+
+pub fn room(width_m: u32, height_m: u32) -> Rect:
+    let r: Rect = {.width_m = width_m, .height_m = height_m}
+    return r
