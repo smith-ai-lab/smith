@@ -38,12 +38,15 @@
 #include <smith/random.h>
 #if defined(SMITH_CORE) || defined(SMITH_BUILD_CORE) // the units runner links these two as objects of its own
 #include <smith/http.h>
+#include <smith/optimize_asm.h>
 #include <smith/trace.h>
 #elif __has_include("internal/http.c")
 #include "internal/http.c"
+#include "lib/optimize_asm.c"
 #include "lib/trace.c"
 #else
 #include "../lib/http.c"
+#include "../lib/optimize_asm.c"
 #include "../lib/trace.c"
 #endif
 

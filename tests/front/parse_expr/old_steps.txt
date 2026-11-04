@@ -19,9 +19,10 @@ i--;
   warnings left: 0
 
 x = i++;
-  warning 5-7: `++` is a statement in Smith: write `i += 1` (no fix)
-  fixed: x = i++;
-  warnings left: 1
+  warning 5-7: `++` is a statement in Smith: write `i += 1`
+  fixed: x = i;
+i += 1;
+  warnings left: 0
 
 f(i++)
   warning 3-5: `++` is a statement in Smith: write `i += 1` (no fix)

@@ -77,15 +77,26 @@ static const ast::Module *load(const char *name) {
         source = re_source();
     else if (same(path, "lib.cycle"))
         source = cycle_source();
+    else if (same(path, "lib.uses_broken"))
+        source = "pub import lib.broken\n\npub fn one() -> i32:\n    1\n";
+    else if (same(path, "lib.broken"))
+        source = "pub fn ok() -> i32:\n    1\n\nfn bad( -> :\n";
     else
         return nullptr;
-    parser::Parsed p = parser::parse_new("t.smith", source);
+    parser::Parsed p = parser::parse_new("lib/broken.smith", source);
     if (countof(p.errors) > 0) {
-        Str expected = "no error";
-        test::check_equal(p.errors[0].message, expected);
+        types::set_load_failure(join("lib/broken.smith: ", p.errors[0].message));
+        return nullptr;
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
+    ast::Identifier parts[:] = {};
+    parts = mem::realloc(parts, 2);
+    Str lead = "lib";
+    Str rest = path[4:countof(path)];
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = rest};
+    copy->name.segments = parts;
     return copy;
 }
 
@@ -175,6 +186,23 @@ export void test_front_types_module_private_name_is_missing() {
 
 export void test_front_types_module_missing_module_is_reported() {
     fails("import lib.nothing as m\n", "cannot find the module `lib.nothing`", "");
+}
+
+export void test_front_types_module_that_does_not_parse_says_so() {
+    fails("import lib.broken as b\n", "the module `lib.broken` does not parse: lib/broken.smith: ", "");
+}
+
+export void test_front_types_module_names_the_importer_of_one_that_does_not_parse() {
+    fails("import lib.uses_broken as u\n", "`lib.uses_broken` imports `lib.broken`, which does not parse", "");
+}
+
+export void test_front_types_module_that_does_not_parse_is_not_missing() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text("import lib.broken as b\n");
+    test::check_condition(!has(errors_of(&r), "cannot find"));
 }
 
 export void test_front_types_module_is_not_a_run_time_value() {

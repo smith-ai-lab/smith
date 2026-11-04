@@ -223,6 +223,9 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     if (lex::tokenize_new(source) != .error) {
         parser::Parsed own = parser::parse_new(file, source);
         if (countof(own.errors) == 0) return own;
+        // The passes read their own output with braces until `fix_blocks` ends them (#2014).
+        parser::Parsed braced = parser::parse_new_braces(file, source);
+        if (countof(braced.errors) == 0) return braced;
         // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
         // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106).
         if (lex::tokenize(source) == .error) return own;
@@ -326,10 +329,51 @@ static Str hash_comments(Str source) {
     return as_str(format::push(out, source[copied:n]));
 }
 
+// `type` is reserved like `i32` (#1901): in an old-syntax text every name `type` (a field, a local, a parameter, a type
+// argument, a use after `.` or `->`) is written `ty`, in the declaration and every use. A name after `.` or `->` is
+// always `ty` (the field of another file's struct); any other is `ty_` when the text already has a `ty` of its own. The
+// keyword of smith's own syntax stays: `type` after a `:`, or after the `->` of a function head (`) -> type`).
+static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
+    if (i == 0) return false;
+    if (tokens[i - 1].kind == lex::colon) return true;
+    return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
+}
+
+static Str rename_type_names(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str type_word = "type";
+    Str ty_word = "ty";
+    Bool own_ty = false;
+    Bool any = false;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name) continue;
+        Str word = lex::text(source, tokens[i]);
+        if (mem::equal(word, type_word) && !is_keyword_use(tokens, i)) any = true;
+        if (mem::equal(word, ty_word) &&
+            !(i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow)))
+            own_ty = true;
+    }
+    if (!any) return source;
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), type_word)) continue;
+        if (is_keyword_use(tokens, i)) continue;
+        Bool member = i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow);
+        out = as_str(format::push(out, source[at:tokens[i].span.start], member || !own_ty ? "ty" : "ty_"));
+        at = tokens[i].span.end;
+    }
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Fixed total = {.text = source};
+    Str renamed = rename_type_names(source);
+    Fixed total = {.text = renamed};
+    if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
     for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
         if (file[i - 1] != '/') continue;
