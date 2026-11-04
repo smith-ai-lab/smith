@@ -2463,7 +2463,7 @@ static void slice_after(types::Checked *c, Frame f) {
     Bool typed_pointer = base->kind == .pointer && base->element->kind != .void_type;
     if (base->kind == .array || base->kind == .slice || typed_pointer) {
         result = types::slice_of(&c->table, base->element, base->pointee_const);
-    } else if (base->kind == .text) {
+    } else if (base->kind == .text || base->kind == .block) {
         result = base;
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
@@ -2591,7 +2591,7 @@ static void cast_after(types::Checked *c, Frame f) {
 }
 
 static Bool countable(types::TypeRef t) {
-    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block;
+    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block || t->kind == .tuple;
 }
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {

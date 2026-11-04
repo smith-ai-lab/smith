@@ -261,6 +261,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         return made;
     }
     if (base->kind == .block_type) return type_block(e, base);
+    if (base->kind == .tuple)
+        return state::type_of(e, base); // `*mut (f64, f32)`: front::emit's type_of builds the tuple
     if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
     ast::Path path = base->kind.named.path;
     if (countof(path.segments) == 2) return state::type_of(e, base); // `v.Vec`: front::emit's type_of reads the import
@@ -299,7 +301,9 @@ static Bool array_count(const state::Emitter *e, const ast::Expr *count, U64 *ou
     return e->options.checked != nullptr && types::length_of(e->options.checked, count, out);
 }
 
-// `[5,3]T` (nested arrays), `[,3]T` (a slice of `[3]T`), `[,]T` and `[,,]T` (a block): the checker's `build_block`.
+// `[5,3]T` (nested arrays), `[,3]T` (a slice of `[3]T`), `[,]T` and `[,,]T` (a block): the checker's `build_block`. The
+// sizes after the last empty one are the cell; a known size before it (`[,2,]T`) is a block's dimension counted at run
+// time.
 export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind != .block_type) {
         return ty_failf(t->span, "not a block type", "");
@@ -307,9 +311,9 @@ export state::TyResult type_block(state::Emitter *e, const ast::TypeExpr *t) {
     ast::ExprRef dims[:] = t->kind.block_type.dims;
     state::TyResult found = state::type_of(e, t->kind.block_type.element);
     if (found == .error) return found;
-    Usize empty = 0;
-    while (empty < countof(dims) && dims[empty] == nullptr)
-        empty += 1;
+    Usize empty = countof(dims);
+    while (empty > 0 && dims[empty - 1] != nullptr)
+        empty -= 1;
     state::Ty cell = found.ok;
     for (Usize i = countof(dims); i > empty; i--) {
         const ast::Expr *size = dims[i - 1];
@@ -955,7 +959,11 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
         return state::success();
     }
     if (node->kind == .index || (node->kind == .unary && node->kind.unary.op == .dereference)) {
-        if ((ty->kind != .pointer && ty->kind != .array) || ty->element == nullptr)
+        if (node->kind == .index && ty->kind == .block && ty->element != nullptr) {
+            *ty = ty->count == 2 ? slice_type(e, *ty->element, "slice") : block_type(e, *ty->element, ty->count - 1);
+            return state::success();
+        }
+        if ((ty->kind != .pointer && ty->kind != .array && ty->kind != .slice) || ty->element == nullptr)
             return state::failf(node->span, "indexing or dereferencing ", ty->name);
         *ty = *ty->element;
         return state::success();
@@ -1036,9 +1044,9 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
     state::Ty word = u64_type(e);
     U64 number = 0;
     if (op == .count_of) {
-        if (subject.kind != .array)
-            return state::failf(x->span, "countof of ", subject.name, ", which is not an array");
-        number = subject.count;
+        if (subject.kind != .array && subject.kind != .tuple)
+            return state::failf(x->span, "countof of ", subject.name, ", which is not an array or a tuple");
+        number = subject.kind == .tuple ? subject.part_count : subject.count;
     } else {
         if (e->target_data == nullptr) return state::fail("sizeof and alignof need the target's data layout", x->span);
         if (op == .size_of)
@@ -1134,6 +1142,27 @@ static c::LLVMValueRef slice_bound(state::Emitter *e, const ast::Expr *written, 
     return c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
 }
 
+// `xs[a:b]` of a block: the same block with rows `a` to `b` of the first dimension, over the same elements.
+static state::Status block_slice(state::Emitter *e, state::Value base, c::LLVMValueRef start, c::LLVMValueRef end) {
+    c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "block");
+    c::LLVMValueRef data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
+    c::LLVMValueRef counts[8] = {};
+    block_counts(e, whole, base.ty.count, counts);
+    if (end == nullptr) end = counts[0];
+    c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");
+    c::LLVMValueRef past = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, end, counts[0], "past");
+    c::LLVMValueRef bad = c::LLVMBuildOr(e->builder, backwards, past, "outside");
+    report_index(e, bad, end, 0, counts[0]);
+    c::LLVMValueRef stride = c::LLVMConstInt(index_word(e), 1, 0);
+    for (U64 i = 1; i < base.ty.count; i++)
+        stride = c::LLVMBuildMul(e->builder, stride, counts[i], "stride");
+    c::LLVMValueRef offset = c::LLVMBuildMul(e->builder, start, stride, "offset");
+    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &offset, 1, "first");
+    counts[0] = c::LLVMBuildSub(e->builder, end, start, "length");
+    state::push_value(e, make_block(e, base.ty, first, counts));
+    return state::success();
+}
+
 static state::Status slice_of_finish(state::Emitter *e, const state::Work *w) {
     if (w->expr->kind != .slice_of) {
         return state::fail("not a slice", w->span);
@@ -1146,6 +1175,7 @@ static state::Status slice_of_finish(state::Emitter *e, const state::Work *w) {
     if (end_written != nullptr) end = slice_bound(e, end_written, nullptr);
     c::LLVMValueRef start = slice_bound(e, start_written, zero);
     state::Value base = state::pop_value(e);
+    if (base.ty.kind == .block) return block_slice(e, base, start, end);
     c::LLVMValueRef data = nullptr;
     c::LLVMValueRef count = nullptr;
     state::Ty result = base.ty;
@@ -1440,7 +1470,42 @@ static state::Status array_constant(state::Ty ty, const ast::Expr *x, c::LLVMVal
 }
 
 // A record's constant from a compound of scalar constants; fields left out are zero.
+static state::Status construction_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    Usize at = 0;
+    if (x->kind != .call || ty.kind != .record || !find_record_of(e, ty, &at))
+        return state::failf(x->span, "a construction of ", ty.name);
+    Usize count = field_count(e, at);
+    if (count > 64) {
+        return state::not_emitted("record with more than 64 fields", x->span);
+    }
+    c::LLVMValueRef values[64];
+    Bool given[64];
+    for (Usize i = 0; i < count; i++) {
+        values[i] = c::LLVMConstNull(e->records[at].fields[i].ty.llvm);
+        given[i] = false;
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        Usize field = i;
+        if (arg->kind == .named_arg) {
+            try field_index(e, ty, arg->kind.named_arg.name, arg->span, &field);
+            arg = arg->kind.named_arg.value;
+        }
+        if (field >= count) return state::failf(arg->span, "too many fields for ", ty.name);
+        try scalar_constant(e->records[at].fields[field].ty, arg, &values[field]);
+        given[field] = true;
+    }
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *fallback = e->records[at].fields[i].default_value;
+        if (!given[i] && fallback != nullptr) try scalar_constant(e->records[at].fields[i].ty, fallback, &values[i]);
+    }
+    *out = c::LLVMConstNamedStruct(ty.llvm, values, (U32)count);
+    return state::success();
+}
+
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
     if (ty.kind == .array) return array_constant(ty, x, out);
     if (x->kind != .compound) {
         return scalar_constant(ty, x, out);

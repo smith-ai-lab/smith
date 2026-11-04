@@ -92,8 +92,8 @@ Showing the caches never takes the lock, and pruning does not need it: it is saf
 
 **The lint cache** (issue #621, `runtime/lint_cache.c`) keeps what clang-tidy said about one file so that `smith lint`
 runs it only on a file whose lint could differ. It is in two levels, like a compiler cache with a manifest. The *first
-key* is the SHA-256 of smith (build-id on Linux, LC_UUID on macOS: clang-tidy and smith's own checks are in the
-binary), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
+key* is the SHA-256 of the *lint identity* (#2236: the LLVM pack, which fixes clang-tidy, and the sources of smith's own
+checks), the environment that moves a compile (`SDKROOT`, `CPATH`, ...), the file's name, its compile command (the
 root of the project replaced by a fixed word, so a clone elsewhere shares entries; a `.smith` file the build does not
 compile has the whole `compile_commands.json` there) and the content of every `.clang-tidy` from its folder up to `/`; a `.smith` file's key also holds every generated header
 under `.smith/include`, since its imports read those without the preprocessor and clang-tidy's dependency file never names
@@ -105,7 +105,12 @@ prints the stored output and returns the stored status; a miss runs clang-tidy a
 writing a temporary file and renaming it, so lints in other worktrees are safe together. Only a run that completed
 (exit status 0 or 1) is stored, and not one that read a file changed during it or in the 20 ms before it. A system
 header is not in a manifest (nor is a header found only because a new file shadows an earlier one in the include path),
-so an SDK update is seen only through `SDKROOT`, `DEVELOPER_DIR` and smith's own identity. The rule is the other caches':
+so an SDK update is seen only through `SDKROOT`, `DEVELOPER_DIR` and the lint identity.
+The lint identity is made by `smith build` (`build_lint_identity` in `build.c`, compiled into smith as `runtime/lint_identity.c`): the
+SHA-256 of the pack's identity and of every project file the preprocessor reads for `shim/tidy.cpp` (`-MM`, so the set
+is the compiler's list and never written by hand). A change to the compiler, the runtime or the libraries is not in it, so
+most pull requests keep every lint result; a change to a check, or to a header a check includes, makes another key. A
+smith built without an LLVM install has no identity and keys on its own build-id (Linux) or LC_UUID (macOS). The rule is the other caches':
 a hit touches its entries when a day old, and once a week (`lint/prune.timestamp`) entries unused for 31 days and
 stale `t/` files go. `SMITH_LINT_CACHE=0` turns it off and `=why` prints why each file ran. `smith cache` counts the
 files and `smith cache clean lint` removes them.

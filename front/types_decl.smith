@@ -49,8 +49,10 @@
 //   Lambdas        A lambda's parameters take the types of the expected `Fn(F)`. Its body is checked after the body
 //                  that holds it: the hook keeps a copy of the scopes as they were at the lambda and the statement
 //                  walk, which has no recursion, runs on it when the enclosing walk is done.
-//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `static_assert` in a
-//                  body, `if constexpr` and `for constexpr`, a range `for`, a local type or function, a name from a C
+//   static_assert  In a body its condition is checked as a `Bool`; the emitter folds it and reports a false or unknown
+//                  condition (front::emit).
+//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `if constexpr` and
+//   `for constexpr`, a range `for`, a local type or function, a name from a C
 //                  header (`c::printf`, until front::cimport lands, #1124), a function that falls off its end is not
 //                  yet reported.
 //
@@ -550,6 +552,32 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
 }
 
+// `if let .some(x) = o`: the value is typed (a call of a generic function there makes its instance), `x` has the
+// payload's type in the `then` branch, and the `else` branch is checked outside it.
+static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .if_let)) {
+        return;
+    }
+    types::TypeRef t = types_expr::infer(r, s->kind.if_let.value);
+    if (s->kind.if_let.else_branch != nullptr) {
+        push(s->kind.if_let.else_branch, nullptr, enter);
+    }
+    types::push_scope(&r->scopes);
+    push(nullptr, nullptr, leave);
+    push(s->kind.if_let.then_branch, nullptr, enter);
+    Str binding = s->kind.if_let.pattern.binding;
+    if (countof(binding) == 0 || is_discard(binding)) {
+        return;
+    }
+    types::TypeRef element = r->table.invalid;
+    if (t != nullptr && t->kind == .option && t->element != nullptr) {
+        element = t->element;
+    }
+    types::Symbol symbol = {.name = binding, .kind = .variable, .type = element, .is_const = true, .is_new = true};
+    types::declare(&r->scopes, symbol);
+    note_local(binding, element);
+}
+
 static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .for_in)) {
         return;
@@ -654,7 +682,12 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     const ast::Expr *value = s->kind.expression.value;
-    types::TypeRef type = types_expr::infer(r, value);
+    types::TypeRef type = nullptr;
+    if (r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type) {
+        type = types_expr::check(r, value, state.result); // the last line is the value: it takes the result's type
+    } else {
+        type = types_expr::infer(r, value);
+    }
     if (!r->new_body || !(value->kind == .call) || type == nullptr) {
         return;
     }
@@ -713,6 +746,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         push(s->kind.do_while.body, nullptr, enter);
     } else if (s->kind == .for_stmt) {
         for_statement(r, s);
+    } else if (s->kind == .if_let) {
+        if_let_statement(r, s);
     } else if (s->kind == .for_in) {
         for_in_statement(r, s);
     } else if (s->kind == .return_stmt) {
@@ -726,7 +761,25 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .switch_stmt) {
         switch_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        not_yet(r, s, "static_assert in a body");
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    }
+}
+
+// A statement inside a block that is a value (`let v = if c:` and its lines): the ones that need no children are
+// checked in the scope the block opened; a loop, a nested block and the like are `not yet typed`.
+static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        expression_statement(r, s);
+    } else if (s->kind == .declaration) {
+        local_declaration(r, s->kind.declaration.decl);
+    } else if (s->kind == .destructure) {
+        destructure_statement(r, s);
+    } else if (s->kind == .return_stmt) {
+        return_statement(r, s);
+    } else if (s->kind == .static_assert_stmt) {
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    } else {
+        types::failf(r, s->span, "not yet typed: this statement inside a block that is used as a value");
     }
 }
 
@@ -903,7 +956,8 @@ static void check_instances(types::Checked *r) {
 }
 
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){
+        .convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook, .statement = value_block_statement});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
@@ -928,6 +982,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || symbol->decl != d) {
         return;
+    }
+    if (symbol->kind == .type_name) {
+        return; // `const Pair = (i32, f32)`: a tuple of types, an alias declared with the aliases
     }
     state.function = name;
     types::TypeRef type = symbol->type;

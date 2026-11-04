@@ -1,0 +1,1 @@
+<dir>/src/static_assert_unknown.smith:2:5: error: static_assert needs a condition known at compile time
