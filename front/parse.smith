@@ -83,6 +83,7 @@ export struct Parser {
     Bool head;     // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
                    // at its top level, so a `{` opens the body (#961)
     Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
+    Bool in_value; // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
     Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on
