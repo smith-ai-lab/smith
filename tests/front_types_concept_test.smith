@@ -1,0 +1,40 @@
+// Tests of the concepts in a type written in smith's own syntax (#2107): `Int` in a fixed file is the concept `int`.
+module front_types_concept_test;
+
+import front::ast;
+import front::types;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool says(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static types::TypeRef own(types::Checked *r, ast::TypeExpr *written) {
+    r->new_syntax = true;
+    types::TypeRef t = types::resolve(r, written);
+    r->new_syntax = false;
+    return t;
+}
+
+export void test_front_types_concept_capitalized_names_are_the_lowercase_concepts() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::DeclRef none[1] = {};
+    ast::Module m = ast::new_module("sample", none[0:0]);
+    types::Checked r = types::check(&m, (types::Options){.target = types::lp64()});
+    types::TypeRef capital = own(&r, ast::named("Int"));
+    test::check_condition(capital->kind == .concept_type);
+    test::check_condition(says(types::show(capital), "int"));
+    test::check_condition(capital == own(&r, ast::named("int")));
+    test::check_condition(own(&r, ast::named("Num")) == own(&r, ast::named("num")));
+    test::check_condition(own(&r, ast::named("Unsigned")) == own(&r, ast::named("unsigned")));
+    test::check_equal(r.error_count, 0);
+}

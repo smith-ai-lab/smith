@@ -1,0 +1,66 @@
+// Tests of the whole-tree variant rename (#2098, part of #2053): a variant declared in one file and used in another is
+// lowercase in both, bare uses get the leading dot, a qualified use does not, and a name that is also a struct stays.
+module front_fix_variants_test;
+
+import front::fix_variants;
+import std::arena;
+import std::mem;
+import std::test;
+
+static fix_variants::Word word(Str text) {
+    return (fix_variants::Word){.text = text};
+}
+
+static void expect_snake(Str name, Str want) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(fix_variants::snake(name), want);
+}
+
+export void test_front_fix_variants_snake_case() {
+    expect_snake("NotFound", "not_found");
+    expect_snake("Other", "other");
+    expect_snake("IOError", "io_error");
+    expect_snake("Default", "default_");
+}
+
+export void test_front_fix_variants_declaration_and_uses_in_two_files() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str one = "enum Error {\n    NotFound\n    Refused\n}\n\nfn find() -> Error {\n    return NotFound\n}\n";
+    Str two = "fn same(e: files.Error) -> bool {\n    return e == files.NotFound\n}\n";
+    fix_variants::Word sources[2] = {word(one), word(two)};
+    fix_variants::Words out = fix_variants::rename_all(sources);
+    Str want_one = "enum Error {\n    not_found\n    refused\n}\n\nfn find() -> Error {\n    return .not_found\n}\n";
+    Str want_two = "fn same(e: files.Error) -> bool {\n    return e == files.not_found\n}\n";
+    test::check_equal(out[0].text, want_one);
+    test::check_equal(out[1].text, want_two);
+}
+
+export void test_front_fix_variants_colon_body_and_attribute() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str one = "enum Mode:\n    @c_name(\"X\") Replace\n    Append\n\nfn m() -> Mode:\n    return Append\n";
+    fix_variants::Word sources[1] = {word(one)};
+    fix_variants::Words out = fix_variants::rename_all(sources);
+    Str want = "enum Mode:\n    @c_name(\"X\") replace\n    append\n\nfn m() -> Mode:\n    return .append\n";
+    test::check_equal(out[0].text, want);
+}
+
+export void test_front_fix_variants_a_name_that_is_a_struct_stays() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str one = "struct Point {\n    x: i32\n}\nenum Kind {\n    Point\n    Line\n}\n";
+    fix_variants::Word sources[1] = {word(one)};
+    fix_variants::Words out = fix_variants::rename_all(sources);
+    Str want = "struct Point {\n    x: i32\n}\nenum Kind {\n    Point\n    line\n}\n";
+    test::check_equal(out[0].text, want);
+}
