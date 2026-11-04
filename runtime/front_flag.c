@@ -166,6 +166,29 @@ static int smith_front_header(int count, char **args, size_t sources, const char
     return front_header_run(smith_front_sources[0], output, triple) == 0 ? 0 : -1;
 }
 
+// Whether an argument names a file clang would compile or link (a source, an object, a library): after the front end
+// took the `.smith` files, an argument list without one has nothing left for clang to do.
+static bool smith_front_is_input(const char *argument) {
+    static const char *const suffixes[] = {".c", ".cc", ".cpp", ".cxx", ".m",  ".mm",
+                                           ".o", ".a",  ".s",   ".S",   ".bc", ".ll"};
+    size_t length = strlen(argument);
+    if (argument[0] == '-') return false;
+    for (size_t i = 0; i < sizeof suffixes / sizeof suffixes[0]; i++) { // bounded by the table
+        size_t n = strlen(suffixes[i]);
+        if (length > n && strcmp(argument + length - n, suffixes[i]) == 0) return true;
+    }
+    return false;
+}
+
+// The depfile a build's compile asked for (`-MD -MF file`): `output: source`, so the step reruns when the source
+// changes. The imports of a module are not listed: a change to one is picked up by the front end's own caches.
+static void smith_front_depfile(const char *depfile, const char *output, const char *source) {
+    FILE *file = fopen(depfile, "w");
+    if (file == nullptr) smith_die(smith_exit_missing, "cannot write the depfile", depfile);
+    fprintf(file, "%s: %s\n", output != nullptr ? output : "a.out", source);
+    fclose(file);
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
@@ -177,12 +200,16 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
     const char *output = nullptr;
     const char *triple = nullptr;
     size_t sources = 0;
+    const char *depfile = nullptr; // `-MD -MF file` of a build's compile: smith writes the file itself (#2042)
+    int source_at = 0;
     for (int i = 0; i < count; i++) { // bounded by count
+        if (strcmp(args[i], "-MF") == 0 && i + 1 < count) depfile = args[i + 1];
         if (strcmp(args[i], "-c") == 0) compile_only = true;
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) output = args[i + 1];
         if (strncmp(args[i], "--target=", 9) == 0) triple = args[i] + 9;
         if (smith_front_is_source(args[i]) && i > 0 && strcmp(args[i - 1], "-o") != 0) {
             if (sources == smith_front_sources_max) smith_die(smith_exit_usage, "too many .smith files", nullptr);
+            source_at = i;
             smith_front_sources[sources++] = args[i];
         }
     }
@@ -199,7 +226,11 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
     int used = first;
     size_t seen = 0;
     for (int i = 0; i < count; i++) { // bounded by count
-        if (strncmp(args[i], "--front-end=", 12) == 0) continue;
+        if (strncmp(args[i], "--front-end=", 12) == 0 || strcmp(args[i], "-MD") == 0) continue;
+        if (strcmp(args[i], "-MF") == 0 && i + 1 < count) {
+            i++;
+            continue;
+        }
         if (smith_front_is_source(args[i]) && (i == 0 || strcmp(args[i - 1], "-o") != 0)) {
             if (!compile_only) smith_front_arguments[used++] = smith_front_names[seen];
             seen++;
@@ -207,13 +238,15 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
         }
         smith_front_arguments[used++] = args[i];
     }
-    bool only_options = true;            // nothing but -c and -o <file> left: clang has no input to compile
+    bool only_options = true;            // nothing but options left: clang has no input to compile
     for (int i = first; i < used; i++) { // bounded by used
         if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
-            i++;
-        else if (strcmp(smith_front_arguments[i], "-c") != 0)
+            i++; // the value of -o is the output, not an input
+        else if (smith_front_is_input(smith_front_arguments[i]))
             only_options = false;
     }
+    if (compile_only && only_options && sources == 1 && depfile != nullptr)
+        smith_front_depfile(depfile, output, args[source_at]);
     return compile_only && only_options ? 0 : used;
 }
 #endif // SMITH_CORE

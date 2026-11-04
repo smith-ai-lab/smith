@@ -996,7 +996,8 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     if (count == 1 && text::is(p->source[params[0]->span.start:params[0]->span.end], "void")) count = 0;
     for (Usize i = 0; i < count; i += 1) {
         ast::Span span = params[i]->span;
-        joined = format::push(joined, i > 0 ? ", " : "", p->source[span.start:span.end]);
+        // The inner types are mended first: `Fn(U32 (U32 x))` is `fn(u32) -> u32`, not `fn(U32) -> U32`.
+        joined = format::push(joined, i > 0 ? ", " : "", parse::mended(p, span.start, span.end));
     }
     if (kind.function.variadic) {
         r->problem = "a variadic function type has no spelling in smith's own syntax yet: write the function by hand";
@@ -1004,7 +1005,7 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     char written[:] = format::push("fn(", joined, ")");
     ast::TypeExpr *result = kind.function.result;
     if (result == nullptr) return frozen(written);
-    Str shown = p->source[result->span.start:result->span.end];
+    Str shown = parse::mended(p, result->span.start, result->span.end);
     if (text::is(shown, "void") || text::is(shown, "Void")) return frozen(written);
     return frozen(format::push(written, " -> ", shown));
 }

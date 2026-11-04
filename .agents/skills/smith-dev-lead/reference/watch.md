@@ -129,6 +129,13 @@ check() {
       : # Mac runners stopped by the owner 2026-11-03:       echo "$who" | grep -q '^mac-runner' || { seen "mac-$(date -u +%F-%H)" && echo "no Mac runner has claimed a ticket in 90 minutes while $ready are ready: the Mac loops may be down; ask on #1406"; }
     }
   fi
+  # a claim with no open PR and no word on its ticket for 30 minutes: its runner may have stopped. Wake the lead, who
+  # checks the session before releasing (a first build is ~15 min and smith check 10+ with nothing on GitHub).
+  # 2026-11-03: 40 tickets were claimed while 6 runners worked; three had stopped hours before. Owner: "60 minutes
+  # might be too long. Do you think we should do 30 minutes?"
+  inprs=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[].body // ""' 2>/dev/null | grep -oE '#[0-9]+' | tr -d '#' | sort -u | tr '\n' ' ')
+  idle=$(issues claimed '.[]|select(.pull_request==null and (.updated_at|fromdateiso8601<now-1800))|.number' | while read -r i; do case " $inprs " in *" $i "*) ;; *) seen "idle-$i-$(date -u +%F-%H)" && echo "#$i";; esac; done | tr '\n' ' ')
+  [ -n "$idle" ] && echo "claimed, no open PR, nothing on the ticket for 30+ min: $idle- check each runner's session (list_sessions); release the claim if it stopped, then look at the whole factory"
   # the focus on #73: no claim, comment or PR push on any of its tickets for 45 minutes while some are open means no
   # runner is working the chain (2026-11-03: every runner had ended and the chain sat 90 minutes unseen)
   focus=$(gh api "repos/$R/issues/73" --jq .body 2>/dev/null | grep -m1 '^\*\*Chain first' | grep -oE '#[0-9]+' | tr -d '#' | sort -u)
@@ -178,7 +185,8 @@ vitals() {
   merges=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
   open=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
   wait=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[].created_at|fromdate]|if length>0 then ((now-min)/60|floor|tostring)+" min" else "none" end' 2>/dev/null)
-  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}"
+  held=$(issues claimed '[.[]|select(.pull_request==null)]|length')
+  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
 }
 
 t=0
@@ -203,6 +211,7 @@ done
 - **Thin tickets:** a `task` with a body under 150 characters wakes the lead once (a split on 2026-11-02 left bodies of `x`, and runners skip them).
 - **Both runner lanes must claim (hourly):** no `claimed by` comment from a cloud runner, or from a Mac runner, in 90 minutes while tickets are ready wakes the lead. On 2026-11-02 the cloud lane was empty from 14:20 to 20:30, unseen.
 - **Ready means takeable:** the ready count leaves out tickets that are claimed, blocked, `later`, `mac`, named by an open PR, or that have a Waits-for line. It said 20 while five fresh runners found nothing.
-- **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, and the oldest queued CI run, so each wake shows the whole factory.
+- **Vital signs with every wake:** claims in the last hour by lane, merges, open PRs, the oldest queued CI run, and how many tickets are claimed now, so each wake shows the whole factory The claimed count is compared with the sessions that are `working`: on 2026-11-03 it was 40 against 6.
+- **A claim gone quiet (every 15 minutes):** a `claimed` ticket with no open PR naming it and no change on the ticket for 30 minutes wakes the lead, at most once an hour per ticket. The lead checks the runner's session before releasing: a first build takes about 15 minutes and `smith check` 10 or more, with nothing on GitHub.
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.
