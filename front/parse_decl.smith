@@ -1830,7 +1830,7 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
         if (!style.saw_new) recover(p);
         return nullptr;
     }
-    if (parse::at(p, lex::name) || parse::at(p, lex::star)) {
+    if (!style.saw_new && (parse::at(p, lex::name) || parse::at(p, lex::star))) {
         Str message = "declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable";
         parse::error(p, parse::peek(p).span, message);
         recover(p);

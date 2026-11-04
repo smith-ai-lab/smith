@@ -1,0 +1,8 @@
+# Doc comments are not kept in the interface read in memory; inline bodies are.
+@inline
+pub fn cost(n: u32) -> u32:
+    n
+
+@inline
+pub fn twice(n: u32) -> u32:
+    cost(n) * 2
