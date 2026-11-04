@@ -637,6 +637,46 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
     return object;
 }
 
+// The lint identity (#2236): what `smith lint` keys its cache on instead of the whole binary. clang-tidy is fixed by
+// the LLVM pack (its identity, smith-clang.id), and smith's own checks by the source files they are compiled from:
+// shim/tidy.cpp and every project file the preprocessor reads for it (`-MM`: the dependency file's list, never written
+// by hand, so a check that starts to use runtime code is in it from then on). The hash is of the pack, then each file's
+// name and SHA-256, in sorted order. A change to the compiler, the runtime or the libraries leaves it, so a lint result
+// survives it. Empty without an LLVM install (the cache then keys on the binary, as before).
+static const char *build_lint_identity(SmithBuild *b, const BuildConfig *config) {
+    if (!config->linkable) return "";
+    // The compiler's -MM lists the project files shim/tidy.cpp includes (system headers, LLVM's among them, are left
+    // out). A compiler that fails, or a list without shim/tidy.cpp, gives no identity: never a hash of the pack alone.
+    const char *script =
+        "set -e; pack=$1; cxx=$2; shift 2; deps=$(\"$cxx\" \"$@\" -MM shim/tidy.cpp); "
+        "files=$(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep . | sort -u); "
+        "case $files in *shim/tidy.cpp*) ;; *) exit 1 ;; esac; "
+        "{ printf 'smith-lint-identity 1\\n%s\\n' \"$pack\"; "
+        "for f in $files; do printf '%s ' \"$f\"; shasum -a 256 < \"$f\"; done; } | shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b,
+                            smith_cat(b,
+                                      (const char *[]){"sh", "-c", script, "sh", config->llvm_id, config->cxx, nullptr},
+                                      build_shim_flags(b, config), nullptr),
+                            "");
+}
+
+// runtime/lint_identity.c, the identity above in a translation unit of its own, as the commit's (build_commit_object).
+static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *identity = build_lint_identity(b, config);
+    SmithObject object = {
+        .compiler = config->cc,
+        .source = "runtime/lint_identity.c",
+        .output = smith_fmt(b, "%s/lint_identity.o", folder),
+        .flags =
+            smith_cat(b, config->cflags,
+                      smith_when(b, identity[0] != '\0',
+                                 (const char *[]){smith_fmt(b, "-DSMITH_LINT_IDENTITY=\"%s\"", identity), nullptr}),
+                      nullptr),
+    };
+    smith_object(b, &object);
+    return object;
+}
+
 static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
 
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
@@ -956,7 +996,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     const char *const *flags = smith_cat(
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
-                         "-DSMITH_COMMIT_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
                          nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
@@ -978,6 +1018,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
+    SmithObject lint_identity = build_lint_identity_object(b, config, folder);
     BuildShims shims = {};
     const char *const *linked = build_linked_libraries(b);
     size_t linked_count = 0;
@@ -988,13 +1029,14 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     build_io_object(b, config, folder, flags, &runtime_io);
     // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 18, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[3 + linked_count + 18 + 2 + 4 + 1];
+    const SmithObject *objects[4 + linked_count + 18 + 2 + 4 + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
     objects[1] = &commit;
     objects[2] = &runtime_io;
-    size_t count = 3;
+    objects[3] = &lint_identity;
+    size_t count = 4;
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
