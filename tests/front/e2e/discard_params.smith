@@ -1,0 +1,10 @@
+fn pick(_: i32, _: i32, third: i32) -> i32:
+    third
+
+pub fn check() -> i32:
+    if pick(1, 2, 7) != 7:
+        return 1
+    let twice: fn(i32, i32) -> i32 = fn(_: i32, _: i32): 5
+    if twice(3, 4) != 5:
+        return 2
+    0

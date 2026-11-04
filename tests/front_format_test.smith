@@ -74,6 +74,14 @@ export void test_format_collapses_blank_lines_and_trailing_spaces() {
     expect_format("let a = 1   \n\n\n\nlet b = 2\n\n\n", "let a = 1\n\nlet b = 2\n");
 }
 
+export void test_format_mixed_indentation_widths_come_out_at_four() {
+    expect_format("fn f():\n  if a:\n      g()\n  h()\n", "fn f():\n    if a:\n        g()\n    h()\n");
+}
+
+export void test_format_a_header_import_stays_on_its_line_without_spaces_inside() {
+    expect_format("import c <stdio.h>\nlet a = 1\n", "import c <stdio.h>\nlet a = 1\n");
+}
+
 export void test_format_a_lexing_error_is_the_result() {
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

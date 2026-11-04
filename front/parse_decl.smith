@@ -1857,7 +1857,7 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
         if (!style.saw_new) recover(p);
         return nullptr;
     }
-    if (parse::at(p, lex::name) || parse::at(p, lex::star)) {
+    if (!style.saw_new && (parse::at(p, lex::name) || parse::at(p, lex::star))) {
         Str message = "declare the type by itself: write `struct Name {...};`, then `Name x;` for the variable";
         parse::error(p, parse::peek(p).span, message);
         recover(p);
@@ -2655,6 +2655,13 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
 static Frame open_frame(parse::Parser *p) {
     Frame frame = {.start = parse::peek(p).span.start};
     parse::advance(p);
+    if (p->layout) {
+        // Smith's own syntax: `if cond:` and the declarations indented under it.
+        frame.condition = parse::expression(p);
+        parse::expect(p, lex::colon, "`:`");
+        if (!open_layout_block(p)) parse::error(p, parse::peek(p).span, "expected an indented block after `if ...:`");
+        return frame;
+    }
     parse::expect(p, lex::kw_constexpr, "`constexpr`: `if constexpr` is the only `if` of a file");
     parse::expect(p, lex::left_paren, "`(`");
     frame.condition = parse::expression(p);
@@ -2817,6 +2824,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
     for (Usize step = 0; step <= countof(p->tokens); step++) {
         ast::Decl *done = nullptr;
         Bool closed = false;
+        if (depth > 0) skip_newlines(p);
         lex::TokenKind kind = parse::peek(p).kind;
         if (depth > 0 && kind == lex::end_of_file) {
             parse::error(p, parse::peek(p).span, "expected `}` to close `if constexpr`, found the end of the file");
@@ -2824,16 +2832,22 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             fixable = false;
             depth -= 1;
             closed = true;
-        } else if (depth > 0 && kind == lex::right_brace) {
+        } else if (depth > 0 && (kind == (p->layout ? lex::dedent : lex::right_brace))) {
             lex::Token brace = parse::advance(p);
             Frame *top = &stack[depth - 1];
             top->close = brace.span;
+            if (p->layout) skip_newlines(p);
             if (!top->in_else && parse::at(p, lex::kw_else)) {
                 lex::Token otherwise = parse::advance(p);
                 top->in_else = true;
                 top->else_head = (ast::Span){.start = brace.span.start, .end = otherwise.span.end};
                 if (parse::at(p, lex::kw_if)) {
                     top->chained = true;
+                } else if (p->layout) {
+                    parse::expect(p, lex::colon, "`:` or `if` after `else`");
+                    if (!open_layout_block(p)) {
+                        parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
+                    }
                 } else {
                     lex::Token open = parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
                     top->else_head.end = open.span.end;
@@ -2848,7 +2862,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             if (depth == countof(stack)) {
                 stack = mem::realloc(stack, depth + 1);
             }
-            if (p->new_syntax && depth == 0) {
+            if (p->new_syntax && !p->layout && depth == 0) {
                 parse::error(
                     p, parse::peek(p).span,
                     "`if constexpr` is not in smith's syntax: write `@when(condition)` before each declaration");

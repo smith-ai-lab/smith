@@ -105,7 +105,6 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
     ast::Param source[:] = d->kind.function.params;
     const ast::TypeExpr *result_type = d->kind.function.result;
     Bool variadic = d->kind.function.variadic;
-    if (result_type == nullptr) return signature_failed(state::not_emitted("function without a result", d->span));
     Usize count = countof(source);
     if (count > 64) return signature_failed(state::not_emitted("more than 64 parameters", d->span));
     for (Usize i = 0; i < count; i++) {
@@ -127,7 +126,9 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         all[i] = made.ok;
         types[i] = state::abi_type(e, made.ok);
     }
-    state::TyResult made_result = type_for(e, result_type);
+    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::TyResult made_result = {.ok = none};
+    if (result_type != nullptr) made_result = type_for(e, result_type);
     if (made_result == .error) {
         mem::free(all.data);
         return {.error = made_result.error};
@@ -532,7 +533,7 @@ static Bool c_record(state::Emitter *e, ast::Path path, Usize *at) {
         ast::Span nowhere = {};
         state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
         if (ty == .error) state::free_text(ty.error.message);
-        made = ty != .error && find_record(e, full, at);
+        made = ty != .error && find_record(e, symbol->type->name, at);
     }
     state::free_text(full);
     return made;
@@ -585,6 +586,31 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
     return filled;
 }
 
+// `words.Pair(key = w)`: a record of another module, named through the module.
+static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
+    if (callee->kind != .member || callee->kind.member.arrow || callee->kind.member.base->kind != .name) return false;
+    ast::Path base = callee->kind.member.base->kind.name.path;
+    ast::Identifier parts[8];
+    Usize count = countof(base.segments);
+    if (count >= 8) return false;
+    for (Usize i = 0; i < count; i++)
+        parts[i] = base.segments[i];
+    parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
+    ast::Path path = {.segments = parts[0:count + 1], .span = callee->span};
+    return c_record(e, path, at);
+}
+
+// The record a construction's callee names: one of the module's, a C one or one of another module (`words.Pair`,
+// or `Pair` after `from words import Pair`).
+static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
+    if (callee->kind == .name) {
+        ast::Path path = callee->kind.name.path;
+        if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
+        return c_record(e, path, at);
+    }
+    return member_record(e, callee, at);
+}
+
 // The field values are on the value stack, the first deepest: start from zero and insert each.
 static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     const ast::Expr *x = w->expr;
@@ -593,27 +619,21 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
     }
     ast::ExprRef written[:] = x->kind.call.args;
     const ast::Expr *callee = x->kind.call.callee;
-    if (callee->kind != .name) {
-        return state::fail("not a name", w->span);
-    }
-    Str name = join(callee->kind.name.path);
     Usize count = (Usize)w->number;
     state::Value values[64];
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
     Usize at = 0;
-    Bool found = find_record(e, name, &at);
-    state::free_text(name);
-    if (!found) return state::failf(w->span, "unknown record ", callee->kind.name.path.segments[0].text);
+    if (!callee_record(e, callee, &at)) return state::fail("unknown record", w->span);
     state::RecordType record = e->records[at];
     ast::ExprRef args[:] = filled_fields(record, written);
     c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
     for (Usize i = 0; i < count; i++) {
         Usize field = 0;
         if (!field_for(record, args, i, &field))
-            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", name);
+            return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", record.name);
         if (!state::same_type(values[i].ty, record.fields[field].ty))
-            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", name, " is ",
+            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name, " is ",
                                 record.fields[field].ty.name, ", the value is ", values[i].ty.name);
         built = c::LLVMBuildInsertValue(e->builder, built, values[i].llvm, (U32)field, "");
     }
@@ -779,12 +799,10 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     const ast::Decl *imported = nullptr;
     Str key = "";
     Bool is_imported = false;
+    Usize record = 0;
+    if (callee_record(e, callee, &record)) return construct(e, x, record);
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
-        Usize record = 0;
-        if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, &record))
-            return construct(e, x, record);
-        if (is_c_path(path) && c_record(e, path, &record)) return construct(e, x, record);
         state::Local local = {};
         if (countof(path.segments) == 1 && state::find_local(e, path.segments[0].text, &local) &&
             local.ty.kind == .fn_value)

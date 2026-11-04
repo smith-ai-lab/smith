@@ -1,0 +1,47 @@
+// The driver gives smith's lint checks their inputs (#1976, part of #1631): `compile::diagnose` hands the checker the
+// file's text, so `# NOLINT` silences a finding, and a reader for `import c <...>` headers, so the check is on.
+module front_lint_driver_test;
+
+import front::compile;
+import front::roots;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Bool reported(Str source, Str needle) {
+    roots::Roots folders = {};
+    compile::Problems found = compile::diagnose("t.smith", source, folders);
+    for (Usize i = 0; i < countof(found); i++) {
+        if (has(found[i].message, needle)) return true;
+    }
+    return false;
+}
+
+export void test_front_lint_driver_reports_a_finding_without_nolint() {
+    test::check_condition(reported("fn f(a: *u8):\n    c::free(a)\n", "`free` is unchecked"));
+}
+
+export void test_front_lint_driver_nolint_silences_the_finding() {
+    test::check_condition(!reported("fn f(a: *u8):\n    c::free(a) # NOLINT(smith-mem)\n", "`free` is unchecked"));
+}
+
+export void test_front_lint_driver_nolintnextline_silences_the_next_line() {
+    test::check_condition(!reported("fn f(a: *u8):\n    # NOLINTNEXTLINE\n    c::free(a)\n", "`free` is unchecked"));
+}
+
+export void test_front_lint_driver_module_library_header_is_read() {
+    test::check_condition(
+        reported("import c <smith/arena.h>\n\nfn f():\n    pass\n", "a module, through its C header"));
+}

@@ -114,3 +114,16 @@ export void test_when_needs_one_condition_the_checker_can_read() {
     says("@when()\nfn f() -> i32:\n    1\n", "`@when` takes one condition", "target.os");
     says("@when(target.os == .windows)\nfn f() -> i32:\n    1\n", "`@when` reads", "`||`");
 }
+
+// A file-scope `if` on `target.os` holds declarations for the systems its condition picks (#2191).
+export void test_when_a_file_scope_if_picks_its_branch_on_each_system() {
+    clean("if target.os == .macos:\n    fn name() -> i32:\n        1\nelse if target.os == .linux:\n"
+          "    fn name() -> i32:\n        2\nelse:\n    fn other() -> i32:\n        3\n\n"
+          "if target.os == .macos || target.os != .macos:\n    struct Pair:\n        a: i32\n"
+          "    fn first(p: *Pair) -> i32:\n        p.a\n\n"
+          "fn main() -> i32:\n    name()\n");
+}
+
+export void test_when_a_file_scope_if_the_checker_cannot_read_is_reported() {
+    says("if 1 + 2:\n    fn f() -> i32:\n        1\n", "not yet typed: if constexpr", "");
+}

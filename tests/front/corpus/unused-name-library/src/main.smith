@@ -1,0 +1,7 @@
+import barrier
+
+pub fn main() -> i32:
+    let x = 0
+    let _ = barrier.wait(&x)
+    let _ = barrier.wait_for(&x, 3)
+    return 0

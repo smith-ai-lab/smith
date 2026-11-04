@@ -284,7 +284,7 @@ static Bool exists(ast::Attribute list[:], Os os) {
 static Bool has_when(const ast::Module *m) {
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
-        if (find(d->attributes) != nullptr) return true;
+        if (find(d->attributes) != nullptr || d->kind == .if_constexpr) return true;
         if (d->kind == .record) {
             for (Usize k = 0; k < countof(d->kind.record.fields); k++) {
                 if (find(d->kind.record.fields[k].attributes) != nullptr) return true;
@@ -317,16 +317,49 @@ export Bool uses_when(const ast::Module *m) {
     return has_when(m);
 }
 
+// Pushes `list` on the stack of declarations still to read, last first so that the first comes off first.
+static typeof(ast::DeclRef[:]) push_reversed(ast::DeclRef pending[:], ast::DeclRef list[:]) {
+    for (Usize i = countof(list); i > 0; i--) {
+        pending = mem::realloc(pending, countof(pending) + 1);
+        pending[countof(pending) - 1] = list[i - 1];
+    }
+    return pending;
+}
+
+// The declarations of the module with each file-scope `if` replaced by the declarations of the branch its condition
+// picks on `os` (#2191). An `if` whose condition this module cannot read stays, and the checker reports it. The nested
+// ones are an explicit stack, so there is no recursion.
+static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
+    ast::DeclRef start[:] = {};
+    ast::DeclRef pending[:] = push_reversed(start, decls);
+    ast::DeclRef out[:] = {};
+    for (Usize step = 0; step < (1U << 24) && countof(pending) > 0; step++) {
+        ast::DeclRef d = pending[countof(pending) - 1];
+        pending = pending[0:countof(pending) - 1];
+        Bool ok = false;
+        Bool value = false;
+        if (d->kind == .if_constexpr) value = holds(d->kind.if_constexpr.condition, os, &ok);
+        if (d->kind == .if_constexpr && ok) {
+            pending = push_reversed(pending, value ? d->kind.if_constexpr.then_decls : d->kind.if_constexpr.else_decls);
+            continue;
+        }
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = d;
+    }
+    return out;
+}
+
 export const ast::Module *live_module(const ast::Module *m, Os os) {
     if (!has_when(m)) return m;
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = *m;
     ast::DeclRef none[:] = {};
     copy->decls = none;
-    for (Usize i = 0; i < countof(m->decls); i++) {
-        const ast::Decl *d = m->decls[i];
+    ast::DeclRef flat[:] = without_ifs(m->decls, os);
+    for (Usize i = 0; i < countof(flat); i++) {
+        const ast::Decl *d = flat[i];
         if (!exists(d->attributes, os)) continue;
-        ast::DeclRef kept = m->decls[i];
+        ast::DeclRef kept = flat[i];
         if (d->kind == .record) {
             ast::FieldDecl fields[:] = {};
             for (Usize k = 0; k < countof(d->kind.record.fields); k++) {

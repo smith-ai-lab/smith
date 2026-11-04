@@ -1,0 +1,7 @@
+import c <stdio.h>
+import table
+
+fn main() -> i32:
+    let plain: table.Plain = table.plain()
+    let _ = stdio.printf("%llu %llu %llu\n", plain(21), table.call(plain, 4), table.chosen_value(5))
+    return 0
