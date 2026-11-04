@@ -156,10 +156,10 @@ jobs:
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
     needs: [changes, pack]
-    # Not on a pull request (owner, 2026-11-03: "we need to get CI moving"): macOS runs in the merge queue only. A pull
-    # request's runs filled the free plan's 5 hosted macOS slots (133 of 287 hosted minutes in 90 minutes), and jobs
-    # queued behind them were cancelled with no step run.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
+    # On pull requests too (owner, 2026-11-04: a green PR should mean a green queue run, and each queue failure fails
+    # every group behind it). From 2026-11-03 it ran in the merge queue only, after 20 runners' PRs filled the free
+    # plan's 5 hosted macOS slots; with 3 to 6 runners, and the owner's Mac as overflow (`pick-mac`), it fits.
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
     # does all of it in about 4 (#1709). The job's limit counts time spent queued for a slot: at 30 minutes, jobs waiting
@@ -474,8 +474,6 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
-          # a pull request owes no macOS: the merge queue runs it (2026-11-03)
-          [ "$EVENT" = pull_request ] && owed="${owed/MACOS/}"
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
