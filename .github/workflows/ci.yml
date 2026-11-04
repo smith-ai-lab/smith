@@ -31,8 +31,6 @@ jobs:
     timeout-minutes: 3
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
-      mode: ${{ steps.scope.outputs.mode }}
-      base: ${{ steps.scope.outputs.base }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
@@ -77,7 +75,6 @@ jobs:
         id: scope
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
@@ -86,7 +83,6 @@ jobs:
           workflows='^[.]github/workflows/'
           gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
-          mode=full
           # a push to main is a commit the merge queue already checked: it only publishes the release
           if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
@@ -99,14 +95,9 @@ jobs:
             built=$(printf '%s\n%s\n' "$built" "$own" | grep . || true)
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
             if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
-            # a pull request tests what its change can reach (`smith test --changed`); the merge queue runs
-            # everything, and so does a pull request that changes this workflow or its actions (how they are tested)
-            if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -z "$own" ]; then mode=changed; fi
           fi
-          echo "mode=$mode" >>"$GITHUB_OUTPUT"
-          echo "base=$PR_BASE" >>"$GITHUB_OUTPUT"
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope, tests: $mode" >>"$GITHUB_STEP_SUMMARY"
+          echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Does the change undo a commit already on main
         # a stale working tree squashed onto a moved main deletes merged work with every test green (#1455, #1473):
@@ -125,20 +116,15 @@ jobs:
       - name: Test matrix
         id: linux
         # Linux carries the tests: `--skip-macos` in parts, each building smith itself (no artifact egress). The Mac
-        # runs the few tests only macOS can run (`--macos-only`, one part). A pull request tests what its change
-        # reaches, split into 2 parts; the queue runs everything in 8. The free plan runs 20 hosted jobs at once and
-        # was full most hours of 2026-11-02 (queue shards waited 15 min for a runner), so a pull request takes 2 slots
-        # instead of 4: a part's median was 5.6 min, mostly building smith, which each part does again. A push to main
-        # runs no tests (the queue tested that exact commit; #1139): its work is the release and the cache.
+        # runs the few tests only macOS can run (`--macos-only`, one part). A pull request runs everything in 8 parts,
+        # as the queue does (owner, 2026-11-04, #2234): from 2026-11-03 the queue was the first place a change was
+        # fully tested, 74 of 100 failed queue builds failed in `test-linux`, and each failure fails the builds behind
+        # it. A push to main runs no tests (the queue tested that exact commit; #1139): its work is the release and the
+        # cache.
         run: |
           flags="--skip-macos"
           macflags="--macos-only"
           count=8
-          if [ "${{ steps.scope.outputs.mode }}" = changed ]; then
-            flags="$flags --changed --base ${{ steps.scope.outputs.base }}"
-            macflags="$macflags --changed --base ${{ steps.scope.outputs.base }}"
-            count=2
-          fi
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
