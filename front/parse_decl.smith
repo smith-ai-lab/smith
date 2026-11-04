@@ -1380,6 +1380,25 @@ static U32 list_length(const parse::Parser *p, U32 from, U32 to) {
     return 0;
 }
 
+// The lists of the designated items inside the braces that start at `from` (up to `to`), turned into `Type(...)` calls:
+// their number, and their edits in `edits`; 0 when there are none.
+static U32 item_lists(const parse::Parser *p, U32 from, U32 to, Str type, parse::Edits *edits) {
+    U32 count = 0;
+    for (Usize i = 0; i < countof(p->listed); i += 1) {
+        parse::NamedList list = p->listed[i];
+        if (list.open.start <= from || list.close.end > to) continue;
+        // Only the items of the outer braces: the text before the item is `{` or `,` and blanks.
+        Str before = trimmed(source_between(p, from, list.open.start));
+        if (countof(before) == 0 || (before[countof(before) - 1] != ',' && countof(before) != 1)) continue;
+        for (Usize j = 0; j < countof(list.edits); j += 1)
+            *edits = with_edit(*edits, list.edits[j]);
+        *edits = with_edit(*edits, edit(list.open.start, list.open.end, as_str(format::push(type, "("))));
+        *edits = with_edit(*edits, edit(list.close.start, list.close.end, ")"));
+        count += 1;
+    }
+    return count;
+}
+
 // Whether the dimensions text is one pair of brackets (`[5]`), not `[2][3]`.
 static Bool single_dimension(Str text) {
     Usize brackets = 0;
@@ -1407,6 +1426,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
     if (suffixed && !has_init && (pre->is_static || pre->top)) fixable = false;
     Str value = "";
+    parse::Edits item_edits = {};
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
     if (suffixed && countof(value) > 0 && value[0] == '{') {
         // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
@@ -1414,6 +1434,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
         // checker's error, not a silent zero fill.
         U32 count = list_length(p, equal_end, last.span.start);
+        if (count == 0) {
+            // A list of lists, `T xs[2] = {{.a = 1}, {.a = 2}}`: each is a `T(a = 1)`.
+            count = item_lists(p, equal_end, last.span.start, trimmed(written), &item_edits);
+        }
         if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
         if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
     }
@@ -1435,7 +1459,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = {};
+    parse::Edits list_edits = item_edits;
     if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
         text = as_str(format::push(lead, name, " ="));
         list_edits = named_list_edits(p, written);

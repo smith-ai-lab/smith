@@ -602,6 +602,8 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
     if (!fix->complex && fix->designated > 0 && fix->positional == 0) {
         parse::NamedList named = {.plain = true, .open = open.span, .close = close.span, .edits = fix->edits};
         p->named_list = named;
+        p->listed = mem::realloc(p->listed, countof(p->listed) + 1);
+        p->listed[countof(p->listed) - 1] = named;
     }
     parse::warning_fix(
         p, whole,
