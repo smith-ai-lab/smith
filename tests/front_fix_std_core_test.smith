@@ -55,3 +55,8 @@ export void test_front_fix_an_if_value_before_a_comma_in_an_argument_list() {
     expect_fixed("module m;\nvoid f(auto xs) {\n    g(xs ? &xs[0] : nullptr, 1);\n}\n",
                  "fn f(xs: auto):\n    g(if xs: &xs[0] else: nullptr, 1)\n");
 }
+
+export void test_front_fix_two_array_globals_in_a_row() {
+    expect_fixed("module m;\nconst I32 a[2] = {1, 2};\nconst I32 b[2] = {3, 4};\n",
+                 "let a: [2]i32 = [1, 2]\nlet b: [2]i32 = [3, 4]\n");
+}
