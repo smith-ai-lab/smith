@@ -1,12 +1,27 @@
 ---
 type: architecture
-title: Effect inference, a plugin linked into smith
-description: "Effects are inferred for every function a compile reads, from its body and its callees, and [[std::pure]] and one attribute for each effect are ceilings checked by one more clang plugin linked into smith."
-tags: [language, plugin, effects]
+title: Effect inference, one pass over LLVM IR
+description: "Effects are inferred for every function of a build by one pass over its unoptimized LLVM IR, the same for smith, C, C++ and Objective-C, and @pure and @effects(...) are ceilings checked against the inferred sets; the clang plugin that did this before stays until the old pipeline goes (#1632)."
+tags: [language, effects, llvm-ir]
 ---
-# Effect inference (issue #207, first step)
+# Effect inference (issues #207, #1939)
 
-> **Direction (#1939, owner, 2026-11-03):** the new front end infers effects in one pass over the unoptimized LLVM IR of the whole build, for every source language (`front/effects_pass.smith`, `knowledge/front-end.md`); `@pure` and `@effects(...)` become ceilings only. This page describes the plugin, which stays until the old pipeline goes (#1632); #2022 rewrites it for the IR pass.
+What a function does to the world is a set of effects (`alloc`, `files`, `net`, `console`, `clock`, `process`, `env`, `entropy`, `globals`, `unknown`, `fails`: one bit each). Skill `smith-lang-effects`. The new front end computes the sets in **one pass over the unoptimized LLVM IR of the whole build**, the same for `.smith`, C, C++ and Objective-C (owner, 2026-11-03: everything is compiled to LLVM IR, so the pass sees what happens whatever the source language was). The code is `front/effects_pass.smith` (sets and fixed point), `front/effects_cache.smith`, `front/effects_ceiling.smith` (ceilings and the error), `front/effects_c.smith` (C, C++, Objective-C) and `front/effects_table.smith` (the leaves); `knowledge/front-end.md` has the per-piece details.
+
+- **Inference.** The pass reads the IR before optimization, so a result never changes with `-O`. A function's set is the union of its calls' sets, solved to a fixed point over the call graph. A call that nothing in the build defines is a leaf and takes its set from the table of the system layer (libSystem on macOS, musl on Linux: `printf` is `console`, `malloc` is `alloc`, `read` is `files` and `net`); an unknown leaf is `unknown`. A store through a global (a function-local `static` is one in IR) is `globals`; inline assembly is `unknown`. `fails` is a call of a failure point (`llvm.trap`, `abort`, `smith_failure*`): a checked index, a contract and an arena budget lower to one. Assembly files are not read.
+- **Annotations are ceilings, never declarations.** `@pure` is the empty set and `@effects(.alloc, .net)` lists what the function may at most do; a function with no attribute is inferred and never an error. The ceiling is written into the IR as an attribute and read back by `effects_ceiling::check`.
+- **The error** is at the call that first adds an effect beyond the ceiling, at its source line (from the debug locations), and names the chain: `` `bad` is [[std::pure]], but it has the effects console, globals: bad -> log_it (chain.smith:16) -> printf (chain.smith:8) `` followed by the note `this call is the first of the effects beyond the declared ones`. The wording is the plugin's.
+- **Generics.** Each instantiation is its own IR function with its own set: `map` with a pure function is pure, and with `print_it` it has `console`.
+- **Function values.** A parameter of function type may carry a ceiling (`f: fn(f32) -> f32 @pure`): every function passed there must fit under it, checked at the call site, and a call through it counts as the ceiling. Without a ceiling the summary records "calls parameter k" and each call site substitutes the set of what it passes. A pointer that went through memory takes the union of every address-taken function of the same type in the build, `unknown` when there is none; `dlopen` and generated code are `unknown`.
+- **C, C++ and Objective-C** are compiled to IR by `smith cc` / `smith c++` and join the same graph, so a pure smith function may call C, and the chain names the C line (`caller -> helper (util.c:9) -> printf`). `operator new` and `delete` are `alloc`, `throw` is `fails`, a message send is `unknown`.
+- **One pass for compiler and editor.** `smith lsp --smith` runs the same pass. Summaries are cached by a hash of each function's IR (opcode and line of every instruction, callee and global names), so only the edited module is read again.
+- **Handlers do not change**: `runtime/handlers.c` stays at the libc and libSystem layer. No `io` value is passed down from `main`; tests and arenas control effects through handlers (owner, 2026-10-30; #240, #207, #239).
+- **Not done yet:** a ceiling on a struct field of function type, and the checker writing a parameter's ceiling from the source (#2080). The parity run of `tests/effects/` and `tests/effects_pointers/` through the new front end is the part of #2022 that waits for those sources in the new syntax.
+- **`clang-plugin-attr-args.patch` is deletable** once the old pipeline goes (#1632): it only taught clang's parser to hand a scoped attribute's arguments to the plugin, and the new front end reads `@effects(...)` itself (#1377's table).
+
+# The plugin (legacy, until #1632)
+
+The pipeline that still compiles `.c` files and `.smith` files in the old syntax infers effects with `shim/effects_infer.cpp`, described below. It is deleted with the old pipeline; the IR pass above replaces it. A set that differs between the two for the same function is a bug in one of them: report it on #1939 before changing either.
 
 What a function does to the world, as a set of effects (`alloc`, `files`, `net`, `console`, `clock`, `process`, `env`,
 `entropy`, `globals`, `unknown`, `fails`: one bit each, `shim/effects_table.h`), computed by `shim/effects_infer.cpp`, a second plugin of the

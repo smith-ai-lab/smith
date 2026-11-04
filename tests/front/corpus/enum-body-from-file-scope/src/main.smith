@@ -1,0 +1,13 @@
+import c <stdio.h>
+import finder
+
+# `Option(usize)` is first named inside a function body, with no file-scope alias: the struct is defined there.
+
+pub fn main() -> i32:
+    let i: Option(usize) = finder.find("key=value", '=')
+    let mut j: Option(usize) = .none
+    j = finder.find("a,b", ',')
+    if let .some(a) = i:
+        if let .some(b) = j:
+            let _ = stdio.printf("%zu %zu\n", a, b)
+    0
