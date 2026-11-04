@@ -445,6 +445,13 @@ export c::LLVMTypeRef pointer_type(Emitter *e, U32 address_space) {
 }
 
 // A zeroed slot in the entry block.
+// The LLVM type a parameter of type `ty` has in a function's signature: an array is passed as a pointer to its first
+// element (C's rule, so a header's `int32_t xs[4]` is what a C caller can call); every other type as it is.
+export c::LLVMTypeRef abi_type(Emitter *e, Ty ty) {
+    if (ty.kind == .array) return c::LLVMPointerTypeInContext(e->context, 0);
+    return ty.llvm;
+}
+
 export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
     char *label = cstr(name);
     c::LLVMValueRef slot = c::LLVMBuildAlloca(e->alloca_builder, ty.llvm, label);

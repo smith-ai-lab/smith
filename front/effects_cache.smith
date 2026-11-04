@@ -14,9 +14,23 @@ import std::arena;
 import std::format;
 import std::mem;
 
+// What a Call records (`kind`). A direct call has the callee's name; the other kinds are the facts piece 3 of #1939
+// needs to follow function values: `slot` is a parameter number, `arg` another number, `target` a function's name.
+export constexpr U32 call_direct = 0;   // calls `callee`
+export constexpr U32 call_param = 1;    // calls its parameter `slot`; `callee` is the text of the function type called
+export constexpr U32 call_memory = 2;   // calls a pointer loaded from memory; `callee` is the function type's text
+export constexpr U32 pass_function = 3; // passes the function `target` as argument `slot` of `callee`
+export constexpr U32 pass_param = 4;    // passes its parameter `arg` as argument `slot` of `callee`
+export constexpr U32 pass_memory = 5;   // passes a pointer it cannot trace as argument `slot` of `callee`
+export constexpr U32 param_ceiling = 6; // parameter `slot` is limited to the effects in `arg`
+
 export struct Call {
     Str callee;
     U32 line;
+    U32 kind;
+    U32 slot;
+    U32 arg;
+    Str target;
 };
 
 export struct Summary {
@@ -79,7 +93,12 @@ export void free_text(Str text) {
 export void push_call(Summary *summary, Call call) {
     Usize n = countof(summary->calls);
     summary->calls = mem::realloc(summary->calls, n + 1);
-    summary->calls[n] = (Call){.callee = dup(call.callee), .line = call.line};
+    summary->calls[n] = (Call){.callee = dup(call.callee),
+                               .line = call.line,
+                               .kind = call.kind,
+                               .slot = call.slot,
+                               .arg = call.arg,
+                               .target = dup(call.target)};
 }
 
 // A summary with its own copy of the name and the callee names; free it with `release_summary`.
@@ -95,6 +114,7 @@ export void release_summary(Summary *summary) {
     free_text(summary->name);
     for (Usize i = 0; i < countof(summary->calls); i++) {
         free_text(summary->calls[i].callee);
+        free_text(summary->calls[i].target);
     }
     mem::free(summary->calls.data);
     *summary = (Summary){};

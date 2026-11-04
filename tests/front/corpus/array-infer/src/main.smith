@@ -1,0 +1,17 @@
+import c <stdio.h>
+
+# `[_]` is a fixed array whose length the initializer gives (#423): one dimension, the outer of two and a string literal. A string counts its terminator, as in C. (An exported constant waits: a global array
+# is not emitted yet.)
+fn sum(xs: []i32) -> i32:
+    let mut total = 0
+    for x in xs:
+        total += x
+    total
+
+pub fn main() -> i32:
+    let xs: [_]i32 = [1, 2, 3]
+    let m: [_][3]i32 = [[1, 2, 3], [4, 5, 6]]
+    let s: [_]char = "abc"
+    let _ = stdio.printf("%zu %zu %zu %zu\n", countof(xs), countof(m), countof(s), countof(xs))
+    let _ = stdio.printf("%d\n", sum(xs))
+    0
