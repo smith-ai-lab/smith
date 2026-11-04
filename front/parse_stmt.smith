@@ -406,6 +406,8 @@ static Bool path_declaration(const parse::Parser *p) {
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
+    // In smith's own syntax a type name and `(` is a construction, `T(1)`, not a declarator (#2145).
+    if (kind == lex::type_name && p->new_syntax && parse::peek_at(p, 1).kind == lex::left_paren) return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
     if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);
