@@ -1,0 +1,249 @@
+// front::types_builtin: clang's `__builtin_*` functions as intrinsics of the checker (#2286 of #2224). std's modules
+// spell a few operations the way clang does (`__builtin_add_overflow(a, b, &r)`, `__builtin_bit_cast(T, x)`); the names
+// stay as clang spells them, they are std's private machinery and not user API, and they have no new-syntax alias.
+//
+// THE TABLE. `find(name)` gives the `Entry` of a builtin: its `Shape` (the parameter and result types, checked here by
+// `check`) and the LLVM intrinsic it lowers to (`intrinsic`, the name after `llvm.`; the emitter, front::emit_builtin,
+// reads the same entry). A name that is not in the table is not a builtin, and the checker reports it as unknown.
+//
+//   Shape            parameters                              result      lowers to
+//   overflow         (int a, int b, *int r)                  Bool        llvm.{s,u}<intrinsic>.with.overflow, the sum
+//   stored in r bit_cast         (type T, x)                             T           the bytes of x read as T assume
+//   (Bool)                                  Void        llvm.assume trap             () Void        llvm.trap
+//   float_unary      (float x)                               its type    llvm.<intrinsic>
+//   float_binary     (float a, float b)                      its type    llvm.<intrinsic>
+//   absolute         (int or float x)                        its type    llvm.fabs, llvm.abs
+//   smallest         (number a, number b)                    its type    llvm.minnum, llvm.smin, llvm.umin
+//   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
+//   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
+//   end in `f`)
+//
+// A type argument (the first of `bit_cast`) is read as a type, not typed as a value.
+module front::types_builtin;
+
+import front::ast;
+import front::types;
+import std::mem;
+
+export typedef enum {
+    overflow;
+    bit_cast;
+    assume;
+    trap;
+    float_unary;
+    float_binary;
+    absolute;
+    smallest;
+    predicate;
+    constant;
+} Shape;
+
+export struct Entry {
+    Str name;
+    Shape shape;
+    Str intrinsic; // the part of the LLVM intrinsic's name that the shape does not fix
+};
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Entry made(Str name, Shape shape, Str intrinsic) {
+    return (Entry){.name = name, .shape = shape, .intrinsic = intrinsic};
+}
+
+// The entry named `name`; false when it is not a builtin of the table.
+export Bool find(Str name, Entry *found) {
+    if (same(name, "__builtin_add_overflow")) {
+        *found = made(name, .overflow, "add");
+    } else if (same(name, "__builtin_sub_overflow")) {
+        *found = made(name, .overflow, "sub");
+    } else if (same(name, "__builtin_mul_overflow")) {
+        *found = made(name, .overflow, "mul");
+    } else if (same(name, "__builtin_bit_cast")) {
+        *found = made(name, .bit_cast, "");
+    } else if (same(name, "__builtin_assume")) {
+        *found = made(name, .assume, "assume");
+    } else if (same(name, "__builtin_trap")) {
+        *found = made(name, .trap, "trap");
+    } else if (same(name, "__builtin_elementwise_sqrt") || same(name, "__builtin_sqrt")) {
+        *found = made(name, .float_unary, "sqrt");
+    } else if (same(name, "__builtin_elementwise_sin")) {
+        *found = made(name, .float_unary, "sin");
+    } else if (same(name, "__builtin_elementwise_cos")) {
+        *found = made(name, .float_unary, "cos");
+    } else if (same(name, "__builtin_floor") || same(name, "__builtin_floorf")) {
+        *found = made(name, .float_unary, "floor");
+    } else if (same(name, "__builtin_fabs") || same(name, "__builtin_fabsf")) {
+        *found = made(name, .float_unary, "fabs");
+    } else if (same(name, "__builtin_elementwise_pow")) {
+        *found = made(name, .float_binary, "pow");
+    } else if (same(name, "__builtin_elementwise_minnum")) {
+        *found = made(name, .float_binary, "minnum");
+    } else if (same(name, "__builtin_elementwise_maxnum")) {
+        *found = made(name, .float_binary, "maxnum");
+    } else if (same(name, "__builtin_elementwise_abs")) {
+        *found = made(name, .absolute, "abs");
+    } else if (same(name, "__builtin_elementwise_min")) {
+        *found = made(name, .smallest, "min");
+    } else if (same(name, "__builtin_isnan")) {
+        *found = made(name, .predicate, "isnan");
+    } else if (same(name, "__builtin_isfinite")) {
+        *found = made(name, .predicate, "isfinite");
+    } else if (same(name, "__builtin_inf")) {
+        *found = made(name, .constant, "inf64");
+    } else if (same(name, "__builtin_inff")) {
+        *found = made(name, .constant, "inf32");
+    } else if (same(name, "__builtin_nan")) {
+        *found = made(name, .constant, "nan64");
+    } else if (same(name, "__builtin_nanf")) {
+        *found = made(name, .constant, "nan32");
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// The builtin a call's callee names, when it is one: a single plain name that no scope declares.
+export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry *found) {
+    if (callee->kind != .name) return false;
+    ast::Path path = callee->kind.name.path;
+    if (countof(path.segments) != 1) return false;
+    if (!find(path.segments[0].text, found)) return false;
+    return types::lookup_path(&c->scopes, path) == nullptr;
+}
+
+// Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), or the
+// tag string of `nan`, which is ignored.
+export Bool is_type_argument(Entry entry, Usize index) {
+    if (entry.shape == .bit_cast) return index == 0;
+    return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
+}
+
+// The type written as argument of a builtin: a name of a type, or a type written as a value.
+static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg) {
+    if (arg->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
+        if (s != nullptr && s->kind == .type_name) return s->type;
+        if (s == nullptr) {
+            ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
+            written->span = arg->span;
+            written->kind = {.named = {.path = arg->kind.name.path}};
+            Usize errors = c->error_count;
+            c->new_syntax = true;
+            types::TypeRef t = types::resolve(c, written);
+            c->new_syntax = false;
+            c->error_count = errors;
+            if (t != c->table.invalid) return t;
+        }
+    } else if (arg->kind == .type_value) {
+        c->new_syntax = true;
+        types::TypeRef t = types::resolve(c, arg->kind.type_value.type);
+        c->new_syntax = false;
+        if (t != c->table.invalid) return t;
+        return nullptr;
+    }
+    types::failf(c, arg->span, "the first argument of `__builtin_bit_cast` is a type; write a type such as `u64`");
+    return nullptr;
+}
+
+static types::TypeRef value_type(const types::Checked *c, const ast::Expr *x) {
+    types::TypeRef t = types::type_of(c, x);
+    if (t == nullptr) return c->table.invalid;
+    return t;
+}
+
+// A type that is not known yet: a parameter of a concept (`Int a`) or of `auto`, checked again for each instance.
+static Bool is_open(types::TypeRef t) {
+    return t->kind == .concept_type || t->kind == .automatic;
+}
+
+static Bool is_number(types::TypeRef t) {
+    return t->kind == .integer || t->kind == .floating;
+}
+
+static types::TypeRef wrong(types::Checked *c, ast::Span span, Entry entry, Str wanted) {
+    types::failf(c, span, "`", entry.name, "` takes ", wanted);
+    return c->table.invalid;
+}
+
+static types::TypeRef check_overflow(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "two integers of one type and a pointer to a third of that type; write `(a, b, &result)`";
+    if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
+    types::TypeRef a = value_type(c, args[0]);
+    types::TypeRef b = value_type(c, args[1]);
+    types::TypeRef r = value_type(c, args[2]);
+    if (a == c->table.invalid || b == c->table.invalid || r == c->table.invalid) return c->table.invalid;
+    if (is_open(a) || is_open(b)) return c->table.bool_type;
+    if (a->kind != .integer || b != a || r->kind != .pointer || r->element != a)
+        return wrong(c, e->span, entry, wanted);
+    return c->table.bool_type;
+}
+
+static types::TypeRef check_bit_cast(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    if (countof(args) != 2) return wrong(c, e->span, entry, "a type and a value; write `(u64, x)`");
+    types::TypeRef to = type_argument(c, args[0]);
+    if (to == nullptr) return c->table.invalid;
+    if (value_type(c, args[1]) == c->table.invalid) return c->table.invalid;
+    return to;
+}
+
+static types::TypeRef check_numbers(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:],
+                                    Usize count, Bool floats_only) {
+    Str wanted = floats_only ? "floating-point arguments of one type" : "numbers of one type";
+    if (countof(args) != count) return wrong(c, e->span, entry, wanted);
+    types::TypeRef first = value_type(c, args[0]);
+    for (Usize i = 0; i < count; i++) {
+        types::TypeRef t = value_type(c, args[i]);
+        if (t == c->table.invalid) return c->table.invalid;
+        if (is_open(t) || is_open(first)) continue;
+        Bool kind_ok = floats_only ? t->kind == .floating : is_number(t);
+        if (!kind_ok || t != first) return wrong(c, e->span, entry, wanted);
+    }
+    return first;
+}
+
+static types::TypeRef check_constant(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Bool tagged = same(entry.intrinsic[0:3], "nan");
+    if (countof(args) != (tagged ? 1 : 0))
+        return wrong(c, e->span, entry, tagged ? "a tag string; write `(\"\")`" : "no arguments");
+    return types::floating(&c->table, same(entry.intrinsic[3:5], "32") ? 32 : 64);
+}
+
+// The type of a call of the builtin, once its arguments are typed (a type argument is read here); the invalid type,
+// with the error reported, when the arguments do not fit.
+export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) {
+    if (e->kind != .call) return c->table.invalid;
+    ast::ExprRef args[:] = e->kind.call.args;
+    switch (entry.shape) {
+    case .overflow:
+        return check_overflow(c, e, entry, args);
+    case .bit_cast:
+        return check_bit_cast(c, e, entry, args);
+    case .assume:
+        if (countof(args) != 1 || value_type(c, args[0]) != c->table.bool_type)
+            return wrong(c, e->span, entry, "one Bool; write `(x > 0)`");
+        return c->table.void_type;
+    case .trap:
+        if (countof(args) != 0) return wrong(c, e->span, entry, "no arguments");
+        return c->table.void_type;
+    case .float_unary:
+        return check_numbers(c, e, entry, args, 1, true);
+    case .float_binary:
+        return check_numbers(c, e, entry, args, 2, true);
+    case .absolute:
+        return check_numbers(c, e, entry, args, 1, false);
+    case .smallest:
+        return check_numbers(c, e, entry, args, 2, false);
+    case .constant:
+        return check_constant(c, e, entry, args);
+    case .predicate:
+        if (check_numbers(c, e, entry, args, 1, true) == c->table.invalid) return c->table.invalid;
+        return c->table.bool_type;
+    }
+    return c->table.invalid;
+}

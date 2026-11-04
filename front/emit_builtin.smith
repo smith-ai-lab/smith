@@ -1,0 +1,150 @@
+// front::emit_builtin: the emit side of clang's `__builtin_*` functions (#2286 of #2224). The checker
+// (front::types_builtin) says what each one takes and returns; this module lowers a call of one to the LLVM intrinsic
+// or the few instructions its entry names. The call emitter (front::emit_call) hands every call whose callee is a name
+// of the table to `call`; nothing else of the emitter knows the table.
+module front::emit_builtin;
+
+import front::ast;
+import front::emit_state as state;
+import front::types_builtin as table;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+// The entry of the builtin the call `x` calls; false when `x` is not a call of one.
+static Bool entry_of(const ast::Expr *x, table::Entry *found) {
+    if (x->kind != .call) return false;
+    const ast::Expr *callee = x->kind.call.callee;
+    if (callee->kind != .name) return false;
+    ast::Path path = callee->kind.name.path;
+    return countof(path.segments) == 1 && table::find(path.segments[0].text, found);
+}
+
+// Whether the call `x` is a call of a builtin of the table.
+export Bool is_call(const ast::Expr *x) {
+    table::Entry found = {};
+    return entry_of(x, &found);
+}
+
+// A call of the LLVM intrinsic `name`, overloaded on `over` (null for one that is not). The call's value.
+static c::LLVMValueRef intrinsic(state::Emitter *e, Str name, c::LLVMTypeRef over, c::LLVMValueRef *args, U32 count) {
+    U32 id = c::LLVMLookupIntrinsicID(name.data, countof(name));
+    c::LLVMTypeRef types[1] = {over};
+    U32 overloads = over == nullptr ? 0 : 1;
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, overloads);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, overloads);
+    return c::LLVMBuildCall2(e->builder, type, declaration, args, count, "");
+}
+
+// `llvm.<name>` called on `over` with the arguments `args`.
+static c::LLVMValueRef named_intrinsic(state::Emitter *e, Str prefix, Str base, Str suffix, c::LLVMTypeRef over,
+                                       c::LLVMValueRef *args, U32 count) {
+    char text[:] = format::push("llvm.", prefix, base, suffix);
+    c::LLVMValueRef made = intrinsic(e, text, over, args, count);
+    mem::free(text.data);
+    return made;
+}
+
+// `__builtin_add_overflow(a, b, &r)`: stores the wrapped result in `r` and says whether it overflowed.
+static c::LLVMValueRef overflow(state::Emitter *e, table::Entry entry, state::Value *v) {
+    c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
+    c::LLVMValueRef pair =
+        named_intrinsic(e, v[0].ty.is_signed ? "s" : "u", entry.intrinsic, ".with.overflow", v[0].ty.llvm, args, 2);
+    c::LLVMBuildStore(e->builder, c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped"), v[2].llvm);
+    return c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+}
+
+// `__builtin_bit_cast(T, x)`: the bytes of `x` read back as a `T`, through a temporary.
+static c::LLVMValueRef bit_cast(state::Emitter *e, state::Value x, state::Ty to) {
+    c::LLVMValueRef slot = state::new_alloca(e, x.ty, "cast");
+    c::LLVMBuildStore(e->builder, x.llvm, slot);
+    return c::LLVMBuildLoad2(e->builder, to.llvm, slot, "cast");
+}
+
+static c::LLVMValueRef absolute(state::Emitter *e, state::Value x) {
+    if (x.ty.kind == .floating) {
+        c::LLVMValueRef args[1] = {x.llvm};
+        return named_intrinsic(e, "", "fabs", "", x.ty.llvm, args, 1);
+    }
+    c::LLVMValueRef args[2] = {x.llvm, c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 0, 0)};
+    return named_intrinsic(e, "", "abs", "", x.ty.llvm, args, 2);
+}
+
+static c::LLVMValueRef smallest(state::Emitter *e, state::Value a, state::Value b) {
+    c::LLVMValueRef args[2] = {a.llvm, b.llvm};
+    if (a.ty.kind == .floating) return named_intrinsic(e, "", "minnum", "", a.ty.llvm, args, 2);
+    return named_intrinsic(e, "", a.ty.is_signed ? "smin" : "umin", "", a.ty.llvm, args, 2);
+}
+
+// `isnan`: unordered with itself. `isfinite`: `x - x` is zero, and is not for an infinity or a NaN.
+static c::LLVMValueRef predicate(state::Emitter *e, table::Entry entry, state::Value x) {
+    if (state::same_text(entry.intrinsic, "isnan"))
+        return c::LLVMBuildFCmp(e->builder, c::LLVMRealUNO, x.llvm, x.llvm, "isnan");
+    c::LLVMValueRef difference = c::LLVMBuildFSub(e->builder, x.llvm, x.llvm, "difference");
+    return c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, difference, c::LLVMConstReal(x.ty.llvm, 0.0), "isfinite");
+}
+
+// The value of the call, from its entry and its arguments' values (the type argument has none).
+static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, state::Ty result) {
+    c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
+    switch (entry.shape) {
+    case .overflow:
+        return overflow(e, entry, v);
+    case .bit_cast:
+        return bit_cast(e, v[0], result);
+    case .assume:
+        return intrinsic(e, "llvm.assume", nullptr, args, 1);
+    case .trap:
+        return intrinsic(e, "llvm.trap", nullptr, nullptr, 0);
+    case .float_unary:
+        return named_intrinsic(e, "", entry.intrinsic, "", v[0].ty.llvm, args, 1);
+    case .float_binary:
+        return named_intrinsic(e, "", entry.intrinsic, "", v[0].ty.llvm, args, 2);
+    case .absolute:
+        return absolute(e, v[0]);
+    case .smallest:
+        return smallest(e, v[0], v[1]);
+    case .predicate:
+        return predicate(e, entry, v[0]);
+    case .constant:
+        return c::LLVMConstRealOfStringAndSize(result.llvm, entry.intrinsic.data, 3);
+    }
+    return nullptr;
+}
+
+// The arguments' values are on the value stack, the first deepest.
+static state::Status finish(state::Emitter *e, const state::Work *w) {
+    const ast::Expr *x = w->expr;
+    table::Entry entry = {};
+    if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
+    state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    if (entry.shape != .assume && entry.shape != .trap) {
+        state::TyResult typed = state::type_of_node(e, x);
+        if (typed == .error) return {.error = typed.error};
+        result = typed.ok;
+    }
+    state::Value values[3] = {};
+    for (Usize i = (Usize)w->number; i > 0; i--)
+        values[i - 1] = state::pop_value(e);
+    c::LLVMValueRef made = lowered(e, entry, values, result);
+    state::push_value(e, (state::Value){.llvm = made, .ty = result});
+    return state::success();
+}
+
+// Emits a call of a builtin: the value arguments are evaluated first to last, then `finish` lowers the call.
+export state::Status call(state::Emitter *e, const ast::Expr *x) {
+    table::Entry entry = {};
+    if (x->kind != .call) return state::fail("not a call", x->span);
+    ast::ExprRef args[:] = x->kind.call.args;
+    if (!entry_of(x, &entry)) return state::fail("not a builtin call", x->span);
+    Usize values = countof(args);
+    for (Usize i = 0; i < countof(args); i++) {
+        if (table::is_type_argument(entry, i)) values -= 1;
+    }
+    if (values > 3) return state::failf(x->span, entry.name, " takes at most 3 arguments, the call has ", (U64)values);
+    state::push_then(e, (state::Work){.then = finish, .expr = x, .number = values, .span = x->span});
+    for (Usize i = countof(args); i > 0; i--) {
+        if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], state::no_hint());
+    }
+    return state::success();
+}
