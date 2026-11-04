@@ -211,7 +211,15 @@ static Bool is_c_path(ast::Path path) {
 // `c::name` where `name` is a function a header declared.
 static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl **found, Str *symbol) {
     Str full = "";
-    if (callee->kind == .name) {
+    if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1) {
+        // `abs` after `from c <stdlib.h> import abs`: the checker bound the header's `c::abs` under the bare name
+        state::Local local = {};
+        Str bare = callee->kind.name.path.segments[0].text;
+        const types::Symbol *alias = types::lookup(&e->options.checked->scopes, bare);
+        if (alias == nullptr || alias->kind != .function_symbol || alias->decl == nullptr) return false;
+        if (alias->decl->kind != .function || !alias->decl->from_c || state::find_local(e, bare, &local)) return false;
+        full = state::msg(format::push("c::", alias->decl->kind.function.name));
+    } else if (callee->kind == .name) {
         full = join(callee->kind.name.path);
     } else if (callee->kind ==
                    .member) { // `stdio.name` after `import c <stdio.h>` (#1678), unless a local hides the binding
@@ -241,6 +249,8 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     if (callee->kind == .name && is_c_path(callee->kind.name.path)) {
         return c_callee(e, callee, found, symbol);
     }
+    if (callee->kind == .name && countof(callee->kind.name.path.segments) == 1 && c_callee(e, callee, found, symbol))
+        return true;
     if (callee->kind == .member && c_callee(e, callee, found, symbol)) return true;
     if (callee->kind == .member) {
         names = types::member_names(callee);
