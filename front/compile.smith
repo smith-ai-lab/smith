@@ -427,6 +427,13 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     return list;
 }
 
+// The module the checker typed: `parsed` with each compile-time `if` keeping one branch and each `@when` decided
+// (#2277), or `parsed` itself. Its nodes are the ones `types::type_of` knows.
+static const ast::Module *checked_module(const types::Checked *checked, const ast::Module *parsed) {
+    if (checked->module != nullptr) return checked->module;
+    return parsed;
+}
+
 // What a hover finds: the bytes of the expression under the cursor and its type as text; `found` is false when the
 // text does not parse, or no checked expression covers the offset.
 export struct Hover {
@@ -459,7 +466,7 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     import_roots = folders;
     header_folder = folder_of(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
-    const ast::Expr *at = ast::expr_at(&parsed.module, offset);
+    const ast::Expr *at = ast::expr_at(checked_module(&checked, &parsed.module), offset);
     if (at == nullptr) return (Hover){};
     types::TypeRef type = types::type_of(&checked, at);
     const types::Symbol *named = header_symbol(&checked, at);
@@ -625,9 +632,10 @@ export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 
     header_folder = folder_of(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     if (word < 2) return list;
-    const ast::Expr *base = ast::expr_at(&parsed.module, word - 2);
+    const ast::Module *module = checked_module(&checked, &parsed.module);
+    const ast::Expr *base = ast::expr_at(module, word - 2);
     if (base == nullptr) return list;
-    return members_of(list, &checked, &parsed.module, base, prefix);
+    return members_of(list, &checked, module, base, prefix);
 }
 
 // Where a name is declared (the language server's go-to-definition, #1893): in `file` (empty: the file asked about),
@@ -968,7 +976,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
     mark = clock::monotonic();
-    emit::ModuleResult emitted = emit::module(context, &parsed.module, options);
+    emit::ModuleResult emitted = emit::module(context, checked_module(&checked, &parsed.module), options);
     times.emit = clock::monotonic() - mark;
     if (emitted == .error)
         return failed(
@@ -1470,7 +1478,8 @@ static Str length_includes(const ast::Module *m, Str bindings) {
         if (!used) continue;
         Str quote_open = d->kind.import_c.angled ? "<" : "\"";
         Str quote_close = d->kind.import_c.angled ? ">" : "\"";
-        lines = as_str(format::push(lines, "#include ", quote_open, name, quote_close, "\n"));
+        Str line = as_str(format::push("#include ", quote_open, name, quote_close, "\n"));
+        lines = as_str(format::push(lines, guarded(d->attributes, line, false))); // an import under `@when` (#2142)
     }
     return lines;
 }

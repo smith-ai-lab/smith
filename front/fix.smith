@@ -21,6 +21,7 @@ module front::fix;
 
 import front::ast;
 import front::cimport;
+import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
 import front::fix_method;
@@ -199,6 +200,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         if (countof(e.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
+    }
+    // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
+    core::Errors zeros = fix_zero::edits(source, module, &checked);
+    for (Usize i = 0; i < countof(zeros); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = zeros[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);

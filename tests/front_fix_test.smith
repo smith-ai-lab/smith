@@ -276,6 +276,18 @@ export void test_a_top_level_if_constexpr_becomes_when() {
                "@when(target.os != .macos && target.os != .linux)\nlet mut a: i32 = 3\nlet mut after: i32 = 4\n");
 }
 
+// `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
+export void test_a_top_level_if_constexpr_on_the_processor_becomes_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "import target;\n\nif constexpr (target::arch == target::aarch64) {\n"
+                                                "    int a = 1;\n} else {\n    int a = 2;\n}\n");
+    check_text(fixed.text, "\n@when(target.arch == .aarch64)\nlet mut a: i32 = 1\n"
+                           "@when(target.arch != .aarch64)\nlet mut a: i32 = 2\n");
+}
+
 // In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
 // system keeps the block of the old syntax (its declarations mended, the block not).
 export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {

@@ -1085,6 +1085,14 @@ static Bool ends_in_expression(const ast::Stmt *body) {
     return false;
 }
 
+// The last line's value after a line that returned (`return 1` then `2`, or a compile-time `if` that kept a `return`,
+// #2277) goes into a block nothing jumps to, as a statement does.
+static state::Status value_after_end(state::Emitter *e, const state::Work *w) {
+    (void)w;
+    start_block_if_ended(e);
+    return state::success();
+}
+
 // The body block with its last expression returned as `return <expression>` is: the same continuation.
 static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
     try debug::stmt_location(e, body);
@@ -1101,6 +1109,7 @@ static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
     state::push_then(e, (state::Work){.then = block_finish, .span = body->span});
     state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
     state::push_eval(e, value, state::hint_of(e->result));
+    state::push_then(e, (state::Work){.then = value_after_end, .span = last->span});
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
     return state::success();
@@ -1167,6 +1176,7 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
     state::push_then(
         e, (state::Work){.then = value_start, .stmt = last, .hint = state::hint_of(e->result), .span = last->span});
+    state::push_then(e, (state::Work){.then = value_after_end, .span = last->span});
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
     return state::success();

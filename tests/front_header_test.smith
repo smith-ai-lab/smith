@@ -311,7 +311,8 @@ export void test_front_header_when_is_if() {
     Str source = "pub struct Point:\n    x: i64\n    @when(target.os == .macos)\n    y: i64\n\n"
                  "@when(target.os == .macos)\npub fn open_window() -> i64:\n    1\n\n"
                  "@when(target.os != .macos && target.os != .linux)\npub fn nothing() -> i64:\n    2\n\n"
-                 "@when(target.os != .macos)\npub fn open_window() -> i64:\n    3\n";
+                 "@when(target.os != .macos)\npub fn open_window() -> i64:\n    3\n\n"
+                 "@when(target.arch == .aarch64)\npub fn neon() -> i64:\n    4\n";
     write_text(shapes_path(folder), source);
     compile::Report done =
         compile::header(shapes_path(folder), header_path(folder), "x86_64-unknown-linux-gnu", roots_of(folder));
@@ -323,5 +324,20 @@ export void test_front_header_when_is_if() {
     test::check_condition(contains(got, "#if !defined(__APPLE__)\nint64_t geometry_shapes_open_window(void)"));
     test::check_condition(
         contains(got, "#if !defined(__APPLE__) && !defined(__linux__)\nint64_t geometry_shapes_nothing"));
+    test::check_condition(contains(got, "#if defined(__aarch64__)\nint64_t geometry_shapes_neon(void)"));
+    remove_all(folder);
+}
+
+// An `import c` under `@when` has its `#include` in the same `#if` (#2142).
+export void test_front_header_when_import_include_is_if() {
+    Str folder = folder_for("when_import");
+    Str source = "@when(target.os == .macos)\nimport c <limits.h>\n\n"
+                 "@when(target.os == .macos)\npub struct Row:\n    cells: [limits.CHAR_BIT]i64\n";
+    write_text(shapes_path(folder), source);
+    compile::Report done =
+        compile::header(shapes_path(folder), header_path(folder), "x86_64-unknown-linux-gnu", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    test::check_condition(contains(got, "#if defined(__APPLE__)\n#include <limits.h>\n#endif\n"));
     remove_all(folder);
 }

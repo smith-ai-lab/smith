@@ -728,9 +728,66 @@ static Result(Usize, LexError) scan_quoted(Str s, Usize start, Usize quote_at) {
     return p + 1;
 }
 
+// The first character at or after p that is not blank on the line; '\n' when the line ends, 0 at the end of s.
+static char next_on_line(Str s, Usize p) {
+    while (p < countof(s) && is_blank(s[p]) && s[p] != '\n')
+        p += 1;
+    return p < countof(s) ? s[p] : 0;
+}
+
+// The last character before start that is not blank on the line; '\n' at the start of the line or of s.
+static char before_on_line(Str s, Usize start) {
+    Usize p = start;
+    while (p > 0 && is_blank(s[p - 1]) && s[p - 1] != '\n')
+        p -= 1;
+    return p > 0 ? s[p - 1] : '\n';
+}
+
+// Whether the identifier before start is `word` (`let`, `mut`): the text right before start, with a boundary.
+static Bool follows_word(Str s, Usize start, Str word) {
+    Usize p = start;
+    while (p > 0 && is_blank(s[p - 1]) && s[p - 1] != '\n')
+        p -= 1;
+    Usize n = countof(word);
+    if (p < n || !same(s[p - n:p], word)) return false;
+    return p == n || !is_identifier_part(s[p - n - 1]);
+}
+
+static Bool strchr_in(Str set, char c) {
+    for (Usize i = 0; i < countof(set); i++)
+        if (set[i] == c) return true;
+    return false;
+}
+
+// In smith's own syntax `module` and `type` are names wherever a name can be written (`c.LLVMModuleRef module`,
+// `Entry(type = ty)`, `let type: str`, `x.type`). `module` is the keyword only as the first word of a line followed by
+// a name (`module m;`); `type` is the keyword where a type is expected, so it is a name after `.`, `let` or `mut`, and
+// as the name of an argument or a field (`(type = x`, `type: str`), and as a value (`f(type, 3)`, `type.size`).
+static Bool is_plain_name(Str s, Usize start, Usize end, Str word) {
+    char before = before_on_line(s, start);
+    char after = next_on_line(s, end);
+    if (same(word, "module"))
+        return !(before == '\n' && (is_identifier_start(after) || after == 0 || after == '\n' || after == ';'));
+    if (before == '.') return true;
+    if (follows_word(s, start, "let") || follows_word(s, start, "mut")) return true;
+    Usize at = end;
+    while (at < countof(s) && is_blank(s[at]) && s[at] != '\n')
+        at += 1;
+    Bool assigns = after == '=' && (at + 1 >= countof(s) || (s[at + 1] != '=' && s[at + 1] != '>'));
+    if ((before == '(' || before == ',') && assigns) return true;
+    if (after == ':' && (before == '(' || before == ',' || before == '\n'))
+        return true; // `type: str`, a field or a parameter
+    // A value: `f(type, 3)`, `type.size`, `a == type`, `return type`.
+    if (before == '\n' && (after == '=' || after == '.' || after == '[')) return true; // `type = x`, `type.size`
+    Bool value_before = before != 0 && (strchr_in("(,=!&|+*/%<[?", before) || follows_word(s, start, "return") ||
+                                        follows_word(s, start, "if") || follows_word(s, start, "while"));
+    return value_before && after != 0 && (after == '\n' || strchr_in(",).;[]=!<>&|+-*/%?}:", after));
+}
+
 // The kind of the identifier or keyword in s[start:end].
 static TokenKind identifier_kind(Str s, Usize start, Usize end, Bool new_syntax) {
     Str word = s[start:end];
+    if ((same(word, "module") || same(word, "type")) && is_plain_name(s, start, end, word)) return name;
     Usize last_keyword = new_syntax ? (Usize)kw_yield : (Usize)kw_countof;
     for (Usize k = (Usize)kw_alignas; k <= last_keyword; k++) {
         if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;

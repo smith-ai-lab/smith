@@ -196,6 +196,35 @@ export void test_lex_the_new_punctuators_are_tokens_in_both_syntaxes() {
                                           "*\n1:22 name b\n1:23 end_of_file\n");
 }
 
+// `module` and `type` are names where a name can be written (the second cause of the switch-over count, #1631).
+export void test_lex_module_and_type_are_names_where_a_name_is_written() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_dump("module ;", "1:1 kw_module module\n1:8 semicolon ;\n1:9 end_of_file\n");
+    expect_dump("module m;", "1:1 kw_module module\n1:8 name m\n1:9 semicolon ;\n1:10 end_of_file\n");
+    expect_dump("Mod module = x;",
+                "1:1 type_name Mod\n1:5 name module\n1:12 equal =\n1:14 name x\n1:15 semicolon ;\n1:16 end_of_file\n");
+    lex::Tokens named = new_tokens_of("f(a, type = t)");
+    test::check_equal(named[4].kind == lex::name, true);
+    lex::Tokens after_let = new_tokens_of("let type: T");
+    test::check_equal(after_let[1].kind == lex::name, true);
+    lex::Tokens field = new_tokens_of("x.type");
+    test::check_equal(field[2].kind == lex::name, true);
+    lex::Tokens value = new_tokens_of("f(x, type)");
+    test::check_equal(value[4].kind == lex::name, true);
+    lex::Tokens member = new_tokens_of("a(type.size)");
+    test::check_equal(member[2].kind == lex::name, true);
+    lex::Tokens declared = new_tokens_of("fn f(a: i32, type: str)");
+    test::check_equal(declared[7].kind == lex::name, true);
+    lex::Tokens result = new_tokens_of("fn f(T: type) -> type");
+    test::check_equal(result[5].kind == lex::kw_type, true);
+    test::check_equal(result[8].kind == lex::kw_type, true);
+    lex::Tokens in_type = new_tokens_of("T: type");
+    test::check_equal(in_type[2].kind == lex::kw_type, true);
+}
+
 export void test_lex_the_new_keywords_are_keywords_only_in_the_new_syntax() {
     arena::Arena memory = test::memory(1U << 20);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
