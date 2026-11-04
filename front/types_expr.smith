@@ -69,6 +69,7 @@ module front::types_expr;
 import front::ast;
 import front::parse as syntax;
 import front::types;
+import front::types_builtin as builtins;
 import front::types_fn;
 import std::arena;
 import std::format;
@@ -774,6 +775,17 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
             return;
         }
         not_yet(c, e, msg(format::push("c:: name `", name, "`")));
+        return;
+    }
+    Str binding = "";
+    if (countof(path.segments) == 1) binding = types::c_binding_of(c, name);
+    if (countof(binding) > 0) { // a C function of a header the file imports: `printf` is `stdio.printf` (#2287)
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start},
+                                .text = msg(format::push(binding, "."))};
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", name, "` comes from a C header: write `", binding, ".", name, "`")), fix);
+        poison(c, e);
         return;
     }
     types::failf(c, e->span, "unknown name `", name, "`; declare it before it is used, for example `I32 ", name,
@@ -1924,6 +1936,22 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
         if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
         types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
     }
+}
+
+// A call of a clang builtin: its arguments are typed, the table says the result.
+static void builtin_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    builtins::Entry builtin = {};
+    if (e->kind != .call || !builtins::callee_entry(c, e->kind.call.callee, &builtin)) {
+        poison(c, e);
+        return;
+    }
+    types::TypeRef result = builtins::check(c, e, builtin);
+    if (result == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    finish(c, e, result, f.expected);
 }
 
 static void call_after(types::Checked *c, Frame f) {
@@ -4271,6 +4299,14 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     ast::ExprRef args[:] = e->kind.call.args;
+    builtins::Entry builtin = {};
+    if (builtins::callee_entry(c, callee, &builtin)) {
+        push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
+        for (Usize i = countof(args); i > 0; i--) {
+            if (!builtins::is_type_argument(builtin, i - 1)) push(w, argument_value(args[i - 1]), nullptr, 0);
+        }
+        return;
+    }
     if (has_spread(args)) {
         // `f(x; s...)`: the spread values are typed first, then the call is rewritten (stage 9).
         push(w, e, f.expected, 9);
@@ -4415,6 +4451,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
             method_resolved(c, w, f);
         } else if (f.stage == 9) {
             spread_resolved(c, w, f);
+        } else if (f.stage == 10) {
+            builtin_after(c, f);
         } else if (f.stage == 8) {
             types::set_type(c, e, typ(c, types::method_of(c, e)));
         } else if (f.stage == 6) {

@@ -588,6 +588,11 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
         return;
     }
     if (plain && fix->designated == 0) {
+        // A declaration of a named type takes this list for its arguments (`Format f = {1, 2};`) and drops the fix
+        // below.
+        parse::NamedList named = {
+            .plain = true, .positional = true, .open = open.span, .close = close.span, .edits = fix->edits};
+        p->named_list = named;
         parse::Edits edits = {};
         edits = with_edit(edits, open.span, "[");
         edits = with_edit(edits, close.span, "]");
