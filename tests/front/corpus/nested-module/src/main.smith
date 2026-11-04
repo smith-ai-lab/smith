@@ -1,0 +1,6 @@
+import shape.board
+import c <stdio.h>
+
+pub fn main() -> i32:
+    stdio.printf("%d\n", board.side() * 2)
+    0
