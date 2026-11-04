@@ -882,7 +882,10 @@ static ast::Expr *do_block(parse::Parser *p) {
 // An `if`, `match`, `for` or block in expression position: the statement it is.
 static ast::Expr *statement_value(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
+    Bool outer = p->in_value;
+    p->in_value = true;
     ast::Stmt *stmt = parse::statement(p);
+    p->in_value = outer;
     if (stmt == nullptr) return nullptr;
     return make(parse::span_from(p, start), {.stmt_expr = {.stmt = stmt}});
 }
