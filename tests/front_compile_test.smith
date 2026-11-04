@@ -1,0 +1,91 @@
+// Tests of front::compile's import cycles (#2130): two modules that import each other get one diagnostic each, at the
+// `import` that closes the cycle, with the old compiler's wording; a chain of three, a self import and a project with
+// no cycle behave the same way.
+module front_compile_test;
+
+import front::compile;
+import front::roots;
+import std::format;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Str folder_for(Str name) {
+    Str path = as_str(format::push("/tmp/front_compile_", (I64)c::getpid(), "_", name));
+    c::mkdir(path.data, 0o700);
+    c::mkdir(as_str(format::push(path, "/src")).data, 0o700);
+    return path;
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+static void remove_all(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+static roots::Roots roots_of(Str folder) {
+    return (roots::Roots){.source = as_str(format::push(folder, "/src")),
+                          .library = as_str(format::push(folder, "/lib"))};
+}
+
+// The report of compiling `src/<name>.smith` of `folder`.
+static compile::Report compile_one(Str folder, Str name) {
+    return compile::file(as_str(format::push(folder, "/src/", name, ".smith")),
+                         as_str(format::push(folder, "/", name, ".o")), "", roots_of(folder));
+}
+
+// Two modules that import each other: each file reports the cycle from its own side.
+export void test_front_compile_two_modules_importing_each_other_are_a_cycle() {
+    Str folder = folder_for("two");
+    write_text(as_str(format::push(folder, "/src/a.smith")),
+               "module a;\nimport b;\n\nexport I32 from_a() { return b::from_b(); }\n");
+    write_text(as_str(format::push(folder, "/src/b.smith")),
+               "module b;\nimport a;\n\nexport I32 from_b() { return a::from_a(); }\n");
+    compile::Report first = compile_one(folder, "a");
+    compile::Report second = compile_one(folder, "b");
+    test::check_equal(first.ok, false);
+    test::check_equal(second.ok, false);
+    test::check_equal(first.text, as_str(format::push(folder, "/src/a.smith:2:8: error: import cycle: a -> b -> a\n")));
+    test::check_equal(second.text,
+                      as_str(format::push(folder, "/src/b.smith:2:8: error: import cycle: b -> a -> b\n")));
+    remove_all(folder);
+}
+
+// A cycle through a third module is named whole.
+export void test_front_compile_a_cycle_of_three_names_every_module() {
+    Str folder = folder_for("three");
+    write_text(as_str(format::push(folder, "/src/a.smith")), "module a;\nimport b;\n\nexport I32 f() { return 1; }\n");
+    write_text(as_str(format::push(folder, "/src/b.smith")), "module b;\nimport c;\n\nexport I32 g() { return 2; }\n");
+    write_text(as_str(format::push(folder, "/src/c.smith")), "module c;\nimport a;\n\nexport I32 h() { return 3; }\n");
+    compile::Report report = compile_one(folder, "a");
+    test::check_equal(report.ok, false);
+    test::check_equal(report.text,
+                      as_str(format::push(folder, "/src/a.smith:2:8: error: import cycle: a -> b -> c -> a\n")));
+    remove_all(folder);
+}
+
+// A module that imports another one that does not import it back is no cycle.
+export void test_front_compile_a_chain_of_imports_is_no_cycle() {
+    Str folder = folder_for("chain");
+    write_text(as_str(format::push(folder, "/src/a.smith")),
+               "module a;\nimport b;\n\nexport I32 from_a() { return 2; }\n");
+    write_text(as_str(format::push(folder, "/src/b.smith")), "module b;\n\nexport I32 from_b() { return 1; }\n");
+    compile::Report report = compile_one(folder, "a");
+    test::check_equal(report.ok, true);
+    test::check_equal(countof(report.text), (Usize)0);
+    remove_all(folder);
+}

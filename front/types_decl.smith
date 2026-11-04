@@ -955,9 +955,16 @@ static void check_instances(types::Checked *r) {
     }
 }
 
+static types::TypeRef result_hook() {
+    return state.result;
+}
+
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){
-        .convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook, .statement = value_block_statement});
+    types_expr::set_hooks((types_expr::Hooks){.function_result = result_hook,
+                                              .convert = convert_hook,
+                                              .cast = cast_hook,
+                                              .lambda_body = lambda_hook,
+                                              .statement = value_block_statement});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
@@ -967,7 +974,7 @@ export void uninstall() {
 
 export types::Options options(types::Target target) {
     install();
-    return (types::Options){.target = target, .bodies = check_body};
+    return (types::Options){.target = target, .bodies = check_body, .expression = types_expr::infer};
 }
 
 // A module-level variable's initializer, against its declared type.
@@ -1081,6 +1088,19 @@ static Bool has_error(const types::Checked *r, const types::Error *e) {
 export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
                                            types::HeaderLoader headers) {
     if (!when::uses_when(m)) return check_once(m, target, load, headers);
+    // The headers of the other system are not there to read: that system's variant is not checked (#2142).
+    if (when::host() == when::os_linux && when::reads_guarded_header(m, when::os_macos)) {
+        types::Checked only = check_once(when::live_module(m, when::os_linux), target, load, headers);
+        explain_dead(&only, m, when::os_linux);
+        types_attr::check_when(&only, m);
+        return only;
+    }
+    if (when::host() == when::os_macos && when::reads_guarded_header(m, when::os_linux)) {
+        types::Checked only = check_once(when::live_module(m, when::os_macos), target, load, headers);
+        explain_dead(&only, m, when::os_macos);
+        types_attr::check_when(&only, m);
+        return only;
+    }
     types::Checked mac = check_once(when::live_module(m, when::os_macos), target, load, headers);
     explain_dead(&mac, m, when::os_macos);
     types::Checked lin = check_once(when::live_module(m, when::os_linux), target, load, headers);

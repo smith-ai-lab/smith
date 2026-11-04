@@ -70,3 +70,16 @@ export void test_front_roots_distinct_names_are_no_clash() {
     roots::Source paths[2] = {source("src/x.smith"), source("src/y.smith")};
     test::check_condition(empty(roots::clash(paths[0:2], roots::default_roots())));
 }
+
+export void test_front_roots_the_local_root_names_a_file_beside_its_neighbours() {
+    roots::Roots beside = roots::default_roots();
+    beside.local = ".";
+    roots::Named named = roots::name_for("./main.smith", beside);
+    test::check_condition(named.rooted);
+    test::check_condition(roots::same(named.name, "main"));
+    roots::Roots folder = roots::default_roots();
+    folder.local = "app";
+    test::check_condition(roots::same(roots::name_for("app/primes.smith", folder).name, "primes"));
+    test::check_condition(roots::same(roots::name_for("src/game/replay.smith", beside).name, "game::replay"));
+    test::check_condition(!roots::name_for("main.smith", roots::default_roots()).rooted);
+}

@@ -369,3 +369,41 @@ export void test_front_join_the_front_end_is_built_by_plain_steps_so_prove_leave
     test::check_condition(has(build_file, "\"--smith-header\", source, \"-o\", header") &&
                           has(build_file, "build_front_objects"));
 }
+
+// The front end's table of embedded `std` sources (shim/cimport_std.cpp, #2041): smith.c fills it from the libraries
+// inside the binary; this runner has none, so the test adds a stand-in.
+extern void smith_std_source_add(const char *name, const char *source, Usize size);
+
+export void test_front_join_a_project_module_is_found_beside_the_file_and_std_comes_from_the_program() {
+    Str folder = folder_for("beside");
+    sh(as_str(format::push("mkdir -p ", folder)));
+    write_text(as_str(format::push(folder, "/primes.smith")), "pub fn three() -> i32:\n    return 3\n");
+    Str standin = "pub fn seven() -> i32:\n    return 7\n";
+    smith_std_source_add("standin", standin.data, countof(standin));
+    Str path = as_str(format::push(folder, "/main.smith"));
+    write_text(
+        path,
+        "import primes\nimport std.standin\n\npub fn total() -> i32:\n    return primes.three() + standin.seven()\n");
+    Str object = as_str(format::push(folder, "/main.o"));
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib")),
+                            .local = folder};
+    compile::Report report = compile::file(path, object, "", folders);
+    if (!report.ok) test::check_equal(report.text, report.text[0:0]);
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+export void test_front_join_a_module_nowhere_is_still_an_error() {
+    Str folder = folder_for("nowhere");
+    sh(as_str(format::push("mkdir -p ", folder)));
+    Str path = as_str(format::push(folder, "/main.smith"));
+    write_text(path, "import std.nope_nowhere\n\npub fn total() -> i32:\n    return 1\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib")),
+                            .local = folder};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/main.o")), "", folders);
+    test::check_equal(report.ok, false);
+    test::check_condition(has(report.text, "cannot find the module `std.nope_nowhere`"));
+    remove_all(folder);
+}

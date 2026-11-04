@@ -163,6 +163,7 @@ export struct LoopTarget {
 export struct DeferEntry {
     const ast::Stmt *body;
     Usize scope_depth;
+    Bool on_error; // an `errdefer`: it runs only on the early return of a `try`
 };
 
 // An enumeration of the module: its enumerators and their values (filled by emit_match).
