@@ -2923,15 +2923,12 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             depth -= 1;
             closed = true;
         } else if (kind == lex::kw_if) {
-            if (depth == countof(stack)) {
-                stack = mem::realloc(stack, depth + 1);
-            }
+            if (depth == countof(stack)) stack = mem::realloc(stack, depth + 1);
             if (p->new_syntax && !p->layout && depth == 0) refuse_if_constexpr(p);
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
-            if (chain) {
-                if (!chain_frame(p, &stack[depth - 1], &opened, &fix)) fixable = false;
-            } else if (depth > 0) {
+            Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
+            if (depth > 0 && !mended) {
                 fixable = false;
             }
             stack[depth] = opened;
