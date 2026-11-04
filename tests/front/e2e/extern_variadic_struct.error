@@ -1,0 +1,1 @@
+<dir>/src/extern_variadic_struct.smith:8:18: error: argument 2 is `Pair`, cannot go through `...`: C receives an integer, float, bool, char, pointer or C enum

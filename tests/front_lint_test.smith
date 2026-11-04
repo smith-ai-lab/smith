@@ -183,3 +183,47 @@ export void test_front_lint_a_plain_header_is_not_a_library() {
     defer mem::set_allocator(outside);
     test::check_condition(!has(library_errors("import c <stdio.h>\nfn f():\n    c::puts(\"x\")\n"), "a module"));
 }
+
+// `source` checked with its own text given for the opt-out comments.
+static Str opted_errors(Str source) {
+    lint::set_source(source);
+    Str text = errors_of(source);
+    lint::set_source("");
+    return text;
+}
+
+static void opted(Str source, Bool expect_finding) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_condition(has(opted_errors(source), "is unchecked") == expect_finding);
+}
+
+export void test_front_lint_nolint_on_the_line_silences_it() {
+    opted("fn f(a: *u8):\n    c::free(a) # NOLINT(smith-mem)\n", false);
+}
+
+export void test_front_lint_nolint_without_a_list_silences_all() {
+    opted("fn f(a: *u8):\n    c::free(a) # NOLINT\n", false);
+}
+
+export void test_front_lint_nolintnextline_silences_the_next_line() {
+    opted("fn f(a: *u8):\n    # NOLINTNEXTLINE(smith-mem)\n    c::free(a)\n", false);
+}
+
+export void test_front_lint_nolint_of_another_check_does_not_silence() {
+    opted("fn f(a: *u8):\n    c::free(a) # NOLINT(smith-unsafe)\n", true);
+}
+
+export void test_front_lint_nolint_lists_several_checks() {
+    opted("fn f(a: *u8):\n    c::free(a) # NOLINT(smith-unsafe, smith-mem)\n", false);
+}
+
+export void test_front_lint_nolint_only_silences_its_own_line() {
+    opted("fn f(a: *u8):\n    c::free(a) # NOLINT(smith-mem)\n    c::free(a)\n", true);
+}
+
+export void test_front_lint_without_the_source_nothing_is_silenced() {
+    reports("fn f(a: *u8):\n    c::free(a) # NOLINT\n", "`free` is unchecked");
+}

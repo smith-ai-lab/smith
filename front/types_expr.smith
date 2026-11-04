@@ -1838,6 +1838,32 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     push_arguments(w, args, signature);
 }
 
+// A string literal in the `...` is a C string.
+static Bool is_string_literal(const ast::Expr *x) {
+    return x->kind == .string;
+}
+
+// What C can receive in the `...` of a call: an integer, float, bool, char, pointer or C enum.
+static Bool c_receivable(types::TypeRef t) {
+    if (t->kind == .bool_type || t->kind == .integer || t->kind == .floating || t->kind == .pointer) return true;
+    if (t->kind == .null_type) return true;
+    return t->kind == .enumeration && !t->has_payload;
+}
+
+// The arguments past the fixed parameters of a C variadic (`extern fn printf(f: *u8, ...)`) must be types C can
+// receive.
+static void check_variadic_arguments(types::Checked *c, types::TypeRef signature, ast::ExprRef args[:]) {
+    if (!signature->variadic) return;
+    for (Usize i = countof(signature->slots); i < countof(args); i++) {
+        types::TypeRef t = typ(c, args[i]);
+        if (t == nullptr || t->kind == .invalid || t->kind == .automatic || t->kind == .concept_type) continue;
+        if (c_receivable(t) || is_string_literal(args[i])) continue;
+        Str hint = " cannot go through `...`: C receives an integer, float, bool, char, pointer or C enum";
+        if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
+        types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
+    }
+}
+
 static void call_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -1849,6 +1875,7 @@ static void call_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    check_variadic_arguments(c, signature, e->kind.call.args);
     finish(c, e, signature->element, f.expected);
 }
 
@@ -2438,7 +2465,10 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         return base;
     }
     Str found = types::show(base);
-    if (arrow && base->kind == .record) {
+    if (base->kind == .enumeration && base->has_payload) {
+        types::failf(c, e->span, "`", found, "` is a payload enumeration, so a payload can't be read with `.",
+                     arrow ? "->" : ".", "`; test the variant first, with `if let .variant(v) = x:` or a `match`");
+    } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
         types::failf(c, e->span, "`.` needs a record, found the pointer `", found, "`; write `->` instead");
@@ -3522,7 +3552,10 @@ static Bool leaf(types::Checked *c, Frame f) {
         // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
         Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
                           f.expected->element->kind == .integer && f.expected->element->bits == 8;
-        finish(c, e, as_pointer ? f.expected : c->table.text, f.expected);
+        // A literal given to `[N]char`: the bytes and the zero byte fill the array, so N is the length plus one.
+        Bool as_array = f.expected != nullptr && f.expected->kind == .array && f.expected->element->kind == .integer &&
+                        f.expected->element->bits == 8 && f.expected->count == countof(e->kind.string.bytes) + 1;
+        finish(c, e, (as_pointer || as_array) ? f.expected : c->table.text, f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {

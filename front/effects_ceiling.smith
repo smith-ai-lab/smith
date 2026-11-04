@@ -9,6 +9,8 @@
 //   effects_ceiling::read(function, &mask)            true and the mask when the function has one
 //   effects_ceiling::check(&graph, module, &report)   after effects_pass::solve: one Violation for each function of
 //                                                     the module whose set passes its ceiling
+//   effects_ceiling::write_param(function, slot, mask)   puts a ceiling on a function-typed parameter (piece 3, #2020):
+//                                                     check then judges every function passed there at the call
 //   effects_ceiling::render(&report)                  the diagnostics as text, `file:line:col: error: ...`
 //   effects_ceiling::release(&report)
 //
@@ -67,6 +69,10 @@ export Bool read(c::LLVMValueRef function, U32 *mask) {
     }
     *mask = value;
     return true;
+}
+
+export void write_param(c::LLVMValueRef function, U32 slot, U32 mask) {
+    effects_pass::write_param_ceiling(function, slot, mask);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -133,13 +139,47 @@ static void push(Report *report, Violation v) {
     report->count += 1;
 }
 
+// A function passed where a parameter's ceiling does not allow its effects: `kernel` passes `print_it` to `map`, whose
+// parameter 1 is [[std::pure]]. The error is at the call; the chain is the passed function's.
+static void check_passes(const effects_pass::Graph *g, Usize index, Report *report) {
+    for (Usize k = 0; k < effects_pass::call_total(g, index); k++) {
+        effects_cache::Call call = effects_pass::call_item(g, index, k);
+        if (call.kind != effects_cache::pass_function) continue;
+        U32 ceiling = 0;
+        if (!effects_pass::param_limit(g, effects_pass::find(g, call.callee), call.slot, &ceiling)) continue;
+        Usize passed = effects_pass::find(g, call.target);
+        if (passed == effects_pass::none) continue;
+        U32 extra = effects_pass::set_of(g, call.target) & ~ceiling;
+        if (extra == 0) continue;
+        Usize bit = first_bit(g, passed, extra);
+        if (bit == effects_pass::none) {
+            for (Usize b = 0; b < effects_table::bit_count && bit == effects_pass::none; b++) {
+                if ((extra & (1u << b)) != 0) bit = b;
+            }
+        }
+        Str chain = chain_of(g, passed, bit, report->file);
+        Str kind = ceiling == 0 ? effects_cache::dup("[[std::pure]]")
+                                : effects_cache::as_str(format::push("limited to ", effects_table::describe(ceiling)));
+        Str own = effects_cache::dup(plain(effects_pass::name_of(g, index)));
+        Str message = effects_cache::as_str(format::push("smith-effect: `", own, "` passes `", plain(call.target),
+                                                         "` to `", plain(call.callee), "`, whose parameter ",
+                                                         call.slot + 1, " is ", kind, ", but it has the effects ",
+                                                         effects_table::describe(extra), ": ", chain));
+        effects_cache::free_text(kind);
+        effects_cache::free_text(chain);
+        push(report,
+             (Violation){.function = own, .message = message, .line = call.line, .excess = extra, .ceiling = ceiling});
+    }
+}
+
 static void check_function(const effects_pass::Graph *g, c::LLVMValueRef function, Report *report) {
-    U32 ceiling = 0;
-    if (!read(function, &ceiling)) return;
     Str name = graph_name(function);
     Usize index = effects_pass::find(g, name);
     effects_cache::free_text(name);
     if (index == effects_pass::none) return;
+    check_passes(g, index, report);
+    U32 ceiling = 0;
+    if (!read(function, &ceiling)) return;
     U32 extra = effects_pass::set_of(g, effects_pass::name_of(g, index)) & ~ceiling;
     if (extra == 0) return;
     Usize bit = first_bit(g, index, extra);
