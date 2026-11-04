@@ -751,6 +751,12 @@ static Bool retype(types::Checked *c, const ast::Expr *n, types::TypeRef to) {
 // ---------------------------------------------------------------------------------------------------------------
 // Names and variants
 
+// `_` written alone as a name: `_ = x` assigns to it, which smith refuses (a discard is `let _ = x`, #2227).
+static Bool is_bare_underscore(const ast::Expr *e) {
+    if (e->kind != .name || countof(e->kind.name.path.segments) != 1) return false;
+    return same_text(e->kind.name.path.segments[0].text, "_");
+}
+
 static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) {
     Str name = path_str(path);
     if (countof(path.segments) > 1) {
@@ -4224,6 +4230,21 @@ static void try_before(Work *w, Frame f) {
     }
 }
 
+// An assignment: the target is typed first, the rest in stage 1. `_ = x` is refused here, not as an unknown name, so
+// that a read of `_` keeps its own message (#2227).
+static void assign_before(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .assign) return;
+    const ast::Expr *target = e->kind.assign.target;
+    push(w, e, f.expected, 1);
+    if (is_bare_underscore(target)) {
+        types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `let _ = x`");
+        poison(c, target);
+        return;
+    }
+    push(w, target, nullptr, 0);
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -4237,9 +4258,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, right, nullptr, 0);
         push(w, left, nullptr, 0);
     } else if (e->kind == .assign) {
-        const ast::Expr *target = e->kind.assign.target;
-        push(w, e, f.expected, 1);
-        push(w, target, nullptr, 0);
+        assign_before(c, w, f);
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
     } else if (e->kind == .try_expr) {
