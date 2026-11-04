@@ -261,6 +261,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         return made;
     }
     if (base->kind == .block_type) return type_block(e, base);
+    if (base->kind == .tuple)
+        return state::type_of(e, base); // `*mut (f64, f32)`: front::emit's type_of builds the tuple
     if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
     ast::Path path = base->kind.named.path;
     if (countof(path.segments) == 2) return state::type_of(e, base); // `v.Vec`: front::emit's type_of reads the import
@@ -1036,9 +1038,9 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
     state::Ty word = u64_type(e);
     U64 number = 0;
     if (op == .count_of) {
-        if (subject.kind != .array)
-            return state::failf(x->span, "countof of ", subject.name, ", which is not an array");
-        number = subject.count;
+        if (subject.kind != .array && subject.kind != .tuple)
+            return state::failf(x->span, "countof of ", subject.name, ", which is not an array or a tuple");
+        number = subject.kind == .tuple ? subject.part_count : subject.count;
     } else {
         if (e->target_data == nullptr) return state::fail("sizeof and alignof need the target's data layout", x->span);
         if (op == .size_of)
