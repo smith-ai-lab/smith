@@ -153,6 +153,8 @@ static Bool is_alias_symbol(const types::Symbol *s) {
 // The alias's written type, emitted as any written type is (a function type has no checker form to emit yet).
 static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) {
     const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
+    // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
+    if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
     return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
 }
@@ -1483,6 +1485,15 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     return first != nullptr && first->kind == .module_name;
 }
 
+// `const Pair = (i32, f32)`: the checker declared a type for the name, with this declaration as its source. A `let Line
+// = []u8` is skipped by the same test; there is no value to emit.
+static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
+    if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
+    if (d->kind.variable.init == nullptr || d->kind.variable.init->kind != .tuple_lit) return false;
+    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
+    return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
+}
+
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
@@ -1498,7 +1509,7 @@ static state::Status declare_all(state::Emitter *e) {
             else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            if (!is_module_alias(e, d)) try memory::global_variable(e, d);
+            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from) {
             return state::not_emitted("this kind of declaration", d->span);

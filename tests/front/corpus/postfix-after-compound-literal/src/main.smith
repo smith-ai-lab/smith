@@ -1,0 +1,11 @@
+import c <stdio.h>
+
+struct Pair:
+    x: i32
+    y: i32
+
+# A member access after a construction is a postfix, not an enum shorthand.
+fn main() -> i32:
+    let a = Pair(3, 4).y
+    let _ = stdio.printf("%d\n", a)
+    return 0

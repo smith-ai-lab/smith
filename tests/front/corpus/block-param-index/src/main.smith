@@ -1,0 +1,29 @@
+import c <stdio.h>
+
+# A block parameter is indexed row by row: `rows[i][j]`, `countof(rows[i])`, through a pointer too (`m.*[0]`).
+fn total(rows: [, 2]f32) -> f32:
+    let mut sum: f32 = 0
+    for i in range(0, countof(rows)):
+        for j in range(0, countof(rows[i])):
+            sum += rows[i][j]
+    sum
+
+fn width(m: *[, 2]f32) -> usize:
+    countof(m.*[0])
+
+fn depth(cube: [, 2, ]i32) -> usize:
+    countof(cube) * 100 + countof(cube[0]) * 10 + countof(cube[0][0])
+
+fn tail(grid: [,]f32) -> usize:
+    countof(grid[1:])
+
+pub fn main() -> i32:
+    let raw: [4, 2]f32 = [[1, 2], [3, 4], [5, 6], [7, 8]]
+    let pairs: [, 2]f32 = raw
+    let _ = stdio.printf("%g %zu\n", total(pairs).to(f64), width(&pairs))
+    let cube: [3, 2, 4]i32 = [[[0, 0, 0, 0], [0, 0, 0, 0]], [[0, 0, 0, 0], [0, 0, 0, 0]], [[0, 0, 0, 0], [0, 0, 0, 0]]]
+    let deep: [, 2, ]i32 = cube
+    let _ = stdio.printf("%zu\n", depth(deep))
+    let grid: [,]f32 = raw
+    let _ = stdio.printf("%zu\n", tail(grid))
+    0

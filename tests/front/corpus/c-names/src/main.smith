@@ -1,0 +1,53 @@
+import c <stdio.h>
+
+# Names that were words in other spellings are ordinary names here: constants, functions, fields.
+# (`import`, `export`, `module`, `try` and `defer` are keywords of the new syntax: see error-defer-name.)
+let imported: i32 = 3
+let exported: i32 = 4
+let modular: i32 = 5
+
+struct CHolder:
+    x: i32
+
+fn countof_twice(x: i32) -> i32:
+    x * 2
+
+fn type_name(kind: i32) -> i32:
+    kind
+
+struct KindItem:
+    kind: i32
+    size: i32
+
+fn scaled(kind: i32, n: i32) -> i32:
+    (kind * n + 1) * 2
+
+fn kind_total(item: *KindItem, n: i32) -> i32:
+    let kind = item.kind
+    let sum = kind * n
+    sum + item.kind * item.size
+
+fn same_type(a: i32, b: i32) -> i32:
+    a + b
+
+fn rest(n: i32) -> i32:
+    let mut s = 0
+    for i in range(0, n):
+        s += i
+    s
+
+pub fn main() -> i32:
+    let c = CHolder(x = 5)
+    let text = "x::y"
+    let io = c.x
+    let u8_ = 2
+    let constexpr_ = true
+    let out = same_type(3, 4)
+    let _ = stdio.printf("%d %d %d\n", imported, exported, modular)
+    let _ = stdio.printf("%d %d %d %d\n", countof_twice(4), type_name(9), out, rest(4))
+    let _ = stdio.printf("%d %d %s\n", io, u8_, &text[0])
+    let item = KindItem(kind = 3, size = 4)
+    let _ = stdio.printf("%d %d\n", scaled(2, 5), kind_total(&item, 2))
+    if constexpr_:
+        let _ = stdio.printf("%d\n", countof_twice(1))
+    0

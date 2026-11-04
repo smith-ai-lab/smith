@@ -1,0 +1,12 @@
+pub struct Key:
+    pub a: u64
+    pub b: u64
+
+pub fn pair(a: u64, b: u64) -> Key:
+    return Key(a = a, b = b)
+
+pub fn total(ks: []Key) -> u64:
+    let mut t: u64 = 0
+    for k in ks:
+        t += k.a
+    t
