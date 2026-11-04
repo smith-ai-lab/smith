@@ -576,7 +576,8 @@ static Bool braced_for(Str source, lex::Tokens tokens, Braces braces, Header h, 
     Bool one_line = same_line(tokens, open, close);
     if (countof(h.step) == 0) return one_line || multi_line_ready(tokens, braces[which]);
     if (one_line || !multi_line_ready(tokens, braces[which])) return false;
-    if (has_continue(tokens, open, close) && !step_before_continues(source, tokens, braces, h, which, cuts)) return false;
+    if (has_continue(tokens, open, close) && !step_before_continues(source, tokens, braces, h, which, cuts))
+        return false;
     Str line = as_str(format::push(spaces(indent_of(source, tokens[open + 1].span.start)), h.step));
     braces[which].tail =
         tokens[close - 1].line_break ? as_str(format::push(line, "\n")) : as_str(format::push("\n", line));
