@@ -47,6 +47,8 @@ if constexpr (target::os == target::macos) {
     }
 } else {
     Usize compress(U8 to[:], const U8 from[:]) {
+        (void)to;
+        (void)from;
         return 0;
     }
 }
