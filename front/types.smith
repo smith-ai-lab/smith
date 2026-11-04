@@ -1170,10 +1170,19 @@ static Str c_type_fix(Str name) {
     return "";
 }
 
+// The concept a capitalized concept name of today's spelling stands for (`Int` is `int`), or empty.
+static Str concept_lower(Str name) {
+    if (same_text(name, "Int")) return "int";
+    if (same_text(name, "Num")) return "num";
+    if (same_text(name, "Signed")) return "signed";
+    if (same_text(name, "Unsigned")) return "unsigned";
+    if (same_text(name, "Float")) return "float";
+    if (same_text(name, "Pointer")) return "pointer";
+    return "";
+}
+
 static Bool is_concept_name(Str name) {
-    return same_text(name, "Int") || same_text(name, "Num") || same_text(name, "Signed") ||
-           same_text(name, "Unsigned") || same_text(name, "Float") || same_text(name, "Pointer") ||
-           same_text(name, "Struct") || same_text(name, "Enum");
+    return same_text(name, "Struct") || same_text(name, "Enum");
 }
 
 // Whether `path` starts with `c::`: a name from a C header, which waits for the C importer (#1124).
@@ -1203,8 +1212,11 @@ static TypeRef resolve_name(Checked *r, ast::Span span, ast::Path path) {
             }
             return r->table.invalid;
         }
-        if (is_concept_name(path.segments[0].text)) {
-            failf(r, span, "not yet typed: the concept `", path.segments[0].text, "`; only `Auto` is typed so far");
+        Str lower = concept_lower(written);
+        if (countof(lower) > 0) return concept_of(&r->table, lower);
+        if (is_concept_name(written)) {
+            failf(r, span, "not yet typed: the concept `", written, "`; only `Auto`, `Int`, `Num`, `Signed`, ",
+                  "`Unsigned`, `Float` and `Pointer` are typed so far");
             return r->table.invalid;
         }
     }
