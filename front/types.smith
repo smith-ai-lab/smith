@@ -1460,10 +1460,13 @@ static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name,
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
-    if (same_text(name, "Fn") && args == 1 && n == 1) {
+    Bool is_lambda = same_text(name, "Lambda");
+    if ((same_text(name, "Fn") || is_lambda) && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;
         if (!(argument->kind == .function)) {
-            failf(r, span, "`Fn` takes a function type; write `Fn(R (P1, P2))`, for example `Fn(Bool (I32, I32))`");
+            Str written = is_lambda ? "Lambda" : "Fn";
+            failf(r, span, "`", written, "` takes a function type; write `", written, "(R (P1, P2))`, for example `",
+                  written, "(Bool (I32, I32))`");
             return r->table.invalid;
         }
         return fn_value_of(&r->table, w->values[base].type);

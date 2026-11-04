@@ -219,3 +219,11 @@ export void test_front_check_types_negative_float_literal_takes_the_type() {
 export void test_front_check_types_negative_float_literal_in_f64() {
     clean("fn f() -> f64:\n    let x: f64 = -2.5\n    x\n");
 }
+
+export void test_front_check_types_lambda_parameter_is_a_function_value() {
+    c_clean("module m;\nI32 apply(Lambda(I32 (I32)) f, I32 x) {\n    return f(x);\n}\n");
+}
+
+export void test_front_check_types_lambda_takes_a_function_type() {
+    c_fails("module m;\nI32 apply(Lambda(I32) f) {\n    return 0;\n}\n", "`Lambda` takes a function type");
+}
