@@ -416,3 +416,10 @@ export void test_front_types_decl_countof_of_an_auto_parameter_is_accepted() {
     reading_new = false;
     clean("Usize count(auto xs[:]) {\n    return countof(xs);\n}\n");
 }
+
+// #2227: a bare `_ = x` is an error that says to write `let _ = x`.
+export void test_front_types_decl_a_bare_underscore_assignment_is_refused() {
+    reading_new = true;
+    fails("fn g(x: i32):\n    _ = x\n", "`_`", "write `let _ = x`");
+    reading_new = false;
+}

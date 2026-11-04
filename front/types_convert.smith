@@ -46,7 +46,7 @@
 //                 them) is free: no check, no UTF-8 validation (owner, 2026-11-01). Between integers, floats,
 //                 enumerations and integers, `Bool` and integers; between pointers if no `const` is dropped (`void *`
 //                 to `T *` included); between a pointer and an integer as wide as a pointer. A cast to `Void` is
-//                 refused: write `_ = x;`. A function casts to a pointer (`f.cast(*void)`, #1975); records are cast
+//                 refused: write `let _ = x`. A function casts to a pointer (`f.cast(*void)`, #1975); records are cast
 //                 to nothing.
 //   checked casts A written cast that can lose a value asserts that the value fits, checked in every build; the task
 //                 fails with a report naming the value and the target type, and `smith prove` removes the check when
@@ -450,7 +450,7 @@ static Verdict checked_cast() {
 static Verdict cast_by_kind(const Ctx *c) {
     types::Kind from = c->from->kind;
     types::Kind to = c->to->kind;
-    if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
+    if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write let _ = x");
     if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
         c->from->element->bits == 8)
         return accept(cast); // bytes to text: free, every byte is a Char, no UTF-8 check (owner, 2026-11-01)

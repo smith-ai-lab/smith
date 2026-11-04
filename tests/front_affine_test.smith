@@ -109,3 +109,9 @@ export void test_front_affine_the_error_names_the_first_use() {
     test::check_equal(countof(found), (Usize)1);
     test::check_condition(has(found[0].message, "'key' is used again; it was already used at line 16"));
 }
+
+// #2227: `let _ = key` consumes an affine value as any `let` does.
+export void test_front_affine_a_discard_consumes_the_value() {
+    cases("fn drop(key: Key):\n    let _ = key\n    let _ = key\n", 1, "'key' is used again");
+    cases("fn drop(key: Key):\n    let _ = key\n", 0, "");
+}
