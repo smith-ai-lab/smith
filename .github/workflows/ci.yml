@@ -133,6 +133,39 @@ jobs:
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
           echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
 
+  queue-guard:
+    # A merge-queue run whose group left the queue cancels itself (#2241). GitHub deletes the group's branch
+    # `gh-readonly-queue/...` when it drops the group (a jump to the front, a removal, a failure ahead) but does not
+    # cancel its run, which then holds hosted runners for nothing. `concurrency` can't do it: its key can't cut `pr-<N>`
+    # out of the ref. So this job, on `merge_group` only, polls whether the branch still exists and cancels the run
+    # when it is gone for two checks in a row; a live group's branch exists until the queue merges or drops it.
+    # It ends when `ci` has finished. Needs `actions: write` for `gh run cancel`, nothing else.
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run when the group left the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          misses=0
+          while true; do
+            rc=0
+            git ls-remote --exit-code "https://github.com/$GH_REPO" "$GITHUB_REF" >/dev/null || rc=$?
+            if [ "$rc" = 2 ]; then misses=$((misses + 1)); elif [ "$rc" = 0 ]; then misses=0; fi
+            if [ "$misses" -ge 2 ]; then
+              echo "group $GITHUB_REF left the queue: cancelling run $GITHUB_RUN_ID"
+              gh run cancel "$GITHUB_RUN_ID"
+              sleep 120
+              exit 0
+            fi
+            done=$(gh run view "$GITHUB_RUN_ID" --json jobs --jq '[.jobs[] | select(.name == "ci" and .status == "completed")] | length' || echo 0)
+            [ "$done" = 1 ] && exit 0
+            sleep 30
+          done
+
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
     # that need it start; it runs on the Mac only as overflow (hosted pool saturated), else on hosted runners
@@ -141,7 +174,7 @@ jobs:
     uses: ./.github/workflows/llvm.yml
     permissions:
       contents: write # gh release create
-      actions: read # llvm.yml's pick-mac lists the queued and running jobs
+      actions: write # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
   macos:
