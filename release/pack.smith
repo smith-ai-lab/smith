@@ -23,8 +23,8 @@ constexpr Usize chunk_max = (Usize)4 << 20; // the most bytes compressed at once
 constexpr Usize files_max = 4096;           // the most records in one pack
 constexpr Usize path_max = 256;             // the longest path in one pack
 constexpr Usize header_size = 24;           // magic[8], hash (8), count (4), reserved (4)
-constexpr U32 file_type_mask = 0170000;     // S_IFMT
-constexpr U32 regular_file = 0100000;       // S_IFREG
+constexpr U32 file_type_mask = 0o170000;    // S_IFMT
+constexpr U32 regular_file = 0o100000;      // S_IFREG
 constexpr Usize record_size = 20;           // path_length, mode, size, stored, continued (4 each)
 
 // FNV-1a 64, the hash of everything after the header.
@@ -150,7 +150,7 @@ void add_file(Pack *pack, Str path) {
     Bool continued = false;
     for (Usize start = 0; start < countof(whole); start += chunk_max) { // each pass takes at least one byte
         Usize end = start + chunk_max < countof(whole) ? start + chunk_max : countof(whole);
-        add_chunk(pack, path, (U32)info.st_mode & 0777, whole[start:end], continued);
+        add_chunk(pack, path, (U32)info.st_mode & 0o777, whole[start:end], continued);
         continued = true;
     }
 }

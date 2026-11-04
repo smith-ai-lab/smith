@@ -1233,6 +1233,9 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         if (!skip) smith_compile_command(b, config->cc, library_sources[i], smith_flags);
     }
     smith_compile_command(b, config->cc, "runtime/io.smith", smith_flags);
+    // The resource packer is compiled by a step with its modules (build_resource_pack), not an object: lint reads it
+    // here.
+    smith_compile_command(b, config->cc, "release/pack.smith", smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",
