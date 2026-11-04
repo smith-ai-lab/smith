@@ -1,0 +1,147 @@
+// Tests of a slice of `auto` (`const auto xs[:]`) in the emitter (#2070, part of #1917): the template is instanced for
+// the element type of the slice the call passes, and the parameter's `const` is kept. Sources are today's syntax.
+module front_emit_auto_slice_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*Run)();
+
+// Parses, checks, emits and runs `symbol`, as front_emit_auto_test.smith does; returns -1 when anything fails.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parser::parse("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_emit_auto_slice_a_const_slice_of_auto_takes_the_element_type() {
+    Str source = "export I32 head(const auto xs[:]) { return xs[0]; }\n"
+                 "export I32 run() {\n"
+                 "    I32 a[3] = {7, 8, 9};\n"
+                 "    return head(a[0:3]);\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)7);
+}
+
+export void test_front_emit_auto_slice_two_element_types_are_two_instances() {
+    Str source = "export I64 last(const auto xs[:]) { return xs[countof(xs) - 1]; }\n"
+                 "export I32 run() {\n"
+                 "    I32 a[2] = {1, 2};\n"
+                 "    I64 b[2] = {10, 40};\n"
+                 "    return (I32)(last(a[0:2]) + last(b[0:2]));\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)42);
+}
+
+export void test_front_emit_auto_slice_a_writable_slice_of_auto_is_written() {
+    Str source = "export void clear(auto xs[:]) { xs[0] = 0; }\n"
+                 "export I32 run() {\n"
+                 "    I32 a[2] = {5, 6};\n"
+                 "    clear(a[0:2]);\n"
+                 "    return a[0] + a[1];\n"
+                 "}\n";
+    test::check_equal(run(source, "front::test::run"), (I32)6);
+}
+
+// A module another module imports: a template of a slice of `auto`, and a plain `auto` one.
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    Str source = "";
+    if (path[0] == 's') {
+        source = "module stats;\n"
+                 "export void clear(const auto xs[:]) { }\n"
+                 "export I32 head(auto xs[:]) { return xs[0]; }\n"
+                 "export typeof(a) larger(auto a, typeof(a) b) { return a > b ? a : b; }\n";
+    } else {
+        return nullptr;
+    }
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+static Usize errors_across_modules(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse("m.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("main", parsed.module.decls);
+    types::Checked checked = types_decl::check_module_with(&m, types::lp64(), load);
+    return checked.error_count;
+}
+
+export void test_front_emit_auto_slice_a_template_in_another_module_is_found_by_its_qualified_name() {
+    Str source = "import stats;\n"
+                 "export I32 run() {\n"
+                 "    I32 values[2] = {1, 2};\n"
+                 "    I32 xs[:] = values;\n"
+                 "    stats::clear(xs);\n"
+                 "    return stats::head(xs) + stats::larger(1, 2);\n"
+                 "}\n";
+    test::check_equal(errors_across_modules(source), (Usize)0);
+}
+
+// The same through a module in smith's own syntax: `xs: []auto` and the call `m.first(xs)`, read through the module.
+static const ast::Module *load_new(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    if (path[0] != 'l') return nullptr;
+    Str source = "pub fn first(xs: []auto) -> i64:\n    return xs[0]\n";
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    return copy;
+}
+
+export void test_front_emit_auto_slice_a_slice_of_auto_in_smiths_own_syntax_is_called_through_a_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "import lib.m\n\n"
+                 "pub fn run(xs: []i32, ys: []i64) -> i32:\n"
+                 "    return (m.first(xs) + m.first(ys)).to(i32)\n";
+    parser::Parsed parsed = parser::parse_new("m.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module_with(&parsed.module, types::lp64(), load_new);
+    test::check_equal(checked.error_count, (Usize)0);
+}

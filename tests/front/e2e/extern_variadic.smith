@@ -1,0 +1,15 @@
+extern fn printf(format: *u8, ...) -> i32
+extern fn puts(s: *u8) -> i32
+
+pub fn check() -> i32:
+    let x: f32 = 1.5
+    let small: i8 = 7
+    let n = printf("n=%d f=%.1f\n", 42, x)
+    if n != 11:
+        return 1
+    if puts("p") < 0:
+        return 2
+    let small_n = printf("%d\n", small)
+    if small_n != 2:
+        return 3
+    0

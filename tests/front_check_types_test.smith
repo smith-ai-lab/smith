@@ -141,3 +141,43 @@ export void test_front_check_types_typeof_expression_result_type() {
 export void test_front_check_types_typeof_expression_mismatch_is_reported() {
     fails("fn f(a: i32, b: i32):\n    let c: typeof(a + b) = \"x\"\n    c\n", "I32", "Str");
 }
+
+// Anonymous struct and union types (a payload variant): written in today's C-like spelling, which is the only one the
+// parser reads for them.
+
+static types::Checked check_c_text(Str source) {
+    parser::Parsed p = parser::parse("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+static void c_clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_c_text(source);
+    test::check_equal(r.error_count, (Usize)0);
+}
+
+static void c_fails(Str source, Str first) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_c_text(source);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors_of(&r), first));
+}
+
+export void test_front_check_types_anonymous_struct_as_a_payload() {
+    c_clean("typedef enum { struct { i32 a; u8 b; } one; empty } Shape;\n");
+}
+
+export void test_front_check_types_anonymous_union_as_a_payload() {
+    c_clean("typedef enum { union { u32 word; f32 real; } bits; empty } Shape;\n");
+}
+
+export void test_front_check_types_anonymous_struct_repeats_a_field_name() {
+    c_fails("typedef enum { struct { i32 a; u8 a; } one; empty } Shape;\n", "the field `a` is declared twice");
+}
