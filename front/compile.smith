@@ -713,7 +713,8 @@ static Str colons(Str chain) {
 // The report of the imports of `m` (the module of `path`, named already) that close a cycle: one line at each such
 // `import`, `file:line:column: error: import cycle: a -> b -> a`, the column that of the module's name. Empty when
 // none does. `import_roots` says where the modules are.
-static Str import_cycles(Str path, Str source, const ast::Module *m) {
+static Str import_cycles(Str path, Str source, const ast::Module *m, roots::Roots folders) {
+    import_roots = folders;
     Str self = dotted_of(m->name);
     if (countof(self) == 0) return "";
     Bool old = starts_with_module(source);
@@ -892,10 +893,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Str problem = name_module(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
-    import_roots = folders;
-    Str cycles = import_cycles(path, source, &parsed.module);
+    Str cycles = import_cycles(path, source, &parsed.module, folders);
     if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
-
     Str wanted = triple;
     char *default_triple = nullptr;
     if (countof(wanted) == 0) {
