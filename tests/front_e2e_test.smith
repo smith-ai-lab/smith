@@ -417,3 +417,17 @@ export void test_front_e2e_a_c_name_no_header_declares_is_an_error() {
     test::check_equal(has(report.text, "`c::missing_function_name` is not declared by any C header"), true);
     remove_all(folder);
 }
+
+// A quoted header next to the source is found in the new spelling, as a binding and by name (point 4 of #2145).
+export void test_front_e2e_a_local_header_next_to_the_source_is_found() {
+    use_header_flags();
+    Str folder = folder_for("c_local");
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/kinds.h")), c_header());
+    Str source = "import c \"kinds.h\"\nfrom c \"kinds.h\" import sum\n\n"
+                 "pub fn check(p: *mut kinds.point_t) -> i32:\n    if sum(p) != 7:\n        return 1\n    0\n";
+    compile::Report report = compile_module(folder, "local", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
