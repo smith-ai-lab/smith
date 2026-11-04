@@ -262,8 +262,8 @@ static const ast::Module *load_embedded(Str dotted) {
     Str source = found[0:size];
     parser::Parsed parsed = starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) {
-        types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
-                                                    parsed.errors[0].message)));
+        types::set_load_failure(as_str(
+            format::push(path, ":", position(source, parsed.errors[0].span.start), ": ", parsed.errors[0].message)));
         return nullptr;
     }
     ast::Identifier parts[:] = {};

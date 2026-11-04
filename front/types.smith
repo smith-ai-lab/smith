@@ -856,8 +856,8 @@ export typedef const ast::Module *(*HeaderLoader)(Str header, Bool angled);
 // Gives the type of an expression (J1b's `infer`), for `typeof(a + b)` in a type; this file cannot import it (#1918).
 export typedef TypeRef (*ExprTyper)(Checked *r, const ast::Expr *e);
 
-// Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or ""
-// when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
+// Why the last `ModuleLoader` call returned null although the module exists: "<file>:<line>: <first parse error>", or
+// "" when the module is not there. The loader sets it on each call; `collect_imports` reads it (#2224).
 static Str load_failure_text = "";
 
 export void set_load_failure(Str text) {
