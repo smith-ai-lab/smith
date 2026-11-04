@@ -1,0 +1,41 @@
+import c <stdio.h>
+
+# A slice is read-only unless it is `[]mut`; the element's constness goes with the element type. `restrict` and a
+# `const` slice variable have no spelling in the new syntax, so those lines are left out of this case.
+
+fn sum(xs: []u8) -> usize:
+    let mut total: usize = 0
+    for x in xs:
+        total += x.to(usize)
+    total
+
+fn east(xs: []u8) -> usize:
+    countof(xs) + sum(xs)
+
+fn copy(dst: []u8, src: []u8):
+    let mut i: usize = 0
+    while i < countof(dst) && i < countof(src):
+        dst[i] = src[i]
+        i += 1
+
+fn fixed(xs: []u8) -> usize:
+    xs[0] = 9
+    countof(xs)
+
+fn corner(m: [][]f32) -> f32:
+    m[countof(m) - 1][countof(m[0]) - 1]
+
+pub fn main() -> i32:
+    let mut raw: [6]u8 = [1, 2, 3, 4, 5, 6]
+    let all: []u8 = raw
+    let read: []u8 = all
+    let same: []u8 = read
+    let cut: []u8 = read[1:4]
+    let _ = stdio.printf("%zu %zu %zu %zu\n", sum(all), sum(read), east(same), sum(cut))
+    let _ = stdio.printf("%zu %zu\n", sum(raw), sum(all[2:]))
+
+    let mut out: [6]u8 = [0, 0, 0, 0, 0, 0]
+    copy(out, raw)
+    copy(out[4:6], read[0:2])
+    let _ = stdio.printf("%d %d %d %d %d\n", out[0], out[3], out[4], out[5], fixed(all).to(i32))
+    0

@@ -85,45 +85,43 @@ static Str line_at(Str lines, Usize start) {
     return lines[start:end];
 }
 
-// The modules of `<dir>/src`, one per line, each as its path from `src` without the suffix: `main`, `shape/board` (the
-// module `shape::board`). Folders are walked with a worklist of paths, not by recursion.
-static Str modules_of(Str dir) {
-    Str modules = "";
-    Str pending = "\n";
+// The files under `root`, subfolders included, that end in `suffix`, each as its path under `root` without the
+// suffix, one per line, in the order `files::list` gives (`shape/board` for `src/shape/board.smith`).
+static Str scan(Str root, Str suffix) {
+    Str found = "";
+    Str pending = "\n"; // folders still to list, one per line, the first line the root itself
     Usize at = 0;
     while (at < countof(pending)) {
-        Str sub = line_at(pending, at);
-        at += countof(sub) + 1;
-        Str path = countof(sub) == 0 ? as_str(format::push(dir, "/src")) : as_str(format::push(dir, "/src/", sub));
-        files::EntriesResult listing = files::list(path);
+        Str rel = line_at(pending, at);
+        at += countof(rel) + 1;
+        Str here = root;
+        if (countof(rel) > 0) here = as_str(format::push(root, "/", rel));
+        files::EntriesResult listing = files::list(here);
         test::check_equal(listing == .ok, true);
-        if (listing != .ok) return modules;
+        if (listing != .ok) return found;
         for (files::Entry entry : listing.ok) {
-            Str file = entry.name;
-            Str rel = countof(sub) == 0 ? file : as_str(format::push(sub, "/", file));
+            Str name = entry.name;
+            if (countof(rel) > 0) name = as_str(format::push(rel, "/", entry.name));
             if (entry.folder) {
-                pending = as_str(format::push(pending, rel, "\n"));
-                continue;
+                pending = as_str(format::push(pending, name, "\n"));
+            } else if (ends_with(name, suffix)) {
+                Str stem = name[0:countof(name) - countof(suffix)];
+                found = as_str(format::push(found, stem, "\n"));
             }
-            if (!ends_with(file, ".smith")) continue;
-            modules = as_str(format::push(modules, rel[0:countof(rel) - 6], "\n"));
         }
     }
-    return modules;
+    return found;
 }
 
-// The names of the `.c` files of `<dir>/src`, each without the suffix, one per line: C sources of the case, compiled by
-// `smith cc` and linked beside the modules (a module's C file calls its exports, as `c-name` does).
+// The modules of `<dir>/src`, one per line: `a/b` is the module `a::b`.
+static Str modules_of(Str dir) {
+    return scan(as_str(format::push(dir, "/src")), ".smith");
+}
+
+// The C sources of `<dir>/src`, compiled by `smith cc` and linked beside the modules (a module's C file calls its
+// exports, as `c-name` does).
 static Str c_sources_of(Str dir) {
-    Str sources = "";
-    files::EntriesResult listing = files::list(as_str(format::push(dir, "/src")));
-    if (listing != .ok) return sources;
-    for (files::Entry entry : listing.ok) {
-        Str file = entry.name;
-        if (!ends_with(file, ".c")) continue;
-        sources = as_str(format::push(sources, file[0:countof(file) - 2], "\n"));
-    }
-    return sources;
+    return scan(as_str(format::push(dir, "/src")), ".c");
 }
 
 // Compiles each C source of the case to `<name>.c.o` and adds the object to the linker's arguments; a failure is
@@ -133,7 +131,7 @@ static Built add_c_sources(Str folder, Str sources, Built built) {
     while (at < countof(sources)) {
         Str name = line_at(sources, at);
         at += countof(name) + 1;
-        Str object = as_str(format::push(folder, "/", name, ".c.o"));
+        Str object = as_str(format::push(folder, "/", replace(name, "/", "_"), ".c.o"));
         I32 status = sh_status(
             as_str(format::push(smith_path(), " cc -I ", folder, "/src -c ", folder, "/src/", name, ".c -o ", object)));
         if (status != 0) {
@@ -181,10 +179,9 @@ static void check_headers(Str dir, Str folder, Str modules) {
     while (at < countof(modules)) {
         Str name = line_at(modules, at);
         at += countof(name) + 1;
-        Str dotted = replace(name, "/", ".");
-        Str want_path = as_str(format::push(dir, "/expect/header/", dotted, ".h"));
+        Str want_path = as_str(format::push(dir, "/expect/header/", replace(name, "/", "."), ".h"));
         if (!files::exists(want_path)) continue;
-        Str made = as_str(format::push(folder, "/", dotted, ".h"));
+        Str made = as_str(format::push(folder, "/", replace(name, "/", "."), ".h"));
         compile::Report report =
             compile::header(as_str(format::push(folder, "/src/", name, ".smith")), made, "", folders);
         test::check_equal(report.ok, true);
