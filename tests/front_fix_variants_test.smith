@@ -64,3 +64,16 @@ export void test_front_fix_variants_a_name_that_is_a_struct_stays() {
     Str want = "struct Point {\n    x: i32\n}\nenum Kind {\n    Point\n    line\n}\n";
     test::check_equal(out[0].text, want);
 }
+
+// `T some;` names the payload type first: the type `T` is no variant, so a use of `T` is not renamed (#2224).
+export void test_front_fix_variants_payload_type_is_no_variant() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str one = "fn Option(T: type) -> type {\n    return enum {\n        T some;\n        none;\n    };\n}\n";
+    fix_variants::Word sources[1] = {word(one)};
+    fix_variants::Words out = fix_variants::rename_all(sources);
+    Str want = one;
+    test::check_equal(out[0].text, want);
+}
