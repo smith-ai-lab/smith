@@ -1,0 +1,7 @@
+pub fn find(text: *u8, wanted: u8) -> Option(usize):
+    let mut i: usize = 0
+    while text[i] != 0:
+        if text[i] == wanted:
+            return .some(i)
+        i += 1
+    return .none
