@@ -1439,12 +1439,13 @@ static const char *build_llvm_cache(SmithBuild *b) {
 // (a cloud container's image has an older one, #1971), that one, so `smith build` works there for a change that does
 // not touch the pack or a patch (CI builds the right one).
 static const char *build_llvm_name(SmithBuild *b) {
-    const char *name = smith_env(b, "SMITH_LLVM_NAME", "");
-    if (name[0] != '\0') return name;
+    // The literal default stays in this form: the CI workflows read the name from it with sed.
+    const char *name = smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14");
+    if (getenv("SMITH_LLVM_NAME") != nullptr) return name;
     const char *dir = build_llvm_cache(b);
-    if (access(smith_fmt(b, "%s/23.1.3-r14/install/lib/smith-clang.id", dir), R_OK) == 0) return "23.1.3-r14";
+    if (access(smith_fmt(b, "%s/%s/install/lib/smith-clang.id", dir, name), R_OK) == 0) return name;
     DIR *d = opendir(dir);
-    if (d == nullptr) return "23.1.3-r14";
+    if (d == nullptr) return name;
     const char *only = nullptr;
     size_t found = 0;
     for (struct dirent *e = readdir(d); e != nullptr; e = readdir(d)) {
@@ -1454,7 +1455,7 @@ static const char *build_llvm_name(SmithBuild *b) {
         found += 1;
     }
     closedir(d);
-    return found == 1 ? only : "23.1.3-r14";
+    return found == 1 ? only : name;
 }
 
 static const char *build_llvm_folder(SmithBuild *b) {
