@@ -211,7 +211,9 @@ static Str name_module(ast::Module *m, Str path, roots::Roots folders) {
     for (Usize i = 0; i < countof(m->name.segments); i++) {
         line_name = as_str(format::push(line_name, i == 0 ? "" : "::", m->name.segments[i].text));
     }
-    roots::Named named = roots::name_for(path, folders);
+    roots::Roots held = folders;
+    if (countof(line_name) > 0) held.local = ""; // a `module` line keeps the old meaning: only src and lib name a file
+    roots::Named named = roots::name_for(path, held);
     if (!named.rooted) return "";
     Str problem = roots::disagreement(path, named.name, line_name);
     if (countof(problem) > 0) {
@@ -239,6 +241,38 @@ static files::BytesResult load(Str path) {
     return files::read_file(path);
 }
 
+// The embedded sources of smith's `.smith` libraries (shim/cimport_std.cpp, filled by smith.c from `smith_libraries`):
+// the source of `std.<name>` and its size, or null when this program has no such module (#2041).
+extern const char *smith_std_source(const char *name, Usize *size);
+
+// The tree of `std.<name>` (`dotted` is `std.name`) read from the source inside the program, named `std::name`, or
+// null when `dotted` is not a one-level `std` module this program embeds, or the source does not parse. A file on disk
+// under a root wins over this (smith's developers compile against the library they edit).
+static const ast::Module *load_embedded(Str dotted) {
+    if (countof(dotted) <= 4 || !roots::same(dotted[0:4], "std.")) return nullptr;
+    Str name = dotted[4:countof(dotted)];
+    for (Usize i = 0; i < countof(name); i++) {
+        if (name[i] == '.') return nullptr;
+    }
+    Str terminated = as_str(format::push(name));
+    Usize size = 0;
+    const char *found = smith_std_source(terminated.data, &size);
+    if (found == nullptr) return nullptr;
+    Str path = as_str(format::push("lib/std/", name, ".smith"));
+    Str source = found[0:size];
+    parser::Parsed parsed = starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
+    if (countof(parsed.errors) > 0) return nullptr;
+    ast::Identifier parts[:] = {};
+    parts = mem::realloc(parts, 2);
+    Str lead = "std";
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = parsed.module;
+    copy->name.segments = parts;
+    return copy;
+}
+
 // The folders `load_module` looks in: those of the file being compiled (the checker's loader takes no context).
 static roots::Roots import_roots;
 
@@ -253,8 +287,9 @@ static const ast::Module *load_module(const char *dotted) {
         if (relative[i] == '.') piece = "/";
         inside = as_str(format::push(inside, piece));
     }
-    Str folders[2] = {import_roots.source, import_roots.library};
-    for (Usize k = 0; k < 2; k++) {
+    Str folders[3] = {import_roots.source, import_roots.library, import_roots.local};
+    for (Usize k = 0; k < 3; k++) {
+        if (countof(folders[k]) == 0) continue;
         Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
         files::BytesResult loaded = load(path);
@@ -269,7 +304,7 @@ static const ast::Module *load_module(const char *dotted) {
         *copy = parsed.module;
         return copy;
     }
-    return nullptr;
+    return load_embedded(relative);
 }
 
 // The folder of the file being compiled and the arena that holds what a header reads (`load_header` takes no context).
@@ -872,6 +907,23 @@ static emit::Options emit_options(Str wanted, Str source, types::Checked *checke
     return options;
 }
 
+// The name of the file being compiled: it keeps its plain symbol names, so `local` (which only finds its imports,
+// #2041) is left out of the roots that name it.
+static Str name_compiled(ast::Module *m, Str path, roots::Roots folders) {
+    roots::Roots named_by = folders;
+    named_by.local = "";
+    return name_module(m, path, named_by);
+}
+
+// `triple`, or the default triple of this machine when it is empty.
+static Str wanted_triple(Str triple) {
+    if (countof(triple) > 0) return triple;
+    char *default_triple = c::LLVMGetDefaultTargetTriple();
+    Str found = as_str(format::push((const char *)default_triple));
+    c::LLVMDisposeMessage(default_triple);
+    return found;
+}
+
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
@@ -890,18 +942,12 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     if (countof(parsed.errors) > 0) {
         return failed(as_str(format::push(warned, lines_of(path, source, parsed.errors, "error"))), times);
     }
-    Str problem = name_module(&parsed.module, path, folders);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
     Str cycles = import_cycles(path, source, &parsed.module, folders);
     if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
-    Str wanted = triple;
-    char *default_triple = nullptr;
-    if (countof(wanted) == 0) {
-        default_triple = c::LLVMGetDefaultTargetTriple();
-        wanted = as_str(format::push((const char *)default_triple));
-        c::LLVMDisposeMessage(default_triple);
-    }
+    Str wanted = wanted_triple(triple);
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
@@ -971,7 +1017,9 @@ static Str stage_of(Times times) {
     I32 status = 0;
     for (Usize i = 0; i < count; i++) {
         Str output = as_str(format::push((const char *)outputs[i]));
-        Report done = file(paths[i].path, output, target, folders);
+        roots::Roots beside = folders;
+        beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
+        Report done = file(paths[i].path, output, target, beside);
         if (countof(done.text) > 0) report(done.text);
         if (!done.ok) status = 1;
         // With SMITH_FRONT_STAGE set, a failed file also names the stage that stopped it (frontend-coverage, #1730).
@@ -1523,7 +1571,7 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     times.parse = clock::monotonic() - mark;
     if (countof(parsed.errors) > 0)
         return failed(as_str(format::push(lines_of(path, source, parsed.errors, "error"))), times);
-    Str problem = name_module(&parsed.module, path, folders);
+    Str problem = name_compiled(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(problem, "\n")), times);
     Str wanted = triple;
     if (countof(wanted) == 0) {
@@ -1547,8 +1595,9 @@ export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     roots::Roots folders = roots::default_roots();
     Str target = "";
     if (triple != nullptr) target = as_str(format::push((const char *)triple));
-    Report done =
-        header(as_str(format::push((const char *)source)), as_str(format::push((const char *)output)), target, folders);
+    Str given = as_str(format::push((const char *)source));
+    folders.local = folder_of(given);
+    Report done = header(given, as_str(format::push((const char *)output)), target, folders);
     if (countof(done.text) > 0) report(done.text);
     return done.ok ? 0 : 1;
 }
