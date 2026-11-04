@@ -3,7 +3,8 @@ description: >
   Where a macOS job runs (knowledge/ci-hosted.md): a hosted macos-26 by default; the owner's Mac only as overflow, when
   a runner labelled self-hosted, macOS, ARM64 is online and idle AND the hosted macOS pool is saturated (a macos-26 job
   of another run is queued, or 5 are running). No token, a fork pull request or a failed call: hosted. Shared by
-  ci.yml and llvm.yml, so the rule is written once.
+  ci.yml and llvm.yml, so the rule is written once. With linux-jobs it also tells, when a run's Linux jobs are about to start, how
+  many of them the Mac's Linux runners take.
 inputs:
   token:
     description: A token that may read the repository's runners (RUNNER_STATUS_TOKEN); empty means hosted
@@ -17,6 +18,16 @@ inputs:
     description: "'true' for a pull request from a fork, which never runs on the Mac"
     required: false
     default: "false"
+  linux-jobs:
+    description: >
+      How many hosted Linux jobs the caller is about to start. Set, the action decides only that (outputs linux-mac) and
+      is called from a job that runs just before them; empty, it picks the macOS runner only.
+    required: false
+    default: ""
+  hosted-linux:
+    description: The hosted ubuntu-latest slots of the plan
+    required: false
+    default: "20"
 outputs:
   mac:
     description: The runs-on of a macOS job, as JSON
@@ -24,17 +35,15 @@ outputs:
   cores:
     description: SMITH_CORES of a macOS job
     value: ${{ steps.pick.outputs.cores }}
-  linux:
-    description: The runs-on of a Linux test job, as JSON
-    value: ${{ steps.linux.outputs.linux }}
-  linux-cores:
-    description: SMITH_CORES of a Linux test job
-    value: ${{ steps.linux.outputs.cores }}
+  linux-mac:
+    description: How many of the Linux jobs about to start go to the Mac's Linux runners (0 to the number idle); the rest run hosted
+    value: ${{ steps.linux.outputs.mac }}
 runs:
   using: composite
   steps:
     - name: Pick the macOS runner
       id: pick
+      if: ${{ inputs.linux-jobs == '' }}
       shell: bash
       env:
         RUNNER_STATUS_TOKEN: ${{ inputs.token }}
@@ -75,8 +84,9 @@ runs:
         echo "mac=$mac" >>"$GITHUB_OUTPUT"
         echo "cores=$cores" >>"$GITHUB_OUTPUT"
         echo "macOS jobs run on $mac ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
-    - name: Pick the Linux runner
+    - name: Pick the Linux jobs for the Mac
       id: linux
+      if: ${{ inputs.linux-jobs != '' }}
       shell: bash
       env:
         RUNNER_STATUS_TOKEN: ${{ inputs.token }}
@@ -84,11 +94,15 @@ runs:
         RUN_ID: ${{ github.run_id }}
         FORK: ${{ inputs.fork }}
         GH_REPO: ${{ github.repository }}
+        JOBS: ${{ inputs.linux-jobs }}
+        SLOTS: ${{ inputs.hosted-linux }}
       run: |
-        # hosted ubuntu-latest by default; the Mac's Linux runners (OrbStack, labelled self-hosted, Linux, X64, #1140) only
-        # when one is online and idle AND hosted Linux is saturated (a job of another run queued for ubuntu-latest).
-        # Fork, no token or a failed call: hosted. A Mac that is off never stalls a run.
-        linux='"ubuntu-latest"'; cores=4; why="hosted is the default"
+        # Called just before the run's Linux jobs ask for slots (ci.yml: the last step of build-linux), so it sees the pool as
+        # those jobs will. Hosted first: the Mac's Linux runners (OrbStack, labelled self-hosted, Linux, X64, #1140) take only
+        # the jobs that would not fit in the 20 hosted slots beside other runs' jobs, at most as many as are online and idle.
+        # Fork, no token or a failed call: 0, all hosted. A Mac that is off never stalls a run.
+        echo "mac=0" >>"$GITHUB_OUTPUT"
+        n=0; why="hosted is the default"
         if [ "$FORK" = true ]; then why="fork pull request"
         elif [ -z "$RUNNER_STATUS_TOKEN" ] || [ -z "$JOB_TOKEN" ]; then why="no token"
         elif ! runners=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GH_REPO/actions/runners" --paginate --jq \
@@ -96,23 +110,30 @@ runs:
           why="runners call failed"
         else
           free=$(printf '%s\n' "$runners" | awk '$2 == "online" && $3 == "false" { printf "%s ", $1 }')
-          if [ -z "$free" ]; then why="no Mac Linux runner online and idle"
+          idle=$(printf '%s\n' "$free" | wc -w)
+          if [ "$idle" -eq 0 ]; then why="no Mac Linux runner online and idle"
           else
-            queued=0; ok=1
-            ids=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs?status=queued&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null) || ok=0
-            for id in $ids; do
-              [ "$id" = "$RUN_ID" ] && continue
-              n=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq \
-                '[.jobs[] | select(.status == "queued" and (.labels | index("ubuntu-latest")))] | length' 2>/dev/null) || { ok=0; continue; }
-              queued=$((queued + n))
+            queued=0; running=0; ok=1
+            for status in queued in_progress; do
+              ids=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs?status=$status&per_page=100" --jq '.workflow_runs[].id' 2>/dev/null) || ok=0
+              for id in $ids; do
+                [ "$id" = "$RUN_ID" ] && continue
+                counts=$(GH_TOKEN=$JOB_TOKEN gh api "repos/$GH_REPO/actions/runs/$id/jobs?per_page=100" --jq \
+                  '[.jobs[] | select(.labels | index("ubuntu-latest"))] | "\(map(select(.status == "queued")) | length) \(map(select(.status == "in_progress")) | length)"' 2>/dev/null) || { ok=0; continue; }
+                queued=$((queued + ${counts% *})); running=$((running + ${counts#* }))
+              done
             done
             if [ "$ok" = 0 ]; then why="jobs call failed"
-            elif [ "$queued" -gt 0 ]; then
-              linux='["self-hosted","Linux","X64"]'; cores=4
-              why="hosted Linux saturated ($queued queued); Mac Linux idle: $free"
-            else why="hosted Linux has room ($queued queued); Mac stays quiet"; fi
+            else
+              # this run's build-linux ends right after this step, so its own slot counts as free
+              room=$((SLOTS - running - queued)); [ "$room" -lt 0 ] && room=0
+              n=$((JOBS - room)); [ "$n" -lt 0 ] && n=0
+              # a job of another run is already waiting: whatever this run adds queues behind it
+              [ "$n" -eq 0 ] && [ "$queued" -gt 0 ] && n=1
+              [ "$n" -gt "$idle" ] && n=$idle
+              why="other runs: $running running, $queued queued of $SLOTS hosted slots; $JOBS jobs about to start; Mac Linux idle: $free"
+            fi
           fi
         fi
-        echo "linux=$linux" >>"$GITHUB_OUTPUT"
-        echo "cores=$cores" >>"$GITHUB_OUTPUT"
-        echo "Linux test jobs run on $linux ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "mac=$n" >>"$GITHUB_OUTPUT"
+        echo "Linux jobs on the Mac: $n of ${JOBS} ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
