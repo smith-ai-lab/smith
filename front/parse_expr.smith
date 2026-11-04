@@ -1185,11 +1185,24 @@ static parse::Edits if_before(const parse::Parser *p, parse::Edits edits, U32 st
     return with_edit(edits, at_offset(start), "if ");
 }
 
+// Whether the text between two offsets has a line break.
+static Bool has_break(Str source, U32 from, U32 to) {
+    for (Usize i = from; i < to && i < countof(source); i += 1) {
+        if (source[i] == '\n') return true;
+    }
+    return false;
+}
+
 // `c ? a : b` is `if c { a } else { b }`.
 static void conditional_warning(Stack *st, const Pending *op, const ast::Expr *condition, const ast::Expr *last) {
     parse::Edits edits = if_before(st->parser, no_edits(), condition->span.start);
-    edits = with_edit(edits, op->head, "{");
-    edits = with_edit(edits, op->colon, "} else {");
+    // A `?` or `:` that starts a line leaves the line break out: `if c {` and `} else {` stay on their lines.
+    Bool head_breaks = has_break(st->parser->source, condition->span.end, op->head.start);
+    Bool colon_breaks = has_break(st->parser->source, op->middle->span.end, op->colon.start);
+    edits = with_edit(edits, head_breaks ? from_to(condition->span.end, op->head.end) : op->head,
+                      head_breaks ? " {" : "{");
+    edits = with_edit(edits, colon_breaks ? from_to(op->middle->span.end, op->colon.end) : op->colon,
+                      colon_breaks ? " } else {" : "} else {");
     ast::Span span = from_to(condition->span.start, last->span.end);
     tail_warning(st, span, "`c ? a : b` is written `if c { a } else { b }`", edits, last->span.end, " }");
 }
@@ -1773,6 +1786,11 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         result = call(p, base, st->head);
         break;
     case lex::left_bracket:
+        // A `[` that starts a line is not an index where the line before it ends a statement (`[[noreturn]] fn` after
+        // a constant's value, #2224).
+        if (p->new_syntax && !p->layout && p->position > 0 &&
+            lex::ends_statement(p->tokens[p->position - 1]) && !inside_brackets(p))
+            return .absent;
         result = index_or_slice(p, base);
         break;
     case lex::dot:
