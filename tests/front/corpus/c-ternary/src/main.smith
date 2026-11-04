@@ -17,7 +17,7 @@ fn pick(h: u64) -> i32:
     else:
         first()
 
-fn name(code: i32) -> *u8:
+fn name(code: i32) -> str:
     if code == 2:
         "second"
     else:
@@ -26,5 +26,7 @@ fn name(code: i32) -> *u8:
 pub fn main() -> i32:
     let a = pick(0)
     let b = pick(1)
-    let _ = stdio.printf("%s %s %d\n", name(a), name(b), calls)
+    let left = name(a)
+    let right = name(b)
+    let _ = stdio.printf("%s %s %d\n", &left[0], &right[0], calls)
     0

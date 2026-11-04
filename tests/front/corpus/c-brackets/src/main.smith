@@ -17,5 +17,5 @@ pub fn main() -> i32:
     let matrix: [2][3]i32 = [[1, 2, 3], [4, 5, 6]]
     let names = ["a", "b"]
     let _ = stdio.printf("%d %d %d\n", first(sized[0:3], 3), designated[0] + designated[2], pointer(&sized[0])[1])
-    let _ = stdio.printf("%d %d %zu %s\n", matrix[1][2], (matrix[0])[1], countof(sized), names[1])
+    let _ = stdio.printf("%d %d %zu %s\n", matrix[1][2], (matrix[0])[1], countof(sized), &names[1][0])
     0

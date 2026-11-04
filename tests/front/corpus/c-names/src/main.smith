@@ -38,13 +38,14 @@ fn rest(n: i32) -> i32:
 
 pub fn main() -> i32:
     let c = CHolder(x = 5)
+    let text = "x::y"
     let io = c.x
     let u8_ = 2
     let constexpr_ = true
     let out = same_type(3, 4)
     let _ = stdio.printf("%d %d %d\n", imported, exported, modular)
     let _ = stdio.printf("%d %d %d %d\n", countof_twice(4), type_name(9), out, rest(4))
-    let _ = stdio.printf("%d %d %s\n", io, u8_, "x::y")
+    let _ = stdio.printf("%d %d %s\n", io, u8_, &text[0])
     let item = KindItem(kind = 3, size = 4)
     let _ = stdio.printf("%d %d\n", scaled(2, 5), kind_total(&item, 2))
     if constexpr_:
