@@ -324,7 +324,19 @@ static types::TypeRef resolve_written(types::Checked *c, const ast::TypeExpr *t)
 // Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
 static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     const types::Symbol *s = root_symbol(c, e);
-    return s != nullptr && s->is_new;
+    if (s != nullptr) {
+        return s->is_new;
+    }
+    // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
+    const ast::Expr *at = e;
+    while (at != nullptr && (at->kind == .member || at->kind == .index)) {
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        }
+    }
+    return at != nullptr && at->kind == .call && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
