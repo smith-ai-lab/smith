@@ -1,7 +1,11 @@
 // Tests of the last step of `smith lint --fix`, braces written as `:` and indentation (#2014, part of #1845).
 module front_fix_blocks_test;
 
+import front::fix;
 import front::fix_blocks;
+import std::arena;
+import std::mem;
+import std::slice;
 import std::test;
 
 static void check(Str before, Str want) {
@@ -92,4 +96,17 @@ export void test_front_fix_blocks_adjacent_strings_on_several_lines_are_parenthe
 export void test_front_fix_blocks_a_c_for_with_an_assignment_as_its_init() {
     check("fn f(at: *char) {\n    for (at += 7; at.* > 0; at++)\n        count += 1\n}\n",
           "fn f(at: *char):\n    at += 7\n    while at.* > 0:\n        count += 1\n        at += 1\n");
+}
+
+// A file with another gap the fixer cannot mend still gets its bodies written as blocks (#2253): the gap no longer
+// keeps the braces of the whole file.
+export void test_front_fix_blocks_a_file_with_another_gap_still_gets_its_blocks() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "static void f(int n) {\n    if (n > 0) {\n        g(n);\n    }\n    c.T module = nullptr;\n}\n");
+    Str block = "if n > 0:\n";
+    test::check_equal(slice::find_slice(fixed.text, block) == .some, true);
 }
