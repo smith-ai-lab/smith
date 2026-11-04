@@ -24,7 +24,7 @@ import objc <Foundation/Foundation.h>
 
 - A smith module is found by its path (`geometry/shapes.smith` is `geometry.shapes`; there is no `module` line). A header is found on the include path; `c`, `cpp` or `objc` says how to read it.
 - Imports are top-level statements, one per line. `as` is required where the default name is not a valid name (`<x-y.h>`); `smith fmt` drops an `as` that repeats the default. `.` is the one separator (`::` is gone).
-- Nothing from std is in scope without an import: `import std.mem`, then `mem.alloc(u8, 10)`; std comes from the smith binary, a project's modules from beside the file and `src`. A name brought in with `from` belongs to the current module for method calls ([smith-dev-syntax-methods](../smith-dev-syntax-methods/SKILL.md)).
+- Nothing from std is in scope without an import: `import std.mem`, then `mem.alloc(u8, 10)`. A name brought in with `from` belongs to the current module for method calls ([smith-dev-syntax-methods](../smith-dev-syntax-methods/SKILL.md)).
 
 ## Headers are namespaces
 
