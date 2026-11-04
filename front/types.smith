@@ -2532,6 +2532,14 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
                             "` (`import c <h>`) and write `h.", name, "`"));
 }
 
+// The binding of the first `import c <h>` whose header declares `name`, for a bare `printf` that needs `stdio.` in
+// front of it: empty when no header does. `smith lint --fix` writes the binding at `span` (#2287).
+export Str c_binding_of(const Checked *r, Str name) {
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (header_has(r->bindings[i].header, name)) return r->bindings[i].name;
+    return "";
+}
+
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
 // checked a name that is not `pub` is missing; inside an imported module it is not.
 export Through through_modules(const Checked *r, const Names *names) {

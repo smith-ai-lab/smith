@@ -1333,6 +1333,14 @@ static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U
            same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
 }
 
+// The warning of a positional list `{1, 2}` that writes it as the array `[1, 2]` loses its fix when the declaration
+// of a named type takes the braces: `Format f = {1, 2};` is `Format(1, 2)`.
+static void drop_array_fix(parse::Parser *p, U32 open) {
+    for (Usize i = 0; i < countof(p->warnings); i += 1) {
+        if (p->warnings[i].span.start == open) p->warnings[i].fix = (parse::Edits){};
+    }
+}
+
 // The edits that turn the braces of that list into the call `Type(...)`; the dots' edits come with it.
 static parse::Edits named_list_edits(const parse::Parser *p, Str type) {
     parse::Edits edits = p->named_list.edits;
@@ -1417,9 +1425,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = {};
-    if (named_list_init(p, type, equal_end, last.span.start)) {
+    if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
         text = as_str(format::push(lead, name, " ="));
         list_edits = named_list_edits(p, written);
+        if (p->named_list.positional) drop_array_fix(p, p->named_list.open.start);
     }
     if (type_value || automatic) text = as_str(format::push(lead, name, " ="));
     if (!has_init) {

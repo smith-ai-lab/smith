@@ -67,6 +67,7 @@ export typedef typeof(ParseError[:]) Errors;
 // dots, kept for the declaration it initializes (`P p = {.x = 1};` is `let p = P(x = 1)`, #1767).
 export struct NamedList {
     Bool plain;
+    Bool positional; // the items have no designators: `Format f = {1, 2};` is `Format(1, 2)`
     ast::Span open;
     ast::Span close;
     Edits edits;
