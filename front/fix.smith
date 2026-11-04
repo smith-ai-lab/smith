@@ -343,7 +343,8 @@ static Str rename_type_names(Str source) {
         if (tokens[i].kind != lex::name) continue;
         Str word = lex::text(source, tokens[i]);
         if (mem::equal(word, type_word) && !is_keyword_use(tokens, i)) any = true;
-        if (mem::equal(word, ty_word) && !(i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow)))
+        if (mem::equal(word, ty_word) &&
+            !(i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow)))
             own_ty = true;
     }
     if (!any) return source;
