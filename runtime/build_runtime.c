@@ -716,7 +716,9 @@ static void smith_check_given(void) {
         bool known = false;
         for (size_t j = 0; j < smith_declared_count; j++)
             known = known || strcmp(smith_declared[j].name, smith_given[i].name) == 0;
-        if (known || strcmp(smith_given[i].name, "SMITH_RECORD") == 0) continue;
+        if (known || strcmp(smith_given[i].name, "SMITH_RECORD") == 0 ||
+            strcmp(smith_given[i].name, "SMITH_FRONT_END") == 0)
+            continue;
         if (strcmp(smith_given[i].name, "SMITH_ARGS") == 0) {
             fprintf(stderr,
                     "smith: %s: this verb was given arguments, but %s does not read them; "
@@ -2350,6 +2352,11 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     if (strcmp(depfile, copy.output) == 0) smith_fail("smith_object: the output '%s' already ends in .d", copy.output);
     const char *const tail[] = {"-MD", "-MF", depfile, "-c", copy.source, "-o", copy.output, nullptr};
     bool lang = smith_ends_with(copy.source, ".smith");
+    // `smith build --front-end=new` (-DSMITH_FRONT_END=new, never declared): the compile goes through smith's own front
+    // end. The flag is part of the command, so objects of the two front ends never share a cache entry (#2042).
+    const char *const *front_end = lang && smith_find_given("SMITH_FRONT_END") != nullptr
+                                       ? smith_list(b, "--front-end=new", nullptr)
+                                       : smith_list(b, nullptr);
     bool headers = lang || smith_reads_module_headers(&copy);
     if (headers) smith_lang_sources_used = true;
     if (lang) {
@@ -2366,7 +2373,7 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     const char *const *proved_flags = smith_proved_flags(b, &copy, &proved_inputs);
     copy.step = (SmithStep){
         .command = smith_cat(b, smith_one(copy.compiler), smith_modules_for(b, copy.source),
-                             smith_lang_flags(b, copy.source), copy.flags, proved_flags,
+                             smith_lang_flags(b, copy.source), front_end, copy.flags, proved_flags,
                              smith_library_flags(b, copy.source), smith_module_flags(b, copy.source), tail, nullptr),
         .inputs = smith_one(copy.source),
         .implicit_inputs =

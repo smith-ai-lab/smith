@@ -1,0 +1,7 @@
+import c <stdio.h>
+import foo
+
+fn main() -> i32:
+    let x = foo.f(10)
+    let _ = stdio.printf("x = %d\n", x)
+    return 0

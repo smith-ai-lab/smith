@@ -1,0 +1,45 @@
+import c <stdio.h>
+
+# Run-time arrays of one dimension: declared in a parameter, a result, a field and a local; counted, indexed, sliced
+# and passed on; made from a fixed array, a string and a pointer; handed to C as a pointer.
+
+struct Bag:
+    items: []i32
+    name: str
+
+fn sum(xs: []i32) -> i32:
+    let mut total = 0
+    for x in xs:
+        total += x
+    total
+
+fn inner(xs: []i32) -> []i32:
+    xs[1:countof(xs) - 1]
+
+fn fixed(xs: []i32) -> []i32:
+    xs
+
+let mut once_calls: i32 = 0
+
+fn once(xs: []i32) -> []i32:
+    once_calls += 1
+    fixed(xs)
+
+pub fn main() -> i32:
+    let mut raw: [5]i32 = [1, 2, 3, 4, 5]
+    let data: [3]i32 = [7, 8, 9]
+    let all: []i32 = raw
+    let mid: []i32 = all[1:4]
+    mid[0] = 40
+    let view: []i32 = raw[2:5]
+    let word: str = "abc"
+    let mut bag = Bag(items = all, name = word)
+    bag.items[4] += 100
+    let _ = stdio.printf("%zu %d %zu %d %d\n", countof(all), sum(all), countof(mid), raw[1], view[0])
+    let _ = stdio.printf("%zu %zu %zu\n", countof(word), countof(bag.items), countof(all[:2]))
+    let _ = stdio.printf("%d %d %d %zu\n", sum(inner(bag.items)), fixed(data)[2], all[3:][0], countof(fixed(data)))
+    let _ = stdio.printf("%d\n", sum(raw[0:2]))
+    let first_of_call = once(data)[0]
+    let part = once(data)[1:3]
+    let _ = stdio.printf("%d %zu %d\n", first_of_call, countof(part), once_calls)
+    0
