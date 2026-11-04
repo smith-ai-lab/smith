@@ -1,0 +1,11 @@
+import <stdio.h>;
+
+fn twice_call(f: fn(i32) -> i32, x: i32) -> i32:
+    f(f(x))
+
+pub fn main() -> i32:
+    # two different lambdas are two instances, the same lambda written twice is one
+    let _ = c::printf("%d\n", twice_call(fn(a: i32) -> i32: a + 1, 1))
+    let _ = c::printf("%d\n", twice_call(fn(a: i32) -> i32: a * 3, 1))
+    let _ = c::printf("%d\n", twice_call(fn(a: i32) -> i32: a + 1, 10))
+    0

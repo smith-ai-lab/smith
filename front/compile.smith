@@ -32,6 +32,7 @@ import front::cimport;
 import front::emit;
 import front::emit_object;
 import front::emit_state as state;
+import front::lint;
 import front::parser;
 import front::roots;
 import front::types;
@@ -306,6 +307,39 @@ static const ast::Module *load_header(Str header, Bool angled) {
     return module;
 }
 
+// The text of the C header `import c <h>` names, for smith's own lint check of library headers (#1976): a quoted
+// header is looked for in the folder of the file being compiled; any header under the project's `include` and
+// `.smith/include` (the libraries' generated headers) and smith's (`<library>/../include`). Empty when none is found.
+static Str read_header_in(Str folder, Str header) {
+    Str path = as_str(format::push(folder, "/", header));
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return "";
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str text = chars;
+    return text;
+}
+
+static Str read_header_text(Str header, Bool angled) {
+    Str found = "";
+    if (!angled) found = read_header_in(header_folder, header);
+    if (countof(found) == 0) found = read_header_in("include", header);
+    if (countof(found) == 0) found = read_header_in(".smith/include", header);
+    if (countof(found) == 0) found = read_header_in(as_str(format::push(import_roots.library, "/../include")), header);
+    return found;
+}
+
+// Gives smith's lint checks the text of the file and where to read headers from (`# NOLINT`, smith-module-library).
+static void lint_inputs(Str source) {
+    lint::set_source(source);
+    lint::set_header_text(read_header_text);
+}
+
+// Takes them back, so the next check (or a caller's own) starts with none.
+static void lint_inputs_done() {
+    lint::set_source("");
+    lint::set_header_text(nullptr);
+}
+
 static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
 }
@@ -342,7 +376,9 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     if (countof(parsed.errors) > 0) return list;
     import_roots = folders;
     header_folder = folder_of(path);
+    lint_inputs(source);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
+    lint_inputs_done();
     for (Usize i = 0; i < checked.error_count; i++) {
         list = mem::realloc(list, countof(list) + 1);
         list[countof(list) - 1] =
@@ -780,8 +816,10 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
+    lint_inputs(source);
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
+    lint_inputs_done();
     times.check = clock::monotonic() - mark;
     if (checked.error_count > 0) {
         Str all = warned;
