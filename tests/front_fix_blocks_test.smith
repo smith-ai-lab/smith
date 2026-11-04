@@ -154,3 +154,10 @@ export void test_front_fix_blocks_a_last_statement_then_else_on_one_line() {
     check("fn f() {\n    if a {\n        b = 1 } else { c = 2 }\n}\n",
           "fn f():\n    if a:\n        b = 1\n    else:\n        c = 2\n");
 }
+
+export void test_front_fix_blocks_an_if_value_after_an_assignment_joins_its_line() {
+    check("fn f() {\n    let m: str =\n        if a {\n            \"x\"\n        } else {\n            \"y\"\n        }\n    g(m)\n}\n",
+          "fn f():\n    let m: str = if a:\n        \"x\"\n    else:\n        \"y\"\n    g(m)\n");
+    check("fn f():\n    n +=\n        if a:\n            1\n        else:\n            0\n    g(n)\n",
+          "fn f():\n    n += if a:\n        1\n    else:\n        0\n    g(n)\n");
+}

@@ -683,6 +683,93 @@ static Str plain_forms(Str source) {
     return apply(source, cuts);
 }
 
+static Usize line_end(Str source, Usize at) {
+    while (at < countof(source) && source[at] != '\n')
+        at += 1;
+    return at;
+}
+
+static Usize leading_spaces(Str source, Usize from, Usize to) {
+    Usize n = 0;
+    while (from + n < to && source[from + n] == ' ')
+        n += 1;
+    return n;
+}
+
+// Whether the line from `from` to `to` ends with an assignment (`=`, `+=`), not a comparison, and holds nothing else
+// that could be a comment.
+static Bool ends_with_assign(Str source, Usize from, Usize to) {
+    while (to > from && source[to - 1] == ' ')
+        to -= 1;
+    if (to - from < 2 || source[to - 1] != '=') return false;
+    char before = source[to - 2];
+    if (before == '=' || before == '!' || before == '<' || before == '>') return false;
+    for (Usize i = from; i < to; i++) {
+        if (source[i] == '#' || source[i] == '"') return false;
+    }
+    return true;
+}
+
+// Whether the line from `from` to `to`, at `indent`, is `if ...:`.
+static Bool is_if_header(Str source, Usize from, Usize to, Usize indent) {
+    Str keyword = "if ";
+    if (to - from < indent + 4 || source[to - 1] != ':') return false;
+    return mem::equal(source[from + indent:from + indent + 3], keyword);
+}
+
+// The end of the lines that follow `from` (the start of a line) and are indented more than `indent`, with the blank
+// line and the end of the text stopping them; `from` itself when a line in them is indented less than `least`.
+static Usize chain_end(Str source, Usize from, Usize indent, Usize least) {
+    Usize at = from;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Usize spaces_here = leading_spaces(source, at, end);
+        if (end == at || spaces_here == end - at || spaces_here <= indent) break;
+        if (spaces_here < least) return from;
+        at = end < countof(source) ? end + 1 : end;
+    }
+    return at;
+}
+
+// A value written as an `if` on the lines after an assignment (`x =\n    if a:\n        1\n    else:\n        2`) is
+// not read by the parser; the `if` goes on the line of the `=` and its lines come out one step, so the `else` is at the
+// indentation of the statement (#2225). The same text when no line has this form.
+static Str join_value_ifs(Str source) {
+    Str out = "";
+    Usize at = 0;
+    Bool changed = false;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Usize next = end < countof(source) ? end + 1 : end;
+        Usize indent = leading_spaces(source, at, end);
+        Usize head_end = line_end(source, next);
+        Usize stop = next;
+        if (next < countof(source) && ends_with_assign(source, at, end) &&
+            is_if_header(source, next, head_end, indent + step) &&
+            leading_spaces(source, next, head_end) == indent + step) {
+            stop = chain_end(source, next, indent, indent + step);
+        }
+        if (stop == next) {
+            out = as_str(format::push(out, source[at:next]));
+            at = next;
+            continue;
+        }
+        changed = true;
+        Usize trimmed = end;
+        while (source[trimmed - 1] == ' ')
+            trimmed -= 1;
+        out = as_str(format::push(out, source[at:trimmed], " ", source[next + indent + step:head_end], "\n"));
+        at = head_end < countof(source) ? head_end + 1 : head_end;
+        while (at < stop) {
+            Usize line_to = line_end(source, at);
+            Usize after = line_to < countof(source) ? line_to + 1 : line_to;
+            out = as_str(format::push(out, source[at + step:after]));
+            at = after;
+        }
+    }
+    return changed ? out : source;
+}
+
 export Str convert(Str source) {
     for (Usize round = 0; round < 8; round++) {
         Str plain = plain_forms(source);
@@ -706,6 +793,6 @@ export Str convert(Str source) {
             multi_line(source, tokens, brace, &cuts);
         }
     }
-    if (countof(cuts) == 0) return source;
-    return apply(source, cuts);
+    if (countof(cuts) == 0) return join_value_ifs(source);
+    return join_value_ifs(apply(source, cuts));
 }
