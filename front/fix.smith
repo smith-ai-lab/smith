@@ -13,14 +13,17 @@
 //   the
 //                                     project's and smith's folders; with none, a call is not rewritten to the method
 //                                     form, which needs the types of another module
-//   fix::fix_run(paths, count)        what the driver calls (C: `front_parser_fix_run`): `path: N fixes applied` on
-//                                     standard output for each file, 0 when every file could be read and written
+//   fix::fix_run(paths, count)        what the driver calls (C: `front_parser_fix_run`): each file fixed, then the enum
+//                                     variants of all the files renamed lowercase (front::fix_variants, #2098);
+//                                     `path: N fixes applied` on standard output for each file, 0 when every file
+//                                     could be read and written
 module front::fix;
 
 import front::ast;
 import front::cimport;
 import front::parse as core;
 import front::fix_method;
+import front::fix_variants;
 import front::lex;
 import front::parse_decl;
 import front::parse_expr;
@@ -381,14 +384,36 @@ export I64 fix_file(Str path) {
     return (I64)fixed.applied;
 }
 
-// The driver's entry for `smith lint --fix FILE...`: each file fixed, `path: N fixes applied` on standard output,
-// 0 when every file could be read and written.
+// The text of the file at `path` mended, or an empty text and false when it cannot be read.
+static Bool fix_to_text(Str path, Fixed *fixed) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return false;
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str source = chars;
+    *fixed = fix_text(path, source);
+    return true;
+}
+
+// The driver's entry for `smith lint --fix FILE...`: each file fixed, then the enum variants of all the files renamed
+// to lowercase together (#2098: a variant is declared in one file and used in others), `path: N fixes applied` on
+// standard output for each file (the renamed file counts one more), 0 when every file could be read and written.
 [[std::c_name("front_parser_fix_run")]] export I32 fix_run(const char *const *paths, Usize count) {
     I32 status = 0;
     loader = load_from_folders;
+    fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
+    I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {
         Str path = as_str(format::push((const char *)paths[i]));
-        I64 n = fix_file(path);
+        Fixed fixed = {};
+        applied[i] = fix_to_text(path, &fixed) ? (I64)fixed.applied : -1;
+        texts[i].text = fixed.text;
+    }
+    fix_variants::Words renamed = fix_variants::rename_all(texts);
+    for (Usize i = 0; i < count; i++) {
+        Str path = as_str(format::push((const char *)paths[i]));
+        I64 n = applied[i];
+        if (n >= 0 && !mem::equal(renamed[i].text, texts[i].text)) n += 1;
+        if (n > 0 && !store(path, renamed[i].text)) n = -1;
         Str line = n < 0 ? as_str(format::push(path, ": cannot read or write the file\n"))
                          : as_str(format::push(path, ": ", n, n == 1 ? " fix applied\n" : " fixes applied\n"));
         (void)c::write(n < 0 ? 2 : 1, line.data, countof(line));

@@ -1,0 +1,6 @@
+import <stdio.h>;
+
+# A main in a module takes no arguments: `int main(void)`.
+pub fn main() -> i32:
+    let _ = c::printf("main takes nothing\n")
+    3

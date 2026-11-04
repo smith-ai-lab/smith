@@ -80,3 +80,47 @@ export void test_fmt_a_c_file_beside_a_new_syntax_file_is_still_clang_formats() 
     test::check_equal(scratch::same(scratch::read(&p, "a.smith"), tidy), true);
     test::check_equal(scratch::contains(scratch::read(&p, "b.c"), "int main(void)"), true);
 }
+
+export void test_fmt_a_two_space_file_comes_out_at_four() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", "import c <stdio.h>\n\nfn main():\n  stdio.printf(\"hello world\")\n");
+    test::check_equal(scratch::sh(&p, "smith fmt -i a.smith").status, 0);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"),
+                                    "import c <stdio.h>\n\nfn main():\n    stdio.printf(\"hello world\")\n"),
+                      true);
+}
+
+export void test_fmt_a_new_syntax_file_with_a_parse_error_is_reported_and_left_unchanged() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    static const char *const broken = "# new syntax\nfn main():\n  let x = = 1\n";
+    scratch::write(&p, "a.smith", broken);
+    scratch::Run run = scratch::sh(&p, "smith fmt -i a.smith 2>&1");
+    test::check_equal(run.status != 0, true);
+    test::check_equal(scratch::contains(run.out, "a.smith:3:"), true);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), broken), true);
+    scratch::Run dry = scratch::sh(&p, "smith fmt --dry-run a.smith 2>&1");
+    test::check_equal(dry.status != 0, true);
+    test::check_equal(scratch::same(scratch::read(&p, "a.smith"), broken), true);
+}
+
+export void test_fmt_a_file_in_todays_syntax_still_goes_to_clang_format() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "a.smith", "// today\nmodule a;\nexport I32 f( void ){return 1;}\n");
+    test::check_equal(scratch::sh(&p, "smith fmt -i a.smith").status, 0);
+    test::check_equal(scratch::contains(scratch::read(&p, "a.smith"), "export I32 f(void) {"), true);
+}
