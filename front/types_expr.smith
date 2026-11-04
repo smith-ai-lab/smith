@@ -53,7 +53,7 @@
 // constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through
 // `*T` is an error naming `*mut T`.
 //
-// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a name from
+// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
 // LITERALS NEXT TO A TYPED OPERAND: in `x + 1` and `x < 10` an unsuffixed literal takes the type of the other operand
@@ -86,7 +86,11 @@ export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, ty
 // checks it in the scope the block opened. Unset, such a statement is reported as `not yet typed`.
 export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
 
+// The result type of the function being checked (`nullptr` outside one); `try` reads it.
+export typedef types::TypeRef (*FunctionResult)(void);
+
 export struct Hooks {
+    FunctionResult function_result;
     Convert convert;
     CastRule cast;
     LambdaBody lambda_body;
@@ -890,6 +894,34 @@ static void some_after(types::Checked *c, Frame f) {
     } else {
         types::set_type(c, e, f.expected);
     }
+}
+
+// `try o`: `o` is a `?T` and the function returns a `?U`; the value is a `T`.
+static void try_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .try_expr)) {
+        return;
+    }
+    types::TypeRef operand = typ(c, e->kind.try_expr.operand);
+    if (operand == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    if (operand->kind != .option) {
+        types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
+                     "`; write `try` before an option, or use `if let` for any other value");
+        poison(c, e);
+        return;
+    }
+    types::TypeRef want = nullptr;
+    if (hooks.function_result != nullptr) want = hooks.function_result();
+    if (want == nullptr || want->kind != .option) {
+        types::failf(c, e->span, "`try` on a `?T` returns `.none` from the function, so the function must return a ",
+                     "`?U`; change its result type or handle `.none` here");
+        poison(c, e);
+        return;
+    }
+    finish(c, e, operand->element, f.expected);
 }
 
 static void variant_expr(types::Checked *c, Frame f) {
@@ -3569,8 +3601,6 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
-    } else if (e->kind == .try_expr) {
-        not_yet(c, e, "try");
     } else {
         return false;
     }
@@ -4005,6 +4035,10 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, target, nullptr, 0);
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
+    } else if (e->kind == .try_expr) {
+        const ast::Expr *operand = e->kind.try_expr.operand;
+        push(w, e, f.expected, 1);
+        push(w, operand, nullptr, 0);
     } else if (e->kind == .variant) {
         some_before(w, f);
     } else if (e->kind == .stmt_expr) {
@@ -4080,6 +4114,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else {
             conditional_after(c, f);
         }
+    } else if (e->kind == .try_expr) {
+        try_after(c, f);
     } else if (e->kind == .variant) {
         some_after(c, f);
     } else if (e->kind == .stmt_expr) {

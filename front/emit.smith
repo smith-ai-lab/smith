@@ -478,11 +478,12 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
         return memory::cast(e, x, hint);
     }
+    if (x->kind == .try_expr) return optional::try_expr(e, x);
     if (x->kind == .query) return memory::query(e, x, hint);
     if (x->kind == .compound) return memory::compound(e, x, hint);
     if (x->kind == .string) return memory::string_literal(e, x, hint);
     if (x->kind == .slice_of) return memory::slice_of(e, x, hint);
-    // type_value, try_expr
+    // type_value
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -707,6 +708,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .break_stmt) return control::break_stmt(e, s);
     if (s->kind == .continue_stmt) return control::continue_stmt(e, s);
     if (s->kind == .defer_stmt) return control::defer_stmt(e, s);
+    if (s->kind == .errdefer_stmt) return control::errdefer_stmt(e, s);
     if (s->kind == .goto_stmt) return control::goto_stmt(e, s);
     if (s->kind == .labeled) return control::labeled(e, s);
     if (s->kind == .empty) return state::success();

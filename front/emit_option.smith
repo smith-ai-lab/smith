@@ -19,10 +19,11 @@
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
 // Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
-// as a value, `try`, and `==` between options.
+// as a value, `try` on a `Result`, and `==` between options.
 module front::emit_option;
 
 import front::ast;
+import front::emit_control as control;
 import front::emit_state as state;
 import front::types;
 import std::format;
@@ -332,6 +333,49 @@ export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
     }
     state::push_then(e, (state::Work){.then = if_let_branch, .stmt = s, .span = s->span});
     state::push_eval(e, s->kind.if_let.value, state::no_hint());
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `try`
+
+static state::Status ret_none(state::Emitter *e, const state::Work *w) {
+    c::LLVMBuildRet(e->builder, w->value);
+    return state::success();
+}
+
+// After the early return: the code goes on in the block of `.some`, with the payload as the value of the `try`.
+static state::Status try_continue(state::Emitter *e, const state::Work *w) {
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    state::push_value(e, payload(e, (state::Value){.llvm = w->value, .ty = w->ty}));
+    return state::success();
+}
+
+// The operand is on the value stack: on `.none` every `defer` and `errdefer` runs and the function returns `.none`.
+static state::Status try_branch(state::Emitter *e, const state::Work *w) {
+    state::Value o = state::pop_value(e);
+    if (o.ty.kind != .option || e->result.kind != .option) {
+        return state::fail("`try` needs a `?T` operand in a function that returns a `?U`", w->span);
+    }
+    c::LLVMBasicBlockRef some_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_some");
+    c::LLVMBasicBlockRef none_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_none");
+    c::LLVMBuildCondBr(e->builder, is_some(e, o), some_block, none_block);
+    c::LLVMPositionBuilderAtEnd(e->builder, none_block);
+    state::Work next = {.then = try_continue, .value = o.llvm, .ty = o.ty, .span = w->span};
+    next.blocks[0] = some_block;
+    state::push_then(e, next);
+    state::push_then(e, (state::Work){.then = ret_none, .value = c::LLVMConstNull(e->result.llvm), .span = w->span});
+    try control::before_error_return(e, w->span);
+    return state::success();
+}
+
+// `try o` on a `?T` in a function that returns a `?U`: `.none` returns `.none`, `.some(x)` is `x`.
+export state::Status try_expr(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .try_expr) {
+        return state::fail("not a try", x->span);
+    }
+    state::push_then(e, (state::Work){.then = try_branch, .span = x->span});
+    state::push_eval(e, x->kind.try_expr.operand, state::no_hint());
     return state::success();
 }
 

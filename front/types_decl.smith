@@ -902,8 +902,13 @@ static void check_instances(types::Checked *r) {
     }
 }
 
+static types::TypeRef result_hook(void) {
+    return state.result;
+}
+
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){
+        .function_result = result_hook, .convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).
