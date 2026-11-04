@@ -657,8 +657,8 @@ static Bool continues_line(lex::Tokens tokens, Usize dot) {
 }
 
 // The text with the forms that stop `convert` from reading a block made plain (#2225): a `}` that follows the last
-// statement of a block and is not followed by `else` or the end of its line, or follows another `}` (`g(i) } }`,
-// `{ a } }`), goes to a line of its own, at the indentation of the block's header; and a line that starts with `.name` after a `)`, `]` or a name
+// statement of a multi-line block on the same line (`g(i) } }`, `low = m } else {`) goes to a line of its own, at the
+// indentation of the block's header; and a line that starts with `.name` after a `)`, `]` or a name
 // (`format.push(a,\n b)\n    .data`) joins the line before it. The same text when neither is there.
 static Str plain_forms(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
@@ -670,7 +670,6 @@ static Str plain_forms(Str source) {
         Brace brace = braces[i];
         if (!brace.block || brace.inside || !open_ends_line(tokens, brace.open)) continue;
         if (tokens[brace.close - 1].line_break) continue;
-        if (closes_cleanly(tokens, brace.close) && tokens[brace.close - 1].kind != lex::right_brace) continue;
         lex::Token close = tokens[brace.close];
         Usize indent = indent_of(source, tokens[brace.open].span.start);
         add_cut(&cuts, spaces_before(source, close.span.start), close.span.start,

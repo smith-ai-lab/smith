@@ -149,3 +149,8 @@ export void test_front_fix_blocks_a_dot_line_joins_the_line_before() {
     check("fn f() {\n    let s = push(a,\n                 b)\n        .data\n    g(s)\n}\n",
           "fn f():\n    let s = push(a,\n                 b).data\n    g(s)\n");
 }
+
+export void test_front_fix_blocks_a_last_statement_then_else_on_one_line() {
+    check("fn f() {\n    if a {\n        b = 1 } else { c = 2 }\n}\n",
+          "fn f():\n    if a:\n        b = 1\n    else:\n        c = 2\n");
+}
