@@ -1042,6 +1042,11 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
         return state::fail("not a string literal", x->span);
     }
     Str bytes = x->kind.string.bytes;
+    if (hint.present && hint.ty.kind == .array) { // a literal given to `[N]char`: the bytes and the zero byte
+        c::LLVMValueRef whole = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
+        state::push_value(e, (state::Value){.llvm = whole, .ty = hint.ty});
+        return state::success();
+    }
     c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
     c::LLVMValueRef text = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
     c::LLVMValueRef global = c::LLVMAddGlobal(e->module, c::LLVMArrayType2(byte, countof(bytes) + 1), ".str");
