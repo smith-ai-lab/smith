@@ -274,7 +274,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         state::Ty made = slice_type(e, character, "str");
         return made;
     }
-    if (state::scalar_type(e, name, &ty) || arith::type_float(e, name, &ty) || matching::type_enum(e, name, &ty)) return ty;
+    if (state::scalar_type(e, name, &ty) || arith::type_float(e, name, &ty) || matching::type_enum(e, name, &ty))
+        return ty;
     if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
         return ty;
