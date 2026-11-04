@@ -331,8 +331,24 @@ static state::Status lookup(state::Emitter *e, const ast::Expr *x, state::Local 
     return state::success();
 }
 
+// A name that is no local but a function of this module is its address (`f.cast(*mut void)`, #1975): a pointer.
+static Bool function_address(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .name || countof(x->kind.name.path.segments) != 1) return false;
+    Str name = x->kind.name.path.segments[0].text;
+    for (Usize i = 0; i < e->function_count; i++) {
+        if (!state::same_text(e->functions[i].name, name)) continue;
+        state::Ty pointer = {.kind = .pointer, .llvm = state::pointer_type(e, 0), .name = "pointer"};
+        state::push_value(e, (state::Value){.llvm = e->functions[i].llvm, .ty = pointer});
+        return true;
+    }
+    return false;
+}
+
 export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     state::Local local = {};
+    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+        !state::find_local(e, x->kind.name.path.segments[0].text, &local) && function_address(e, x))
+        return state::success();
     try lookup(e, x, &local);
     c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
     state::push_value(e, (state::Value){.llvm = loaded, .ty = local.ty});

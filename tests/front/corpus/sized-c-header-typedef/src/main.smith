@@ -1,0 +1,10 @@
+import <stdio.h>;
+import "defs.h";
+
+# A project's own name for a type smith also names (`U32` in defs.h): the same type, so they agree.
+fn twice(byte: u8) -> u32:
+    2 * byte.to(u32)
+
+pub fn main() -> i32:
+    let _ = c::printf("%u\n", twice(21))
+    0

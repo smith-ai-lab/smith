@@ -324,7 +324,19 @@ static types::TypeRef resolve_written(types::Checked *c, const ast::TypeExpr *t)
 // Whether `e` is written in smith's own syntax: the variable at its root was declared there (#1524).
 static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     const types::Symbol *s = root_symbol(c, e);
-    return s != nullptr && s->is_new;
+    if (s != nullptr) {
+        return s->is_new;
+    }
+    // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
+    const ast::Expr *at = e;
+    while (at != nullptr && (at->kind == .member || at->kind == .index)) {
+        if (at->kind == .member) {
+            at = at->kind.member.base;
+        } else if (at->kind == .index) {
+            at = at->kind.index.base;
+        }
+    }
+    return at != nullptr && at->kind == .call && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -2451,7 +2463,7 @@ static void slice_after(types::Checked *c, Frame f) {
     Bool typed_pointer = base->kind == .pointer && base->element->kind != .void_type;
     if (base->kind == .array || base->kind == .slice || typed_pointer) {
         result = types::slice_of(&c->table, base->element, base->pointee_const);
-    } else if (base->kind == .text) {
+    } else if (base->kind == .text || base->kind == .block) {
         result = base;
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
@@ -2579,7 +2591,7 @@ static void cast_after(types::Checked *c, Frame f) {
 }
 
 static Bool countable(types::TypeRef t) {
-    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block;
+    return t->kind == .array || t->kind == .slice || t->kind == .text || t->kind == .block || t->kind == .tuple;
 }
 
 static void count_check(types::Checked *c, const ast::Expr *e, types::TypeRef t) {
