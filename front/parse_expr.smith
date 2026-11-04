@@ -991,6 +991,9 @@ static ast::Expr *primary(parse::Parser *p) {
         if (p->new_syntax && !p->layout && !designated_list_ahead(p)) return statement_value(p);
         return initializer_list(p, nullptr, token.span.start, 0);
     case lex::left_bracket:
+        // `[]i32` and `[3]f32` as a value are types (`let Numbers = []i32`); a bracket group followed by a type is no
+        // array.
+        if (p->new_syntax && !at_old_lambda(p) && parse_type::starts_new_type(p, 0)) return type_value(p);
         if (p->new_syntax && !at_old_lambda(p)) return array_literal(p);
         return lambda(p);
     case lex::kw_fn:
