@@ -167,3 +167,22 @@ export void test_front_check_types_anonymous_union_as_a_payload() {
 export void test_front_check_types_anonymous_struct_repeats_a_field_name() {
     c_fails("typedef enum { struct { i32 a; u8 a; } one; empty } Shape;\n", "the field `a` is declared twice");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Slice aliases and negated float literals (#2186)
+
+export void test_front_check_types_slice_type_alias_parses_and_is_used() {
+    clean("let Numbers = []i32\n\nfn first(xs: Numbers) -> i32:\n    xs[0]\n");
+}
+
+export void test_front_check_types_array_type_alias_parses() {
+    clean("let Four = [4]u8\n\nfn first(xs: Four) -> u8:\n    xs[0]\n");
+}
+
+export void test_front_check_types_negative_float_literal_takes_the_type() {
+    clean("fn f() -> f32:\n    let x: f32 = -2.0\n    x\n");
+}
+
+export void test_front_check_types_negative_float_literal_in_f64() {
+    clean("fn f() -> f64:\n    let x: f64 = -2.5\n    x\n");
+}

@@ -1066,6 +1066,18 @@ static void unary_before(types::Checked *c, Work *w, Frame f) {
         }
         return;
     }
+    // `-2.0` where an `F32` is expected is a negated literal like `2.0`: it takes the type, no conversion.
+    if (op == .negate && f.expected != nullptr && f.expected->kind == .floating && operand->kind == .floating &&
+        countof(operand->kind.floating.suffix) == 0) {
+        if (float_fits(c, operand->span, operand->kind.floating.value, f.expected)) {
+            types::set_type(c, operand, f.expected);
+            types::set_type(c, e, f.expected);
+        } else {
+            poison(c, operand);
+            poison(c, e);
+        }
+        return;
+    }
     push(w, e, f.expected, 1);
     push(w, operand, nullptr, 0);
 }
