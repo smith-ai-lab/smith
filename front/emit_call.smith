@@ -22,6 +22,7 @@
 module front::emit_call;
 
 import front::ast;
+import front::emit_builtin as builtin;
 import front::emit_control as control;
 import front::emit_lambda as lambdas;
 import front::emit_match as matching;
@@ -812,6 +813,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Bool is_imported = false;
     Usize record = 0;
     if (callee_record(e, callee, &record)) return construct(e, x, record);
+    if (builtin::is_call(x)) return builtin::call(e, x); // a clang builtin (#2286)
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         state::Local local = {};
