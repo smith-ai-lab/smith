@@ -274,7 +274,7 @@ static state::Status branch_end(state::Emitter *e, const state::Work *w) {
 }
 
 // The scrutinee is on the value stack: test its tag, bind the payload, and run the branches.
-static state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
+export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .if_let) {
         return state::fail("not an if let", s->span);

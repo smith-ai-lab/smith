@@ -1,0 +1,37 @@
+import c <stdio.h>
+
+# Every loop shape of the old for header: a range, a loop with a step, an endless loop with a break, two counters, a
+# match in the body, and a walk over a pointer.
+fn pick(a: i32, b: i32, c: i32) -> i32:
+    if a != 0:
+        b
+    else:
+        c
+
+fn above(a: i32, b: i32) -> i32:
+    if a > b:
+        1
+    else:
+        0
+
+pub fn main() -> i32:
+    let mut total = 0
+    let xs: [4]i32 = [1, 2, 3, 4]
+    let mut i = pick(1, 2, 3)
+    while i < pick(total, 9, 5):
+        total += i
+        i += pick(above(i, 2), 2, 1)
+    while true:
+        total += 100
+        break
+    for k in range(0, 4):
+        total += xs[k] * (3 - k)
+    for k in range(0, 4):
+        if xs[k] == 1:
+            total += 1
+        else:
+            total += pick(xs[k], 10, 20)
+    for x in xs:
+        total += pick(above(x, 2), x, -x)
+    let _ = stdio.printf("%d\n", total)
+    0
