@@ -650,6 +650,93 @@ static Str dotted_of(ast::Path path) {
     return out;
 }
 
+// The path an import declaration reads, empty when `d` is no import.
+static ast::Path imported_path(const ast::Decl *d) {
+    ast::Path path = {};
+    if (d->kind == .import_module) path = d->kind.import_module.path;
+    if (d->kind == .import_from) path = d->kind.import_from.path;
+    return path;
+}
+
+// The dotted name an import declaration reads, empty when `d` is no import or names a standard module (the library
+// has no cycles, and reading it twice would cost the compile).
+static Str imported_name(const ast::Decl *d) {
+    Str name = dotted_of(imported_path(d));
+    if (starts_with_text(name, "std.") || same_text(name, "std")) return "";
+    return name;
+}
+
+// A module the cycle search will read the imports of, and the chain that reached it.
+struct Visit {
+    const ast::Module *module;
+    Str name;
+    Str chain;
+};
+
+// The shortest chain from the module `first` (reached by `chain`, which ends in its name) back to `target` through
+// imports, as `a -> b -> a` (dotted names), or empty when `first` leads nowhere near it. Each module is read once.
+static Str cycle_through(const ast::Module *first, Str first_name, Str chain, Str target) {
+    Visit queue[:] = {};
+    queue = mem::realloc(queue, 1);
+    queue[0] = (Visit){.module = first, .name = first_name, .chain = chain};
+    for (Usize head = 0; head < countof(queue); head++) {
+        const ast::Module *m = queue[head].module;
+        for (Usize i = 0; i < countof(m->decls); i++) {
+            Str name = imported_name(m->decls[i]);
+            if (countof(name) == 0) continue;
+            Str next = as_str(format::push(queue[head].chain, " -> ", name));
+            if (same_text(name, target)) return next;
+            Bool entered = false;
+            for (Usize k = 0; k < countof(queue); k++)
+                if (same_text(queue[k].name, name)) entered = true;
+            if (entered) continue;
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded == nullptr) continue;
+            queue = mem::realloc(queue, countof(queue) + 1);
+            queue[countof(queue) - 1] = (Visit){.module = loaded, .name = name, .chain = next};
+        }
+    }
+    return "";
+}
+
+// `chain` with its dots written `::` (today's syntax names a module that way).
+static Str colons(Str chain) {
+    Str out = "";
+    for (Usize i = 0; i < countof(chain); i++) {
+        Str piece = chain[i:i + 1];
+        if (chain[i] == '.') piece = "::";
+        out = as_str(format::push(out, piece));
+    }
+    return out;
+}
+
+// The report of the imports of `m` (the module of `path`, named already) that close a cycle: one line at each such
+// `import`, `file:line:column: error: import cycle: a -> b -> a`, the column that of the module's name. Empty when
+// none does. `import_roots` says where the modules are.
+static Str import_cycles(Str path, Str source, const ast::Module *m, roots::Roots folders) {
+    import_roots = folders;
+    Str self = dotted_of(m->name);
+    if (countof(self) == 0) return "";
+    Bool old = starts_with_module(source);
+    Str all = "";
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        Str name = imported_name(m->decls[i]);
+        if (countof(name) == 0) continue;
+        Str chain = "";
+        if (same_text(name, self)) {
+            chain = as_str(format::push(self, " -> ", self));
+        } else {
+            const ast::Module *loaded = load_module(name.data);
+            if (loaded != nullptr) chain = cycle_through(loaded, name, as_str(format::push(self, " -> ", name)), self);
+        }
+        if (countof(chain) == 0) continue;
+        Str shown = old ? colons(chain) : chain;
+        Str message = as_str(format::push("import cycle: ", shown));
+        all = as_str(format::push(all, diagnostic(path, source, imported_path(m->decls[i]).span, "error", message)));
+    }
+    return all;
+}
+
 // The module the name `qualifier` stands for in `m`: an `import a.b` is reached as `b`, `import a.b as q` as `q`, an
 // `import c <h>` as `c` (or its alias), and a name brought in by `from a.b import n` is not a qualifier.
 static const ast::Module *qualified_module(const ast::Module *m, Str qualifier) {
@@ -806,6 +893,8 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Str problem = name_module(&parsed.module, path, folders);
     if (countof(problem) > 0) return failed(as_str(format::push(warned, problem, "\n")), times);
 
+    Str cycles = import_cycles(path, source, &parsed.module, folders);
+    if (countof(cycles) > 0) return failed(as_str(format::push(warned, cycles)), times);
     Str wanted = triple;
     char *default_triple = nullptr;
     if (countof(wanted) == 0) {
