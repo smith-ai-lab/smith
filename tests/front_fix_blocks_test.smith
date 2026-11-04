@@ -88,3 +88,8 @@ export void test_front_fix_blocks_adjacent_strings_on_several_lines_are_parenthe
           "fn f() -> str:\n    return (\"ab \"\n           \"cd\")\n");
     check("fn f() {\n    g(\"ab \"\n      \"cd\")\n}\n", "fn f():\n    g(\"ab \"\n      \"cd\")\n");
 }
+
+export void test_front_fix_blocks_a_c_for_with_an_assignment_as_its_init() {
+    check("fn f(at: *char) {\n    for (at += 7; at.* > 0; at++)\n        count += 1\n}\n",
+          "fn f(at: *char):\n    at += 7\n    while at.* > 0:\n        count += 1\n        at += 1\n");
+}

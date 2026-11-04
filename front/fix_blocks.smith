@@ -379,6 +379,7 @@ struct Header {
     Usize close; // the `)`
     Bool has_init;
     Bool has_type; // the init declares its name: `usize i = 0`
+    Bool raw;      // the init is a statement written as it is
     Str name;
     Str type;
     Str value;
@@ -410,7 +411,16 @@ static void read_init(Str source, lex::Tokens tokens, Usize from, Usize to, Head
         return;
     }
     Usize equal = find_flat(tokens, from, to, lex::equal);
-    if (equal == to || equal == from || equal + 1 >= to || find_flat(tokens, from, to, lex::comma) != to) return;
+    if (find_flat(tokens, from, to, lex::comma) != to) return;
+    if (equal == to) {
+        // A statement that is not a declaration (`at += 7`): written as it is, before the loop.
+        h->has_init = true;
+        h->raw = true;
+        h->value = source[tokens[from].span.start:tokens[to - 1].span.end];
+        h->ok = true;
+        return;
+    }
+    if (equal == from || equal + 1 >= to) return;
     lex::TokenKind kind = tokens[equal - 1].kind;
     if (kind != lex::name && kind != lex::type_name) return;
     h->has_init = true;
@@ -505,6 +515,7 @@ static Str while_head(Header h, Bool declare, Usize indent) {
     Str out = "";
     if (h.has_init) {
         Str line = as_str(format::push(h.name, " = ", h.value));
+        if (h.raw) line = h.value;
         if (declare) {
             Str automatic = "auto";
             Str kind = "";
