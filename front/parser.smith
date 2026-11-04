@@ -99,9 +99,7 @@ static Bool takes_layout(Str source, lex::Tokens tokens, lex::Tokens *laid) {
     return true;
 }
 
-// Reads the text of the file called `file` in smith's own syntax (#1578): what `parse` does with `lex::tokenize_new`
-// and `Parser.new_syntax` set. The errors and the warnings come back as for `parse`.
-export Parsed parse_new(Str file, Str source) {
+static Parsed read_new(Str file, Str source, Bool braces) {
     Parsed result = {};
     result.module.file = file;
     lex::Lexed lexed = lex::tokenize_new(source);
@@ -116,14 +114,17 @@ export Parsed parse_new(Str file, Str source) {
     lex::Tokens tokens = lexed.ok;
     lex::Lexed made = lex::layout(source, tokens);
     if (made == .error) {
-        lex::LexError failure = made.error;
-        parse::ParseError first = {.span = failure.span, .message = failure.message};
-        result.errors = mem::realloc(result.errors, 1);
-        result.errors[0] = first;
-        return result;
+        if (!braces) {
+            lex::LexError failure = made.error;
+            parse::ParseError first = {.span = failure.span, .message = failure.message};
+            result.errors = mem::realloc(result.errors, 1);
+            result.errors[0] = first;
+            return result;
+        }
+    } else {
+        mem::free(made.ok.data);
     }
-    mem::free(made.ok.data);
-    Bool layout = takes_layout(source, lexed.ok, &tokens);
+    Bool layout = !braces && takes_layout(source, lexed.ok, &tokens);
     parse::Parser p = parse::make(tokens, source);
     p.new_syntax = true;
     p.layout = layout;
@@ -135,4 +136,16 @@ export Parsed parse_new(Str file, Str source) {
     result.errors = p.errors;
     result.warnings = p.warnings;
     return result;
+}
+
+// Reads the text of the file called `file` in smith's own syntax (#1578): what `parse` does with `lex::tokenize_new`
+// and `Parser.new_syntax` set. The errors and the warnings come back as for `parse`.
+export Parsed parse_new(Str file, Str source) {
+    return read_new(file, source, false);
+}
+
+// The same for text whose blocks are braces, the form the fixer's own output has between its passes (#2014): the
+// tokens never get layout.
+export Parsed parse_new_braces(Str file, Str source) {
+    return read_new(file, source, true);
 }
