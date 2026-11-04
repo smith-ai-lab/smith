@@ -2813,6 +2813,47 @@ static void add_to_frame(Frame *top, ast::Decl *item) {
     }
 }
 
+static void refuse_if_constexpr(parse::Parser *p) {
+    parse::error(p, parse::peek(p).span,
+                 "`if constexpr` is not in smith's syntax: write `@when(condition)` before each declaration");
+}
+
+// The one warning of a mended top-level block (#2142).
+static void warn_when_fix(parse::Parser *p, const ast::Decl *block, parse::Edits fix) {
+    if (countof(fix) == 0) return;
+    warn(p, block->span.start, block->span.end,
+         "a top-level `if constexpr` is written `@when(condition)` before each declaration", fix);
+}
+
+// The `else` after a block's `}`: its head (for the fix), then `{` or `:` and the block, or the `if` of a chain.
+static void open_else(parse::Parser *p, Frame *top, lex::Token brace) {
+    lex::Token otherwise = parse::advance(p);
+    top->in_else = true;
+    top->else_head = (ast::Span){.start = brace.span.start, .end = otherwise.span.end};
+    if (parse::at(p, lex::kw_if)) {
+        top->chained = true;
+    } else if (p->layout) {
+        parse::expect(p, lex::colon, "`:` or `if` after `else`");
+        if (!open_layout_block(p)) {
+            parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
+        }
+    } else {
+        lex::Token open = parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
+        top->else_head.end = open.span.end;
+    }
+}
+
+// `else if constexpr (d) {` opened inside `parent`: the new frame takes the parent's head start and the conditions
+// before it; the parent's own edits are made now. False when the parent's condition is not about the system.
+static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::Edits *fix) {
+    opened->head.start = parent->else_head.start;
+    opened->before = parent->before;
+    Str earlier = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
+    opened->before = mem::realloc(opened->before, countof(opened->before) + 1);
+    opened->before[countof(opened->before) - 1] = earlier;
+    return frame_edits(p, parent, fix);
+}
+
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
 // explicit stack, so a nest of them is no recursion. A top-level block of the old syntax carries one warning with the
 // edits that make it `@when` lines (#2142).
@@ -2838,20 +2879,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             top->close = brace.span;
             if (p->layout) skip_newlines(p);
             if (!top->in_else && parse::at(p, lex::kw_else)) {
-                lex::Token otherwise = parse::advance(p);
-                top->in_else = true;
-                top->else_head = (ast::Span){.start = brace.span.start, .end = otherwise.span.end};
-                if (parse::at(p, lex::kw_if)) {
-                    top->chained = true;
-                } else if (p->layout) {
-                    parse::expect(p, lex::colon, "`:` or `if` after `else`");
-                    if (!open_layout_block(p)) {
-                        parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
-                    }
-                } else {
-                    lex::Token open = parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
-                    top->else_head.end = open.span.end;
-                }
+                open_else(p, top, brace);
                 continue;
             }
             if (fixable && !frame_edits(p, top, &fix)) fixable = false;
@@ -2862,22 +2890,11 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             if (depth == countof(stack)) {
                 stack = mem::realloc(stack, depth + 1);
             }
-            if (p->new_syntax && !p->layout && depth == 0) {
-                parse::error(
-                    p, parse::peek(p).span,
-                    "`if constexpr` is not in smith's syntax: write `@when(condition)` before each declaration");
-            }
+            if (p->new_syntax && !p->layout && depth == 0) refuse_if_constexpr(p);
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
             if (chain) {
-                Frame *parent = &stack[depth - 1];
-                opened.head.start = parent->else_head.start;
-                opened.before = parent->before;
-                Str earlier =
-                    when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
-                opened.before = mem::realloc(opened.before, countof(opened.before) + 1);
-                opened.before[countof(opened.before) - 1] = earlier;
-                if (fixable && !frame_edits(p, parent, &fix)) fixable = false;
+                if (!chain_frame(p, &stack[depth - 1], &opened, &fix)) fixable = false;
             } else if (depth > 0) {
                 fixable = false;
             }
@@ -2891,10 +2908,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
         }
         for (Usize level = 0; level <= countof(stack); level++) {
             if (depth == 0) {
-                if (fixable && closed && countof(fix) > 0) {
-                    warn(p, done->span.start, done->span.end,
-                         "a top-level `if constexpr` is written `@when(condition)` before each declaration", fix);
-                }
+                if (fixable && closed) warn_when_fix(p, done, fix);
                 return done;
             }
             Frame *top = &stack[depth - 1];
