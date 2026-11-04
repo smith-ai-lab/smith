@@ -1,0 +1,10 @@
+import <stdio.h>;
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32:
+    f(x)
+
+pub fn main() -> i32:
+    let doubled = apply(fn(a): a * 2, 4)
+    let triple: fn(i32) -> i32 = fn(a): a * 3
+    let _ = c::printf("%d %d\n", doubled, triple(5))
+    0

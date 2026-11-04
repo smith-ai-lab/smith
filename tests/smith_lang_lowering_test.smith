@@ -279,6 +279,18 @@ static Bool selected(const char *kase) {
     return c::strstr(selection, name) != nullptr;
 }
 
+// The one case that takes seconds by itself (65 chained modules, about 8 s of the lowering in a debug build, #2075): it
+// has its own test and no shard carries it, so more shards keep every shard far from the CPU limit.
+static const char *const chain_case = "error-import-chain-limit";
+
+static Bool is_chain_case(const char *name) {
+    return c::strcmp(name, chain_case) == 0;
+}
+
+// The one file of the chain case that its expect/error names (the lowering stops there). The chain's other modules
+// have no golden and carry no error, so lowering them only repeats the walk down the chain: this test lowers m00 alone.
+static const char *const chain_checked_file = "chain/m00.smith";
+
 typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 
 // A case lowered: the C of each file, the header of each module and the errors. `Pass_Files` compares them with the
@@ -295,6 +307,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
     Bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
     Bool creates = test::updating() && fresh && selected(kase);
     for (Usize i = 0; i < count; i++) {
+        if (is_chain_case(kase) && c::strcmp(files[i], chain_checked_file) != 0) continue;
         const char *file = join3("src/", files[i], "");
         const char *module = module_of(arena, files[i]);
         (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
@@ -311,7 +324,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
         const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(header_golden) || (creates))) corpus::golden(arena, differing, header_golden, header_text);
     }
-    const char *error_golden = join3(folder, "/expect/lower-error", "");
+    const char *error_golden = join3(folder, is_chain_case(kase) ? "/expect/error" : "/expect/lower-error", "");
     const char *joined = sorted_unique(errors, error_count);
     if (pass == Pass_Files && (exists(error_golden) || (creates && joined[0] != '\0')))
         corpus::golden(arena, differing, error_golden, joined);
@@ -328,8 +341,20 @@ static void check_shard(Usize shard) {
     test::check(count > 100);
     const char *differing = "";
     for (Usize i = shard; i < count; i += shards) {
-        if (lowers(cases[i])) check_case(arena, cases[i], Pass_Files, nullptr, &differing);
+        if (lowers(cases[i]) && !is_chain_case(cases[i])) check_case(arena, cases[i], Pass_Files, nullptr, &differing);
     }
+    corpus::finish(differing);
+}
+
+// The case that has no shard, alone: its files compared with its folder, as the shards do.
+export void test_lowering_import_chain_limit() {
+    arena::Arena memory = test::memory(1U << 27);
+    arena::Arena *arena = &memory;
+    arena::ArenaAllocator allocator = arena::allocator(arena);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *differing = "";
+    check_case(arena, chain_case, Pass_Files, nullptr, &differing);
     corpus::finish(differing);
 }
 
@@ -366,13 +391,13 @@ static void check_twice_shard(Usize shard) {
     Usize count = names_of(arena, "tests/smith-lang/cases", true, cases, cases_max);
     Usize lowered = 0;
     for (Usize i = shard; i < count; i += twice_shards) {
-        if (!lowers(cases[i])) continue;
+        if (!lowers(cases[i]) || is_chain_case(cases[i])) continue;
         check_case(arena, cases[i], Pass_Record, seen_lowered + i * slots_per_case, nullptr);
         lowered += 1;
     }
     for (Usize i = count; i > 0; i--) {
         if ((i - 1) % twice_shards != shard) continue;
-        if (lowers(cases[i - 1]))
+        if (lowers(cases[i - 1]) && !is_chain_case(cases[i - 1]))
             check_case(arena, cases[i - 1], Pass_Compare, seen_lowered + (i - 1) * slots_per_case, nullptr);
     }
     test::check(lowered > 10);

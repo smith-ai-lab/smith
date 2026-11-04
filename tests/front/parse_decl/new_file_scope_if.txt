@@ -1,0 +1,27 @@
+(module 
+  (if_constexpr
+    (name a)
+    (then
+      (struct Pair
+        (field a (named i32)))
+      (function f
+        (param x new (named i32))
+        (result (named i32))
+        (block
+          (return (name x))))
+      (if_constexpr
+        (name b)
+        (then
+          (function deep
+            (block)))))
+    (else
+      (if_constexpr
+        (name c)
+        (then
+          (function g
+            (block)))
+        (else
+          (function h
+            (block))))))
+  (function last
+    (block)))

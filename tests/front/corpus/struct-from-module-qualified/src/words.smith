@@ -1,0 +1,3 @@
+pub struct Pair:
+    pub key: str
+    pub value: str
