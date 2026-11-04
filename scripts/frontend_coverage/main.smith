@@ -598,9 +598,22 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     (void)format::to(include, sizeof include, "-I", include_root, "/.smith/include");
     char own[path_size * 2];
     (void)format::to(own, sizeof own, "-I", include_root, "/include");
-    const char *const compile[_] = {
-        smith, "cc", "--front-end=new", (const char *)include, (const char *)own, "-c", name, "-o", object};
-    struct Ran compiled = run_program(compile[0:9]);
+    // The address space of one compile is capped (6 GB): two files of front/ make the front end grow to 13 GB
+    // before it fails, which killed the 16 GB hosted runner (#2254); a file over the cap fails alone, as `parse` does.
+    const char *const compile[_] = {"/bin/sh",
+                                    "-c",
+                                    "ulimit -v 6291456; exec \"$@\"",
+                                    "sh",
+                                    smith,
+                                    "cc",
+                                    "--front-end=new",
+                                    (const char *)include,
+                                    (const char *)own,
+                                    "-c",
+                                    name,
+                                    "-o",
+                                    object};
+    struct Ran compiled = run_program(compile[0:13]);
     if (compiled.status == 0) {
         add_entry(view_of(path), "pass", "", "");
     } else {
