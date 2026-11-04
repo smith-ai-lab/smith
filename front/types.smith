@@ -1892,11 +1892,10 @@ export Bool is_type_parameter(const ast::Param *p) {
     return is_type_name(p->type);
 }
 
-// Whether a parameter is written `auto x` in today's syntax: its type is the type each call passes, so the function is
-// a template with one instance per set of argument types (#1934).
+// Whether a parameter is written `auto x` (today's syntax) or `x: auto` (smith's own): its type is the type each call
+// passes, so the function is a template with one instance per set of argument types (#1934).
 export Bool is_auto_param(const ast::Param *p) {
-    return !p->is_new && p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack &&
-           !p->is_gather;
+    return p->type != nullptr && p->type->kind == .auto_type && !p->is_rest && !p->is_pack && !p->is_gather;
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
@@ -2131,6 +2130,10 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     keep_params(r, all, bindings, auto_syntax, kept, slots);
+    for (Usize i = 0; i < kept_count; i++) { // the parameters, for a `typeof(v)` in the result
+        Symbol parameter = {.name = slots[i].name, .kind = .variable, .type = slots[i].type};
+        declare(&r->scopes, parameter);
+    }
     TypeRef result = r->table.void_type;
     if (copy->kind.function.result != nullptr) {
         r->new_syntax = !auto_syntax;
