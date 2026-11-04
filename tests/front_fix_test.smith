@@ -507,3 +507,45 @@ export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
                                  "typedef struct Node Node;\n");
     check_text(fixed.text, "@c_name(\"SmithChunk\") pub struct Chunk\nstruct Node\n");
 }
+
+// Unbraced bodies that end together close together, so the inner `if` is mended in the same pass (#2224).
+export void test_nested_unbraced_bodies_are_braced_in_one_pass() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "void f(int *b) {\n    for (int i = 0; i < 3; i++)\n        if (i == 1)\n"
+                                 "            if (i == 2)\n                b[i] = 1;\n}\n");
+    check_text(fixed.text, "fn f(b: *mut i32):\n    for i in range(0, 3):\n        if i == 1:\n"
+                           "            if i == 2:\n                b[i] = 1\n");
+}
+
+// A C `for` over a pointer, with an unbraced body, and a `continue` in it (#2224).
+export void test_a_for_over_a_pointer_with_an_unbraced_body_becomes_while() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "typedef struct R {\n    struct R *next;\n    int state;\n} R;\n"
+                                                "void f(R *head, int *n) {\n    for (R *r = head; r != nullptr; "
+                                                "r = r->next)\n        if (r->state == 1) {\n            *n += 1;\n"
+                                                "        }\n    for (R *r = head; r != nullptr; r = r->next) {\n"
+                                                "        if (r->state == 2) continue;\n        *n += 1;\n    }\n}\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+    check_count(countof(fixed.text) > 0 ? 1 : 0, 1);
+}
+
+// `struct tag name = v` of a C tag is mended with the rest of the function, not by an error that stops it (#2224).
+export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "void f(Usize *dims) {\n    struct smith_array_T_n result = {};\n"
+                                                "    for (Usize i = 0; i < 3; i++)\n"
+                                                "        result.count[i] = (Usize)dims[i];\n}\n");
+    check_text(fixed.text, "fn f(dims: *usize):\n    let result: c.smith_array_T_n = {}\n    for i in range(0, 3):\n"
+                           "        result.count[i] = dims[i].to(usize)\n");
+}

@@ -98,9 +98,10 @@ export void test_front_fix_blocks_a_continue_of_an_inner_loop_is_not_stepped() {
         "1\n");
 }
 
-export void test_front_fix_blocks_a_continue_inside_a_one_line_block_leaves_the_for() {
+export void test_front_fix_blocks_a_continue_inside_a_one_line_block_gets_the_step() {
     check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        if skip(i) { continue }\n        a(i)\n    }\n}\n",
-          "fn f():\n    for (usize i = 9; i > 0; i--):\n        if skip(i):\n            continue\n        a(i)\n");
+          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        if skip(i):\n            i -= 1\n"
+          "            continue\n        a(i)\n        i -= 1\n");
 }
 
 export void test_front_fix_blocks_adjacent_strings_on_several_lines_are_parenthesized() {

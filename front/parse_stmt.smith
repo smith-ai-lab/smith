@@ -781,6 +781,14 @@ static Bool has_continue(const parse::Parser *p, Usize from) {
 // A `for (init; cond; step) { body }` as `{ init; while cond { body step; } }`, when its body is a block with no
 // `continue`; otherwise a warning with no edits.
 static void loop_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
+    if (body->kind != .block && (has_continue(p, frame->body_from) || frame->wrapped)) {
+        // The loop itself is written by front::fix_blocks, which reads a braced body: brace this one (#2224).
+        parse::Edits wrap = edit_list(2);
+        wrap[0] = edit(point(frame->cut.end), " {");
+        wrap[1] = edit(point(body->span.end), " }");
+        parse::warning_fix(p, frame->cut, "the body of a `for` is braced: write `for (...) { ... }`", wrap);
+        return;
+    }
     if (body->kind != .block || has_continue(p, frame->body_from) || frame->wrapped) {
         // With an init the `while` would need a block around it for the scope of the init, and a statement has no
         // block form in smith's own syntax (`do:` is a value, #2014): the user writes it by hand.
@@ -1167,6 +1175,18 @@ static RangeText reread_range(parse::Parser *p, Usize open) {
     return again;
 }
 
+// Whether the tokens ahead are `*T name =`: the declaration of a pointer written as smith writes the type, in the init
+// of a C `for`.
+static Bool new_pointer_init(const parse::Parser *p) {
+    Usize at = 0;
+    while (parse::peek_at(p, at).kind == lex::star)
+        at += 1;
+    if (at == 0) return false;
+    lex::TokenKind type = parse::peek_at(p, at).kind;
+    if (type != lex::name && type != lex::type_name) return false;
+    return parse::peek_at(p, at + 1).kind == lex::name && parse::peek_at(p, at + 2).kind == lex::equal;
+}
+
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
 static Frame open_for(parse::Parser *p) {
     if (new_for(p)) return open_for_in(p);
@@ -1183,6 +1203,13 @@ static Frame open_for(parse::Parser *p) {
             p->for_init = true;
             frame.init = declaration_statement(p);
             p->for_init = false;
+        } else if (new_pointer_init(p)) {
+            // `*T r = v`, a declaration whose type an earlier pass wrote in smith's own form: not the dereference
+            // `*T` (its fix would make `T.* r`, #2224). front::fix_blocks writes the loop from the text.
+            while (!parse::at(p, lex::semicolon) && !parse::at(p, lex::end_of_file))
+                parse::advance(p);
+            parse::expect(p, lex::semicolon, "`;`");
+            frame.init = empty_stmt();
         } else {
             U32 start = parse::peek(p).span.start;
             ast::Expr *value = expression(p);

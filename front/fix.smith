@@ -54,9 +54,15 @@ static Bool is_insert(core::Edit e) {
 }
 
 // Two edits at one offset overlap, except an insertion beside an edit that deletes from there: the text goes in first
-// (`n` then `;` removed: `n as i32` and no `;`). Two insertions at one offset have no order, so they clash.
+// (`n` then `;` removed: `n as i32` and no `;`). Two insertions at one offset have no order, so they clash, unless
+// they are both ` }`: the closing braces of two unbraced bodies that end together (`for (...) if (c) s;`) go in
+// in either order, and a clash would leave the inner `if` for a pass that no longer reads its old form (#2224).
 static Bool overlaps(core::Edit a, core::Edit b) {
-    if (a.span.start == b.span.start) return is_insert(a) == is_insert(b);
+    if (a.span.start == b.span.start) {
+        Str closer = " }";
+        if (is_insert(a) && is_insert(b)) return !(mem::equal(a.text, closer) && mem::equal(b.text, closer));
+        return is_insert(a) == is_insert(b);
+    }
     return a.span.start < b.span.end && b.span.start < a.span.end;
 }
 

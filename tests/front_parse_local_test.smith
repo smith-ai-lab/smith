@@ -7,6 +7,7 @@ module front_parse_local_test;
 import front::ast;
 import front::parser;
 import std::arena;
+import std::mem;
 import std::test;
 
 // The dump of a file, with no error allowed.
@@ -77,7 +78,12 @@ export void test_parse_local_error_c_tag_without_c() {
                  "    return 0;\n"
                  "}\n";
     Str expected = "`struct stat` names a C tag; write `struct c::stat`";
-    test::check_equal(first_error(source), expected);
+    parser::Parsed parsed = parser::parse("local.smith", source);
+    Bool found = false;
+    for (Usize i = 0; i < countof(parsed.warnings); i++) {
+        if (mem::equal(parsed.warnings[i].message, expected)) found = true;
+    }
+    test::check_condition(found);
 }
 
 export void test_parse_local_range_for() {

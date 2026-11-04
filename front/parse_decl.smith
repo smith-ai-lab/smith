@@ -1075,9 +1075,9 @@ static Bool take_tag_keyword(parse::Parser *p) {
         Str word = parse::text(p, keyword);
         char message[:] = format::push("`", word, " ", tag, "` names a C tag; write `", word, " c::", tag, "`");
         parse::Edits edits = {};
-        edits = with_edit(edits, edit(name.span.start, name.span.start, "c::")); // #2224
-        parse::error_fix(p, name.span, message, edits);
-        return false;
+        edits = with_edit(edits, edit(keyword.span.start, name.span.start, "c::")); // #2224
+        parse::warning_fix(p, name.span, message, edits);
+        return true;
     }
     // `struct Pair p` and `struct c::stat st` name the type: the keyword goes, also inside the fix of a declaration.
     parse::Edits drop = {};

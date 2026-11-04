@@ -663,6 +663,21 @@ static Bool continues_line(lex::Tokens tokens, Usize dot) {
     return tokens[dot + 1].kind == lex::name;
 }
 
+// A `{ continue }` on one line is put on lines of its own, so that the loop it is in can write its step before the
+// `continue` (`if (c) continue;` in a C `for` is this after the braces are added, #2224).
+static void lonely_continues(Str source, lex::Tokens tokens, Braces braces, Cuts *cuts) {
+    for (Usize i = 0; i < countof(braces); i++) {
+        Brace brace = braces[i];
+        if (!brace.block || brace.inside || brace.close != brace.open + 2) continue;
+        if (tokens[brace.open + 1].kind != lex::kw_continue || !same_line(tokens, brace.open, brace.close)) continue;
+        Usize indent = indent_of(source, tokens[brace.open].span.start);
+        add_cut(cuts, tokens[brace.open].span.end, tokens[brace.open + 1].span.start,
+                as_str(format::push("\n", spaces(indent + step))));
+        add_cut(cuts, tokens[brace.open + 1].span.end, tokens[brace.close].span.start,
+                as_str(format::push("\n", spaces(indent))));
+    }
+}
+
 // The text with the forms that stop `convert` from reading a block made plain (#2225): a `}` that follows the last
 // statement of a multi-line block on the same line (`g(i) } }`, `low = m } else {`) goes to a line of its own, at the
 // indentation of the block's header; and a line that starts with `.name` after a `)`, `]` or a name
@@ -686,6 +701,7 @@ static Str plain_forms(Str source) {
         if (!continues_line(tokens, i)) continue;
         add_cut(&cuts, tokens[i - 1].span.end, tokens[i].span.start, "");
     }
+    lonely_continues(source, tokens, braces, &cuts);
     if (countof(cuts) == 0) return source;
     return apply(source, cuts);
 }
