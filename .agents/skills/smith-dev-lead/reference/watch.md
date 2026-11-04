@@ -56,18 +56,23 @@ fix() {
     why=
     if [ "$(echo "$pr" | jq -r .mergeable)" = false ]; then
       why="it has a merge conflict with main"
+      # never released by script: a conflict on an old PR is often a runner still at work (six false releases, 2026-11-04)
+      owner=$(echo "$pr" | jq -r '.body // ""' | grep -oE 'session_[A-Za-z0-9]+' | tail -1)
       if [ "$age" -lt 60 ]; then
-        owner=$(echo "$pr" | jq -r '.body // ""' | grep -oE 'session_[A-Za-z0-9]+' | tail -1)
-        seen "nudge$p-$sha" && echo "PR #$p conflicts with main (no push for $age min): send_message to ${owner:-its runner (no session link in the body)} to merge main and push; released at 60 min"
-        continue
+        seen "nudge$p-$sha" && echo "PR #$p conflicts with main (no push for $age min): send_message to ${owner:-its runner (no session link in the body)} to merge main and push"
+      else
+        seen "conf$p-$sha" && echo "PR #$p has conflicted with main for $age min with no push: get_session ${owner:-its runner}; release its ticket by hand only if that session is not working"
       fi
+      continue
     elif [ "$age" -ge 30 ] && [ "$(gh api repos/$R/commits/$sha/check-runs --jq '[.check_runs[]|select(.name=="ci")|.conclusion]|first' 2>/dev/null)" = failure ]; then
       why="its ci is red"
     fi
     [ -z "$why" ] && continue
     seen "rel$p-$sha" || continue
+    # a ticket labeled blocked waits on purpose (its PR stays red until what it waits for merges): never release it
     t=$(gh api repos/$R/pulls/$p --jq '.title + " " + (.body // "")' 2>/dev/null | { b=$(cat); echo "$b" | grep -oiE '(closes|fixes|resolves) #[0-9]+'; echo "$b" | grep -oiE 'part of #[0-9]+|\(#[0-9]+'; } | grep -oE '[0-9]+' | head -1)
     [ -z "$t" ] && { echo "PR #$p: $why, untouched for $age minutes, and no ticket found to release"; continue; }
+    gh api "repos/$R/issues/$t" --jq '[.labels[].name]|index("blocked")' 2>/dev/null | grep -q '[0-9]' && continue
     gh api -X DELETE "repos/$R/issues/$t/labels/claimed" >/dev/null 2>&1
     say "$t" "Claim released (lead's watcher): PR #$p has gone $age minutes with no push and $why. The next runner takes that PR over: check out its branch, merge main in, make ci green, and push. Do not open a second PR." && did "released #$t (PR #$p: $why)" &&
       echo "released #$t (PR #$p: $why): start a runner if none is free to take it over (2026-11-03: two releases sat 1-2 hours with no runner)"
@@ -101,7 +106,7 @@ health() {
   done
   today=$(date -u +%F)
   awk -v d="$today" '$1==d && $2=="fail" {print $3, $4}' "$FAILS" | sort -u | awk '{n[$1]++; p[$1]=p[$1]" #"$2} END {for (t in n) if (n[t]>=3) print t p[t]}' |
-    while read -r test prs; do seen "flake$test-$today" && echo "the test $test failed on 3 or more different PRs today ($prs): shared, not theirs; file a p0 ticket for it"; done
+    while read -r test prs; do seen "flake$test-$today" && echo "the test $test failed on 3 or more different PRs today ($prs): shared, not theirs, unless one queued PR sits in every failing merge group (compare the queue branches); file a p0 ticket for it"; done
   awk -v d="$today" '$1==d && $2=="cancel" {print $3, $4}' "$FAILS" | sort -u | awk '{n[$1]++; p[$1]=p[$1]" #"$2} END {for (j in n) if (n[j]>=2) print j p[j]}' |
     while read -r job prs; do seen "cancel$job-$today" && echo "the job $job was cancelled without a runner on different PRs today ($prs): runner starvation, not their code"; done
 }
@@ -251,10 +256,11 @@ done
 - **Done without the lead (every ten minutes):**
   - Everything a blocked ticket waits for is closed: it removes `blocked` and says so on the ticket.
   - A green PR not in the merge queue (GitHub ignores auto-merge on a PR that is already green; the queue drops a PR whose queue run fails): it merges main in and turns auto-merge on through `PUT pulls/N/ccr/auto_merge` (#1522 sat green for 90 minutes). Green means the `ci` check passed, not `mergeable_state=clean`: GitHub often reports `unknown` (#2033 and #2031 sat green and unqueued for 50 minutes, 2026-11-03). A PR whose last queue event is `added_to_merge_queue` is skipped: its `auto_merge` is null too, and updating its branch would throw it out of the queue.
-  - A PR red and untouched for 30 minutes, or conflicted and untouched for 60: it removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over before any new ticket (smith-dev-runner step 1; #1562 sat conflicted for four hours).
-  - **A conflict first goes to the PR's own session.** A red check wakes the PR's runner; a conflict does not. After 10 minutes with no push, the watcher wakes the lead with the session named in the PR body's footer, and the lead sends it `send_message` to merge main and push. The release at 60 minutes is the fallback (owner, 2026-11-03, after four takeovers in an hour, each a fresh session only to merge main: "I think we need a watcher to send a message to the session").
+  - A PR red and untouched for 30 minutes: it removes `claimed` from the ticket the PR names and comments `Claim released (lead's watcher)`, so the next runner takes that PR over before any new ticket (smith-dev-runner step 1; #1562 sat conflicted for four hours). Never a ticket labeled `blocked`: its PR is red on purpose until what it waits for merges.
+  - **A conflict is never released by script.** After 60 minutes the watcher wakes the lead, who checks the PR's session with `get_session` and releases by hand only if it is not working: on 2026-11-04 six conflict releases (#2142, #2193, #2186 twice, #1918, #2041) hit runners still at work, and each claim had to be restored.
+  - **A conflict first goes to the PR's own session.** A red check wakes the PR's runner; a conflict does not. After 10 minutes with no push, the watcher wakes the lead with the session named in the PR body's footer, and the lead sends it `send_message` to merge main and push. At 60 minutes it wakes the lead again (owner, 2026-11-03, after four takeovers in an hour, each a fresh session only to merge main: "I think we need a watcher to send a message to the session").
 - **Wakes the lead (every hour, once per problem):** fewer ready tickets than N (write or split tickets); main's ci red; a blocked ticket with no Waits-for line (likely a runner's question; owner, 2026-11-02, "we should never let you mark something as blocked unless you have a ticket saying what unlocks it"); no merge into main for an hour with PRs open; a PR it could not re-arm or release.
-- **Failures that are not the PR's (every ten minutes, `health`):** it reads each failed ci run once, records each failed test (its `FAIL <name>` check-run annotation) and each job cancelled without ever getting a runner, with the PR, in `failures.txt` beside `SEEN`. The same test failing on three PRs in a day wakes the lead (two gave a false alarm: a PR that changes the lowering legitimately fails the lowering tests) as shared (a flake or a break on main: file a p0 ticket); so does the same job cancelled with no runner on two PRs (starvation). On 2026-11-02 `task_test` failed on four PRs before anyone looked (#1718).
+- **Failures that are not the PR's (every ten minutes, `health`):** it reads each failed ci run once, records each failed test (its `FAIL <name>` check-run annotation) and each job cancelled without ever getting a runner, with the PR, in `failures.txt` beside `SEEN`. The same test failing on three PRs in a day wakes the lead (first check whether one queued PR sits in every failing merge group: a PR in the queue fails every group behind it, and on 2026-11-04 #2033 broke #2158's tests in three groups) (two gave a false alarm: a PR that changes the lowering legitimately fails the lowering tests) as shared (a flake or a break on main: file a p0 ticket); so does the same job cancelled with no runner on two PRs (starvation). On 2026-11-02 `task_test` failed on four PRs before anyone looked (#1718).
 - **Stall wakes carry their cause:** the stall message lists each open PR's ci state and its failed or cancelled jobs, so a wake starts from why the queue is stuck, not from the alarm.
 - **Thin tickets:** a `task` with a body under 150 characters wakes the lead once (a split on 2026-11-02 left bodies of `x`, and runners skip them).
 - **Both runner lanes must claim (hourly):** no `claimed by` comment from a cloud runner, or from a Mac runner, in 90 minutes while tickets are ready wakes the lead. On 2026-11-02 the cloud lane was empty from 14:20 to 20:30, unseen.
