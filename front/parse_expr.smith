@@ -1776,7 +1776,8 @@ static Step query(parse::Parser *p, Stack *st) {
     ast::QueryOp op = .count_of;
     if (keyword.kind == lex::kw_sizeof) op = .size_of;
     if (keyword.kind == lex::kw_alignof) op = .align_of;
-    if (parse::at(p, lex::left_paren) && parse_type::starts_type(p, 1)) {
+    if (parse::at(p, lex::left_paren) &&
+        (parse_type::starts_type(p, 1) || (p->new_syntax && parse_type::typeof_new_type_at(p, 1)))) {
         parse::advance(p);
         ast::TypeExpr *type = parse::type(p);
         parse::expect(p, lex::right_paren, "`)` to end the type");

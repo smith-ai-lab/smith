@@ -1,0 +1,47 @@
+// Tests of the fixer on forms of the std modules every program imports (#2224, part of #2053 and #1631): a group of
+// attributes, an `extern` prototype, an `auto` parameter, `sizeof` of a pointer type and a C tag named with `struct`.
+module front_fix_std_core_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_a_group_of_attributes() {
+    expect_fixed("module m;\n[[gnu::always_inline, maybe_unused]] export inline void proved(Bool c) {\n    g(c);\n}\n",
+                 "@inline pub inline fn proved(c: bool):\n    g(c)\n");
+}
+
+export void test_front_fix_an_extern_prototype() {
+    expect_fixed("module m;\n[[noreturn]] extern void fail(c::Kind kind);\n",
+                 "[[noreturn]] extern fn fail(kind: c.Kind)\n");
+}
+
+export void test_front_fix_an_auto_parameter() {
+    expect_fixed("module m;\ninline void f(auto xs) {\n    g(xs);\n}\n", "inline fn f(xs: auto):\n    g(xs)\n");
+}
+
+export void test_front_fix_sizeof_of_a_pointer_type() {
+    expect_fixed("module m;\nUsize f(Usize n) {\n    return n * sizeof(Item *);\n}\n",
+                 "fn f(n: usize) -> usize:\n    return n * sizeof(*Item)\n");
+}
+
+export void test_front_fix_a_c_tag_named_with_struct() {
+    expect_fixed("module m;\nvoid f() {\n    struct c::stat st;\n}\n", "fn f():\n    let mut st: c.stat = undefined\n");
+}
+
+export void test_front_fix_a_tag_of_the_file_named_with_struct() {
+    expect_fixed("module m;\nstruct Pair {\n    I32 a;\n};\nvoid f(struct Pair *p) {\n    struct Pair r;\n}\n",
+                 "struct Pair:\n    a: i32\nfn f(p: *Pair):\n    let mut r: Pair = undefined\n");
+}

@@ -123,6 +123,12 @@ static void note(Found *found, Str source, lex::Token token) {
 // of an attribute.
 static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first) {
     if (tokens[i].kind != lex::type_name) return false;
+    // `T some;` is a variant with a payload, written type first: the type is no variant (`Option`'s `T`, #2224).
+    if (i + 1 < countof(tokens)) {
+        lex::TokenKind next = tokens[i + 1].kind;
+        Bool same_line = !tokens[i + 1].line_break;
+        if (same_line && (next == lex::name || next == lex::star || next == lex::colon_colon)) return false;
+    }
     if (i == first || tokens[i].line_break) return true;
     lex::TokenKind before = tokens[i - 1].kind;
     return before == lex::comma || before == lex::right_bracket;

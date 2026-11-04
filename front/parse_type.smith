@@ -323,15 +323,22 @@ static Bool is_reflected(const parse::Parser *p) {
 
 // Whether the operand of `typeof` starts a type of the new syntax. A `*` is also a dereference (`typeof(*p)`,
 // `typeof(*(t)nullptr)`), so it counts only when the stars end at a word that names a type or at a type of its own.
-static Bool typeof_new_type(const parse::Parser *p) {
-    Usize at = 0;
+static Bool is_builtin_name(Str word);
+
+export Bool typeof_new_type_at(const parse::Parser *p, Usize offset) {
+    Usize at = offset;
     for (Usize i = 0; i < countof(p->tokens); i += 1) {
         if (parse::peek_at(p, at).kind != lex::star) break;
         at += 1;
     }
-    if (at == 0) return starts_new_type(p, 0);
+    if (at == offset) return starts_new_type(p, offset);
     lex::TokenKind after = parse::peek_at(p, at).kind;
+    if (after == lex::name && is_builtin_name(parse::text(p, parse::peek_at(p, at)))) return true;
     return after == lex::type_name || after == lex::kw_type || is_keyword_type(after) || starts_new_type(p, at);
+}
+
+static Bool typeof_new_type(const parse::Parser *p) {
+    return typeof_new_type_at(p, 0);
 }
 
 // `typeof(e)` or `typeof(T)`: the position is at the keyword.
