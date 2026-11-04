@@ -28,14 +28,14 @@ static void expect_fixed(Str before, Str want) {
 }
 
 export void test_front_fix_array_literal_with_an_inferred_length() {
-    expect_fixed("module m;\nvoid f() {\n    g(([_]F64){3.5}, 1);\n}\n", "fn f() {\n    g([3.5], 1)\n}\n");
+    expect_fixed("module m;\nvoid f() {\n    g(([_]F64){3.5}, 1);\n}\n", "fn f():\n    g([3.5], 1)\n");
 }
 
 export void test_front_fix_array_literal_with_a_length() {
     expect_fixed("module m;\nvoid f() {\n    let want = ([3]I32){1, 2, 3};\n}\n",
-                 "fn f() {\n    let want = [1, 2, 3]\n}\n");
+                 "fn f():\n    let want = [1, 2, 3]\n");
 }
 
 export void test_front_fix_array_literal_in_the_c_spelling() {
-    expect_fixed("module m;\nvoid f() {\n    g((const F64[_]){3.5}, 1);\n}\n", "fn f() {\n    g([3.5], 1)\n}\n");
+    expect_fixed("module m;\nvoid f() {\n    g((const F64[_]){3.5}, 1);\n}\n", "fn f():\n    g([3.5], 1)\n");
 }

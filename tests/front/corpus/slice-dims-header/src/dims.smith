@@ -1,0 +1,4 @@
+# Run-time arrays of more dimensions: the struct is named after the element and the shape (`n` is a run-time size).
+pub struct Image:
+    pub pixels: [,]f32
+    pub rows: [, 3]u8

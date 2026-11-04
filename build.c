@@ -897,6 +897,7 @@ static const char *const build_front_modules[] = {
     "emit_vector",
     "emit_stream",
     "fix_directive",
+    "fix_blocks",
     "fix_method",
     "lsp_server",
     "lsp_hover",

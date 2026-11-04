@@ -252,12 +252,42 @@ export void test_an_if_around_declarations_becomes_when() {
                                                 "// closes it\nint close_window() {\n    return 3;\n}\n#else\n"
                                                 "int open_window() {\n    return 2;\n}\n#endif\n"
                                                 "#ifdef __linux__\nint only_linux() {\n    return 4;\n}\n#endif\n");
-    check_text(fixed.text, "@when(target.os == .macos)\nfn open_window() -> i32 {\n    return 1\n}\n"
-                           "# closes it\n@when(target.os == .macos)\nfn close_window() -> i32 {\n    return 3\n}\n"
-                           "@when(target.os != .macos)\nfn open_window() -> i32 {\n    return 2\n}\n"
-                           "@when(target.os == .linux)\nfn only_linux() -> i32 {\n    return 4\n}\n");
+    check_text(fixed.text, "@when(target.os == .macos)\nfn open_window() -> i32:\n    return 1\n"
+                           "# closes it\n@when(target.os == .macos)\nfn close_window() -> i32:\n    return 3\n"
+                           "@when(target.os != .macos)\nfn open_window() -> i32:\n    return 2\n"
+                           "@when(target.os == .linux)\nfn only_linux() -> i32:\n    return 4\n");
     parser::Parsed again = parser::parse_new("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
+}
+
+// A top-level `if constexpr` is `@when` on each declaration of its branches (#2142).
+export void test_a_top_level_if_constexpr_becomes_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "import target;\n\nif constexpr (target::os == target::macos) {\n"
+                   "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
+                   "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
+    check_text(fixed.text,
+               "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
+               "let mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nlet mut a: i32 = 2\n"
+               "@when(target.os != .macos && target.os != .linux)\nlet mut a: i32 = 3\nlet mut after: i32 = 4\n");
+}
+
+// In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
+// system keeps the block of the old syntax (its declarations mended, the block not).
+export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed new_file =
+        parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    let a: i32 = 1\n}\n");
+    check_count(countof(new_file.errors) > 0 ? 1 : 0, 1);
+    fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (wide) {\n    int a = 1;\n}\n");
+    check_text(kept.text, "if constexpr (wide) {\n    let mut a: i32 = 1\n}\n");
 }
 
 // An `#if` that is not about the system, is inside a function or holds another directive stays as it is.
@@ -308,7 +338,7 @@ export void test_an_empty_compound_literal_is_rewritten_to_a_call() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node make(void) { return (Node){}; }\n");
-    check_text(fixed.text, "struct Node { a: i32 }\nstatic fn make() -> Node { return Node() }\n");
+    check_text(fixed.text, "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    return Node()\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
@@ -327,20 +357,30 @@ export void test_a_typedef_of_a_function_pointer_keeps_its_name() {
     check_count(countof(again.errors), 0);
 }
 
-// C's three-part `for` is a `while` (the spec removes it): the init goes before it in a block, the step ends the body,
-// and the result reads in smith's own syntax. A body with a `continue` would skip the step: that `for` has no fix.
+// C's three-part `for` with no init is a `while` (the spec removes it): the step ends the body, and the result reads
+// in smith's own syntax. A body with a `continue` would skip the step, and an init needs a block around the loop for
+// its scope, which smith's own syntax has only as a value (`do:`, #2014): those `for`s have no fix.
 export void test_a_three_part_for_is_rewritten_to_while() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
-        "t.smith",
-        "module m;\nstatic void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
+        "t.smith", "module m;\nstatic void f(int n) {\n    for (; n * 2 < 9; n += 3) {\n        n -= 1;\n    }\n}\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
-    check_text(fixed.text, "static fn f(mut n: i32) {\n    { let mut i: i32 = 0\nwhile i * 2 < n {\n        n -= 1\n   "
-                           " i += 3\n}\n}\n}\n");
+    check_text(fixed.text, "static fn f(mut n: i32):\n    while n * 2 < 9:\n        n -= 1\n        n += 3\n");
+}
+
+export void test_a_three_part_for_with_an_init_gets_no_while() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "static void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
+    Str word = "while";
+    check_flag(slice::find_slice(fixed.text, word) == .some, false);
 }
 
 export void test_a_for_with_a_continue_gets_no_while() {
@@ -364,7 +404,7 @@ export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node "
                                                 "make(void) {\n    Node n = {.a = 1};\n    return n;\n}\n");
     check_text(fixed.text,
-               "struct Node { a: i32 }\nstatic fn make() -> Node {\n    let n = Node(a = 1)\n    return n\n}\n");
+               "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    let n = Node(a = 1)\n    return n\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
@@ -381,7 +421,7 @@ export void test_a_slash_comment_becomes_a_hash_comment() {
     check_count(countof(edits), 1);
     check_text(edits[0].text, "# ");
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // \"x\" // a\n}\n// end\n");
-    check_text(fixed.text, "fn f() -> i32 {\n    return 1 # \"x\" // a\n}\n# end\n");
+    check_text(fixed.text, "fn f() -> i32:\n    return 1 # \"x\" // a\n# end\n");
 }
 
 // Comments are written as `#` even when a form the fixer cannot mend stays (an array suffix here), so `//` and
@@ -392,7 +432,7 @@ export void test_comments_are_written_when_another_form_stays() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nint a[3];\n/* two\n   lines */\n");
-    check_text(fixed.text, "fn f() -> i32 {\n    return 1 # one\n}\ni32 a[3];\n# two\n#   lines \n");
+    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\ni32 a[3];\n# two\n#   lines \n");
 }
 
 // A function type written with the names of its parameters (`Fn(void (Key key))`) is `fn(Key)`: the names are dropped,
@@ -405,8 +445,8 @@ export void test_a_function_type_with_parameter_names_is_rewritten() {
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct {\n    Fn(void (Key key, U32 n)) hook;\n"
                                                 "    Fn(Node * (Node *)) make;\n} Hooks;\n"
                                                 "static void run(Fn(void (Key key)) f) {\n}\n");
-    check_text(fixed.text, "struct Hooks {\n    hook: fn(Key, u32)\n    make: fn(*Node) -> *Node\n}\n"
-                           "static fn run(f: fn(Key)) {\n}\n");
+    check_text(fixed.text, "struct Hooks:\n    hook: fn(Key, u32)\n    make: fn(*Node) -> *Node\n"
+                           "static fn run(f: fn(Key)):\n");
 }
 
 // The same in a typedef: the name goes with the parameter, and no `Fn(` is left.

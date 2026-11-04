@@ -29,14 +29,14 @@ static void expect_fixed(Str before, Str want) {
 
 export void test_front_fix_lambda_a_capture_and_a_typed_parameter() {
     expect_fixed("module m;\nI32 f(I32 factor) {\n    return g([factor](I32 a) -> I32 { return a * factor; });\n}\n",
-                 "fn f(factor: i32) -> i32 {\n    return g(fn(a: i32) -> i32 { return a * factor })\n}\n");
+                 "fn f(factor: i32) -> i32:\n    return g(fn(a: i32) -> i32: a * factor)\n");
 }
 
 export void test_front_fix_lambda_no_parameters() {
-    expect_fixed("module m;\nvoid f() {\n    run([] { work(); });\n}\n", "fn f() {\n    run(fn() { work() })\n}\n");
+    expect_fixed("module m;\nvoid f() {\n    run([] { work(); });\n}\n", "fn f():\n    run(fn(): work())\n");
 }
 
 export void test_front_fix_lambda_function_pointer_local_with_a_result() {
     expect_fixed("module m;\nI32 main() {\n    I32 (*f)(I32) = [](I32 a) { return a; };\n}\n",
-                 "fn main() -> i32 {\n    let f: fn(i32) -> i32 = fn(a: i32) { return a }\n}\n");
+                 "fn main() -> i32:\n    let f: fn(i32) -> i32 = fn(a: i32): a\n");
 }
