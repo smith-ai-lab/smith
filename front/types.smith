@@ -917,6 +917,8 @@ export struct Checked {
     Usize node_count;
     Error errors[:];
     Usize error_count;
+    const ast::Module *module; // the module as checked for the system smith runs on (`when::live_module`), null when
+                               // it is the one given (#2277): the emitter emits this one
 };
 
 // Records an error; the checking goes on. `message` is copied into the current allocator.

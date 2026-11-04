@@ -80,10 +80,11 @@ export struct Parser {
     Errors warnings; // old forms that still compile, with their fixes: kept apart so `errors` stays the failures
     Hooks hooks;
     NamedList named_list; // the last untyped list with only field designators
-    Bool head;     // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
-                   // at its top level, so a `{` opens the body (#961)
-    Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
-    Bool in_value; // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
+    Bool head;      // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
+                    // at its top level, so a `{` opens the body (#961)
+    Bool for_init;  // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
+    Bool in_value;  // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
+    Bool in_result; // a function's result type is being read: `-> slice_of(T, n)` is a type function applied
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
     Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on
