@@ -49,8 +49,9 @@
 //   Lambdas        A lambda's parameters take the types of the expected `Fn(F)`. Its body is checked after the body
 //                  that holds it: the hook keeps a copy of the scopes as they were at the lambda and the statement
 //                  walk, which has no recursion, runs on it when the enclosing walk is done.
-//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `static_assert` in a
-//                  body, `if constexpr` and `for constexpr`, a range `for`, a local type or function, a name from a C
+//   static_assert  In a body its condition is checked as a `Bool`; the emitter folds it and reports a false or unknown
+//                  condition (front::emit).
+//   Not yet        Each reported as `not yet typed: <kind>` at its span, never accepted: `switch`, `if constexpr` and `for constexpr`, a range `for`, a local type or function, a name from a C
 //                  header (`c::printf`, until front::cimport lands, #1124), a function that falls off its end is not
 //                  yet reported.
 //
@@ -726,7 +727,25 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .switch_stmt) {
         switch_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        not_yet(r, s, "static_assert in a body");
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    }
+}
+
+// A statement inside a block that is a value (`let v = if c:` and its lines): the ones that need no children are
+// checked in the scope the block opened; a loop, a nested block and the like are `not yet typed`.
+static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind == .expression) {
+        expression_statement(r, s);
+    } else if (s->kind == .declaration) {
+        local_declaration(r, s->kind.declaration.decl);
+    } else if (s->kind == .destructure) {
+        destructure_statement(r, s);
+    } else if (s->kind == .return_stmt) {
+        return_statement(r, s);
+    } else if (s->kind == .static_assert_stmt) {
+        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    } else {
+        types::failf(r, s->span, "not yet typed: this statement inside a block that is used as a value");
     }
 }
 
@@ -903,7 +922,8 @@ static void check_instances(types::Checked *r) {
 }
 
 export void install() {
-    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook});
+    types_expr::set_hooks((types_expr::Hooks){.convert = convert_hook, .cast = cast_hook, .lambda_body = lambda_hook,
+                                                .statement = value_block_statement});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).

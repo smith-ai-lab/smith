@@ -288,8 +288,9 @@ export void test_front_types_decl_a_c_name_is_not_yet_typed() {
     fails("Void f() { c::exit(1); }", "not yet typed: c:: name `c::exit`", "");
 }
 
-export void test_front_types_decl_static_assert_in_a_body_is_not_yet_typed() {
-    fails("Void f() { static_assert(true); }", "not yet typed: static_assert in a body", "");
+export void test_front_types_decl_static_assert_in_a_body_checks_its_condition() {
+    clean("Void f() { static_assert(true); }");
+    fails("Void f() { static_assert(1); }", "", "");
 }
 
 export void test_front_types_decl_if_constexpr_in_a_body_is_not_yet_typed() {

@@ -567,7 +567,7 @@ static ast::Stmt *static_assert_statement(parse::Parser *p) {
         message = unquoted(p, text);
     }
     if (countof(p->errors) == before) parse::expect(p, lex::right_paren, "`)`");
-    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    if (countof(p->errors) == before) end_statement(p);
     ast::Stmt *built = new_stmt({.static_assert_stmt = {.condition = condition, .message = message}});
     return settle(p, start, before, built);
 }
