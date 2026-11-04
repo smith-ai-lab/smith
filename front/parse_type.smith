@@ -437,6 +437,13 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         lex::Token tag = parse::peek(p);
         if (!parse::accept(p, lex::name) && !parse::accept(p, lex::type_name)) {
             parse::error(p, parse::peek(p).span, "expected a tag name after `struct`, `union` or `enum`");
+        } else if (tag.kind == lex::name && text::is(parse::text(p, tag), "c") && parse::at(p, lex::colon_colon)) {
+            // `struct c::pollfd`: a C tag through the header's namespace is the type `c.pollfd`.
+            while (parse::at(p, lex::colon_colon) && (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
+                parse::warn_separator(p, parse::advance(p));
+                parse::advance(p);
+            }
+            drop_tag_keyword(p, token, tag);
         } else if (tag.kind == lex::type_name && !parse::at(p, lex::colon_colon) && !parse::at(p, lex::left_brace) &&
                    !parse::at(p, lex::colon) && !parse::at(p, lex::semicolon)) {
             // not the declaration of the tag itself (`struct Q {`), only a use of it
