@@ -1140,7 +1140,7 @@ static Bool is_postfix_level(Str source, const ast::Expr *e) {
 
 // The conversion function that writes a cast to `type`: `cast` for a pointer, else `to` (#1811).
 static Str conversion_name(const ast::TypeExpr *type) {
-    if (type->kind == .pointer) return "cast";
+    if (type->kind == .pointer || type->kind == .function) return "cast";
     return "to";
 }
 
@@ -1856,7 +1856,29 @@ static Bool c_literal_type(const parse::Parser *p) {
 }
 
 // `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
+// Whether `(fn(A))operand` is ahead, the `(` taken: a cast to a function type (`(void (*)(i32))0` after a pass), read as
+// a cast whose fix writes `operand.cast(fn(A))`.
+static Bool fn_type_cast(const parse::Parser *p) {
+    lex::Token word = parse::peek_at(p, 0);
+    Bool is_fn = word.kind == lex::kw_fn || (word.kind == lex::name && text::is(parse::text(p, word), "fn"));
+    if (!is_fn || parse::peek_at(p, 1).kind != lex::left_paren) return false;
+    Usize after = after_group(p, 1, lex::left_paren, lex::right_paren);
+    return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
+}
+
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
+    if (fn_type_cast(p)) {
+        ast::TypeExpr *type = parse::type(p);
+        lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        if (type == nullptr) return .failed;
+        Pending cast = {.form = .cast_form,
+                        .prec = prefix_prec,
+                        .start = start,
+                        .type = type,
+                        .head = from_to(start, close.span.end)};
+        push_op(st, cast);
+        return .more;
+    }
     ast::ExprRef items[:] = {};
     Bool is_tuple = parse::at(p, lex::right_paren);
     Usize named_count = 0;
