@@ -1,0 +1,86 @@
+// Tests of `textDocument/completion` (#1894): a document is opened, then completion asks for what can be written at a
+// position. A name in scope (a parameter, a local declared before the cursor, a function), and after a `.` the fields
+// and the methods of the receiver; a document that was never opened gives null.
+module front_lsp_completion_test;
+
+import front::lsp_server;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static void open(Str uri, Str text) {
+    (void)lsp_server::handle(as_str(format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{"
+                                                 "\"textDocument\":{\"uri\":\"",
+                                                 uri, "\",\"text\":\"", text, "\"}}}")));
+}
+
+static Str completion(Str uri, U64 line, U64 character) {
+    return lsp_server::handle(as_str(format::push(
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"",
+        uri, "\"},\"position\":{\"line\":", line, ",\"character\":", character, "}}}")));
+}
+
+export void test_lsp_completion_after_a_dot_offers_fields_and_methods() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/c.smith", "struct Point:\\n    x: i32\\n    y: i32\\n\\nfn norm(p: Point) -> i32:\\n"
+                              "    return p.x + p.y\\n\\nfn main() -> i32:\\n    let origin = Point(x = 1, y = 2)\\n"
+                              "    let a = origin.\\n    return a\\n");
+    Str out = completion("file:///t/c.smith", 9, 19);
+    test::check(has(out, "\"id\":4"));
+    test::check(has(out, "\"label\":\"x\""));
+    test::check(has(out, "\"label\":\"y\""));
+    test::check(has(out, "\"label\":\"norm\",\"kind\":2"));
+    test::check(!has(out, "\"label\":\"main\""));
+}
+
+export void test_lsp_completion_after_a_dot_and_letters_keeps_the_matching_names() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/p.smith", "struct Point:\\n    x: i32\\n    y: i32\\n\\nfn norm(p: Point) -> i32:\\n"
+                              "    return p.x + p.y\\n\\nfn main() -> i32:\\n    let origin = Point(x = 1, y = 2)\\n"
+                              "    let a = origin.no\\n    return a\\n");
+    Str out = completion("file:///t/p.smith", 9, 21);
+    test::check(has(out, "\"label\":\"norm\""));
+    test::check(!has(out, "\"label\":\"x\""));
+}
+
+export void test_lsp_completion_of_a_name_offers_what_is_in_scope() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/n.smith", "fn twice(n: i32) -> i32:\\n    let m = n + n\\n    return \\n    let later = m\\n");
+    Str out = completion("file:///t/n.smith", 2, 11);
+    test::check(has(out, "\"label\":\"n\",\"kind\":6"));
+    test::check(has(out, "\"label\":\"m\",\"kind\":6"));
+    test::check(has(out, "\"label\":\"twice\",\"kind\":3"));
+    test::check(!has(out, "\"label\":\"later\""));
+}
+
+export void test_lsp_completion_in_an_unopened_document_is_null() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check(has(completion("file:///t/none.smith", 0, 0), "\"result\":null"));
+}
