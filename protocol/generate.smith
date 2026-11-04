@@ -181,6 +181,32 @@ const char *gen_text(Generator *g, struct smith_array_const_char_n text) {
     return gen_copy(g, buffer, (Usize)written);
 }
 
+// One byte as ASCII, the C locale's ctype and no macro: a byte of 128 or more is none of these (glibc's ctype names are
+// macros, which a .smith file may not call, #2238).
+Bool gen_digit(U8 c) {
+    return c >= '0' && c <= '9';
+}
+
+Bool gen_upper(U8 c) {
+    return c >= 'A' && c <= 'Z';
+}
+
+Bool gen_lower(U8 c) {
+    return c >= 'a' && c <= 'z';
+}
+
+Bool gen_alnum(U8 c) {
+    return gen_digit(c) || gen_upper(c) || gen_lower(c);
+}
+
+U8 gen_to_upper(U8 c) {
+    return gen_lower(c) ? (U8)(c - 'a' + 'A') : c;
+}
+
+U8 gen_to_lower(U8 c) {
+    return gen_upper(c) ? (U8)(c - 'A' + 'a') : c;
+}
+
 // "innerException" is "InnerException", "_meta" is "Meta", "function breakpoint" is "FunctionBreakpoint".
 const char *gen_pascal(Generator *g, const char *text) {
     char out[256];
@@ -188,16 +214,16 @@ const char *gen_pascal(Generator *g, const char *text) {
     bool upper = true;
     for (Usize i = 0; text[i] != '\0' && length < sizeof out - 2; i++) { // bounded by the buffer
         U8 c = (U8)text[i];
-        if (!c::isalnum(c)) {
+        if (!gen_alnum(c)) {
             upper = true;
             continue;
         }
-        out[length++] = (char)(upper ? c::toupper(c) : c);
+        out[length++] = (char)(upper ? gen_to_upper(c) : c);
         upper = false;
     }
     if (length == 0) return "Empty";
     out[length] = '\0';
-    if (c::isdigit((U8)out[0])) return gen_format(g, "N%s", out);
+    if (gen_digit((U8)out[0])) return gen_format(g, "N%s", out);
     return gen_copy(g, out, length);
 }
 
@@ -207,17 +233,17 @@ const char *gen_snake(Generator *g, const char *name) {
     Usize length = 0;
     for (Usize i = 0; name[i] != '\0' && length < sizeof out - 2; i++) { // bounded by the buffer
         U8 c = (U8)name[i];
-        if (!c::isalnum(c)) {
+        if (!gen_alnum(c)) {
             if (length > 0 && out[length - 1] != '_') out[length++] = '_';
             continue;
         }
-        if (c::isupper(c) && i > 0) {
+        if (gen_upper(c) && i > 0) {
             U8 before = (U8)name[i - 1];
             U8 after = (U8)name[i + 1];
-            bool boundary = c::islower(before) || c::isdigit(before) || (c::isupper(before) && c::islower(after));
+            bool boundary = gen_lower(before) || gen_digit(before) || (gen_upper(before) && gen_lower(after));
             if (boundary && length > 0 && out[length - 1] != '_') out[length++] = '_';
         }
-        out[length++] = (char)c::tolower(c);
+        out[length++] = (char)gen_to_lower(c);
     }
     return gen_copy(g, out, length);
 }
@@ -236,9 +262,9 @@ const char *gen_ident(Generator *g, const char *json) {
     Usize length = 0;
     for (Usize i = 0; json[i] != '\0' && length < sizeof out - 3; i++) { // bounded by the buffer
         U8 c = (U8)json[i];
-        out[length++] = (char)(c::isalnum(c) || c == '_' ? c : '_');
+        out[length++] = (char)(gen_alnum(c) || c == '_' ? c : '_');
     }
-    if (length == 0 || c::isdigit((U8)out[0])) {
+    if (length == 0 || gen_digit((U8)out[0])) {
         mem::move(out[1:length + 1], out[0:length]);
         out[0] = '_';
         length++;
@@ -1765,7 +1791,7 @@ void gen_prepare(Generator *g, const char *name, struct smith_array_const_char_n
     gen_assert(__builtin_strlen(name) < sizeof upper && name[0] != '\0',
                "strlen(name) < sizeof upper && name[0] != '\0'");
     mem::copy(upper[0:__builtin_strlen(name) + 1], name[0:__builtin_strlen(name) + 1]);
-    upper[0] = (char)c::toupper((U8)upper[0]);
+    upper[0] = (char)gen_to_upper((U8)upper[0]);
     g->prefix = gen_format(g, "Smith%s", upper);
     g->stem_prefix = gen_format(g, "smith_%s_", name);
     const c::SmithJsonValue *root = nullptr;

@@ -845,6 +845,10 @@ void drain_done(Worker *worker) {
     }
 }
 
+// The most events one `kevent` or `epoll_wait` call reads. Declared here, before the branches, so that `drain_done` is
+// not the last thing before them: clang-tidy counted its lines up to the end of the skipped branch (#2238).
+constexpr Usize events_max = 16;
+
 // ---- Waiting on the system: a kqueue per worker on macOS, an epoll instance per worker on Linux. ----
 //
 // macOS: an idle worker blocks in `kevent` on its own kqueue, which holds the sockets and pipes its parked tasks wait
@@ -859,7 +863,6 @@ if constexpr (target::os == target::macos) {
     constexpr I32 add_clear = c::EV_ADD | c::EV_CLEAR;
     constexpr U32 trigger = c::NOTE_TRIGGER;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr Usize events_max = 16;
 
     void queue_open(Worker *worker) {
         contract::trusted(); // the system's queue is the edge
@@ -922,7 +925,6 @@ if constexpr (target::os == target::macos) {
     constexpr I32 close_on_exec = c::EPOLL_CLOEXEC;
     constexpr I32 event_fd_flags = c::EFD_CLOEXEC | c::EFD_NONBLOCK;
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
-    constexpr Usize events_max = 16;
 
     void queue_open(Worker *worker) {
         contract::trusted(); // the system's queue is the edge
