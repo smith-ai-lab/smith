@@ -707,6 +707,30 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
     return state::success();
 }
 
+// `static_assert(c, "m")` in a body: the condition is built and must fold to a constant; false stops the compile with
+// the message.
+static state::Status static_assert_finish(state::Emitter *e, const state::Work *w) {
+    state::Value condition = state::pop_value(e);
+    if (w->stmt->kind != .static_assert_stmt) return state::fail("not a static_assert", w->span);
+    if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
+    if (c::LLVMIsAConstantInt(condition.llvm) == nullptr)
+        return state::fail("static_assert needs a condition known at compile time", w->span);
+    if (c::LLVMConstIntGetZExtValue(condition.llvm) == 0) {
+        if (countof(w->stmt->kind.static_assert_stmt.message) == 0) return state::fail("static_assert failed", w->span);
+        return state::fail(w->stmt->kind.static_assert_stmt.message, w->span);
+    }
+    return state::success();
+}
+
+static state::Status static_assert_statement(state::Emitter *e, const ast::Stmt *s) {
+    if (s->kind != .static_assert_stmt) {
+        return state::fail("not a static_assert", s->span);
+    }
+    state::push_then(e, (state::Work){.then = static_assert_finish, .stmt = s, .span = s->span});
+    state::push_eval(e, s->kind.static_assert_stmt.condition, state::no_hint());
+    return state::success();
+}
+
 // A statement after `return` goes into a block nothing jumps to: instructions after a terminator are not valid.
 static void start_block_if_ended(state::Emitter *e) {
     c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
@@ -738,7 +762,8 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
-    return state::not_emitted("static_assert", s->span); // the one kind left
+    if (s->kind == .static_assert_stmt) return static_assert_statement(e, s);
+    return state::not_emitted("this kind of statement", s->span);
 }
 
 // Run the work stack until it is empty or a handler fails.
