@@ -1200,6 +1200,38 @@ static void note_bump(Stack *st, ast::Expr *expr, ast::Span token) {
     st->bumps[countof(st->bumps) - 1] = bump;
 }
 
+// The fix of `x = y++;`, `x = ++y;` as the whole statement of a line: the step is a statement of its own, after the
+// assignment (`y++`) or before it (`++y`). Nothing when the statement shares its line with anything else (an unbraced
+// `if (c) x = y++;` would take only the first).
+static parse::Edits bump_in_assignment(const parse::Parser *p, Bump bump, const ast::Expr *whole, Bool is_post, Str step) {
+    parse::Edits none = {};
+    if (whole == nullptr || whole->kind != .assign || whole->kind.assign.op != .plain) return none;
+    if (whole->kind.assign.value != bump.expr || bump.expr->kind != .unary) return none;
+    const ast::Expr *operand = bump.expr->kind.unary.operand;
+    if (operand->kind != .name) return none;
+    lex::Token after = parse::peek(p);
+    if (after.kind != lex::semicolon) return none;
+    Usize line = whole->span.start;
+    while (line > 0 && p->source[line - 1] != '\n')
+        line -= 1;
+    Usize indent = line;
+    while (indent < countof(p->source) && p->source[indent] == ' ')
+        indent += 1;
+    if (indent != whole->span.start) return none;
+    Str margin = p->source[line:indent];
+    Str target = p->source[operand->span.start:operand->span.end];
+    Str bumped = as_str(format::push(target, step, ";"));
+    parse::Edits edits = {};
+    if (is_post) {
+        edits = with_edit(edits, bump.token, "");
+        edits = with_edit(edits, at_offset(after.span.end), as_str(format::push("\n", margin, bumped)));
+    } else {
+        edits = with_edit(edits, from_to(bump.token.start, operand->span.start), "");
+        edits = with_edit(edits, at_offset(whole->span.start), as_str(format::push(bumped, "\n", margin)));
+    }
+    return edits;
+}
+
 // The warnings of the `++` and `--` of an expression: as the whole of a statement (`i++;`) it is `i += 1`; anywhere
 // else it has no value form and no mechanical fix.
 static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *whole) {
@@ -1213,7 +1245,7 @@ static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *wh
         Str message =
             is_up ? "`++` is a statement in Smith: write `i += 1`" : "`--` is a statement in Smith: write `i -= 1`";
         if (bump.expr != whole || !parse::at(p, lex::semicolon)) {
-            parse::warning_fix(p, bump.token, message, no_edits());
+            parse::warning_fix(p, bump.token, message, bump_in_assignment(p, bump, whole, is_post, step));
             continue;
         }
         parse::Edits edits = {};
