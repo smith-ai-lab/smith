@@ -1,0 +1,5 @@
+import c <stdio.h>
+
+fn main() -> i32:
+    let _ = stdio.printf("hello\n")
+    return 0

@@ -1,0 +1,5 @@
+extern fn printf(format: *u8, ...) -> i32
+
+pub fn check() -> i32:
+    let s = "x"
+    printf("%s", s)
