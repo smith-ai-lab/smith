@@ -123,7 +123,7 @@ jobs:
         # cache.
         run: |
           flags="--skip-macos"
-          macflags="--macos-only"
+          macflags="--macos-only --shard 1/1"
           count=8
           linux=
           for i in $(seq 1 "$count"); do
@@ -194,6 +194,9 @@ jobs:
         timeout-minutes: 20
         with:
           tests: "true"
+          # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
+          # them (#2242); a documents-only change keeps the full list
+          test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
       - name: Checks
         timeout-minutes: 30
         shell: bash
@@ -490,7 +493,12 @@ jobs:
     if: needs.changes.outputs.scope == 'release'
     strategy:
       matrix:
-        os: [macos-26, ubuntu-latest]
+        include:
+          # each OS saves the cache of what its jobs build: the Mac builds only its `--macos-only` tests
+          - os: macos-26
+            test-flags: --macos-only --shard 1/1 --costs ${{ github.workspace }}/.github/shard-costs.tsv
+          - os: ubuntu-latest
+            test-flags: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
@@ -502,6 +510,7 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+          test-flags: ${{ matrix.test-flags }}
       - name: Save the step cache
         uses: actions/cache/save@v4
         with:
