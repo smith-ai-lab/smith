@@ -431,6 +431,9 @@ static Mapped map_attribute(Str inner) {
         result.text = "@noinline";
     } else if (same_text(word, "gnu::cold")) {
         result.text = "@cold";
+    } else if (starts_with(word, "gnu::format(")) {
+        // Nothing in Smith checks a printf-style format yet; the attribute only asked clang to (#2224 gap).
+        result.text = "";
     } else if (same_text(word, "std::affine")) {
         result.text = "@affine";
     } else if (starts_with(word, "std::c_name(")) {
@@ -563,9 +566,30 @@ static Str gnu_to_std(Str word) {
 
 // A GNU `__attribute__((a, b(1)))` is not Smith's: one error per attribute name (the first word of each), at the
 // name, then the group is skipped. False when the position is not at `__attribute__`.
+// The `[[gnu::a, b]]` that says what `__attribute__((a, b))` says, or an empty text when a name has no such spelling
+// (`unused` is `maybe_unused`); the next pass maps the group.
+static Str attribute_group_text(Str inner) {
+    Str out = "";
+    Usize from = 0;
+    for (Usize i = 0; i <= countof(inner); i += 1) {
+        if (i < countof(inner) && inner[i] != ',') continue;
+        Str word = trimmed(inner[from:i]);
+        from = i + 1;
+        Str spelled = word;
+        if (same_text(word, "unused") || same_text(word, "__unused__")) spelled = "maybe_unused";
+        Bool known = !same_text(gnu_to_std(word), "") || same_text(spelled, "maybe_unused");
+        if (!known) return "";
+        if (!same_text(spelled, "maybe_unused")) spelled = as_str(format::push("gnu::", word));
+        out = countof(out) > 0 ? as_str(format::push(out, ", ", spelled)) : spelled;
+    }
+    return as_str(format::push("[[", out, "]]"));
+}
+
 static Bool reject_gnu_spelling(parse::Parser *p) {
     lex::Token head = parse::peek(p);
     if (head.kind != lex::name || !same_text(parse::text(p, head), "__attribute__")) return false;
+    Usize errors_before = countof(p->errors);
+    U32 head_start = head.span.start;
     parse::advance(p);
     Usize depth = 0;
     Bool at_name = false;
@@ -595,6 +619,14 @@ static Bool reject_gnu_spelling(parse::Parser *p) {
             parse::error(p, token.span, message);
         }
         at_name = false;
+    }
+    U32 group_end = p->tokens[p->position - 1].span.end;
+    Str group = p->source[head_start:group_end];
+    // `__attribute__((` ... `))`
+    if (countof(p->errors) > errors_before && countof(group) > 15 && group[countof(group) - 1] == ')') {
+        Str written = attribute_group_text(group[15:countof(group) - 2]);
+        parse::Edits none = {};
+        if (countof(written) > 0) p->errors[errors_before].fix = with_edit(none, edit(head_start, group_end, written));
     }
     return true;
 }
