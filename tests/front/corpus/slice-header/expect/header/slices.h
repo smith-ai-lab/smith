@@ -1,0 +1,27 @@
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef SMITH_ARRAY_f32_n
+#define SMITH_ARRAY_f32_n
+struct smith_array_f32_n { float * data; size_t count [1]; };
+#endif
+
+#ifndef SMITH_ARRAY_char_n
+#define SMITH_ARRAY_char_n
+struct smith_array_char_n { char * data; size_t count [1]; };
+#endif
+typedef struct { struct smith_array_f32_n weights; struct smith_array_char_n name; } slices_Layer;
+
+
+#ifndef SMITH_ARRAY_i32_n
+#define SMITH_ARRAY_i32_n
+struct smith_array_i32_n { int32_t * data; size_t count [1]; };
+#endif
+size_t slices_total(struct smith_array_i32_n xs, size_t skip) __asm__("slices::total");
+#ifdef __cplusplus
+}
+#endif

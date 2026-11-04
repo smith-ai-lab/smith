@@ -260,6 +260,36 @@ export void test_an_if_around_declarations_becomes_when() {
     check_count(countof(again.errors), 0);
 }
 
+// A top-level `if constexpr` is `@when` on each declaration of its branches (#2142).
+export void test_a_top_level_if_constexpr_becomes_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "import target;\n\nif constexpr (target::os == target::macos) {\n"
+                   "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
+                   "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
+    check_text(fixed.text,
+               "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
+               "let mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nlet mut a: i32 = 2\n"
+               "@when(target.os != .macos && target.os != .linux)\nlet mut a: i32 = 3\nlet mut after: i32 = 4\n");
+}
+
+// In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
+// system keeps the block of the old syntax (its declarations mended, the block not).
+export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed new_file =
+        parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    let a: i32 = 1\n}\n");
+    check_count(countof(new_file.errors) > 0 ? 1 : 0, 1);
+    fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (wide) {\n    int a = 1;\n}\n");
+    check_text(kept.text, "if constexpr (wide) {\n    let mut a: i32 = 1\n}\n");
+}
+
 // An `#if` that is not about the system, is inside a function or holds another directive stays as it is.
 export void test_an_if_that_is_not_about_the_system_has_no_fix() {
     arena::Arena memory = test::memory(1U << 22);

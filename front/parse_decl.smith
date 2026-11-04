@@ -89,6 +89,8 @@ struct Style {
     Bool unfixed; // an old member that has no mechanical fix: the `;` after the `}` stays
 };
 
+typedef Str StrList[:];
+
 // An open `if constexpr (c) { ... }`: the declarations read so far in each branch.
 struct Frame {
     ast::Expr *condition;
@@ -97,6 +99,13 @@ struct Frame {
     Bool in_else;
     Bool chained; // `else if constexpr`: the else branch is the one block that follows, and closes with it
     U32 start;
+    // The pieces the fix of a top-level block deletes (front::parse_decl, #2142): the head `if constexpr (c) {`, the
+    // `} else {` (or `} else`) in front of the else branch and the closing `}`.
+    ast::Span head;
+    ast::Span else_head;
+    ast::Span close;
+    Bool nested;    // opened inside a branch of another block (not `else if`): no fix
+    StrList before; // the conditions of the branches before this one in an `else if` chain, as `@when` text
 };
 
 typedef Frame FrameList[:];
@@ -375,6 +384,24 @@ static parse::Edits with_edit(parse::Edits edits, parse::Edit item) {
 static void warn(parse::Parser *p, U32 start, U32 end, Str message, parse::Edits edits) {
     ast::Span span = {.start = start, .end = end};
     parse::warning_fix(p, span, message, edits);
+}
+
+// The span of a line to delete: the head or the closing line of a block, with the blanks around it and its newline
+// when nothing else is on the line.
+static ast::Span whole_line(const parse::Parser *p, ast::Span at) {
+    Str s = p->source;
+    U32 a = at.start;
+    U32 b = at.end;
+    U32 from = a;
+    while (from > 0 && (s[from - 1] == ' ' || s[from - 1] == '\t'))
+        from -= 1;
+    U32 to = b;
+    while (to < countof(s) && (s[to] == ' ' || s[to] == '\t' || s[to] == '\r'))
+        to += 1;
+    Bool alone = (from == 0 || s[from - 1] == '\n') && (to >= countof(s) || s[to] == '\n');
+    if (!alone) return at;
+    if (to < countof(s)) to += 1;
+    return (ast::Span){.start = from, .end = to};
 }
 
 static Bool starts_with(Str text, Str prefix) {
@@ -2241,6 +2268,13 @@ static void fix_import(parse::Parser *p, U32 import_start, lex::Token semi, ast:
     char message[:] = format::push("an import has no `::` or `;`: write `", text, "`");
     parse::Edits edits = {};
     edits = with_edit(edits, edit(import_start, semi.span.end, text));
+    if (count == 1 && same_text(path.segments[0].text, "target") && countof(alias) == 0) {
+        // `target` is built in: its import goes, with the line (#2142)
+        ast::Span line = whole_line(p, (ast::Span){.start = import_start, .end = semi.span.end});
+        parse::Edits only = {};
+        edits = with_edit(only, edit(line.start, line.end, ""));
+        message = format::push("`target` is built in: remove `import target;`");
+    }
     warn(p, import_start, semi.span.end, message, edits);
 }
 
@@ -2668,8 +2702,133 @@ static Frame open_frame(parse::Parser *p) {
     parse::expect(p, lex::left_paren, "`(`");
     frame.condition = parse::expression(p);
     parse::expect(p, lex::right_paren, "`)`");
-    parse::expect(p, lex::left_brace, "`{`");
+    lex::Token open = parse::expect(p, lex::left_brace, "`{`");
+    frame.head = (ast::Span){.start = frame.start, .end = open.span.end};
     return frame;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The fix of a top-level `if constexpr` (#2142): `@when(c)` before each declaration of a branch, the block's lines
+// gone.
+
+static Bool word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+static Bool prefix_at(Str text, Usize at, Str prefix) {
+    if (at + countof(prefix) > countof(text)) return false;
+    return same_text(text[at:at + countof(prefix)], prefix);
+}
+
+// Whether `word` is one a system condition is made of.
+static Bool system_word(Str word) {
+    return same_text(word, "target") || same_text(word, "os") || same_text(word, "macos") || same_text(word, "linux") ||
+           same_text(word, "true") || same_text(word, "false");
+}
+
+// The condition as `@when` writes it: `target::os` is `target.os` and `target::macos` is `.macos`. Gives "" when it
+// says anything but the system, and then "" (the words `target`, `os`, `macos`, `linux`, `true`, `false`, and `==`,
+// `!=`, `!`, `&&`,
+// `||`, parentheses).
+static Str when_text(Str condition) {
+    char result[:] = {};
+    Usize i = 0;
+    while (i < countof(condition)) {
+        if (prefix_at(condition, i, "target::os")) {
+            result = format::push(result, "target.os");
+            i += 10;
+        } else if (prefix_at(condition, i, "target::")) {
+            result = format::push(result, ".");
+            i += 8;
+        } else {
+            result = format::push(result, condition[i:i + 1]);
+            i += 1;
+        }
+    }
+    Usize at = 0;
+    while (at < countof(result)) {
+        char c = result[at];
+        Usize end = at + 1;
+        if (word_char(c)) {
+            while (end < countof(result) && word_char(result[end]))
+                end += 1;
+            if (!system_word(result[at:end])) return "";
+        } else if (c != ' ' && c != '.' && c != '=' && c != '!' && c != '&' && c != '|' && c != '(' && c != ')') {
+            return "";
+        }
+        at = end;
+    }
+    return result;
+}
+
+static Bool contains(Str text, Str piece) {
+    for (Usize i = 0; i < countof(text); i++) {
+        if (prefix_at(text, i, piece)) return true;
+    }
+    return false;
+}
+
+static Str str_of(char chars[:]) {
+    return chars;
+}
+
+// `target.os == .macos` and `target.os != .macos` negate each other; any other condition is `!(c)`.
+static Str negated(Str text) {
+    Bool simple = !contains(text, "&") && !contains(text, "|");
+    if (simple && prefix_at(text, 0, "target.os == ")) return str_of(format::push("target.os != ", text[13:]));
+    if (simple && prefix_at(text, 0, "target.os != ")) return str_of(format::push("target.os == ", text[13:]));
+    return str_of(format::push("!(", text, ")"));
+}
+
+// The condition of a branch: the conditions before it negated, then its own (negated for the `else`).
+static Str branch_condition(const Frame *frame, Bool else_branch, Str own) {
+    char result[:] = {};
+    for (Str earlier : frame->before) {
+        Str one = earlier;
+        if (contains(earlier, "||")) one = str_of(format::push("(", earlier, ")"));
+        Str glue = "";
+        if (countof(result) > 0) glue = " && ";
+        result = format::push(result, glue, negated(one));
+    }
+    Str mine = own;
+    if (else_branch) {
+        mine = negated(own);
+    } else if (contains(own, "||") && countof(result) > 0) {
+        mine = str_of(format::push("(", own, ")"));
+    }
+    Str glue = "";
+    if (countof(result) > 0) glue = " && ";
+    return str_of(format::push(result, glue, mine));
+}
+
+// The edits of one block's own pieces: its head, its `} else {`, its closing `}` and a `@when` before each declaration
+// of its branches. False when the condition is not about the system (the block gets no fix).
+static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits *edits) {
+    Str own = when_text(trimmed(source_between(p, frame->condition->span.start, frame->condition->span.end)));
+    if (countof(own) == 0) return false;
+    ast::Span head = whole_line(p, frame->head);
+    *edits = with_edit(*edits, edit(head.start, head.end, ""));
+    for (Usize pass = 0; pass < 2; pass++) {
+        Bool in_else = pass == 1;
+        DeclRefList list = in_else ? frame->else_decls : frame->then_decls;
+        Str text = str_of(format::push("@when(", branch_condition(frame, in_else, own), ")\n"));
+        for (ast::Decl *item : list) {
+            if (item->kind == .if_constexpr) continue; // an `else if`: its own frame did it
+            U32 from = item->span.start;
+            while (from > 0 && (p->source[from - 1] == ' ' || p->source[from - 1] == '\t'))
+                from -= 1;
+            if (from > 0 && p->source[from - 1] != '\n') from = item->span.start; // not first on its line
+            *edits = with_edit(*edits, edit(from, item->span.start, text));
+        }
+    }
+    if (frame->chained) return true;
+    if (frame->in_else) {
+        ast::Span else_line = whole_line(p, frame->else_head);
+        *edits = with_edit(*edits, edit(else_line.start, else_line.end, ""));
+    }
+    ast::Span close = whole_line(p, frame->close);
+    *edits = with_edit(*edits, edit(close.start, close.end, ""));
+    return true;
 }
 
 static ast::Decl *finish_frame(const parse::Parser *p, const Frame *frame) {
@@ -2690,11 +2849,55 @@ static void add_to_frame(Frame *top, ast::Decl *item) {
     }
 }
 
+static void refuse_if_constexpr(parse::Parser *p) {
+    parse::error(p, parse::peek(p).span,
+                 "`if constexpr` is not in smith's syntax: write `@when(condition)` before each declaration");
+}
+
+// The one warning of a mended top-level block (#2142).
+static void warn_when_fix(parse::Parser *p, const ast::Decl *block, parse::Edits fix) {
+    if (countof(fix) == 0) return;
+    warn(p, block->span.start, block->span.end,
+         "a top-level `if constexpr` is written `@when(condition)` before each declaration", fix);
+}
+
+// The `else` after a block's `}`: its head (for the fix), then `{` or `:` and the block, or the `if` of a chain.
+static void open_else(parse::Parser *p, Frame *top, lex::Token brace) {
+    lex::Token otherwise = parse::advance(p);
+    top->in_else = true;
+    top->else_head = (ast::Span){.start = brace.span.start, .end = otherwise.span.end};
+    if (parse::at(p, lex::kw_if)) {
+        top->chained = true;
+    } else if (p->layout) {
+        parse::expect(p, lex::colon, "`:` or `if` after `else`");
+        if (!open_layout_block(p)) {
+            parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
+        }
+    } else {
+        lex::Token open = parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
+        top->else_head.end = open.span.end;
+    }
+}
+
+// `else if constexpr (d) {` opened inside `parent`: the new frame takes the parent's head start and the conditions
+// before it; the parent's own edits are made now. False when the parent's condition is not about the system.
+static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::Edits *fix) {
+    opened->head.start = parent->else_head.start;
+    opened->before = parent->before;
+    Str earlier = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
+    opened->before = mem::realloc(opened->before, countof(opened->before) + 1);
+    opened->before[countof(opened->before) - 1] = earlier;
+    return frame_edits(p, parent, fix);
+}
+
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
-// explicit stack, so a nest of them is no recursion.
+// explicit stack, so a nest of them is no recursion. A top-level block of the old syntax carries one warning with the
+// edits that make it `@when` lines (#2142).
 static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
     FrameList stack = {};
     Usize depth = 0;
+    parse::Edits fix = {};
+    Bool fixable = at_top && !p->new_syntax;
     for (Usize step = 0; step <= countof(p->tokens); step++) {
         ast::Decl *done = nullptr;
         Bool closed = false;
@@ -2703,35 +2906,32 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
         if (depth > 0 && kind == lex::end_of_file) {
             parse::error(p, parse::peek(p).span, "expected `}` to close `if constexpr`, found the end of the file");
             done = finish_frame(p, &stack[depth - 1]);
+            fixable = false;
             depth -= 1;
             closed = true;
         } else if (depth > 0 && (kind == (p->layout ? lex::dedent : lex::right_brace))) {
-            parse::advance(p);
+            lex::Token brace = parse::advance(p);
             Frame *top = &stack[depth - 1];
+            top->close = brace.span;
             if (p->layout) skip_newlines(p);
             if (!top->in_else && parse::at(p, lex::kw_else)) {
-                parse::advance(p);
-                top->in_else = true;
-                if (parse::at(p, lex::kw_if)) {
-                    top->chained = true;
-                } else if (p->layout) {
-                    parse::expect(p, lex::colon, "`:` or `if` after `else`");
-                    if (!open_layout_block(p)) {
-                        parse::error(p, parse::peek(p).span, "expected an indented block after `else:`");
-                    }
-                } else {
-                    parse::expect(p, lex::left_brace, "`{` or `if constexpr` after `else`");
-                }
+                open_else(p, top, brace);
                 continue;
             }
+            if (fixable && !frame_edits(p, top, &fix)) fixable = false;
             done = finish_frame(p, top);
             depth -= 1;
             closed = true;
         } else if (kind == lex::kw_if) {
-            if (depth == countof(stack)) {
-                stack = mem::realloc(stack, depth + 1);
+            if (depth == countof(stack)) stack = mem::realloc(stack, depth + 1);
+            if (p->new_syntax && !p->layout && depth == 0) refuse_if_constexpr(p);
+            Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
+            Frame opened = open_frame(p);
+            Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
+            if (depth > 0 && !mended) {
+                fixable = false;
             }
-            stack[depth] = open_frame(p);
+            stack[depth] = opened;
             depth += 1;
             continue;
         } else {
@@ -2740,7 +2940,10 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             if (done == nullptr && p->position == before) parse::advance(p);
         }
         for (Usize level = 0; level <= countof(stack); level++) {
-            if (depth == 0) return done;
+            if (depth == 0) {
+                if (fixable && closed) warn_when_fix(p, done, fix);
+                return done;
+            }
             Frame *top = &stack[depth - 1];
             if (closed && top->chained) {
                 add_to_frame(top, done);
