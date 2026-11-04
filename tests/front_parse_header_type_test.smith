@@ -37,7 +37,7 @@ export void test_a_lowercase_type_after_a_header_binding() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "import c <stdio.h>\nimport c <stdlib.h>\nfn f(d: *stdlib.div_t) {\n    let n: stdio.size_t = 3\n}\n";
+    Str source = "import c <stdio.h>\nimport c <stdlib.h>\nfn f(d: *stdlib.div_t):\n    let n: stdio.size_t = 3\n";
     Str got = dump_of(source);
     test::check_condition(has(got, "stdio::size_t"));
     test::check_condition(has(got, "stdlib::div_t"));
@@ -48,6 +48,6 @@ export void test_a_member_access_in_an_expression_is_unchanged() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str got = dump_of("fn f(a: i32) {\n    let n: i32 = a.b\n}\n");
+    Str got = dump_of("fn f(a: i32):\n    let n: i32 = a.b\n");
     test::check_condition(!has(got, "a.b"));
 }
