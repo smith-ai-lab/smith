@@ -27,5 +27,5 @@ static void expect_fixed(Str before, Str want) {
 
 export void test_front_fix_compound_literal_of_a_c_name() {
     expect_fixed("module m;\nvoid f(void) {\n    h = (c::Handler){.fill = g};\n}\n",
-                 "fn f() {\n    h = c.Handler(fill = g)\n}\n");
+                 "fn f():\n    h = c.Handler(fill = g)\n");
 }

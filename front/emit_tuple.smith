@@ -120,6 +120,10 @@ static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
         }
     }
     if (t->kind == .option) return optional::from_checked(e, t);
+    // A float, a pointer, an array, a slice, an enumeration: whatever the emitter makes of the type elsewhere.
+    state::TyResult general = state::type_of_checked(e, t, (ast::Span){});
+    if (general == .ok) return general;
+    state::free_text(general.error.message);
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: a tuple of ", shown));
     state::free_text(shown);

@@ -22,6 +22,7 @@ module front::fix;
 import front::ast;
 import front::cimport;
 import front::parse as core;
+import front::fix_blocks;
 import front::fix_method;
 import front::fix_variants;
 import front::lex;
@@ -344,6 +345,10 @@ export Fixed fix_text(Str file, Str source) {
     }
     // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
     if (total.applied > 0) total.text = hash_comments(total.text);
+    // The blocks last (#2014): the passes above read their own output with braces, so only now do `:` and the
+    // indentation replace them, and only for a text that reads cleanly.
+    if (total.applied > 0 && countof(parser::parse_new_braces(file, total.text).errors) == 0)
+        total.text = fix_blocks::convert(total.text);
     return total;
 }
 

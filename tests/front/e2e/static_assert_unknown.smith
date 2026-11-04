@@ -1,0 +1,3 @@
+pub fn check(n: i32) -> i32:
+    static_assert(n == 0, "n is not a constant")
+    0

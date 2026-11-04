@@ -589,7 +589,7 @@ static ast::Stmt *static_assert_statement(parse::Parser *p) {
         message = unquoted(p, text);
     }
     if (countof(p->errors) == before) parse::expect(p, lex::right_paren, "`)`");
-    if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
+    if (countof(p->errors) == before) end_statement(p);
     ast::Stmt *built = new_stmt({.static_assert_stmt = {.condition = condition, .message = message}});
     return settle(p, start, before, built);
 }
@@ -779,16 +779,16 @@ static Bool has_continue(const parse::Parser *p, Usize from) {
 // A `for (init; cond; step) { body }` as `{ init; while cond { body step; } }`, when its body is a block with no
 // `continue`; otherwise a warning with no edits.
 static void loop_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
-    if (body->kind != .block || has_continue(p, frame->body_from)) {
+    if (body->kind != .block || has_continue(p, frame->body_from) || frame->wrapped) {
+        // With an init the `while` would need a block around it for the scope of the init, and a statement has no
+        // block form in smith's own syntax (`do:` is a value, #2014): the user writes it by hand.
         parse::Edits none = {};
         parse::warning_fix(p, frame->cut, "this `for` has no `while` form here: write it by hand with `while`", none);
         return;
     }
-    Usize count = frame->wrapped ? 3 : 2;
-    parse::Edits edits = edit_list(count);
+    parse::Edits edits = edit_list(2);
     edits[0] = edit(frame->cut, frame->head);
     edits[1] = edit(point(body->span.end - 1), frame->tail);
-    if (frame->wrapped) edits[2] = edit(point(body->span.end), "\n}");
     parse::warning_fix(p, frame->cut, frame->message, edits);
 }
 
@@ -1109,10 +1109,17 @@ static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semic
     if (second > first_semicolon + 1) condition = tokens_text(p, first_semicolon + 1, second - 1);
     Str step = "";
     if (close > second + 1) step = tokens_text(p, second + 1, close - 1);
+    // The step goes on its own line, one level in; the `}` it is inserted before keeps the indentation it has.
+    Usize at = parse::peek(p).span.start;
+    while (at > 0 && p->source[at - 1] != '\n')
+        at -= 1;
+    Usize indent = 0;
+    while (at + indent < countof(p->source) && p->source[at + indent] == ' ')
+        indent += 1;
+    Str margin = p->source[at:at + indent];
     char head[:] = format::push("while ", condition);
-    if (countof(init) > 0) head = format::push("{ ", init, ";\nwhile ", condition);
     char tail[:] = format::push("");
-    if (countof(step) > 0) tail = format::push(step, ";\n");
+    if (countof(step) > 0) tail = format::push("    ", step, ";\n", margin);
     RangeText found = {.ok = true, .text = head, .loop = true, .tail = tail, .wrapped = countof(init) > 0};
     return found;
 }

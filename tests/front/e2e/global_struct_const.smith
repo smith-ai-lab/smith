@@ -1,0 +1,13 @@
+struct Config:
+    count: i32
+    step: i32 = 2
+
+const cfg: Config = Config(count = 3)
+const both: Config = Config(5, step = 7)
+
+pub fn check() -> i32:
+    if cfg.count != 3 || cfg.step != 2:
+        return 1
+    if both.count != 5 || both.step != 7:
+        return 2
+    0

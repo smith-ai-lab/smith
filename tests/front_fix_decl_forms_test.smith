@@ -23,19 +23,19 @@ static void expect_fixed(Str before, Str want) {
 export void test_front_fix_struct_with_a_function_pointer_and_comments() {
     expect_fixed("module m;\nstruct Task {\n    Task *next; // the link\n    void (*entry)(void *context);\n"
                  "    Bool done; // set\n};\n",
-                 "struct Task {\n    next: *Task # the link\n    entry: fn(*void)\n    done: bool # set\n}\n");
+                 "struct Task:\n    next: *Task # the link\n    entry: fn(*void)\n    done: bool # set\n");
 }
 
 export void test_front_fix_type_parameter_of_a_type_function() {
     expect_fixed("module m;\nexport Type Wrap(Type T) {\n    return T;\n}\n",
-                 "pub fn Wrap(T: type) -> type {\n    return T\n}\n");
+                 "pub fn Wrap(T: type) -> type:\n    return T\n");
 }
 
 export void test_front_fix_parameter_named_type() {
     expect_fixed("module m;\nvoid f(const char *type, Usize n) {\n    g(type, n);\n}\n",
-                 "fn f(ty: *char, n: usize) {\n    g(ty, n)\n}\n");
+                 "fn f(ty: *char, n: usize):\n    g(ty, n)\n");
 }
 
 export void test_front_fix_pointer_to_a_slice_of_auto() {
-    expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto) {\n    g(xs)\n}\n");
+    expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto):\n    g(xs)\n");
 }

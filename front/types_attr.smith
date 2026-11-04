@@ -279,8 +279,9 @@ export void check_module(types::Checked *r, const ast::Module *m) {
     }
 }
 
-const Str when_place = "`@when` is for a function, variable, struct, enum or typedef at the top level, and for a "
-                       "struct's field; inside a function choose with `if constexpr`";
+const Str when_place =
+    "`@when` is for an import, function, variable, struct, enum or typedef at the top level, and for a "
+    "struct's field; inside a function choose with `if constexpr`";
 
 // One `@when(cond)`: exactly one argument, and a condition the checker can read.
 static void check_when_one(types::Checked *r, const ast::Attribute *a) {
@@ -309,7 +310,8 @@ export void check_when(types::Checked *r, const ast::Module *m) {
         if (d->from_c) continue;
         const ast::Attribute *a = when::find(d->attributes);
         if (a != nullptr) {
-            if (countof(when::name_of(d)) == 0) {
+            Bool is_import = d->kind == .import_c || d->kind == .import_module || d->kind == .import_from;
+            if (countof(when::name_of(d)) == 0 && !is_import) {
                 types::fail(r, a->span, when_place);
             } else {
                 check_when_one(r, a);

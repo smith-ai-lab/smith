@@ -1,0 +1,297 @@
+// front::fix_blocks, the last step of `smith lint --fix` for blocks (#2014, part of #1845): the fixer's other fixes
+// keep the braces of the source (`fn f() -> i32 {` ... `}`), and this writes them as smith's own blocks, `:` and an
+// indented body. It reads tokens only, so it does not depend on which parser reads the text.
+//
+//   fix_blocks::convert(source)   the text with every brace block written as `:` and indentation; the text itself when
+//                                 it has none, or when it does not lex as smith's own syntax
+//
+// A `{` is a block unless it follows `=`, `(`, `[`, `,` or `return` (a list), or starts its line. The forms:
+//
+//   header {          header:          the closing `}` line is removed
+//   } else {          else:            the `}` and the space after it are removed
+//   header { a }      header:          a body on the line of the header moves to its own line, 4 deeper
+//   struct S { a: i32, b: i32 }        one field to a line
+//   f(fn(a) { b })    f(fn(a): b)      a block inside parentheses stays on its line, and a multi-line one is left
+module front::fix_blocks;
+
+import front::lex;
+import std::format;
+import std::mem;
+
+constexpr Usize step = 4;
+
+struct Cut {
+    Usize start;
+    Usize end;
+    Str text;
+};
+
+typedef typeof(Cut[:]) Cuts;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static void add_cut(Cuts *cuts, Usize start, Usize end, Str text) {
+    *cuts = mem::realloc(*cuts, countof(*cuts) + 1);
+    (*cuts)[countof(*cuts) - 1] = (Cut){.start = start, .end = end, .text = text};
+}
+
+// The offset of the start of the line that holds `at`.
+static Usize line_start(Str source, Usize at) {
+    while (at > 0 && source[at - 1] != '\n')
+        at -= 1;
+    return at;
+}
+
+// The spaces at the start of the line that holds `at`.
+static Usize indent_of(Str source, Usize at) {
+    Usize from = line_start(source, at);
+    Usize n = 0;
+    while (from + n < countof(source) && source[from + n] == ' ')
+        n += 1;
+    return n;
+}
+
+// Where the spaces before `at` start.
+static Usize spaces_before(Str source, Usize at) {
+    while (at > 0 && source[at - 1] == ' ')
+        at -= 1;
+    return at;
+}
+
+static Str spaces(Usize n) {
+    Str out = "";
+    for (Usize i = 0; i < n; i++)
+        out = as_str(format::push(out, " "));
+    return out;
+}
+
+// One `{` of the text: its token, the token of its `}`, and what it is.
+struct Brace {
+    Usize open;
+    Usize close;
+    Bool block;  // not a list
+    Bool inside; // inside parentheses or brackets
+};
+
+typedef typeof(Brace[:]) Braces;
+
+static Bool starts_list(lex::TokenKind before) {
+    return before == lex::equal || before == lex::left_paren || before == lex::left_bracket || before == lex::comma ||
+           before == lex::kw_return || before == lex::left_brace;
+}
+
+static Bool any_group(const Bool group[:]) {
+    for (Usize g = 0; g < countof(group); g++) {
+        if (group[g]) return true;
+    }
+    return false;
+}
+
+// Every `{` with its `}`, in the order of the `{`. Empty when the braces do not balance.
+static Braces braces_of(lex::Tokens tokens) {
+    Braces out = {};
+    Braces none = {};
+    Usize open[:] = {};
+    Bool group[:] = {};
+    for (Usize i = 0; i < countof(tokens); i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::left_brace || kind == lex::left_paren || kind == lex::left_bracket) {
+            Bool list =
+                kind == lex::left_brace && (i == 0 || starts_list(tokens[i - 1].kind) || tokens[i - 1].line_break);
+            if (kind == lex::left_brace) {
+                out = mem::realloc(out, countof(out) + 1);
+                out[countof(out) - 1] = (Brace){.open = i, .block = !list};
+            }
+            open = mem::realloc(open, countof(open) + 1);
+            open[countof(open) - 1] = kind == lex::left_brace ? countof(out) : 0;
+            group = mem::realloc(group, countof(group) + 1);
+            group[countof(group) - 1] = kind != lex::left_brace;
+            continue;
+        }
+        if (kind != lex::right_brace && kind != lex::right_paren && kind != lex::right_bracket) continue;
+        if (countof(open) == 0) return none;
+        Usize which = open[countof(open) - 1];
+        open = mem::realloc(open, countof(open) - 1);
+        group = mem::realloc(group, countof(group) - 1);
+        if (kind == lex::right_brace) {
+            if (which == 0) {
+                return none;
+            }
+            out[which - 1].close = i;
+            out[which - 1].inside = any_group(group);
+        }
+    }
+    return countof(open) == 0 ? out : none;
+}
+
+static Bool same_line(lex::Tokens tokens, Usize from, Usize to) {
+    for (Usize i = from; i < to; i++) {
+        if (tokens[i].line_break) return false;
+    }
+    return true;
+}
+
+// Whether the tokens of the line that holds the `{` start a `struct`, `enum` or `union`.
+static Bool declares_fields(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    while (i < open) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::kw_struct || kind == lex::kw_enum || kind == lex::kw_union) return true;
+        i += 1;
+    }
+    return false;
+}
+
+// The `}` ends its line or is followed by `else` and the rest.
+static Bool closes_cleanly(lex::Tokens tokens, Usize close) {
+    if (close + 1 >= countof(tokens) || tokens[close + 1].kind == lex::end_of_file) return true;
+    if (tokens[close].line_break) return true;
+    return tokens[close + 1].kind == lex::kw_else;
+}
+
+// The end of the line of the `}`, after its newline.
+static Usize after_line(Str source, Usize at) {
+    while (at < countof(source) && source[at] != '\n')
+        at += 1;
+    return at < countof(source) ? at + 1 : at;
+}
+
+static Bool open_ends_line(lex::Tokens tokens, Usize open) {
+    return tokens[open].line_break;
+}
+
+// A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
+// `else` follows).
+static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    lex::Token open = tokens[brace.open];
+    lex::Token close = tokens[brace.close];
+    if (!tokens[brace.close - 1].line_break || !closes_cleanly(tokens, brace.close)) return;
+    if (!open_ends_line(tokens, brace.open)) return;
+    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, ":");
+    Bool other = brace.close + 1 < countof(tokens) && !close.line_break && tokens[brace.close + 1].kind == lex::kw_else;
+    if (other) {
+        add_cut(cuts, close.span.start, tokens[brace.close + 1].span.start, "");
+        return;
+    }
+    add_cut(cuts, line_start(source, close.span.start), after_line(source, close.span.end), "");
+}
+
+// The fields or statements between the braces of a one-line block, one to a line at `depth` spaces.
+static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
+    Str out = "";
+    Usize from = tokens[brace.open + 1].span.start;
+    Usize to = tokens[brace.close].span.start;
+    Bool fields = declares_fields(tokens, brace.open);
+    Usize start = from;
+    Usize nest = 0;
+    for (Usize i = brace.open + 1; i < brace.close; i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) nest += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest -= 1;
+        if (fields && nest == 0 && (kind == lex::comma || kind == lex::semicolon)) {
+            out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i].span.start]));
+            start = tokens[i + 1].span.start;
+        }
+    }
+    if (start < to)
+        out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[brace.close - 1].span.end]));
+    return out;
+}
+
+// Whether the line of the `{` starts a statement or a declaration (`if`, `fn`, `struct`, ...), not a value: a block of
+// `let c = if a { b } else { d }` stays on its line.
+static Bool statement_line(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    switch (tokens[i].kind) {
+    case lex::kw_if:
+    case lex::kw_else:
+    case lex::kw_while:
+    case lex::kw_for:
+    case lex::kw_match:
+    case lex::kw_defer:
+    case lex::kw_errdefer:
+    case lex::kw_fn:
+    case lex::kw_struct:
+    case lex::kw_enum:
+    case lex::kw_union:
+    case lex::kw_pub:
+    case lex::kw_static:
+    case lex::kw_extern:
+    case lex::kw_export:
+    case lex::at:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// A block whose body is on the line of its header. Inside parentheses it stays there (`fn(a): b`); elsewhere the body
+// moves to its own line.
+static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    lex::Token open = tokens[brace.open];
+    lex::Token close = tokens[brace.close];
+    Usize indent = indent_of(source, open.span.start);
+    Usize before = spaces_before(source, open.span.start);
+    brace.inside = brace.inside || !statement_line(tokens, brace.open);
+    Bool empty = brace.close == brace.open + 1;
+    Bool else_next =
+        brace.close + 1 < countof(tokens) && !close.line_break && tokens[brace.close + 1].kind == lex::kw_else;
+    if (!brace.inside && !closes_cleanly(tokens, brace.close)) return;
+    Str body = "";
+    if (!brace.inside && !empty) body = lines_of(source, tokens, brace, indent + step);
+    if (brace.inside) {
+        add_cut(cuts, before, open.span.end, ":");
+        // The body of a lambda in a call is an expression, and its value is the lambda's: `return` goes.
+        if (!empty && tokens[brace.open + 1].kind == lex::kw_return && brace.close > brace.open + 2)
+            add_cut(cuts, tokens[brace.open + 1].span.start, tokens[brace.open + 2].span.start, "");
+        if (!empty) add_cut(cuts, tokens[brace.close - 1].span.end, close.span.end, "");
+        if (empty) add_cut(cuts, open.span.end, close.span.end, "");
+        return;
+    }
+    add_cut(cuts, before, close.span.end, as_str(format::push(":", body)));
+    if (else_next)
+        add_cut(cuts, close.span.end, tokens[brace.close + 1].span.start, as_str(format::push("\n", spaces(indent))));
+}
+
+static Str apply(Str source, Cuts cuts) {
+    Str out = "";
+    Usize from = 0;
+    for (Usize i = 0; i < countof(cuts); i++) {
+        Usize best = i;
+        for (Usize j = i + 1; j < countof(cuts); j++) {
+            if (cuts[j].start < cuts[best].start) best = j;
+        }
+        Cut taken = cuts[best];
+        cuts[best] = cuts[i];
+        cuts[i] = taken;
+        if (taken.start < from) return source;
+        out = as_str(format::push(out, source[from:taken.start], taken.text));
+        from = taken.end;
+    }
+    return as_str(format::push(out, source[from:countof(source)]));
+}
+
+export Str convert(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Braces braces = braces_of(tokens);
+    Cuts cuts = {};
+    for (Usize i = 0; i < countof(braces); i++) {
+        Brace brace = braces[i];
+        if (!brace.block) continue;
+        if (same_line(tokens, brace.open, brace.close)) {
+            one_line(source, tokens, brace, &cuts);
+        } else if (!brace.inside) {
+            multi_line(source, tokens, brace, &cuts);
+        }
+    }
+    if (countof(cuts) == 0) return source;
+    return apply(source, cuts);
+}

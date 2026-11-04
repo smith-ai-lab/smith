@@ -25,7 +25,7 @@ static void expect(Str before, Str after) {
 }
 
 export void test_front_fix_args_an_array_type_argument_is_a_type_value() {
-    expect("void f(Usize i) {\n    no_rule(char[i + 1]);\n}\n", "fn f(i: usize) {\n    no_rule([i + 1]char)\n}\n");
+    expect("void f(Usize i) {\n    no_rule(char[i + 1]);\n}\n", "fn f(i: usize):\n    no_rule([i + 1]char)\n");
 }
 
 static Usize errors_in(Str source) {
