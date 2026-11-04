@@ -88,14 +88,15 @@ export typedef enum {
     pointer;
     array;
     record;
-    option;   // `?T`: `element` is the payload
-    tuple;    // `parts` are the elements
-    fn_value; // `parts` are the parameters, `element` the result
-    slice;    // next batch
-    floating; // next batch
-    block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
-    vector;   // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
-    result;   // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
+    option;       // `?T`: `element` is the payload
+    tuple;        // `parts` are the elements
+    fn_value;     // `parts` are the parameters, `element` the result
+    slice;        // next batch
+    floating;     // next batch
+    block;        // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
+    vector;       // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
+    result;       // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
+    variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
 } TyKind;
 
 export struct Ty;
@@ -169,6 +170,8 @@ export struct DeferEntry {
 export struct Enumerator {
     Str name;
     U64 value;
+    Bool has_payload; // a payload enumeration's variant `circle: Circle`
+    Ty payload;
 };
 
 // (A slice of `Str` is not a field type today, so the enumerators are one slice of pairs, not `names` and `values`.)

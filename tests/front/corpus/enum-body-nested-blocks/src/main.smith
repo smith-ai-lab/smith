@@ -1,0 +1,25 @@
+import c <stdio.h>
+
+# An inner block names the type after an outer block did; a later block names it again.
+
+fn walk(n: usize) -> usize:
+    let mut total: usize = 0
+    {
+        let outer: Option(usize) = .some(n)
+        {
+            let inner: Option(usize) = .some(n + 1)
+            if let .some(a) = outer:
+                if let .some(b) = inner:
+                    total += a + b
+        }
+    }
+    {
+        let later: Option(usize) = .some(10)
+        if let .some(v) = later:
+            total += v
+    }
+    total
+
+pub fn main() -> i32:
+    let _ = stdio.printf("%zu\n", walk(2))
+    0
