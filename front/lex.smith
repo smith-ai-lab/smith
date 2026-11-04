@@ -766,7 +766,7 @@ static Bool strchr_in(Str set, char c) {
 static Bool is_plain_name(Str s, Usize start, Usize end, Str word) {
     char before = before_on_line(s, start);
     char after = next_on_line(s, end);
-    if (same(word, "module")) return !(before == '\n' && (is_identifier_start(after) || after == 0 || after == '\n'));
+    if (same(word, "module")) return !(before == '\n' && (is_identifier_start(after) || after == 0 || after == '\n' || after == ';'));
     if (before == '.') return true;
     if (follows_word(s, start, "let") || follows_word(s, start, "mut")) return true;
     Usize at = end;
