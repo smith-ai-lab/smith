@@ -1193,7 +1193,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     if (same_text(name, "type")) name = "ty"; // `type` is reserved like `i32` (#1901): the body follows in rename_type
     if (unused) name = as_str(format::push("_", name));
     if (to == at + 3 && p->tokens[at].kind == lex::kw_auto && p->tokens[at + 1].kind == lex::ellipsis)
-        return as_str(format::push(prefix, name, ": ..."));
+        return as_str(format::push(prefix, name, "..."));
     Str type = trimmed(parse::mended(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
