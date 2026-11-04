@@ -1,0 +1,11 @@
+fn info(msg: str; ctx...) -> i32:
+    ctx.count * 100 + ctx.ms
+
+pub fn check() -> i32:
+    let count = 4
+    let ms = 7
+    if info("x", count = count, ms = ms) != 407:
+        return 1
+    if info("y", count = 1, ms = 2) != 102:
+        return 2
+    0

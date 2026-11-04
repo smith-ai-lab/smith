@@ -35,7 +35,7 @@ log.info("parsed rows", count = n, ms = ms)        # ctx is the named tuple (cou
 log.warn("request failed"; req...)                 # ; x... spreads a struct or named tuple as named arguments
 ```
 
-- A default must be a compile-time constant. Positional arguments come first, then named ones; a call needs no `;` unless it spreads: `f(1; opts..., retry = 3)`. A name given twice is an error, and with no named arguments `kw` is `()`.
+- A default must be a compile-time constant. Positional arguments come first, then named ones; a call needs no `;` unless it spreads: `f(1; opts..., retry = 3)`. A name given twice is an error, and with no named arguments `kw` is `()`. Each call site makes its own instance for the names and types it gathers, as a generic does; a call gives every parameter before the `;`'s leftovers (a default is not filled in a call of a function with `; kw...` yet).
 - `fn f(x: str, xs...; kw...)`: `xs` gets the leftover positional arguments ([smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md)), `kw` the named ones.
 
 ## Lambdas and trailing lambdas
