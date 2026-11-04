@@ -205,6 +205,9 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     if (lex::tokenize_new(source) != .error) {
         parser::Parsed own = parser::parse_new(file, source);
         if (countof(own.errors) == 0) return own;
+        // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
+        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106).
+        if (lex::tokenize(source) == .error) return own;
     }
     return parser::parse(file, source);
 }

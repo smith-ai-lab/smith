@@ -658,6 +658,27 @@ export void test_parse_decl_new_types() {
     test::golden("tests/front/parse_decl/new_types.txt", layout_dump_of(source));
 }
 
+// A file-scope `if` of smith's own syntax holds declarations in an indented block, with `else` and `else if` (#2191).
+export void test_parse_decl_new_file_scope_if() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "if a:\n"
+                 "    struct Pair:\n"
+                 "        a: i32\n"
+                 "    fn f(x: i32) -> i32:\n"
+                 "        return x\n"
+                 "    if b:\n"
+                 "        fn deep():\n"
+                 "else if c:\n"
+                 "    fn g():\n"
+                 "else:\n"
+                 "    fn h():\n"
+                 "fn last():\n";
+    test::golden("tests/front/parse_decl/new_file_scope_if.txt", layout_dump_of(source));
+}
+
 // A keyword names a field in a struct body (`module: str`), never a local or a parameter (#1770).
 export void test_parse_decl_keyword_names_a_field() {
     arena::Arena memory = test::memory(1U << 22);

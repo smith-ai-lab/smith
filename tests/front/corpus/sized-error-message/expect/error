@@ -1,0 +1,1 @@
+src/main.smith:2:18: error: expected I32, found Str: there is no conversion between these types; write the value as the expected type

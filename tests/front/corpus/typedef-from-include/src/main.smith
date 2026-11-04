@@ -1,0 +1,8 @@
+import c <stdint.h>
+import c <stdio.h>
+
+# `stdint.int32_t` is declared by an include of <stdint.h>: the header's namespace has it although no function mentions it.
+pub fn main() -> i32:
+    let x: stdint.int32_t = 5
+    let _ = stdio.printf("%d\n", x)
+    0

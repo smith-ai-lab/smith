@@ -1,0 +1,3 @@
+fn f():
+    let x: i32 = "hello"
+    let _ = x
