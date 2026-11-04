@@ -543,6 +543,15 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             if (r->isThisDeclarationADefinition() || r->getDefinition() == nullptr) record(r);
         } else if (const auto *e = llvm::dyn_cast<clang::EnumDecl>(d)) {
             enumeration(e);
+        } else if (const auto *t = llvm::dyn_cast<clang::TypedefNameDecl>(d)) {
+            // A typedef no function mentions is still the header's (stdint.int32_t, declared by an include of it).
+            uint32_t spelled = text(t->getName().str());
+            uint32_t under = typedef_placed.count(spelled) ? bad : convert(t->getUnderlyingType(), false);
+            if (under != bad && typedef_placed.insert(spelled).second) {
+                type_node(Typedef, 0, spelled, under, 0);
+                place(6, spelled, t);
+            }
+            failure.clear();
         } else if (const auto *v = llvm::dyn_cast<clang::VarDecl>(d)) {
             // A `static const` or `constexpr` variable with a constant initializer; other variables are not read.
             std::string why;

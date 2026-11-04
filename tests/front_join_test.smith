@@ -288,6 +288,30 @@ export void test_front_join_driver_a_global_of_an_imported_module_is_read_under_
     remove_all(folder);
 }
 
+// `gradient`'s call of Enzyme (#1975): a variadic C function from a header, called with a module function cast to
+// `*mut void` (`square.cast(*mut void)`), a marker read from an extern global under its `@c_name` and a pointer to a
+// float (`*f64`). The object calls `__enzyme_autodiff`, reads `enzyme_dup` and passes the address of `square`.
+export void test_front_join_driver_a_function_cast_to_a_pointer_is_passed_to_a_variadic_c_function() {
+    Str folder = folder_for("enzyme");
+    sh(as_str(format::push("mkdir -p ", folder, "/src ", folder, "/inc")));
+    write_text(as_str(format::push(folder, "/inc/probe.h")), "double __enzyme_autodiff(void *function, ...);\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")),
+               "import c <probe.h>\n\n@c_name(\"enzyme_dup\")\nextern let dup: i32\n\n"
+               "fn square(x: *f64) -> f64:\n    x.* * x.*\n\n"
+               "pub fn grad(x: *f64) -> f64:\n    let mut dx: f64 = 0.0\n"
+               "    let r = probe.__enzyme_autodiff(square.cast(*mut void), dup, x, dup, &dx)\n    r + dx\n");
+    Ran ran = sh(as_str(format::push("cd ", folder, " && env -u SMITH_FRONT_CIMPORT_FLAGS ", smith_path(),
+                                     " cc --front-end=new -I inc -c src/main.smith")));
+    if (ran.status != 0) c::printf("enzyme probe: %s\n", ran.errors.data);
+    test::check_equal(ran.status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U __enzyme_autodiff'"))).status, 0);
+    test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_dup'"))).status, 0);
+    test::check_equal(
+        sh(as_str(format::push("objdump -d ", folder, "/main.o | grep -A30 'grad>:' | grep -q 'lea.*square>'"))).status,
+        0);
+    remove_all(folder);
+}
+
 // The real lib/std/ascii.smith: parsed and checked clean, then front::emit stops at `char`. This documents the gap
 // (nothing is asserted about the outcome, so the day the emitter handles `char` this test needs no change).
 export void test_front_join_the_real_ascii_module_reports_where_it_stops() {

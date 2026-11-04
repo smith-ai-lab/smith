@@ -896,7 +896,8 @@ static Bool named_construction(const parse::Parser *p) {
     Usize last = 0;
     lex::TokenKind first = parse::peek_at(p, 0).kind;
     if (!p->new_syntax || (first != lex::name && first != lex::type_name)) return false;
-    while (parse::peek_at(p, last + 1).kind == lex::colon_colon) {
+    // `words.Pair(...)`: a record of another module is named through the module (a dot joins the path).
+    while (parse::peek_at(p, last + 1).kind == lex::colon_colon || parse::peek_at(p, last + 1).kind == lex::dot) {
         lex::TokenKind next = parse::peek_at(p, last + 2).kind;
         if (next != lex::name && next != lex::type_name) break;
         last += 2;
@@ -915,7 +916,8 @@ static Bool named_construction(const parse::Parser *p) {
 
 // A name or path as a value, or a type as a value.
 static ast::Expr *name_or_type(parse::Parser *p) {
-    if (parse_type::starts_type(p, 0) && !named_construction(p)) return type_value(p);
+    if (parse_type::starts_type(p, 0) && !named_construction(p) && !parse_type::path_then_product(p, 0))
+        return type_value(p);
     lex::TokenKind kind = parse::peek(p).kind;
     if (kind != lex::name && kind != lex::type_name) {
         not_an_expression(p);

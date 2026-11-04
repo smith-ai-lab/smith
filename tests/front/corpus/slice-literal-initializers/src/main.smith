@@ -1,0 +1,39 @@
+import <stdio.h>;
+
+pub struct Pair:
+    pub written: str
+    pub sized: str
+
+fn put(text: str):
+    # (A `str` cannot go through a C variadic, so the characters are written one by one.)
+    for i in range(0, countof(text)):
+        let _ = c::printf("%c", text[i].to(i32))
+    let _ = c::printf("\n")
+
+pub fn main() -> i32:
+    # (The old case had `table` and `names` at file scope: a global array constant of structs or strings is not
+    # emitted yet, #2113 and #2116.)
+    let table: [2]Pair = [Pair(written = "unsigned", sized = "u32"), Pair(written = "signed", sized = "i32")]
+    let names: [3]str = ["a", "bb", "ccc"]
+    let flag = true
+    for i in range(0, 2):
+        put(table[i].written)
+        put(table[i].sized)
+    for i in range(0, 3):
+        put(names[i])
+    let words: [2]str = ["x", "yz"]
+    for i in range(0, 2):
+        put(words[i])
+    # (The old case chose between two literals with `?:`; an `if` value of string literals is not emitted yet.)
+    if flag:
+        put("yes")
+    else:
+        put("no")
+    if !flag:
+        put("yes")
+    else:
+        put("no")
+    let plain: [4]i32 = [1, 2, 3, 4]
+    let n = countof(plain)
+    let _ = c::printf("%d\n", n.to(i32))
+    0
