@@ -751,6 +751,12 @@ static Bool retype(types::Checked *c, const ast::Expr *n, types::TypeRef to) {
 // ---------------------------------------------------------------------------------------------------------------
 // Names and variants
 
+// `_` written alone as a name: `_ = x` assigns to it, which smith refuses (a discard is `let _ = x`, #2227).
+static Bool is_bare_underscore(const ast::Expr *e) {
+    if (e->kind != .name || countof(e->kind.name.path.segments) != 1) return false;
+    return same_text(e->kind.name.path.segments[0].text, "_");
+}
+
 static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) {
     Str name = path_str(path);
     if (countof(path.segments) > 1) {
@@ -768,11 +774,6 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
             return;
         }
         not_yet(c, e, msg(format::push("c:: name `", name, "`")));
-        return;
-    }
-    if (same_text(name, "_")) {
-        types::fail(c, e->span, "`_` is not a name you can assign to; to discard a value write `let _ = x`");
-        poison(c, e);
         return;
     }
     types::failf(c, e->span, "unknown name `", name, "`; declare it before it is used, for example `I32 ", name,
@@ -4244,7 +4245,12 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .assign) {
         const ast::Expr *target = e->kind.assign.target;
         push(w, e, f.expected, 1);
-        push(w, target, nullptr, 0);
+        if (is_bare_underscore(target)) {
+            types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `let _ = x`");
+            poison(c, target);
+        } else {
+            push(w, target, nullptr, 0);
+        }
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
     } else if (e->kind == .try_expr) {
