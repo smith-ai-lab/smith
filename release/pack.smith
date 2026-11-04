@@ -1,0 +1,185 @@
+// Packs the files of clang's resource directory into the one file smith.c embeds (scripts/pack.h has the format). It
+// replaces scripts/pack.c (#1673 of #1669), byte for byte.
+//
+// Usage: pack out.pack < list
+// The list is one path per line, relative to the current folder (a build runs this in the LLVM install). Only regular
+// files are accepted. The order is the list's, so a sorted list makes the same pack every time. A failure prints
+// `pack: <what>` on stderr and exits 1.
+//
+// The format is native byte order; it is made and read on the same machine, and both platforms smith runs on are little
+// endian, so the fields are written as little endian bytes.
+module release::pack;
+
+import std::arena;
+import std::console;
+import std::files;
+import std::mem;
+import target;
+import <stdlib.h>;
+import <sys/stat.h>;
+
+// scripts/pack.h: the limits of the format.
+constexpr Usize chunk_max = (Usize)4 << 20; // the most bytes compressed at once
+constexpr Usize files_max = 4096;           // the most records in one pack
+constexpr Usize path_max = 256;             // the longest path in one pack
+constexpr Usize header_size = 24;           // magic[8], hash (8), count (4), reserved (4)
+constexpr U32 file_type_mask = 0o170000;    // S_IFMT
+constexpr U32 regular_file = 0o100000;      // S_IFREG
+constexpr Usize record_size = 20;           // path_length, mode, size, stored, continued (4 each)
+
+// FNV-1a 64, the hash of everything after the header.
+constexpr U64 hash_start = 14695981039346656037ULL;
+constexpr U64 hash_prime = 1099511628211ULL;
+
+// libcompression (macOS only): LZFSE. Linux has no libcompression and stores every file as it is (issue #305), which
+// smith.c reads the same way.
+if constexpr (target::os == target::macos) {
+    extern Usize compression_encode_buffer(U8 *to, Usize to_size, const U8 *from, Usize from_size, void *scratch,
+                                           U32 algorithm);
+    extern Usize compression_encode_scratch_buffer_size(U32 algorithm);
+
+    constexpr U32 lzfse = 0x801;
+
+    // The `from` bytes compressed into `to`, which holds one byte less than `from`, or 0 when they do not shrink.
+    Usize compress(U8 to[:], const U8 from[:]) {
+        U8 scratch[:] = mem::alloc_slice(U8, compression_encode_scratch_buffer_size(lzfse));
+        return compression_encode_buffer(to.data, countof(from) - 1, from.data, countof(from), scratch.data, lzfse);
+    }
+} else {
+    Usize compress(U8 to[:], const U8 from[:]) {
+        (void)to;
+        (void)from;
+        return 0;
+    }
+}
+
+// `message` on stderr after `pack: `, and the exit status 1.
+void die(Str what) {
+    console::print_error("pack: ", what, "\n");
+    c::exit(1);
+}
+
+// Puts `value` as four little endian bytes at `at` of `out`.
+void put32(U8 out[:], Usize at, U32 value) {
+    for (Usize i = 0; i < 4; i++) {
+        out[at + i] = (U8)(value >> (8 * (U32)i));
+    }
+}
+
+void put64(U8 out[:], Usize at, U64 value) {
+    for (Usize i = 0; i < 8; i++) {
+        out[at + i] = (U8)(value >> (8 * (U32)i));
+    }
+}
+
+// The output being made: its bytes so far, the hash of those after the header and the records written.
+struct Pack {
+    U8 bytes[:];
+    Usize used;
+    U32 records;
+};
+
+// Adds `data` to the pack.
+void add(Pack *pack, const U8 data[:]) {
+    if (pack->used + countof(data) > countof(pack->bytes)) {
+        Usize size = countof(pack->bytes) * 2;
+        while (size < pack->used + countof(data)) { // doubles until it fits
+            size *= 2;
+        }
+        U8 bigger[:] = mem::alloc_slice(U8, size);
+        mem::copy(bigger[0:pack->used], pack->bytes[0:pack->used]);
+        pack->bytes = bigger;
+    }
+    mem::copy(pack->bytes[pack->used:pack->used + countof(data)], data);
+    pack->used += countof(data);
+}
+
+// One record: `size` bytes of the file at `path`, compressed when that makes them smaller.
+void add_chunk(Pack *pack, Str path, U32 mode, const U8 raw[:], Bool continued) {
+    if (pack->records >= files_max) die("too many files in one pack");
+    U8 packed[:] = mem::alloc_slice(U8, countof(raw));
+    Usize stored = compress(packed, raw);
+    const U8 *body = packed.data;
+    if (stored == 0) {
+        body = raw.data;
+        stored = countof(raw);
+    }
+    U8 record[:] = mem::alloc_slice(U8, record_size);
+    mem::zero(record);
+    put32(record, 0, (U32)countof(path));
+    put32(record, 4, mode);
+    put32(record, 8, (U32)countof(raw));
+    put32(record, 12, (U32)stored);
+    put32(record, 16, continued ? 1 : 0);
+    add(pack, record);
+    const U8 *name = (const U8 *)path.data;
+    add(pack, name[0:countof(path)]);
+    add(pack, body[0:stored]);
+    pack->records += 1;
+}
+
+// The whole file, or the end of the program.
+files::Bytes must_read(Str path, Str what) {
+    files::BytesResult got = files::read_file(path);
+    if (got == .ok) return got.ok;
+    die(what);
+    return {};
+}
+
+// Whether `path` has `..` in it.
+Bool has_dots(Str path) {
+    for (Usize i = 0; i + 1 < countof(path); i++) {
+        if (path[i] == '.' && path[i + 1] == '.') return true;
+    }
+    return false;
+}
+
+// A whole file: one record per chunk of at most chunk_max bytes, the later ones continuing the first.
+void add_file(Pack *pack, Str path) {
+    if (countof(path) == 0 || countof(path) >= path_max || path[0] == '/' || has_dots(path)) {
+        die("a path is empty, too long, absolute or has ..");
+    }
+    char named[:] = mem::alloc_slice(char, countof(path) + 1);
+    mem::copy(named[0:countof(path)], path);
+    named[countof(path)] = 0;
+    struct c::stat info;
+    if (c::stat(named.data, &info) != 0 || (info.st_mode & file_type_mask) != regular_file || info.st_size == 0) {
+        die("not a regular file with bytes");
+    }
+    files::Bytes whole = must_read(path, "cannot read a file");
+    Bool continued = false;
+    for (Usize start = 0; start < countof(whole); start += chunk_max) { // each pass takes at least one byte
+        Usize end = start + chunk_max < countof(whole) ? start + chunk_max : countof(whole);
+        add_chunk(pack, path, (U32)info.st_mode & 0o777, whole[start:end], continued);
+        continued = true;
+    }
+}
+
+I32 main(Str args[:]) {
+    if (countof(args) != 2) die("usage: pack out.pack < list");
+    Pack pack = {.bytes = mem::alloc_slice(U8, (Usize)1 << 20), .used = header_size, .records = 0};
+    files::Bytes list = must_read("/dev/stdin", "cannot read the list");
+    Usize start = 0;
+    for (Usize at = 0; at < countof(list); at++) { // each pass looks at one byte of the list
+        if (list[at] != '\n') continue;
+        const char *first = (const char *)list.data;
+        add_file(&pack, first[start:at]);
+        start = at + 1;
+    }
+    if (start != countof(list)) die("the list's last line has no newline");
+    if (pack.records == 0) die("no files");
+    U64 hash = hash_start;
+    for (Usize i = header_size; i < pack.used; i++) { // bounded by the pack
+        hash = (hash ^ pack.bytes[i]) * hash_prime;
+    }
+    const char magic[:] = "SMITHPK1";
+    for (Usize i = 0; i < 8; i++) {
+        pack.bytes[i] = (U8)magic[i];
+    }
+    put64(pack.bytes, 8, hash);
+    put32(pack.bytes, 16, pack.records);
+    put32(pack.bytes, 20, 0);
+    files::CountResult written = files::write_file(args[1], pack.bytes[0:pack.used], files::Replace);
+    if (written == .error) die("cannot write the pack");
+    return 0;
+}

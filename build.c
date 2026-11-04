@@ -63,7 +63,7 @@ struct BuildPlatform {
     const char *const *deployment;  // every compile of smith itself: the oldest OS it runs on (macOS 26), else nothing
     const char *const *lldb_libraries;   // what lldb's host layer uses
     const char *const *system_libraries; // last: the C++ library and the platform's own
-    const char *const *pack_libraries;   // scripts/pack.c's (libcompression on macOS)
+    const char *const *pack_libraries;   // release/pack.smith's (libcompression on macOS)
     const char *pack_runtime;            // the files of the LLVM install, besides clang's headers, that are packed
     bool lldb_server; // smith is lldb-server too (shim/lldb_server.cpp): macOS's lldb runs the system's debugserver
 };
@@ -200,8 +200,8 @@ constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_pr
 static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
 
 // The generator is a program of smith's own code (protocol/generate.smith, on lib/json.c), built here and not shipped:
-// like scripts/pack.c, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from their
-// sources. Returns the program's step.
+// like release/pack.smith, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from
+// their sources. Returns the program's step.
 static SmithStep build_protocol_program(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *const sources[] = {"protocol/generate.smith",
                                    smith_fmt(b, "%s/arena.smith", build_library_folder),
@@ -564,27 +564,30 @@ static void build_prover(SmithBuild *b, const BuildConfig *config, const char *f
                                   nullptr);
 }
 
-// What the driver looks up beside its program in the LLVM install, packed (scripts/pack.c) into the file smith.c
+// What the driver looks up beside its program in the LLVM install, packed (release/pack.smith) into the file smith.c
 // embeds, compressed: clang's resource directory (builtin headers, sanitizer ignore lists, the macOS compiler-rt
 // libraries) and libLTO.dylib, which the system linker loads for -flto. Nothing else of the install is needed. The list
 // is sorted, so the same install makes the same pack.
 static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config, const char *folder) {
-    SmithObject tool = {
-        .compiler = config->cc,
-        .source = "scripts/pack.c",
-        .output = smith_fmt(b, "%s/pack.o", folder),
-        .flags = config->cflags,
-        .implicit_inputs = (const char *[]){"scripts/pack.h", nullptr},
+    // release/pack.smith with the modules it imports and the two C files under them, compiled and linked in one step
+    // (as `smith cc` takes a few modules).
+    const char *const sources[] = {"release/pack.smith",     "lib/std/files.smith", "lib/std/console.smith",
+                                   "lib/std/format.smith",   "lib/std/mem.smith",   "lib/std/arena.smith",
+                                   "lib/std/contract.smith", "lib/std/env.smith",   "lib/std/text.smith",
+                                   "lib/handlers.c",         "lib/trace.c",         nullptr};
+    SmithStep program = {
+        .command = smith_cat(
+            b, smith_list(b, config->cc, "-O1", "-w", "-I", "include", "-I", ".smith/include", nullptr), sources,
+            smith_cat(b, config->platform->pack_libraries,
+                      smith_list(b, "-o", smith_fmt(b, "%s/pack", folder), nullptr), nullptr),
+            nullptr),
+        .inputs = sources,
+        .implicit_inputs =
+            smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers, nullptr),
+        .outputs = smith_list(b, smith_fmt(b, "%s/pack", folder), nullptr),
+        .description = "compiling the resource packer",
     };
-    smith_object(b, &tool);
-    SmithProgram program = {
-        .linker = config->cc,
-        .output = smith_fmt(b, "%s/pack", folder),
-        .flags = config->platform->deployment,
-        .objects = (const SmithObject *[]){&tool, nullptr},
-        .libraries = config->platform->pack_libraries,
-    };
-    smith_program(b, &program);
+    smith_step(b, &program);
     const char *pack = smith_fmt(b, "%s/clang-resource.pack", folder);
     SmithStep step = {
         .command =
@@ -595,8 +598,8 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
                           "root=$PWD && cd \"$0\" && (find lib/clang/*/include lib/clang/*/share -type f; ls %s) | "
                           "LC_ALL=C sort | \"$root/$1\" \"$root/$2\"",
                           config->platform->pack_runtime),
-                config->llvm, program.output, pack, nullptr},
-        .inputs = smith_cat(b, program.step.outputs,
+                config->llvm, program.outputs[0], pack, nullptr},
+        .inputs = smith_cat(b, program.outputs,
                             smith_list(b, smith_fmt(b, "%s/lib/smith-clang.id", config->llvm), nullptr), nullptr),
         .outputs = (const char *[]){pack, nullptr},
         .description = "packing clang's resource directory",
@@ -1230,6 +1233,9 @@ static void build_unbuilt_sources(SmithBuild *b, const BuildConfig *config) {
         if (!skip) smith_compile_command(b, config->cc, library_sources[i], smith_flags);
     }
     smith_compile_command(b, config->cc, "runtime/io.smith", smith_flags);
+    // The resource packer is compiled by a step with its modules (build_resource_pack), not an object: lint reads it
+    // here.
+    smith_compile_command(b, config->cc, "release/pack.smith", smith_flags);
     // The protocol code's hand-written base and its tests' support; the generated files are not linted.
     smith_compile_command(b, config->cc, "runtime/protocol/protocol.c", flags);
     smith_compile_command(b, config->cc, "tests/protocol/protocol_support.c",

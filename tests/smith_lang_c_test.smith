@@ -115,10 +115,6 @@ export void test_the_stub_compiles_the_same_as_smith() {
     compare("tests/stub", "-DNAME='\"stub\"'", false);
 }
 
-export void test_pack_compiles_the_same_as_smith() {
-    compare("scripts/pack", "", false);
-}
-
 export void test_the_http_library_compiles_the_same_as_smith() {
     compare("lib/http", "", false);
 }

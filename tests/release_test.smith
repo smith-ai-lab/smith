@@ -3,7 +3,7 @@
 // repositories, and publish and fetch against a stub gh (tests/build_fixtures/release/gh, and curl beside it for the
 // fetch, which is plain HTTPS) that keeps its "releases" in a folder. Never touches a real repository. Each test makes
 // its project with scratch::make and has a test::memory arena as the current allocator, so what scratch returns goes
-// back with the arena. smith-covers: build.c release/publish.smith scripts/sha256.h scripts/pack.c
+// back with the arena. smith-covers: build.c release/publish.smith scripts/sha256.h release/pack.smith
 // tests/build_fixtures/release/ smith.c smith-covers: runtime/package.c
 module release_test;
 

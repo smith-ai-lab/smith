@@ -400,9 +400,10 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 // The driver finds its builtin headers (lib/clang/<major>/include), the compiler-rt libraries (lib/clang/<major>/lib),
 // the sanitizers' ignore lists (lib/clang/<major>/share) and the libLTO.dylib it hands the linker (lib/libLTO.dylib)
 // from the path it is run as: `<folder>/bin/clang` has them in `<folder>/lib`. So smith embeds exactly those files,
-// packed and compressed by scripts/pack.c from the LLVM install (the macOS runtimes only, not iOS's), and writes them
-// once, on first use, to a folder named for the pack's contents, then runs the driver as that folder's `bin/clang`.
-// Nothing else is read from the install. The linker, dsymutil and the other tools are the system's, found on PATH.
+// packed and compressed by release/pack.smith from the LLVM install (the macOS runtimes only, not iOS's), and writes
+// them once, on first use, to a folder named for the pack's contents, then runs the driver as that folder's
+// `bin/clang`. Nothing else is read from the install. The linker, dsymutil and the other tools are the system's, found
+// on PATH.
 //
 // The folder is outside the caches smith prunes and cleans, in the user's data folder, and is never removed by smith:
 // a sanitized program records an absolute rpath to the runtime's `lib/darwin` in it, and must keep loading it after
@@ -446,7 +447,7 @@ static void smith_resource_folder(char *folder) {
     } else {
         smith_die(smith_exit_usage, "cannot find a folder for clang's files: set HOME or XDG_DATA_HOME", nullptr);
     }
-    // The name is the pack's hash carried on over the compiler's identity (FNV-1a, as scripts/pack.c), so another
+    // The name is the pack's hash carried on over the compiler's identity (FNV-1a, as release/pack.smith), so another
     // contents or another compiler is another folder.
     uint64_t key = smith_resource_header().hash;
     for (const char *c = SMITH_CLANG_ID; *c != '\0'; c++) // the identity is a short constant
