@@ -1,0 +1,256 @@
+// Tests of clang's `__builtin_*` functions in the new front end (#2286, part of #2224): each builtin of
+// front::types_builtin is called from a module in smith's own syntax, compiled by the driver, linked with a `main` and
+// run; `check()` returns 0 when every step worked. The last tests are the checker's errors.
+module front_builtin_test;
+
+import front::compile;
+import front::roots;
+import std::files;
+import std::format;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <stdlib.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static const char *smith_path() {
+    const char *self = c::getenv("SMITH_SELF");
+    return self != nullptr ? self : "smith";
+}
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+static I32 sh_status(Str command) {
+    const char *const argv[4] = {"sh", "-c", command.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    if (done != .ok || done.ok.exit.signal != 0) return -1;
+    return done.ok.exit.status;
+}
+
+static Str prefix() {
+    return c::access("/System/Library/CoreServices", 0) == 0 ? "_" : "";
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (roots::same(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
+// The stand-ins of the six `smith_contract_fail_*` checks a module's arithmetic can call, as
+// tests/front_e2e_test.smith.
+static Str stand_ins() {
+    return "void smith_contract_fail_cast(unsigned long a, int b, const char *c) { __builtin_trap(); }\n"
+           "void smith_contract_fail_index(unsigned long a, int b, unsigned long c) { __builtin_trap(); }\n"
+           "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, const char *d, "
+           "const char *e) { __builtin_trap(); }\n"
+           "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) { __builtin_trap(); }\n"
+           "void smith_contract_fail_divide(const char *a, unsigned long b, int c, const char *d) { __builtin_trap(); "
+           "}\n"
+           "void smith_contract_fail_shift(const char *a, unsigned long b, unsigned long c, int d, unsigned e, "
+           "const char *f, const char *g) { __builtin_trap(); }\n";
+}
+
+static compile::Report compile_body(Str folder, Str name, Str body) {
+    Str src = as_str(format::push(folder, "/src"));
+    c::mkdir(folder.data, 0o700);
+    c::mkdir(src.data, 0o700);
+    Str path = as_str(format::push(src, "/", name, ".smith"));
+    write_text(path, body);
+    roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
+    return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
+}
+
+static Str folder_for(Str name) {
+    return as_str(format::push("/tmp/front_builtin_", (I64)c::getpid(), "_", name));
+}
+
+static void clean(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+// `body` is a module whose `pub fn check() -> i32` returns 0 when the builtin did what it should.
+static void passes(Str name, Str body) {
+    Str folder = folder_for(name);
+    compile::Report report = compile_body(folder, name, body);
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", stand_ins(),
+                                         "int main(void) { return check(); }\n"));
+        write_text(as_str(format::push(folder, "/main.c")), main_c);
+        I32 linked = sh_status(as_str(
+            format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/", name, ".o -lm -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    } else {
+        test::check_equal(report.text, as_str(format::push("")));
+    }
+    clean(folder);
+}
+
+// `body` fails to compile with a message that has `needle`.
+static void refused(Str name, Str body, Str needle) {
+    Str folder = folder_for(name);
+    compile::Report report = compile_body(folder, name, body);
+    test::check_equal(report.ok, false);
+    test::check_equal(has(report.text, needle), true);
+    clean(folder);
+}
+
+export void test_front_builtin_add_overflow() {
+    passes("add_overflow", "pub fn check() -> i32:\n"
+                           "    let mut r: i32 = 0\n"
+                           "    let a: i32 = 2147483647\n"
+                           "    let one: i32 = 1\n"
+                           "    if !__builtin_add_overflow(a, one, &r):\n        return 1\n"
+                           "    if r != -2147483648:\n        return 2\n"
+                           "    if __builtin_add_overflow(one, one, &r):\n        return 3\n"
+                           "    if r != 2:\n        return 4\n"
+                           "    0\n");
+}
+
+export void test_front_builtin_sub_overflow() {
+    passes("sub_overflow", "pub fn check() -> i32:\n"
+                           "    let mut r: u8 = 0\n"
+                           "    let zero: u8 = 0\n"
+                           "    let one: u8 = 1\n"
+                           "    if !__builtin_sub_overflow(zero, one, &r):\n        return 1\n"
+                           "    if r != 255:\n        return 2\n"
+                           "    0\n");
+}
+
+export void test_front_builtin_mul_overflow() {
+    passes("mul_overflow", "pub fn check() -> i32:\n"
+                           "    let mut r: i64 = 0\n"
+                           "    let big: i64 = 4611686018427387904\n"
+                           "    let two: i64 = 2\n"
+                           "    if !__builtin_mul_overflow(big, two, &r):\n        return 1\n"
+                           "    if r != -9223372036854775808:\n        return 2\n"
+                           "    0\n");
+}
+
+export void test_front_builtin_bit_cast() {
+    passes("bit_cast", "pub fn check() -> i32:\n"
+                       "    let x: f64 = 1.0\n"
+                       "    let bits = __builtin_bit_cast(u64, x)\n"
+                       "    if bits != 4607182418800017408:\n        return 1\n"
+                       "    let back = __builtin_bit_cast(f64, bits)\n"
+                       "    if back != 1.0:\n        return 2\n"
+                       "    0\n");
+}
+
+export void test_front_builtin_assume() {
+    passes("assume", "pub fn check() -> i32:\n"
+                     "    let x: i32 = 3\n"
+                     "    __builtin_assume(x > 0)\n"
+                     "    0\n");
+}
+
+export void test_front_builtin_trap_is_checked_but_not_called() {
+    passes("trap", "pub fn check() -> i32:\n"
+                   "    let x: i32 = 3\n"
+                   "    if x < 0:\n        __builtin_trap()\n"
+                   "    0\n");
+}
+
+export void test_front_builtin_elementwise_abs() {
+    passes("elementwise_abs", "pub fn check() -> i32:\n"
+                              "    let x: f64 = -2.5\n"
+                              "    let n: i32 = -7\n"
+                              "    if __builtin_elementwise_abs(x) != 2.5:\n        return 1\n"
+                              "    if __builtin_elementwise_abs(n) != 7:\n        return 2\n"
+                              "    0\n");
+}
+
+export void test_front_builtin_elementwise_min_and_the_float_pair() {
+    passes("elementwise_min", "pub fn check() -> i32:\n"
+                              "    let a: i32 = -3\n"
+                              "    let b: i32 = 4\n"
+                              "    if __builtin_elementwise_min(a, b) != -3:\n        return 1\n"
+                              "    let x: f64 = 1.5\n"
+                              "    let y: f64 = 0.5\n"
+                              "    if __builtin_elementwise_minnum(x, y) != 0.5:\n        return 2\n"
+                              "    if __builtin_elementwise_maxnum(x, y) != 1.5:\n        return 3\n"
+                              "    0\n");
+}
+
+export void test_front_builtin_elementwise_math() {
+    passes("elementwise_math", "pub fn check() -> i32:\n"
+                               "    let four: f64 = 4.0\n"
+                               "    let zero: f64 = 0.0\n"
+                               "    let two: f64 = 2.0\n"
+                               "    if __builtin_elementwise_sqrt(four) != 2.0:\n        return 1\n"
+                               "    if __builtin_elementwise_sin(zero) != 0.0:\n        return 2\n"
+                               "    if __builtin_elementwise_cos(zero) != 1.0:\n        return 3\n"
+                               "    if __builtin_elementwise_pow(two, two) != 4.0:\n        return 4\n"
+                               "    0\n");
+}
+
+export void test_front_builtin_float_functions() {
+    passes("float_functions", "pub fn check() -> i32:\n"
+                              "    let x: f64 = -2.5\n"
+                              "    if __builtin_fabs(x) != 2.5:\n        return 1\n"
+                              "    if __builtin_floor(x) != -3.0:\n        return 2\n"
+                              "    if __builtin_sqrt(9.0) != 3.0:\n        return 3\n"
+                              "    0\n");
+}
+
+export void test_front_builtin_isnan_and_isfinite() {
+    passes("predicates", "pub fn check() -> i32:\n"
+                         "    let zero: f64 = 0.0\n"
+                         "    let nan = zero / zero\n"
+                         "    let inf = 1.0 / zero\n"
+                         "    if !__builtin_isnan(nan):\n        return 1\n"
+                         "    if __builtin_isnan(inf):\n        return 2\n"
+                         "    if __builtin_isfinite(inf):\n        return 3\n"
+                         "    if __builtin_isfinite(nan):\n        return 4\n"
+                         "    if !__builtin_isfinite(zero):\n        return 5\n"
+                         "    0\n");
+}
+
+export void test_front_builtin_overflow_refuses_mixed_types() {
+    refused("mixed",
+            "pub fn check() -> i32:\n"
+            "    let mut r: i32 = 0\n"
+            "    let a: i32 = 1\n"
+            "    let b: i64 = 1\n"
+            "    let _ = __builtin_add_overflow(a, b, &r)\n"
+            "    0\n",
+            "`__builtin_add_overflow` takes");
+}
+
+export void test_front_builtin_bit_cast_wants_a_type() {
+    refused("not_a_type",
+            "pub fn check() -> i32:\n"
+            "    let x: f64 = 1.0\n"
+            "    let _ = __builtin_bit_cast(x, x)\n"
+            "    0\n",
+            "is a type");
+}
+
+export void test_front_builtin_inf_and_nan() {
+    passes("constants", "pub fn check() -> i32:\n"
+                        "    let inf: f64 = __builtin_inf()\n"
+                        "    let inf32: f32 = __builtin_inff()\n"
+                        "    let nan: f64 = __builtin_nan(\"\")\n"
+                        "    let nan32: f32 = __builtin_nanf(\"\")\n"
+                        "    if inf <= 1.0e308:\n        return 1\n"
+                        "    if inf32 <= 1.0e38:\n        return 2\n"
+                        "    if nan == nan:\n        return 3\n"
+                        "    if nan32 == nan32:\n        return 4\n"
+                        "    0\n");
+}
