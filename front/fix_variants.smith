@@ -101,6 +101,8 @@ static Bool is_close(lex::TokenKind k) {
 static Usize body_start(lex::Tokens tokens, Usize at, Bool *braced) {
     Usize limit = at + 12;
     for (Usize i = at + 1; i < countof(tokens) && i < limit; i++) {
+        // `enum End : u8:` has two colons: the first ends the name and gives the representation, the second the body.
+        if (tokens[i].kind == lex::colon && i + 2 < countof(tokens) && tokens[i + 2].kind == lex::colon) continue;
         if (tokens[i].kind == lex::left_brace || tokens[i].kind == lex::colon) {
             *braced = tokens[i].kind == lex::left_brace;
             return i + 1;
