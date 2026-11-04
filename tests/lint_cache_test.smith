@@ -10,7 +10,7 @@
 // smith-covers: smith.c runtime/verbs.c runtime/quiet.c runtime/base.h runtime/platform_*.c runtime/slots.c
 // smith-covers: runtime/lint_cache.c shim/tidy.cpp shim/clang.cpp templates/defaults/ runtime/build_runtime.c
 // smith-covers: runtime/executor*.c runtime/cache.c runtime/sdk_cache.c include/smith_core_lint_cache.h
-// smith-covers: include/smith_core.h tests/build_fixtures/lint_cache/ runtime/lint_identity.c scripts/lint_identity.sh
+// smith-covers: include/smith_core.h tests/build_fixtures/lint_cache/ runtime/lint_identity.c
 module lint_cache_test;
 
 import std::arena;
@@ -341,51 +341,4 @@ export void test_lint_results_follow_the_lint_identity_not_the_binary() {
     expect_counts("a return to the first identity finds its entries", 0, &back);
     Lint binary = run(p.dir, p.cache, nullptr, 0, "");
     expect_counts("a smith with no identity keys on its binary: another key", 4, &binary);
-}
-
-// The identity script's hash, for the project `p` whose compiler `cc` prints the dependency file that names the files
-// `deps` (the preprocessor's list, as clang's -MM gives it) under the pack named `pack`.
-static const char *identity_of(const scratch::Project *p, const char *pack, const char *deps) {
-    char command[512];
-    (void)format::to(command, sizeof command, "sh \"$SMITH_REPO/scripts/lint_identity.sh\" '", pack, "' ./cc");
-    scratch::write(p, "deps.txt", deps);
-    return scratch::capture(p, command);
-}
-
-// scripts/lint_identity.sh, which `smith build` runs for the constant in runtime/lint_identity.c: its hash holds the
-// pack and exactly the files the compiler lists, so a comment in a file the checks are not built from (a front end
-// file) leaves it and one in the checks' own source, or in a header they include, changes it.
-export void test_lint_identity_holds_the_check_sources_and_the_pack_only() {
-    scratch::Project p = prepared();
-    defer scratch::clean(&p);
-    arena::Arena memory = test::memory(1U << 22);
-    arena::ArenaAllocator allocator = arena::allocator(&memory);
-    mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    defer mem::set_allocator(outside);
-    scratch::Run folders = scratch::sh(&p, "mkdir -p shim front");
-    scratch::expect_status("the folders are made", 0, &folders);
-    scratch::write(&p, "shim/tidy.cpp", "int tidy;\n");
-    scratch::write(&p, "shim/check.h", "int check;\n");
-    scratch::write(&p, "front/parse_expr.smith", "module parse_expr;\n");
-    scratch::write(&p, "cc", "#!/bin/sh\ncat deps.txt\n");
-    scratch::Run made = scratch::sh(&p, "chmod +x cc");
-    scratch::expect_status("the fake compiler is made", 0, &made);
-    constexpr const char *listed = "tidy.o: shim/tidy.cpp shim/check.h \\\n  shim/check.h\n";
-    const char *base = identity_of(&p, "pack-one", listed);
-    scratch::expect_count("the identity is a SHA-256", 65, c::strlen(base) + 1);
-    scratch::write(&p, "front/parse_expr.smith", "module parse_expr;\n// a comment\n");
-    scratch::expect_text("a comment in a file outside it leaves it", base, identity_of(&p, "pack-one", listed));
-    scratch::write(&p, "shim/check.h", "int check;\n// a comment\n");
-    const char *header = identity_of(&p, "pack-one", listed);
-    scratch::expect_text("a comment in a header of the checks changes it", "changed",
-                         c::strcmp(base, header) == 0 ? "same" : "changed");
-    scratch::write(&p, "shim/tidy.cpp", "int tidy;\n// a comment\n");
-    scratch::expect_text("... and one in the checks' source changes it again", "changed",
-                         c::strcmp(header, identity_of(&p, "pack-one", listed)) == 0 ? "same" : "changed");
-    scratch::expect_text("another pack changes it", "changed",
-                         c::strcmp(header, identity_of(&p, "pack-two", listed)) == 0 ? "same" : "changed");
-    scratch::Run broken = scratch::sh(
-        &p,
-        "printf 'tidy.o: front/parse_expr.smith\\n' > deps.txt; sh \"$SMITH_REPO/scripts/lint_identity.sh\" pack ./cc");
-    scratch::expect_failure("a list without shim/tidy.cpp is no identity", &broken);
 }

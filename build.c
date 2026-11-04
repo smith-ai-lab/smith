@@ -644,11 +644,19 @@ static SmithObject build_commit_object(SmithBuild *b, const BuildConfig *config,
 // survives it. Empty without an LLVM install (the cache then keys on the binary, as before).
 static const char *build_lint_identity(SmithBuild *b, const BuildConfig *config) {
     if (!config->linkable) return "";
-    return smith_capture_or(
-        b,
-        smith_cat(b, (const char *[]){"sh", "scripts/lint_identity.sh", config->llvm_id, config->cxx, nullptr},
-                  build_shim_flags(b, config), nullptr),
-        "");
+    // The compiler's -MM lists the project files shim/tidy.cpp includes (system headers, LLVM's among them, are left
+    // out). A compiler that fails, or a list without shim/tidy.cpp, gives no identity: never a hash of the pack alone.
+    const char *script =
+        "set -e; pack=$1; cxx=$2; shift 2; deps=$(\"$cxx\" \"$@\" -MM shim/tidy.cpp); "
+        "files=$(printf '%s\\n' \"$deps\" | tr -d '\\\\' | tr ' ' '\\n' | grep -v ':$' | grep . | sort -u); "
+        "case $files in *shim/tidy.cpp*) ;; *) exit 1 ;; esac; "
+        "{ printf 'smith-lint-identity 1\\n%s\\n' \"$pack\"; "
+        "for f in $files; do printf '%s ' \"$f\"; shasum -a 256 < \"$f\"; done; } | shasum -a 256 | cut -c1-64";
+    return smith_capture_or(b,
+                            smith_cat(b,
+                                      (const char *[]){"sh", "-c", script, "sh", config->llvm_id, config->cxx, nullptr},
+                                      build_shim_flags(b, config), nullptr),
+                            "");
 }
 
 // runtime/lint_identity.c, the identity above in a translation unit of its own, as the commit's (build_commit_object).

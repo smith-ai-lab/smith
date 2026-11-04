@@ -106,7 +106,7 @@ writing a temporary file and renaming it, so lints in other worktrees are safe t
 (exit status 0 or 1) is stored, and not one that read a file changed during it or in the 20 ms before it. A system
 header is not in a manifest (nor is a header found only because a new file shadows an earlier one in the include path),
 so an SDK update is seen only through `SDKROOT`, `DEVELOPER_DIR` and the lint identity.
-The lint identity is made by `smith build` (`scripts/lint_identity.sh`, compiled into smith as `runtime/lint_identity.c`): the
+The lint identity is made by `smith build` (`build_lint_identity` in `build.c`, compiled into smith as `runtime/lint_identity.c`): the
 SHA-256 of the pack's identity and of every project file the preprocessor reads for `shim/tidy.cpp` (`-MM`, so the set
 is the compiler's list and never written by hand). A change to the compiler, the runtime or the libraries is not in it, so
 most pull requests keep every lint result; a change to a check, or to a header a check includes, makes another key. A
