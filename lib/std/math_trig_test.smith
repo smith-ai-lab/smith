@@ -1,0 +1,68 @@
+// Tests of std::math_trig.
+module std::math_trig_test;
+
+import std::math;
+import std::math_trig;
+import std::test;
+
+// Distance in units in the last place between an f32 and the f64 reference rounded to f32 (the neighbours count one).
+F32 ulp_error(F32 got, F64 reference) {
+    F32 want = (F32)reference;
+    if (got == want) return 0.0f;
+    F32 step = math::abs(__builtin_nextafterf(want, math::infinity(F32)) - want);
+    return math::abs(got - (F32)reference) / step;
+}
+
+export void test_math_trig_known_answers() {
+    test::check_equal(math_trig::sin(0.0f), 0.0f);
+    test::check_equal(math_trig::cos(0.0f), 1.0f);
+    test::check_equal(math_trig::tan(0.0f), 0.0f);
+    test::check(math::abs(math_trig::sin(1.0f) - 0.84147098f) <= 1e-7f);
+    test::check(math::abs(math_trig::cos(1.0f) - 0.54030231f) <= 1e-7f);
+    test::check(math::abs(math_trig::tan(1.0f) - 1.5574077f) <= 2e-7f);
+    test::check(math::abs(math_trig::sin(100.0f) - -0.50636564f) <= 1e-7f);
+}
+
+// A sweep against libm's f64 functions (correctly rounded to within far less than an f32 ulp), the bound asserted.
+export void test_math_trig_within_one_ulp_of_the_reference() {
+    F32 worst = 0.0f;
+    for (I32 i = -20000; i <= 20000; i++) {
+        F32 x = (F32)i * 0.0625f + 0.013f;
+        F64 xd = (F64)x;
+        F32 e = ulp_error(math_trig::sin(x), math::sin(xd));
+        if (e > worst) worst = e;
+        e = ulp_error(math_trig::cos(x), math::cos(xd));
+        if (e > worst) worst = e;
+        F64 t = math::sin(xd) / math::cos(xd);
+        if (math::abs(t) < 1000.0) {
+            e = ulp_error(math_trig::tan(x), t);
+            if (e > worst) worst = e;
+        }
+    }
+    test::check(worst <= 1.0f);
+}
+
+export void test_math_trig_odd_and_even() {
+    for (I32 i = 1; i < 2000; i++) {
+        F32 x = (F32)i * 0.37f;
+        test::check_equal(math_trig::sin(-x), -math_trig::sin(x));
+        test::check_equal(math_trig::cos(-x), math_trig::cos(x));
+    }
+}
+
+export void test_math_trig_wrap() {
+    test::check_equal(math_trig::wrap(0.0f), 0.0f);
+    for (I32 i = -1000; i <= 1000; i++) {
+        F32 w = math_trig::wrap((F32)i * 0.7f);
+        test::check(w >= -3.1415927f && w <= 3.1415927f);
+    }
+}
+
+export void test_math_trig_clamp_and_lerp() {
+    test::check_equal(math_trig::clamp(5.0f, 0.0f, 1.0f), 1.0f);
+    test::check_equal(math_trig::clamp(-5.0, 0.0, 1.0), 0.0);
+    test::check_equal(math_trig::clamp(0.5, 0.0, 1.0), 0.5);
+    test::check_equal(math_trig::lerp(2.0f, 4.0f, 0.0f), 2.0f);
+    test::check_equal(math_trig::lerp(2.0f, 4.0f, 1.0f), 4.0f);
+    test::check_equal(math_trig::lerp(2.0, 4.0, 0.5), 3.0);
+}

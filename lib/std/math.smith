@@ -8,6 +8,7 @@
 // ask today, and the first thing a second project needs beside it is the place to add it.
 module std::math;
 
+import std::math_trig;
 import std::optimize;
 
 // <smith/math.h>: whether x is neither infinite nor not-a-number. The type is x's: f32 or f64.
@@ -43,14 +44,35 @@ export inline typeof(x) pow(auto x, typeof(x) y) {
     return __builtin_elementwise_pow(x, y);
 }
 
-// The sine of x in radians: libm's sin and sinf. The type is x's.
+// The sine of x in radians. An f32 is std::math_trig's: within 1 ulp for |x| <= 2^20 and the same bits on every
+// machine; an f64 is libm's sin. The type is x's.
 export inline typeof(x) sin(auto x) {
-    return __builtin_elementwise_sin(x);
+    return math_trig::sin(x);
 }
 
-// The cosine of x in radians: libm's cos and cosf. The type is x's.
+// The cosine of x in radians, as sin is. The type is x's.
 export inline typeof(x) cos(auto x) {
-    return __builtin_elementwise_cos(x);
+    return math_trig::cos(x);
+}
+
+// The tangent of x in radians, as sin is (std::math_trig). The type is x's.
+export inline typeof(x) tan(auto x) {
+    return math_trig::tan(x);
+}
+
+// The angle equivalent to `angle` within [-pi, pi], for |angle| <= 2^20 (f32).
+export F32 wrap(F32 angle) {
+    return math_trig::wrap(angle);
+}
+
+// x limited to [low, high] (low <= high); a not-a-number x stays one. The type is x's.
+export inline typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
+    return math_trig::clamp(x, low, high);
+}
+
+// a * (1 - t) + b * t: a at t = 0 and b at t = 1. The type is a's.
+export inline typeof(a) lerp(auto a, typeof(a) b, typeof(a) t) {
+    return math_trig::lerp(a, b, t);
 }
 
 // x times two to the power exponent: libm's ldexp and ldexpf. The type is x's; an f32 goes through
