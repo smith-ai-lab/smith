@@ -67,6 +67,15 @@ static void smith_verb_room(size_t used, size_t more, const char *what) {
     }
 }
 
+// `--front-end=new` among a verb's arguments (before any `--`): the build compiles its .smith sources with smith's own
+// front end (#2042). It becomes the option -DSMITH_FRONT_END=new, which only smith_object reads (it is not a variable
+// of the project's). Any other value is an error, as smith cc reports it.
+static bool smith_front_end_flag(const char *arg) {
+    if (strncmp(arg, "--front-end=", 12) != 0) return false;
+    if (strcmp(arg + 12, "new") != 0) smith_die(smith_exit_usage, "--front-end takes only `new`", arg);
+    return true;
+}
+
 static SmithVerbArgs *smith_verb_split(int count, char **args) {
     SMITH_ASSERT(count >= 0);
     if ((size_t)count > smith_build_args_max) smith_die(smith_exit_usage, "too many arguments", nullptr);
@@ -78,6 +87,9 @@ static SmithVerbArgs *smith_verb_split(int count, char **args) {
             options_end = true;
         } else if (!options_end && strncmp(args[i], "-D", 2) == 0) {
             split->options[split->option_count++] = args[i];
+        } else if (!options_end && smith_front_end_flag(args[i])) {
+            static char front_end[] = "-DSMITH_FRONT_END=new";
+            if (split->option_count < smith_build_args_max) split->options[split->option_count++] = front_end;
         } else {
             split->own[split->own_count++] = args[i];
         }
