@@ -441,6 +441,32 @@ static Mapped map_attribute(Str inner) {
     return result;
 }
 
+// A group of attributes `[[gnu::always_inline, maybe_unused]]`: each one mapped, the texts joined by spaces. Not known
+// when one of them is not (the group is left as it is, #2224).
+static Mapped map_group(Str inner) {
+    Mapped group = {};
+    group.known = true;
+    Usize from = 0;
+    Usize depth = 0;
+    for (Usize i = 0; i <= countof(inner); i++) {
+        Bool end = i == countof(inner);
+        if (!end && inner[i] == '(') depth += 1;
+        if (!end && inner[i] == ')' && depth > 0) depth -= 1;
+        if (!end && !(inner[i] == ',' && depth == 0)) continue;
+        Mapped one = map_attribute(inner[from:i]);
+        if (!one.known) {
+            group.known = false;
+            return group;
+        }
+        if (one.unused) group.unused = true;
+        if (countof(one.text) > 0) {
+            group.text = countof(group.text) > 0 ? as_str(format::push(group.text, " ", one.text)) : one.text;
+        }
+        from = i + 1;
+    }
+    return group;
+}
+
 // The name of a declaration with its `[[maybe_unused]]` written as a prefix.
 static Str named(const Prefixes *pre, Str name) {
     if (!pre->unused) return name;
@@ -458,10 +484,10 @@ static void fix_attribute_group(parse::Parser *p, Prefixes *pre, U32 start, Usiz
     U32 end = p->tokens[p->position - 1].span.end;
     if (end < start + 4) return;
     Str inner = p->source[start + 2:end - 2];
-    Mapped mapped = map_attribute(inner);
+    Mapped mapped = map_group(inner);
     if (!mapped.known) return;
     U32 after = parse::peek(p).span.start;
-    if (mapped.unused) {
+    if (mapped.unused && countof(mapped.text) == 0) {
         pre->unused = true;
         pre->unused_start = start;
         pre->unused_after = after;
@@ -473,7 +499,7 @@ static void fix_attribute_group(parse::Parser *p, Prefixes *pre, U32 start, Usiz
     } else {
         edits = with_edit(edits, edit(start, end, mapped.text));
     }
-    if (countof(p->errors) == errors_before + 1) {
+    if (countof(p->errors) > errors_before) {
         p->errors[errors_before].fix = edits;
         return;
     }
@@ -1048,9 +1074,15 @@ static Bool take_tag_keyword(parse::Parser *p) {
         Str tag = parse::text(p, name);
         Str word = parse::text(p, keyword);
         char message[:] = format::push("`", word, " ", tag, "` names a C tag; write `", word, " c::", tag, "`");
-        parse::error(p, name.span, message);
+        parse::Edits edits = {};
+        edits = with_edit(edits, edit(name.span.start, name.span.start, "c::")); // #2224
+        parse::error_fix(p, name.span, message, edits);
         return false;
     }
+    // `struct Pair p` and `struct c::stat st` name the type: the keyword goes, also inside the fix of a declaration.
+    parse::Edits drop = {};
+    drop = with_edit(drop, edit(keyword.span.start, name.span.start, ""));
+    warn(p, keyword.span.start, name.span.end, "a type is named without `struct`, `union` or `enum`", drop);
     return true;
 }
 
@@ -1164,7 +1196,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
         return as_str(format::push(prefix, name, ": ..."));
     Str type = trimmed(parse::mended(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
-    if (same_text(raw, "auto")) return "";
+    if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
     type = as_str(format::push(dims, type));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
@@ -1205,7 +1237,10 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     if (same_text(trimmed(source_between(p, head.type_start, head.name.span.start)), "fn")) return false;
     Str name = named(pre, parse::text(p, head.name));
     Str params = "";
-    Bool fixable = new_parameters(p, open, close, &params) && has_body;
+    // `extern void f(A a);` is `extern fn f(a: A)`: the linker provides the body, so the `;` goes (#2224).
+    Bool prototype =
+        !has_body && pre->is_extern && close + 1 < countof(p->tokens) && p->tokens[close + 1].kind == lex::semicolon;
+    Bool fixable = new_parameters(p, open, close, &params) && (has_body || prototype);
     if (pre->is_constexpr && pre->constexpr_end > head.type_start) fixable = false;
     if (!fixable) {
         char message[:] = format::push("a function is written `fn ", name,
@@ -1220,6 +1255,7 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, end, written));
+    if (prototype) edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");

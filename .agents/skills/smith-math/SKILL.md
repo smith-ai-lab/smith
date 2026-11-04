@@ -34,7 +34,10 @@ F64 missing(Bool negative) {
 | `math::is_finite(x)` | `c::isfinite` | neither infinite nor not-a-number; `x` is `F32` or `F64` |
 | `math::sqrt(x)` | `c::sqrt`, `c::sqrtf` | the square root, correctly rounded |
 | `math::abs(x)` | `c::fabs`, `c::fabsf` | the absolute value (the sign bit cleared) |
-| `math::pow(x, y)`, `math::sin(x)`, `math::cos(x)` | `c::pow`, `c::sin`, `c::cos` | libm's functions, in the type of `x` |
+| `math::pow(x, y)` | `c::pow` | libm's function, in the type of `x` |
+| `math::sin(x)`, `math::cos(x)`, `math::tan(x)` | `c::sin`, `c::cos`, `c::tan` | an `F32` is `std::math_trig`'s (`lib/std/math_trig.smith`, ported from game): computed in `F64` and rounded once, within 1 ulp for \|x\| <= 2^20 and the same bits on every machine, the sign of zero kept; an `F64` is libm's (a 1 ulp `F64` port is pending) |
+| `math::wrap(angle)` | | an `F32` angle brought into [-pi, pi] (\|angle\| <= 2^20) |
+| `math::clamp(x, low, high)`, `math::lerp(a, b, t)` | | `x` limited to [low, high] (a NaN stays one); `a * (1 - t) + b * t`; `F32` or `F64` |
 | `math::log(x)` | `c::log`, `c::logf` | the natural logarithm, fdlibm's algorithm: within 1 ulp and the same bits on every platform (0 gives -inf, a negative NaN); C calls `smith_log_float` and `smith_log_double` from `<smith/math.h>`, and a library that links it (`random`) brings `lib/std/math.smith` |
 | `math::ldexp(x, exponent)` | `c::ldexp`, `c::ldexpf` | `x` times two to the `exponent` (an `I32`) |
 | `math::maximum(a, b)`, `math::minimum(a, b)` | `c::fmax`, `c::fmin` | the number wins over a not-a-number |

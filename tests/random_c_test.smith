@@ -9,9 +9,9 @@
 // smith-covers: runtime/quiet.c shim/hook.cpp shim/clang.cpp shim/names.h shim/tool.h shim/platform*.h include/smith/
 // smith-covers: runtime/build_runtime.c runtime/executor*.c runtime/slots.c runtime/cache.c runtime/package.c
 // smith-covers: shim/lsp.cpp shim/clangd.cpp lib/std/random.smith lib/std/categorical.smith lib/std/arena.smith
-// smith-covers: lib/std/contract.smith lib/std/math.smith lib/trace.c lib/handlers.c tests/random.c
-// smith-covers: tests/build_fixtures/random_project/
-// smith.c is declared for the cc, build and lsp verbs.
+// smith-covers: lib/std/contract.smith lib/std/math.smith lib/std/math_trig.smith lib/trace.c lib/handlers.c
+// tests/random.c smith-covers: tests/build_fixtures/random_project/ smith.c is declared for the cc, build and lsp
+// verbs.
 module random_c_test;
 
 import std::arena;
@@ -25,7 +25,7 @@ import target;
 constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
-constexpr char sources[_] = "-I lowered tests/random.c lib/std/arena.smith lib/std/math.smith "
+constexpr char sources[_] = "-I lowered tests/random.c lib/std/arena.smith lib/std/math.smith lib/std/math_trig.smith "
                             "lib/std/contract.smith lib/trace.c";
 
 // A project holding the files the commands compile: the libraries and the program of the test, copied in.

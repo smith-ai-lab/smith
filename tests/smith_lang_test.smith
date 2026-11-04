@@ -497,6 +497,7 @@ static void corpus_case(const char *name) {
         scratch::copy_tree(&p, "lib/std/contract.smith", "mirror/lib/std/contract.smith");
         scratch::copy_tree(&p, "lib/std/mem.smith", "mirror/lib/std/mem.smith");
         scratch::copy_tree(&p, "lib/std/math.smith", "mirror/lib/std/math.smith");
+        scratch::copy_tree(&p, "lib/std/math_trig.smith", "mirror/lib/std/math_trig.smith");
         scratch::copy_tree(&p, "lib/handlers.c", "mirror/lib/handlers.c");
         scratch::copy_tree(&p, "lib/std/text.smith", "mirror/lib/std/text.smith");
         scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
