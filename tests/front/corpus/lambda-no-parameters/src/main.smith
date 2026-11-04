@@ -1,0 +1,9 @@
+import <stdio.h>;
+
+pub fn main() -> i32:
+    let seven: fn() -> i32 = fn(): 7
+    let hello: fn() = fn():
+        let _ = c::printf("hello\n")
+    hello()
+    let _ = c::printf("%d\n", seven())
+    0

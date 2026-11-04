@@ -30,7 +30,8 @@
 // (`I32 a;` is `mut a: I32`, `auto a = 3;` is `let a = 3`, `constexpr I32 n = 3;` is `const n: I32 = 3`, `constexpr
 // Type N = T;` and `typedef T N;` are `let N = T`), `R f(A a) {...}` is `fn f(a: A) -> R {...}` (`constexpr` removed,
 // no `-> void`), a field `I32 x;` is `x: I32`, an enum member loses its `,` or `;` (a payload is `circle: Circle`),
-// `typedef struct {...} N;` is `struct N {...}`, `};` is `}` and the attributes `[[nodiscard]]`, `[[maybe_unused]]` (a
+// `typedef struct {...} N;` is `struct N {...}`, `typedef struct Tag N;` (an opaque tag) is `struct N`, `};` is `}` and
+// the attributes `[[nodiscard]]`, `[[maybe_unused]]` (a
 // `_` prefix),
 // `[[gnu::always_inline]]` (`@inline`), `[[gnu::noinline]]`, `[[gnu::cold]]`, `[[std::affine]]` and
 // `[[std::c_name("f")]]` are `@name`. A form with no mechanical fix (a prototype, a parameter with no name, a qualified
@@ -1247,6 +1248,31 @@ static Bool is_number_type(Str type) {
            same_text(type, "isize") || same_text(type, "usize") || same_text(type, "f32") || same_text(type, "f64");
 }
 
+// The number of elements of the flat list `{a, b, c}` the tokens from `from` to `to` (not taken) hold; 0 when they
+// are not one list, the list is empty or an element is designated (`[i] = v`, `.f = v`) or nested.
+static U32 list_length(const parse::Parser *p, U32 from, U32 to) {
+    Usize at = 0;
+    while (at < countof(p->tokens) && p->tokens[at].span.start < from)
+        at += 1;
+    if (at >= countof(p->tokens) || p->tokens[at].kind != lex::left_brace) return 0;
+    U32 count = 0;
+    Bool element = false;
+    for (at += 1; at < countof(p->tokens) && p->tokens[at].span.start < to; at += 1) {
+        lex::TokenKind kind = p->tokens[at].kind;
+        if (kind == lex::right_brace) return element ? count + 1 : count;
+        if (kind == lex::comma) {
+            if (!element) return 0;
+            count += 1;
+            element = false;
+            continue;
+        }
+        if (kind == lex::dot || kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace)
+            return 0;
+        element = true;
+    }
+    return 0;
+}
+
 // `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `let a = v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1266,7 +1292,13 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (suffixed && !has_init && (pre->is_static || pre->top)) fixable = false;
     Str value = "";
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
-    if (suffixed && countof(value) > 0 && value[0] == '{') fixable = false;
+    if (suffixed && countof(value) > 0 && value[0] == '{') {
+        // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
+        // elements is written; any other `{...}` list on an array has no spelling yet.
+        U32 count = same_text(dims.text, "[_]") ? list_length(p, equal_end, last.span.start) : 0;
+        if (count == 0) fixable = false;
+        dims.text = as_str(format::push("[", count, "]"));
+    }
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
@@ -1905,12 +1937,44 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
 }
 
+// Whether the next tokens are `struct Tag Name ;` or `union Tag Name ;`: an opaque C tag and its alias (#2091).
+static Bool opaque_typedef_ahead(parse::Parser *p) {
+    if (!parse::at(p, lex::kw_struct) && !parse::at(p, lex::kw_union)) return false;
+    return parse::peek_at(p, 1).kind == lex::type_name && parse::peek_at(p, 2).kind == lex::type_name &&
+           parse::peek_at(p, 3).kind == lex::semicolon;
+}
+
+// `typedef struct Tag Name;` (a tag declared elsewhere, as `@c_name("Tag") typedef struct Tag Name;` does for an
+// opaque type) is the opaque `struct Name`; the C name stays `Tag` through `@c_name`. With another tag than the
+// alias and no attribute to carry the C name, the name would change in C: a warning with no edits.
+static ast::Decl *parse_opaque_typedef(parse::Parser *p, const Prefixes *pre, U32 start, Usize typedef_index) {
+    lex::Token keyword = parse::advance(p);
+    Str tag = parse::text(p, parse::advance(p));
+    lex::Token alias = parse::advance(p);
+    Str name = parse::text(p, alias);
+    lex::Token semi = parse::advance(p);
+    U32 from = p->tokens[typedef_index].span.start;
+    if (pre->top) {
+        parse::Edits edits = {};
+        if (same_text(tag, name) || countof(pre->attributes) > 0) {
+            char text[:] = format::push(parse::text(p, keyword), " ", name);
+            edits = with_edit(edits, edit(from, semi.span.end, text));
+        }
+        char message[:] = format::push("an opaque type is declared as `", parse::text(p, keyword), " ", name,
+                                       "`, not with `typedef`");
+        warn(p, from, semi.span.end, message, edits);
+    }
+    ast::DeclKind kind = {.record = {.name = name, .is_union = keyword.kind == lex::kw_union, .opaque = true}};
+    return make(p, start, pre, kind);
+}
+
 // `typedef struct {...} Name;`, `typedef enum {...} Name;` and `typedef T Name;` (a tuple is a type: `typedef struct {
 // I32, F32 } Pair;`).
 static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start) {
     Usize typedef_index = p->position;
     parse::advance(p);
     Usize errors_before = countof(p->errors);
+    if (opaque_typedef_ahead(p)) return parse_opaque_typedef(p, pre, start, typedef_index);
     if (!parse_type::tuple_ahead(p) &&
         (parse::at(p, lex::kw_struct) || parse::at(p, lex::kw_union) || parse::at(p, lex::kw_enum))) {
         Style style = {.top = pre->top};
@@ -2156,6 +2220,7 @@ static ast::Decl *parse_import(parse::Parser *p, const Prefixes *pre, U32 start)
     } else {
         end_import(p);
     }
+    parse::bind_module(p, countof(alias) > 0 ? alias : last);
     ast::DeclKind kind = {.import_module = {.path = path, .alias = alias}};
     return make(p, start, pre, kind);
 }
@@ -2297,6 +2362,22 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str opener, B
     return false;
 }
 
+// `let xs: [_]i32 = [1, 2, 3]` and `const s: [_]char = "abc"`: a `[_]` length is the initializer's element count, a
+// string literal's bytes and its terminator, as in C. The length is written into the type, so the checker, the
+// emitter and the headers all see an ordinary `[3]`. Any other initializer is left alone for them to report.
+static void infer_array_length(ast::TypeExpr *type, const ast::Expr *init) {
+    if (type == nullptr || init == nullptr || type->kind != .array) return;
+    const ast::Expr *count = type->kind.array.count;
+    if (count == nullptr || count->kind != .name || countof(count->kind.name.path.segments) != 1) return;
+    Str word = count->kind.name.path.segments[0].text;
+    if (countof(word) != 1 || word[0] != '_') return;
+    if (init->kind == .array_lit) {
+        type->kind.array.count = ast::integer(countof(init->kind.array_lit.items));
+    } else if (init->kind == .string) {
+        type->kind.array.count = ast::integer(countof(init->kind.string.bytes) + 1);
+    }
+}
+
 // `let a = v`, `let a: T = v`, `let mut a: usize = 0`, `const X = v`; the position is at the first of them.
 static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
     Bool is_let = let_at(p, 0);
@@ -2326,6 +2407,7 @@ static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start
         return nullptr;
     }
     end_line(p, "declaration");
+    infer_array_length(type, init);
     ast::DeclKind kind = {.variable = {.name = parse::text(p, name),
                                        .type = type,
                                        .init = init,
@@ -2466,6 +2548,28 @@ static void check_pack(ast::Param *param, Bool after_semicolon) {
     param->is_gather = true;
 }
 
+// A bare `...` ends the parameters of an `extern fn`: it declares a C variadic. True; an error elsewhere.
+static Bool parse_bare_dots(parse::Parser *p, const Prefixes *pre) {
+    lex::Token dots = parse::advance(p);
+    if (!pre->is_extern) {
+        parse::error(p, dots.span,
+                     "a Smith function names its variadic parameters: `rest...`; a bare `...` only declares a "
+                     "C function with `extern fn`");
+    } else if (!parse::at(p, lex::right_paren)) {
+        parse::error(p, parse::peek(p).span, "`...` is the last parameter of an `extern fn`");
+    }
+    return true;
+}
+
+// `extern fn name(a: i32, ...) -> r` has no body: the linker provides it.
+static ast::Decl *extern_function(parse::Parser *p, const Prefixes *pre, U32 start, Str name, ParamList params,
+                                  ast::TypeExpr *result, Bool variadic) {
+    parse::accept(p, lex::semicolon);
+    ast::DeclKind kind = {
+        .function = {.name = name, .params = params, .result = result, .body = nullptr, .variadic = variadic}};
+    return make(p, start, pre, kind);
+}
+
 // `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
 // `fn`.
 static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
@@ -2482,7 +2586,12 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     }
     ParamList params = {};
     Bool keyword_only = false;
+    Bool variadic = false;
     while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        if (parse::at(p, lex::ellipsis)) {
+            variadic = parse_bare_dots(p, pre);
+            break;
+        }
         ast::Param param = {};
         if (!parse_new_param(p, &param)) break;
         param.is_keyword = keyword_only;
@@ -2505,6 +2614,9 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     if (!failed_since(p, errors_before)) parse::expect(p, lex::right_paren, "`)`");
     ast::TypeExpr *result = nullptr;
     if (!failed_since(p, errors_before) && parse::accept(p, lex::arrow)) result = parse::type(p);
+    if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
+        !parse::at(p, lex::left_brace))
+        return extern_function(p, pre, start, parse::text(p, name), params, result, variadic);
     if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before);
     if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");

@@ -1,0 +1,41 @@
+// front::lsp_completion: `textDocument/completion` for `.smith` on smith's own front end (#1894, a piece of #1887).
+// The names in scope at the cursor, and after a `.` the fields and methods of the receiver (a function of the module
+// that defines its type or of this one whose first parameter is the receiver, #1793) or the names of a C header the
+// receiver names (`c.`), each with the comment its header keeps (#1941).
+//
+//   result(path, source, line, character)   the JSON for the `result` of the reply: `null` when nothing is offered,
+//                                           else an array of `{"label":...,"kind":N,"detail":...}`
+//
+// A position is a line and a byte count in the line (LSP asks for UTF-16 units; the two agree on ASCII). The text is
+// the current allocator's.
+module front::lsp_completion;
+
+import front::compile;
+import front::lsp_definition;
+import front::roots;
+import std::format;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// One item of the reply.
+static Str item(compile::Candidate c) {
+    Str out = as_str(format::push("{\"label\":\"", lsp_definition::escape(c.label), "\",\"kind\":", c.kind));
+    if (countof(c.detail) > 0)
+        out = as_str(format::push(out, ",\"detail\":\"", lsp_definition::escape(c.detail), "\""));
+    if (countof(c.doc) > 0)
+        out = as_str(format::push(out, ",\"documentation\":\"", lsp_definition::escape(c.doc), "\""));
+    return as_str(format::push(out, "}"));
+}
+
+// The `result` of a completion at `line` and `character` of the text `source` of the file `path`.
+export Str result(Str path, Str source, U64 line, U64 character) {
+    U32 offset = lsp_definition::offset_of(source, line, character);
+    compile::Candidates found = compile::completion_at(path, source, roots::default_roots(), offset);
+    if (countof(found) == 0) return "null";
+    Str out = "[";
+    for (Usize i = 0; i < countof(found); i++)
+        out = as_str(format::push(out, i == 0 ? "" : ",", item(found[i])));
+    return as_str(format::push(out, "]"));
+}
