@@ -164,17 +164,22 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     return false;
 }
 
-// `(Void)x` written as a statement discards a value; smith writes that `_ = x`. The fix replaces the cast's head, from
-// the cast to its operand, with `_ = `. Empty for any other cast.
+// `(Void)x` written as a statement discards a value; smith writes that `let _ = x`. The fix replaces the cast's head,
+// from the cast to its operand, with `let _ = `. Empty for any other cast.
 static syntax::Edits discard_fix(const ast::Expr *e, types::TypeRef to) {
     syntax::Edits edits = {};
     if (e->kind != .cast || to->kind != .void_type) {
         return edits;
     }
-    edits = mem::realloc(edits, 1);
-    Str word = "_ = ";
+    Str word = "let _ = ";
     ast::Span head = {.start = e->span.start, .end = e->kind.cast.operand->span.start};
+    ast::Span tail = {.start = e->kind.cast.operand->span.end, .end = e->span.end};
+    // `x.to(void)` has its cast after the operand: the tail goes too, or each pass writes another `let _ = ` (#2224).
+    Usize count = tail.end > tail.start ? 2 : 1;
+    edits = mem::realloc(edits, count);
     edits[0] = (syntax::Edit){.span = head, .text = word};
+    Str nothing = "";
+    if (count == 2) edits[1] = (syntax::Edit){.span = tail, .text = nothing};
     return edits;
 }
 

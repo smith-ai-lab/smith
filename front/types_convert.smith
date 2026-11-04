@@ -450,7 +450,7 @@ static Verdict checked_cast() {
 static Verdict cast_by_kind(const Ctx *c) {
     types::Kind from = c->from->kind;
     types::Kind to = c->to->kind;
-    if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ = x;");
+    if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write let _ = x");
     if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
         c->from->element->bits == 8)
         return accept(cast); // bytes to text: free, every byte is a Char, no UTF-8 check (owner, 2026-11-01)

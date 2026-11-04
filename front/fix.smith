@@ -161,6 +161,11 @@ static const ast::Module *load_header(Str header, Bool angled) {
     const char *flags = empty.data;
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
     if (given != nullptr) flags = given;
+    // `smith lint --fix` has no `-I` of its own: a library's header (`<smith/trace.h>`) is looked for in the project's
+    // `include` and `.smith/include`, as `smith cc` is given them (#2224).
+    Str given_text = as_str(format::push(flags));
+    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n"));
+    flags = joined.data;
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
     if (countof(got.error) > 0) return nullptr;
     ast::Module *module = mem::alloc(ast::Module);
