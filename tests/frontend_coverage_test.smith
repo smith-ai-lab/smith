@@ -1,6 +1,7 @@
 // scripts/frontend_coverage/main.smith (#1730), the tool of `smith build frontend-coverage`: its grouping and summary
-// on a small fixed table of four files (one passes, two fail at the check stage with the same cause, one of them with
-// a second error that the first would have hidden (#1922), one fails differently at the parse stage). The tool is a
+// on a small fixed table of five files (one passes, three fail at the check stage, one of them with
+// more errors that the first would have hidden (#1922), one fails at the parse stage; the causes rank by the files
+// they stop first, #2247). The tool is a
 // project of its own in a scratch folder, run by the smith under test; no real file is read or changed. smith-covers:
 // scripts/frontend_coverage/main.smith
 module frontend_coverage_test;
@@ -11,10 +12,13 @@ import std::test;
 import scratch;
 
 constexpr const char *table = "a.smith\tpass\t\n"
+                              "b.smith\tcheck\texpected 2 arguments, found 3\t2:1\n"
                               "b.smith\tcheck\tunknown name `x`\t3:7\n"
-                              "b.smith\tcheck\texpected 2 arguments, found 3\t9:1\n"
+                              "b.smith\tcheck\tunknown name `y`\t4:7\n"
+                              "b.smith\tcheck\tunknown name `w`\t5:7\n"
                               "c.smith\tparse\texpected `;`, found `y`\t4:2\n"
-                              "d.smith\tcheck\tunknown name `z`\t5:5\n";
+                              "d.smith\tcheck\texpected 2 arguments, found 3\t6:1\n"
+                              "e.smith\tcheck\tunknown name `z`\t5:5\n";
 
 export void test_frontend_coverage_groups_failures_and_counts_the_passes() {
     scratch::Project p = scratch::make("p", nullptr);
@@ -31,19 +35,25 @@ export void test_frontend_coverage_groups_failures_and_counts_the_passes() {
     scratch::expect_contains("frontend_coverage: a failure has its place, stage and message", run.out,
                              "FAIL  c.smith:4:2 [parse] expected `;`, found `y`\n");
     scratch::expect_contains("frontend_coverage: a second error of a file is a line of its own", run.out,
-                             "FAIL  b.smith:9:1 [check] expected 2 arguments, found 3\n");
+                             "FAIL  b.smith:4:7 [check] unknown name `y`\n");
     scratch::expect_contains("frontend_coverage: the files passed out of the total", run.out,
-                             "frontend-coverage: 1 of 4 files pass\n");
-    scratch::expect_contains("frontend_coverage: the failed files of a stage", run.out, "failed at check  2\n");
+                             "frontend-coverage: 1 of 5 files pass\n");
+    scratch::expect_contains("frontend_coverage: the failed files of a stage", run.out, "failed at check  3\n");
     scratch::expect_contains("frontend_coverage: and of another", run.out, "failed at parse  1\n");
-    scratch::expect_contains("frontend_coverage: three causes of four diagnostics", run.out,
-                             "failures by cause (3 causes, 4 diagnostics):\n");
+    scratch::expect_contains("frontend_coverage: three causes of seven diagnostics", run.out,
+                             "failures by cause (3 causes, 7 diagnostics):\n  first  count  files  cause\n");
     scratch::expect_contains(
-        "frontend_coverage: names are one cause, with occurrences, files and places, the biggest first", run.out,
-        "      2      2  unknown name `<name>`\n                e.g. b.smith:3:7\n"
-        "                e.g. d.smith:5:5\n"
-        "      1      1  expected <n> arguments, found <n>\n                e.g. b.smith:9:1\n"
-        "      1      1  expected `<name>`, found `<name>`\n                e.g. c.smith:4:2\n");
+        "frontend_coverage: the cause that stops most files first ranks above one with more occurrences", run.out,
+        "      2      2      2  expected <n> arguments, found <n>\n                e.g. b.smith:2:1\n"
+        "                e.g. d.smith:6:1\n"
+        "      1      4      2  unknown name `<name>`\n                e.g. b.smith:3:7\n"
+        "                e.g. b.smith:4:7\n"
+        "                e.g. b.smith:5:7\n"
+        "      1      1      1  expected `<name>`, found `<name>`\n                e.g. c.smith:4:2\n");
+    scratch::expect_contains("frontend_coverage: one fixed line per cause for the log, in the same order", run.out,
+                             "frontend-cause: 2 2 2 expected <n> arguments, found <n>\n"
+                             "frontend-cause: 1 2 4 unknown name `<name>`\n"
+                             "frontend-cause: 1 1 1 expected `<name>`, found `<name>`\n");
     scratch::release(run.out);
     scratch::release(run.err);
 }
