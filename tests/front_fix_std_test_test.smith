@@ -1,0 +1,130 @@
+// Tests of the fix-its that `std.test` needed (#2224): a cast to a `c::` type, an array of pointers or of structs
+// written as a list, `*T name = v` left by a `for` that became a `while`, the variants of an enum with a
+// representation, `[[gnu::format]]`, `__attribute__((...))`, a capability struct, `struct c::T`, `x = y++`, a
+// function-pointer parameter with named parameters, a `?:` across lines and a `[[noreturn]]` after a constant. The text
+// each ends with parses with no error.
+module front_fix_std_test_test;
+
+import front::fix;
+import front::fix_variants;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::slice;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static Str fixed(Str before) {
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    return first.text;
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed(before);
+    test::check_equal(got, want);
+    test::check_equal(errors_in(got), (Usize)0);
+}
+
+// What `smith lint --fix` does to one file: the text mended, the variants of its enums renamed, and mended again.
+static Str fixed_with_variants(Str before) {
+    Str first = fixed(before);
+    fix_variants::Words files = mem::alloc_slice(fix_variants::Word, 1);
+    files[0].text = first;
+    fix_variants::Words renamed = fix_variants::rename_all(files);
+    return fixed(renamed[0].text);
+}
+
+export void test_front_fix_std_cast_to_a_c_type() {
+    expect_fixed(
+        "module m;\nimport <unistd.h>;\nvoid f(Isize v, I32 pid) {\n    work((c::uintmax_t)v, (c::pid_t)pid);\n}\n",
+        "import c <unistd.h>\nfn f(v: isize, pid: i32):\n    work(v.to(c.uintmax_t), pid.to(c.pid_t))\n");
+}
+
+export void test_front_fix_std_array_of_pointers_with_a_list() {
+    expect_fixed(
+        "module m;\nvoid f(char *program) {\n    char *arguments[3] = {program, \"x\", nullptr};\n    "
+        "work(arguments);\n}\n",
+        "fn f(program: *char):\n    let arguments: [3]*char = [program, \"x\", nullptr]\n    work(arguments)\n");
+}
+
+export void test_front_fix_std_pointer_init_of_a_for_with_a_comment_in_the_body() {
+    expect_fixed("module m;\nvoid f(char *folder) {\n    for (char *slash = c::strchr(folder + 1, '/'); slash != "
+                 "nullptr; slash = c::strchr(slash + 1, '/')) {\n        *slash = 0; // cut\n    }\n}\n",
+                 "fn f(folder: *char):\n    let mut slash: *char = c.strchr(folder + 1, '/')\n    while slash != "
+                 "nullptr:\n        slash.* = 0 # cut\n        slash = c.strchr(slash + 1, '/')\n");
+}
+
+export void test_front_fix_std_variants_of_an_enum_with_a_representation() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_with_variants("module m;\ntypedef enum : U8 {\n    End_Passed,\n    End_Check,\n} End;\nEnd f(I32 "
+                                  "j) {\n    return j == 2 ? End_Check : End_Passed;\n}\n");
+    Str want = "enum End : u8:\n    end_passed\n    end_check\nfn f(j: i32) -> End:\n    return if j == 2: .end_check "
+               "else: .end_passed\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_std_array_of_structs_written_as_a_list_of_lists() {
+    expect_fixed("module m;\nstruct Line {\n    const char *text;\n    I32 value;\n};\nvoid f(I32 a, I32 b) {\n    "
+                 "Line lines[2] = {{.text = \"a\", .value = b}, {.text = \"b\", .value = a}};\n    work(lines);\n}\n",
+                 "struct Line:\n    text: *char\n    value: i32\nfn f(a: i32, b: i32):\n    let lines: [2]Line = "
+                 "[Line(text = \"a\", value = b), Line(text = \"b\", value = a)]\n    work(lines)\n");
+}
+
+export void test_front_fix_std_gnu_format_is_dropped() {
+    Str got = fixed("module m;\n[[gnu::format(printf, 1, 2)]] void note(const char *format, ...) {\n}\n");
+    Str format_attribute = "gnu::format";
+    test::check_equal(slice::find_slice(got, format_attribute) == .some, false);
+}
+
+export void test_front_fix_std_attribute_group_is_a_gnu_attribute() {
+    expect_fixed("module m;\nstatic __attribute__((always_inline, unused)) void check(Bool condition) {\n    "
+                 "work(condition);\n}\n",
+                 "static @inline fn check(condition: bool):\n    work(condition)\n");
+}
+
+export void test_front_fix_std_capability_struct() {
+    expect_fixed("module m;\n[[std::c_name(\"SmithRunner\")]] export typedef struct "
+                 "[[clang::annotate(\"std::capability\")]] {\n    I32 argc;\n} Runner;\n",
+                 "@capability @c_name(\"SmithRunner\") pub struct Runner:\n    argc: i32\n");
+}
+
+export void test_front_fix_std_struct_c_tag_field() {
+    expect_fixed("module m;\nstruct Plan {\n    struct c::pollfd polls[4];\n};\n",
+                 "struct Plan:\n    polls: [4]c.pollfd\n");
+}
+
+export void test_front_fix_std_increment_in_an_assignment() {
+    expect_fixed("module m;\nbool glob(const char *pattern, const char *text) {\n    const char *star = nullptr;\n    "
+                 "star = pattern++;\n    text = ++star;\n    return true;\n}\n",
+                 "fn glob(mut pattern: *char, mut text: *char) -> bool:\n    let mut star: *char = nullptr\n    star = "
+                 "pattern\n    pattern += 1\n    star += 1\n    text = star\n    return true\n");
+}
+
+export void test_front_fix_std_function_pointer_parameter_with_named_parameters() {
+    expect_fixed("module m;\nexport I32 search(U32 (*verdict)(void *context), void *context) {\n    return 1;\n}\n",
+                 "pub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    return 1\n");
+}
+
+export void test_front_fix_std_conditional_across_lines() {
+    expect_fixed("module m;\nvoid f(I32 down, I32 right, Usize i) {\n    I32 best = down > right\n                   ? "
+                 "down\n                   : right;\n    work(best);\n}\n",
+                 "fn f(down: i32, right: i32, i: usize):\n    let best: i32 = if down > right: down else: right\n    "
+                 "work(best)\n");
+}
+
+export void test_front_fix_std_noreturn_after_a_constant() {
+    expect_fixed("module m;\nconstexpr Usize capacity = 128;\n\n// A function.\n[[noreturn]] void stop(void) {\n    "
+                 "c::abort();\n}\n",
+                 "const capacity: usize = 128\n\n# A function.\n[[noreturn]] fn stop():\n    c.abort()\n");
+}

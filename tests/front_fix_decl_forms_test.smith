@@ -39,3 +39,9 @@ export void test_front_fix_parameter_named_type() {
 export void test_front_fix_pointer_to_a_slice_of_auto() {
     expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto):\n    g(xs)\n");
 }
+
+export void test_front_fix_field_and_local_named_type() {
+    expect_fixed(
+        "module m;\nstruct Node {\n    I32 type;\n};\nI32 f(Node *n) {\n    I32 type = n->type;\n    return type;\n}\n",
+        "struct Node:\n    ty: i32\nfn f(n: *Node) -> i32:\n    let ty: i32 = n.ty\n    return ty\n");
+}

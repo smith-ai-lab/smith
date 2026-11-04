@@ -85,8 +85,10 @@ struct Prefixes {
 struct Style {
     Bool saw_old;
     Bool saw_new;
-    Bool top;     // the record or enum is a declaration of the file: its old members carry fixes
-    Bool unfixed; // an old member that has no mechanical fix: the `;` after the `}` stays
+    Bool top;        // the record or enum is a declaration of the file: its old members carry fixes
+    Bool unfixed;    // an old member that has no mechanical fix: the `;` after the `}` stays
+    Bool capability; // `struct [[clang::annotate("std::capability")]] ...`: `@capability` in front of the declaration
+    ast::Span capability_span; // where that attribute is written
 };
 
 typedef Str StrList[:];
@@ -431,6 +433,9 @@ static Mapped map_attribute(Str inner) {
         result.text = "@noinline";
     } else if (same_text(word, "gnu::cold")) {
         result.text = "@cold";
+    } else if (starts_with(word, "gnu::format(")) {
+        // Nothing in Smith checks a printf-style format yet; the attribute only asked clang to (#2224 gap).
+        result.text = "";
     } else if (same_text(word, "std::affine")) {
         result.text = "@affine";
     } else if (starts_with(word, "std::c_name(")) {
@@ -563,9 +568,30 @@ static Str gnu_to_std(Str word) {
 
 // A GNU `__attribute__((a, b(1)))` is not Smith's: one error per attribute name (the first word of each), at the
 // name, then the group is skipped. False when the position is not at `__attribute__`.
+// The `[[gnu::a, b]]` that says what `__attribute__((a, b))` says, or an empty text when a name has no such spelling
+// (`unused` is `maybe_unused`); the next pass maps the group.
+static Str attribute_group_text(Str inner) {
+    Str out = "";
+    Usize from = 0;
+    for (Usize i = 0; i <= countof(inner); i += 1) {
+        if (i < countof(inner) && inner[i] != ',') continue;
+        Str word = trimmed(inner[from:i]);
+        from = i + 1;
+        Str spelled = word;
+        if (same_text(word, "unused") || same_text(word, "__unused__")) spelled = "maybe_unused";
+        Bool known = !same_text(gnu_to_std(word), "") || same_text(spelled, "maybe_unused");
+        if (!known) return "";
+        if (!same_text(spelled, "maybe_unused")) spelled = as_str(format::push("gnu::", word));
+        out = countof(out) > 0 ? as_str(format::push(out, ", ", spelled)) : spelled;
+    }
+    return as_str(format::push("[[", out, "]]"));
+}
+
 static Bool reject_gnu_spelling(parse::Parser *p) {
     lex::Token head = parse::peek(p);
     if (head.kind != lex::name || !same_text(parse::text(p, head), "__attribute__")) return false;
+    Usize errors_before = countof(p->errors);
+    U32 head_start = head.span.start;
     parse::advance(p);
     Usize depth = 0;
     Bool at_name = false;
@@ -595,6 +621,14 @@ static Bool reject_gnu_spelling(parse::Parser *p) {
             parse::error(p, token.span, message);
         }
         at_name = false;
+    }
+    U32 group_end = p->tokens[p->position - 1].span.end;
+    Str group = p->source[head_start:group_end];
+    // `__attribute__((` ... `))`
+    if (countof(p->errors) > errors_before && countof(group) > 15 && group[countof(group) - 1] == ')') {
+        Str written = attribute_group_text(group[15:countof(group) - 2]);
+        parse::Edits none = {};
+        if (countof(written) > 0) p->errors[errors_before].fix = with_edit(none, edit(head_start, group_end, written));
     }
     return true;
 }
@@ -1364,20 +1398,60 @@ static U32 list_length(const parse::Parser *p, U32 from, U32 to) {
     if (at >= countof(p->tokens) || p->tokens[at].kind != lex::left_brace) return 0;
     U32 count = 0;
     Bool element = false;
+    Usize depth = 1;
     for (at += 1; at < countof(p->tokens) && p->tokens[at].span.start < to; at += 1) {
         lex::TokenKind kind = p->tokens[at].kind;
-        if (kind == lex::right_brace) return element ? count + 1 : count;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) {
+            // A designator `[i] = v` starts an element; a group inside an element is part of its value.
+            if (depth == 1 && !element && kind != lex::left_paren) return 0;
+            depth += 1;
+            element = true;
+            continue;
+        }
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) {
+            depth -= 1;
+            if (depth == 0) return element ? count + 1 : count;
+            continue;
+        }
+        if (depth != 1) continue;
         if (kind == lex::comma) {
             if (!element) return 0;
             count += 1;
             element = false;
             continue;
         }
-        if (kind == lex::dot || kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace)
-            return 0;
+        if (kind == lex::dot && !element) return 0;
         element = true;
     }
     return 0;
+}
+
+// The lists of the designated items inside the braces that start at `from` (up to `to`), turned into `Type(...)` calls:
+// their number, and their edits in `edits`; 0 when there are none.
+static U32 item_lists(const parse::Parser *p, U32 from, U32 to, Str type, parse::Edits *edits) {
+    U32 count = 0;
+    for (Usize i = 0; i < countof(p->listed); i += 1) {
+        parse::NamedList list = p->listed[i];
+        if (list.open.start <= from || list.close.end > to) continue;
+        // Only the items of the outer braces: the text before the item is `{` or `,` and blanks.
+        Str before = trimmed(source_between(p, from, list.open.start));
+        if (countof(before) == 0 || (before[countof(before) - 1] != ',' && countof(before) != 1)) continue;
+        for (Usize j = 0; j < countof(list.edits); j += 1)
+            *edits = with_edit(*edits, list.edits[j]);
+        *edits = with_edit(*edits, edit(list.open.start, list.open.end, as_str(format::push(type, "("))));
+        *edits = with_edit(*edits, edit(list.close.start, list.close.end, ")"));
+        count += 1;
+    }
+    return count;
+}
+
+// Whether the dimensions text is one pair of brackets (`[5]`), not `[2][3]`.
+static Bool single_dimension(Str text) {
+    Usize brackets = 0;
+    for (Usize i = 0; i < countof(text); i += 1) {
+        if (text[i] == '[') brackets += 1;
+    }
+    return brackets == 1;
 }
 
 // `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
@@ -1398,13 +1472,20 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
     if (suffixed && !has_init && (pre->is_static || pre->top)) fixable = false;
     Str value = "";
+    parse::Edits item_edits = {};
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
     if (suffixed && countof(value) > 0 && value[0] == '{') {
         // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
         // elements is written; any other `{...}` list on an array has no spelling yet.
-        U32 count = same_text(dims.text, "[_]") ? list_length(p, equal_end, last.span.start) : 0;
-        if (count == 0) fixable = false;
-        dims.text = as_str(format::push("[", count, "]"));
+        // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
+        // checker's error, not a silent zero fill.
+        U32 count = list_length(p, equal_end, last.span.start);
+        if (count == 0) {
+            // A list of lists, `T xs[2] = {{.a = 1}, {.a = 2}}`: each is a `T(a = 1)`.
+            count = item_lists(p, equal_end, last.span.start, trimmed(written), &item_edits);
+        }
+        if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
+        if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
     }
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
@@ -1424,7 +1505,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = {};
+    parse::Edits list_edits = item_edits;
     if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
         text = as_str(format::push(lead, name, " ="));
         list_edits = named_list_edits(p, written);
@@ -1774,10 +1855,32 @@ static ast::TypeExpr *parse_anonymous_record(parse::Parser *p) {
     return ast::new_type(node);
 }
 
+// `[[clang::annotate("std::capability")]]` between `struct` and its name: read past it, and kept in `style` for the
+// fix of the declaration, which writes it as `@capability` in front.
+static void skip_capability(parse::Parser *p, Style *style) {
+    if (!parse::at(p, lex::left_bracket) || parse::peek_at(p, 1).kind != lex::left_bracket) return;
+    U32 start = parse::peek(p).span.start;
+    Usize close = 2;
+    while (parse::peek_at(p, close).kind != lex::end_of_file &&
+           !(parse::peek_at(p, close).kind == lex::right_bracket &&
+             parse::peek_at(p, close + 1).kind == lex::right_bracket))
+        close += 1;
+    if (parse::peek_at(p, close).kind == lex::end_of_file) return;
+    U32 end = parse::peek_at(p, close + 1).span.end;
+    for (Usize i = 0; i < close + 2; i += 1)
+        parse::advance(p);
+    Str written = source_between(p, start, end);
+    if (same_text(written, "[[clang::annotate(\"std::capability\")]]")) {
+        style->capability = true;
+        style->capability_span = (ast::Span){.start = start, .end = end};
+    }
+}
+
 // `struct Name { fields }` or `union`, the position at the keyword. A `typedef struct {...} Name;` has no tag name: the
 // caller gives it.
 static ast::DeclKind record_kind(parse::Parser *p, Style *style) {
     Bool is_union = parse::advance(p).kind == lex::kw_union;
+    skip_capability(p, style);
     Str name = tag_name(p);
     FieldList fields = {};
     Bool opaque = false;
@@ -2018,7 +2121,8 @@ static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, le
 // tag, and the `Name;` after the `}` goes. A tag with another name than the alias, or a member with no fix, is a
 // warning with no edits.
 static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_index, lex::Token alias, lex::Token semi,
-                            Bool renamed, Bool unfixed) {
+                            Bool renamed, const Style *style, U32 decl_start) {
+    Bool unfixed = style->unfixed;
     lex::Token typedef_token = p->tokens[typedef_index];
     lex::Token keyword = p->tokens[typedef_index + 1];
     lex::Token close = p->tokens[close_index];
@@ -2040,6 +2144,12 @@ static void fix_typedef_tag(parse::Parser *p, Usize typedef_index, Usize close_i
         edits = with_edit(edits, edit(typedef_token.span.start, keyword.span.end, head));
     }
     edits = with_edit(edits, edit(close.span.end, semi.span.end, ""));
+    if (style->capability) {
+        U32 after = style->capability_span.end;
+        if (after < countof(p->source) && p->source[after] == ' ') after += 1;
+        edits = with_edit(edits, edit(style->capability_span.start, after, ""));
+        edits = with_edit(edits, edit(decl_start, decl_start, "@capability "));
+    }
     char message[:] =
         format::push("a type is declared as `", parse::text(p, keyword), " ", name, " {...}`, not with `typedef`");
     warn(p, typedef_token.span.start, semi.span.end, message, edits);
@@ -2102,7 +2212,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
         if (kind == .enumeration && countof(kind.enumeration.name) == 0) kind.enumeration.name = name;
         lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
         if (pre->top && !failed_since(p, errors_before))
-            fix_typedef_tag(p, typedef_index, close_index, alias, semi, renamed, style.unfixed);
+            fix_typedef_tag(p, typedef_index, close_index, alias, semi, renamed, &style, start);
         return make(p, start, pre, kind);
     }
     U32 type_start = parse::peek(p).span.start;

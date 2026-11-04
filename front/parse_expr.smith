@@ -602,6 +602,8 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
     if (!fix->complex && fix->designated > 0 && fix->positional == 0) {
         parse::NamedList named = {.plain = true, .open = open.span, .close = close.span, .edits = fix->edits};
         p->named_list = named;
+        p->listed = mem::realloc(p->listed, countof(p->listed) + 1);
+        p->listed[countof(p->listed) - 1] = named;
     }
     parse::warning_fix(
         p, whole,
@@ -1140,7 +1142,7 @@ static Bool is_postfix_level(Str source, const ast::Expr *e) {
 
 // The conversion function that writes a cast to `type`: `cast` for a pointer, else `to` (#1811).
 static Str conversion_name(const ast::TypeExpr *type) {
-    if (type->kind == .pointer) return "cast";
+    if (type->kind == .pointer || type->kind == .function) return "cast";
     return "to";
 }
 
@@ -1183,11 +1185,24 @@ static parse::Edits if_before(const parse::Parser *p, parse::Edits edits, U32 st
     return with_edit(edits, at_offset(start), "if ");
 }
 
+// Whether the text between two offsets has a line break.
+static Bool has_break(Str source, U32 from, U32 to) {
+    for (Usize i = from; i < to && i < countof(source); i += 1) {
+        if (source[i] == '\n') return true;
+    }
+    return false;
+}
+
 // `c ? a : b` is `if c { a } else { b }`.
 static void conditional_warning(Stack *st, const Pending *op, const ast::Expr *condition, const ast::Expr *last) {
     parse::Edits edits = if_before(st->parser, no_edits(), condition->span.start);
-    edits = with_edit(edits, op->head, "{");
-    edits = with_edit(edits, op->colon, "} else {");
+    // A `?` or `:` that starts a line leaves the line break out: `if c {` and `} else {` stay on their lines.
+    Bool head_breaks = has_break(st->parser->source, condition->span.end, op->head.start);
+    Bool colon_breaks = has_break(st->parser->source, op->middle->span.end, op->colon.start);
+    edits =
+        with_edit(edits, head_breaks ? from_to(condition->span.end, op->head.end) : op->head, head_breaks ? " {" : "{");
+    edits = with_edit(edits, colon_breaks ? from_to(op->middle->span.end, op->colon.end) : op->colon,
+                      colon_breaks ? " } else {" : "} else {");
     ast::Span span = from_to(condition->span.start, last->span.end);
     tail_warning(st, span, "`c ? a : b` is written `if c { a } else { b }`", edits, last->span.end, " }");
 }
@@ -1196,6 +1211,39 @@ static void note_bump(Stack *st, ast::Expr *expr, ast::Span token) {
     Bump bump = {.expr = expr, .token = token};
     st->bumps = mem::realloc(st->bumps, countof(st->bumps) + 1);
     st->bumps[countof(st->bumps) - 1] = bump;
+}
+
+// The fix of `x = y++;`, `x = ++y;` as the whole statement of a line: the step is a statement of its own, after the
+// assignment (`y++`) or before it (`++y`). Nothing when the statement shares its line with anything else (an unbraced
+// `if (c) x = y++;` would take only the first).
+static parse::Edits bump_in_assignment(const parse::Parser *p, Bump bump, const ast::Expr *whole, Bool is_post,
+                                       Str step) {
+    parse::Edits none = {};
+    if (whole == nullptr || whole->kind != .assign || whole->kind.assign.op != .plain) return none;
+    if (whole->kind.assign.value != bump.expr || bump.expr->kind != .unary) return none;
+    const ast::Expr *operand = bump.expr->kind.unary.operand;
+    if (operand->kind != .name) return none;
+    lex::Token after = parse::peek(p);
+    if (after.kind != lex::semicolon) return none;
+    Usize line = whole->span.start;
+    while (line > 0 && p->source[line - 1] != '\n')
+        line -= 1;
+    Usize indent = line;
+    while (indent < countof(p->source) && p->source[indent] == ' ')
+        indent += 1;
+    if (indent != whole->span.start) return none;
+    Str margin = p->source[line:indent];
+    Str target = p->source[operand->span.start:operand->span.end];
+    Str bumped = as_str(format::push(target, step, ";"));
+    parse::Edits edits = {};
+    if (is_post) {
+        edits = with_edit(edits, bump.token, "");
+        edits = with_edit(edits, at_offset(after.span.end), as_str(format::push("\n", margin, bumped)));
+    } else {
+        edits = with_edit(edits, from_to(bump.token.start, operand->span.start), "");
+        edits = with_edit(edits, at_offset(whole->span.start), as_str(format::push(bumped, "\n", margin)));
+    }
+    return edits;
 }
 
 // The warnings of the `++` and `--` of an expression: as the whole of a statement (`i++;`) it is `i += 1`; anywhere
@@ -1211,7 +1259,7 @@ static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *wh
         Str message =
             is_up ? "`++` is a statement in Smith: write `i += 1`" : "`--` is a statement in Smith: write `i -= 1`";
         if (bump.expr != whole || !parse::at(p, lex::semicolon)) {
-            parse::warning_fix(p, bump.token, message, no_edits());
+            parse::warning_fix(p, bump.token, message, bump_in_assignment(p, bump, whole, is_post, step));
             continue;
         }
         parse::Edits edits = {};
@@ -1739,6 +1787,11 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
         result = call(p, base, st->head);
         break;
     case lex::left_bracket:
+        // A `[` that starts a line is not an index where the line before it ends a statement (`[[noreturn]] fn` after
+        // a constant's value, #2224).
+        if (p->new_syntax && !p->layout && p->position > 0 && lex::ends_statement(p->tokens[p->position - 1]) &&
+            !inside_brackets(p))
+            return .absent;
         result = index_or_slice(p, base);
         break;
     case lex::dot:
@@ -1817,8 +1870,9 @@ static Bool starts_bare_operand(lex::TokenKind kind) {
     }
 }
 
-// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase, not `c::`) alone in the parentheses, then a
-// token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference and
+// Whether `(x) operand` is a cast to a type value: the path `x` (lowercase; a `c::` path too) alone in the parentheses,
+// then a token that starts an operand and cannot continue an expression (`(t)nullptr`). `(x) - 1` stays a difference
+// and
 // `(x)(y)` a call. Whether `x` IS a type is the checker's.
 static Bool type_value_cast(const parse::Parser *p) {
     Usize last = 0;
@@ -1828,9 +1882,16 @@ static Bool type_value_cast(const parse::Parser *p) {
         if (next != lex::name && next != lex::type_name) break;
         last += 2;
     }
-    if (text::is(parse::text(p, parse::peek_at(p, 0)), "c")) return false;
-    if (parse::peek_at(p, last + 1).kind != lex::right_paren) return false;
-    return starts_bare_operand(parse::peek_at(p, last + 2).kind);
+    Bool is_c = text::is(parse::text(p, parse::peek_at(p, 0)), "c");
+    if (is_c && last == 0) return false;
+    Usize close = last + 1;
+    // A `c::` type is lowercase (`c::pid_t`), so it reads as a value; one or more `*` before the `)` make it a pointer
+    // type (`(c::rusage_info_t *)&usage`), which no value is.
+    while (is_c && parse::peek_at(p, close).kind == lex::star)
+        close += 1;
+    if (parse::peek_at(p, close).kind != lex::right_paren) return false;
+    if (close > last + 1) return true;
+    return starts_bare_operand(parse::peek_at(p, close + 1).kind);
 }
 
 // Whether `(c::T) {` starts a compound literal of a C name: a `c::` path alone in the parentheses and a `{` after them.
@@ -1849,7 +1910,75 @@ static Bool c_literal_type(const parse::Parser *p) {
 }
 
 // `(` in smith's own syntax: `()`, `(x,)` and `(a, b)` are tuples, `(x)` groups. The `(` is read.
+// Whether `(fn(A))operand` is ahead, the `(` taken: a cast to a function type (`(void (*)(i32))0` after a pass), read
+// as a cast whose fix writes `operand.cast(fn(A))`.
+static Bool fn_type_cast(const parse::Parser *p) {
+    lex::Token word = parse::peek_at(p, 0);
+    Bool is_fn = word.kind == lex::kw_fn || (word.kind == lex::name && text::is(parse::text(p, word), "fn"));
+    if (!is_fn || parse::peek_at(p, 1).kind != lex::left_paren) return false;
+    Usize after = after_group(p, 1, lex::left_paren, lex::right_paren);
+    return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
+}
+
+// Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax
+// never has before a `)`. A text a pass has half mended (the head of its function is new, the body is not) holds it.
+static Bool old_pointer_cast(const parse::Parser *p) {
+    Usize at = 0;
+    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    if (parse_type::is_keyword_type(first)) {
+        while (parse_type::is_keyword_type(parse::peek_at(p, at + 1).kind))
+            at += 1;
+    } else if (first == lex::name || first == lex::type_name) {
+        while ((parse::peek_at(p, at + 1).kind == lex::colon_colon || parse::peek_at(p, at + 1).kind == lex::dot) &&
+               (parse::peek_at(p, at + 2).kind == lex::name || parse::peek_at(p, at + 2).kind == lex::type_name))
+            at += 2;
+    } else {
+        return false;
+    }
+    at += 1;
+    Usize stars = 0;
+    while (parse::peek_at(p, at + stars).kind == lex::star)
+        stars += 1;
+    return stars > 0 && parse::peek_at(p, at + stars).kind == lex::right_paren;
+}
+
+// Whether `(T){.x = ...` is ahead, the `(` taken: a compound literal of today's syntax in a text a pass has half
+// mended.
+static Bool old_literal_ahead(const parse::Parser *p) {
+    Usize at = 0;
+    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    if (first != lex::name && first != lex::type_name) return false;
+    while ((parse::peek_at(p, at + 1).kind == lex::colon_colon || parse::peek_at(p, at + 1).kind == lex::dot) &&
+           (parse::peek_at(p, at + 2).kind == lex::name || parse::peek_at(p, at + 2).kind == lex::type_name))
+        at += 2;
+    if (parse::peek_at(p, at + 1).kind != lex::right_paren || parse::peek_at(p, at + 2).kind != lex::left_brace)
+        return false;
+    return parse::peek_at(p, at + 3).kind == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
+}
+
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
+    if (old_literal_ahead(p) && parse_type::path_is_type(p, 0)) {
+        ast::TypeExpr *type = parse::type(p);
+        lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        if (type == nullptr) return .failed;
+        push_value(st, initializer_list(p, type, start, close.span.start));
+        return .value;
+    }
+    if (fn_type_cast(p) || old_pointer_cast(p)) {
+        Bool was_new = p->new_syntax;
+        p->new_syntax = !old_pointer_cast(p) && was_new;
+        ast::TypeExpr *type = parse::type(p);
+        p->new_syntax = was_new;
+        lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
+        if (type == nullptr) return .failed;
+        Pending cast = {.form = .cast_form,
+                        .prec = prefix_prec,
+                        .start = start,
+                        .type = type,
+                        .head = from_to(start, close.span.end)};
+        push_op(st, cast);
+        return .more;
+    }
     ast::ExprRef items[:] = {};
     Bool is_tuple = parse::at(p, lex::right_paren);
     Usize named_count = 0;
