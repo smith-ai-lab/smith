@@ -1154,6 +1154,12 @@ static Bool glued(const parse::Parser *p, U32 end) {
 
 // Records the warning of an old type: the edit that writes it in smith's own syntax, or a message alone.
 static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExpr *base) {
+    // `const name: T = v` is a constant already written in smith's own syntax, which an old-syntax read of a file that
+    // still holds other old forms takes for the type `const name`: no warning, or its fix would drop the `const`.
+    if (p->tokens[t->first].kind == lex::kw_const && t->end < countof(p->tokens) &&
+        p->tokens[t->end].kind == lex::colon) {
+        return;
+    }
     Rewrite r = {};
     for (Usize i = t->first; i < t->base; i += 1) {
         note_qualifier(p->tokens[i].kind, &r);

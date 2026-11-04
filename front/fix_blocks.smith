@@ -678,6 +678,24 @@ static void lonely_continues(Str source, lex::Tokens tokens, Braces braces, Cuts
     }
 }
 
+// The indentation of the header that the block opening at the token `open` belongs to. A `} else {` that follows a body
+// on the same line (`d = 1 } else if c {`) belongs to the header of the block that closed there, not to the line.
+static Usize header_indent(Str source, lex::Tokens tokens, Braces braces, Usize open) {
+    Usize at = open;
+    Usize t = at;
+    while (t > 0 && !tokens[t - 1].line_break) {
+        t -= 1;
+        if (tokens[t].kind != lex::right_brace) continue;
+        for (Usize j = 0; j < countof(braces); j++) {
+            if (braces[j].close != t) continue;
+            at = braces[j].open;
+            t = at;
+            break;
+        }
+    }
+    return indent_of(source, tokens[at].span.start);
+}
+
 // The text with the forms that stop `convert` from reading a block made plain (#2225): a `}` that follows the last
 // statement of a multi-line block on the same line (`g(i) } }`, `low = m } else {`) goes to a line of its own, at the
 // indentation of the block's header; and a line that starts with `.name` after a `)`, `]` or a name
@@ -693,7 +711,7 @@ static Str plain_forms(Str source) {
         if (!brace.block || brace.inside || !open_ends_line(tokens, brace.open)) continue;
         if (tokens[brace.close - 1].line_break) continue;
         lex::Token close = tokens[brace.close];
-        Usize indent = indent_of(source, tokens[brace.open].span.start);
+        Usize indent = header_indent(source, tokens, braces, brace.open);
         add_cut(&cuts, spaces_before(source, close.span.start), close.span.start,
                 as_str(format::push("\n", spaces(indent))));
     }

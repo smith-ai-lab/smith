@@ -508,6 +508,18 @@ export void test_a_bare_c_member_becomes_the_header_binding() {
     check_count(fixed.applied, 1);
 }
 
+// A bare `abs` that `import c <stdlib.h>` declares is written `stdlib.abs` (#2287); a name no header has is left.
+export void test_a_bare_c_function_becomes_the_header_binding() {
+    use_header_flags();
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "import c <stdlib.h>\n\npub fn f() -> i32:\n    abs(-1)\n");
+    check_text(fixed.text, "import c <stdlib.h>\n\npub fn f() -> i32:\n    stdlib.abs(-1)\n");
+    check_count(fixed.applied, 1);
+}
+
 // An opaque tag and its alias is the opaque `struct Name`, the C name kept by `@c_name` (#2091).
 export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
     arena::Arena memory = test::memory(1U << 22);
