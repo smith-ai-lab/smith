@@ -53,7 +53,7 @@
 // constant unless `mut`, `&x` is `*mut T` for a `mut x` and else `*T`, `p.x` through a pointer, and a write through
 // `*T` is an error naming `*mut T`.
 //
-// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): `try`, a name from
+// NOT YET TYPED (each reported as `not yet typed: <kind>` with its span): a name from
 // another module (`arena::push`), nested designators (`.a.b = 1`), a designator index that is not an integer literal.
 //
 // LITERALS NEXT TO A TYPED OPERAND: in `x + 1` and `x < 10` an unsuffixed literal takes the type of the other operand
@@ -86,7 +86,11 @@ export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, ty
 // checks it in the scope the block opened. Unset, such a statement is reported as `not yet typed`.
 export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
 
+// The result type of the function being checked (`nullptr` outside one); `try` reads it.
+export typedef types::TypeRef (*FunctionResult)();
+
 export struct Hooks {
+    FunctionResult function_result;
     Convert convert;
     CastRule cast;
     LambdaBody lambda_body;
@@ -902,6 +906,34 @@ static void some_after(types::Checked *c, Frame f) {
     } else {
         types::set_type(c, e, f.expected);
     }
+}
+
+// `try o`: `o` is a `?T` and the function returns a `?U`; the value is a `T`.
+static void try_after(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .try_expr)) {
+        return;
+    }
+    types::TypeRef operand = typ(c, e->kind.try_expr.operand);
+    if (operand == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    if (operand->kind != .option) {
+        types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
+                     "`; write `try` before an option, or use `if let` for any other value");
+        poison(c, e);
+        return;
+    }
+    types::TypeRef want = nullptr;
+    if (hooks.function_result != nullptr) want = hooks.function_result();
+    if (want == nullptr || want->kind != .option) {
+        types::failf(c, e->span, "`try` on a `?T` returns `.none` from the function, so the function must return a ",
+                     "`?U`; change its result type or handle `.none` here");
+        poison(c, e);
+        return;
+    }
+    finish(c, e, operand->element, f.expected);
 }
 
 static void variant_expr(types::Checked *c, Frame f) {
@@ -3606,8 +3638,6 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
-    } else if (e->kind == .try_expr) {
-        not_yet(c, e, "try");
     } else {
         return false;
     }
@@ -3829,6 +3859,143 @@ static void auto_resolved(types::Checked *c, Frame f) {
     call_after(c, f);
 }
 
+// The parameter written `; kw...` of a template, or null (#1985).
+static const ast::Param *gather_param(ast::Param params[:]) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_gather) return &params[i];
+    }
+    return nullptr;
+}
+
+// Whether a parameter of the template has this name (the gather parameter is not one a call can name).
+static Bool names_parameter(ast::Param params[:], Str name) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (!params[i].is_gather && same_text(params[i].name, name)) return true;
+    }
+    return false;
+}
+
+static Str names_of(const ast::Expr *arg) {
+    if (arg->kind == .named_arg) return arg->kind.named_arg.name;
+    return "";
+}
+
+// A list of `n` expression references (not mem::alloc_slice: its instance for a pointer element draws the lint of a
+// multilevel conversion).
+static ast::ExprRef *expr_block(Usize n) {
+    return (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), n + 1, alignof(ast::ExprRef));
+}
+
+// Splits the arguments of a call of a function with `; kw...` into those a parameter takes (`kept`) and the named
+// ones no parameter has (`rest`). False, with the error, when a leftover name is given twice.
+static Bool split_leftovers(types::Checked *c, ast::ExprRef args[:], ast::Param params[:], ast::ExprRef kept[:],
+                            Usize *kept_count, ast::ExprRef rest[:], Usize *rest_count) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (!(arg->kind == .named_arg) || names_parameter(params, arg->kind.named_arg.name)) {
+            kept[*kept_count] = args[i];
+            *kept_count += 1;
+            continue;
+        }
+        for (Usize k = 0; k < *rest_count; k++) {
+            if (!same_text(names_of(rest[k]), arg->kind.named_arg.name)) continue;
+            types::failf(c, arg->span, "the argument `", arg->kind.named_arg.name,
+                         "` is given twice; give each name once");
+            return false;
+        }
+        rest[*rest_count] = args[i];
+        *rest_count += 1;
+    }
+    return true;
+}
+
+// Puts the arguments the parameters take in the order of the parameters, `fixed` of them (the gather parameter is
+// after); false, with the error, for one too many, one twice or one left out.
+static Bool order_fixed(types::Checked *c, const ast::Expr *e, const types::Symbol *template, ast::Param params[:],
+                        ast::ExprRef kept[:], Usize kept_count, ast::ExprRef ordered[:]) {
+    Usize fixed = countof(ordered);
+    Usize next = 0; // the slot of the next positional argument
+    for (Usize i = 0; i < kept_count; i++) {
+        const ast::Expr *arg = kept[i];
+        Usize slot = next;
+        if (arg->kind == .named_arg) {
+            slot = fixed;
+            for (Usize k = 0; k < fixed; k++) {
+                if (same_text(params[k].name, arg->kind.named_arg.name)) slot = k;
+            }
+        } else {
+            next += 1;
+        }
+        if (slot >= fixed || ordered[slot] != nullptr) {
+            types::failf(c, arg->span, "this call passes too many arguments or one parameter twice; `", template->name,
+                         "` takes ", fixed, " and names the rest after the `;`");
+            return false;
+        }
+        ordered[slot] = kept[i];
+    }
+    for (Usize k = 0; k < fixed; k++) {
+        if (ordered[k] != nullptr) continue;
+        types::failf(c, e->span, "this call leaves out `", params[k].name, "`; a call of `", template->name,
+                     "` gives every parameter before the leftovers");
+        return false;
+    }
+    return true;
+}
+
+// The call with the leftovers gathered: the arguments in the order of the parameters, then the named tuple of the
+// leftovers under the gather parameter's name.
+static const ast::Expr *gathered_call(const ast::Expr *e, ast::Param params[:], ast::ExprRef ordered[:],
+                                      ast::ExprRef rest[:]) {
+    if (!(e->kind == .call)) return e;
+    Usize fixed = countof(ordered);
+    ast::Expr *leftovers = ast::tuple_literal(rest);
+    leftovers->span = e->span;
+    ast::Expr *gathered = ast::named_arg(params[fixed].name, leftovers);
+    gathered->span = e->span;
+    ast::ExprRef *block = expr_block(fixed + 1);
+    ast::ExprRef all[:] = block[0:fixed + 1];
+    for (Usize k = 0; k < fixed; k++) {
+        all[k] = ordered[k];
+    }
+    all[fixed] = gathered;
+    ast::Expr *made = ast::call(e->kind.call.callee, all);
+    made->span = e->span;
+    return made;
+}
+
+// Stage 0 of a call of a function with `; kw...`: the named arguments no parameter has become one named tuple
+// `(count = n, ms = ms)`, the last argument, which the gather parameter takes as an `auto` one; then the call goes on
+// as the call of a template with `auto` parameters, one instance per set of leftovers (#1985).
+static void gather_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    ast::ExprRef *kept_block = expr_block(countof(args));
+    ast::ExprRef *rest_block = expr_block(countof(args));
+    ast::ExprRef kept[:] = kept_block[0:countof(args)];
+    ast::ExprRef rest[:] = rest_block[0:countof(args)];
+    Usize kept_count = 0;
+    Usize rest_count = 0;
+    Usize fixed = countof(params) - 1; // the gather parameter is the last
+    ast::ExprRef *ordered_block = expr_block(fixed);
+    ast::ExprRef ordered[:] = ordered_block[0:fixed];
+    for (Usize k = 0; k < fixed; k++) {
+        ordered[k] = nullptr;
+    }
+    if (!split_leftovers(c, args, params, kept, &kept_count, rest, &rest_count) ||
+        !order_fixed(c, e, template, params, kept, kept_count, ordered)) {
+        poison(c, e);
+        return;
+    }
+    const ast::Expr *made = gathered_call(e, params, ordered, rest[0:rest_count]);
+    types::set_method(c, e, made);
+    push(w, e, nullptr, 8);
+    Frame inner = f;
+    inner.node = made;
+    auto_before(c, w, inner, template);
+}
+
 // Stage 0 of a call of a generic function: finds the instance, then pushes the arguments of the runtime parameters.
 static void generic_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
     const ast::Expr *e = f.node;
@@ -3837,6 +4004,10 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
+    if (gather_param(params) != nullptr) {
+        gather_before(c, w, f, template);
+        return;
+    }
     if (has_auto_param(params)) {
         auto_before(c, w, f, template);
         return;
@@ -4044,6 +4215,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     push(w, callee, nullptr, 0);
 }
 
+static void try_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (e->kind == .try_expr) {
+        const ast::Expr *operand = e->kind.try_expr.operand;
+        push(w, e, f.expected, 1);
+        push(w, operand, nullptr, 0);
+    }
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -4062,6 +4242,8 @@ static void before(types::Checked *c, Work *w, Frame f) {
         push(w, target, nullptr, 0);
     } else if (e->kind == .conditional) {
         conditional_before(w, c, f);
+    } else if (e->kind == .try_expr) {
+        try_before(w, f);
     } else if (e->kind == .variant) {
         some_before(w, f);
     } else if (e->kind == .stmt_expr) {
@@ -4137,6 +4319,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else {
             conditional_after(c, f);
         }
+    } else if (e->kind == .try_expr) {
+        try_after(c, f);
     } else if (e->kind == .variant) {
         some_after(c, f);
     } else if (e->kind == .stmt_expr) {
