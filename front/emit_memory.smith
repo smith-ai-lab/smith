@@ -1395,7 +1395,42 @@ static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMVa
 }
 
 // A record's constant from a compound of scalar constants; fields left out are zero.
+static state::Status construction_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    Usize at = 0;
+    if (x->kind != .call || ty.kind != .record || !find_record_of(e, ty, &at))
+        return state::failf(x->span, "a construction of ", ty.name);
+    Usize count = field_count(e, at);
+    if (count > 64) {
+        return state::not_emitted("record with more than 64 fields", x->span);
+    }
+    c::LLVMValueRef values[64];
+    Bool given[64];
+    for (Usize i = 0; i < count; i++) {
+        values[i] = c::LLVMConstNull(e->records[at].fields[i].ty.llvm);
+        given[i] = false;
+    }
+    ast::ExprRef args[:] = x->kind.call.args;
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        Usize field = i;
+        if (arg->kind == .named_arg) {
+            try field_index(e, ty, arg->kind.named_arg.name, arg->span, &field);
+            arg = arg->kind.named_arg.value;
+        }
+        if (field >= count) return state::failf(arg->span, "too many fields for ", ty.name);
+        try scalar_constant(e->records[at].fields[field].ty, arg, &values[field]);
+        given[field] = true;
+    }
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *fallback = e->records[at].fields[i].default_value;
+        if (!given[i] && fallback != nullptr) try scalar_constant(e->records[at].fields[i].ty, fallback, &values[i]);
+    }
+    *out = c::LLVMConstNamedStruct(ty.llvm, values, (U32)count);
+    return state::success();
+}
+
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
     if (x->kind != .compound) {
         return scalar_constant(ty, x, out);
     }
