@@ -49,7 +49,10 @@ fix() {
     hd=$(gh api repos/$R/commits/$hs --jq .commit.committer.date 2>/dev/null)
     qf=$(gh api "repos/$R/actions/runs?event=merge_group&per_page=60" --jq "[.workflow_runs[]|select((.head_branch|contains(\"/pr-$p-\")) and .conclusion==\"failure\" and .created_at > \"$hd\")]|length" 2>/dev/null)
     if [ "${qf:-0}" -gt 0 ]; then seen "qfail$p-$hs" && echo "URGENT PR #$p: the merge queue failed its head $hs and it is out of the queue: start a runner to take it over"; continue; fi
-    gh api -X PUT "repos/$R/pulls/$p/update-branch" >/dev/null 2>&1
+    # retest on current main first: a head more than 2 commits behind main gets main merged in, and is re-armed on a
+    # later pass once ci is green on that new head (#2148 was green on an old main and failed the queue, 2026-11-04)
+    behind=$(gh api "repos/$R/compare/main...$hs" --jq .behind_by 2>/dev/null)
+    [ "${behind:-0}" -gt 2 ] && { gh api -X PUT "repos/$R/pulls/$p/update-branch" >/dev/null 2>&1 && did "merged main into PR #$p (behind $behind) before re-arming"; continue; }
     gh api -X PUT "repos/$R/pulls/$p/ccr/auto_merge" >/dev/null 2>&1 && did "re-armed PR #$p" || { seen "arm$p-$(date +%H)" && echo "PR #$p is green but auto-merge would not turn on"; }
   done
   # A PR red for 30 minutes, or conflicted for 60, with no push: release its ticket to the next runner. A conflict does
@@ -246,7 +249,11 @@ vitals() {
   open=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
   wait=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[].created_at|fromdate]|if length>0 then ((now-min)/60|floor|tostring)+" min" else "none" end' 2>/dev/null)
   held=$(issues claimed '[.[]|select(.pull_request==null)]|length')
-  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
+  # the queue's pass rate on main (owner, 2026-11-04: measure before adding runners; target 90%): a group built on
+  # main's tip (its base is on main, compare status identical or behind) passed or failed on its own merits
+  qrate=$(gh api "repos/$R/actions/runs?event=merge_group&status=completed&created=>=$h&per_page=50" --jq '.workflow_runs[]|select(.conclusion=="success" or .conclusion=="failure")|"\(.conclusion) \(.head_branch|split("-")|last)"' 2>/dev/null |
+    while read -r c b; do st=$(gh api "repos/$R/compare/main...$b" --jq .status 2>/dev/null); case $st in identical|behind) echo "$c";; esac; done | sort | uniq -c | awk '{n[$2]=$1} END {t=n["success"]+n["failure"]; if (t) printf "%d of %d", n["success"], t; else printf "none"}')
+  echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; queue runs on main passed ${qrate:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
 }
 
 # The queue stalled 10:51-11:31 on 2026-11-04 with its front groups green and nothing building; taking the front PR
@@ -282,6 +289,8 @@ while :; do
   t=$((t+1)); sleep 60
 done
 ```
+- **Retest on current main before re-arming:** a green PR more than 2 commits behind main gets main merged in and waits for `ci` on that head before auto-merge goes on (a PR green on an old main fails the queue against the new one, #2148).
+- **The queue's pass rate in the vitals:** of the queue runs in the last hour built on main itself (not on a group ahead), how many passed. The target is 90% before runners are added (owner, 2026-11-04). On the night of 2026-11-03, 44 such runs failed, and each took about 3 groups behind it down: 127 more failures, 8 to 9 hours of queue time in 25.
 - **Batched wakes (owner, 2026-11-04):** the mailbox and `URGENT` lines (main red, a queue failure on a PR's head, a stalled queue) wake the lead at once; every other line waits in `pending-wake` and wakes it at most every 30 minutes. Overnight on 2026-11-03 the lead woke about 140 times in 12 hours, each wake several calls at about 200k tokens.
 - **A PR the queue failed is not re-armed:** when a `merge_group` run for the PR failed after its head commit, the watcher wakes the lead (`URGENT`) to start a takeover runner instead of re-queuing broken code (#2148 re-entered the queue at 12:36 on 2026-11-04 with the code that failed at 12:03). Runners end once their PR is queued (smith-dev-runner step 5), so nobody else is watching it.
 - **A stalled queue (every ten minutes, `stall`):** PRs queued and no `merge_group` run created or running for 15 minutes wakes the lead to take the front PR out (2026-11-04, 10:51-11:31).
