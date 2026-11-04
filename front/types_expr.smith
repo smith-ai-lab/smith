@@ -2463,7 +2463,7 @@ static void slice_after(types::Checked *c, Frame f) {
     Bool typed_pointer = base->kind == .pointer && base->element->kind != .void_type;
     if (base->kind == .array || base->kind == .slice || typed_pointer) {
         result = types::slice_of(&c->table, base->element, base->pointee_const);
-    } else if (base->kind == .text) {
+    } else if (base->kind == .text || base->kind == .block) {
         result = base;
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
