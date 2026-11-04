@@ -281,9 +281,10 @@ export void test_arena_c_unknown_library_lists_the_known_names() {
     defer mem::set_allocator(outside);
     scratch::Run run = scratch::build(&p, "");
     scratch::expect_status("unknown: the build fails with status 2", 2, &run);
-    scratch::expect_contains("unknown: the message names the library", run.err,
-                             "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, trace, "
-                             "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, "
-                             "failing, files, format, inflate, "
-                             "math, math_trig, mem, net, optimize, process, random, slice, stream, task, test, text");
+    scratch::expect_contains(
+        "unknown: the message names the library", run.err,
+        "smith: build.c: smith_library: unknown library \"nope\"; known: handlers, json, optimize_asm, trace, "
+        "arena, ascii, autodiff, categorical, clock, console, contract, effects, entropy, env, "
+        "failing, files, format, inflate, "
+        "math, math_trig, mem, net, optimize, process, random, slice, stream, task, test, text");
 }
