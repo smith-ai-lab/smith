@@ -214,10 +214,11 @@ static bool smith_lint_fix_requested(int count, char **args) {
 // `smith lint --fix FILE...` (#1442): each `.smith` file is parsed by smith's own front end, the fixes its parse errors
 // carry are applied, and `path: N fixes applied` is printed; a file with nothing to fix reports 0. The units runner has
 // no front end, so it refuses.
-static int smith_lint_fix(int count, char **args) {
+static int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE
     (void)count;
     (void)args;
+    (void)self;
     smith_die(smith_exit_usage, "lint --fix needs the full smith (smith's own front end is not in this one)", nullptr);
 #else
     if (count < 1) smith_die(smith_exit_usage, "usage: smith lint --fix FILE.smith...", nullptr);
@@ -225,6 +226,7 @@ static int smith_lint_fix(int count, char **args) {
         if (!smith_ends_with(args[i], ".smith"))
             smith_die(smith_exit_usage, "lint --fix reads .smith files only", args[i]);
     }
+    smith_front_cimport_flags(self, 0, args); // the fixer reads the headers a file imports as `smith cc` does (#2209)
     return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
 }
