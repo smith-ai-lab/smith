@@ -12,6 +12,7 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -1431,16 +1432,43 @@ static void build_release(SmithBuild *b, const char *binary, const char *folder)
 // needs them), the token hook (#11), and the prover's libraries beside it. r14 is the fourteenth configuration
 // (patches/*.patch; r14 changes `SmithCEval` only (#1018); r12 has no new patch: it is the pack of Linux that gains the
 // prover and Enzyme, #820); build_llvm_run_macos has the same name (SMITH_LLVM_NAME overrides both).
-static const char *build_llvm_folder(SmithBuild *b) {
+static const char *build_llvm_cache(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/llvm/%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
+    return smith_fmt(b, "%s/smith/llvm", cache);
+}
+
+// The name of the configuration: SMITH_LLVM_NAME, else r14; when r14 is not installed but exactly one other pack is
+// (a cloud container's image has an older one, #1971), that one, so `smith build` works there for a change that does
+// not touch the pack or a patch (CI builds the right one).
+static const char *build_llvm_name(SmithBuild *b) {
+    // The literal default stays in this form: the CI workflows read the name from it with sed.
+    const char *name = smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14");
+    if (getenv("SMITH_LLVM_NAME") != nullptr) return name;
+    const char *dir = build_llvm_cache(b);
+    if (access(smith_fmt(b, "%s/%s/install/lib/smith-clang.id", dir, name), R_OK) == 0) return name;
+    DIR *d = opendir(dir);
+    if (d == nullptr) return name;
+    const char *only = nullptr;
+    size_t found = 0;
+    for (struct dirent *e = readdir(d); e != nullptr; e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        if (access(smith_fmt(b, "%s/%s/install/lib/smith-clang.id", dir, e->d_name), R_OK) != 0) continue;
+        only = smith_fmt(b, "%s", e->d_name);
+        found += 1;
+    }
+    closedir(d);
+    return found == 1 ? only : name;
+}
+
+static const char *build_llvm_folder(SmithBuild *b) {
+    return smith_fmt(b, "%s/%s", build_llvm_cache(b), build_llvm_name(b));
 }
 
 // Enzyme beside the LLVM configurations, keyed by its version and the configuration it was built against, so that
 // building it leaves the LLVM install alone (build_enzyme_make).
 static const char *build_enzyme_folder(SmithBuild *b) {
     const char *cache = smith_env(b, "XDG_CACHE_HOME", smith_fmt(b, "%s/.cache", smith_env(b, "HOME", "")));
-    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, smith_env(b, "SMITH_LLVM_NAME", "23.1.3-r14"));
+    return smith_fmt(b, "%s/smith/enzyme/0.0.303-%s", cache, build_llvm_name(b));
 }
 
 static const char *build_cmake_package(SmithBuild *b) {

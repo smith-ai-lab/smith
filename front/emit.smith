@@ -145,6 +145,18 @@ static state::TyResult type_of_header(state::Emitter *e, const ast::TypeExpr *t)
     return type_of_checked(e, symbol->type, t->span);
 }
 
+// `let Plain = fn(u64) -> u64`: a name for a type, which the checker declared as that type (#2190).
+static Bool is_alias_symbol(const types::Symbol *s) {
+    return s != nullptr && s->kind == .type_name && s->decl != nullptr && s->decl->kind == .variable;
+}
+
+// The alias's written type, emitted as any written type is (a function type has no checker form to emit yet).
+static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) {
+    const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
+    if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
+    return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
+}
+
 // `v.Vec`, a record of an imported module: `v` is the module's alias, and the checker declared the record under the
 // module's path (`geom::vec::Vec`).
 static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *t) {
@@ -164,6 +176,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     }
     const types::Symbol *target = types::lookup(scopes, full);
     state::free_text(full);
+    if (is_alias_symbol(target)) return type_of_alias(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
     return memory::imported_record(e, target->decl, target->type->name);
@@ -175,6 +188,10 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     Str full = state::msg(format::push(e->import_scope, path.segments[0].text));
     const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
     state::free_text(full);
+    if (is_alias_symbol(target)) {
+        *made = type_of_alias(e, target);
+        return true;
+    }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return false;
     *made = memory::imported_record(e, target->decl, target->type->name);
@@ -203,6 +220,10 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         state::TyResult scoped = {};
         if (countof(path.segments) == 1 && countof(e->import_scope) > 0 && type_in_import_scope(e, path, &scoped))
             return scoped;
+        if (countof(path.segments) == 1 && e->options.checked != nullptr) {
+            const types::Symbol *alias = types::lookup(&e->options.checked->scopes, path.segments[0].text);
+            if (is_alias_symbol(alias)) return type_of_alias(e, alias);
+        }
         return memory::type_record(e, t);
     }
     if (t->kind == .slice) return memory::type_slice(e, t);
@@ -712,7 +733,7 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind == .empty) return state::success();
     if (s->kind == .match_stmt) return matching::match_stmt(e, s);
     if (s->kind == .for_in) return looping::for_in(e, s);
-    if (s->kind == .if_let) return optional::if_let(e, s);
+    if (s->kind == .if_let) return matching::if_let(e, s);
     if (s->kind == .destructure) return tupled::destructure(e, s);
     if (s->kind == .yield_stmt) return streams::yield_statement(e, s);
     return state::not_emitted("static_assert", s->span); // the one kind left
@@ -1220,6 +1241,14 @@ static Bool find_record_by_name(state::Emitter *e, Str name, state::Ty *ty) {
     return false;
 }
 
+// Whether a checker name has a module before it, `words::Pair`: a record of another smith module.
+static Bool in_module(Str name) {
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return true;
+    }
+    return false;
+}
+
 // Whether a checker name starts with `c::`: it came from a C header.
 static Bool from_header(Str name) {
     return countof(name) > 3 && name[0] == 'c' && name[1] == ':' && name[2] == ':';
@@ -1361,7 +1390,8 @@ static void ensure_c_record(state::Emitter *e, types::TypeRef t) {
         base = next;
     }
     state::Ty found = {};
-    if (base->kind == .record && !find_record_by_name(e, base->name, &found) && from_header(base->name)) {
+    if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
+        (from_header(base->name) || in_module(base->name))) {
         make_c_record(e, base);
     }
 }
@@ -1445,6 +1475,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
 static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     const ast::Expr *init = d->kind.variable.init;
+    if (init != nullptr && init->kind == .type_value) return true; // `let Plain = fn(u64) -> u64`: the checker's alias
     if (init == nullptr || init->kind != .member) return false;
     types::Names names = types::member_names(init);
     if (names.count < 2) return false;

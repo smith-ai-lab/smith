@@ -167,6 +167,17 @@ export Bool starts_type(const parse::Parser *p, Usize offset) {
     }
 }
 
+// Whether a path of the new syntax that ends in a `type_name` is followed by `* operand` where a value is read:
+// `k.SIDE * 2` is a product of a header's constant (the name is upper case, so it reads as a type), not a pointer to
+// a type, which the new syntax writes in front (`*T`).
+export Bool path_then_product(const parse::Parser *p, Usize offset) {
+    if (!p->new_syntax || !path_is_type(p, offset)) return false;
+    Usize last = path_last(p, offset);
+    if (parse::peek_at(p, last + 1).kind != lex::star) return false;
+    lex::TokenKind after = parse::peek_at(p, last + 2).kind;
+    return after == lex::integer || after == lex::name || after == lex::type_name || after == lex::left_paren;
+}
+
 // Whether `fn` or `fn_once` starts a function type `offset` tokens ahead. Today's lexer reads them as names, so while
 // fixing (`smith lint --fix` reads a text again after each pass) a name followed by `(` counts too, and a type that a
 // pass has already written is read.
@@ -997,7 +1008,11 @@ static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrit
     for (Usize i = 0; i < count; i += 1) {
         ast::Span span = params[i]->span;
         // The inner types are mended first: `Fn(U32 (U32 x))` is `fn(u32) -> u32`, not `fn(U32) -> U32`.
-        joined = format::push(joined, i > 0 ? ", " : "", parse::mended(p, span.start, span.end));
+        // A name after the type (`void *context`) leaves the space the mended star wants (`*void `): it goes.
+        Str inner = parse::mended(p, span.start, span.end);
+        while (countof(inner) > 0 && inner[countof(inner) - 1] == ' ')
+            inner = inner[0:countof(inner) - 1];
+        joined = format::push(joined, i > 0 ? ", " : "", inner);
     }
     if (kind.function.variadic) {
         r->problem = "a variadic function type has no spelling in smith's own syntax yet: write the function by hand";

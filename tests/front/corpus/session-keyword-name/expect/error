@@ -1,0 +1,3 @@
+src/foo.smith:1:8: error: a function has a name: write `fn name(a: i32) -> i32:`
+src/main.smith:1:1: error: cannot find the module `foo`; check its path under the roots
+src/main.smith:4:12: error: `foo` has no public `double`; write the name of one of its `pub` declarations

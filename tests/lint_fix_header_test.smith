@@ -1,0 +1,26 @@
+// `smith lint --fix` reads the headers a file imports with the flags `smith cc` passes (the compiler's resource
+// directory), so `c::strlen` is written as the header's namespace, `string.strlen`, in one run (#2209).
+// smith-covers: smith.c runtime/front_flag.c
+module lint_fix_header_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+export void test_lint_fix_writes_a_c_call_as_the_namespace_of_its_header() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run =
+        scratch::sh(&p, "unset SMITH_FRONT_CIMPORT_FLAGS; "
+                        "printf '#include <string.h>\\n#include <errno.h>\\n\\n"
+                        "export Usize f(const char *s) {\\n    return c::strlen(s);\\n}\\n' > a.smith && "
+                        "smith lint --fix a.smith 2>&1 && cat a.smith");
+    scratch::expect_status("the file is fixed", 0, &run);
+    scratch::expect_contains("the call is the header's", run.out, "string.strlen(s)");
+    scratch::expect_lacks("no `c` is left", run.out, "c.strlen");
+}

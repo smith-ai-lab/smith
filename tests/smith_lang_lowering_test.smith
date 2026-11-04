@@ -287,6 +287,10 @@ static Bool is_chain_case(const char *name) {
     return c::strcmp(name, chain_case) == 0;
 }
 
+// The one file of the chain case that its expect/error names (the lowering stops there). The chain's other modules
+// have no golden and carry no error, so lowering them only repeats the walk down the chain: this test lowers m00 alone.
+static const char *const chain_checked_file = "chain/m00.smith";
+
 typedef enum { Pass_Files, Pass_Record, Pass_Compare } Pass;
 
 // A case lowered: the C of each file, the header of each module and the errors. `Pass_Files` compares them with the
@@ -303,6 +307,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
     Bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
     Bool creates = test::updating() && fresh && selected(kase);
     for (Usize i = 0; i < count; i++) {
+        if (is_chain_case(kase) && c::strcmp(files[i], chain_checked_file) != 0) continue;
         const char *file = join3("src/", files[i], "");
         const char *module = module_of(arena, files[i]);
         (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
@@ -319,7 +324,7 @@ static void check_case(arena::Arena *arena, const char *kase, Pass pass, const c
         const char *header_golden = join3(folder, "/expect/header/", format::push(module, ".h").data);
         if (made && (exists(header_golden) || (creates))) corpus::golden(arena, differing, header_golden, header_text);
     }
-    const char *error_golden = join3(folder, "/expect/lower-error", "");
+    const char *error_golden = join3(folder, is_chain_case(kase) ? "/expect/error" : "/expect/lower-error", "");
     const char *joined = sorted_unique(errors, error_count);
     if (pass == Pass_Files && (exists(error_golden) || (creates && joined[0] != '\0')))
         corpus::golden(arena, differing, error_golden, joined);
