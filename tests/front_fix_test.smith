@@ -372,7 +372,7 @@ export void test_a_three_part_for_is_rewritten_to_while() {
     check_text(fixed.text, "static fn f(mut n: i32):\n    while n * 2 < 9:\n        n -= 1\n        n += 3\n");
 }
 
-export void test_a_three_part_for_with_an_init_gets_no_while() {
+export void test_a_three_part_for_with_an_init_becomes_a_while() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -380,7 +380,7 @@ export void test_a_three_part_for_with_an_init_gets_no_while() {
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "static void f(int n) {\n    for (int i = 0; i * 2 < n; i += 3) {\n        n -= 1;\n    }\n}\n");
     Str word = "while";
-    check_flag(slice::find_slice(fixed.text, word) == .some, false);
+    check_flag(slice::find_slice(fixed.text, word) == .some, true);
 }
 
 export void test_a_for_with_a_continue_gets_no_while() {
