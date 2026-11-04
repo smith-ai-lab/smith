@@ -550,8 +550,8 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     if (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr) {
         types::failf(r, test->span,
                      "a condition on `target` is decided at compile time and this one cannot be: write it with "
-                     "`target.os == .macos` (or `.linux`), `target.arch == .aarch64` (or `.x86_64`), "
-                     "`target.static_analyzer`, `!`, `&&`, `||`, `true` and `false`");
+                     "`target.os == .macos` (or `.linux`), `target.static_analyzer`, `!`, `&&`, `||`, "
+                     "`true` and `false`");
         return;
     }
     if (is_constexpr) {

@@ -14,7 +14,7 @@ fn analyzed(x: i32) -> i32:
     x + 1
 
 fn word_bits() -> i32:
-    if target.arch == .aarch64 || target.arch == .x86_64:
+    if target.os == .macos || target.os == .linux:
         return 64
     32
 
