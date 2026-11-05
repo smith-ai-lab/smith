@@ -127,6 +127,8 @@ static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state:
         args[i] = v[i].llvm;
         if (i == 1) args[i] = coerced(e, v[i], 'z');
         if (i > 2 && v[i].ty.kind == .integer && v[i].ty.bits < 32) args[i] = coerced(e, v[i], 'i');
+        if (i > 2 && v[i].ty.kind == .floating && v[i].ty.bits < 64)
+            args[i] = c::LLVMBuildFPExt(e->builder, v[i].llvm, c::LLVMDoubleTypeInContext(e->context), "promoted");
         types[i] = c::LLVMTypeOf(args[i]);
     }
     c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, 3, 1);
@@ -172,6 +174,11 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return format_call(e, entry, v, count, result);
     case .count_zeros:
         return count_zeros(e, v[0], result);
+    case .atomic_add:
+        return c::LLVMBuildAtomicRMW(
+            e->builder, c::LLVMAtomicRMWBinOpAdd, v[0].llvm,
+            c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, v[1].ty.is_signed ? 1 : 0, ""),
+            c::LLVMAtomicOrderingMonotonic, 0);
     case .filled:
     case .type_query:
         return nullptr; // `filled` lowers itself; the checker decides a type question and keeps one branch

@@ -2510,6 +2510,12 @@ export const types::Slot *argument_field(types::Checked *c, ast::ExprRef args[:]
             return &record->slots[k];
         }
     }
+    Usize anonymous = 0;
+    const types::Slot *inner = types::inner_member(record, name, &anonymous);
+    if (inner != nullptr) {
+        *index = anonymous;
+        return &record->slots[anonymous];
+    }
     if (countof(record->slots) == 0) {
         types::failf(c, arg->span, "`", shown, "` has no field `", name, "`; it has no fields at all");
     } else {
@@ -2542,8 +2548,12 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
             ok = false;
             continue;
         }
-        if (seen[index]) {
-            types::failf(c, arg->span, "the field `", field->name, "` of `", shown, "` is given twice; remove one");
+        // Two named fields of one anonymous struct member are two fields; two of an anonymous union overlap.
+        Bool inside = countof(field->name) == 0 && arg->kind == .named_arg;
+        if (seen[index] && (!inside || field->type->is_union)) {
+            Str given_name = field->name;
+            if (arg->kind == .named_arg && inside) given_name = arg->kind.named_arg.name;
+            types::failf(c, arg->span, "the field `", given_name, "` of `", shown, "` is given twice; remove one");
             ok = false;
         }
         seen[index] = true;
