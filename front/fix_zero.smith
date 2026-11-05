@@ -11,6 +11,11 @@
 // union, a struct two levels down) keeps its warning: it needs a spelling smith has not settled. A list that has no
 // struct type (`struct smith_array_T_n`, `typeof(xs)`) is left alone too.
 //
+// A construction that leaves fields out, `E(k = k)` (from the C list `(E){.k = k}`), is `E(k = k, s = S(a = 0, b = 0))`
+// (#2329, decided on #1406): C zeroes the fields a list does not name, and smith's construction demands them. The
+// checker records the call (`Error.left_out_call`) and this pass writes the text; a field with no zero spelling (above)
+// keeps its error.
+//
 //   fix_zero::edits(module, checked)   one fix for each declaration whose initializer is `{}` of a struct
 module front::fix_zero;
 
@@ -169,6 +174,44 @@ static Str construct_array(types::TypeRef t) {
     return types::message_of(format::push(out, "]"));
 }
 
+// The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
+// each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
+static Str omitted(types::TypeRef record, U64 given) {
+    if (record->kind != .record || record->is_union || !record->complete) return "";
+    Str out = "";
+    for (Usize k = 0; k < countof(record->slots); k++) {
+        if ((given & ((U64)1 << k)) != 0 || record->slots[k].default_value != nullptr) continue;
+        types::TypeRef field = record->slots[k].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
+        if (countof(zero) == 0 || !nameable(record->slots[k].name)) return "";
+        out = types::message_of(format::push(out, ", ", record->slots[k].name, " = ", zero));
+    }
+    return out;
+}
+
+// The fix of the construction `e` that leaves fields out: their zero values after the last argument.
+static core::ParseError left_out_fix(const ast::Expr *e, types::TypeRef record, U64 given) {
+    core::ParseError none = {};
+    Str text = omitted(record, given);
+    if (countof(text) == 0 || !(e->kind == .call)) return none;
+    ast::ExprRef args[:] = e->kind.call.args;
+    U32 at = e->span.end - 1; // before the `)`
+    if (countof(args) > 0) {
+        at = args[countof(args) - 1]->span.end;
+    } else {
+        text = text[2:countof(text)];
+    }
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    fix[0] = (core::Edit){.span = {.start = at, .end = at}, .text = text};
+    core::ParseError found = {};
+    found.span = e->span;
+    found.message = "a construction that leaves fields out gives them their zero values";
+    found.fix = fix;
+    return found;
+}
+
 // Whether `text` holds `name` as a whole word.
 static Bool mentions(Str text, Str name) {
     Usize n = countof(name);
@@ -276,6 +319,13 @@ static core::Errors add(core::Errors out, core::ParseError found) {
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
+    const ast::Expr *last = nullptr;
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error error = c->errors[i];
+        if (error.left_out_call == nullptr || error.left_out_call == last) continue;
+        last = error.left_out_call;
+        out = add(out, left_out_fix(error.left_out_call, error.left_out_record, error.left_out_given));
+    }
     Work w = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];

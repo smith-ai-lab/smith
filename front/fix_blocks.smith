@@ -413,6 +413,30 @@ static void mark_c_functions(lex::Tokens tokens, Braces braces) {
     }
 }
 
+// Whether the block is the cases of a `switch` the fixer did not turn into a `match`: its header line starts with
+// `switch`. The parser reads `switch (v) {` and not `switch (v):` (#2382), so it keeps its braces.
+static Bool switch_header(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    while (i < open && tokens[i].kind == lex::right_brace)
+        i += 1;
+    return tokens[i].kind == lex::kw_switch;
+}
+
+// Marks every `switch` block, and the blocks inside it, as left alone.
+static void mark_switches(lex::Tokens tokens, Braces braces) {
+    Usize skipped = 0;
+    for (Usize i = 0; i < countof(braces); i++) {
+        if (braces[i].open < skipped) {
+            braces[i].skip = true;
+        } else if (braces[i].block && switch_header(tokens, braces[i].open)) {
+            braces[i].skip = true;
+            skipped = braces[i].close;
+        }
+    }
+}
+
 static Bool in_skipped(Braces braces, Usize at) {
     for (Usize i = 0; i < countof(braces); i++) {
         if (braces[i].skip && braces[i].open <= at && at <= braces[i].close) return true;
@@ -930,6 +954,7 @@ static Str convert_once(Str source) {
     lex::Tokens tokens = lexed.ok;
     Braces braces = braces_of(tokens);
     mark_c_functions(tokens, braces);
+    mark_switches(tokens, braces);
     // The arms of a `match` come first, alone: they move lines, which the other cuts read where they stand.
     Cuts arms = {};
     for (Usize i = 0; i < countof(braces); i++) {
