@@ -647,3 +647,21 @@ export void test_parse_stmt_layout_malformed_forms_are_one_error() {
     }
     test::golden("tests/front/parse_stmt/layout_errors.txt", all);
 }
+
+// A kept C `switch` of a layout file has no layout inside its braces: its `if`, `else` and `match` keep their braces
+// and still parse (#2397).
+export void test_parse_stmt_layout_braced_bodies_inside_a_kept_switch() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = ":\n"
+                 "    switch (s) {\n"
+                 "    case 1:\n"
+                 "        f\n"
+                 "        if n {\n            m\n        } else {\n            g()\n        }\n"
+                 "        match t {\n        .a => f()\n        _ => ()\n        }\n"
+                 "        break\n"
+                 "    }\n";
+    test::golden("tests/front/parse_stmt/braced_switch.txt", first_error(source));
+}
