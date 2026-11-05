@@ -2124,7 +2124,11 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
     }
     const types::Symbol *local = function_named(c, name, false);
     if (record->kind == .record && types::member(record, name) != nullptr) {
-        if (own != nullptr || local != nullptr) {
+        // Only a function that takes this type first is a method of it, so only it clashes with the field: `mem.alloc`
+        // takes a type first, and `a.alloc(...)` on an allocator can only mean the field (#2342).
+        Bool own_clashes = own != nullptr && first_parameter(own) == record;
+        Bool local_clashes = local != nullptr && first_parameter(local) == record;
+        if (own_clashes || local_clashes) {
             types::failf(c, e->span, "`", types::show(record), "` has a field `", name, "` and a function `", name,
                          "`; rename one, a field and a method of one type cannot share a name");
             poison(c, e);
