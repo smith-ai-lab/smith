@@ -443,6 +443,36 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
     return edits;
 }
 
+// The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
+// becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
+static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member) {
+    syntax::Edits edits = {};
+    if (!(member->kind == .member)) {
+        return edits;
+    }
+    types::TypeRef owner = types::type_of(c, member->kind.member.base);
+    if (owner != nullptr && owner->kind == .pointer) {
+        owner = owner->element;
+    }
+    if (owner == nullptr || owner->kind != .record || countof(owner->owner) != 0) {
+        return edits;
+    }
+    for (Usize i = 0; i < countof(owner->slots); i++) {
+        const ast::TypeExpr *written = owner->slots[i].written;
+        if (!types::same_text(owner->slots[i].name, member->kind.member.name) || written == nullptr) continue;
+        // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
+        if (!(written->kind == .pointer)) continue;
+        Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
+        if (star_first && !written->kind.pointer.is_mut) {
+            edits = mem::realloc(edits, 1);
+            U32 after_star = written->span.start + 1;
+            Str word = "mut ";
+            edits[0] = (syntax::Edit){.span = {.start = after_star, .end = after_star}, .text = word};
+        }
+    }
+    return edits;
+}
+
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
@@ -450,6 +480,9 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     syntax::Edits edits = {};
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
+    }
+    if (base->kind == .member) {
+        return field_fix(c, base);
     }
     if (base->kind != .name) {
         return edits;
@@ -2415,11 +2448,19 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
         }
     }
     type_named_arguments(c, args);
+    U64 given = 0;
+    for (Usize k = 0; k < countof(record->slots) && k < 64; k++) {
+        if (seen[k]) given |= (U64)1 << k;
+    }
     for (Usize k = 0; k < countof(record->slots); k++) {
         if (!built_here || seen[k] || record->slots[k].default_value != nullptr) continue;
-        types::failf(c, e->span, "the field `", record->slots[k].name, "` of `", shown,
-                     "` is left out and has no default; give it a value, or write a default in the struct (`",
-                     record->slots[k].name, ": T = value`)");
+        types::fail_left_out(
+            c, e->span,
+            types::message_of(
+                format::push("the field `", record->slots[k].name, "` of `", shown,
+                             "` is left out and has no default; give it a value, or write a default in the struct (`",
+                             record->slots[k].name, ": T = value`)")),
+            e, record, given);
         ok = false;
     }
     if (!ok) {
