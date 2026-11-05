@@ -238,6 +238,8 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
                     "`cast` reinterprets a pointer, or an integer of pointer size, as another pointer type");
         return false;
     }
+    // `x.wrap(T)` keeps the low bits of any integer, a constant too: `(-1).wrap(usize)` is the largest usize (#2474).
+    if (form == .wrapping) return true;
     types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
     if (!verdict.ok) {
         // A `p.cast(*mut T)` of a `*T` drops const: the fix writes `*mut T` on the parameter or local `p` comes from

@@ -1161,18 +1161,43 @@ static Bool is_postfix_level(Str source, const ast::Expr *e) {
     return e->kind != .query && e->kind != .try_expr;
 }
 
+static Bool same_text(Str a, Str b) {
+    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+}
+
+// Whether `operand` is a negated integer literal: `-1`.
+static Bool is_negative_literal(const ast::Expr *operand) {
+    return operand->kind == .unary && operand->kind.unary.op == .negate &&
+           operand->kind.unary.operand->kind == .integer;
+}
+
+// Whether a type written as `text` (new spelling) holds every negative literal or has no wrapping: a signed fixed-width
+// integer or a float. Any other (`usize`, `u8`, a type parameter `T`) may be unsigned, where C's `(T)-1` wraps.
+static Bool holds_negative(Str text) {
+    return same_text(text, "i8") || same_text(text, "i16") || same_text(text, "i32") || same_text(text, "i64") ||
+           same_text(text, "isize") || same_text(text, "f32") || same_text(text, "f64");
+}
+
 // The conversion function that writes a cast to `type`: `cast` for a pointer, else `to` (#1811).
 static Str conversion_name(const ast::TypeExpr *type) {
     if (type->kind == .pointer || type->kind == .function) return "cast";
     return "to";
 }
 
+static Str cast_name(const ast::TypeExpr *type, const ast::Expr *operand, Str type_text) {
+    Str name = conversion_name(type);
+    if (!same_text(name, "to")) return name;
+    // C's `(T)-1` wraps for an unsigned T (`SIZE_MAX`), where `.to` refuses -1 (#2474).
+    if (is_negative_literal(operand) && !holds_negative(type_text)) return "wrap";
+    return name;
+}
+
 // `(T)x` is `x.to(T)`, or `p.cast(T)` when T is a pointer type; the operand is parenthesized when it is not a postfix
-// chain (`(-x).to(T)`).
+// chain (`(-x).to(T)`). A negative literal cast to a type that may be unsigned is `(-1).wrap(T)`: C wraps there.
 static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
     parse::Parser *p = st->parser;
     Str type_text = parse::mended(p, op->head.start + 1, op->head.end - 1);
-    Str name = conversion_name(op->type);
+    Str name = cast_name(op->type, operand, type_text);
     Bool plain = is_postfix_level(p->source, operand);
     parse::Edits edits = {};
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
@@ -1745,10 +1770,6 @@ static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
     Str message = as_str(format::push("`as` is gone: write `x.", name, "(T)`"));
     parse::error_fix(p, whole, message, edits);
     return make(whole, {.cast = {.type = type, .operand = operand}});
-}
-
-static Bool same_text(Str a, Str b) {
-    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
 }
 
 // Whether a conversion call `.to(T)`, `.wrap(T)` or `.cast(T)` starts at the `.` the position is at: the three are

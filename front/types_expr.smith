@@ -905,7 +905,8 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     if (!asan && !ubsan && !tsan && !checks && !same_text(fact, "static_analyzer")) return false;
     Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||
                  (tsan && target::thread_sanitizer) || (checks && target::assertions);
-    node->kind = (ast::ExprKind){.boolean = {.value = value}};
+    ast::ExprKind folded = {.boolean = {.value = value}};
+    node->kind = folded;
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
     return true;
 }
