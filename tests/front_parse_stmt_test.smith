@@ -676,7 +676,7 @@ export void test_parse_stmt_layout_braced_match_arm_is_a_block() {
                  "    switch (s) {\n"
                  "    case 1:\n"
                  "        match t {\n"
-                 "        .ok => {\n            seen: Bytes = f()\n            return seen\n        }\n"
+                 "        .ok => { seen: Bytes = f(); return seen }\n"
                  "        _ => ()\n        }\n"
                  "        break\n"
                  "    }\n";
