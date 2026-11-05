@@ -303,3 +303,11 @@ export void test_front_builtin_snprintf() {
                        "    if out[2] != 55:\n        return 2\n"
                        "    0\n");
 }
+
+// A `%s` argument that is an `if` of two literals is a C string like the format (#2427).
+export void test_front_builtin_snprintf_conditional_string() {
+    passes("snprintf_if", "pub fn check(flag: bool) -> i32:\n"
+                          "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
+                          "    _ := __builtin_snprintf(&out[0], 16, \"%s\", if flag: \"a\" else: \"b\")\n"
+                          "    0\n");
+}

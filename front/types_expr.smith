@@ -4878,7 +4878,12 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             types::TypeRef expected = nullptr; // `array.filled(u8, 4, 0)`: the value takes the element type
             if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
             if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
-            push(w, argument_value(args[i - 1]), expected, 0);
+            // A string literal, or an `if` that picks one, handed for a `%s`, is a C string like the format (#2427).
+            const ast::Expr *value = argument_value(args[i - 1]);
+            if (builtin.shape == .format && i > 3 && (value->kind == .conditional || value->kind == .stmt_expr)) {
+                expected = builtins::format_pointer(c);
+            }
+            push(w, value, expected, 0);
         }
         return;
     }
