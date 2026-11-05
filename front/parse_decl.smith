@@ -2117,10 +2117,13 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
         lex::Token semi = parse::peek(p);
         parse::expect(p, lex::semicolon, "`;` after the type");
         Bool opaque = kind == .record && kind.record.opaque;
-        if (pre->top && semi.kind == lex::semicolon && !opaque && !style.unfixed) {
+        if (pre->top && semi.kind == lex::semicolon && !style.unfixed) {
+            // `struct Name;` (a forward declaration) is `struct Name` in the new syntax: a type ends with the line.
+            Str message = opaque ? "a type ends with the line, not `;`: remove the `;`"
+                                 : "a type ends with its `}`, not `};`: remove the `;`";
             parse::Edits edits = {};
             edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
-            warn(p, semi.span.start, semi.span.end, "a type ends with its `}`, not `};`: remove the `;`", edits);
+            warn(p, semi.span.start, semi.span.end, message, edits);
         }
     }
     return make(p, start, pre, kind);

@@ -169,3 +169,10 @@ export void test_front_fix_blocks_a_case_label_keeps_its_one_colon() {
     check("fn f() {\n    switch (x) {\n    case .a: {\n        g()\n    }\n    }\n}\n",
           "fn f():\n    switch (x):\n    case .a:\n        g()\n");
 }
+
+export void test_front_fix_blocks_a_one_line_block_inside_another_converts_in_a_later_round() {
+    check("const a: i32 = if x { 1 } else { 2 }\nfn f(x: i32) -> i32 {\n    if x < 0 { return if x == 1 { 5 } else { 6 "
+          "} }\n    return 0\n}\n",
+          "const a: i32 = if x: 1 else: 2\nfn f(x: i32) -> i32:\n    if x < 0:\n        return if x == 1: 5 else: 6\n  "
+          "  return 0\n");
+}
