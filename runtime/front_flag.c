@@ -107,9 +107,78 @@ static void smith_front_command_flags(char *flags, size_t size, size_t used, int
     }
 }
 
+// The string a line of compile_commands.json holds (`    "-I",` gives `-I`, `"file": "a.smith",` gives `a.smith`):
+// the last quoted string of the line, unescaped into `out`. False when the line has none or it does not fit.
+static bool smith_front_json_string(const char *line, char *out, size_t size) {
+    const char *end = strrchr(line, '"');
+    if (end == nullptr || end == line) return false;
+    const char *begin = end - 1;
+    while (begin > line && !(*begin == '"' && begin[-1] != '\\')) // bounded by the line
+        begin--;
+    if (*begin != '"') return false;
+    size_t used = 0;
+    for (const char *c = begin + 1; c < end; c++) { // bounded by the line
+        if (*c == '\\' && c + 1 < end) c++;
+        if (used + 1 >= size) return false;
+        out[used++] = *c;
+    }
+    out[used] = '\0';
+    return true;
+}
+
+// Whether the database's `file` names the source `path`: the same text, or one a suffix of the other after a `/`.
+static bool smith_front_same_file(const char *file, const char *path) {
+    while (path[0] == '.' && path[1] == '/')
+        path += 2;
+    size_t a = strlen(file);
+    size_t b = strlen(path);
+    if (a == b) return strcmp(file, path) == 0;
+    const char *longer = a > b ? file : path;
+    const char *shorter = a > b ? path : file;
+    size_t gap = a > b ? a - b : b - a;
+    return longer[gap - 1] == '/' && strcmp(longer + gap, shorter) == 0;
+}
+
+// The compile command of `source` in the database `database` (a compile_commands.json with an `arguments` array of
+// one string on each line, as smith's builds write it), as the flags a header is read with: its `-I`, `-isystem`,
+// `-D` and the rest of smith_front_command_flags, appended to the text in `flags`. This is how a file of a project
+// whose build gives it `-I<llvm>/include` reads `<llvm-c/Core.h>` under `--front-end=new` as it does under clang
+// (#2313). Nothing is added when the database or the file's entry is not there.
+static void smith_front_database_flags(char *flags, size_t size, const char *database, const char *source) {
+    FILE *file = fopen(database, "r");
+    if (file == nullptr) return;
+    static char line[PATH_MAX + 64];
+    static char text[PATH_MAX];
+    static char storage[256][PATH_MAX / 4];
+    static char *found[256];
+    int count = 0;
+    bool matched = false;
+    bool inside = false;
+    while (fgets(line, sizeof line, file) != nullptr) { // bounded by the database
+        if (strstr(line, "\"directory\"") != nullptr) {
+            if (matched && count > 0) break;
+            matched = false;
+            inside = false;
+            count = 0;
+        } else if (strstr(line, "\"file\"") != nullptr) {
+            matched = smith_front_json_string(line, text, sizeof text) && smith_front_same_file(text, source);
+        } else if (matched && strstr(line, "\"arguments\"") != nullptr) {
+            inside = true;
+        } else if (matched && inside && strchr(line, ']') != nullptr && strchr(line, '"') == nullptr) {
+            break;
+        } else if (matched && inside && count < 256 && smith_front_json_string(line, text, sizeof storage[0])) {
+            snprintf(storage[count], sizeof storage[count], "%s", text);
+            found[count] = storage[count];
+            count++;
+        }
+    }
+    fclose(file);
+    if (matched && count > 0) smith_front_command_flags(flags, size, strlen(flags), count, found);
+}
+
 // The flags front::cimport reads a C header with (#1762), one on each line, in $SMITH_FRONT_CIMPORT_FLAGS for
 // front::compile: the compiler's resource directory and, where there is one, the SDK. The caller's own value stays.
-static void smith_front_cimport_flags(const char *self, int count, char **args) {
+static void smith_front_cimport_flags(const char *self, int count, char **args, const char *source) {
     if (getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr) return;
     char folder[PATH_MAX];
     char programs[PATH_MAX];
@@ -128,6 +197,15 @@ static void smith_front_cimport_flags(const char *self, int count, char **args) 
     if (sdk != nullptr && *sdk != '\0' && strlen(sdk) < PATH_MAX)
         written += snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
     smith_front_command_flags(flags, sizeof flags, (size_t)written, count, args);
+    if (source != nullptr) { // the build's own flags for the file, where a compile_commands.json has them (#2313)
+        static const char *const databases[] = {"compile_commands.json", "build/compile_commands.json",
+                                                ".smith/compile_commands.json"};
+        for (size_t k = 0; k < sizeof databases / sizeof databases[0]; k++)
+            if (access(databases[k], R_OK) == 0) {
+                smith_front_database_flags(flags, sizeof flags, databases[k], source);
+                break;
+            }
+    }
     setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
 }
 
@@ -220,7 +298,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
         smith_front_objects[i] = smith_front_names[i];
     }
-    if (sources > 0) smith_front_cimport_flags(self, count, args);
+    if (sources > 0) smith_front_cimport_flags(self, count, args, smith_front_sources[0]);
     if (sources > 0) smith_front_debug_flag(count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
@@ -276,7 +354,8 @@ static int smith_lint_fix(int count, char **args, const char *self) {
         if (!smith_ends_with(args[i], ".smith"))
             smith_die(smith_exit_usage, "lint --fix reads .smith files only", args[i]);
     }
-    smith_front_cimport_flags(self, 0, args); // the fixer reads the headers a file imports as `smith cc` does (#2209)
+    smith_front_cimport_flags(self, 0, args,
+                              nullptr); // the fixer reads the headers a file imports as `smith cc` does (#2209)
     return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
 }
