@@ -36,6 +36,11 @@ export void test_front_fix_parameter_named_type() {
                  "fn f(ty: *char, n: usize):\n    g(ty, n)\n");
 }
 
+export void test_front_fix_local_named_in() {
+    expect_fixed("module m;\nvoid f(I32 n) {\n    I32 in = n;\n    g(in);\n    for (I32 i = 0; i < in; i++) g(i);\n}\n",
+                 "fn f(n: i32):\n    in_: i32 = n\n    g(in_)\n    for i in range(0, in_):\n        g(i)\n");
+}
+
 export void test_front_fix_pointer_to_a_slice_of_auto() {
     expect_fixed("module m;\nvoid f(auto (*xs)[:]) {\n    g(xs);\n}\n", "fn f(xs: *[]auto):\n    g(xs)\n");
 }
