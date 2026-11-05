@@ -242,8 +242,9 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
         parser::Parsed braced = parser::parse_new_braces(file, source);
         if (countof(braced.errors) == 0) return braced;
         // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
-        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106).
-        if (lex::tokenize(source) == .error) return own;
+        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106). The braced
+        // reader is the one that reads a body still written with braces; the indented one skips it (#2328).
+        if (lex::tokenize(source) == .error) return countof(braced.errors) < countof(own.errors) ? braced : own;
     }
     return parser::parse(file, source);
 }
