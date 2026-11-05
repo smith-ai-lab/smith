@@ -55,8 +55,8 @@ static Bool is_void(state::Ty ty) {
 }
 
 // Part `i` of a `fn` type: its parameters are `OwnedTy` blocks, not `Ty`s.
-static state::Ty part(state::Ty fn, Usize i) {
-    state::OwnedTy *blocks = (state::OwnedTy *)fn.parts;
+static state::Ty part(state::Ty func_ty, Usize i) {
+    state::OwnedTy *blocks = (state::OwnedTy *)func_ty.parts;
     return blocks[i].ty;
 }
 
@@ -103,12 +103,12 @@ static state::Ty make_type(state::Emitter *e, state::Ty parts[:], state::Ty resu
 }
 
 // `R (ptr, A, B)`: the code of a `fn` type.
-static c::LLVMTypeRef code_type(state::Emitter *e, state::Ty fn) {
+static c::LLVMTypeRef code_type(state::Emitter *e, state::Ty func_ty) {
     c::LLVMTypeRef types[max_parts + 1];
     types[0] = state::pointer_type(e, 0);
-    for (Usize i = 0; i < fn.part_count; i++)
-        types[i + 1] = part(fn, i).llvm;
-    return c::LLVMFunctionType(fn.element->llvm, types, (U32)fn.part_count + 1, 0);
+    for (Usize i = 0; i < func_ty.part_count; i++)
+        types[i + 1] = part(func_ty, i).llvm;
+    return c::LLVMFunctionType(func_ty.element->llvm, types, (U32)func_ty.part_count + 1, 0);
 }
 
 export state::TyResult type_function(state::Emitter *e, const ast::TypeExpr *t) {
@@ -270,9 +270,9 @@ static char *lambda_label(state::Emitter *e) {
 }
 
 // The lambda's function starts: an `entry` block with the allocas and a branch to `body`, empty locals, loops, defers.
-static void begin_function(state::Emitter *e, c::LLVMValueRef function, state::Ty fn) {
+static void begin_function(state::Emitter *e, c::LLVMValueRef function, state::Ty func_ty) {
     e->function = function;
-    e->result = *fn.element;
+    e->result = *func_ty.element;
     e->trap_block = nullptr;
     state::Local no_locals[:] = {};
     Usize no_marks[:] = {};
@@ -314,12 +314,12 @@ static c::LLVMValueRef declare_captures(state::Emitter *e, const state::SavedFun
     return context;
 }
 
-static void declare_parameters(state::Emitter *e, c::LLVMValueRef function, state::Ty fn, ast::Param params[:]) {
+static void declare_parameters(state::Emitter *e, c::LLVMValueRef function, state::Ty func_ty, ast::Param params[:]) {
     for (Usize i = 0; i < countof(params); i++) {
         c::LLVMValueRef value = c::LLVMGetParam(function, (U32)i + 1);
         Str name = params[i].name;
         c::LLVMSetValueName2(value, name.data, countof(name));
-        state::Ty ty = part(fn, i);
+        state::Ty ty = part(func_ty, i);
         c::LLVMValueRef slot = state::new_alloca(e, ty, params[i].name);
         c::LLVMBuildStore(e->builder, value, slot);
         state::add_local(e, (state::Local){.name = params[i].name, .ty = ty, .address = slot});
@@ -336,19 +336,19 @@ static state::Status make(state::Emitter *e, const ast::Expr *x, state::Hint hin
     ast::Param params[:] = x->kind.lambda.params;
     const ast::Stmt *body = x->kind.lambda.body;
     if (e->options.debug_info != false) return state::not_emitted("a lambda with debug info", x->span);
-    state::Ty fn = {};
+    state::Ty func_ty = {};
     if (hint.present && hint.ty.kind == .fn_value) {
-        fn = hint.ty;
+        func_ty = hint.ty;
     } else {
         state::TyResult made = state::type_of_node(e, x);
         if (made == .error) return {.error = made.error};
-        fn = made.ok;
-        if (fn.kind != .fn_value) return state::not_emitted("a lambda that is not a fn value", x->span);
+        func_ty = made.ok;
+        if (func_ty.kind != .fn_value) return state::not_emitted("a lambda that is not a fn value", x->span);
     }
-    if (countof(params) != fn.part_count)
-        return state::failf(x->span, "the lambda has ", (U64)countof(params), " parameters, its type ", fn.name,
-                            " takes ", (U64)fn.part_count);
-    c::LLVMTypeRef type = code_type(e, fn);
+    if (countof(params) != func_ty.part_count)
+        return state::failf(x->span, "the lambda has ", (U64)countof(params), " parameters, its type ", func_ty.name,
+                            " takes ", (U64)func_ty.part_count);
+    c::LLVMTypeRef type = code_type(e, func_ty);
     char *label = lambda_label(e);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
     mem::free(label);
@@ -367,14 +367,14 @@ static state::Status make(state::Emitter *e, const ast::Expr *x, state::Hint hin
                                   .defer_count = e->defer_count,
                                   .insert_block = c::LLVMGetInsertBlock(e->builder),
                                   .lambda_function = function,
-                                  .fn_ty = fn,
+                                  .fn_ty = func_ty,
                                   .argument = argument};
     Usize made_loads[:] = mem::alloc_slice(Usize, saved.local_count + 1);
     saved.loads = (c::LLVMValueRef *)made_loads.data;
-    begin_function(e, function, fn);
+    begin_function(e, function, func_ty);
     c::LLVMSetValueName2(c::LLVMGetParam(function, 0), "context", 7);
     declare_captures(e, &saved, function, saved.loads);
-    declare_parameters(e, function, fn, params);
+    declare_parameters(e, function, func_ty, params);
     push_frame(e, saved);
     state::push_then(e, (state::Work){.then = lambda_end, .span = x->span});
     push_body(e, body);
@@ -487,7 +487,7 @@ export state::Status argument(state::Emitter *e, const ast::Expr *x, state::Hint
 
 // The callee and the arguments are on the value stack, the callee deepest.
 static state::Status call_finish(state::Emitter *e, const state::Work *w) {
-    state::Ty fn = w->ty;
+    state::Ty func_ty = w->ty;
     Usize count = (Usize)w->number;
     const ast::Expr *x = w->expr;
     if (x->kind != .call) {
@@ -502,15 +502,15 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     argv[0] = c::LLVMBuildExtractValue(e->builder, callee.llvm, 1, "context");
     c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, callee.llvm, 0, "code");
     for (Usize i = 0; i < count; i++) {
-        state::Ty want = part(fn, i);
+        state::Ty want = part(func_ty, i);
         if (!state::same_type(values[i].ty, want)) {
             try state::convert(e, values[i], want, args[i]->span, .initialize);
             values[i] = state::pop_value(e);
         }
         argv[i + 1] = values[i].llvm;
     }
-    state::Ty result = *fn.element;
-    c::LLVMTypeRef type = code_type(e, fn);
+    state::Ty result = *func_ty.element;
+    c::LLVMTypeRef type = code_type(e, func_ty);
     c::LLVMValueRef made = nullptr;
     if (is_void(result))
         made = c::LLVMBuildCall2(e->builder, type, code, argv, (U32)count + 1, "");
@@ -521,23 +521,24 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
 }
 
 // `f(a, b)` where `f` is a local of type `fn`.
-export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty fn) {
+export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty func_ty) {
     if (x->kind != .call) {
         return state::fail("not a call", x->span);
     }
     ast::ExprRef args[:] = x->kind.call.args;
     Usize count = countof(args);
-    if (count != fn.part_count)
-        return state::failf(x->span, "a fn value takes ", (U64)fn.part_count, " arguments, the call has ", (U64)count);
+    if (count != func_ty.part_count)
+        return state::failf(x->span, "a fn value takes ", (U64)func_ty.part_count, " arguments, the call has ",
+                            (U64)count);
     for (Usize i = 0; i < count; i++) {
         const ast::Expr *arg = args[i];
         if (arg->kind == .named_arg) {
             return state::fail("a `fn` value takes its arguments by position", arg->span);
         }
     }
-    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .ty = fn, .span = x->span});
+    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .ty = func_ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
-        state::push_eval(e, args[i - 1], state::hint_of(part(fn, i - 1)));
+        state::push_eval(e, args[i - 1], state::hint_of(part(func_ty, i - 1)));
     }
     state::push_eval(e, x->kind.call.callee, state::no_hint());
     return state::success();

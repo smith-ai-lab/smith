@@ -188,7 +188,11 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
     Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
-    syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, e) : (syntax::Edits){};
+    // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
+    const ast::Expr *source = e;
+    while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
+        source = source->kind.binary.left;
+    syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
     if (from->kind == .array && to->kind == .pointer &&
