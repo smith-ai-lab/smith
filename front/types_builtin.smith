@@ -17,7 +17,8 @@
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
-//   filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
+//   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
+//   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
 //   (#2339):
 //                                                                        n copies of value; n is a constant
 //   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
@@ -44,6 +45,7 @@ export typedef enum {
     libc;
     count_zeros;
     filled;
+    type_query;
 } Shape;
 
 export struct Entry {
@@ -102,6 +104,27 @@ static Bool find_libc(Str name, Entry *found) {
     return true;
 }
 
+// The questions about a type that std's generic bodies ask in an `if` (`is_slice(typeof(x))`); an instance keeps the
+// branch the answer picks (#1902).
+static Bool is_query(Str name) {
+    return same(name, "is_slice") || same(name, "is_array") || same(name, "is_record") || same(name, "is_pointer") ||
+           same(name, "is_integer") || same(name, "is_float") || same(name, "is_signed") || same(name, "is_bool") ||
+           same(name, "is_enum");
+}
+
+// The answer of the question `name` for the type `t`.
+static Bool answer(Str name, types::TypeRef t) {
+    if (same(name, "is_slice")) return t->kind == .slice || t->kind == .text || t->kind == .block;
+    if (same(name, "is_array")) return t->kind == .array;
+    if (same(name, "is_record")) return t->kind == .record;
+    if (same(name, "is_pointer")) return t->kind == .pointer;
+    if (same(name, "is_integer")) return t->kind == .integer;
+    if (same(name, "is_float")) return t->kind == .floating;
+    if (same(name, "is_signed")) return t->kind == .integer && t->is_signed;
+    if (same(name, "is_bool")) return t->kind == .bool_type;
+    return t->kind == .enumeration;
+}
+
 // The entry named `name`; false when it is not a builtin of the table.
 export Bool find(Str name, Entry *found) {
     if (same(name, "__builtin_add_overflow")) {
@@ -148,6 +171,8 @@ export Bool find(Str name, Entry *found) {
         *found = made(name, .constant, "nan64");
     } else if (same(name, "__builtin_nanf")) {
         *found = made(name, .constant, "nan32");
+    } else if (is_query(name)) {
+        *found = made(name, .type_query, name);
     } else {
         return find_libc(name, found);
     }
@@ -185,7 +210,7 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
 // Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), or the
 // tag string of `nan`, which is ignored.
 export Bool is_type_argument(Entry entry, Usize index) {
-    if (entry.shape == .bit_cast || entry.shape == .filled) return index == 0;
+    if (entry.shape == .bit_cast || entry.shape == .filled || entry.shape == .type_query) return index == 0;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
 }
 
@@ -410,6 +435,10 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_libc(c, e, entry, args);
     case .filled:
         return check_filled(c, e, entry, args);
+    case .type_query:
+        if (countof(args) != 1) return wrong(c, e->span, entry, "one type; write `(typeof(x))`");
+        if (type_argument(c, args[0], entry.name) == nullptr) return c->table.invalid;
+        return c->table.bool_type;
     case .count_zeros:
         if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
         return named(c, "I32");
@@ -418,4 +447,19 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return c->table.bool_type;
     }
     return c->table.invalid;
+}
+
+// Whether the expression is a call of a question about a type, with its answer for the type it is asked of. False
+// when it is no such call, or the type is not known yet (a parameter of a concept or `auto`).
+export Bool query_value(types::Checked *c, const ast::Expr *e, Bool *value) {
+    Entry entry = {};
+    if (e->kind != .call || !callee_entry(c, e->kind.call.callee, &entry) || entry.shape != .type_query) return false;
+    ast::ExprRef args[:] = e->kind.call.args;
+    if (countof(args) != 1) return false;
+    Usize errors = c->error_count;
+    types::TypeRef t = type_argument(c, args[0], entry.name);
+    c->error_count = errors;
+    if (t == nullptr || t == c->table.invalid || is_open(t)) return false;
+    *value = answer(entry.name, t);
+    return true;
 }
