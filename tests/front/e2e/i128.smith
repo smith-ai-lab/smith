@@ -1,0 +1,21 @@
+# i128 and u128 (#2306): the same conversions, arithmetic and comparisons as i64 and u64, in 128 bits.
+
+pub fn check() -> i32:
+    let low: u64 = 0xffffffffffffffff
+    let wide = low.to(u128) + 1
+    if wide.wrap(u64) != 0:
+        return 1
+    if (wide >> 64).wrap(u64) != 1:
+        return 2
+    if wide <= low.to(u128):
+        return 3
+    let product = low.to(u128) * low.to(u128)
+    if (product >> 64).wrap(u64) != 0xfffffffffffffffe:
+        return 4
+    let minus: i64 = -5
+    let negative = minus.to(i128) * 1000000000000
+    if negative >= 0:
+        return 5
+    if (negative / 1000000000000).wrap(i64) != -5:
+        return 6
+    0
