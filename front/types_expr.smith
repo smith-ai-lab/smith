@@ -5175,6 +5175,38 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
     push(w, dotted, want, 0);
 }
 
+// The operands of a binary operator are typed first; a comparison with a leading-dot side types the other side first.
+static void binary_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    const ast::Expr *right = e->kind.binary.right;
+    const ast::Expr *left = e->kind.binary.left;
+    Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
+    if (compares && right->kind == .variant && left->kind != .variant) {
+        // `c == .green`: the side with a leading dot is the type of the other (#2460).
+        push(w, e, f.expected, 2);
+        push(w, left, nullptr, 0);
+    } else if (compares && left->kind == .variant && right->kind != .variant) {
+        push(w, e, f.expected, 3);
+        push(w, right, nullptr, 0);
+    } else {
+        push(w, e, f.expected, 1);
+        push(w, right, nullptr, 0);
+        push(w, left, nullptr, 0);
+    }
+}
+
+// A binary operator once its operands are typed (stage 1), or one side of a comparison with a leading dot (2, 3).
+static void binary_stage(types::Checked *c, Work *w, Frame f) {
+    if (f.stage >= 2) {
+        binary_variant_side(c, w, f);
+    } else {
+        binary_after(c, f);
+    }
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -5182,21 +5214,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
-        const ast::Expr *right = e->kind.binary.right;
-        const ast::Expr *left = e->kind.binary.left;
-        Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
-        if (compares && right->kind == .variant && left->kind != .variant) {
-            // `c == .green`: the side with a leading dot is the type of the other (#2460).
-            push(w, e, f.expected, 2);
-            push(w, left, nullptr, 0);
-        } else if (compares && left->kind == .variant && right->kind != .variant) {
-            push(w, e, f.expected, 3);
-            push(w, right, nullptr, 0);
-        } else {
-            push(w, e, f.expected, 1);
-            push(w, right, nullptr, 0);
-            push(w, left, nullptr, 0);
-        }
+        binary_before(w, f);
     } else if (e->kind == .assign) {
         assign_before(c, w, f);
     } else if (e->kind == .conditional) {
@@ -5264,11 +5282,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_after(c, f);
     } else if (e->kind == .binary) {
-        if (f.stage >= 2) {
-            binary_variant_side(c, w, f);
-        } else {
-            binary_after(c, f);
-        }
+        binary_stage(c, w, f);
     } else if (e->kind == .assign) {
         if (f.stage == 1) {
             assign_target_done(c, w, f);
