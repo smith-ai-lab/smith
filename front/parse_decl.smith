@@ -1508,6 +1508,23 @@ static Bool single_dimension(Str text) {
     return brackets == 1;
 }
 
+// The zero list of a static or file-level array with no value, or of `= {}`, which C zeroes; empty for any other.
+static Str zero_fill(const Prefixes *pre, Dims dims, Str type, Bool has_init, Str value) {
+    if (countof(dims.text) == 0 || !single_dimension(dims.text)) return "";
+    if (has_init ? !same_text(value, "{}") : !(pre->is_static || pre->top)) return "";
+    return zero_array(dims.text, type);
+}
+
+// The warning of a variable with no mechanical fix, which stays as it is.
+static void warn_by_hand(parse::Parser *p, Head head, Str name, Str written) {
+    char message[:] =
+        format::push("a variable is written `", name, ": T = value`, the type after the name: `", written, " ", name,
+                     "` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` "
+                     "after the name, a `{...}` list, an array that C zeroes): write it by hand");
+    parse::Edits none = {};
+    warn(p, head.type_start, head.name.span.end, message, none);
+}
+
 // `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `let a = v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1524,15 +1541,11 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Bool suffixed = countof(dims.text) > 0;
     Bool fixable = last.kind == lex::semicolon && !dims.blocked && !pre->is_extern && !p->for_init;
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
-    Str zeros = "";
-    if (suffixed && (pre->is_static || pre->top) && single_dimension(dims.text) && !has_init)
-        zeros = zero_array(dims.text, written);
-    if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
     Str value = "";
     parse::Edits item_edits = {};
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
-    if (suffixed && has_init && single_dimension(dims.text) && same_text(value, "{}"))
-        zeros = zero_array(dims.text, written);
+    Str zeros = zero_fill(pre, dims, written, has_init, value);
+    if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
     if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{') {
         // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
         // elements is written; any other `{...}` list on an array has no spelling yet.
@@ -1549,12 +1562,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (pre->is_constexpr && (pre->constexpr_end > head.type_start || !has_init)) fixable = false;
     if (automatic && !has_init) fixable = false;
     if (!fixable) {
-        char message[:] = format::push("a variable is written `", name, ": T = value`, the type after the name: `",
-                                       written, " ", name,
-                                       "` has no mechanical fix (`extern`, a `for` initializer, `[]` or `[const :]` "
-                                       "after the name, a `{...}` list, an array that C zeroes): write it by hand");
-        parse::Edits none = {};
-        warn(p, head.type_start, head.name.span.end, message, none);
+        warn_by_hand(p, head, name, written);
         return;
     }
     // A global of C is writable: `let mut` (`pub let mut` with the `export` before it); a local is `let`.
@@ -1574,13 +1582,12 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (!has_init) {
         Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
         text = as_str(format::push("let mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
-        if (countof(zeros) > 0) text = as_str(format::push("let mut ", name, ": ", written, " = ", zeros));
         to = suffixed ? dims.end : head.name.span.end;
     }
-    if (has_init && countof(zeros) > 0) {
-        // `T xs[3] = {};` is `let mut xs: [3]T = [0, 0, 0]`, the braces replaced.
+    if (countof(zeros) > 0) {
+        // `T xs[3];` and `T xs[3] = {};` are `let mut xs: [3]T = [0, 0, 0]`.
         text = as_str(format::push("let mut ", name, ": ", written, " = ", zeros));
-        to = last.span.start;
+        to = has_init ? last.span.start : dims.end;
     }
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, to, text));
