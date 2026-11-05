@@ -165,15 +165,27 @@ static state::Status loop_end(state::Emitter *e, const state::Work *w) {
 }
 
 // Binds the loop's name for this turn to `value`: a constant local in the body's scope (`_` binds nothing).
-static void bind_name(state::Emitter *e, const ast::Stmt *s, state::Ty ty, c::LLVMValueRef value) {
+static void bind_one(state::Emitter *e, Str name, state::Ty ty, c::LLVMValueRef value) {
+    if (state::same_text(name, "_")) return;
+    c::LLVMValueRef slot = state::new_alloca(e, ty, name);
+    c::LLVMBuildStore(e->builder, value, slot);
+    state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
+}
+
+// A tuple pattern is `(i, x) in enumerate(xs)`: the counter, then the element (#2456).
+static void bind_name(state::Emitter *e, const ast::Stmt *s, Plan plan, c::LLVMValueRef counter, state::Ty ty,
+                      c::LLVMValueRef value) {
     if (s->kind != .for_in) {
         return;
     }
     ast::Identifier names[:] = s->kind.for_in.names;
-    if (countof(names) != 1 || state::same_text(names[0].text, "_")) return;
-    c::LLVMValueRef slot = state::new_alloca(e, ty, names[0].text);
-    c::LLVMBuildStore(e->builder, value, slot);
-    state::add_local(e, (state::Local){.name = names[0].text, .ty = ty, .address = slot});
+    if (s->kind.for_in.is_tuple && countof(names) == 2) {
+        bind_one(e, names[0].text, plan.counter, counter);
+        bind_one(e, names[1].text, ty, value);
+        return;
+    }
+    if (countof(names) != 1) return;
+    bind_one(e, names[0].text, ty, value);
 }
 
 // The value of the loop's name on this turn, from the counter just loaded.
@@ -227,7 +239,7 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
     state::push_loop(e, (state::LoopTarget){.break_block = end, .continue_block = step, .scope_depth = e->scope_count});
     c::LLVMValueRef turn = nullptr;
     state::Ty turn_ty = turn_value(e, plan, counter, &turn);
-    bind_name(e, s, turn_ty, turn);
+    bind_name(e, s, plan, counter, turn_ty, turn);
     state::Work finish = {.then = loop_end, .span = s->span};
     finish.blocks[0] = end;
     state::push_then(e, finish);
@@ -343,8 +355,13 @@ static state::Status begin_range(state::Emitter *e, const ast::Stmt *s, const as
 export state::Status for_in(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .for_in) return state::fail("not a for in", s->span);
     const ast::Expr *iterable = s->kind.for_in.iterable;
-    if (s->kind.for_in.is_tuple) return state::not_emitted("a tuple pattern in a for", iterable->span);
     Str function = stream_function(e, iterable);
+    if (s->kind.for_in.is_tuple) {
+        if (!state::same_text(function, "enumerate") || iterable->kind != .call ||
+            countof(iterable->kind.call.args) != 1 || countof(s->kind.for_in.names) != 2)
+            return state::not_emitted("a tuple pattern in a for over anything but `enumerate`", iterable->span);
+        return begin_array(e, s, iterable->kind.call.args[0], false, iterable->span);
+    }
     if (state::same_text(function, "range")) return begin_range(e, s, iterable);
     if (state::same_text(function, "enumerate") || state::same_text(function, "zip"))
         return state::failf(iterable->span, "not emitted yet: `", function, "` in a for (it yields tuples)");

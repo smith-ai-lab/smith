@@ -98,14 +98,14 @@ export void test_front_fix_wide_integer_typedef() {
 export void test_front_fix_indexed_for_each_with_a_const_pointer() {
     expect_fixed("module m;\nvoid f(const char *const argv[:]) {\n    for (Usize i, const char *argument : argv) {\n"
                  "        g(i, argument);\n    }\n}\n",
-                 "fn f(argv: []*char):\n    for (i, argument) in argv:\n        g(i, argument)\n");
+                 "fn f(argv: []*char):\n    for (i, argument) in enumerate(argv):\n        g(i, argument)\n");
 }
 
 export void test_front_fix_store_through_a_field_index_after_an_indexed_for_each() {
     expect_fixed("module m;\nVector f(const char *const argv[:]) {\n    Vector result = {};\n"
                  "    for (Usize i, const char *argument : argv) {\n        result.items[i] = argument;\n    }\n"
                  "    result.items[countof(argv)] = nullptr;\n    return result;\n}\n",
-                 "fn f(argv: []*char) -> Vector:\n    result: Vector = {}\n    for (i, argument) in argv:\n"
+                 "fn f(argv: []*char) -> Vector:\n    result: Vector = {}\n    for (i, argument) in enumerate(argv):\n"
                  "        result.items[i] = argument\n    result.items[countof(argv)] = nullptr\n    return result\n");
 }
 
