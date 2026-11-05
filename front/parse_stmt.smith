@@ -1671,6 +1671,29 @@ static void append(Frame *frame, ast::Stmt *done) {
     frame->item_count += 1;
 }
 
+// A C `switch` with no `default` does nothing for the other values, while a `match` must cover them: the fix adds a
+// last arm `_ => ()` on its own line before the `}`, indented like the arms.
+static void default_arm(const parse::Parser *p, Frame *frame) {
+    for (Usize i = 0; i < countof(frame->cases); i++) {
+        if (frame->cases[i].is_default) return;
+    }
+    if (frame->layout || p->position == 0 || frame->switch_edit_count == 0) return;
+    Usize brace = p->tokens[p->position - 1].span.start;
+    Usize line = brace;
+    while (line > 0 && p->source[line - 1] == ' ')
+        line -= 1;
+    if (line > 0 && p->source[line - 1] != '\n') return;
+    ast::Span written = frame->switch_edits[frame->last_label].span;
+    Usize arm_line = written.start;
+    while (arm_line > 0 && p->source[arm_line - 1] != '\n')
+        arm_line -= 1;
+    Usize indent = 0;
+    while (arm_line + indent < countof(p->source) && p->source[arm_line + indent] == ' ')
+        indent += 1;
+    char text[:] = format::push(p->source[arm_line:arm_line + indent], "_ => ()\n");
+    add_switch_edit(frame, edit((ast::Span){.start = (U32)line, .end = (U32)line}, text));
+}
+
 // `}` of a block or a switch: the construct is complete.
 static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
     flush_case(p, &frame);
@@ -1679,6 +1702,7 @@ static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
     else
         parse::expect(p, lex::right_brace, "`}`");
     if (frame.kind == switch_frame) {
+        if (!frame.switch_bad && countof(frame.cases) > 0) default_arm(p, &frame);
         if (!frame.switch_bad && countof(frame.cases) > 0) {
             parse::ParseError *warning = &p->warnings[frame.switch_warning];
             warning->message = "a `switch` is a `match` in smith: write it so";
