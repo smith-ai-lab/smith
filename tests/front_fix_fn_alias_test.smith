@@ -1,0 +1,24 @@
+// A typedef of a function pointer (#2384, part of #1631): `typedef const ast::Stmt *(*Choose)(const ast::Stmt *s);`
+// goes through `smith lint --fix` to an alias `Choose := fn(*ast.Stmt) -> *ast.Stmt`, and the text it ends with
+// parses with no error. Before, the new parser read the alias as a lambda: "expected a parameter name, found `*`".
+module front_fix_fn_alias_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+export void test_front_fix_fn_alias_parses() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nimport front::ast;\nexport typedef const ast::Stmt *(*Choose)(const ast::Stmt *s);\n\n"
+                 "typedef enum {\n    ast::Decl *decl;\n    ast::Stmt *stmt;\n} Node;\n";
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", first.text);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}

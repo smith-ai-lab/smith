@@ -415,10 +415,45 @@ static void mend_passes(Str file, Fixed *total) {
     }
 }
 
+// `in` is a keyword of smith's own syntax: a C name `in` (a local, a parameter, a field) is written `in_`, in the
+// declaration and every use (#2390). The `in` of a `for x in xs` loop already in smith's own syntax stays: it is the
+// one with a `for` earlier on its line and no open parenthesis between them.
+static Bool is_for_in(lex::Tokens tokens, Usize i) {
+    Usize depth = 0;
+    for (Usize back = i; back > 0; back--) {
+        lex::Token before = tokens[back - 1];
+        if (before.kind == lex::right_paren) depth += 1;
+        if (before.kind == lex::left_paren) {
+            if (depth == 0) return false; // `for (I32 in = 0; ...)`: the name is inside the parentheses
+            depth -= 1;
+        }
+        if (before.kind == lex::kw_for) return depth == 0;
+        if (before.line_break) return false;
+    }
+    return false;
+}
+
+static Str rename_in_names(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str in_word = "in";
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), in_word)) continue;
+        if (is_for_in(tokens, i)) continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], "in_"));
+        at = tokens[i].span.end;
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_type_names(source);
+    Str renamed = rename_in_names(rename_type_names(source));
     Fixed total = {.text = renamed};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";

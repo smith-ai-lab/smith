@@ -3186,7 +3186,51 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
 // own (#1677). A generic function is not declared (its use reports itself).
 static void declare_headers(Checked *r, const ast::Module *m);
 
+// Whether every module in `list` that module `k` imports is already in `done`.
+static Bool imports_done(const Pending list[:], Usize count, const Bool done[:], Usize k) {
+    const ast::Module *m = list[k].module;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .import_from && d->kind != .import_module) continue;
+        Str prefix = prefix_of_import(d);
+        for (Usize j = 0; j < count; j++) {
+            if (j != k && !done[j] && same_text(list[j].prefix, prefix)) return false;
+        }
+    }
+    return true;
+}
+
+// Puts each module after the ones it imports, so a type that names another module's type finds it declared. The walk
+// finds a module before its imports, and an import found early may be needed by one found later. A cycle is cut at
+// the first module left.
+static void order_by_imports(Pending list[:], Usize count) {
+    Pending sorted[max_modules] = {};
+    Bool done[max_modules] = {};
+    Usize placed = 0;
+    while (placed < count) {
+        Bool progress = false;
+        for (Usize k = 0; k < count; k++) {
+            if (done[k] || !imports_done(list, count, done, k)) continue;
+            sorted[placed] = list[k];
+            placed += 1;
+            done[k] = true;
+            progress = true;
+        }
+        if (progress) continue;
+        for (Usize k = 0; k < count; k++) {
+            if (done[k]) continue;
+            sorted[placed] = list[k];
+            placed += 1;
+            done[k] = true;
+            break;
+        }
+    }
+    for (Usize k = 0; k < count; k++)
+        list[k] = sorted[k];
+}
+
 static void declare_imported(Checked *r, Pending list[:], Usize count) {
+    order_by_imports(list, count);
     for (Usize k = 0; k < count; k++) {
         const ast::Module *m = list[k].module;
         // The headers the module imports bind their names for its own declarations only (`[k.SIDE]u8` in a field),

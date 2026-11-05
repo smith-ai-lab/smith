@@ -101,12 +101,13 @@ struct Frame {
     ast::Pattern pattern; // and its pattern
     // An old header and the fix that writes it as smith's own, recorded once the body is known (old_header_fix).
     Bool old;
-    Bool has_close;  // the `)` of the header is an edit of its own (`if` and `while`)
-    Bool else_wrap;  // the `else` of an old `if` has a body with no braces
-    U32 else_end;    // and where that `else` ends
-    ast::Span cut;   // the text of the header the fix replaces
-    Str head;        // and what replaces it
-    ast::Span close; // the `)`, when `has_close`
+    Bool has_close;   // the `)` of the header is an edit of its own (`if` and `while`)
+    Bool keep_parens; // the condition is a `c ? a : b`, which becomes an `if` value: its parentheses stay
+    Bool else_wrap;   // the `else` of an old `if` has a body with no braces
+    U32 else_end;     // and where that `else` ends
+    ast::Span cut;    // the text of the header the fix replaces
+    Str head;         // and what replaces it
+    ast::Span close;  // the `)`, when `has_close`
     Str message;
     Str tail;        // a `for` written as `while`: the step, put before the `}` of the body
     Usize body_from; // and the token where the body starts (0: not a `while`)
@@ -725,6 +726,8 @@ static Bool new_header(const parse::Parser *p) {
     if (next.kind == lex::kw_constexpr) return false;
     if (next.kind != lex::left_paren) return brace_before_line_end(p, 1);
     Usize after = after_group(p, 1);
+    // `if (if c { a } else { b }) {`: the value that `c ? a : b` was written as, in the parentheses it keeps.
+    if (parse::peek_at(p, 2).kind == lex::kw_if) return brace_before_line_end(p, after);
     return continues_condition(parse::peek_at(p, after).kind) && brace_before_line_end(p, after);
 }
 
@@ -887,6 +890,7 @@ static void paren_fix(Frame *frame, Header head, U32 cut_start, U32 keyword_end,
     frame->cut = (ast::Span){.start = cut_start, .end = head.open.end};
     frame->head = cut_start == keyword_end ? " " : "";
     frame->close = head.close;
+    frame->keep_parens = head.condition != nullptr && head.condition->kind == .conditional;
     frame->message = message;
 }
 
@@ -932,6 +936,16 @@ static void old_header_fix(parse::Parser *p, Frame *frame, ast::Stmt *body) {
     }
     Bool wrap = body->kind != .block;
     Str brace = " {";
+    if (frame->keep_parens) {
+        // `if (c ? a : b) s`: the condition becomes `(if c { a } else { b })`, and the parentheses are what lets the
+        // header read it (`if if c { a } else { b } {` has no end to its condition). Only the body needs braces.
+        if (!wrap) return;
+        parse::Edits braces = edit_list(2);
+        braces[0] = edit(point(frame->close.end), brace);
+        braces[1] = edit(point(body->span.end), " }");
+        parse::warning_fix(p, frame->cut, frame->message, braces);
+        return;
+    }
     Usize count = 1 + (frame->has_close ? 1 : 0) + (wrap ? 1 : 0);
     parse::Edits edits = edit_list(count);
     Usize at = 0;

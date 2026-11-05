@@ -1545,6 +1545,22 @@ static Str zero_fill(const Prefixes *pre, Dims dims, Str type, Bool has_init, St
     return zero_array(dims.text, type);
 }
 
+// The number of elements the `{...}` list of an array declaration stands for, 0 when it has no spelling: a flat list
+// is its length, a list of lists (`T xs[2] = {{.a = 1}, {.a = 2}}`) is one `T(a = 1)` each (their edits go in
+// `edits`), and `T xs[3] = {};` of a struct element is written as a declaration that keeps `{}` for the zero fix
+// (fix_zero), which has the element's fields (`zero_later`; a variable of C is writable, so it is `mut`).
+static U32 braced_count(const parse::Parser *p, U32 from, U32 to, Str written, Str dims, parse::Edits *edits,
+                        Bool *zero_later) {
+    Str value = trimmed(source_between(p, from, to));
+    if (same_text(value, "{}") && single_dimension(dims) && !same_text(dims, "[_]")) {
+        *zero_later = true;
+        return 1;
+    }
+    U32 count = list_length(p, from, to);
+    if (count == 0) count = item_lists(p, from, to, trimmed(written), edits);
+    return count;
+}
+
 // The warning of a variable with no mechanical fix, which stays as it is.
 static void warn_by_hand(parse::Parser *p, Head head, Str name, Str written) {
     char message[:] =
@@ -1587,6 +1603,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
     Str value = "";
     parse::Edits item_edits = {};
+    Bool zero_later = false;
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
     Str zeros = zero_fill(pre, dims, written, has_init, value);
     if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
@@ -1595,11 +1612,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         // elements is written; any other `{...}` list on an array has no spelling yet.
         // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
         // checker's error, not a silent zero fill.
-        U32 count = list_length(p, equal_end, last.span.start);
-        if (count == 0) {
-            // A list of lists, `T xs[2] = {{.a = 1}, {.a = 2}}`: each is a `T(a = 1)`.
-            count = item_lists(p, equal_end, last.span.start, trimmed(written), &item_edits);
-        }
+        U32 count = braced_count(p, equal_end, last.span.start, written, dims.text, &item_edits, &zero_later);
         if (count == 0 || (!same_text(dims.text, "[_]") && !single_dimension(dims.text))) fixable = false;
         if (same_text(dims.text, "[_]")) dims.text = as_str(format::push("[", count, "]"));
     }
@@ -1610,6 +1623,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         return;
     }
     Str lead = variable_lead(pre, type_value);
+    if (zero_later && !pre->is_constexpr) lead = "mut ";
     Str untyped = untyped_of(lead);
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
