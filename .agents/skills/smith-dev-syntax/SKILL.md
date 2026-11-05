@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax
-description: "The tour of smith's new syntax (#1428): indentation blocks, `#` comments, `let`/`let mut`, `Point(x = 1, y = 2)`, `import std.math`, `x.to(i64)`, every feature with examples, one skill per area, and the map from today's C-like forms. Load before writing or reviewing anything in the new syntax: a front-end test, a ticket, an example, a skill, a fix-it."
+description: "The tour of smith's new syntax (#1428): indentation blocks, `#` comments, `x := 5`/`mut n := 0`, `Point(x = 1, y = 2)`, `import std.math`, `x.to(i64)`, every feature with examples, one skill per area, and the map from today's C-like forms. Load before writing or reviewing anything in the new syntax: a front-end test, a ticket, an example, a skill, a fix-it."
 ---
 
 # The new syntax, in one place
@@ -12,13 +12,13 @@ Write tickets, tests of the new front end and examples in this syntax, never tod
 | Area | Skill |
 |---|---|
 | a whole program, for a first look | [smith-dev-syntax-program](../smith-dev-syntax-program/SKILL.md) |
-| lines, comments, `do:`, declarations, `let`, `mut`, `undefined`, pointers, conversions | [smith-dev-syntax-values](../smith-dev-syntax-values/SKILL.md) |
+| lines, comments, `do:`, declarations, `:=`, `mut`, `undefined`, pointers, conversions | [smith-dev-syntax-values](../smith-dev-syntax-values/SKILL.md) |
 | the types: primitives, `?T`, `*void`, arrays, slices, blocks, tuples, `fn(...)`, `type`, `vec` | [smith-dev-syntax-types](../smith-dev-syntax-types/SKILL.md) |
 | functions, defaults, named and keyword arguments, lambdas, trailing lambdas | [smith-dev-syntax-functions](../smith-dev-syntax-functions/SKILL.md) |
 | method calls (UFCS) | [smith-dev-syntax-methods](../smith-dev-syntax-methods/SKILL.md) |
 | structs, enums, payload enums, building values, named tuples, options | [smith-dev-syntax-data](../smith-dev-syntax-data/SKILL.md) |
 | private fields, `init` functions, field defaults | [smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md) |
-| `if`, `if let`, `match`, `while`, `while let`, `defer`, `errdefer`, `try` | [smith-dev-syntax-control](../smith-dev-syntax-control/SKILL.md) |
+| `if`, `if x := opt:`, `match`, `while`, `while x := it.next():`, `defer`, `errdefer`, `try` | [smith-dev-syntax-control](../smith-dev-syntax-control/SKILL.md) |
 | loops, iterators, generators, `for` expressions | [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md) |
 | types as arguments, inferred parameters, concepts, type functions | [smith-dev-syntax-generics](../smith-dev-syntax-generics/SKILL.md) |
 | `const`, compile-time `if`, reflection, variadics | [smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md) |

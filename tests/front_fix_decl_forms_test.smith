@@ -75,3 +75,17 @@ export void test_front_fix_type_function_returns_an_unnamed_struct() {
         "module m;\nexport Type Pair(Type T) {\n    return struct {\n        T first;\n        T second;\n    };\n}\n",
         "pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n");
 }
+
+export void test_front_fix_typedef_of_a_pointer_is_a_pointer_type() {
+    expect_fixed("module m;\ntypedef U32 Wide;\ntypedef Node *NodeRef;\ntypedef const char *Name;\n",
+                 "Wide := u32\nNodeRef := *Node\nName := *char\n");
+}
+
+export void test_front_fix_a_function_hands_out_a_writable_pointer() {
+    expect_fixed("module m;\nNode *make(void) {\n    return g();\n}\nconst Node *peek(void) {\n    return g();\n}\n",
+                 "fn make() -> *mut Node:\n    return g()\nfn peek() -> *Node:\n    return g()\n");
+}
+
+export void test_front_fix_wide_integer_typedef() {
+    expect_fixed("module m;\ntypedef __uint128_t Wide;\n", "Wide := u128\n");
+}

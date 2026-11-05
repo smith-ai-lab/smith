@@ -263,6 +263,16 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
             if (d->kind.variable.init->kind == .member) names = types::member_names(d->kind.variable.init);
         }
     }
+    if (names.count < 2 && countof(e->instance_scope) > 0 && callee->kind == .name &&
+        countof(callee->kind.name.path.segments) == 1) {
+        Str own = state::msg(format::push(e->instance_scope, callee->kind.name.path.segments[0].text));
+        const types::Symbol *sibling = types::lookup(&e->options.checked->scopes, own);
+        if (sibling != nullptr && sibling->kind == .function_symbol && sibling->decl->kind == .function) {
+            *found = sibling->decl; // a function of the module the generic comes from
+            *symbol = own;
+            return true;
+        }
+    }
     if (names.count < 2) return false;
     const types::Scopes *scopes = &e->options.checked->scopes;
     Str prefix = "";

@@ -32,8 +32,8 @@ fn show[T](value: *T):
         if num(f.type):                         # a compile-time condition keeps one branch
             stdio.printf("%.*s = %g\n", f.name, value.[f].to(f64))
 
-let first = fields(Point)[0]                    # indexed with a compile-time number
-let n = countof(fields(Point))
+first := fields(Point)[0]                       # indexed with a compile-time number
+n := countof(fields(Point))
 ```
 
 - `fields(T)` and `parameters(F)` are compile-time lists like packs. A run-time index or one out of range is a compile error. Each entry has `.name`, `.type`, `.attr(X)` (`?X`, [smith-dev-syntax-attributes](../smith-dev-syntax-attributes/SKILL.md)) and `.doc` (its `##` comment); `value.[f]` reads the field `f` names.

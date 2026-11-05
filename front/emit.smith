@@ -1601,8 +1601,11 @@ static state::Status emit_all(state::Emitter *e) {
     }
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
-            try emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
-                              &e->options.checked->instances[i]);
+            e->instance_scope = e->options.checked->instances[i].prefix;
+            state::Status emitted = emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
+                                                  &e->options.checked->instances[i]);
+            e->instance_scope = "";
+            try emitted;
             next += 1;
         }
     }

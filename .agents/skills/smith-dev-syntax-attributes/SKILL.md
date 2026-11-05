@@ -52,4 +52,4 @@ struct User:
     cache: u64 = 0
 ```
 
-A user attribute is a struct marked `@attribute`; using it builds the struct at compile time, positional or named, like any struct. It is qualified by its module. Attributes are data, not decorators: code reads one through reflection, `f.attr(serial.rename)` giving `?serial.rename`, and wrapping a function is an explicit call: `pub let fast_compute = memo(compute)`.
+A user attribute is a struct marked `@attribute`; using it builds the struct at compile time, positional or named, like any struct. It is qualified by its module. Attributes are data, not decorators: code reads one through reflection, `f.attr(serial.rename)` giving `?serial.rename`, and wrapping a function is an explicit call: `pub fast_compute := memo(compute)`.

@@ -1043,7 +1043,8 @@ static Str c_type_name(Str w) {
     if (text::is(w, "int16_t")) return "i16";
     if (text::is(w, "int32_t")) return "i32";
     if (text::is(w, "int64_t") || text::is(w, "intmax_t")) return "i64";
-    if (text::is(w, "__int128")) return "i128";
+    if (text::is(w, "__int128") || text::is(w, "__int128_t")) return "i128";
+    if (text::is(w, "__uint128_t")) return "u128";
     if (text::is(w, "uint8_t")) return "u8";
     if (text::is(w, "uint16_t")) return "u16";
     if (text::is(w, "uint32_t")) return "u32";

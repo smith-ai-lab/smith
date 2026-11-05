@@ -1316,6 +1316,30 @@ static Usize asm_label_end(const parse::Parser *p, Usize at) {
 
 // `R f(A a) { ... }` is `fn f(a: A) -> R { ... }` (no `-> void`); the parameters are the tokens `open` to `close`. A
 // prototype, and a head with a parameter that has no mechanical fix, are a warning with no edits.
+// A function returns `T *` as `*mut T` and `const T *` as `*T` (#2329): a pointer a function hands out is writable
+// unless it says `const`. `raw` is the result as written, `result` as mended; only the leading stars are changed.
+static Str writable_result(Str raw, Str result) {
+    if (countof(result) == 0 || result[0] != '*') return result;
+    Str word = "const";
+    for (Usize i = 0; i + countof(word) <= countof(raw); i++) {
+        if (mem::equal(raw[i:i + countof(word)], word)) return result;
+    }
+    char text[:] = format::push("");
+    Usize at = 0;
+    while (at < countof(result) && result[at] == '*') {
+        Str mut_word = "mut ";
+        Bool already = at + 4 < countof(result) && mem::equal(result[at + 1:at + 5], mut_word);
+        text = format::push(text, already ? "*" : "*mut ");
+        if (already) {
+            text = format::push(text, "mut ");
+            at += 5;
+        } else {
+            at += 1;
+        }
+    }
+    return as_str(format::push(text, result[at:]));
+}
+
 static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize open, Usize close, Bool has_body) {
     U32 end = p->tokens[close].span.end;
     // `fn run() {` read with today's tokenizer (`smith lint --fix` does until the switch) is a function whose type is
@@ -1344,6 +1368,7 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
         return false;
     }
     Str result = trimmed(parse::mended(p, head.type_start, head.name.span.start));
+    result = writable_result(trimmed(source_between(p, head.type_start, head.name.span.start)), result);
     Str written = as_str(format::push("fn ", name, "(", params, ")"));
     if (countof(symbol) > 0) written = as_str(format::push("@c_name(", symbol, ") ", written));
     if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
@@ -2873,6 +2898,14 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str lead, Boo
     *type = auto_type(name.span);
     *equal = parse::peek(p);
     if (parse::accept(p, lex::colon_equal)) {
+        if (name.kind == lex::type_name && parse::at(p, lex::star)) {
+            // `Ptr := *Node` is a pointer type; as an expression `*Node` would be a dereference (#2329).
+            ast::TypeExpr *pointer = parse::type(p);
+            if (pointer == nullptr) return false;
+            *init = ast::expr({.type_value = {.type = pointer}});
+            (*init)->span = pointer->span;
+            return true;
+        }
         *init = parse::expression(p);
         return *init != nullptr;
     }
