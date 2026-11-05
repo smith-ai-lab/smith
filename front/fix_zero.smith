@@ -96,12 +96,13 @@ static Bool nameable(Str field) {
     return ok;
 }
 
-// The zero value of a type that is a number, a `Bool` or a pointer; empty for any other.
+// The zero value of a type that is a number, a `Bool`, a pointer or a slice (`[]`); empty for any other.
 static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .integer) return "0";
     if (t->kind == .floating) return "0.0";
     if (t->kind == .bool_type) return "false";
     if (t->kind == .pointer) return "nullptr";
+    if (t->kind == .slice) return "[]"; // the empty slice literal, typed by the field (owner, 2026-11-05, #2460)
     return "";
 }
 
