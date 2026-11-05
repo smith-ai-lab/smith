@@ -748,8 +748,8 @@ export struct Scopes {
     Usize count;
     Usize marks[:];
     Usize depth;
-    Str prefix;    // while the body of a generic's instance from another module is checked: that module's prefix
-    Usize floor;   // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
+    Str prefix;  // while the body of a generic's instance from another module is checked: that module's prefix
+    Usize floor; // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
 };
 
 export void push_scope(Scopes *s) {
@@ -2771,7 +2771,8 @@ static Str prefix_of_import(const ast::Decl *import) {
     return msg(format::push(joined(import->kind.import_module.path, "::"), "::"));
 }
 
-// The prefix a declaration's table name carries: `util::` for `util::apply`, empty for a name of the module being checked.
+// The prefix a declaration's table name carries: `util::` for `util::apply`, empty for a name of the module being
+// checked.
 export Str module_prefix(Str name) {
     Usize end = 0;
     for (Usize i = 0; i + 1 < countof(name); i++)

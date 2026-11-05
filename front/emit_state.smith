@@ -307,7 +307,7 @@ export struct Emitter {
     Usize lambda_frame_count;
 
     Str instance_scope; // while the body of a generic's instance from another module is emitted: that module's prefix
-    Str import_scope; // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
+    Str import_scope;   // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
