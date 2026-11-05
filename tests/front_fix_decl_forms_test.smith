@@ -53,7 +53,7 @@ export void test_front_fix_static_assert_with_joined_strings() {
 }
 
 export void test_front_fix_bit_int_type_parses() {
-    expect_fixed("module m;\ntypedef unsigned _BitInt(128) Wide;\n", "let Wide = unsigned _BitInt(128)\n");
+    expect_fixed("module m;\ntypedef unsigned _BitInt(128) Wide;\n", "let Wide = u128\n");
 }
 
 export void test_front_fix_field_and_local_named_type() {

@@ -457,8 +457,8 @@ export void test_comments_are_written_when_another_form_stays() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nint a[3];\n/* two\n   lines */\n");
-    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\ni32 a[3];\n# two\n#   lines \n");
+    fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nStr a[3];\n/* two\n   lines */\n");
+    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\nstr a[3];\n# two\n#   lines \n");
 }
 
 // A function type written with the names of its parameters (`Fn(void (Key key))`) is `fn(Key)`: the names are dropped,
@@ -542,6 +542,16 @@ export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
         fix::fix_text("t.smith", "module m;\n@c_name(\"SmithChunk\") pub typedef struct SmithChunk Chunk;\n"
                                  "typedef struct Node Node;\n");
     check_text(fixed.text, "@c_name(\"SmithChunk\") pub struct Chunk\nstruct Node\n");
+}
+
+// A forward declaration `export struct Name;` is the opaque `pub struct Name`: a type ends with the line (#2312).
+export void test_a_forward_declared_struct_loses_its_semicolon() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nexport struct Expr;\nexport struct Expr { I32 a; };\n");
+    check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    a: i32\n");
 }
 
 // A value cast to `void` as a statement is `let _ = x`, whether it was written `(void)x` or `x.to(void)`: the second

@@ -82,6 +82,20 @@ export void test_prove_assert_one_it_does_not_give_fails_with_its_line_and_condi
     has("assert: ... with its line and condition", &run, "assertion.c:16: assert(x < 50) may fail");
 }
 
+// A 128-bit integer (#2306): the prover reads LLVM's `i128`, so a contract on a `u128` is proved, and a false one
+// fails.
+export void test_prove_a_128_bit_integer_contract_is_proved_and_a_false_one_fails() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    proved(&p, "wide: a u128 contract is proved", "\"$c/wide.c\" --function=next");
+    scratch::Run run = refuted(&p, "wide: a false one fails", "\"$c/wide.c\" --function=too_sure");
+    has("wide: ... with its condition", &run, "wide.c");
+}
+
 // 2. A caller that breaks the contract fails, with the line and the values.
 export void test_prove_caller_that_breaks_the_contract_fails_with_the_line_and_the_values() {
     scratch::Project p = fresh();
