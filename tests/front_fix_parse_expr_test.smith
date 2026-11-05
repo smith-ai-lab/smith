@@ -1,0 +1,48 @@
+// Tests of the fixer on the forms front/parse_expr.smith needs (#2411, part of #1631): an exported struct's fields are
+// `pub` (C's were all visible), a `for` whose body assigns its variable stays a `while`, two integers of different
+// widths get `.to(T)` on the narrower, and `{}` where a slice is wanted is the empty slice.
+module front_fix_parse_expr_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str fixed(Str before) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    return first.text;
+}
+
+export void test_front_fix_exported_struct_fields_are_pub() {
+    Str got = fixed("module m;\nexport struct Point {\n    I32 x;\n    I32 y;\n};\n");
+    Str want = "pub struct Point:\n    pub x: i32\n    pub y: i32\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_private_struct_fields_stay_private() {
+    Str got = fixed("module m;\nstruct Point {\n    I32 x;\n};\n");
+    Str want = "struct Point:\n    x: i32\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_for_that_assigns_its_variable_is_a_while() {
+    Str got = fixed("module m;\nvoid f(Usize n) {\n    for (Usize i = 0; i < n; i++) {\n        i += 2;\n    }\n}\n");
+    Str want = "fn f(n: usize):\n    mut i: usize = 0\n    while i < n:\n        i += 2\n        i += 1\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_for_that_reads_its_variable_is_a_range() {
+    Str got = fixed("module m;\nvoid f(Usize n) {\n    for (Usize i = 0; i < n; i++) {\n        g(i);\n    }\n}\n");
+    Str want = "fn f(n: usize):\n    for i in range(0, n):\n        g(i)\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_narrower_integer_is_widened() {
+    Str got = fixed("module m;\nU64 f(U64 a, U32 b) {\n    return a - b;\n}\n");
+    Str want = "fn f(a: u64, b: u32) -> u64:\n    return a - b.to(u64)\n";
+    test::check_equal(got, want);
+}

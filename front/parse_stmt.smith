@@ -1273,6 +1273,38 @@ static Bool has_looser_operator(const parse::Parser *p, Usize from, Usize stop) 
     return false;
 }
 
+// Whether `kind` is `=`, a compound assignment, `++` or `--`.
+static Bool is_assignment_token(lex::TokenKind kind) {
+    return kind == lex::equal || kind == lex::star_equal || kind == lex::slash_equal || kind == lex::percent_equal ||
+           kind == lex::plus_equal || kind == lex::minus_equal || kind == lex::less_less_equal ||
+           kind == lex::greater_greater_equal || kind == lex::ampersand_equal || kind == lex::caret_equal ||
+           kind == lex::pipe_equal || kind == lex::plus_plus || kind == lex::minus_minus;
+}
+
+// Whether the braced body that starts at the offset `from` assigns to `name` (`i += n`, `i++`, `--i`): a `range` loop
+// variable is constant, so such a loop stays a `while`.
+static Bool body_assigns(const parse::Parser *p, Usize from, Str name) {
+    if (parse::peek_at(p, from).kind != lex::left_brace) return false;
+    Usize depth = 0;
+    Usize limit = from + countof(p->tokens);
+    for (Usize i = from; i < limit; i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_brace) depth += 1;
+        if (kind == lex::right_brace) {
+            depth -= 1;
+            if (depth == 0) return false;
+        }
+        if (!same_name(p, i, name)) continue;
+        lex::TokenKind before = parse::peek_at(p, i - 1).kind;
+        if (before == lex::dot || before == lex::arrow) continue;
+        if (is_assignment_token(parse::peek_at(p, i + 1).kind) || before == lex::plus_plus ||
+            before == lex::minus_minus)
+            return true;
+    }
+    return false;
+}
+
 // `(T i = a; i < b; i++)`, and `<=`, `++i`, `i += 1`, is `i in range(a, b)` (`b + 1` for `<=`).
 static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first_semicolon) {
     RangeText none = {};
@@ -1294,6 +1326,7 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
     Bool added = length == 3 && same_name(p, step, name) && parse::peek_at(p, step + 1).kind == lex::plus_equal &&
                  mem::equal(parse::text(p, parse::peek_at(p, step + 2)), one);
     if (!plain && !prefix && !added) return none;
+    if (body_assigns(p, close + 1, name)) return none;
     Str low = tokens_text(p, equal + 1, first_semicolon - 1);
     Str high = tokens_text(p, cond + 2, second - 1);
     if (op == lex::less_equal) {

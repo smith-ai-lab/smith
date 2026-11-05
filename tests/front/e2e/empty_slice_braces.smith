@@ -1,0 +1,15 @@
+fn total(xs: []i32) -> i32:
+    let mut sum = 0
+    for x in xs:
+        sum += x
+    sum
+
+pub fn check() -> i32:
+    let empty: []i32 = {}
+    if countof(empty) != 0 || total(empty) != 0:
+        return 1
+    let a: u64 = 10
+    let b: u32 = 3
+    if a - b.to(u64) != 7:
+        return 2
+    0
