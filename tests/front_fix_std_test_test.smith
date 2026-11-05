@@ -160,8 +160,8 @@ export void test_front_fix_std_an_old_if_after_a_function_pointer_signature_and_
 export void test_front_fix_std_nested_designated_list_is_a_named_tuple() {
     expect_fixed("module m;\nimport <sys/time.h>;\nvoid f(I64 t) {\n    struct c::itimerval cpu = {.it_value = "
                  "{.tv_sec = t}};\n    work(&cpu);\n}\n",
-                 "import c <sys/time.h>\nfn f(t: i64):\n    cpu := time.itimerval(it_value = (tv_sec = t), it_interval = time.timeval(tv_sec = 0, tv_usec = 0))\n    "
-                 "work(&cpu)\n");
+                 "import c <sys/time.h>\nfn f(t: i64):\n    cpu := time.itimerval(it_value = (tv_sec = t), "
+                 "it_interval = time.timeval(tv_sec = 0, tv_usec = 0))\n    work(&cpu)\n");
 }
 
 // An empty body of a loop is written `()`, so the text parses (#2328).
