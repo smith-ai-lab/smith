@@ -15,7 +15,7 @@
 //   header {          header:          a `}` that ends the last statement's line goes without a line of its own
 //   for (T i = a; c; s) { b }          `mut i: T = a`, then `while c:` with `s` as the last line of the body
 //   (#2225);
-//                                      the names already declared in the scope get an assignment instead of a `let`; a
+//                                      the names already declared in the scope get an assignment instead of a declaration; a
 //                                      loop with a `continue`, a comma, or a body on the header's line is left
 //   "a"\n"b"          ("a"\n"b")        adjacent literals on several lines are one parenthesized expression
 //   void f(auto x) {                   a C signature the fixer did not convert is left with its braces, all of it:
@@ -276,7 +276,7 @@ static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
 }
 
 // Whether the line of the `{` starts a statement or a declaration (`if`, `fn`, `struct`, ...), not a value: a block of
-// `let c = if a { b } else { d }` stays on its line.
+// `c := if a { b } else { d }` stays on its line.
 static Bool statement_line(lex::Tokens tokens, Usize open) {
     Usize i = open;
     while (i > 0 && !tokens[i - 1].line_break)
