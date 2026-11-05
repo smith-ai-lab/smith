@@ -3316,7 +3316,91 @@ static int build_coverage_fetch(SmithRun *run) {
 // scripts/frontend_coverage/main.smith is the tool: a project of its own under .smith/frontend-coverage/tool, built by
 // the smith that runs this build (as build_defer_make does). It writes the results to
 // .smith/frontend-coverage/results.tsv and prints the summary: files passed out of total, the failures per stage and
-// the failures grouped by message. `-Dsmith` names the smith to measure.
+// the failures grouped by message. `-Dsmith` names the smith to measure; `-Dfiles` measures only those files and the
+// modules they import, and prints the chain of imports.
+static const char *build_absolute(SmithBuild *b, const char *path);
+static int build_tool_make(SmithBuild *b, const char *folder, const char *source);
+
+// `smith build ci-times [-Dn=10] [-Devent=pull_request]` (issue #360): where CI's time goes. The last n green runs of
+// ci.yml (a pull request, a merge queue entry with -Devent=merge_group, or a push to main) are downloaded with `gh`
+// into .smith/ci-times/<run id> (kept, so a run is fetched once): every job's steps in seconds (steps.tsv) and the
+// `test-log-*` artifacts, one for each part of the test matrix. ci/times/main.smith, built here as a project of its
+// own, prints the report. A run that had no tests (its scope was documents only) has no logs and is counted.
+static int build_ci_times_fetch(SmithBuild *b, const char *id, const char *folder) {
+    const char *steps = smith_fmt(b, "%s/steps.tsv", folder);
+    if (access(steps, R_OK) == 0) return 0;
+    if (build_make_folder(b, folder) != 0) return 1;
+    const char *jq = ".jobs[] | select(.started_at != null and .completed_at != null) | .name as $n | "
+                     "(\"\\($n) / queued\\t\\((.started_at | fromdate) - (.created_at | fromdate))\"), "
+                     "(\"\\($n) / job\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\"), "
+                     "(.steps[] | select(.started_at != null and .completed_at != null) | "
+                     "\"\\($n) / \\(.name)\\t\\((.completed_at | fromdate) - (.started_at | fromdate))\")";
+    int status = build_spawn(&(BuildSpawn){
+        .argv = smith_list(b, "gh", "api", "--paginate", smith_fmt(b, "repos/{owner}/{repo}/actions/runs/%s/jobs", id),
+                           "--jq", jq, nullptr),
+        .log = steps,
+        .stdout_only = true,
+        .tail = 5});
+    // A run with no test job, or whose artifacts expired, has no logs: that is counted, not an error.
+    (void)build_spawn(&(BuildSpawn){.argv = smith_list(b, "gh", "run", "download", id, "-p", "test-log-*", "-D",
+                                                       smith_fmt(b, "%s/", folder), nullptr),
+                                    .log = smith_fmt(b, "%s/download.log", folder)});
+    return status;
+}
+
+static int build_ci_times(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *root = ".smith/ci-times";
+    const char *event = run->args[1];
+    const char *list = smith_fmt(b, "%s/runs.txt", root);
+    if (build_make_folder(b, root) != 0) return 1;
+    const char *const *query =
+        smith_list(b, "gh", "run", "list", "--workflow", "ci.yml", "--event", event, "--status", "success", "--limit",
+                   run->args[0], "--json", "databaseId", "--jq", ".[].databaseId", nullptr);
+    if (strcmp(event, "push") == 0) query = smith_cat(b, query, smith_list(b, "--branch", "main", nullptr), nullptr);
+    int status = build_spawn(&(BuildSpawn){.argv = query, .log = list, .stdout_only = true, .tail = 5});
+    const char *const *ids = build_lines(b, list);
+    for (size_t i = 0; status == 0 && ids != nullptr && ids[i] != nullptr; i++)
+        status = build_ci_times_fetch(b, ids[i], smith_fmt(b, "%s/%s", root, ids[i]));
+    if (status != 0) return status;
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", root));
+    status = build_tool_make(b, tool_folder, "ci/times/main.smith");
+    if (status != 0) return status;
+    return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
+}
+
+// `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
+// table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
+// suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
+// ci/bench/main.smith, built here as a project of its own, does the measuring.
+static int build_bench(SmithRun *run) {
+    SmithBuild *b = run->b;
+    const char *folder = ".smith/bench";
+    if (build_make_folder(b, ".smith") != 0 || build_make_folder(b, folder) != 0) return 1;
+    const char *tool_folder = build_absolute(b, smith_fmt(b, "%s/tool", folder));
+    int status = build_tool_make(b, tool_folder, "ci/bench/main.smith");
+    if (status != 0) return status;
+    const char *tool = build_defer_tool(b, tool_folder);
+    const char *const *argv = smith_list(b, tool, run->args[0], ".smith/bench.tsv", nullptr);
+    if (run->args[1][0] != '\0') argv = smith_cat(b, argv, smith_list(b, "full", nullptr), nullptr);
+    return build_exec(argv);
+}
+
+// `smith build coverage-fetch` (issue #456), run by `smith test --changed` when it finds no records and this build file
+// defines the task. CI's ci.yml uploads no coverage records (the check that did is gone, #798), so there is nothing to
+// fetch: the task finds none, quietly, and `smith test --changed` falls back to the build graph.
+static int build_coverage_fetch(SmithRun *run) {
+    (void)run;
+    return 0;
+}
+
+// `smith build frontend-coverage [-Dsmith=<path>] [-Dfiles=<path>,...]` (#1730, #2309): how much of the tree smith's
+// own front end handles. Every .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with `smith lint --fix` and compiled
+// with `smith cc --front-end=new`; the real files are never touched. scripts/frontend_coverage/main.smith is the tool:
+// a project of its own under .smith/frontend-coverage/tool, built by the smith that runs this build (as
+// build_defer_make does). It writes the results to .smith/frontend-coverage/results.tsv and prints the summary: files
+// passed out of total, the failures per stage and the failures grouped by message. `-Dsmith` names the smith to
+// measure.
 static const char *build_absolute(SmithBuild *b, const char *path) {
     char home[PATH_MAX];
     if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
@@ -3399,8 +3483,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .run = build_frontend_coverage,
         .args = smith_list(
             b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
-            smith_option_value(b, "files", "",
-                               "frontend-coverage: only these files (a,b) and what they import (#2309)"),
+            smith_option_value(b, "files", "", "frontend-coverage: only these files (a,b) and what they import (#2309)"),
             smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
