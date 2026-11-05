@@ -3349,8 +3349,8 @@ static Bool declares_function(const ast::Module *m, Str name) {
     return false;
 }
 
-// The name `import c <h>` binds with no `as`: the header's stem, or `<stem>_h` with a fix that writes it, when a function
-// of the module has the stem's name and would hide the binding (#2446).
+// The name `import c <h>` binds with no `as`: the header's stem, or `<stem>_h` with a fix that writes it, when a
+// function of the module has the stem's name and would hide the binding (#2446).
 static Str default_binding(Checked *r, const ast::Module *m, const ast::Decl *imported, Str header) {
     Str binding = header_stem(header);
     if (!declares_function(m, binding)) return binding;
