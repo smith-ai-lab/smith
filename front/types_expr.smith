@@ -424,7 +424,7 @@ static syntax::Edits mut_fix(const types::Symbol *s) {
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
-static syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
+export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits edits = {};
     if (base->kind != .name) {
         return edits;
