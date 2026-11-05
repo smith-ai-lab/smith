@@ -34,7 +34,7 @@
 //                 an anonymous enum's enumerator, a macro, a `static const` variable), 6 typedef (ordinal = the
 //                 string offset of its name).)
 //
-// Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed); 3 floating (a = bits); 4 pointer (a = pointee);
+// Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed, 2 for plain `char`); 3 floating (a = bits); 4 pointer (a = pointee);
 // 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct index); 8 function
 // (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic); 9 unsupported (a = the spelling
 // of the C type that has no smith equivalent: a union, `long double`, a bit-field); 11 string (smith's `Str`, the type
@@ -239,7 +239,8 @@ uint32_t Reader::builtin(const clang::BuiltinType *type, uint32_t flags) {
     if (type->getKind() == B::Bool) return type_node(Bool, flags, 0, 0, 0);
     if (type->isInteger()) {
         uint32_t bits = static_cast<uint32_t>(context().getTypeSize(clang::QualType(type, 0)));
-        return type_node(Integer, flags, bits, type->isSignedInteger() ? 1 : 0, 0);
+        bool plain_char = type->getKind() == B::Char_S || type->getKind() == B::Char_U;
+        return type_node(Integer, flags, bits, plain_char ? 2 : (type->isSignedInteger() ? 1 : 0), 0);
     }
     if (type->isFloatingPoint()) {
         uint32_t bits = static_cast<uint32_t>(context().getTypeSize(clang::QualType(type, 0)));

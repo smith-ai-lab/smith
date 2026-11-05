@@ -7,7 +7,7 @@
     (field inner (pointer mut (named Opaque)))
     (field compare (named Compare))
     (field callback (applied Fn (type_arg (function_type (pointer mut (named Void)) (named I32) (result (named I32))))))
-    (field name (pointer (named I8 const)))
+    (field name (pointer (named Char const)))
     (field id (named Id))
     (field weights (array (named F32) (integer 4))))
   (struct Flags from_c
@@ -21,7 +21,7 @@
     (enumerator Green (integer 5))
     (enumerator Below (unary negate (integer 3))))
   (function add from_c (param a (named I32)) (param b (named I32)) (result (named I32)))
-  (function log_line variadic from_c (param format (pointer (named I8 const))) (result (named I32)))
+  (function log_line variadic from_c (param format (pointer (named Char const))) (result (named I32)))
   (function origin from_c (result (named Point)))
   (function sort from_c (param holder (pointer mut (named Holder))) (param compare (named Compare)) (result (named Void)))
   (function precise from_c (result (unsupported_c "long double")))
