@@ -4235,7 +4235,7 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
-    Usize at = types::instance_of(c, template->decl, bound);
+    Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), bound);
     if (at >= c->instance_count) {
         poison(c, e);
         return;
@@ -4279,7 +4279,7 @@ static void auto_resolved(types::Checked *c, Frame f) {
         given[bound] = (types::Binding){.is_type = true, .type = t};
         bound += 1;
     }
-    Usize at = types::instance_of(c, template->decl, given[0:bound]);
+    Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:bound]);
     if (at >= c->instance_count) {
         poison(c, e);
         return;
@@ -4534,7 +4534,7 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
         }
         bound += 1;
     }
-    Usize at = types::instance_of(c, template->decl, given[0:bound]);
+    Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:bound]);
     if (at >= c->instance_count) {
         poison(c, e);
         return;

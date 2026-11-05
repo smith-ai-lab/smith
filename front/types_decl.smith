@@ -1068,8 +1068,17 @@ static void check_instances(types::Checked *r) {
         r->instances[i].checked = true;
         types::Instance instance = r->instances[i];
         types::push_scope(&r->scopes);
+        Str outer = r->prefix;
+        Str outer_scopes = r->scopes.prefix;
+        Usize outer_floor = r->scopes.floor;
+        r->prefix = instance.prefix; // the template's own names, as when its module was declared
+        r->scopes.prefix = instance.prefix;
+        r->scopes.floor = r->scopes.count;
         types::bind_instance(r, &instance);
         check_function(r, instance.decl, instance.signature);
+        r->prefix = outer;
+        r->scopes.prefix = outer_scopes;
+        r->scopes.floor = outer_floor;
         types::pop_scope(&r->scopes);
     }
 }
