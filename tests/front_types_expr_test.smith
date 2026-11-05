@@ -1265,6 +1265,24 @@ export void test_front_types_expr_as_casts_to_the_written_type() {
     expect(r.error_count, 0);
 }
 
+export void test_front_types_expr_a_named_tuple_is_a_record_with_those_fields() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef shape = point(&r);
+    // `(y = 2, x = 1)` where a `Point` is expected: every field named once, in any order
+    ast::ExprRef both[2] = {named("y", num(2)), named("x", num(1))};
+    test::check_condition(types_expr::check(&r, ast::tuple_literal(both), shape) == shape);
+    expect(r.error_count, 0);
+    // a field left out, or one that is not a field, stays a tuple and is refused
+    ast::ExprRef partial[1] = {named("x", num(1))};
+    test::check_condition(types_expr::check(&r, ast::tuple_literal(partial), shape) == r.table.invalid);
+    ast::ExprRef wrong[2] = {named("x", num(1)), named("z", num(2))};
+    test::check_condition(types_expr::check(&r, ast::tuple_literal(wrong), shape) == r.table.invalid);
+}
+
 export void test_front_types_expr_a_tuple_has_a_type_elements_and_equality() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

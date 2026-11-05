@@ -4071,6 +4071,25 @@ static Bool leaf(types::Checked *c, Frame f) {
     return true;
 }
 
+// Whether the named tuple `(a = 1, b = 2)` is the value of the expected record: every item is named, each name is a
+// different field of the record, and every field is given (the fixer writes a braced `{.a = 1, .b = 2}` of a field's
+// record type this way, as it cannot tell the field's type).
+static Bool names_record(types::TypeRef expected, ast::ExprRef items[:]) {
+    if (expected == nullptr || expected->kind != .record || countof(items) == 0) return false;
+    if (countof(items) != countof(expected->slots)) return false;
+    for (Usize i = 0; i < countof(items); i++) {
+        const ast::Expr *item = items[i];
+        if (!(item->kind == .named_arg)) return false;
+        Str name = item->kind.named_arg.name;
+        if (types::member(expected, name) == nullptr) return false;
+        for (Usize k = 0; k < i; k++) {
+            const ast::Expr *earlier = items[k];
+            if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, name)) return false;
+        }
+    }
+    return true;
+}
+
 // `(a, b)`: where a tuple type is expected, each element is checked against its own element type.
 static void tuple_before(Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -4078,6 +4097,15 @@ static void tuple_before(Work *w, Frame f) {
         return;
     }
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (names_record(f.expected, items)) {
+        push(w, e, f.expected, 1);
+        for (Usize i = countof(items); i > 0; i--) {
+            const ast::Expr *item = items[i - 1];
+            if (!(item->kind == .named_arg)) continue;
+            push(w, item->kind.named_arg.value, types::member(f.expected, item->kind.named_arg.name)->type, 0);
+        }
+        return;
+    }
     types::TypeRef shape = nullptr;
     if (f.expected != nullptr && f.expected->kind == .tuple && countof(f.expected->slots) == countof(items)) {
         shape = f.expected;
@@ -4100,6 +4128,17 @@ static void tuple_after(types::Checked *c, Frame f) {
         return;
     }
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (names_record(f.expected, items)) {
+        for (Usize i = 0; i < countof(items); i++) {
+            const ast::Expr *item = items[i];
+            if (item->kind == .named_arg && typ(c, item->kind.named_arg.value) == invalid(c)) {
+                poison(c, e);
+                return;
+            }
+        }
+        finish(c, e, f.expected, f.expected);
+        return;
+    }
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(items));
     Bool shaped = f.expected != nullptr && f.expected->kind == .tuple && countof(f.expected->slots) == countof(items);
     for (Usize i = 0; i < countof(items); i++) {
@@ -4881,6 +4920,10 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);
         if (builtin.shape == .format && i > 3 && (value->kind == .conditional || value->kind == .stmt_expr)) {
+            expected = builtins::format_pointer(c);
+        }
+        // `__builtin_strstr(p, "text")`: a literal given to a C string function is a C string
+        if (builtin.shape == .libc && value->kind == .string && builtin.name[10] == 's') {
             expected = builtins::format_pointer(c);
         }
         push(w, value, expected, 0);
