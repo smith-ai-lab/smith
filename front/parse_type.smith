@@ -989,7 +989,8 @@ struct Rewrite {
     char run[:];
     Usize dims;
     Str problem;
-    Bool pointee_const; // the next star points at a const type (`const T *`, or `T *const *`): `*T`, else `*mut T` in a cast
+    Bool pointee_const; // the next star points at a const type (`const T *`, or `T *const *`): `*T`, else `*mut T` in a
+                        // cast
     Bool casting;       // the type is a cast's: a star that points at a non-const type is `*mut`
 };
 

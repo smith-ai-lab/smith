@@ -349,7 +349,8 @@ static void check_fixes(Str path, Str lines) {
 
 export void test_parse_expr_old_casts_and_members_have_fixes() {
     check_fixes("tests/front/parse_expr/old_casts.txt",
-                "(I32)x\n(Point *)p\n(const Point *)p\n(const void *)p\n(void *)p\n(const Point *const *)p\n(I32)(U8)x\n-(I32)x\n(I32)-x\n(I32)x + 1\n*(Point *)p\n(t)x\np->x\np->a->b\n"
+                "(I32)x\n(Point *)p\n(const Point *)p\n(const void *)p\n(void *)p\n(const Point *const "
+                "*)p\n(I32)(U8)x\n-(I32)x\n(I32)-x\n(I32)x + 1\n*(Point *)p\n(t)x\np->x\np->a->b\n"
                 "(*p).x\n*p\n*p = 3\n**pp\n*p->x\n*-x\n*p++\n(I32)*p\n*(I32 *)p\n(I32)(U8)(U16)x");
 }
 
