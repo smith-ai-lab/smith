@@ -1,0 +1,91 @@
+// front::fix_opaque, the fix-it for a struct declared twice (#2224): `typedef struct SmithArenaChunk Chunk;` of today's
+// syntax is read as an opaque `@c_name("SmithArenaChunk") pub struct Chunk` and the definition `struct Chunk {...}`
+// comes later in the same file, so the name is declared twice. The opaque line is removed and its attributes and `pub`
+// move to the definition; the fields stay private, which is what the opaque face promised.
+//
+//   fix_opaque::edits(source, module)   one fix for each opaque struct that a later, plain definition completes
+module front::fix_opaque;
+
+import front::ast;
+import front::parse as core;
+import std::mem;
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
+// The offset of the text `struct ` in `source[from:to]`, or `to` when it is not there.
+static Usize keyword_at(Str source, Usize from, Usize to) {
+    Str keyword = "struct ";
+    for (Usize i = from; i + countof(keyword) <= to; i++)
+        if (same_text(source[i:i + countof(keyword)], keyword)) return i;
+    return to;
+}
+
+// Whether the text holds `typedef`.
+static Bool has_typedef(Str text) {
+    Str word = "typedef";
+    for (Usize i = 0; i + countof(word) <= countof(text); i++)
+        if (same_text(text[i:i + countof(word)], word)) return true;
+    return false;
+}
+
+// The definition that completes `opaque` (a later struct of the same name that carries no attribute and no `pub`), or null.
+static const ast::Decl *definition_of(const ast::Module *module, Usize after, Str name) {
+    for (Usize j = after + 1; j < countof(module->decls); j++) {
+        const ast::Decl *e = module->decls[j];
+        if (e->kind != .record || e->kind.record.opaque || e->from_c) continue;
+        if (!same_text(e->kind.record.name, name)) continue;
+        if (countof(e->attributes) > 0 || e->is_pub || e->exported) return nullptr;
+        return e;
+    }
+    return nullptr;
+}
+
+static core::ParseError fix_of(Str source, const ast::Module *module, Usize at) {
+    core::ParseError none = {};
+    const ast::Decl *d = module->decls[at];
+    if (d->kind != .record || !d->kind.record.opaque || d->from_c) return none;
+    const ast::Decl *e = definition_of(module, at, d->kind.record.name);
+    if (e == nullptr || e->span.start < d->span.end) return none;
+    Usize start = d->span.start;
+    Usize end = d->span.end;
+    if (end >= countof(source) || end > countof(source)) return none;
+    Usize keyword = keyword_at(source, start, end);
+    if (keyword == end) return none;
+    Str prefix = source[start:keyword];
+    // Today's spelling (`typedef struct Tag Name;`) is mended first; the next pass reads the result.
+    if (has_typedef(prefix)) return none;
+    Usize cut = end;
+    if (cut < countof(source) && source[cut] == '\n') cut += 1;
+    ast::Span cut_span = d->span;
+    cut_span.start = (U32)start;
+    cut_span.end = (U32)cut;
+    ast::Span put_span = e->span;
+    put_span.end = put_span.start;
+    Str nothing = "";
+    core::Edits edits = {};
+    edits = mem::realloc(edits, 2);
+    edits[0] = (core::Edit){.span = cut_span, .text = nothing};
+    edits[1] = (core::Edit){.span = put_span, .text = prefix};
+    core::ParseError found = {};
+    found.span = d->span;
+    found.message = "a struct declared twice is one declaration";
+    found.fix = edits;
+    return found;
+}
+
+// The fixes of the module's opaque structs that a definition completes, as errors that carry them.
+export core::Errors edits(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        core::ParseError found = fix_of(source, module, i);
+        if (countof(found.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}

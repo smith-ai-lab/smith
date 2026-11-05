@@ -915,6 +915,7 @@ static const char *const build_front_modules[] = {
     "fix_blocks",
     "fix_method",
     "fix_zero",
+    "fix_opaque",
     "lsp_server",
     "lsp_hover",
     "lsp_semantic",
