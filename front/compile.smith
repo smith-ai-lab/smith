@@ -1409,6 +1409,26 @@ static Str function_line(Str path, Str source, const ast::Decl *d, HeaderScope *
     return as_str(format::push(needed, head, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
 }
 
+// The header line of a `pub` global with a written type: `pub mut buf: [8]u8` is `extern uint8_t
+// mod_buf[8] __asm__("mod::buf");` (`const` for a `pub const`), the array behind `array.filled` (#2339). Empty when it
+// is not one; a type with no C spelling is a problem.
+static Str variable_line(Str path, Str source, const ast::Decl *d, HeaderScope *scope, Str prefix, Str module_c,
+                         Str module_label, Str label_start, Str *problems) {
+    if (d->kind != .variable || !d->is_pub || !d->kind.variable.is_new || d->kind.variable.type == nullptr) return "";
+    Str name = d->kind.variable.name;
+    Spelled spelled = spell_declarator(d->kind.variable.type, scope, prefix);
+    if (countof(spelled.text) == 0) {
+        Str message = as_str(format::push("`", name, "` is `", source_of(source, d->kind.variable.type->span),
+                                          "`, which has no C spelling in a header yet"));
+        *problems = as_str(format::push(*problems, header_error(path, source, d->span, message)));
+        return "";
+    }
+    Bool star = spelled.text[countof(spelled.text) - 1] == '*';
+    Str constant = d->kind.variable.is_mut ? "" : "const ";
+    return as_str(format::push(spelled.defs, "extern ", constant, spelled.text, star ? "" : " ", module_c, "_", name,
+                               spelled.suffix, " __asm__(\"", label_start, module_label, "::", name, "\");\n"));
+}
+
 // `text` between `#if cond` and `#endif` when the declaration or field carries `@when(cond)` (#1801).
 static Str guarded(ast::Attribute list[:], Str text, Bool own_lines) {
     const ast::Attribute *when_here = when::find(list);
@@ -1537,6 +1557,13 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     Str body = "";
     Str label_start = label_prefix(triple);
     Usize count = 0;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        Str line =
+            variable_line(path, source, m->decls[i], &scope, prefix, module_c, module_label, label_start, problems);
+        if (countof(line) == 0) continue;
+        body = as_str(format::push(body, count == 0 ? "" : "\n", guarded(m->decls[i]->attributes, line, false)));
+        count += 1;
+    }
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
         if (d->kind != .function || !d->is_pub || d->kind.function.body == nullptr) continue;

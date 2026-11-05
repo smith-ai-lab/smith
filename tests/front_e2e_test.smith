@@ -105,7 +105,9 @@ static compile::Report compile_module(Str folder, Str name, Str source) {
     c::mkdir(src.data, 0o700);
     Str path = as_str(format::push(src, "/", name, ".smith"));
     write_text(path, source);
-    roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
+    const char *repo = c::getenv("SMITH_REPO"); // the standard library a case imports (`import std.array`)
+    Str library = repo != nullptr ? as_str(format::push(repo, "/lib")) : as_str(format::push(folder, "/lib"));
+    roots::Roots folders = {.source = src, .library = library};
     return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
 }
 
@@ -497,5 +499,25 @@ export void test_front_e2e_a_local_header_next_to_the_source_is_found() {
     compile::Report report = compile_module(folder, "local", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// `array.filled` at file scope is data in the object, not code (#2339): a module of globals only has no function, the
+// zero arrays are in .bss and the others in .data.
+export void test_front_e2e_a_filled_global_is_data_and_runs_no_code() {
+    Str folder = folder_for("filled_data");
+    Str source =
+        "import std.array\n\nconst named: usize = 1024\n\npub mut zeros: [named]u8 = array.filled(u8, named, 0)\n"
+        "pub mut sevens: [256]u32 = array.filled(u32, 256, 7)\n";
+    compile::Report report = compile_module(folder, "filled_data", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str object = as_str(format::push(folder, "/filled_data.o"));
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q -i ' t '"))), 1);
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q ' b .*zeros'"))), 0);
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q ' [dD] .*sevens'"))), 0);
+        test::check_equal(sh_status(as_str(format::push("nm ", object, " | grep -q 'init'"))), 1);
+    }
     remove_all(folder);
 }

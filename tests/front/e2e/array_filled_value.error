@@ -1,0 +1,1 @@
+<dir>/src/array_filled_value.smith:4:31: error: expected U8, found F64: a float converts to an integer only by a cast, which drops the fraction; write a conversion: x.to(U8)
