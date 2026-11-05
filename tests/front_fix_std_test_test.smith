@@ -69,7 +69,7 @@ export void test_front_fix_std_variants_of_an_enum_with_a_representation() {
     defer mem::set_allocator(outside);
     Str got = fixed_with_variants("module m;\ntypedef enum : U8 {\n    End_Passed,\n    End_Check,\n} End;\nEnd f(I32 "
                                   "j) {\n    return j == 2 ? End_Check : End_Passed;\n}\n");
-    Str want = "enum End : u8:\n    end_passed\n    end_check\nfn f(j: i32) -> End:\n    return if j == 2: .end_check "
+    Str want = "enum End(u8):\n    end_passed\n    end_check\nfn f(j: i32) -> End:\n    return if j == 2: .end_check "
                "else: .end_passed\n";
     test::check_equal(got, want);
 }
