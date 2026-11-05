@@ -209,6 +209,7 @@ struct Reader {
     // The type, or UINT32_MAX with `failure` set. `behind` is true under a pointer, where a struct that could not be
     // imported stays usable as an opaque one.
     uint32_t convert(clang::QualType type, bool behind);
+    clang::QualType without_volatile_pointee(clang::QualType type);
     uint32_t convert_inner(clang::QualType type, bool behind);
     uint32_t builtin(const clang::BuiltinType *type, uint32_t flags);
     uint32_t function_type(const clang::FunctionProtoType *proto, uint32_t flags);
@@ -256,6 +257,7 @@ uint32_t Reader::function_type(const clang::FunctionProtoType *proto, uint32_t f
     uint32_t first = static_cast<uint32_t>(parameters.size());
     std::vector<uint32_t> kinds;
     for (clang::QualType p : proto->param_types()) {
+        p = without_volatile_pointee(p);
         uint32_t t = convert(p, false);
         if (t == bad) return bad;
         kinds.push_back(t);
@@ -264,6 +266,17 @@ uint32_t Reader::function_type(const clang::FunctionProtoType *proto, uint32_t f
         parameters.push_back({0, t});
     return type_node(Function, flags | (proto->isVariadic() ? 4U : 0U), result, first,
                      static_cast<uint32_t>(kinds.size()));
+}
+
+// A parameter `const volatile void *` (the sanitizer's `__asan_poison_memory_region`) takes any pointer, so a call
+// loses nothing when the pointee is read as not volatile. Only the pointee of a parameter is relaxed: a volatile
+// variable, field or result stays not imported.
+clang::QualType Reader::without_volatile_pointee(clang::QualType type) {
+    const auto *pointer = type->getAs<clang::PointerType>();
+    if (pointer == nullptr || !pointer->getPointeeType().isVolatileQualified()) return type;
+    clang::QualType pointee = pointer->getPointeeType();
+    pointee.removeLocalVolatile();
+    return context().getQualifiedType(context().getPointerType(pointee), type.getQualifiers());
 }
 
 uint32_t Reader::convert(clang::QualType type, bool behind) {
@@ -385,7 +398,8 @@ void Reader::function(const clang::FunctionDecl *decl) {
     uint32_t result = convert(proto->getReturnType(), false);
     std::vector<std::array<uint32_t, 2>> params;
     for (unsigned i = 0; i < decl->getNumParams() && i < proto->getNumParams(); i++)
-        params.push_back({text(decl->getParamDecl(i)->getName().str()), convert(proto->getParamType(i), false)});
+        params.push_back({text(decl->getParamDecl(i)->getName().str()),
+                          convert(without_volatile_pointee(proto->getParamType(i)), false)});
     if (!failure.empty()) skip(0, name, failure);
     uint32_t first = static_cast<uint32_t>(parameters.size());
     for (auto &p : params)
