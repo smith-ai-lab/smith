@@ -16,6 +16,7 @@
 //   smallest         (number a, number b)                    its type    llvm.minnum, llvm.smin, llvm.umin
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
+//   format           (*char out, n, *char format, rest...)   I32         a variadic call of snprintf
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
 //   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
 //   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
@@ -29,6 +30,7 @@ module front::types_builtin;
 
 import front::ast;
 import front::types;
+import front::parse as syntax;
 import std::mem;
 
 export typedef enum {
@@ -43,6 +45,7 @@ export typedef enum {
     predicate;
     constant;
     libc;
+    format;
     count_zeros;
     filled;
     type_query;
@@ -96,6 +99,8 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .libc, "ldexp di d");
     } else if (same(name, "__builtin_nextafterf")) {
         *found = made(name, .libc, "nextafterf ff f");
+    } else if (same(name, "__builtin_snprintf")) {
+        *found = made(name, .format, "snprintf");
     } else if (same(name, "__builtin_clzll")) {
         *found = made(name, .count_zeros, "ctlz");
     } else {
@@ -352,6 +357,19 @@ static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
     return t == want;
 }
 
+// A fixed array handed where a bare pointer to its element is wanted (C's decay): the fix writes the address of its
+// first element, `xs` to `&xs[0]`. Empty unless the array is a place (a name, a member, an element).
+export syntax::Edits element_address_fix(const ast::Expr *e) {
+    syntax::Edits edits = {};
+    if (e->kind != .name && e->kind != .member && e->kind != .index) return edits;
+    Str open = "&";
+    Str close = "[0]";
+    edits = mem::realloc(edits, 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start}, .text = open};
+    edits[1] = (syntax::Edit){.span = {.start = e->span.end, .end = e->span.end}, .text = close};
+    return edits;
+}
+
 static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
     Str params = libc_params(entry);
     Str wanted = "arguments of the types of the C function";
@@ -361,11 +379,48 @@ static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry en
         types::TypeRef t = value_type(c, args[i]);
         if (t == c->table.invalid) return c->table.invalid;
         if (i == 0) first = t;
+        if (params[i] == 'p' && t->kind == .array) {
+            types::fail_fix(c, args[i]->span,
+                            "a fixed array never converts to a bare pointer; write the address of an element: &xs[0]",
+                            element_address_fix(args[i]));
+            return c->table.invalid;
+        }
         if (!letter_fits((U8)params[i], t, libc_type(c, (U8)params[i], first))) return wrong(c, e->span, entry, wanted);
     }
     U8 result = libc_result(entry);
     if (result == 'p' && first->kind != .pointer) return c->table.invalid;
     return libc_type(c, result, first);
+}
+
+// The type a format argument of `__builtin_snprintf` is expected to have, so that a literal is a C string: `const Char
+// *`.
+export types::TypeRef format_pointer(types::Checked *c) {
+    return types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true);
+}
+
+// `__builtin_snprintf(out, n, format, rest...)`: a pointer, a size, a format and any number of integers and pointers;
+// the result is an I32.
+static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "a pointer, a size, a format and integers or pointers";
+    if (countof(args) < 3) return wrong(c, e->span, entry, wanted);
+    for (Usize i = 0; i < countof(args); i++) {
+        types::TypeRef t = value_type(c, args[i]);
+        if (t == c->table.invalid) return c->table.invalid;
+        if (is_open(t)) continue;
+        Bool pointer = t->kind == .pointer;
+        Bool integer = t->kind == .integer;
+        if (t->kind == .array && (i == 0 || i == 2)) {
+            types::fail_fix(c, args[i]->span,
+                            "a fixed array never converts to a bare pointer; write the address of an element: &xs[0]",
+                            element_address_fix(args[i]));
+            return c->table.invalid;
+        }
+        if (i == 1 ? !integer : (i == 0 || i == 2) ? !pointer : !(pointer || integer)) {
+            types::failf(c, args[i]->span, "`", entry.name, "` takes ", wanted, ", found ", types::show(t));
+            return c->table.invalid;
+        }
+    }
+    return named(c, "I32");
 }
 
 // The element type `array.filled` is called with (its first argument), for the checker to expect of the value; null
@@ -433,6 +488,8 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_constant(c, e, entry, args);
     case .libc:
         return check_libc(c, e, entry, args);
+    case .format:
+        return check_format(c, e, entry, args);
     case .filled:
         return check_filled(c, e, entry, args);
     case .type_query:

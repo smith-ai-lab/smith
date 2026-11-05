@@ -1508,6 +1508,41 @@ static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::Binary
     return arith_type(c, span, op, l, r);
 }
 
+// The edits that write `x.to(T)` for the operand `x` (`(x + 1).to(T)` when it is more than a name).
+static syntax::Edits to_fix(const ast::Expr *x, types::TypeRef to) {
+    Bool plain = x->kind == .name;
+    syntax::Edits edits = {};
+    edits = mem::realloc(edits, 2);
+    Str open = plain ? "" : "(";
+    Str close = plain ? ".to(" : ").to(";
+    edits[0] = (syntax::Edit){.span = {.start = x->span.start, .end = x->span.start}, .text = open};
+    edits[1] = (syntax::Edit){.span = {.start = x->span.end, .end = x->span.end},
+                              .text = msg(format::push(close, types::show(to), ")"))};
+    return edits;
+}
+
+// Two integers of the same signedness and different widths in `+`, `-`, a comparison or a bit operator: the
+// narrower one is widened with `.to(T)` by a fix, as C widens it (a file written in C's way reads in smith's). True
+// when the error was recorded.
+static Bool widen_operand(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                          const ast::Expr *right) {
+    types::TypeRef l = typ(c, left);
+    types::TypeRef r = typ(c, right);
+    if (is_shift(op) || is_logical(op) || !is_integer(l) || !is_integer(r) || l->is_signed != r->is_signed ||
+        l->bits == r->bits || literal_like(left) || literal_like(right)) {
+        return false;
+    }
+    Bool left_narrow = l->bits < r->bits;
+    const ast::Expr *narrow = left_narrow ? left : right;
+    types::TypeRef wide = left_narrow ? r : l;
+    types::fail_fix(c, e->span,
+                    msg(format::push("the operands of `", binary_text(op), "` have different types, `", types::show(l),
+                                     "` and `", types::show(r), "`; make both `", types::show(wide),
+                                     "` with a conversion, for example `y.to(", types::show(wide), ")`")),
+                    to_fix(narrow, wide));
+    return true;
+}
+
 // Whether a literal of type `from` can take the type `to` of its neighbour.
 static Bool adaptable(types::TypeRef from, types::TypeRef to) {
     if (from == to) {
@@ -1616,6 +1651,10 @@ static void binary_after(types::Checked *c, Frame f) {
         expected = f.expected;
     }
     if (!is_shift(op) && !is_logical(op) && !adapt_literals(c, left, right, expected)) {
+        poison(c, e);
+        return;
+    }
+    if (widen_operand(c, e, op, left, right)) {
         poison(c, e);
         return;
     }
@@ -3025,6 +3064,10 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     }
     if (t == invalid(c)) {
         poison(c, e);
+        return;
+    }
+    if (t->kind == .slice && countof(e->kind.compound.items) == 0) {
+        finish(c, e, t, f.expected);
         return;
     }
     if (!listable(t)) {
@@ -4877,6 +4920,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             if (builtins::is_type_argument(builtin, i - 1)) continue;
             types::TypeRef expected = nullptr; // `array.filled(u8, 4, 0)`: the value takes the element type
             if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
+            if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
             push(w, argument_value(args[i - 1]), expected, 0);
         }
         return;

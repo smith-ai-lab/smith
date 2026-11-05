@@ -836,10 +836,21 @@ static ast::Pattern read_arm_pattern(parse::Parser *p) {
 
 // The result of a `match` arm: an expression, a `return`, `break` or `continue`, or the indented block on the next
 // lines, each as the value of a statement.
+// Whether the `{` at the position opens a block of statements, not a struct literal (#2397): a declaration, a jump, an
+// `if`, `while` or `for` follows it. A literal starts with `.name =`, `}` or a value.
+static Bool block_arm(const parse::Parser *p) {
+    if (parse::peek(p).kind != lex::left_brace) return false;
+    lex::TokenKind first = parse::peek_at(p, 1).kind;
+    if (first == lex::kw_return || first == lex::kw_if || first == lex::kw_while || first == lex::kw_for) return true;
+    if (first != lex::name) return false;
+    lex::TokenKind second = parse::peek_at(p, 2).kind;
+    return second == lex::colon || second == lex::colon_equal;
+}
+
 static ast::Expr *arm_result(parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
     Bool jump = kind == lex::kw_return || kind == lex::kw_break || kind == lex::kw_continue;
-    if (!jump && !(p->layout && kind == lex::newline)) return expression(p);
+    if (!jump && !block_arm(p) && !(p->layout && kind == lex::newline)) return expression(p);
     U32 start = parse::peek(p).span.start;
     ast::Stmt *stmt = parse::statement(p);
     if (stmt == nullptr) return nullptr;
@@ -1273,6 +1284,38 @@ static Bool has_looser_operator(const parse::Parser *p, Usize from, Usize stop) 
     return false;
 }
 
+// Whether `kind` is `=`, a compound assignment, `++` or `--`.
+static Bool is_assignment_token(lex::TokenKind kind) {
+    return kind == lex::equal || kind == lex::star_equal || kind == lex::slash_equal || kind == lex::percent_equal ||
+           kind == lex::plus_equal || kind == lex::minus_equal || kind == lex::less_less_equal ||
+           kind == lex::greater_greater_equal || kind == lex::ampersand_equal || kind == lex::caret_equal ||
+           kind == lex::pipe_equal || kind == lex::plus_plus || kind == lex::minus_minus;
+}
+
+// Whether the braced body that starts at the offset `from` assigns to `name` (`i += n`, `i++`, `--i`): a `range` loop
+// variable is constant, so such a loop stays a `while`.
+static Bool body_assigns(const parse::Parser *p, Usize from, Str name) {
+    if (parse::peek_at(p, from).kind != lex::left_brace) return false;
+    Usize depth = 0;
+    Usize limit = from + countof(p->tokens);
+    for (Usize i = from; i < limit; i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file) return false;
+        if (kind == lex::left_brace) depth += 1;
+        if (kind == lex::right_brace) {
+            depth -= 1;
+            if (depth == 0) return false;
+        }
+        if (!same_name(p, i, name)) continue;
+        lex::TokenKind before = parse::peek_at(p, i - 1).kind;
+        if (before == lex::dot || before == lex::arrow) continue;
+        if (is_assignment_token(parse::peek_at(p, i + 1).kind) || before == lex::plus_plus ||
+            before == lex::minus_minus)
+            return true;
+    }
+    return false;
+}
+
 // `(T i = a; i < b; i++)`, and `<=`, `++i`, `i += 1`, is `i in range(a, b)` (`b + 1` for `<=`).
 static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first_semicolon) {
     RangeText none = {};
@@ -1294,6 +1337,7 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
     Bool added = length == 3 && same_name(p, step, name) && parse::peek_at(p, step + 1).kind == lex::plus_equal &&
                  mem::equal(parse::text(p, parse::peek_at(p, step + 2)), one);
     if (!plain && !prefix && !added) return none;
+    if (body_assigns(p, close + 1, name)) return none;
     Str low = tokens_text(p, equal + 1, first_semicolon - 1);
     Str high = tokens_text(p, cond + 2, second - 1);
     if (op == lex::less_equal) {

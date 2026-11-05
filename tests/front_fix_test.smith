@@ -549,7 +549,7 @@ export void test_a_forward_declared_struct_loses_its_semicolon() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nexport struct Expr;\nexport struct Expr { I32 a; };\n");
-    check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    a: i32\n");
+    check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    pub a: i32\n");
 }
 
 // A value cast to `void` as a statement is `_ := x`, whether it was written `(void)x` or `x.to(void)`: the second
