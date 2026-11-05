@@ -319,7 +319,9 @@ static void sort_names() {
 static void count_name(Usize i, Usize file) {
     Usize kind = kind_of(text_of(entries[i].message[0:message_size]));
     char name[message_size];
-    if (kind == countof(kind_prefixes) || !first_name(name[0:message_size], text_of(entries[i].message[0:message_size]))) return;
+    if (kind == countof(kind_prefixes) ||
+        !first_name(name[0:message_size], text_of(entries[i].message[0:message_size])))
+        return;
     struct Name *row = name_of(kind, text_of(name[0:message_size]));
     row->count += 1;
     if (starts_file(i)) row->stopped += 1;
