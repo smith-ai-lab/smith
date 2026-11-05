@@ -180,9 +180,9 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
                                   position_arg(e, span)};
     close_failure(e, next, "smith_contract_fail_divide", by_zero, 4);
     if (ty.is_signed) {
-        U64 least = 1ULL << (ty.bits - 1);
-        c::LLVMValueRef is_least =
-            c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, a.llvm, c::LLVMConstInt(ty.llvm, least, 0), "");
+        c::LLVMValueRef least =
+            c::LLVMBuildShl(e->builder, c::LLVMConstInt(ty.llvm, 1, 0), c::LLVMConstInt(ty.llvm, ty.bits - 1, 0), "");
+        c::LLVMValueRef is_least = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, a.llvm, least, "");
         c::LLVMValueRef is_minus_one =
             c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, c::LLVMConstAllOnes(ty.llvm), "");
         c::LLVMValueRef both = c::LLVMBuildAnd(e->builder, is_least, is_minus_one, "");
@@ -290,8 +290,9 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
 
 // Does `value` fit the integer type?
 static Bool fits(state::Ty ty, U64 value) {
-    if (ty.bits == 64 && !ty.is_signed) return true;
+    if (ty.bits >= 64 && !ty.is_signed) return true;
     U32 usable = ty.bits;
+    if (usable > 64) usable = 64; // a literal is a 64-bit value: a signed 128-bit type holds all of them
     if (ty.is_signed) usable -= 1;
     return value < (1ULL << usable);
 }
@@ -436,7 +437,7 @@ export state::Status unary_op(state::Emitter *e, const ast::Expr *x, state::Hint
         hint.ty.kind == .integer && countof(operand->kind.integer.suffix) == 0) {
         // `-128` for an I8: the literal alone does not fit, its negation does.
         U64 value = operand->kind.integer.value;
-        if (value == (1ULL << (hint.ty.bits - 1))) {
+        if (hint.ty.bits <= 64 && value == (1ULL << (hint.ty.bits - 1))) {
             c::LLVMValueRef least = c::LLVMConstInt(hint.ty.llvm, value, 0);
             state::push_value(e, (state::Value){.llvm = least, .ty = hint.ty});
             return state::success();

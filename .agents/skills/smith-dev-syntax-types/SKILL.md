@@ -9,7 +9,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 
 | Type | Written |
 |---|---|
-| primitives | `i8 i16 i32 i64 u8 u16 u32 u64 isize usize f16 bf16 f32 f64 bool char str void` |
+| primitives | `i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 isize usize f16 bf16 f32 f64 bool char str void` (`i128` and `u128` lower to LLVM `i128`; C's `__int128` and `_BitInt(128)` map to them, other `_BitInt(N)` widths have no spelling) |
 | pointer | `*T` read-only, `*mut T` writable; never null |
 | nullable pointer | `?*T`: `.none` is C's null, and `if let` unwraps it |
 | void pointer | `*void`, `*mut void`, `?*mut void`: for C interop only |

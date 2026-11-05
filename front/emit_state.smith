@@ -527,6 +527,9 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     } else if (same_text(name, "I64") || same_text(name, "i64")) {
         bits = 64;
         is_signed = true;
+    } else if (same_text(name, "I128") || same_text(name, "i128")) {
+        bits = 128;
+        is_signed = true;
     } else if (same_text(name, "Isize") || same_text(name, "isize")) {
         bits = pointer_bits(e);
         is_signed = true;
@@ -538,6 +541,8 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
         bits = 32;
     } else if (same_text(name, "U64") || same_text(name, "u64")) {
         bits = 64;
+    } else if (same_text(name, "U128") || same_text(name, "u128")) {
+        bits = 128;
     } else if (same_text(name, "Usize") || same_text(name, "usize")) {
         bits = pointer_bits(e);
     } else if (same_text(name, "Bool") || same_text(name, "bool")) {

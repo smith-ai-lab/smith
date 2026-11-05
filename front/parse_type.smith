@@ -54,6 +54,7 @@ export Bool is_keyword_type(lex::TokenKind kind) {
     case lex::kw_long:
     case lex::kw_signed:
     case lex::kw_unsigned:
+    case lex::kw_bit_int:
     case lex::kw_float:
     case lex::kw_double:
     case lex::kw_bool:
@@ -61,6 +62,31 @@ export Bool is_keyword_type(lex::TokenKind kind) {
         return true;
     default:
         return false;
+    }
+}
+
+// The width of a `_BitInt`, in parentheses.
+static void bit_width(parse::Parser *p) {
+    parse::expect(p, lex::left_paren, "`(` and a width after `_BitInt`");
+    if (parse::at(p, lex::integer)) parse::advance(p);
+    parse::expect(p, lex::right_paren, "`)` to end the width of `_BitInt`");
+}
+
+// The rest of a run of C's keyword types, after its first token: `unsigned long`, `unsigned _BitInt(128)` and `unsigned
+// __int128` (a name clang knows, not a keyword).
+static void keyword_run(parse::Parser *p) {
+    for (;;) {
+        lex::Token next = parse::peek(p);
+        if (next.kind == lex::kw_bit_int) {
+            parse::advance(p);
+            bit_width(p);
+        } else if (is_keyword_type(next.kind) && next.kind != lex::kw_bit_int) {
+            parse::advance(p);
+        } else if (next.kind == lex::name && text::is(parse::text(p, next), "__int128")) {
+            parse::advance(p);
+        } else {
+            return;
+        }
     }
 }
 
@@ -462,8 +488,7 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
         break;
     }
     if (is_keyword_type(token.kind)) {
-        while (is_keyword_type(parse::peek(p).kind))
-            parse::advance(p);
+        keyword_run(p);
         return spelled(p, token.span.start, q);
     }
     if (is_segment(token.kind)) {
@@ -766,7 +791,7 @@ static ast::TypeExpr *function_argument(parse::Parser *p) {
 // Whether a name is one of the lowercase built-in types of the new syntax (`i32`, `usize`, `str`...): a fixed list, so
 // no symbol table. Where a type or a value may stand, as an argument of a type function, such a name is a type.
 static Bool is_builtin_name(Str word) {
-    return text::is(word, "i8") || text::is(word, "i16") || text::is(word, "i32") || text::is(word, "i64") ||
+    return text::is(word, "i8") || text::is(word, "i16") || text::is(word, "i32") || text::is(word, "i64") || text::is(word, "i128") || text::is(word, "u128") ||
            text::is(word, "isize") || text::is(word, "u8") || text::is(word, "u16") || text::is(word, "u32") ||
            text::is(word, "u64") || text::is(word, "usize") || text::is(word, "f32") || text::is(word, "f64") ||
            text::is(word, "str");
@@ -994,7 +1019,7 @@ static Bool same(Str a, Str b) {
 static Bool old_builtin(Str w) {
     return text::is(w, "I8") || text::is(w, "I16") || text::is(w, "I32") || text::is(w, "I64") ||
            text::is(w, "Isize") || text::is(w, "U8") || text::is(w, "U16") || text::is(w, "U32") ||
-           text::is(w, "U64") || text::is(w, "Usize") || text::is(w, "F32") || text::is(w, "F64") ||
+           text::is(w, "U64") || text::is(w, "U128") || text::is(w, "I128") || text::is(w, "Usize") || text::is(w, "F32") || text::is(w, "F64") ||
            text::is(w, "Bool") || text::is(w, "Char") || text::is(w, "Str") || text::is(w, "Void") ||
            text::is(w, "Type");
 }
@@ -1007,6 +1032,7 @@ static Str c_type_name(Str w) {
     if (text::is(w, "int16_t")) return "i16";
     if (text::is(w, "int32_t")) return "i32";
     if (text::is(w, "int64_t") || text::is(w, "intmax_t")) return "i64";
+    if (text::is(w, "__int128")) return "i128";
     if (text::is(w, "uint8_t")) return "u8";
     if (text::is(w, "uint16_t")) return "u16";
     if (text::is(w, "uint32_t")) return "u32";
@@ -1024,6 +1050,8 @@ static Str keyword_type(Str w) {
         return "i64";
     if (text::is(w, "unsigned long") || text::is(w, "unsigned long int") || text::is(w, "unsigned long long"))
         return "u64";
+    if (text::is(w, "unsigned __int128") || text::is(w, "unsigned _BitInt(128)")) return "u128";
+    if (text::is(w, "signed __int128") || text::is(w, "_BitInt(128)") || text::is(w, "signed _BitInt(128)")) return "i128";
     if (text::is(w, "signed char")) return "i8";
     if (text::is(w, "unsigned char")) return "u8";
     if (text::is(w, "float")) return "f32";
@@ -1041,7 +1069,10 @@ static void note_qualifier(lex::TokenKind kind, Rewrite *r) {
 static Str keyword_base(const parse::Parser *p, const OldType *t, Rewrite *r) {
     char words[:] = {};
     for (Usize i = t->base; i < t->after; i += 1) {
-        words = format::push(words, i > t->base ? " " : "", parse::text(p, p->tokens[i]));
+        lex::TokenKind here = p->tokens[i].kind;
+        Bool tight = i == t->base || here == lex::left_paren || here == lex::right_paren || here == lex::integer ||
+                     p->tokens[i - 1].kind == lex::left_paren;
+        words = format::push(words, tight ? "" : " ", parse::text(p, p->tokens[i]));
     }
     Str sized = keyword_type(words);
     if (countof(sized) > 0) return sized;

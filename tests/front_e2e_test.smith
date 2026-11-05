@@ -331,7 +331,8 @@ static Str c_header() {
            "typedef struct point point_t;\n"
            "#define SCALE 3\n"
            "static const int answer = 42;\n"
-           "int sum(point_t *p);\n";
+           "int sum(point_t *p);\n"
+           "unsigned __int128 wide_add(unsigned __int128 a, unsigned __int128 b);\n";
 }
 
 // `body` is the body of `check`, in a module that imports the header above and <stdio.h> and <stdlib.h>. Its exit
@@ -351,11 +352,18 @@ static I32 run_with_header(Str name, Str body) {
                                          stand_ins("__builtin_trap();"),
                                          "struct point { int x; int y; };\n"
                                          "int sum(struct point *p) { return p->x + p->y; }\n"
+                                         "unsigned __int128 wide_add(unsigned __int128 a, unsigned __int128 b) { return a + b; }\n"
                                          "int main(void) { return check(); }\n"));
         status = link_and_run(folder, name, main_c);
     }
     remove_all(folder);
     return status;
+}
+
+export void test_front_e2e_c_u128_to_and_from_a_c_function() {
+    Str body = "    let low: u64 = 0xffffffffffffffff\n    let r: u128 = c::wide_add(low.to(u128), 2)\n"
+               "    if r.wrap(u64) != 1:\n        return 1\n    if (r >> 64).wrap(u64) != 1:\n        return 2\n    0\n";
+    test::check_equal(run_with_header("c_u128", body), 0);
 }
 
 export void test_front_e2e_c_function_and_constant_macro() {

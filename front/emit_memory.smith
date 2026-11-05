@@ -1415,7 +1415,8 @@ export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
 static state::Status integer_constant(state::Ty ty, U64 value, Bool negative, ast::Span span, c::LLVMValueRef *out) {
     U32 usable = ty.bits;
     if (ty.is_signed) usable -= 1;
-    Bool fits = ty.bits == 64 && !ty.is_signed;
+    Bool fits = ty.bits >= 64 && !ty.is_signed;
+    if (usable >= 64 && ty.bits > 64) fits = true; // a literal is a 64-bit value; a signed 128-bit type holds all of them
     if (!fits) fits = value < (1ULL << usable) || (negative && ty.is_signed && value == (1ULL << usable));
     if (!fits) return state::failf(span, "integer literal ", value, " does not fit ", ty.name);
     *out = c::LLVMConstInt(ty.llvm, value, 0);

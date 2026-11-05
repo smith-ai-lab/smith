@@ -1,0 +1,117 @@
+// Tests of `i128` and `u128` (#2306, part of #2224): primitives of the new syntax like `i64` and `u64`. The checker
+// accepts them with the conversions and arithmetic of the other integers, they satisfy the integer concept, and the
+// fixer writes them for C's `_BitInt(128)` and `__int128`.
+module front_i128_test;
+
+import front::ast;
+import front::fix;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, (Usize)0);
+}
+
+static parse::Parser parser_of(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    lex::Tokens tokens = {};
+    switch (lexed) {
+    case .ok:
+        tokens = lexed.ok;
+        break;
+    case .error:
+        Str expected = "no error";
+        test::check_equal(lexed.error.message, expected);
+    }
+    parse::Parser p = parse::make(tokens, source);
+    p.hooks.type = parse_type::type;
+    return p;
+}
+
+// The old type written in `source`, after the fixes are applied.
+static Str fixed(Str source) {
+    Str current = source;
+    for (Usize pass = 0; pass < 8; pass += 1) {
+        parse::Parser p = parser_of(current);
+        _ = parse::type(&p);
+        fix::Fixed result = fix::apply_fixes(current, p.errors, p.warnings);
+        if (result.applied == 0) break;
+        current = result.text;
+    }
+    return current;
+}
+
+export void test_front_i128_declarations_and_arithmetic() {
+    clean("fn add(a: u128, b: u128) -> u128:\n    a + b\n\nfn sub(a: i128, b: i128) -> i128:\n    a - b\n");
+}
+
+export void test_front_i128_conversions() {
+    clean("fn wide(x: u64) -> u128:\n    x.to(u128)\n\nfn low(x: u128) -> u64:\n    x.wrap(u64)\n");
+    clean("fn widen(x: i64) -> i128:\n    x.to(i128)\n");
+}
+
+export void test_front_i128_comparison_and_literals() {
+    clean("fn big(x: u128) -> bool:\n    x > 18446744073709551615\n");
+}
+
+export void test_front_i128_satisfies_the_integer_concept() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ast::DeclRef none[1] = {};
+    ast::Module m = ast::new_module("sample", none[0:0]);
+    types::Checked r = types::check(&m, (types::Options){.target = types::lp64()});
+    types::TypeRef wide = types::builtin(&r.table, "I128");
+    types::TypeRef unsigned_wide = types::builtin(&r.table, "U128");
+    test::check_condition(wide != nullptr && wide->kind == .integer && wide->bits == 128 && wide->is_signed);
+    test::check_condition(unsigned_wide != nullptr && unsigned_wide->kind == .integer && !unsigned_wide->is_signed);
+    test::check_condition(types::integer(&r.table, 128, true) == wide);
+    test::check_condition(types::integer(&r.table, 128, false) == unsigned_wide);
+}
+
+export void test_front_i128_does_not_narrow_to_i64() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", "fn f(a: i128) -> i64:\n    a\n");
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(r.error_count, (Usize)1);
+}
+
+export void test_front_i128_fixer_spellings() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    check_text(fixed("unsigned _BitInt(128)"), "u128");
+    check_text(fixed("_BitInt(128)"), "i128");
+    check_text(fixed("signed _BitInt(128)"), "i128");
+    check_text(fixed("unsigned __int128"), "u128");
+    check_text(fixed("__int128"), "i128");
+    check_text(fixed("U128"), "u128");
+}

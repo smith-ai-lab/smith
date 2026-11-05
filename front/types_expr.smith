@@ -568,6 +568,9 @@ static void finish(types::Checked *c, const ast::Expr *e, types::TypeRef found, 
 // Whether `value` (negated when `negated`) is a value of the integer type `t`.
 static Bool fits(types::TypeRef t, U64 value, Bool negated) {
     U64 one = 1;
+    if (t->bits > 64) {
+        return t->is_signed || !negated || value == 0; // a literal is a 64-bit value: 128 bits hold them all
+    }
     if (t->is_signed) {
         U64 limit = one << (t->bits - 1);
         if (negated) {
@@ -586,6 +589,10 @@ static Bool fits(types::TypeRef t, U64 value, Bool negated) {
 
 static Str range_text(types::TypeRef t) {
     U64 one = 1;
+    if (t->bits > 64) {
+        if (t->is_signed) return msg("-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727");
+        return msg("0 to 340282366920938463463374607431768211455");
+    }
     if (t->is_signed) {
         U64 limit = one << (t->bits - 1);
         return msg(format::push("-", limit, " to ", limit - 1));
