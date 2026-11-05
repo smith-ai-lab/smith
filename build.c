@@ -3404,6 +3404,15 @@ static int build_frontend_coverage(SmithRun *run) {
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
     const char *files = run->args[1];
     const char *tree = smith_fmt(b, "%s/tree", work);
+    // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
+    // reads a header with from the compile_commands.json of the folder it runs in (#2313).
+    if (access("compile_commands.json", R_OK) == 0) {
+        status = build_make_folder(b, smith_fmt(b, "%s/tree", work));
+        status = status != 0 ? status
+                             : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
+                                                     smith_fmt(b, "%s/tree/compile_commands.json", work), nullptr));
+        if (status != 0) return status;
+    }
     status = build_spawn(&(BuildSpawn){
         .argv = files[0] != '\0' ? smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, files, nullptr)
                                  : smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, nullptr),

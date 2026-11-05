@@ -31,3 +31,12 @@ export void test_front_fix_array_an_array_of_pointers_to_text() {
 export void test_front_fix_array_a_trailing_comma_is_not_an_element() {
     expect("void f(void) {\n    I32 xs[_] = {1, 2,};\n}\n", "fn f():\n    let xs: [2]i32 = [1, 2,]\n");
 }
+
+// A static or file-level array C zeroes, and `T xs[3] = {}`, are written with their zero values (#1901).
+export void test_front_fix_array_a_static_array_is_zero_filled() {
+    expect("static Bool seen[3];\n", "static let mut seen: [3]bool = [false, false, false]\n");
+}
+
+export void test_front_fix_array_an_empty_list_is_zero_filled() {
+    expect("void f(void) {\n    I32 xs[2] = {};\n}\n", "fn f():\n    let mut xs: [2]i32 = [0, 0]\n");
+}
