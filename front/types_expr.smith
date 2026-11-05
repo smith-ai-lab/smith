@@ -2329,8 +2329,8 @@ static void stream_after(types::Checked *c, Frame f) {
 // ---------------------------------------------------------------------------------------------------------------
 // Construction: `Point(x = 1, y = 2)` (spec "Structs, enums and building values" of #1428)
 
-// The record a call constructs when its callee names a struct (or an alias of one), else null.
-static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
+// The type a call's callee names (a struct, an enumeration or an alias of one), else null.
+static types::TypeRef named_type(const types::Checked *c, const ast::Expr *callee) {
     ast::Path path = {};
     ast::Identifier parts[8];
     if (callee->kind == .name) {
@@ -2348,10 +2348,33 @@ static types::TypeRef constructed_record(const types::Checked *c, const ast::Exp
         return nullptr;
     }
     const types::Symbol *s = types::lookup_path(&c->scopes, path);
-    if (s == nullptr || s->kind != .type_name || s->type == nullptr || s->type->kind != .record) {
+    if (s == nullptr || s->kind != .type_name) {
         return nullptr;
     }
     return s->type;
+}
+
+// The record a call constructs when its callee names a struct (or an alias of one), else null.
+static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
+    types::TypeRef t = named_type(c, callee);
+    return t != nullptr && t->kind == .record ? t : nullptr;
+}
+
+// `ExprKind(name = (path = p))`: a payload enumeration named as the callee with one argument `variant = payload` builds
+// the value `.variant(payload)` of that enumeration. Null when the call is no such form.
+static const ast::Expr *enum_variant_call(const types::Checked *c, ast::Span span, const ast::Expr *callee,
+                                          ast::ExprRef args[:], types::TypeRef *made) {
+    types::TypeRef t = named_type(c, callee);
+    if (t == nullptr || t->kind != .enumeration || !t->has_payload || countof(args) != 1) return nullptr;
+    const ast::Expr *arg = args[0];
+    if (!(arg->kind == .named_arg)) return nullptr;
+    const types::Slot *slot = types::member(t, arg->kind.named_arg.name);
+    if (slot == nullptr || !carries_value(slot->type)) return nullptr;
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = span;
+    variant->kind = {.variant = {.name = arg->kind.named_arg.name, .payload = arg->kind.named_arg.value}};
+    *made = t;
+    return variant;
 }
 
 // Stage 0 of a construction: each field's value is checked against the field's type; the callee is not a value.
@@ -4766,6 +4789,16 @@ static void spread_resolved(types::Checked *c, Work *w, Frame f) {
     push(w, made, f.expected, 0);
 }
 
+// The variant built in the place of `E(name = payload)` is typed: the call takes its type (stage 11).
+static void enum_variant_after(types::Checked *c, Frame f) {
+    types::TypeRef t = types::type_of(c, f.twin);
+    if (t == nullptr || t == invalid(c)) {
+        poison(c, f.node);
+        return;
+    }
+    finish(c, f.node, t, f.expected);
+}
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -4797,6 +4830,13 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     types::TypeRef record = constructed_record(c, callee);
     if (record != nullptr) {
         construct_before(w, f, record);
+        return;
+    }
+    types::TypeRef enumeration = nullptr;
+    const ast::Expr *variant = enum_variant_call(c, e->span, callee, e->kind.call.args, &enumeration);
+    if (variant != nullptr) {
+        push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 11, .twin = variant});
+        push(w, variant, enumeration, 0);
         return;
     }
     if (method_shaped(c, callee) && callee->kind == .member) {
@@ -4962,6 +5002,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
             spread_resolved(c, w, f);
         } else if (f.stage == 10) {
             builtin_after(c, f);
+        } else if (f.stage == 11) {
+            enum_variant_after(c, f);
         } else if (f.stage == 8) {
             types::set_type(c, e, typ(c, types::method_of(c, e)));
         } else if (f.stage == 6) {
