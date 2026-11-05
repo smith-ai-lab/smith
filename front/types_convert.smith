@@ -408,7 +408,11 @@ static Verdict cast_pointer(const Ctx *c) {
     types::TypeRef from = c->from;
     types::TypeRef to = c->to;
     if (from->kind == .pointer && to->kind == .pointer) {
-        if (from->pointee_const && !to->pointee_const) return dropped_const(c);
+        // A `*void` is C's `void *` or `const void *`, which the fixer writes alike: a cast out of it to a writable
+        // pointer is the C cast `(T *)p` and stays allowed (#2361). A typed read-only pointer still cannot be cast
+        // to a writable one.
+        Bool from_void = from->element->kind == .void_type;
+        if (from->pointee_const && !to->pointee_const && !from_void) return dropped_const(c);
         return accept(cast);
     }
     if (from->kind == .pointer && pointer_wide(c, to)) return accept(cast);

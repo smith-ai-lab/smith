@@ -292,6 +292,8 @@ export void test_front_types_convert_casts() {
     types::TypeRef plain = types::pointer_to(&t, int32, false);
     types::TypeRef readonly = types::pointer_to(&t, int32, true);
     test::check_condition(cast(&t, nothing, plain).ok);
+    // A cast out of a read-only void pointer to a writable one is the C cast `(T *)p` (#2361).
+    test::check_condition(cast(&t, types::pointer_to(&t, named(&t, "Void"), true), plain).ok);
     test::check_condition(cast(&t, plain, types::pointer_to(&t, byte, false)).ok);
     test::check_condition(cast(&t, plain, named(&t, "Usize")).ok);
     test::check_condition(cast(&t, named(&t, "U64"), plain).ok);
