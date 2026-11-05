@@ -88,6 +88,8 @@ export struct Parser {
                     // at its top level, so a `{` opens the body (#961)
     Bool for_init;  // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
     Bool in_value;  // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
+    Bool in_cast;   // a cast's type is being read: `T *` is `*mut T` there (a cast to a writable pointer), `const T *`
+                    // is `*T`
     Bool in_result; // a function's result type is being read: `-> slice_of(T, n)` is a type function applied
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)

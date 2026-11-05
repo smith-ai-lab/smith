@@ -989,6 +989,9 @@ struct Rewrite {
     char run[:];
     Usize dims;
     Str problem;
+    Bool pointee_const; // the next star points at a const type (`const T *`, or `T *const *`): `*T`, else `*mut T` in a
+                        // cast
+    Bool casting;       // the type is a cast's: a star that points at a non-const type is `*mut`
 };
 
 // The source text of the tokens from `from` up to but not including `to`.
@@ -1210,8 +1213,11 @@ static void scan_suffixes(const parse::Parser *p, const OldType *t, Rewrite *r) 
         }
         flush_run(r);
         if (kind == lex::star) {
-            r->prefix = format::push("*", r->prefix);
+            Bool writable = r->casting && !r->pointee_const;
+            r->prefix = format::push(writable ? "*mut " : "*", r->prefix);
+            r->pointee_const = false;
         } else if (is_qualifier(kind)) {
+            if (kind == lex::kw_const) r->pointee_const = true;
             note_qualifier(kind, r);
         } else {
             r->problem = "this type has no spelling in smith's own syntax: write it by hand";
@@ -1242,8 +1248,9 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
         p->tokens[t->end].kind == lex::colon) {
         return;
     }
-    Rewrite r = {};
+    Rewrite r = {.casting = p->in_cast};
     for (Usize i = t->first; i < t->base; i += 1) {
+        if (p->tokens[i].kind == lex::kw_const) r.pointee_const = true;
         note_qualifier(p->tokens[i].kind, &r);
     }
     Str head = head_of(p, t, base, &r);
