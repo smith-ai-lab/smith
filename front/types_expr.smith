@@ -884,19 +884,15 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     if (types::scoped(c, "target") != nullptr) return false;
     Str fact = names.items[1];
     ast::Expr *node = (ast::Expr *)(Usize)e; // the checker settles the node's meaning in place
-    if (same_text(fact, "address_sanitizer")) {
-        node->kind = (ast::ExprKind){.boolean = {.value = target::address_sanitizer}};
-    } else if (same_text(fact, "undefined_sanitizer")) {
-        node->kind = (ast::ExprKind){.boolean = {.value = target::undefined_sanitizer}};
-    } else if (same_text(fact, "thread_sanitizer")) {
-        node->kind = (ast::ExprKind){.boolean = {.value = target::thread_sanitizer}};
-    } else if (same_text(fact, "assertions")) {
-        node->kind = (ast::ExprKind){.boolean = {.value = target::assertions}};
-    } else if (same_text(fact, "static_analyzer")) {
-        node->kind = (ast::ExprKind){.boolean = {.value = false}}; // never under clang's analyzer, as in `when`
-    } else {
-        return false;
-    }
+    Bool asan = same_text(fact, "address_sanitizer");
+    Bool ubsan = same_text(fact, "undefined_sanitizer");
+    Bool tsan = same_text(fact, "thread_sanitizer");
+    Bool checks = same_text(fact, "assertions");
+    // `static_analyzer` is never true: the new front end does not run under clang's analyzer, as in `when`.
+    if (!asan && !ubsan && !tsan && !checks && !same_text(fact, "static_analyzer")) return false;
+    Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||
+                 (tsan && target::thread_sanitizer) || (checks && target::assertions);
+    node->kind = (ast::ExprKind){.boolean = {.value = value}};
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
     return true;
 }
