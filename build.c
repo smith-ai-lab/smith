@@ -913,6 +913,7 @@ static const char *const build_front_modules[] = {
     "emit_stream",
     "fix_directive",
     "fix_blocks",
+    "fix_generic_c",
     "fix_method",
     "fix_zero",
     "lsp_server",

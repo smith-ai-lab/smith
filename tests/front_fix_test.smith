@@ -596,3 +596,24 @@ export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
     check_text(fixed.text, "fn f(dims: *usize):\n    let result: c.smith_array_T_n = {}\n    for i in range(0, 3):\n"
                            "        result.count[i] = dims[i].to(usize)\n");
 }
+
+// `c.name` in a generic function nothing calls is written with the header's binding (#2303): the checker reads such a
+// body only through its instances.
+export void test_a_bare_c_member_in_a_generic_function_becomes_the_header_binding() {
+    use_header_flags();
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "import c <stdlib.h>\n\npub fn f(x: auto) -> i32:\n    c.abs(x)\n");
+    check_text(fixed.text, "import c <stdlib.h>\n\npub fn f(x: auto) -> i32:\n    stdlib.abs(x)\n");
+}
+
+// A lone `[[maybe_unused]]` on an exported function is deleted and the name stays public (#2303); a static one still
+// gets the `_` of an unused name.
+export void test_maybe_unused_on_an_export_keeps_the_name() {
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\nexport [[maybe_unused]] inline I32 f(I32 x) {\n    return x;\n}\n");
+    check_flag(fixed.text.data != nullptr, true);
+    check_text(fixed.text, "pub inline fn f(x: i32) -> i32:\n    return x\n");
+}
