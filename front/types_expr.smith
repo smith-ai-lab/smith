@@ -1455,6 +1455,12 @@ static types::TypeRef tuple_compare(types::Checked *c, ast::Span span, ast::Bina
     return c->table.bool_type;
 }
 
+// C compares two pointers when they point to the same type (const or not) or one points to void.
+static Bool comparable_pointers(types::TypeRef l, types::TypeRef r) {
+    if (l->kind != .pointer || r->kind != .pointer) return false;
+    return l->element == r->element || l->element->kind == .void_type || r->element->kind == .void_type;
+}
+
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
     if (is_equality(op) && (null_against(l, r) || null_against(r, l))) {
@@ -1475,6 +1481,9 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     }
     if (is_ordering(op) && l->kind != .pointer && !is_number(l)) {
         return need_number(c, span, op, l, false);
+    }
+    if (comparable_pointers(l, r)) {
+        return c->table.bool_type;
     }
     if (!same_operands(c, span, op, l, r)) {
         return invalid(c);

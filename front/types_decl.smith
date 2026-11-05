@@ -160,6 +160,19 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
+// A fixed array handed where a bare pointer to its element is wanted (C's decay): the fix writes the address of its
+// first element, `xs` to `&xs[0]`. Empty unless the array is a place (a name, a member, an element).
+static syntax::Edits element_address_fix(const ast::Expr *e) {
+    syntax::Edits edits = {};
+    if (e->kind != .name && e->kind != .member && e->kind != .index) return edits;
+    Str open = "&";
+    Str close = "[0]";
+    edits = mem::realloc(edits, 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start}, .text = open};
+    edits[1] = (syntax::Edit){.span = {.start = e->span.end, .end = e->span.end}, .text = close};
+    return edits;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok) {
@@ -167,7 +180,9 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
     Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
-    types::fail_fix(c, e->span, verdict.message, drops_const ? types_expr::pointer_fix(c, e) : (syntax::Edits){});
+    syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, e) : (syntax::Edits){};
+    if (from->kind == .array && to->kind == .pointer && from->element == to->element) fix = element_address_fix(e);
+    types::fail_fix(c, e->span, verdict.message, fix);
     return false;
 }
 
