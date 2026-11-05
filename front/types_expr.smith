@@ -2032,6 +2032,35 @@ static types::TypeRef first_parameter(const types::Symbol *s) {
     return t;
 }
 
+// Whether the function is a template with bracketed generics (`fn push[T](xs: *mut List(T), x: T)`).
+static Bool has_generics(const types::Symbol *fn) {
+    return fn->generic && fn->decl != nullptr && fn->decl->kind == .function &&
+           countof(fn->decl->kind.function.generics) > 0 && countof(fn->decl->kind.function.params) > 0;
+}
+
+// Whether the first parameter of a function with bracketed generics is written as a pointer.
+static Bool generic_takes_pointer(const types::Symbol *fn) {
+    if (!(fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+    return written != nullptr && written->kind == .pointer;
+}
+
+// Whether the receiver can be the first parameter of a function with bracketed generics: its written type, seen
+// through one pointer, is a generic name or has the receiver's shape (a name or an applied type is left to the check
+// of the arguments).
+static Bool generic_first_fits(const types::Symbol *fn, types::TypeRef self_type) {
+    if (!(fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+    if (written == nullptr) return false;
+    if (written->kind == .pointer) written = written->kind.pointer.pointee;
+    if (written->kind == .slice) return self_type->kind == .slice;
+    if (written->kind == .array) return self_type->kind == .array;
+    if (written->kind == .option) return self_type->kind == .option;
+    if (written->kind == .tuple) return self_type->kind == .tuple;
+    if (written->kind == .pointer) return self_type->kind == .pointer;
+    return true;
+}
+
 // The call `f(x, args)`; `f(&x, args)` when `f` takes a pointer and `x` is not one, `f(x.*, args)` for the reverse.
 static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn, types::TypeRef base_type) {
     if (!(e->kind == .call)) {
@@ -2048,12 +2077,13 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
     ast::ExprRef all[:] = block[0:countof(given) + 1];
     ast::Expr *self = (ast::Expr *)callee->kind.member.base;
     types::TypeRef takes = fn->type->slots[0].type;
-    if (takes->kind == .pointer && base_type->kind != .pointer) {
+    Bool takes_pointer = has_generics(fn) ? generic_takes_pointer(fn) : takes->kind == .pointer;
+    if (takes_pointer && base_type->kind != .pointer) {
         ast::UnaryOp op = .address_of;
         ast::ExprKind address = {.unary = {.op = op, .operand = self}};
         self = ast::expr(address);
         self->span = callee->kind.member.base->span;
-    } else if (takes->kind != .pointer && base_type->kind == .pointer) {
+    } else if (!takes_pointer && base_type->kind == .pointer) {
         self = ast::deref(self);
         self->span = callee->kind.member.base->span;
     }
@@ -2150,7 +2180,9 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    if (fn == nullptr || first_parameter(fn) == nullptr || first_parameter(fn) != self_type) {
+    Bool fits = fn != nullptr && (has_generics(fn) ? generic_first_fits(fn, self_type)
+                                                   : first_parameter(fn) != nullptr && first_parameter(fn) == self_type);
+    if (!fits) {
         method_missing(c, e, fn, bt);
         push_arguments(w, args, nullptr);
         return;
@@ -3749,6 +3781,15 @@ static void tuple_after(types::Checked *c, Frame f) {
 // The template a call names, when the callee is a plain name of a function with compile-time parameters.
 static const types::Symbol *generic_callee(const types::Checked *c, const ast::Expr *callee) {
     const types::Symbol *s = nullptr;
+    if (callee->kind == .index && callee->kind.index.base->kind == .name) {
+        // `f[T](x)`: the brackets pin the generics of `f` (#1698)
+        const types::Symbol *named = types::lookup_path(&c->scopes, callee->kind.index.base->kind.name.path);
+        if (named != nullptr && named->kind == .function_symbol && named->generic && named->decl != nullptr &&
+            named->decl->kind == .function && countof(named->decl->kind.function.generics) > 0) {
+            return named;
+        }
+        return nullptr;
+    }
     if (callee->kind == .name) {
         s = types::lookup_path(&c->scopes, callee->kind.name.path);
     } else if (callee->kind == .member && !callee->kind.member.arrow) {
@@ -3906,6 +3947,92 @@ static Bool pack_satisfies(types::Checked *c, const ast::Param *pack, const ast:
     return true;
 }
 
+// Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
+// the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
+// binds last, and only a generic no other argument binds.
+static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    ast::Param generics[:] = template->decl->kind.function.generics;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i]) || params[i].is_pack ||
+            params[i].is_gather) {
+            types::failf(c, params[i].span, "not yet: `", template->name,
+                         "` has both bracketed generics and compile-time, `auto` or rest parameters");
+            poison(c, e);
+            return;
+        }
+    }
+    types::Binding bound[:] = mem::alloc_slice(types::Binding, countof(generics));
+    Bool set[:] = mem::alloc_slice(Bool, countof(generics));
+    types::Unified clash = {};
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind == .index) { // `f[T](x)`: the first generic is written
+        const ast::Expr *pin = callee->kind.index.index;
+        if (types::is_generic_type(&generics[0])) {
+            types::TypeRef t = type_argument(c, &generics[0], pin);
+            if (t == nullptr) {
+                poison(c, e);
+                return;
+            }
+            bound[0] = (types::Binding){.is_type = true, .type = t};
+        } else {
+            U64 value = 0;
+            if (!value_argument(c, &generics[0], pin, &value)) {
+                poison(c, e);
+                return;
+            }
+            bound[0] = (types::Binding){.value = value};
+        }
+        set[0] = true;
+    }
+    for (Usize pass = 0; pass < 2; pass++) {
+        for (Usize i = 0; i < countof(params); i++) {
+            const ast::Expr *arg = argument_value(args[i]);
+            Bool literal = arg->kind == .integer || arg->kind == .floating;
+            if (literal != (pass == 1)) continue;
+            types::TypeRef t = typ(c, arg);
+            if (t == invalid(c)) {
+                poison(c, e);
+                return;
+            }
+            if (!types::unify_generics(generics, params[i].type, t, bound, set, pass == 0, &clash)) {
+                types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
+                             "` from an earlier argument and `", types::show(clash.now),
+                             "` from this one; make the arguments agree, or write `", template->name, "[...]`");
+                poison(c, e);
+                return;
+            }
+        }
+    }
+    for (Usize i = 0; i < countof(generics); i++) {
+        if (set[i]) {
+            Str concept = types::written_concept(generics[i].type);
+            if (countof(concept) > 0 && !types::concept_holds(concept, bound[i].type)) {
+                types::failf(c, e->span, "`", generics[i].name, "` is `", types::show(bound[i].type),
+                             "`, which is not a `", concept, "`");
+                poison(c, e);
+                return;
+            }
+            continue;
+        }
+        types::failf(c, e->span, "cannot work out `", generics[i].name, "` from the arguments of `", template->name,
+                     "`: no argument has a type that contains it; write `", template->name, "[...]`");
+        poison(c, e);
+        return;
+    }
+    Usize at = types::instance_of(c, template->decl, bound);
+    if (at >= c->instance_count) {
+        poison(c, e);
+        return;
+    }
+    types::set_type(c, e->kind.call.callee, c->instances[at].signature);
+    types::use_instance(c, e, at);
+    call_after(c, f);
+}
+
 // Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
 static void auto_resolved(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
@@ -3913,6 +4040,10 @@ static void auto_resolved(types::Checked *c, Frame f) {
     const types::Symbol *template = generic_callee(c, e->kind.call.callee);
     if (template == nullptr || !(template->decl->kind == .function)) {
         poison(c, e);
+        return;
+    }
+    if (countof(template->decl->kind.function.generics) > 0) {
+        infer_resolved(c, f, template);
         return;
     }
     ast::ExprRef args[:] = e->kind.call.args;
@@ -4157,7 +4288,8 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
-    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params)) {
+    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params) ||
+        countof(template->decl->kind.function.generics) > 0) {
         rewritten_before(c, w, f, template);
         return;
     }
