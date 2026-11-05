@@ -366,9 +366,15 @@ static Bool c_signature(lex::Tokens tokens, Usize open) {
     while (i > 0 && !tokens[i - 1].line_break)
         i -= 1;
     Bool paren = false;
+    Usize first = i;
     for (; i < open; i++) {
         lex::TokenKind kind = tokens[i].kind;
         if (kind == lex::kw_fn || kind == lex::kw_struct || kind == lex::kw_enum || kind == lex::kw_union) return false;
+        // A value, not a signature: `return if g() == 1 { a } else { b }` has `(` and no `fn` (#2328). A statement that
+        // starts the line (`if constexpr (...) {` at the top) stays as it was.
+        if (kind == lex::kw_return || kind == lex::kw_if || kind == lex::kw_match) {
+            if (kind == lex::kw_return || i > first) return false;
+        }
         if (kind == lex::left_paren) paren = true;
     }
     return paren;
