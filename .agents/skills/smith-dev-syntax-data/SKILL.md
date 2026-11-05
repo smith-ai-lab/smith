@@ -39,7 +39,7 @@ pub enum Shape:                     # a payload enum; C's union is an error in a
 | payload variant | `.circle(Circle(radius = 1))`, `.square(2)`: parentheses wrap the one payload value |
 | tuple | `(1, 2.5)`, `()` empty |
 | named tuple | `(count = n, ms = ms)`: its type is the anonymous struct `(count: i32, ms: f64)` |
-| array or slice | `[1, 2, 3]` (a slice gets a hidden array behind it), `array.filled(u32, 256, 0)` |
+| array or slice | `[1, 2, 3]` (a slice gets a hidden array behind it), `[]` empty (owner, 2026-11-05: "empty array literals should be `[]`"; it takes its type from context: a field, a parameter, a declared type, as in `Attribute(name = n, args = [])`; a bare `xs := []` is an error for now, write `xs: []i32 = []`, and inferring it from later uses is planned), `array.filled(u32, 256, 0)` |
 | option | `.some(x)`, `.none`, or a plain value where `?T` is expected |
 
 ```smith

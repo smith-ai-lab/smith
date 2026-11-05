@@ -30,6 +30,30 @@ export void test_front_fix_type_name_after_a_slice_colon() {
                            "source[start:ty.end]\n    return p\n");
 }
 
+// A plain enum written as an index, `names[c]` (C allows it), is `names[c.to(usize)]` (#2460).
+export void test_front_fix_enum_as_an_index() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nenum Color { red, green };\nstatic Str names[2] = {\"r\", "
+                                                "\"g\"};\nstatic Str f(Color c) {\n    return names[c];\n}\n");
+    Str want = "return names[c.to(usize)]";
+    test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
+}
+
+// A slice field that a C compound literal leaves out is `args = []` (owner, 2026-11-05, #2460).
+export void test_front_fix_left_out_slice_field_is_empty_literal() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nexport struct A {\n    I32 n;\n    I32 xs[:];\n};\nstatic "
+                                                "A make(void) {\n    return (A){.n = 1};\n}\n");
+    Str want = "A(n = 1, xs = [])";
+    test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
+}
+
 // A C enumerator written bare is `.name` (the type comes from the other operand), and plain enums are ordered by
 // declaration (owner, 2026-11-05, #2460).
 export void test_front_fix_bare_enumerator_in_a_comparison() {
