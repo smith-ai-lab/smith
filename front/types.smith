@@ -62,6 +62,7 @@ module front::types;
 import front::ast;
 import front::ast_clone;
 import front::parse as syntax;
+import front::when;
 import std::arena;
 import std::format;
 import std::mem;
@@ -1697,6 +1698,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .slice) {
         Bool is_const = node->kind.slice.element->qualifiers.is_const;
+        if (r->new_syntax) is_const = !node->kind.slice.is_mut; // `[]T` is read-only, `[]mut T` writable
         return slice_of(&r->table, w->values[base].type, is_const);
     }
     if (node->kind == .array) {
@@ -1896,9 +1898,23 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
     Bool exported = d->exported;
     ast::Span span = d->span;
     if (d->kind == .record) {
+        Bool forward = d->kind.record.opaque;
         Str name = qualified(r, from_c, d->kind.record.name);
         Ty *made = new_record(&r->table, name, d->kind.record.is_union);
         made->affine = marks_affine(d);
+        // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
+        Symbol *earlier = nullptr;
+        for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
+            if (same_text(r->scopes.symbols[i - 1].name, name)) earlier = &r->scopes.symbols[i - 1];
+        }
+        if (earlier != nullptr && earlier->kind == .type_name && earlier->decl != nullptr &&
+            earlier->decl->kind == .record) {
+            if (forward) return;
+            if (earlier->decl->kind.record.opaque) {
+                *earlier = type_symbol(name, made, d, exported);
+                return;
+            }
+        }
         declare_in_module(r, type_symbol(name, made, d, exported), span);
     } else if (d->kind == .enumeration) {
         Str name = qualified(r, from_c, d->kind.enumeration.name);
@@ -2004,7 +2020,12 @@ static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
 // type (#2323). The rule is on the binding's value, not on the keyword that spells it.
 static ast::TypeExpr *named_type_alias(Checked *r, const ast::Expr *init) {
     if (init->kind != .name || countof(init->kind.name.path.segments) != 1) return nullptr;
-    const Symbol *found = lookup(&r->scopes, init->kind.name.path.segments[0].text);
+    Str written = init->kind.name.path.segments[0].text;
+    const Symbol *found = lookup(&r->scopes, written);
+    Str own = own_builtin(written);
+    if (found == nullptr && countof(own) > 0) {
+        return ast::make_type({.named = {.path = init->kind.name.path}}); // `Wide := u128`: a builtin type
+    }
     if (found == nullptr || found->kind != .type_name) return nullptr;
     return ast::make_type({.named = {.path = init->kind.name.path}});
 }
@@ -2112,7 +2133,10 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
         }
         TypeRef carried = symbol->type->element;
         if (has_payload) {
+            // A payload struct the fixer converted holds types in smith's own spelling (`bool`, `*T`) (#2329).
+            r->new_syntax = true;
             carried = item->payload != nullptr ? resolve(r, item->payload) : r->table.void_type;
+            r->new_syntax = false;
         }
         items[i] = (Slot){.name = item->name, .type = carried, .value = next};
         next += 1;
@@ -2735,10 +2759,10 @@ static Str joined(ast::Path path, Str separator) {
 
 // The prefix of every name of the module a module symbol stands for: `std::math::`. The declarations of a module
 // are in the table once, under this prefix, however many names it is imported by.
-static Str prefix_of_import(const ast::Decl *import) {
-    if (import->kind == .import_from) return msg(format::push(joined(import->kind.import_from.path, "::"), "::"));
-    if (import->kind != .import_module) return "";
-    return msg(format::push(joined(import->kind.import_module.path, "::"), "::"));
+static Str prefix_of_import(const ast::Decl *imported) {
+    if (imported->kind == .import_from) return msg(format::push(joined(imported->kind.import_from.path, "::"), "::"));
+    if (imported->kind != .import_module) return "";
+    return msg(format::push(joined(imported->kind.import_module.path, "::"), "::"));
 }
 
 // The module's path as written, `std.math`.
@@ -3078,6 +3102,10 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
             } else if (count == countof(list)) {
                 failf(r, d->span, "more than ", countof(list), " modules are imported; the checker reads that many");
             } else {
+                // an imported module is read as it is on this system, as the main one is (#2323)
+                if (when::uses_when(loaded)) {
+                    loaded = when::live_module(loaded, when::host());
+                }
                 list[count] = (Pending){.prefix = prefix, .module = loaded};
                 count += 1;
             }
@@ -3161,33 +3189,33 @@ static void declare_headers(Checked *r, const ast::Module *m) {
     if (r->options.headers == nullptr) return;
     r->in_header = true;
     for (Usize k = 0; k < countof(m->decls); k++) {
-        const ast::Decl *import = m->decls[k];
+        const ast::Decl *imported = m->decls[k];
         Str name = "";
         Bool angled = false;
-        if (import->kind == .import_c) {
-            name = import->kind.import_c.header;
-            angled = import->kind.import_c.angled;
-        } else if (import->kind == .import_from && countof(import->kind.import_from.header) > 0) {
-            name = import->kind.import_from.header;
-            angled = import->kind.import_from.angled;
+        if (imported->kind == .import_c) {
+            name = imported->kind.import_c.header;
+            angled = imported->kind.import_c.angled;
+        } else if (imported->kind == .import_from && countof(imported->kind.import_from.header) > 0) {
+            name = imported->kind.import_from.header;
+            angled = imported->kind.import_from.angled;
         } else {
             continue;
         }
-        if (import->kind == .import_c && countof(import->kind.import_c.language) > 0 &&
-            !same_text(import->kind.import_c.language, "c")) {
-            failf(r, import->span, same_text(import->kind.import_c.language, "cpp") ? "C++" : "Objective-C",
+        if (imported->kind == .import_c && countof(imported->kind.import_c.language) > 0 &&
+            !same_text(imported->kind.import_c.language, "c")) {
+            failf(r, imported->span, same_text(imported->kind.import_c.language, "cpp") ? "C++" : "Objective-C",
                   " headers are not imported yet");
             continue;
         }
         const ast::Module *header = r->options.headers(name, angled);
         if (header == nullptr) {
-            failf(r, import->span, "cannot read the C header `", name,
+            failf(r, imported->span, "cannot read the C header `", name,
                   "`; check that it exists and that its flags are right");
             continue;
         }
-        if (import->kind == .import_c && countof(import->kind.import_c.language) > 0 &&
+        if (imported->kind == .import_c && countof(imported->kind.import_c.language) > 0 &&
             r->binding_count < max_header_bindings) {
-            Str binding = import->kind.import_c.alias;
+            Str binding = imported->kind.import_c.alias;
             if (countof(binding) == 0) binding = header_stem(name);
             r->bindings[r->binding_count] = (HeaderBinding){.name = binding, .header = header};
             r->binding_count++;
