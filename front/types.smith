@@ -2626,6 +2626,11 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
     if (copy->kind != .function) return max_instances;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
+    // The signature is written in the template's module: `Chars` in `format::push`'s result is `format::Chars`.
+    Str outer = r->prefix;
+    Str outer_scopes = r->scopes.prefix;
+    r->prefix = prefix;
+    r->scopes.prefix = prefix;
     keep_params(r, generic_count, all, bindings, auto_syntax, kept, slots);
     for (Usize i = 0; i < kept_count; i++) { // the parameters, for a `typeof(v)` in the result
         Symbol parameter = {.name = slots[i].name, .kind = .variable, .type = slots[i].type};
@@ -2637,6 +2642,8 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
         result = resolve(r, copy->kind.function.result);
         r->new_syntax = false;
     }
+    r->prefix = outer;
+    r->scopes.prefix = outer_scopes;
     pop_scope(&r->scopes);
     copy->kind.function.params = kept;
     copy->kind.function.generics = copy->kind.function.generics[0:0]; // the instance has none: they are bound

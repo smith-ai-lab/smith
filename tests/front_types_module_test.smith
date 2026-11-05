@@ -56,6 +56,8 @@ static Str math_source() {
            "fn helper(x: f64) -> f64:\n    x\n\n"
            "pub fn wrap[T](x: T) -> f64:\n    return helper(1.0) + hidden().to(f64)\n\n"
            "pub let tau = 6.28\n\n"
+           "pub Length := f64\n\n"
+           "pub fn measured[T](x: T) -> Length:\n    return 1.0\n\n"
            "pub struct Point:\n    pub x: f64\n    pub y: f64\n\n"
            "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
            "pub fn handle() -> Handle:\n    return Handle(len = 1, items = 2)\n\n"
@@ -161,6 +163,12 @@ export void test_front_types_module_constant_and_result_type() {
 // The body of a generic from another module is checked with that module's own names, public or not (#1902).
 export void test_front_types_module_generic_body_reads_its_own_modules_names() {
     clean("import lib.math as m\n\nfn run() -> f64:\n    m.wrap(1)\n");
+}
+
+// The result of a generic from another module is written in that module: its type alias `Length` is not a name of the
+// importer (#2431: `format.push` returns `Chars`).
+export void test_front_types_module_generic_result_names_a_type_of_its_own_module() {
+    clean("import lib.math as m\n\nfn run() -> f64:\n    m.measured(1)\n");
 }
 
 // A module's types may name those of the module it imports, which is found after it (#1902).
