@@ -1093,67 +1093,21 @@ static void explain_dead(types::Checked *r, const ast::Module *m, when::Os os) {
     }
 }
 
-static Bool has_error(const types::Checked *r, const types::Error *e) {
-    for (Usize i = 0; i < r->error_count; i++) {
-        const types::Error *o = &r->errors[i];
-        if (o->span.start == e->span.start && o->span.end == e->span.end && same_str(o->message, e->message)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // `check_module_with` that also reads the C headers the file imports (`import <stdio.h>;`, #1762): `headers` gives the
-// declarations of one, and `c::printf`, `c::FILE` are then names of the module. A module with `@when` is checked once
-// for each system smith builds on, and an error found on one system only says which.
+// declarations of one, and `c::printf`, `c::FILE` are then names of the module. A module with `@when` is checked as it
+// is on the system smith runs on: a variant for another system is not checked (#2323).
 export types::Checked check_module_headers(const ast::Module *m, types::Target target, types::ModuleLoader load,
                                            types::HeaderLoader headers) {
     if (!when::uses_when(m)) return check_once(m, target, load, headers);
-    // The headers of the other system are not there to read: that system's variant is not checked (#2142).
-    if (when::host() == when::os_linux && when::reads_guarded_header(m, when::os_macos)) {
-        const ast::Module *live = when::live_module(m, when::os_linux);
-        types::Checked only = check_once(live, target, load, headers);
-        explain_dead(&only, m, when::os_linux);
-        types_attr::check_when(&only, m);
-        only.module = live;
-        return only;
-    }
-    if (when::host() == when::os_macos && when::reads_guarded_header(m, when::os_linux)) {
-        const ast::Module *live = when::live_module(m, when::os_macos);
-        types::Checked only = check_once(live, target, load, headers);
-        explain_dead(&only, m, when::os_macos);
-        types_attr::check_when(&only, m);
-        only.module = live;
-        return only;
-    }
-    const ast::Module *mac_live = when::live_module(m, when::os_macos);
-    types::Checked mac = check_once(mac_live, target, load, headers);
-    explain_dead(&mac, m, when::os_macos);
-    const ast::Module *lin_live = when::live_module(m, when::os_linux);
-    types::Checked lin = check_once(lin_live, target, load, headers);
-    explain_dead(&lin, m, when::os_linux);
-    Bool only_lin[:] = mem::alloc_slice(Bool, lin.error_count);
-    for (Usize i = 0; i < lin.error_count; i++)
-        only_lin[i] = !has_error(&mac, &lin.errors[i]);
-    for (Usize i = 0; i < mac.error_count; i++) {
-        if (!has_error(&lin, &mac.errors[i])) {
-            mac.errors[i].message = types::message_of(format::push("on macos: ", mac.errors[i].message));
-        }
-    }
-    for (Usize i = 0; i < lin.error_count; i++) {
-        if (!only_lin[i]) continue;
-        types::Error found = lin.errors[i];
-        found.message = types::message_of(format::push("on linux: ", found.message));
-        types::add_error(&mac, found);
-    }
-    types_attr::check_when(&mac, m);
-    mac.module = mac_live;
-    if (when::host() == when::os_macos) return mac;
-    // The emitter emits the variant of the system smith runs on: its nodes are the ones that variant's check typed.
-    lin.errors = mac.errors;
-    lin.error_count = mac.error_count;
-    lin.module = lin_live;
-    return lin;
+    // A variant whose `@when` does not hold for the system being compiled is not checked, as a compile-time `if` in a
+    // body is not (#2283, #2323): its headers, its types and its names are the other system's. The CI of each system
+    // compiles its own variant, so an error in the other one is found there.
+    const ast::Module *live = when::live_module(m, when::host());
+    types::Checked only = check_once(live, target, load, headers);
+    explain_dead(&only, m, when::host());
+    types_attr::check_when(&only, m);
+    only.module = live;
+    return only;
 }
 
 // Checks a whole module, reading the modules it imports with `load` (#1677): `import a.b as m` makes `m.name` the
