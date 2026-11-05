@@ -191,8 +191,8 @@ typedef struct {
 
 // One Philox round on the counter words c[0..3] with the round key k0, k1.
 inline void philox_round(U32 *c0, U32 *c1, U32 *c2, U32 *c3, U32 k0, U32 k1, U32 m0, U32 m1) {
-    U64 product_0 = (U64)m0 * *c0;
-    U64 product_1 = (U64)m1 * *c2;
+    U64 product_0 = (U64)m0 * (U64)*c0;
+    U64 product_1 = (U64)m1 * (U64)*c2;
     *c0 = (U32)((U64)(*c1 ^ k0) ^ (product_1 >> 32));
     *c1 = (U32)product_1;
     *c2 = (U32)((U64)(*c3 ^ k1) ^ (product_0 >> 32));

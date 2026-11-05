@@ -128,6 +128,12 @@ static void note(Found *found, Str source, lex::Token token) {
 // of an attribute.
 static Bool starts_entry(lex::Tokens tokens, Usize i, Usize first) {
     if (tokens[i].kind != lex::type_name) return false;
+    // A name after `.`, `::`, `*` or `:` is part of a type (`*ast.TypeExpr`, `ast::Decl *decl`), never a variant: a
+    // qualified or payload type that ends its line used to count as an entry (#2400).
+    if (i > first) {
+        lex::TokenKind prev = tokens[i - 1].kind;
+        if (prev == lex::dot || prev == lex::colon_colon || prev == lex::star || prev == lex::colon) return false;
+    }
     // `T some;` is a variant with a payload, written type first: the type is no variant (`Option`'s `T`, #2224).
     if (i + 1 < countof(tokens)) {
         lex::TokenKind next = tokens[i + 1].kind;
