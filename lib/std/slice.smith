@@ -89,6 +89,9 @@ export void reverse(auto xs[:]) {
 // Copies src into dst, element by element. The two must have the same count and must not overlap.
 export void copy(auto dst[restrict :], const typeof(dst[0]) src[restrict :]) {
     contract::requires(countof(dst) == countof(src));
+    // One ends before the other begins (an empty one is apart from anything). This is the non-overlap that `restrict`
+    // said: the fixer drops `restrict` from a slice (#2463), and smith prove checks this at each call instead.
+    contract::requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || &src[0] + countof(src) <= &dst[0]);
     for (Usize i = 0; i < countof(dst); i++) {
         dst[i] = src[i];
     }

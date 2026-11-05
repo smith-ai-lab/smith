@@ -1,0 +1,29 @@
+// What `restrict` on a slice said, written as a precondition (#2463): one slice ends before the other begins. This is
+// the `requires` of std.slice's copy; the call proves it, and a call on overlapping ranges breaks it.
+module geometry::apart_precondition;
+import <smith/contract.h>;
+
+void copy(U8 dst[:], const U8 src[:]) {
+    c::smith_requires(countof(dst) <= countof(src) && countof(dst) <= 4);
+    c::smith_requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || &src[0] + countof(src) <= &dst[0]);
+    c::smith_ensures(true);
+    for (Usize i = 0; i < countof(dst); i++) dst[i] = src[i];
+}
+
+export void apart() {
+    c::smith_ensures(true);
+    U8 b[8] = {0};
+    copy(b[0:4], b[4:8]);
+}
+
+export void shifted() {
+    c::smith_ensures(true);
+    U8 b[8] = {0};
+    copy(b[1:5], b[0:4]);
+}
+
+export void same() {
+    c::smith_ensures(true);
+    U8 b[8] = {0};
+    copy(b[0:4], b[0:4]);
+}
