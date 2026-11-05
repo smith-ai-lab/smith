@@ -354,7 +354,7 @@ static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
     if (c.kind == kind_function) return build_function(&c, done);
     if (done[c.a] == nullptr) return nullptr;
     if (c.kind == kind_pointer) {
-        ast::TypeKind kind = {.pointer = {.pointee = done[c.a]}};
+        ast::TypeKind kind = {.pointer = {.pointee = done[c.a], .is_mut = !done[c.a]->qualifiers.is_const}};
         return ast::make_type(kind);
     }
     if (c.kind == kind_array) {
