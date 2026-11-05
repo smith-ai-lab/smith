@@ -224,3 +224,14 @@ export void test_front_types_a_read_only_field_in_a_pointer_sum_has_a_fix() {
     parse::Edits fix = r.errors[0].fix;
     test::check_equal(countof(fix), (Usize)1);
 }
+
+// #2461: a function whose last line is a call to a `[[noreturn]]` function has no value to match: it ends there.
+export void test_front_types_a_last_line_calling_a_noreturn_function_is_not_a_value() {
+    clean("[[noreturn]] fn stop(code: i32):\n    stop(code)\n\n"
+          "fn pick(p: *mut u8, code: i32) -> *mut u8:\n    if code == 0:\n        return p\n    stop(code)\n");
+}
+
+// #2461: `target.<fact>` is a constant the checker decides (here a `bool`), so it initializes a global.
+export void test_front_types_target_address_sanitizer_is_a_bool_constant() {
+    clean("const sanitized: bool = target.address_sanitizer\n\nfn run() -> bool:\n    sanitized\n");
+}
