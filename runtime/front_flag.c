@@ -196,6 +196,11 @@ static void smith_front_cimport_flags(const char *self, int count, char **args, 
     const char *sdk = getenv("SDKROOT");
     if (sdk != nullptr && *sdk != '\0' && strlen(sdk) < PATH_MAX)
         written += snprintf(flags + written, sizeof flags - (size_t)written, "-isysroot\n%s\n", sdk);
+    if (source != nullptr) { // smith's own headers (`<smith/console.h>`) are written beside the project on first use (#2041)
+        if (access(".smith/include/smith", F_OK) != 0) smith_write_embedded_headers(self);
+        written += snprintf(flags + written, sizeof flags - (size_t)written, "-I\n.smith/include\n");
+        SMITH_ASSERT((size_t)written < sizeof flags);
+    }
     smith_front_command_flags(flags, sizeof flags, (size_t)written, count, args);
     if (source != nullptr) { // the build's own flags for the file, where a compile_commands.json has them (#2313)
         static const char *const databases[] = {"compile_commands.json", "build/compile_commands.json",
