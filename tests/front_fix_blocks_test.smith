@@ -176,3 +176,8 @@ export void test_front_fix_blocks_a_one_line_block_inside_another_converts_in_a_
           "const a: i32 = if x: 1 else: 2\nfn f(x: i32) -> i32:\n    if x < 0:\n        return if x == 1: 5 else: 6\n  "
           "  return 0\n");
 }
+
+export void test_front_fix_blocks_a_match_arm_that_starts_with_a_dot_stays_on_its_own_line() {
+    check("fn f(e: E) {\n    match e {\n        .a => g(1)\n        .b(v), .c => g(v)\n        _ => g(3)\n    }\n}\n",
+          "fn f(e: E):\n    match e:\n        .a: g(1)\n        .b(v), .c: g(v)\n        _: g(3)\n");
+}
