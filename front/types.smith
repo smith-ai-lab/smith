@@ -3042,6 +3042,11 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     return found;
 }
 
+// The symbol a written type name stands for, read through the modules imported (`words.Pair`), else null.
+export const Symbol *written_type_symbol(const Checked *r, ast::Path path) {
+    return type_through_modules(r, path);
+}
+
 static Usize distance(Str a, Str b) {
     Usize row[65] = {};
     if (countof(a) > 64 || countof(b) > 64) return 65;

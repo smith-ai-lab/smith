@@ -265,6 +265,12 @@ export void test_front_types_module_a_struct_with_a_private_field_is_built_only_
     clean("import lib.math as m\n\nfn run() -> m.Handle:\n    return m.handle()\n");
 }
 
+// A struct is built through the name of the module that declares it, `m.Point(...)`, with no `let` first (#2431).
+export void test_front_types_module_a_struct_is_built_through_the_module_name() {
+    clean("import lib.math as m\n\nfn run() -> m.Point:\n    return m.Point(x = 1.0, y = 2.0)\n");
+    clean("import lib.math as m\n\nfn run() -> m.Point:\n    return m.Point(1.0, 2.0)\n");
+}
+
 export void test_front_types_module_a_struct_of_pub_fields_is_built_anywhere() {
     clean("import lib.math as m\nlet Point = m.Point\n\nfn run() -> m.Point:\n    return Point(x = 1.0, y = 2.0)\n");
     clean("import lib.math as m\nlet Point = m.Point\n\nfn run() -> m.Point:\n    return Point(1.0, 2.0)\n");

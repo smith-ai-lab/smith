@@ -2386,7 +2386,8 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     } else {
         return nullptr;
     }
-    const types::Symbol *s = types::lookup_path(&c->scopes, path);
+    const types::Symbol *s = types::written_type_symbol(c, path);
+    if (s == nullptr) s = types::lookup_path(&c->scopes, path); // a private type: the construction says why it fails
     if (s == nullptr || s->kind != .type_name) {
         return nullptr;
     }
