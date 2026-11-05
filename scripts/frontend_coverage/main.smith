@@ -28,8 +28,10 @@
 // The summary: files passed out of total, the failed files per stage, then the causes: a diagnostic's message with
 // its names (`...`) and numbers replaced by `<name>` and `<n>`, the biggest first, each with its occurrences, its
 // files, the files it stops first (their first diagnostic) and up to 3 example locations, the cause that stops most
-// files first; then 20 `frontend-cause:` lines for the CI log. A parse error is the only one of its file (the parser
-// stops at the first, parser recovery is not counted here): the summary says how many files are stopped there. The real
+// files first; then 20 `frontend-cause:` lines for the CI log. A file with parse errors has a row for every one the
+// parser recorded while it recovered (213 files stop at `parse`, 114 of them with more than one); the errors past a
+// function body's first can be cascades of a badly skipped body, until the parser's recovery resynchronizes there.
+// The summary says how many files are stopped at parse. The real
 // files are never changed: only the copies are.
 //
 // The fixer's work is cached (#2309) in `SCRATCH/../fixed/<hash>`: the fixed text of a file, keyed by the file, every
