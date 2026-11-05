@@ -183,7 +183,7 @@ static Str omitted(types::TypeRef record, U64 given) {
         if ((given & ((U64)1 << k)) != 0 || record->slots[k].default_value != nullptr) continue;
         types::TypeRef field = record->slots[k].type;
         Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
+        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
         if (countof(zero) == 0 || !nameable(record->slots[k].name)) return "";
         out = types::message_of(format::push(out, ", ", record->slots[k].name, " = ", zero));
     }
