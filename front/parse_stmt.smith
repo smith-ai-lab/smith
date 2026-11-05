@@ -1200,14 +1200,22 @@ static Bool same_name(const parse::Parser *p, Usize at, Str name) {
     return parse::peek_at(p, at).kind == lex::name && mem::equal(parse::text(p, parse::peek_at(p, at)), name);
 }
 
-// `(T x : xs)` is `x in xs`.
+// `(T x : xs)` is `x in xs`, and `(Usize i, T x : xs)` is `(i, x) in xs` (#2397).
 static RangeText range_of_collection(const parse::Parser *p, Usize close) {
     RangeText none = {};
     Usize colon = find_at_depth_0(p, 1, close, lex::colon);
     if (colon < 3 || colon + 1 >= close) return none;
-    if (find_at_depth_0(p, 1, colon, lex::comma) != colon) return none;
+    Usize comma = find_at_depth_0(p, 1, colon, lex::comma);
     if (parse::peek_at(p, colon - 1).kind != lex::name) return none;
     Str name = parse::text(p, parse::peek_at(p, colon - 1));
+    if (comma != colon) {
+        if (comma < 3 || find_at_depth_0(p, comma + 1, colon, lex::comma) != colon) return none;
+        if (parse::peek_at(p, comma - 1).kind != lex::name) return none;
+        Str index = parse::text(p, parse::peek_at(p, comma - 1));
+        char pair[:] = format::push("(", index, ", ", name, ") in ", tokens_text(p, colon + 1, close - 1));
+        RangeText found = {.ok = true, .text = pair};
+        return found;
+    }
     char text[:] = format::push(name, " in ", tokens_text(p, colon + 1, close - 1));
     RangeText found = {.ok = true, .text = text};
     return found;
