@@ -1,0 +1,348 @@
+// Tests of the compile-time reflection lists `fields(T)` and `parameters(F)` (#1821): unrolled `for`, a compile-time
+// index, `countof`, and the entries' `.name`, `.type`, `.doc`, `.attr(X)` and `value.[f]`.
+module front_reflect_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::parse;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <string.h>;
+import <llvm-c/Core.h>;
+
+static parser::Parsed parse_new(Str source) {
+    return parser::parse_new("t.smith", source);
+}
+
+typedef I32 (*Run)();
+
+// Parses and checks under the arena as front_emit_option_test.smith does; emission and the JIT use the system's
+// allocator, and the arena stays alive until the function has run.
+static I32 run(Str source, Str symbol) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parse_new(source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    ast::Module m = ast::new_module("front::test", parsed.module.decls);
+    types::Checked checked = types_decl::check_module(&m, types::lp64());
+    mem::set_allocator(outside);
+    test::check_equal(checked.error_count, (Usize)0);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    emit::Options options = {};
+    options.target = host.target;
+    options.checked = &checked;
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &m, options);
+    test::check_equal(emitted == .ok, true);
+    I32 result = -1;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(&host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+        emit_jit::AddressResult found = emit_jit::lookup(&host, symbol);
+        test::check_equal(found == .ok, true);
+        if (added == .ok && found == .ok) result = ((Run)found.ok)();
+    }
+    emit_jit::stop(&host);
+    return result;
+}
+
+export void test_front_reflect_countof_fields() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let n: usize = countof(fields(Point))\n"
+                 "    n.to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)3);
+}
+
+export void test_front_reflect_compile_time_index_name() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let a: usize = countof(fields(Point)[1].name)\n"
+                 "    let b: usize = countof(fields(Point)[0].name)\n"
+                 "    (a + b * 10).to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)11);
+}
+
+export void test_front_reflect_alias_of_an_entry() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let first = fields(Point)[0]\n"
+                 "    let p = Point(x = 4, y = 5, z = 6)\n"
+                 "    let n: usize = countof(first.name)\n"
+                 "    p.[first] + n.to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)5);
+}
+
+export void test_front_reflect_unrolled_for_reads_each_field() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "\n"
+                 "fn sum(T: type, v: T) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        total = total + v.[f]\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    sum(Point, Point(x = 1, y = 20, z = 300))\n";
+    test::check_equal(run(source, "front::test::run"), (I32)321);
+}
+
+export void test_front_reflect_unrolled_for_of_a_named_struct() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let p = Point(x = 1, y = 20, z = 300)\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(Point):\n"
+                 "        total = total + p.[f]\n"
+                 "    total\n";
+    test::check_equal(run(source, "front::test::run"), (I32)321);
+}
+
+export void test_front_reflect_names_of_different_lengths() {
+    Str source = "struct Mixed:\n"
+                 "    a: i32\n"
+                 "    bb: i32\n"
+                 "    ccc: i32\n"
+                 "\n"
+                 "fn width(T: type) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        let n: usize = countof(f.name)\n"
+                 "        total = total * 10 + n.to(i32)\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    width(Mixed)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)123);
+}
+
+export void test_front_reflect_type_of_an_entry() {
+    Str source = "struct Mixed:\n"
+                 "    a: i8\n"
+                 "    b: i32\n"
+                 "    c: i64\n"
+                 "\n"
+                 "fn bytes(T: type) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        let n: usize = sizeof(f.type)\n"
+                 "        total = total + n.to(i32)\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    bytes(Mixed)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)13);
+}
+
+export void test_front_reflect_doc_of_an_entry() {
+    Str source = "struct Documented:\n"
+                 "    ## width\n"
+                 "    w: i32\n"
+                 "    h: i32\n"
+                 "\n"
+                 "fn doc_length(T: type) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        let n: usize = countof(f.doc)\n"
+                 "        total = total * 100 + n.to(i32)\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    doc_length(Documented)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)500);
+}
+
+export void test_front_reflect_attribute_of_an_entry() {
+    Str source = "@attribute\n"
+                 "pub struct Rename:\n"
+                 "    to: str\n"
+                 "\n"
+                 "struct User:\n"
+                 "    @Rename(to = \"user_id\")\n"
+                 "    id: i32\n"
+                 "    name: i32\n"
+                 "\n"
+                 "fn renamed(T: type) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        if let .some(r) = f.attr(Rename):\n"
+                 "            let n: usize = countof(r.to)\n"
+                 "            total = total + n.to(i32)\n"
+                 "        else:\n"
+                 "            total = total + 1000\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    renamed(User)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)1007);
+}
+
+export void test_front_reflect_parameters_of_a_function() {
+    Str source = "fn area(width: i32, height: i32, depth: i32) -> i32:\n"
+                 "    width * height * depth\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for p in parameters(area):\n"
+                 "        let n: usize = countof(p.name)\n"
+                 "        total = total + n.to(i32)\n"
+                 "    let count: usize = countof(parameters(area))\n"
+                 "    total + count.to(i32) * 100\n";
+    test::check_equal(run(source, "front::test::run"), (I32)316);
+}
+
+export void test_front_reflect_each_type_is_its_own_instance() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "    z: i32\n"
+                 "struct Pair:\n"
+                 "    a: i32\n"
+                 "    b: i32\n"
+                 "\n"
+                 "fn count(T: type) -> i32:\n"
+                 "    let n: usize = countof(fields(T))\n"
+                 "    n.to(i32)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    count(Point) * 10 + count(Pair)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)32);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `fields(T)` in another module lists only the `pub` fields (#1787): a module `lib.math` has a struct with one `pub`
+// field and one private one, and the unrolled loop reads every field it lists.
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static const ast::Module *load(const char *name) {
+    Str path = name[0:c::strlen(name)];
+    if (!same_text(path, "lib.math")) return nullptr;
+    Str source = "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
+                 "pub fn handle() -> Handle:\n    return Handle(len = 1, items = 2)\n";
+    parser::Parsed p = parser::parse_new("lib/math.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 2);
+    Str lead = "lib";
+    Str rest = "math";
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = rest};
+    copy->name.segments = parts;
+    return copy;
+}
+
+static Usize errors_with(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    return r.error_count;
+}
+
+export void test_front_reflect_another_module_lists_only_pub_fields() {
+    Str reads_every_field = "import lib.math as m\n\n"
+                            "fn sum(T: type, v: T) -> i32:\n"
+                            "    let mut total = 0\n"
+                            "    for f in fields(T):\n"
+                            "        total = total + v.[f]\n"
+                            "    total\n\n"
+                            "fn run() -> i32:\n"
+                            "    sum(m.Handle, m.handle())\n";
+    test::check_equal(errors_with(reads_every_field), (Usize)0);
+}
+
+export void test_front_reflect_its_own_module_lists_private_fields() {
+    Str source = "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
+                 "fn sum(T: type, v: T) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        total = total + v.[f]\n"
+                 "    total\n\n"
+                 "fn run() -> i32:\n"
+                 "    sum(Handle, Handle(len = 1, items = 2))\n";
+    test::check_equal(errors_with(source), (Usize)0);
+}
+
+// The first error a source gives, or an empty text when it checks clean.
+static Str first_error(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    Str none = "";
+    if (r.error_count == 0) return none;
+    return r.errors[0].message;
+}
+
+static Bool mentions(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool match = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
+    }
+    return false;
+}
+
+export void test_front_reflect_an_index_past_the_end_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str error = first_error("struct Point:\n    x: i32\n    y: i32\n\n"
+                            "fn run() -> usize:\n    countof(fields(Point)[2].name)\n");
+    test::check_equal(mentions(error, "`fields(Point)` has 2 entries, but this index is 2"), true);
+}
+
+export void test_front_reflect_a_run_time_index_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str error = first_error("struct Point:\n    x: i32\n    y: i32\n\n"
+                            "fn run(i: usize) -> usize:\n    countof(fields(Point)[i].name)\n");
+    test::check_equal(mentions(error, "must be a number written in the code"), true);
+    test::check_equal(mentions(error, "slice"), true);
+}

@@ -1,0 +1,69 @@
+// Tests of the bracketed parameters of a function in front::parse_decl (#1698, part of #1700): `fn push[T](...)`,
+// `fn first[T, n: usize](...)` and `fn sum[T: num](...)` keep the names, and the type or concept after `:`.
+module front_parse_generics_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::Param ParamList[:];
+
+// The bracketed parameters of the first function of source, which must parse without errors.
+static ParamList generics_of(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    test::check_equal(countof(parsed.errors), 0);
+    test::check_condition(countof(parsed.module.decls) >= 1);
+    ast::DeclKind kind = parsed.module.decls[0]->kind;
+    if (kind == .function) {
+        return kind.function.generics;
+    }
+    test::check_condition(false);
+    return {};
+}
+
+export void test_parse_generics_names() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList list = generics_of("fn push[T](xs: *mut List(T), x: T):\n    return\n");
+    test::check_equal(countof(list), 1);
+    Str t = "T";
+    test::check_equal(list[0].name, t);
+    test::check_condition(list[0].type == nullptr);
+}
+
+export void test_parse_generics_value_and_concept() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList list = generics_of("fn first[T: num, n: usize](data: [n]T) -> T:\n    return data[0]\n");
+    test::check_equal(countof(list), 2);
+    Str t = "T";
+    test::check_equal(list[0].name, t);
+    test::check_condition(list[0].type != nullptr);
+    Str n = "n";
+    test::check_equal(list[1].name, n);
+    test::check_condition(list[1].type != nullptr);
+}
+
+export void test_parse_generics_none() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ParamList list = generics_of("fn f(x: i32):\n    return\n");
+    test::check_equal(countof(list), 0);
+}
+
+export void test_parse_generics_unclosed() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse_new("x.smith", "fn f[T(x: i32):\n    return\n");
+    test::check_condition(countof(parsed.errors) > 0);
+}

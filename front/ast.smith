@@ -546,6 +546,7 @@ export typedef enum {
     struct {
         Text name;
         Param params[:];
+        Param generics[:]; // `fn push[T, n: usize](...)`: the bracketed parameters, worked out from the call (#1698)
         TypeExpr *result;
         Stmt *body;
         Bool variadic;
@@ -2044,6 +2045,11 @@ static void decl_head(Output *text, Decl *d) {
         put(text, "function ");
         put(text, d->kind.function.name);
         put_flag(text, d->kind.function.variadic, "variadic");
+        for (Usize i = 0; i < countof(d->kind.function.generics); i++) {
+            put(text, " [");
+            put(text, d->kind.function.generics[i].name);
+            put(text, "]");
+        }
         break;
     case .record:
         put(text, pick(d->kind.record.is_union, "union ", "struct "));

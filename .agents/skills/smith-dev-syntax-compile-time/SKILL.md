@@ -37,7 +37,7 @@ let n = countof(fields(Point))
 ```
 
 - `fields(T)` and `parameters(F)` are compile-time lists like packs. A run-time index or one out of range is a compile error. Each entry has `.name`, `.type`, `.attr(X)` (`?X`, [smith-dev-syntax-attributes](../smith-dev-syntax-attributes/SKILL.md)) and `.doc` (its `##` comment); `value.[f]` reads the field `f` names.
-- `fields(T)` in another module lists only `pub` fields; it also reads a named tuple.
+- `fields(T)` in another module lists only `pub` fields; it also reads a named tuple. Built so far (#2295): structs and `parameters(F)` of a plain function; `.attr(X)` is read in `if let .some(a) = f.attr(X): ... else: ...`, decided at compile time; `f.type` is the type, so `sizeof(f.type)` works; a named tuple, `methods(T)` and the defaults of `parameters(F)` are not yet.
 - `methods(T)` lists the functions in `T`'s module whose first parameter is `T`, `*T` or `*mut T`; Objective-C and C++ registration are built on it.
 
 ## Variadics
