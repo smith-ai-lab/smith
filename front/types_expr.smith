@@ -267,9 +267,9 @@ static Bool negated_literal(const ast::Expr *e) {
     return plain_integer(operand) || plain_float(operand);
 }
 
-// A literal that takes the type of its neighbour: `1`, `2.5`, `-3`.
+// A literal that takes the type of its neighbour: `1`, `2.5`, `-3`, `'a'` (a `U8` compared with `'a'`).
 static Bool literal_like(const ast::Expr *e) {
-    return plain_integer(e) || plain_float(e) || negated_literal(e);
+    return plain_integer(e) || plain_float(e) || negated_literal(e) || e->kind == .character;
 }
 
 static Bool is_lvalue(const ast::Expr *e) {
@@ -730,6 +730,13 @@ static void literal_null(types::Checked *c, Frame f) {
 // Retypes an unsuffixed literal (or a negated one) to the number type `to`; false, with the error, when it does not
 // fit.
 static Bool retype(types::Checked *c, const ast::Expr *n, types::TypeRef to) {
+    if (n->kind == .character) {
+        if (!fit(c, n->span, n->kind.character.value, false, to)) {
+            return false;
+        }
+        types::set_type(c, n, to);
+        return true;
+    }
     if (n->kind == .integer) {
         U64 value = n->kind.integer.value;
         if (!fit(c, n->span, value, false, to)) {

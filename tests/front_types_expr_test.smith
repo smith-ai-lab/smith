@@ -303,6 +303,21 @@ export void test_front_types_expr_names_and_operators_take_their_operands_type()
     expect(r.error_count, 0);
 }
 
+export void test_front_types_expr_a_character_literal_takes_the_type_of_the_operand_next_to_it() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "c", "U8");
+    ast::ExprKind kind = {.character = {.value = 'a'}};
+    ast::Expr *letter = ast::expr(kind);
+    ast::Expr *same = binary(.equal, ast::name("c"), letter);
+    test::check_condition(types_expr::infer(&r, same) == r.table.bool_type);
+    test::check_condition(types::type_of(&r, letter) == ty(&r, "U8"));
+    expect(r.error_count, 0);
+}
+
 export void test_front_types_expr_operand_errors_name_the_types_and_what_to_write() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
