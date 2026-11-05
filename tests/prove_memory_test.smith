@@ -323,6 +323,42 @@ static void restrict_slice_fails(const char *function, const char *line, const c
             .data);
 }
 
+// 7c4b2. The non-overlap that `restrict` said, written as a `requires` (#2463), is proved for apart ranges and broken
+// at the call by overlapping ones: std.slice's copy keeps the check after the fixer drops `restrict`.
+export void test_prove_apart_precondition_is_proved_for_apart_ranges() {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prove_cases::each_proved(&p, "apart precondition: apart is proved", "\"$c/geometry/apart_precondition.smith\"",
+                             "geometry::apart_precondition::", "apart");
+}
+
+static void apart_precondition_fails(const char *function) {
+    scratch::Project p = fresh();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    const char *name = format::push("apart precondition: ", function, " fails").data;
+    scratch::Run run = refuted(&p, name,
+                               format::push("--function=geometry::apart_precondition::", function,
+                                            " \"$c/geometry/apart_precondition.smith\"")
+                                   .data);
+    has(format::push(name, " at the call").data, &run, "the call of geometry::apart_precondition::copy may break");
+}
+
+export void test_prove_apart_precondition_shifted_fails_at_the_call() {
+    apart_precondition_fails("shifted");
+}
+
+export void test_prove_apart_precondition_same_range_fails_at_the_call() {
+    apart_precondition_fails("same");
+}
+
 // 7c4c. `restrict` on an `auto` slice parameter is in the generic's instance (#484): the call is checked as a
 // fixed-element slice's is.
 export void test_prove_restrict_generic_apart_ranges_are_proved() {

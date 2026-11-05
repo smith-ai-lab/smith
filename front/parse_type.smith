@@ -1078,6 +1078,52 @@ static void note_qualifier(lex::TokenKind kind, Rewrite *r) {
     r->problem = "`volatile` and `restrict` have no spelling in smith's own syntax: remove them";
 }
 
+static Bool is_word_at(const lex::Tokens tokens, Str source, Usize i, const char *word) {
+    return tokens[i].kind == lex::name && text::is(source[tokens[i].span.start:tokens[i].span.end], word);
+}
+
+// The token that closes the bracket opened at `open`, or `open` when the file ends first.
+static Usize closing_of(const lex::Tokens tokens, Usize open) {
+    lex::TokenKind opener = tokens[open].kind;
+    lex::TokenKind closer = opener == lex::left_paren ? lex::right_paren : lex::right_brace;
+    Usize depth = 0;
+    for (Usize i = open; i < countof(tokens); i += 1) {
+        if (tokens[i].kind == opener) depth += 1;
+        if (tokens[i].kind == closer) depth -= 1;
+        if (depth == 0) return i;
+    }
+    return open;
+}
+
+// Whether the arguments from the `(` at `open` compare the addresses of slice elements.
+static Bool compares_slice_addresses(const lex::Tokens tokens, Usize open) {
+    Usize close = closing_of(tokens, open);
+    Bool address = false;
+    Bool index = false;
+    Bool order = false;
+    for (Usize i = open; i < close; i += 1) {
+        if (tokens[i].kind == lex::ampersand) address = true;
+        if (tokens[i].kind == lex::left_bracket) index = true;
+        if (tokens[i].kind == lex::less || tokens[i].kind == lex::less_equal) order = true;
+    }
+    return address && index && order;
+}
+
+// What lets the fixer drop `restrict` from a slice parameter (#2463): whether the function whose parameters open at
+// token `open` has, in its body, a `requires` (or `smith_requires`) that compares the addresses of two slices (an `&`,
+// an index and a `<` or `<=`: one ends before the other begins). `smith prove` checks that at each call, as it did
+// `restrict`, so the guarantee is not lost. Any other function keeps `restrict` as a problem.
+export Bool states_apart(const lex::Tokens tokens, Str source, Usize open) {
+    Usize close = closing_of(tokens, open);
+    if (close == open || close + 1 >= countof(tokens) || tokens[close + 1].kind != lex::left_brace) return false;
+    Usize end = closing_of(tokens, close + 1);
+    for (Usize i = close + 2; i + 1 < end; i += 1) {
+        Bool named = is_word_at(tokens, source, i, "requires") || is_word_at(tokens, source, i, "smith_requires");
+        if (named && tokens[i + 1].kind == lex::left_paren && compares_slice_addresses(tokens, i + 1)) return true;
+    }
+    return false;
+}
+
 // The base when it is C's keyword types: `unsigned long` is `u64`.
 static Str keyword_base(const parse::Parser *p, const OldType *t, Rewrite *r) {
     char words[:] = {};
@@ -1196,7 +1242,9 @@ static Usize scan_bracket(const parse::Parser *p, Usize open, Usize end, Rewrite
     }
     Usize from = open + 1;
     while (from < close && is_qualifier(p->tokens[from].kind)) {
-        note_qualifier(p->tokens[from].kind, r);
+        // `restrict` on a slice goes when the function states its slices apart in a `requires` (#2463)
+        Bool dropped = p->tokens[from].kind == lex::kw_restrict && p->apart;
+        if (!dropped) note_qualifier(p->tokens[from].kind, r);
         from += 1;
     }
     Str size = "";
