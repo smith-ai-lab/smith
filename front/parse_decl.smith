@@ -2139,6 +2139,60 @@ static ast::DeclKind tag_kind(parse::Parser *p, Style *style) {
     return record_kind(p, style);
 }
 
+// Whether the position is `enum {` or `struct {` after a `return`: the old spelling of the unnamed type a type function
+// returns (#2251).
+export Bool at_returned_tag(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    return (kind == lex::kw_enum || kind == lex::kw_struct) && parse::peek_at(p, 1).kind == lex::left_brace;
+}
+
+// The white space at the start of the line that holds `offset`.
+static Str line_indent(const parse::Parser *p, U32 offset) {
+    U32 from = offset;
+    while (from > 0 && p->source[from - 1] != '\n')
+        from -= 1;
+    U32 to = from;
+    while (to < offset && (p->source[to] == ' ' || p->source[to] == '\t'))
+        to += 1;
+    return p->source[from:to];
+}
+
+// `return enum { T some; none; };` (or `struct { T first; T second; }`), the position at the keyword and `start` at the
+// `return`: the type function's last line is the unnamed block `enum:` with its members indented, one to a line
+// (`some: T`, `none`), and the `return` and the `;` go (#2251). Only in smith's own layout, where the function body is
+// already indented; the brace pass has run first.
+export void fix_returned_tag(parse::Parser *p, U32 start) {
+    Style style = {.top = false};
+    Bool is_enum = parse::at(p, lex::kw_enum);
+    ast::DeclKind kind = tag_kind(p, &style);
+    parse::accept(p, lex::semicolon);
+    if (!p->layout) return;
+    U32 end = p->tokens[p->position - 1].span.end;
+    Str indent = line_indent(p, start);
+    char text[:] = format::push(is_enum ? "enum:" : "struct:");
+    if (kind == .enumeration) {
+        for (Usize i = 0; i < countof(kind.enumeration.items); i++) {
+            const ast::Enumerator *item = &kind.enumeration.items[i];
+            if (item->payload == nullptr) {
+                text = format::push(text, "\n", indent, "    ", item->name);
+            } else {
+                Str written = trimmed(source_between(p, item->payload->span.start, item->payload->span.end));
+                text = format::push(text, "\n", indent, "    ", item->name, ": ", written);
+            }
+        }
+    } else if (kind == .record) {
+        for (Usize i = 0; i < countof(kind.record.fields); i++) {
+            const ast::FieldDecl *field = &kind.record.fields[i];
+            Str written = trimmed(source_between(p, field->type->span.start, field->type->span.end));
+            text = format::push(text, "\n", indent, "    ", field->name, ": ", written);
+        }
+    }
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(start, end, as_str(text)));
+    warn(p, start, end, "a type function returns its unnamed type as the last line: `enum:` and the members indented",
+         edits);
+}
+
 // `struct Name {...};`, `union`, `enum`: a declaration of the type by itself.
 static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     Usize errors_before = countof(p->errors);

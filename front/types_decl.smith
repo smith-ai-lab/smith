@@ -901,6 +901,7 @@ static void drain(types::Checked *r) {
 // Functions and the module
 
 static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature);
+static Bool declares_type(const ast::Decl *function);
 
 // The types::BodyChecker: the body of one function of the module.
 export void check_body(types::Checked *r, const ast::Decl *function) {
@@ -915,7 +916,37 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     if (symbol->generic) {
         return; // a template: its bodies are the instances' (check_instances)
     }
+    if (declares_type(function)) {
+        return; // a type function: its unnamed `enum:` or `struct:` is the type it returns (#2251)
+    }
     check_function(r, function, symbol->type);
+}
+
+// Whether `function` is a type function (`-> type`) whose last statement is an unnamed `enum:` or `struct:` block:
+// that declaration is the type each call returns (`Option(i32)`), so the body has nothing else to check.
+static Bool declares_type(const ast::Decl *function) {
+    if (function->kind != .function) {
+        return false;
+    }
+    const ast::TypeExpr *result = function->kind.function.result;
+    if (result == nullptr || result->kind != .named) {
+        return false;
+    }
+    ast::Path path = result->kind.named.path;
+    if (countof(path.segments) != 1 || !types::same_text(path.segments[0].text, "type")) {
+        return false;
+    }
+    const ast::Stmt *body = function->kind.function.body;
+    if (body->kind != .block || countof(body->kind.block.items) == 0) {
+        return false;
+    }
+    const ast::Stmt *last = body->kind.block.items[countof(body->kind.block.items) - 1];
+    if (last->kind != .declaration) {
+        return false;
+    }
+    const ast::Decl *declared = last->kind.declaration.decl;
+    return (declared->kind == .enumeration && countof(declared->kind.enumeration.name) == 0) ||
+           (declared->kind == .record && countof(declared->kind.record.name) == 0);
 }
 
 // The body of `function` against `signature`: the parameters in a scope of their own, then the body.

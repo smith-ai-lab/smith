@@ -181,7 +181,7 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
-static Bool same_text(Str a, Str b) {
+export Bool same_text(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
         if (a[i] != b[i]) return false;
