@@ -5,6 +5,7 @@ module front_target_if_test;
 import front::parser;
 import front::types;
 import front::types_decl;
+import front::when;
 import std::arena;
 import std::mem;
 import std::test;
@@ -21,6 +22,15 @@ static Bool has(Str text, Str needle) {
         if (same) return true;
     }
     return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++)
+        out[i] = a[i];
+    for (Usize i = 0; i < countof(b); i++)
+        out[countof(a) + i] = b[i];
+    return out;
 }
 
 static Str format_line(Str text, Str line) {
@@ -74,12 +84,16 @@ export void test_front_target_if_the_branch_kept_is_checked() {
            "nothing_here");
 }
 
-export void test_front_target_if_on_the_os_checks_each_branch_on_its_system() {
+export void test_front_target_if_on_the_os_checks_the_branch_of_this_system_only() {
     expect("fn f() -> i32:\n    if target.os == .macos:\n        return 1\n    else:\n        return 2\n", false, "");
-    expect("fn f() -> i32:\n    if target.os == .macos:\n        return mac_only()\n    return 2\n", false,
-           "on macos: ");
-    expect("fn f() -> i32:\n    if target.os != .macos:\n        return linux_only()\n    return 2\n", false,
-           "on linux: ");
+    Str other = when::host() == when::os_macos ? "linux" : "macos";
+    Str mine = when::host() == when::os_macos ? "macos" : "linux";
+    Str bad_other =
+        join(join("fn f() -> i32:\n    if target.os == .", other), ":\n        return nothing_here()\n    return 2\n");
+    expect(bad_other, false, "");
+    Str bad_mine =
+        join(join("fn f() -> i32:\n    if target.os == .", mine), ":\n        return nothing_here()\n    return 2\n");
+    expect(bad_mine, false, "nothing_here");
 }
 
 export void test_front_target_if_a_run_time_condition_keeps_both_branches() {

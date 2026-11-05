@@ -1,0 +1,63 @@
+// front::fix_generic_c, the fix-it for `c.name` in the body of a generic function (#2303, part of #2224): the checker
+// reads the body of a generic function only through its instances, so a template that nothing calls (std::optimize's
+// `opaque`) never reports `there is no global `c``. This pass reads the text of such a body: `c.name` where an
+// `import c <h>` of the file declares `name` is written `h.name`, as the checker's fix does for any other function.
+//
+//   fix_generic_c::edits(source, module, checked)   one fix for each `c.name` of a generic function's body
+module front::fix_generic_c;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::mem;
+
+// Whether the function is a template: a compile-time parameter or an `auto` one.
+static Bool is_generic(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_const || params[i].is_constexpr) return true;
+        const ast::TypeExpr *type = params[i].type;
+        if (type != nullptr && type->kind == .auto_type) return true;
+    }
+    return false;
+}
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// The fix of the `c.name` that starts at `at`, or none when it is not one or no header declares `name`.
+static Bool find(Str source, Usize at, Usize end, const types::Checked *c, core::ParseError *out) {
+    if (source[at] != 'c' || at + 2 >= end || source[at + 1] != '.') return false;
+    if (at > 0 && (word_char(source[at - 1]) || source[at - 1] == '.')) return false;
+    Usize stop = at + 2;
+    while (stop < end && word_char(source[stop]))
+        stop += 1;
+    if (stop == at + 2) return false;
+    Str binding = types::c_binding_of(c, source[at + 2:stop]);
+    if (countof(binding) == 0) return false;
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    fix[0] = (core::Edit){.span = {.start = (U32)at, .end = (U32)(at + 1)}, .text = binding};
+    out->span = fix[0].span;
+    out->message = "there is no global `c`: write the header's binding";
+    out->fix = fix;
+    return true;
+}
+
+export core::Errors edits(Str source, const ast::Module *module, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .function || d->kind.function.body == nullptr || !is_generic(d)) continue;
+        Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+        for (Usize at = d->span.start; at < end; at++) {
+            core::ParseError found = {};
+            if (!find(source, at, end, c, &found)) continue;
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = found;
+        }
+    }
+    return out;
+}

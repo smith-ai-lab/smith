@@ -472,9 +472,10 @@ static Mapped map_group(Str inner) {
     return group;
 }
 
-// The name of a declaration with its `[[maybe_unused]]` written as a prefix.
+// The name of a declaration with its `[[maybe_unused]]` written as a prefix. An exported name stays: `_` would make it
+// private, and a public declaration is never unused (#2303).
 static Str named(const Prefixes *pre, Str name) {
-    if (!pre->unused) return name;
+    if (!pre->unused || pre->exported || pre->is_pub) return name;
     return as_str(format::push("_", name));
 }
 
