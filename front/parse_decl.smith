@@ -1525,6 +1525,20 @@ static void warn_by_hand(parse::Parser *p, Head head, Str name, Str written) {
     warn(p, head.type_start, head.name.span.end, message, none);
 }
 
+// The word before a fixed variable's name: a global of C is writable, `mut` (`pub mut` with the `export` before it);
+// a local is a constant, with no word; a `constexpr` value is `const`.
+static Str variable_lead(const Prefixes *pre, Bool type_value) {
+    if (pre->is_constexpr && !type_value) return "const ";
+    if (!pre->is_constexpr && pre->top) return "mut ";
+    return "";
+}
+
+// What follows the name when no type is written: `name := v`, but `const N = v`.
+static Str untyped_of(Str lead) {
+    if (same_text(lead, "const ")) return " =";
+    return " :=";
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1565,13 +1579,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         warn_by_hand(p, head, name, written);
         return;
     }
-    // A global of C is writable: `mut` (`pub mut` with the `export` before it); a local is a constant. With no type
-    // written, a declaration is `name := v`, and a constant `const N = v`.
-    Str lead = "";
-    if (pre->is_constexpr && !type_value) lead = "const ";
-    if (!pre->is_constexpr && pre->top) lead = "mut ";
-    Str untyped = " :=";
-    if (same_text(lead, "const ")) untyped = " =";
+    Str lead = variable_lead(pre, type_value);
+    Str untyped = untyped_of(lead);
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
