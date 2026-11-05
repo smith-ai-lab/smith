@@ -184,7 +184,7 @@ export void test_front_types_match_a_variant_over_a_number_is_an_error() {
           "`.red` is a variant, but this `match` is over `I32`", "");
 }
 
-export void test_front_types_match_a_constant_over_an_enumeration_is_an_error() {
+export void test_front_types_match_a_literal_over_an_enumeration_is_an_error() {
     fails("enum Color:\n"
           "    red\n"
           "    green\n"
@@ -193,6 +193,26 @@ export void test_front_types_match_a_constant_over_an_enumeration_is_an_error() 
           "        1: 10\n"
           "        _: 0\n",
           "a `match` over `Color` names its cases with a dot", "");
+}
+
+// The fixer writes a C `case red:` label as the bare name; over an enumeration it is the enumerator.
+export void test_front_types_match_an_enumerator_name_is_its_case() {
+    clean("enum Color:\n"
+          "    red\n"
+          "    green\n"
+          "    blue\n"
+          "fn pick(c: Color) -> i32:\n"
+          "    match c:\n"
+          "        red, green: 10\n"
+          "        Color.blue: 20\n");
+    fails("enum Color:\n"
+          "    red\n"
+          "    green\n"
+          "fn pick(c: Color) -> i32:\n"
+          "    match c:\n"
+          "        red: 10\n"
+          "        purple: 20\n",
+          "`Color` has no enumerator `purple`", "");
 }
 
 export void test_front_types_match_a_default_covers_the_rest_of_an_enumeration() {

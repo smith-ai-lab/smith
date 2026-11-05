@@ -369,6 +369,20 @@ static c::LLVMBasicBlockRef unreachable_block(state::Emitter *e, Str name) {
     return block;
 }
 
+// The enumerator a pattern names: `.name`, or a constant pattern that is a name (`name`, `lex.name`, as the fixer
+// writes a C `case` label); empty for a literal.
+static Str case_name(ast::Pattern p) {
+    if (p.constant == nullptr) return p.name;
+    const ast::Expr *e = p.constant;
+    if (e->kind == .member) return e->kind.member.name;
+    ast::Path path = {};
+    if (e->kind == .name) path = e->kind.name.path;
+    if (e->kind == .type_value && e->kind.type_value.type != nullptr && e->kind.type_value.type->kind == .named)
+        path = e->kind.type_value.type->kind.named.path;
+    if (countof(path.segments) == 0) return "";
+    return path.segments[countof(path.segments) - 1].text;
+}
+
 // The block of the first arm with a pattern named `name`, else of the `_` arm, else null.
 static c::LLVMBasicBlockRef arm_for(const ast::Stmt *s, c::LLVMBasicBlockRef blocks[64], Str name) {
     if (s->kind != .match_stmt) {
@@ -379,9 +393,9 @@ static c::LLVMBasicBlockRef arm_for(const ast::Stmt *s, c::LLVMBasicBlockRef blo
     for (Usize i = 0; i < countof(arms); i++) {
         ast::Pattern patterns[:] = arms[i].patterns;
         for (Usize k = 0; k < countof(patterns); k++) {
-            Str got = patterns[k].name;
+            Str got = case_name(patterns[k]);
             Bool any = patterns[k].wildcard || state::same_text(got, "_");
-            if (!any && patterns[k].constant == nullptr && state::same_text(got, name)) return blocks[i];
+            if (!any && state::same_text(got, name)) return blocks[i];
             if (any && wild == nullptr) wild = blocks[i];
         }
     }
@@ -409,10 +423,10 @@ static state::Status switch_enum(state::Emitter *e, const ast::Stmt *s, state::V
         for (Usize k = 0; k < countof(patterns); k++) {
             ast::Pattern p = patterns[k];
             if (p.wildcard || state::same_text(p.name, "_")) continue;
-            if (p.constant != nullptr) return state::fail("a constant pattern in a match over an enumeration", p.span);
+            Str name = case_name(p);
             U64 value = 0;
-            if (!find_enumerator(e, at, p.name, &value))
-                return state::failf(p.span, e->enums[at].name, " has no enumerator ", p.name);
+            if (!find_enumerator(e, at, name, &value))
+                return state::failf(p.span, e->enums[at].name, " has no enumerator ", name);
             c::LLVMAddCase(chosen, c::LLVMConstInt(subject_type, value, 0), blocks[i]);
         }
     }

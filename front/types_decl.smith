@@ -761,14 +761,17 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
-// Types the constant patterns of arm `index` of a `match`, before the arm checks them against its value.
+// Types the constant patterns of arm `index` of a `match`, before the arm checks them against its value. Over an
+// enumeration a name is one of its enumerators (`lex.name`), which is not a value in scope, so it is not typed.
 static void match_patterns(types::Checked *r, const ast::Stmt *s, Usize index) {
     if (!(s->kind == .match_stmt)) {
         return;
     }
     ast::Pattern pats[:] = s->kind.match_stmt.arms[index].patterns;
+    types::TypeRef t = types::type_of(r, s->kind.match_stmt.value);
+    Bool enumeration = t != nullptr && t->kind == .enumeration;
     for (Usize k = 0; k < countof(pats); k++) {
-        if (pats[k].constant != nullptr) {
+        if (pats[k].constant != nullptr && !(enumeration && types_expr::names_case(pats[k].constant))) {
             _ = types_expr::infer(r, pats[k].constant);
         }
     }
