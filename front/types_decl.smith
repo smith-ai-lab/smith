@@ -710,8 +710,16 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     if (type == r->table.void_type || type == r->table.invalid || type == r->table.automatic) {
         return;
     }
-    types::failf(r, s->span, "the result of this call, a `", types::show(type),
-                 "`, is not used; use it, or write `let _ = ...` to discard it");
+    // `smith lint --fix` writes the discard: `let _ = ` before the call (#2311). The error itself stays for new code.
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    ast::Span at = {.start = value->span.start, .end = value->span.start};
+    Str word = "let _ = ";
+    fix[0] = (syntax::Edit){.span = at, .text = word};
+    types::fail_fix(r, s->span,
+                    msg(format::push("the result of this call, a `", types::show(type),
+                                     "`, is not used; use it, or write `let _ = ...` to discard it")),
+                    fix);
 }
 
 // `switch (v) { case .a: ... default: ... }` (#1916): the value is typed, and when it is an enumeration with payloads
