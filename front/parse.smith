@@ -95,6 +95,8 @@ export struct Parser {
                      // (#1446)
     Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on
                      // one is a call of the module's function, not the conversion `x.to(T)` (#2104)
+    Bool apart;      // the function whose parameters are read states in its body that its slices do not overlap, so
+                     // `restrict` on a slice parameter can go (#2463; front::fix_restrict)
     Bool layout;     // the tokens went through lex::layout: blocks are `:` and `indent` ... `dedent`, a statement ends
                      // with `newline` (#1856; parser::parse_new chooses, #1859 removes the other path)
 };
