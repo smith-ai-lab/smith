@@ -351,7 +351,12 @@ static Str hash_comments(Str source) {
 // keyword of smith's own syntax stays: `type` after a `:`, or after the `->` of a function head (`) -> type`).
 static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
     if (i == 0) return false;
-    if (tokens[i - 1].kind == lex::colon) return true;
+    // A `:` before a member access or a closing bracket is a slice's (`s[start:type.end]`): a value, not the keyword.
+    if (tokens[i - 1].kind == lex::colon) {
+        if (i + 1 >= countof(tokens)) return true;
+        lex::TokenKind next = tokens[i + 1].kind;
+        return next != lex::dot && next != lex::arrow && next != lex::right_bracket;
+    }
     return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
 }
 
