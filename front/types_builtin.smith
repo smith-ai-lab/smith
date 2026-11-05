@@ -17,8 +17,8 @@
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
-//   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the type
-//   filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
+//   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
+//   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
 //   (#2339):
 //                                                                        n copies of value; n is a constant
 //   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
@@ -124,7 +124,6 @@ static Bool answer(Str name, types::TypeRef t) {
     if (same(name, "is_bool")) return t->kind == .bool_type;
     return t->kind == .enumeration;
 }
-
 
 // The entry named `name`; false when it is not a builtin of the table.
 export Bool find(Str name, Entry *found) {

@@ -149,9 +149,8 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
     case .count_zeros:
         return count_zeros(e, v[0], result);
     case .filled:
-        return nullptr; // lowered by `filled`
     case .type_query:
-        return nullptr; // decided by the checker, which keeps one branch
+        return nullptr; // `filled` lowers itself; the checker decides a type question and keeps one branch
     case .constant:
         return c::LLVMConstRealOfStringAndSize(result.llvm, entry.intrinsic.data, 3);
     }
