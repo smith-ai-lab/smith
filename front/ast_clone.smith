@@ -449,6 +449,7 @@ static void visit_decl(Work *work, ast::Decl *d) {
     }
     if (d->kind == .function) {
         d->kind.function.params = take_params(work, d->kind.function.params);
+        d->kind.function.generics = take_params(work, d->kind.function.generics);
         d->kind.function.result = take_type(work, d->kind.function.result);
         d->kind.function.body = take_stmt(work, d->kind.function.body);
     }

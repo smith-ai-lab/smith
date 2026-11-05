@@ -2926,7 +2926,8 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
 // Layout path: the `:` and the body of `fn name(...) -> r:`, the block indented or one statement on the line; a `:`
 // with nothing after it is an empty body.
 static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, U32 start, lex::Token name,
-                                         ParamList params, ast::TypeExpr *result, Usize errors_before) {
+                                         ParamList params, ParamList generics, ast::TypeExpr *result,
+                                         Usize errors_before) {
     if (!failed_since(p, errors_before) && !parse::accept(p, lex::colon)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `:` after the parameters");
     }
@@ -2942,7 +2943,9 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
     } else {
         body = parse::statement(p);
     }
-    ast::DeclKind kind = {.function = {.name = parse::text(p, name), .params = params, .result = result, .body = body}};
+    ast::DeclKind kind = {
+        .function = {
+            .name = parse::text(p, name), .params = params, .generics = generics, .result = result, .body = body}};
     return make(p, start, pre, kind);
 }
 
@@ -2975,19 +2978,49 @@ static ast::Decl *extern_function(parse::Parser *p, const Prefixes *pre, U32 sta
     return make(p, start, pre, kind);
 }
 
+// The bracketed parameters after a function's name, `[T, n: usize, U: num]`: a name, and a type or concept after `:`
+// (null for a bare name). The position is at `[`; the error, when the list is not one, is reported here.
+static ParamList parse_generics(parse::Parser *p) {
+    ParamList list = {};
+    parse::advance(p);
+    while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
+        U32 start = parse::peek(p).span.start;
+        lex::Token name = parse::peek(p);
+        if (!is_name(name.kind)) {
+            parse::error(p, name.span, "a generic parameter is a name: `fn f[T, n: usize](...)`");
+            return list;
+        }
+        ast::Param param = {};
+        param.name = parse::text(p, parse::advance(p));
+        param.is_new = true;
+        if (parse::accept(p, lex::colon)) {
+            param.type = parse::type(p);
+            if (param.type == nullptr) return list;
+        }
+        param.span = parse::span_from(p, start);
+        list = mem::realloc(list, countof(list) + 1);
+        list[countof(list) - 1] = param;
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    parse::expect(p, lex::right_bracket, "`]` after the generic parameters");
+    return list;
+}
+
 // `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
 // `fn`.
 static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
     parse::advance(p);
     Usize errors_before = countof(p->errors);
     lex::Token name = parse::peek(p);
+    ParamList generics = {};
     // `type` is a keyword only where a type is expected: `fn type(p: *Parser)` names a function.
     if (!is_name(name.kind) && name.kind != lex::kw_type) {
         Str form = p->layout ? "fn name(a: i32) -> i32:" : "fn name(a: i32) -> i32 { ... }";
         parse::error(p, name.span, as_str(format::push("a function has a name: write `", form, "`")));
     } else {
         parse::advance(p);
-        parse::expect(p, lex::left_paren, "`(` after the function's name");
+        if (parse::at(p, lex::left_bracket)) generics = parse_generics(p);
+        if (!failed_since(p, errors_before)) parse::expect(p, lex::left_paren, "`(` after the function's name");
     }
     ParamList params = {};
     Bool keyword_only = false;
@@ -3026,7 +3059,7 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
         !parse::at(p, lex::left_brace))
         return extern_function(p, pre, start, parse::text(p, name), params, result, variadic);
-    if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before);
+    if (p->layout) return finish_layout_function(p, pre, start, name, params, generics, result, errors_before);
     if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");
     }
@@ -3035,7 +3068,9 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
         return nullptr;
     }
     ast::Stmt *body = parse::statement(p);
-    ast::DeclKind kind = {.function = {.name = parse::text(p, name), .params = params, .result = result, .body = body}};
+    ast::DeclKind kind = {
+        .function = {
+            .name = parse::text(p, name), .params = params, .generics = generics, .result = result, .body = body}};
     return make(p, start, pre, kind);
 }
 
