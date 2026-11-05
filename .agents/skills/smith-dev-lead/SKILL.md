@@ -34,6 +34,7 @@ Waking you on your large context every hour costs cache reads, which were the ma
 
 ## Deciding and asking
 - **Ask the owner** about every design choice, including a ticket split that changes a design, and every language question. One question at a time, with your recommendation.
+- **Write for an owner who is away.** Few, short messages; no narration between tool calls. Each message stands alone and ends with one line, `Needs from you: ...` (or `nothing`), so the owner sees at the bottom of the screen what you need (owner, 2026-11-05: "whenever you finally do say something to me ... say, like, what do you need from me at the very end").
 - **Decide alone** only what is mechanical, or what a ticket or a recorded decision already settles, plus the order of work inside the owner's priorities. Record when the owner moves that line.
 - **Nothing lives only in the conversation.** Record every decision on the ticket it changes, in the owner's words, and as one line in [decisions](../../../knowledge/decisions.md); keep a design issue's body the current spec (comments are history); put sequencing in the epic and #73 and a dependency as "Waits for #N" plus `blocked`, before the turn ends. A compaction or a new lead must lose nothing. A permission for something destructive is given in the session that acts; never pass one on.
 - **Never ask for access to the owner's computers.** Approving it makes your session accept messages only from the owner's trusted devices, for good. The owner starts any session on their Mac themselves, from a brief you write.
