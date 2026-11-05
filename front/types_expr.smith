@@ -2408,11 +2408,19 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
         }
     }
     type_named_arguments(c, args);
+    U64 given = 0;
+    for (Usize k = 0; k < countof(record->slots) && k < 64; k++) {
+        if (seen[k]) given |= (U64)1 << k;
+    }
     for (Usize k = 0; k < countof(record->slots); k++) {
         if (!built_here || seen[k] || record->slots[k].default_value != nullptr) continue;
-        types::failf(c, e->span, "the field `", record->slots[k].name, "` of `", shown,
-                     "` is left out and has no default; give it a value, or write a default in the struct (`",
-                     record->slots[k].name, ": T = value`)");
+        types::fail_left_out(
+            c, e->span,
+            types::message_of(
+                format::push("the field `", record->slots[k].name, "` of `", shown,
+                             "` is left out and has no default; give it a value, or write a default in the struct (`",
+                             record->slots[k].name, ": T = value`)")),
+            e, record, given);
         ok = false;
     }
     if (!ok) {

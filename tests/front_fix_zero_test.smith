@@ -50,6 +50,14 @@ export void test_front_fix_zero_a_read_between_the_writes_takes_the_default() {
         "struct Q:\n    a: i32\n    b: i32\nfn f():\n    mut z: Q = Q(a = 0, b = 0)\n    z.a = 1\n    z.b = z.a\n");
 }
 
+export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() {
+    expect_fixed(
+        "module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n    char *p;\n};\n"
+        "E make(int k) {\n    return (E){.k = k};\n}\n",
+        "struct S:\n    a: i32\n    b: i32\nstruct E:\n    k: i32\n    s: S\n    p: *char\n"
+        "fn make(k: i32) -> E:\n    return E(k = k, s = S(a = 0, b = 0), p = nullptr)\n");
+}
+
 // Slice 6 of #2224 (`std::arena` parses): an opaque type that ends the file keeps its `struct`, and a function's result
 // that is a type function applied is read as a type whatever its case.
 export void test_front_fix_an_opaque_struct_at_the_end_keeps_its_keyword() {
