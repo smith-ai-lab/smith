@@ -58,7 +58,6 @@ static Bool has_instance(const types::Checked *r, Str name) {
     return false;
 }
 
-
 export void test_front_generics_infer_a_slice_binds_the_element() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -86,7 +85,8 @@ export void test_front_generics_infer_two_parameters_bind_two_generics() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn pair[K, V](k: K, v: V) -> V:\n    return v\n\nfn run(a: i32, b: f64) -> f64:\n    return pair(a, b)\n";
+    Str source =
+        "fn pair[K, V](k: K, v: V) -> V:\n    return v\n\nfn run(a: i32, b: f64) -> f64:\n    return pair(a, b)\n";
     types::Checked r = checked(source);
     test::check_equal(countof(errors_of(&r)), (Usize)0);
     test::check_condition(has_instance(&r, "pair.i32.f64"));
@@ -97,7 +97,8 @@ export void test_front_generics_infer_an_array_length_binds_a_constant() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn first[T, n: usize](data: [n]T) -> T:\n    return data[0]\n\nfn run(a: [8]f64) -> f64:\n    return first(a)\n";
+    Str source = "fn first[T, n: usize](data: [n]T) -> T:\n    return data[0]\n\nfn run(a: [8]f64) -> f64:\n    return "
+                 "first(a)\n";
     types::Checked r = checked(source);
     test::check_equal(countof(errors_of(&r)), (Usize)0);
     test::check_condition(has_instance(&r, "first.f64.8"));
@@ -130,7 +131,8 @@ export void test_front_generics_infer_one_instance_for_equal_bindings() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn first[T](xs: []T) -> T:\n    return xs[0]\n\nfn run(a: []i32, b: []i32) -> i32:\n    return first(a) + first(b)\n";
+    Str source = "fn first[T](xs: []T) -> T:\n    return xs[0]\n\nfn run(a: []i32, b: []i32) -> i32:\n    return "
+                 "first(a) + first(b)\n";
     types::Checked r = checked(source);
     test::check_equal(countof(errors_of(&r)), (Usize)0);
     test::check_condition(has_instance(&r, "first.i32"));
@@ -151,7 +153,8 @@ export void test_front_generics_infer_a_conflicting_binding_is_an_error() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "fn same[T](a: T, b: T) -> T:\n    return a\n\nfn run(x: i32, y: f64) -> i32:\n    return same(x, y)\n";
+    Str source =
+        "fn same[T](a: T, b: T) -> T:\n    return a\n\nfn run(x: i32, y: f64) -> i32:\n    return same(x, y)\n";
     types::Checked r = checked(source);
     test::check_condition(has(errors_of(&r), "from an earlier argument"));
 }
