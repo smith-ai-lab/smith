@@ -164,17 +164,17 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     return false;
 }
 
-// `(Void)x` written as a statement discards a value; smith writes that `let _ = x`. The fix replaces the cast's head,
-// from the cast to its operand, with `let _ = `. Empty for any other cast.
+// `(Void)x` written as a statement discards a value; smith writes that `_ := x`. The fix replaces the cast's head,
+// from the cast to its operand, with `_ := `. Empty for any other cast.
 static syntax::Edits discard_fix(const ast::Expr *e, types::TypeRef to) {
     syntax::Edits edits = {};
     if (e->kind != .cast || to->kind != .void_type) {
         return edits;
     }
-    Str word = "let _ = ";
+    Str word = "_ := ";
     ast::Span head = {.start = e->span.start, .end = e->kind.cast.operand->span.start};
     ast::Span tail = {.start = e->kind.cast.operand->span.end, .end = e->span.end};
-    // `x.to(void)` has its cast after the operand: the tail goes too, or each pass writes another `let _ = ` (#2224).
+    // `x.to(void)` has its cast after the operand: the tail goes too, or each pass writes another `_ := ` (#2224).
     Usize count = tail.end > tail.start ? 2 : 1;
     edits = mem::realloc(edits, count);
     edits[0] = (syntax::Edit){.span = head, .text = word};
@@ -263,7 +263,7 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     const types::Symbol *earlier = types::lookup(&r->scopes, name);
     if (earlier != nullptr && earlier->kind == .module_name) {
         types::failf(r, d->span, "`", name, "` hides the module `", name,
-                     "`; shadowing is an error, choose another name");
+                     "`; shadowing is an error: assign with `=`, or choose another name");
         return true;
     }
     if (earlier == nullptr || earlier->kind != .variable) {
@@ -271,10 +271,10 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     }
     if (earlier->decl != nullptr) {
         types::failf(r, d->span, "`", name, "` hides the `", name, "` declared at byte ", earlier->decl->span.start,
-                     "; shadowing is an error, choose another name");
+                     "; shadowing is an error: assign with `=`, or choose another name");
     } else {
         types::failf(r, d->span, "`", name, "` hides a parameter or an outer `", name,
-                     "`; shadowing is an error, choose another name");
+                     "`; shadowing is an error: assign with `=`, or choose another name");
     }
     return true;
 }
@@ -284,7 +284,7 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         r->new_body = true;
     }
     if (is_discard(name) && is_new_variable(d)) {
-        return; // `let _ = f()` discards the value: nothing is declared
+        return; // `_ := f()` discards the value: nothing is declared
     }
     if (shadows(r, d, name)) {
         return;
@@ -293,7 +293,7 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new_variable(d)};
     if (d->kind == .variable && d->kind.variable.is_new) {
         symbol.at = d->span;
-        symbol.at.start += 4; // past `let `: a fix writes `mut ` before the name
+        symbol.at.start = d->kind.variable.name_at; // a fix writes `mut ` before the name
         symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
         symbol.written = d->kind.variable.type;
         symbol.init = d->kind.variable.init;
@@ -382,8 +382,8 @@ static void require_constant(types::Checked *r, Str name, const ast::Expr *init)
     const ast::Expr *bad = not_constant(r, init);
     if (bad != nullptr) {
         types::failf(r, bad->span, "`const ", name,
-                     "` is known at compile time, but this is not; use a constant here, or write `let ", name,
-                     " = ...` without `const`");
+                     "` is known at compile time, but this is not; use a constant here, or write `", name,
+                     " := ...` without `const`");
     }
 }
 
@@ -408,8 +408,8 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         type = r->table.invalid;
     } else if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
         if (is_auto(type)) {
-            types::failf(r, init->span, "`let mut ", name,
-                         " = undefined` has no type to take; write the type, e.g. `let mut ", name,
+            types::failf(r, init->span, "`mut ", name,
+                         " := undefined` has no type to take; write the type, e.g. `mut ", name,
                          ": i32 = undefined`");
             type = r->table.invalid;
         }
@@ -451,7 +451,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (found->kind != .tuple) {
-        types::failf(r, s->span, "`let (", countof(names), " names) = ...` splits a tuple, but this is a `",
+        types::failf(r, s->span, "`(", countof(names), " names) := ...` splits a tuple, but this is a `",
                      types::show(found), "`; write a single name, or call something that returns a tuple");
         return;
     }
@@ -468,8 +468,8 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         }
         const types::Symbol *earlier = types::lookup(&r->scopes, name);
         if (earlier != nullptr && earlier->kind == .variable) {
-            types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error, ",
-                         "choose another name");
+            types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error: ",
+                         "assign with `=`, or choose another name");
             continue;
         }
         types::TypeRef type = found->slots[i].type;
@@ -711,7 +711,7 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types::failf(r, s->span, "the result of this call, a `", types::show(type),
-                 "`, is not used; use it, or write `let _ = ...` to discard it");
+                 "`, is not used; use it, or write `_ := ...` to discard it");
 }
 
 // `switch (v) { case .a: ... default: ... }` (#1916): the value is typed, and when it is an enumeration with payloads

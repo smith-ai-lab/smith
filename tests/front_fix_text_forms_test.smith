@@ -25,7 +25,7 @@ export void test_front_fix_do_while_is_a_loop_with_a_break() {
         "module m;\nUsize g(U64 v) {\n    Usize n = 0;\n    do {\n        n += 1;\n        v /= 10;\n    } while (v != "
         "0 && n < 20);\n"
         "    return n;\n}\n",
-        "fn g(mut v: u64) -> usize:\n    let mut n: usize = 0\n    while true:\n        n += 1\n        v /= 10\n"
+        "fn g(mut v: u64) -> usize:\n    mut n: usize = 0\n    while true:\n        n += 1\n        v /= 10\n"
         "        if !(v != 0 && n < 20):\n            break\n    return n\n");
 }
 
@@ -33,7 +33,7 @@ export void test_front_fix_for_with_a_longer_condition_is_a_while() {
     expect_fixed(
         "module m;\nvoid h(char out[:], Usize count) {\n    for (Usize i = 0; i < count && i < countof(out); i++) {\n"
         "        out[i] = 1;\n    }\n}\n",
-        "fn h(out: []char, count: usize):\n    let mut i: usize = 0\n    while i < count && i < countof(out):\n"
+        "fn h(out: []char, count: usize):\n    mut i: usize = 0\n    while i < count && i < countof(out):\n"
         "        out[i] = 1\n        i += 1\n");
 }
 
@@ -41,7 +41,7 @@ export void test_front_fix_unbraced_if_chain_keeps_its_else() {
     expect_fixed("module m;\nI32 f(I32 c) {\n    I32 d = 0;\n    if (c > 1)\n        d = 1;\n    else if (c > 2)\n     "
                  "   d = 2;\n"
                  "    else\n        return 0;\n    return d;\n}\n",
-                 "fn f(c: i32) -> i32:\n    let mut d: i32 = 0\n    if c > 1:\n        d = 1\n    else if c > 2:\n     "
+                 "fn f(c: i32) -> i32:\n    mut d: i32 = 0\n    if c > 1:\n        d = 1\n    else if c > 2:\n     "
                  "   d = 2\n"
                  "    else:\n        return 0\n    return d\n");
 }
@@ -49,7 +49,7 @@ export void test_front_fix_unbraced_if_chain_keeps_its_else() {
 export void test_front_fix_positional_list_of_a_named_type_is_a_call() {
     expect_fixed("module m;\ntypedef struct {\n    U32 a;\n    I64 b;\n} Pair;\nconstexpr Pair p = {24, -149};\nU32 "
                  "xs[2] = {1, 2};\n",
-                 "struct Pair:\n    a: u32\n    b: i64\nconst p = Pair(24, -149)\nlet mut xs: [2]u32 = [1, 2]\n");
+                 "struct Pair:\n    a: u32\n    b: i64\nconst p = Pair(24, -149)\nmut xs: [2]u32 = [1, 2]\n");
 }
 
 export void test_front_fix_index_by_an_if_value() {

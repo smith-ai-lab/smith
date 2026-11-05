@@ -13,7 +13,7 @@
 //   struct S { a: i32, b: i32 }        one field to a line
 //   f(fn(a) { b })    f(fn(a): b)      a block inside parentheses stays on its line, and a multi-line one is left
 //   header {          header:          a `}` that ends the last statement's line goes without a line of its own
-//   for (T i = a; c; s) { b }          `let mut i: T = a`, then `while c:` with `s` as the last line of the body
+//   for (T i = a; c; s) { b }          `mut i: T = a`, then `while c:` with `s` as the last line of the body
 //   (#2225);
 //                                      the names already declared in the scope get an assignment instead of a `let`; a
 //                                      loop with a `continue`, a comma, or a body on the header's line is left
@@ -530,7 +530,7 @@ static Str while_head(Header h, Bool declare, Usize indent) {
             Str automatic = "auto";
             Str kind = "";
             if (h.has_type && !mem::equal(h.type, automatic)) kind = as_str(format::push(": ", h.type));
-            line = as_str(format::push("let mut ", h.name, kind, " = ", h.value));
+            line = as_str(format::push("mut ", h.name, kind, " = ", h.value));
         }
         out = as_str(format::push(line, "\n", spaces(indent)));
     }

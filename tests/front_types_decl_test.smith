@@ -365,7 +365,7 @@ export void test_front_types_decl_a_discard_is_accepted() {
 
 export void test_front_types_decl_an_unused_result_is_refused() {
     reading_new = true;
-    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `let _ = ...`");
+    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `_ := ...`");
     clean("fn f(x: i32):\nfn g(x: i32):\n    f(x)\n");
     reading_new = false;
 }
@@ -375,8 +375,8 @@ export void test_front_types_decl_a_call_on_the_last_line_is_the_result() {
     reading_new = true;
     clean("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n");
     fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32) -> i32:\n    f(x)\n    return x\n", "is not used",
-          "write `let _ = ...`");
-    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `let _ = ...`");
+          "write `_ := ...`");
+    fails("fn f(x: i32) -> i32:\n    return x\nfn g(x: i32):\n    f(x)\n", "is not used", "write `_ := ...`");
     reading_new = false;
 }
 
@@ -420,6 +420,6 @@ export void test_front_types_decl_countof_of_an_auto_parameter_is_accepted() {
 // #2227: a bare `_ = x` is an error that says to write `let _ = x`.
 export void test_front_types_decl_a_bare_underscore_assignment_is_refused() {
     reading_new = true;
-    fails("fn g(x: i32):\n    _ = x\n", "`_`", "write `let _ = x`");
+    fails("fn g(x: i32):\n    _ = x\n", "`_`", "write `_ := x`");
     reading_new = false;
 }

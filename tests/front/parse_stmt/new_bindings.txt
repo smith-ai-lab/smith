@@ -4,8 +4,8 @@
     (block
       (declaration
         (variable a new (auto) (name 3)))
-      (labeled b
-        (expression (name i32 = 4)))
+      (declaration
+        (variable b new (named i32) (name 4)))
       (declaration
         (variable c mut new (auto) (name 0)))
       (declaration
