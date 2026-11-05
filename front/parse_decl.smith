@@ -3040,7 +3040,8 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
         body = parse::statement(p);
     }
     ast::DeclKind kind = {
-        .function = {.name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
+        .function = {
+            .name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
     return make(p, start, pre, kind);
 }
 
@@ -3055,7 +3056,8 @@ static void check_pack(ast::Param *param, Bool after_semicolon) {
 // (#2333). True; an error when it is not last.
 static Bool parse_bare_dots(parse::Parser *p) {
     parse::advance(p);
-    if (!parse::at(p, lex::right_paren)) parse::error(p, parse::peek(p).span, "`...` is the last parameter of a function");
+    if (!parse::at(p, lex::right_paren))
+        parse::error(p, parse::peek(p).span, "`...` is the last parameter of a function");
     return true;
 }
 
@@ -3129,7 +3131,8 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     }
     ast::Stmt *body = parse::statement(p);
     ast::DeclKind kind = {
-        .function = {.name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
+        .function = {
+            .name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
     return make(p, start, pre, kind);
 }
 
