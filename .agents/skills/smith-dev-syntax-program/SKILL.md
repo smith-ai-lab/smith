@@ -46,7 +46,7 @@ pub fn main() -> i32:
 ```smith
 page := html():
     head():
-        title(): "hello"
+        title("hello")                  # text only: an ordinary argument, no block
     body():
         h1(class = "my class"): "my heading"
         for todo in todos:
