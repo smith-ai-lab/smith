@@ -770,6 +770,8 @@ static Bool require_colon(parse::Parser *p, Usize before) {
 
 // `require_brace` or `require_colon`, by the path the file took.
 static Bool require_body(parse::Parser *p, Usize before) {
+    // The cases of a kept C `switch` have no layout inside their braces: a body there keeps its braces (#2397).
+    if (p->layout && parse::at(p, lex::left_brace) && countof(p->errors) == before) return true;
     if (p->layout) return require_colon(p, before);
     return require_brace(p, before);
 }
@@ -1115,8 +1117,23 @@ static ast::Stmt *match_layout(parse::Parser *p) {
 }
 
 // `match v { .a => x ... }`: one arm per line, `.a, .b => x` for several patterns.
+// Whether the `match` at the position has its arms in braces: its header ends with a `{`, not a `:`. Inside the kept C
+// `switch` of a layout file there is no layout, so a `match` there keeps its braces (#2397).
+static Bool braced_match(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = p->position + 1; i < countof(p->tokens); i++) {
+        lex::TokenKind kind = p->tokens[i].kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket) depth += 1;
+        if ((kind == lex::right_paren || kind == lex::right_bracket) && depth > 0) depth -= 1;
+        if (depth > 0) continue;
+        if (kind == lex::left_brace) return true;
+        if (kind == lex::colon || kind == lex::newline || kind == lex::end_of_file) return false;
+    }
+    return false;
+}
+
 static ast::Stmt *match_statement(parse::Parser *p) {
-    if (p->layout) return match_layout(p);
+    if (p->layout && !braced_match(p)) return match_layout(p);
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
     p->head = true;
@@ -1860,7 +1877,8 @@ static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
         }
         if (p->layout && frame->kind == if_then && parse::at(p, lex::kw_else)) {
             frame->else_end = parse::advance(p).span.end;
-            if (!parse::at(p, lex::kw_if) && !parse::accept(p, lex::colon))
+            if (!parse::at(p, lex::kw_if) && !(frame->braced && parse::at(p, lex::left_brace)) &&
+                !parse::accept(p, lex::colon))
                 parse::error(p, parse::peek(p).span, "expected `:` or `if` after `else`");
             frame->first = done;
             frame->kind = if_else;
