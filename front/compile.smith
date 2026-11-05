@@ -343,7 +343,6 @@ static Str header_folder;
 static arena::Arena header_arena;
 static Bool header_arena_made = false;
 
-
 // The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
 // when clang cannot read it.
 static const ast::Module *load_header(Str header, Bool angled) {
