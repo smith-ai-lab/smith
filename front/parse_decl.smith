@@ -3167,7 +3167,8 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
                                        .generics = generics,
                                        .result = result,
                                        .body = body,
-                                       .variadic = variadic}};
+                                       .variadic = variadic,
+                                       .is_new = true}};
     return make(p, start, pre, kind);
 }
 
@@ -3192,7 +3193,8 @@ static ast::Decl *extern_function(parse::Parser *p, const Prefixes *pre, U32 sta
                                   ast::TypeExpr *result, Bool variadic) {
     parse::accept(p, lex::semicolon);
     ast::DeclKind kind = {
-        .function = {.name = name, .params = params, .result = result, .body = nullptr, .variadic = variadic}};
+        .function = {
+            .name = name, .params = params, .result = result, .body = nullptr, .variadic = variadic, .is_new = true}};
     return make(p, start, pre, kind);
 }
 
@@ -3241,7 +3243,8 @@ static ast::Decl *finish_braced_function(parse::Parser *p, const Prefixes *pre, 
                                        .generics = generics,
                                        .result = result,
                                        .body = body,
-                                       .variadic = variadic}};
+                                       .variadic = variadic,
+                                       .is_new = true}};
     return make(p, start, pre, kind);
 }
 

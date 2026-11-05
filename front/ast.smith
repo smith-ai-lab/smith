@@ -550,7 +550,8 @@ export typedef enum {
         TypeExpr *result;
         Stmt *body;
         Bool variadic;
-    } function; // a null body: a prototype
+        Bool is_new; // written `fn name(...) -> R:` (smith's own syntax): its result type is read as one (`-> bool`)
+    } function;      // a null body: a prototype
     struct {
         Text name;
         Bool is_union;
