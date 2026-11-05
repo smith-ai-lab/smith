@@ -1295,3 +1295,19 @@ export void test_front_types_expr_a_tuple_has_a_type_elements_and_equality() {
     test::check_condition(
         says(last(&r), "`(I32, Bool)` has 2 elements, so there is no `.2`; write an element from `.0` to `.1`"));
 }
+
+export void test_front_types_expr_pointers_compare_when_one_points_to_void() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    var(&r, "p", "U8 *");
+    var(&r, "v", "const Void *");
+    var(&r, "q", "I32 *");
+    test::check_condition(types_expr::infer(&r, binary(.equal, ast::name("p"), ast::name("v"))) == r.table.bool_type);
+    test::check_condition(types_expr::infer(&r, binary(.not_equal, ast::name("v"), ast::name("p"))) == r.table.bool_type);
+    test::check_condition(r.error_count == 0);
+    types_expr::infer(&r, binary(.equal, ast::name("p"), ast::name("q")));
+    test::check_condition(r.error_count == 1);
+}
