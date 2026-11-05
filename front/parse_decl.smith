@@ -1284,7 +1284,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
     type = as_str(format::push(dims, type));
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
-    if (countof(dims) > 0 && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
+    if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
     return as_str(format::push(prefix, name, ": ", type));
 }
