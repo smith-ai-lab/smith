@@ -1959,6 +1959,15 @@ static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
     return ast::make_type({.named = {.path = path}});
 }
 
+// `Count := U64`, `Image := Other`: a binding whose value is the name of a type declared before it is an alias of that
+// type (#2323). The rule is on the binding's value, not on the keyword that spells it.
+static ast::TypeExpr *named_type_alias(Checked *r, const ast::Expr *init) {
+    if (init->kind != .name || countof(init->kind.name.path.segments) != 1) return nullptr;
+    const Symbol *found = lookup(&r->scopes, init->kind.name.path.segments[0].text);
+    if (found == nullptr || found->kind != .type_name) return nullptr;
+    return ast::make_type({.named = {.path = init->kind.name.path}});
+}
+
 // The type a `let`/`const` of smith's own syntax stands for, or null when it is a value: `let Line = []u8` is a type
 // value, `const Pair = (i32, f32)` a tuple of types. It is plain substitution.
 static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
@@ -1967,7 +1976,9 @@ static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
     if (init == nullptr) return nullptr;
     if (init->kind == .type_value) return init->kind.type_value.type;
     if (init->kind == .tuple_lit) return tuple_as_type(r, init);
-    return header_type_alias(r, init);
+    ast::TypeExpr *header = header_type_alias(r, init);
+    if (header != nullptr) return header;
+    return named_type_alias(r, init);
 }
 
 static void declare_own_alias(Checked *r, const ast::Decl *d) {

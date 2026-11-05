@@ -1,5 +1,6 @@
 // Tests of `@when(cond)` in the checker (#1801, part of #1428): a declaration or a field that exists on some systems
-// only, checked for macOS and for Linux whichever system builds. Each scenario is source text in smith's own syntax.
+// only, checked as it is on the system that builds (the variant for the other one is not checked, #2323). Each scenario
+// is source text in smith's own syntax.
 module front_when_test;
 
 import front::ast;
@@ -12,6 +13,7 @@ import front::parse_type;
 import front::parser;
 import front::types;
 import front::types_decl;
+import front::when;
 import std::arena;
 import std::mem;
 import std::test;
@@ -89,16 +91,49 @@ export void test_when_conditions_combine_and_a_field_can_have_one() {
           "@when(target.os == .macos || target.os == .linux)\nfn both() -> i32:\n    1\n");
 }
 
-export void test_when_a_duplicate_that_only_the_other_target_has_is_an_error_naming_it() {
-    says("@when(target.os == .macos)\nfn f() -> i32:\n    1\n\n"
-         "@when(target.os != .linux)\nfn f() -> i32:\n    2\n",
-         "on macos: ", "`f` is declared twice");
+// The condition that holds on the system that runs the test, and the one that holds on the other.
+static Str here() {
+    return when::host() == when::os_macos ? "target.os == .macos" : "target.os == .linux";
+}
+
+static Str there() {
+    return when::host() == when::os_macos ? "target.os == .linux" : "target.os == .macos";
+}
+
+static Str system_name() {
+    return when::host() == when::os_macos ? "macos" : "linux";
+}
+
+export void test_when_a_duplicate_that_holds_on_this_system_is_an_error() {
+    Str source = join(join("@when(", here()), ")\nfn f() -> i32:\n    1\n\n@when(true)\nfn f() -> i32:\n    2\n");
+    says(source, "`f` is declared twice", "");
+}
+
+// A variant whose `@when` does not hold on the system being compiled is neither checked nor emitted (#2323): an error
+// in it, or a name only the other system's headers declare, is the other system's CI to find.
+export void test_when_a_variant_for_the_other_system_is_not_checked() {
+    Str dead = join(join("@when(", there()), ")\nfn f() -> i32:\n    nothing_here()\n\n");
+    Str kept = join(join("@when(", here()), ")\nfn f() -> i32:\n    2\n");
+    clean(join(dead, kept));
+    Str twice = join(join(join("@when(", there()), ")\nstruct Image:\n    a: i32\n\n@when("), here());
+    clean(join(twice, ")\nstruct Image:\n    b: i64\n\nfn g(x: *Image) -> i32:\n    0\n"));
+}
+
+export void test_when_an_error_in_the_variant_for_this_system_is_reported() {
+    Str source = join(join("@when(", here()), ")\nfn f() -> i32:\n    nothing_here()\n");
+    says(source, "nothing_here", "");
 }
 
 export void test_when_a_use_with_no_live_declaration_names_the_condition() {
-    says("@when(target.os == .macos)\nfn open_window() -> i32:\n    1\n\n"
-         "fn main() -> i32:\n    open_window()\n",
-         "on linux: `open_window` is not declared on linux", "declared only when target.os == .macos");
+    Str source =
+        join(join("@when(", there()), ")\nfn open_window() -> i32:\n    1\n\nfn main() -> i32:\n    open_window()\n");
+    Str first = join(join("`open_window` is not declared on ", system_name()), "");
+    says(source, first, join("declared only when ", there()));
+}
+
+// A binding whose value is the name of a type is an alias of it (#2323).
+export void test_when_a_binding_to_a_type_name_is_a_type_alias() {
+    clean("struct Point:\n    x: i32\n\nPlace := Point\n\nfn f(p: *Place) -> i32:\n    p.x\n");
 }
 
 export void test_when_on_an_import_is_clean_and_on_an_enumerator_or_a_parameter_points_at_if_constexpr() {
