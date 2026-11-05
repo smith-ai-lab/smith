@@ -234,7 +234,7 @@ export Bool starts_new_type(const parse::Parser *p, Usize offset) {
     lex::TokenKind after = parse::peek_at(p, at).kind;
     return after == lex::star || after == lex::question || after == lex::left_bracket || after == lex::left_paren ||
            after == lex::kw_fn || after == lex::kw_fn_once || after == lex::kw_type || after == lex::type_name ||
-           after == lex::name || is_keyword_type(after);
+           after == lex::name || after == lex::kw_mut || is_keyword_type(after);
 }
 
 static ast::Path read_path(parse::Parser *p, Bool in_type);
@@ -871,6 +871,9 @@ static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_bracket, "`]` to end the array size");
+    // `[]mut T` is a writable slice. The tree does not record a slice's writability (every slice is writable to the
+    // checker today), so the word is read and dropped.
+    if (countof(dims) == 1 && dims[0] == nullptr) parse::accept(p, lex::kw_mut);
     ast::TypeExpr *element = parse::type(p);
     ast::Qualifiers none = {};
     if (countof(dims) > 1) return node(start, p, none, {.block_type = {.element = element, .dims = dims}});

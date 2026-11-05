@@ -216,7 +216,7 @@ export void test_parse_type_new_pointers_and_options() {
 export void test_parse_type_new_arrays_slices_and_blocks() {
     check_golden_in("tests/front/parse_type/new_arrays.txt",
                     "[5]i32\n[_]u8\n[]i32\n[][]i32\n[5][]i32\n[5][3]f32\n[5,3]f32\n[,3]f32\n[,]f32\n[,,]f32\n[n,]u8\n"
-                    "[]*mut Point",
+                    "[]*mut Point\n[]mut i32\nOption([]mut i32)",
                     true);
 }
 
