@@ -65,11 +65,11 @@ export Bool is_keyword_type(lex::TokenKind kind) {
     }
 }
 
-// The width of a `_BitInt`, in parentheses.
-static void bit_width(parse::Parser *p) {
-    parse::expect(p, lex::left_paren, "`(` and a width after `_BitInt`");
-    if (parse::at(p, lex::integer)) parse::advance(p);
-    parse::expect(p, lex::right_paren, "`)` to end the width of `_BitInt`");
+// `(128)` after `_BitInt`, with `unsigned` or `signed` before it: the width is part of the type's spelling (#2224).
+static void bit_int_width(parse::Parser *p) {
+    parse::expect(p, lex::left_paren, "`(` after `_BitInt`");
+    parse::expect(p, lex::integer, "the width of `_BitInt`, a number");
+    parse::expect(p, lex::right_paren, "`)` after the width");
 }
 
 // The rest of a run of C's keyword types, after its first token: `unsigned long`, `unsigned _BitInt(128)` and `unsigned
@@ -80,7 +80,7 @@ static void keyword_run(parse::Parser *p) {
         Bool word = next.kind == lex::name && text::is(parse::text(p, next), "__int128");
         if (!is_keyword_type(next.kind) && !word) return;
         parse::advance(p);
-        if (next.kind == lex::kw_bit_int) bit_width(p);
+        if (next.kind == lex::kw_bit_int) bit_int_width(p);
     }
 }
 
@@ -382,6 +382,17 @@ static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.type_of = {.operand = operand}});
 }
 
+// Whether the `,` at the offset follows a field's name, `F32 low, high;`: a word that a type or a `*` or `]` precedes.
+// A tuple's element is a type, whose last word follows a `{`, a `,` or a `.`.
+static Bool declares_field(const parse::Parser *p, Usize comma) {
+    if (comma < 2) return false;
+    lex::TokenKind word = parse::peek_at(p, comma - 1).kind;
+    lex::TokenKind before = parse::peek_at(p, comma - 2).kind;
+    if (word != lex::name) return false;
+    return before == lex::name || before == lex::type_name || before == lex::star || before == lex::right_bracket ||
+           is_keyword_type(before);
+}
+
 // Whether `struct { ... }` at the position is a tuple: the first thing at the braces' own depth that ends an element is
 // a `,` or the `}` (a record's field ends with `;`). An empty `struct {}` is a record. A scan of the tokens, no
 // speculative parse.
@@ -398,7 +409,7 @@ export Bool tuple_ahead(const parse::Parser *p) {
             if (depth == 0) return true;
             depth -= 1;
         }
-        if (kind == lex::comma && depth == 0) return true;
+        if (kind == lex::comma && depth == 0) return !declares_field(p, offset);
     }
     return false;
 }

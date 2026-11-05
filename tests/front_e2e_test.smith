@@ -412,6 +412,34 @@ export void test_front_e2e_import_c_names_are_read_through_the_binding() {
     remove_all(folder);
 }
 
+// `let Word = stdint.uint32_t` names a type of the header (#2224): a parameter, a pointer to it and a use compile.
+export void test_front_e2e_a_let_names_a_type_of_a_header() {
+    use_header_flags();
+    Str folder = folder_for("c_alias");
+    Str source = "import c <stdint.h>\n\nlet Word = stdint.uint32_t\n\n"
+                 "fn bump(w: *mut Word) -> i32:\n    0\n\n"
+                 "pub fn check() -> i32:\n    let mut w: Word = 3\n    bump(&w)\n";
+    compile::Report report = compile_module(folder, "alias", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// The same with a capitalized name of a struct (`mem::Allocator`), which the parser reads as a qualified name.
+export void test_front_e2e_a_let_names_a_struct_of_a_header() {
+    use_header_flags();
+    Str folder = folder_for("c_alias_struct");
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/big.h")), "typedef struct Big { int x; } Big;\n");
+    Str source = "import c \"big.h\"\n\npub let Thing = big.Big\n\n"
+                 "pub fn same(a: *Thing) -> *Thing:\n    a\n\n"
+                 "pub fn check() -> i32:\n    0\n";
+    compile::Report report = compile_module(folder, "alias_struct", source);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
 // `c.abs` with no binding named `c` is an error that says which binding to write.
 export void test_front_e2e_a_bare_c_is_an_error_naming_the_binding() {
     use_header_flags();

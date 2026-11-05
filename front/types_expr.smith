@@ -3716,6 +3716,7 @@ static void tuple_after(types::Checked *c, Frame f) {
     }
     ast::ExprRef items[:] = e->kind.tuple_lit.items;
     types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(items));
+    Bool shaped = f.expected != nullptr && f.expected->kind == .tuple && countof(f.expected->slots) == countof(items);
     for (Usize i = 0; i < countof(items); i++) {
         const ast::Expr *item = items[i];
         if (item->kind == .named_arg) {
@@ -3726,6 +3727,12 @@ static void tuple_after(types::Checked *c, Frame f) {
         if (elements[i].type == invalid(c)) {
             poison(c, e);
             return;
+        }
+        // an element that was checked against its element type converts to it (`(i32, i64)` where `(i64, i64)` is
+        // expected)
+        if (shaped) {
+            types::TypeRef wanted = f.expected->slots[i].type;
+            if (!(wanted->kind == .automatic)) elements[i].type = wanted;
         }
     }
     finish(c, e, types::tuple_of(&c->table, elements), f.expected);
@@ -3835,6 +3842,22 @@ static Bool has_auto_param(ast::Param params[:]) {
     return false;
 }
 
+// The tuple type a typed pack (`nums: i32...`) expects for its leftover arguments: every element of the written type,
+// so each argument is checked against it like any argument (an implicit conversion, else an error at the argument).
+// Null for a pack with no written type or a concept (`nums: int...`), whose elements keep their own types.
+static types::TypeRef pack_expected(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple) {
+    if (pack->type == nullptr || pack->type->kind == .auto_type || countof(types::written_concept(pack->type)) > 0) {
+        return nullptr;
+    }
+    if (!(tuple->kind == .tuple_lit)) return nullptr;
+    types::TypeRef element = resolve_written(c, pack->type);
+    types::Slot elements[:] = mem::alloc_slice(types::Slot, countof(tuple->kind.tuple_lit.items));
+    for (Usize i = 0; i < countof(elements); i++) {
+        elements[i].type = element;
+    }
+    return types::tuple_of(&c->table, elements);
+}
+
 // Stage 0 of a call of a function with `auto` parameters: the arguments are typed first, the instance is found after
 // them (`auto_resolved`).
 static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol *template) {
@@ -3857,8 +3880,26 @@ static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol
     }
     push(w, e, f.expected, 4);
     for (Usize i = countof(args); i > 0; i--) {
-        push(w, argument_value(args[i - 1]), nullptr, 0);
+        const ast::Expr *arg = argument_value(args[i - 1]);
+        types::TypeRef wanted = params[i - 1].is_pack ? pack_expected(c, &params[i - 1], arg) : nullptr;
+        push(w, arg, wanted, 0);
     }
+}
+
+// Whether every element of the tuple a concept pack (`nums: int...`) takes satisfies the concept; else the error names
+// the argument.
+static Bool pack_satisfies(types::Checked *c, const ast::Param *pack, const ast::Expr *tuple) {
+    Str concept = types::written_concept(pack->type);
+    if (countof(concept) == 0 || !(tuple->kind == .tuple_lit)) return true;
+    ast::ExprRef items[:] = tuple->kind.tuple_lit.items;
+    for (Usize i = 0; i < countof(items); i++) {
+        types::TypeRef t = typ(c, items[i]);
+        if (t == invalid(c) || types::concept_holds(concept, t)) continue;
+        types::failf(c, items[i]->span, "`", pack->name, "` takes `", concept, "` arguments, but this one is `",
+                     types::show(t), "`");
+        return false;
+    }
+    return true;
 }
 
 // Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
@@ -3877,7 +3918,7 @@ static void auto_resolved(types::Checked *c, Frame f) {
     for (Usize i = 0; i < countof(params); i++) {
         if (!types::is_auto_param(&params[i])) continue;
         types::TypeRef t = typ(c, argument_value(args[i]));
-        if (t == invalid(c)) {
+        if (t == invalid(c) || (params[i].is_pack && !pack_satisfies(c, &params[i], argument_value(args[i])))) {
             poison(c, e);
             return;
         }
