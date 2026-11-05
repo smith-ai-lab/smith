@@ -1,0 +1,24 @@
+// Test of the fix-it for a name `type` (#2460, part of #1631): a local called `type` that ends a slice,
+// `s[start:type.end]`, is written `ty` like every other use. The `:` of the slice is not the `:` before the keyword
+// `type`, so the fixer used to leave the name, and the text did not parse.
+module front_fix_type_name_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_type_name_after_a_slice_colon() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Str f(Str source, U32 start) {\n    ast::Span type "
+                                                "= g();\n    Str p = source[start:type.end];\n    return p;\n}\n");
+    check_text(fixed.text, "static fn f(source: str, start: u32) -> str:\n    ty: ast.Span = g()\n    p: str = "
+                           "source[start:ty.end]\n    return p\n");
+}
