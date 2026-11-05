@@ -901,7 +901,9 @@ static ast::TypeExpr *take_type_body(const Tables *t, Cursor *r, U32 tag) {
     }
     if (tag == type_pointer) {
         ast::TypeExpr *pointee = type_at(t, r, take_u32(r));
-        return r->bad || pointee == nullptr ? nullptr : ast::make_type({.pointer = {.pointee = pointee}});
+        if (r->bad || pointee == nullptr) return nullptr;
+        // A C pointer is writable unless its pointee is const, as cimport builds it.
+        return ast::make_type({.pointer = {.pointee = pointee, .is_mut = !pointee->qualifiers.is_const}});
     }
     if (tag == type_array) {
         ast::TypeExpr *element = type_at(t, r, take_u32(r));
