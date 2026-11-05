@@ -679,7 +679,7 @@ jobs:
     # a developer's Mac) on every merge to main with the smith this job builds for that commit: a push to main runs no
     # test job, and no release job hands its smith over, so `setup-smith` builds one here (cache-warm, a few minutes).
     # It gates nothing: it is not in `ci`'s needs, and a failure to measure is reported (`unmeasured`), never a red main.
-    # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md), and the count itself takes about 2 minutes.
+    # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md), and the count itself takes about 9 minutes on 4 cores (#2426).
     needs: changes
     if: ${{ github.event_name == 'push' && needs.changes.outputs.scope == 'release' }}
     runs-on: ubuntu-latest
