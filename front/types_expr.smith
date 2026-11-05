@@ -71,6 +71,7 @@ import front::parse as syntax;
 import front::types;
 import front::types_builtin as builtins;
 import front::types_fn;
+import front::when;
 import std::arena;
 import std::format;
 import std::mem;
@@ -459,7 +460,7 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
 
 // The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
 // becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
-static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member) {
+static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member, Bool slice_field) {
     syntax::Edits edits = {};
     if (!(member->kind == .member)) {
         return edits;
@@ -474,6 +475,14 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member)
     for (Usize i = 0; i < countof(owner->slots); i++) {
         const ast::TypeExpr *written = owner->slots[i].written;
         if (!types::same_text(owner->slots[i].name, member->kind.member.name) || written == nullptr) continue;
+        if (written->kind == .slice && !written->kind.slice.is_mut && slice_field) {
+            // A `[]T` field whose `.data` is handed where a `*mut T` is wanted is `[]mut T` (#2456).
+            edits = mem::realloc(edits, 1);
+            U32 after_brackets = written->span.start + 2;
+            Str word = "mut ";
+            edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
+            continue;
+        }
         // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
         if (!(written->kind == .pointer)) continue;
         Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
@@ -487,6 +496,43 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member)
     return edits;
 }
 
+// One edit that writes `mut ` at `at` (after the `*` or the `[]` of a written type).
+static syntax::Edits mut_after(U32 at) {
+    syntax::Edits edits = mem::realloc((syntax::Edits){}, 1);
+    Str word = "mut ";
+    edits[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = word};
+    return edits;
+}
+
+// The fix for `&a[i]` of a local array and `&r.f` of a local record: the one for `&a` and `&r` (#2456). A field
+// reached through a pointer is writable when the pointer is, which is another fix. Empty when neither is so.
+static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *operand) {
+    syntax::Edits none = {};
+    if (operand->kind == .index) {
+        const ast::Expr *array = operand->kind.index.base;
+        types::TypeRef held = array->kind == .name ? types::type_of(c, array) : nullptr;
+        return held != nullptr && held->kind == .array ? address_fix(c, array) : none;
+    }
+    if (operand->kind != .member) return none;
+    const ast::Expr *root = operand;
+    while (root->kind == .member && !root->kind.member.arrow)
+        root = root->kind.member.base;
+    types::TypeRef held = root->kind == .name ? types::type_of(c, root) : nullptr;
+    return held != nullptr && held->kind == .record ? address_fix(c, root) : none;
+}
+
+// The fix for `xs.data` handed where a `*mut T` is wanted: the slice `xs` (a field or a parameter) is `[]mut T`
+// (#2456).
+static syntax::Edits data_fix(const types::Checked *c, const ast::Expr *slice_expr) {
+    syntax::Edits none = {};
+    if (slice_expr->kind == .member) return field_fix(c, slice_expr, true);
+    if (slice_expr->kind != .name) return none;
+    const types::Symbol *slice = types::lookup_path(&c->scopes, slice_expr->kind.name.path);
+    if (slice == nullptr || slice->kind != .variable || !slice->is_new || slice->written == nullptr) return none;
+    if (slice->written->kind != .slice || slice->written->kind.slice.is_mut) return none;
+    return mut_after(slice->written->span.start + 2);
+}
+
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
@@ -495,8 +541,15 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
     }
+    if (base->kind == .unary && base->kind.unary.op == .address_of) {
+        edits = address_part_fix(c, base->kind.unary.operand);
+        if (countof(edits) != 0) return edits;
+    }
+    if (base->kind == .member && !base->kind.member.arrow && same_text(base->kind.member.name, "data")) {
+        return data_fix(c, base->kind.member.base);
+    }
     if (base->kind == .member) {
-        return field_fix(c, base);
+        return field_fix(c, base, false);
     }
     if (base->kind != .name) {
         return edits;
@@ -506,6 +559,9 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
         return edits;
     }
     const ast::TypeExpr *written = p->written;
+    if (written != nullptr && written->kind == .slice && !written->kind.slice.is_mut) {
+        return mut_after(written->span.start + 2);
+    }
     if (written != nullptr && written->kind == .pointer && !written->kind.pointer.is_mut) {
         edits = mem::realloc(edits, 1);
         U32 after_star = written->span.start + 1;
@@ -875,6 +931,18 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
         poison(c, e);
         return;
     }
+    Str owner = "";
+    if (countof(path.segments) == 1) owner = types::enumeration_of(c, "", name);
+    if (countof(owner) > 0) {
+        // A C enumerator written bare (`kind >= kw_alignas`): smith's own syntax takes its type from the context.
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        fix[0] = (syntax::Edit){.span = e->span, .text = msg(format::push(".", name))};
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", name, "` is an enumerator: write `.", name, "` where the type is known")),
+                        fix);
+        poison(c, e);
+        return;
+    }
     types::failf(c, e->span, "unknown name `", name, "`; declare it before it is used, for example `I32 ", name,
                  " = 0;`, or import the module that has it");
     poison(c, e);
@@ -907,6 +975,36 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
                  (tsan && target::thread_sanitizer) || (checks && target::assertions);
     node->kind = (ast::ExprKind){.boolean = {.value = value}};
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
+    return true;
+}
+
+// `target.os == target.macos` as a value (#2456): the system and the processor smith runs on, and the names the facts
+// are compared with, are numbers (`when`'s `Os` and `Arch`), so the comparison folds like any constant. True when `e`
+// was one of these.
+static Bool fold_target_system(types::Checked *c, Frame f, types::Names names) {
+    const ast::Expr *e = f.node;
+    if (names.count != 2 || !same_text(names.items[0], "target")) return false;
+    if (types::scoped(c, "target") != nullptr) return false;
+    Str fact = names.items[1];
+    U64 value = 0;
+    if (same_text(fact, "os")) {
+        value = when::host();
+    } else if (same_text(fact, "macos")) {
+        value = when::os_macos;
+    } else if (same_text(fact, "linux")) {
+        value = when::os_linux;
+    } else if (same_text(fact, "arch")) {
+        value = when::host_arch();
+    } else if (same_text(fact, "aarch64")) {
+        value = when::arch_aarch64;
+    } else if (same_text(fact, "x86_64")) {
+        value = when::arch_x86_64;
+    } else {
+        return false;
+    }
+    ast::Expr *node = (ast::Expr *)(Usize)e; // the checker settles the node's meaning in place
+    node->kind = (ast::ExprKind){.integer = {.value = value}};
+    finish(c, e, types::builtin(&c->table, "U32"), f.expected);
     return true;
 }
 
@@ -959,7 +1057,7 @@ static void name_expr(types::Checked *c, Frame f) {
         types::Names names = {.count = countof(path.segments)};
         for (Usize i = 0; i < names.count; i++)
             names.items[i] = path.segments[i].text;
-        if (fold_target(c, f, names)) return;
+        if (fold_target(c, f, names) || fold_target_system(c, f, names)) return;
         if (module_value(c, f, names)) return;
     }
     if (s == nullptr) {
@@ -1079,7 +1177,9 @@ static void variant_expr(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (expected->kind == .option && same_text(name, "none")) {
+    // `x == .some` and `x != .some` test an option's tag, so a bare `.some` is the option too (#2456).
+    if (expected->kind == .option &&
+        (same_text(name, "none") || (same_text(name, "some") && e->kind.variant.payload == nullptr))) {
         types::set_type(c, e, expected);
         return;
     }
@@ -1527,7 +1627,8 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
                      "`; write numbers, Bools, enumerators or pointers");
         return invalid(c);
     }
-    if (is_ordering(op) && l->kind != .pointer && !is_number(l) && !(l->kind == .enumeration && !l->has_payload)) {
+    Bool plain_enum = l->kind == .enumeration && !l->has_payload; // ordered by declaration (owner, 2026-11-05)
+    if (is_ordering(op) && l->kind != .pointer && !is_number(l) && !plain_enum) {
         return need_number(c, span, op, l, false);
     }
     if (comparable_pointers(l, r)) {
@@ -1673,56 +1774,6 @@ static void vector_binary(types::Checked *c, const ast::Expr *e, types::TypeRef 
     }
 }
 
-// A comparison with a leading-dot name on one side (`kind >= .kw_alignas`, `kind == .cast`): the other side is typed
-// first (stage 4), and the name takes that type (the owner, 2026-11-05).
-static Bool is_bare_variant(const ast::Expr *e) {
-    return e->kind == .variant && e->kind.variant.payload == nullptr;
-}
-
-static void binary_before(Work *w, Frame f) {
-    const ast::Expr *e = f.node;
-    if (!(e->kind == .binary)) {
-        return;
-    }
-    ast::BinaryOp op = e->kind.binary.op;
-    const ast::Expr *left = e->kind.binary.left;
-    const ast::Expr *right = e->kind.binary.right;
-    if ((is_ordering(op) || is_equality(op)) && is_bare_variant(left) != is_bare_variant(right)) {
-        push(w, e, f.expected, 4);
-        push(w, is_bare_variant(left) ? right : left, nullptr, 0);
-        return;
-    }
-    push(w, e, f.expected, 1);
-    push(w, right, nullptr, 0);
-    push(w, left, nullptr, 0);
-}
-
-// Stage 4: the side without the name is typed; type the name as it, then finish as any binary.
-static void binary_dot_next(types::Checked *c, Work *w, Frame f) {
-    const ast::Expr *e = f.node;
-    if (!(e->kind == .binary)) {
-        return;
-    }
-    ast::BinaryOp op = e->kind.binary.op;
-    const ast::Expr *left = e->kind.binary.left;
-    const ast::Expr *right = e->kind.binary.right;
-    const ast::Expr *dot = is_bare_variant(left) ? left : right;
-    const ast::Expr *other = is_bare_variant(left) ? right : left;
-    if (!(dot->kind == .variant)) {
-        return;
-    }
-    types::TypeRef t = typ(c, other);
-    push(w, e, f.expected, 1);
-    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
-    // carries.
-    if (is_equality(op) && t->kind == .enumeration && t->has_payload &&
-        types::member(t, dot->kind.variant.name) != nullptr) {
-        types::set_type(c, dot, t);
-        return;
-    }
-    push(w, dot, t == invalid(c) ? nullptr : t, 0);
-}
-
 static void binary_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .binary)) {
@@ -1762,15 +1813,6 @@ static void binary_after(types::Checked *c, Frame f) {
         return;
     }
     finish(c, e, t, f.expected);
-}
-
-// Stage 4 types the name of a comparison; any other stage finishes the binary.
-static void binary_stage(types::Checked *c, Work *w, Frame f) {
-    if (f.stage == 4) {
-        binary_dot_next(c, w, f);
-    } else {
-        binary_after(c, f);
-    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2959,6 +3001,11 @@ static void member_after(types::Checked *c, Frame f) {
             return;
         }
         finish(c, e, element->type, f.expected);
+        return;
+    }
+    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "data")) {
+        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
+        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
         return;
     }
     types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
@@ -5202,6 +5249,65 @@ static void assign_before(types::Checked *c, Work *w, Frame f) {
     push(w, target, nullptr, 0);
 }
 
+// Stage 2 and 3 of a comparison with a leading-dot side (`c == .green`, `.green == c`): the other side is typed, and
+// the dotted side is wanted as its type.
+static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    ast::BinaryOp op = e->kind.binary.op;
+    Bool dotted_right = f.stage == 2;
+    const ast::Expr *typed = dotted_right ? e->kind.binary.left : e->kind.binary.right;
+    const ast::Expr *dotted = dotted_right ? e->kind.binary.right : e->kind.binary.left;
+    types::TypeRef want = typ(c, typed);
+    if (want == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    push(w, e, f.expected, 1);
+    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
+    // carries.
+    if (is_equality(op) && want->kind == .enumeration && want->has_payload && dotted->kind == .variant &&
+        types::member(want, dotted->kind.variant.name) != nullptr) {
+        types::set_type(c, dotted, want);
+        return;
+    }
+    push(w, dotted, want, 0);
+}
+
+// The operands of a binary operator are typed first; a comparison with a leading-dot side types the other side first.
+static void binary_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    const ast::Expr *right = e->kind.binary.right;
+    const ast::Expr *left = e->kind.binary.left;
+    Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
+    if (compares && right->kind == .variant && left->kind != .variant) {
+        // `c == .green`: the side with a leading dot is the type of the other (#2460).
+        push(w, e, f.expected, 2);
+        push(w, left, nullptr, 0);
+    } else if (compares && left->kind == .variant && right->kind != .variant) {
+        push(w, e, f.expected, 3);
+        push(w, right, nullptr, 0);
+    } else {
+        push(w, e, f.expected, 1);
+        push(w, right, nullptr, 0);
+        push(w, left, nullptr, 0);
+    }
+}
+
+// A binary operator once its operands are typed (stage 1), or one side of a comparison with a leading dot (2, 3).
+static void binary_stage(types::Checked *c, Work *w, Frame f) {
+    if (f.stage >= 2) {
+        binary_variant_side(c, w, f);
+    } else {
+        binary_after(c, f);
+    }
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -5250,7 +5356,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
             poison(c, e);
             return;
         }
-        if (fold_target(c, f, types::member_names(e))) return;
+        if (fold_target(c, f, types::member_names(e)) || fold_target_system(c, f, types::member_names(e))) return;
         if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);

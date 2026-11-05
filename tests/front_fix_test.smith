@@ -509,7 +509,7 @@ static void use_header_flags() {
 
 export void test_a_bare_c_member_becomes_the_header_binding() {
     use_header_flags(); // clang reads the header with smith's resource directory, as `smith cc` passes it
-    arena::Arena memory = test::memory(1U << 22);
+    arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
@@ -521,7 +521,7 @@ export void test_a_bare_c_member_becomes_the_header_binding() {
 // A bare `abs` that `import c <stdlib.h>` declares is written `stdlib.abs` (#2287); a name no header has is left.
 export void test_a_bare_c_function_becomes_the_header_binding() {
     use_header_flags();
-    arena::Arena memory = test::memory(1U << 22);
+    arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
@@ -609,7 +609,7 @@ export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
 // body only through its instances.
 export void test_a_bare_c_member_in_a_generic_function_becomes_the_header_binding() {
     use_header_flags();
-    arena::Arena memory = test::memory(1U << 22);
+    arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);

@@ -1251,7 +1251,7 @@ static Bool same_name(const parse::Parser *p, Usize at, Str name) {
     return parse::peek_at(p, at).kind == lex::name && mem::equal(parse::text(p, parse::peek_at(p, at)), name);
 }
 
-// `(T x : xs)` is `x in xs`, and `(Usize i, T x : xs)` is `(i, x) in xs` (#2397).
+// `(T x : xs)` is `x in xs`, and `(Usize i, T x : xs)` is `(i, x) in enumerate(xs)` (#2397, #2456).
 static RangeText range_of_collection(const parse::Parser *p, Usize close) {
     RangeText none = {};
     Usize colon = find_at_depth_0(p, 1, close, lex::colon);
@@ -1263,7 +1263,8 @@ static RangeText range_of_collection(const parse::Parser *p, Usize close) {
         if (comma < 3 || find_at_depth_0(p, comma + 1, colon, lex::comma) != colon) return none;
         if (parse::peek_at(p, comma - 1).kind != lex::name) return none;
         Str index = parse::text(p, parse::peek_at(p, comma - 1));
-        char pair[:] = format::push("(", index, ", ", name, ") in ", tokens_text(p, colon + 1, close - 1));
+        char pair[:] =
+            format::push("(", index, ", ", name, ") in enumerate(", tokens_text(p, colon + 1, close - 1), ")");
         RangeText found = {.ok = true, .text = pair};
         return found;
     }

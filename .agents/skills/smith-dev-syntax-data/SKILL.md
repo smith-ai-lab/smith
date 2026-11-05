@@ -6,6 +6,7 @@ description: "New syntax (#1428): `struct` and `enum` declarations with indented
 # Structs, enums and building values
 
 Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428.
+
 ## Declaring
 
 ```smith
@@ -28,15 +29,13 @@ pub enum Shape:                     # a payload enum; C's union is an error in a
     empty
 ```
 
-The variants of a `pub enum` are public with it, with no `pub` of their own (`lex.kw_const`). `<`, `<=`, `>` and `>=` work on enums without payloads, in declaration order (`kind >= .kw_alignas`); a leading-dot name takes its type from the other operand, as in `==`; a payload enum is not ordered, but `shape == .circle` tests its tag.
-
 ## Building values
 
 | Value | Written |
 |---|---|
 | struct | `Point(1, 2)`, `Point(x = 1, y = 2)`, `Point(1, y = 2)`: Python's rules, positional (in field order) then named |
 | generic struct | `Pair(i32)(1, 2)`, or through an alias `IntPair(first = 1, second = 2)` |
-| enum variant | `.red`, `.empty`: the leading dot means the enum the context expects |
+| enum variant | `.red`, `.empty`: the leading dot means the enum the context expects; a plain enum (no payload) is ordered with `<`, `<=`, `>`, `>=` in declaration order (owner, 2026-11-05: "Yeah, I think we should be able to do what you're saying"), and a leading dot in a comparison takes its type from the other operand (`kind >= .kw_alignas`); a payload enum is not ordered; the variants of a `pub enum` are public with it |
 | payload variant | `.circle(Circle(radius = 1))`, `.square(2)`: parentheses wrap the one payload value |
 | tuple | `(1, 2.5)`, `()` empty |
 | named tuple | `(count = n, ms = ms)`: its type is the anonymous struct `(count: i32, ms: f64)` |

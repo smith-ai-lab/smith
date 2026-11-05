@@ -174,7 +174,17 @@ export void test_front_types_iter_enumerate_one_name_is_refused() {
           "for (i, x)");
 }
 
-export void test_front_types_iter_tuple_pattern_is_not_yet_typed() {
-    fails("fn run(xs: []i32):\n    for (i, x) in enumerate(xs):\n        return\n", "not yet typed: a tuple pattern",
+export void test_front_types_iter_tuple_pattern_over_enumerate_binds_the_index_and_the_element() {
+    clean("fn run(xs: []i32) -> usize:\n    for (i, x) in enumerate(xs):\n        _ := x\n        return i\n    return "
+          "0\n");
+}
+
+export void test_front_types_iter_tuple_pattern_over_zip_is_not_yet_typed() {
+    fails("fn run(xs: []i32):\n    for (i, x) in zip(xs, xs):\n        return\n", "not yet typed: a tuple pattern",
           "#1557");
+}
+
+// Beside the loops (#2456): a slice's `.data` checks with no error.
+export void test_front_types_slice_data_checks_clean() {
+    clean("fn first(xs: []mut u8) -> *mut u8:\n    xs.data\n");
 }
