@@ -875,6 +875,18 @@ static void unknown_name(types::Checked *c, const ast::Expr *e, ast::Path path) 
         poison(c, e);
         return;
     }
+    Str owner = "";
+    if (countof(path.segments) == 1) owner = types::enumeration_of(c, "", name);
+    if (countof(owner) > 0) {
+        // A C enumerator written bare (`kind >= kw_alignas`): smith's own syntax takes its type from the context.
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        fix[0] = (syntax::Edit){.span = e->span, .text = msg(format::push(".", name))};
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", name, "` is an enumerator: write `.", name, "` where the type is known")),
+                        fix);
+        poison(c, e);
+        return;
+    }
     types::failf(c, e->span, "unknown name `", name, "`; declare it before it is used, for example `I32 ", name,
                  " = 0;`, or import the module that has it");
     poison(c, e);
@@ -1527,7 +1539,8 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
                      "`; write numbers, Bools, enumerators or pointers");
         return invalid(c);
     }
-    if (is_ordering(op) && l->kind != .pointer && !is_number(l)) {
+    Bool plain_enum = l->kind == .enumeration && !l->has_payload; // ordered by declaration (owner, 2026-11-05)
+    if (is_ordering(op) && l->kind != .pointer && !is_number(l) && !plain_enum) {
         return need_number(c, span, op, l, false);
     }
     if (comparable_pointers(l, r)) {
@@ -5143,6 +5156,57 @@ static void assign_before(types::Checked *c, Work *w, Frame f) {
     push(w, target, nullptr, 0);
 }
 
+// Stage 2 and 3 of a comparison with a leading-dot side (`c == .green`, `.green == c`): the other side is typed, and
+// the dotted side is wanted as its type.
+static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    Bool dotted_right = f.stage == 2;
+    const ast::Expr *typed = dotted_right ? e->kind.binary.left : e->kind.binary.right;
+    const ast::Expr *dotted = dotted_right ? e->kind.binary.right : e->kind.binary.left;
+    types::TypeRef want = typ(c, typed);
+    if (want == invalid(c)) {
+        poison(c, e);
+        return;
+    }
+    push(w, e, f.expected, 1);
+    push(w, dotted, want, 0);
+}
+
+// The operands of a binary operator are typed first; a comparison with a leading-dot side types the other side first.
+static void binary_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    const ast::Expr *right = e->kind.binary.right;
+    const ast::Expr *left = e->kind.binary.left;
+    Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
+    if (compares && right->kind == .variant && left->kind != .variant) {
+        // `c == .green`: the side with a leading dot is the type of the other (#2460).
+        push(w, e, f.expected, 2);
+        push(w, left, nullptr, 0);
+    } else if (compares && left->kind == .variant && right->kind != .variant) {
+        push(w, e, f.expected, 3);
+        push(w, right, nullptr, 0);
+    } else {
+        push(w, e, f.expected, 1);
+        push(w, right, nullptr, 0);
+        push(w, left, nullptr, 0);
+    }
+}
+
+// A binary operator once its operands are typed (stage 1), or one side of a comparison with a leading dot (2, 3).
+static void binary_stage(types::Checked *c, Work *w, Frame f) {
+    if (f.stage >= 2) {
+        binary_variant_side(c, w, f);
+    } else {
+        binary_after(c, f);
+    }
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -5150,11 +5214,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
-        const ast::Expr *right = e->kind.binary.right;
-        const ast::Expr *left = e->kind.binary.left;
-        push(w, e, f.expected, 1);
-        push(w, right, nullptr, 0);
-        push(w, left, nullptr, 0);
+        binary_before(w, f);
     } else if (e->kind == .assign) {
         assign_before(c, w, f);
     } else if (e->kind == .conditional) {
@@ -5222,7 +5282,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_after(c, f);
     } else if (e->kind == .binary) {
-        binary_after(c, f);
+        binary_stage(c, w, f);
     } else if (e->kind == .assign) {
         if (f.stage == 1) {
             assign_target_done(c, w, f);

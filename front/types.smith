@@ -3089,9 +3089,36 @@ static Usize distance(Str a, Str b) {
     return row[countof(b)];
 }
 
+// The enumeration of the module `prefix` names that has an enumerator `name`: C writes `lex::kw_const`, smith's own
+// syntax `lex.TokenKind.kw_const` (#2460). Empty when no enumeration has it.
+export Str enumeration_of(const Checked *r, Str prefix, Str name) {
+    for (Usize i = 0; i < r->scopes.count; i++) {
+        const Symbol *s = &r->scopes.symbols[i];
+        if (s->kind != .type_name || s->type == nullptr || s->type->kind != .enumeration ||
+            (countof(prefix) > 0 && !is_public(s)))
+            continue;
+        if (countof(s->name) <= countof(prefix) || !same_text(s->name[0:countof(prefix)], prefix)) continue;
+        if (countof(prefix) == 0 && countof(module_prefix(s->name)) > 0) continue; // a bare name: this module's own
+        for (Usize k = 0; k < countof(s->type->slots); k++) {
+            if (same_text(s->type->slots[k].name, name)) return s->name[countof(prefix):countof(s->name)];
+        }
+    }
+    return "";
+}
+
 // Reports `std.math has no public sinn`, with the closest public name when one is near.
 export void report_missing(Checked *r, ast::Span span, Through t) {
     Str prefix = prefix_of_import(t.module->decl);
+    Str owner = enumeration_of(r, prefix, t.missing);
+    if (countof(owner) > 0) {
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        fix[0] = (syntax::Edit){.span = span, .text = msg(format::push(".", t.missing))};
+        fail_fix(r, span,
+                 msg(format::push("`", t.missing, "` is an enumerator of `", owner, "`: write `.", t.missing,
+                                  "` where the type is known")),
+                 fix);
+        return;
+    }
     Str best = "";
     Usize best_distance = 3;
     for (Usize i = 0; i < r->scopes.count; i++) {
