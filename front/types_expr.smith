@@ -1763,6 +1763,15 @@ static void binary_after(types::Checked *c, Frame f) {
     finish(c, e, t, f.expected);
 }
 
+// Stage 4 types the name of a comparison; any other stage finishes the binary.
+static void binary_stage(types::Checked *c, Work *w, Frame f) {
+    if (f.stage == 4) {
+        binary_dot_next(c, w, f);
+    } else {
+        binary_after(c, f);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Assignment and the conditional
 
@@ -5266,10 +5275,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         type_value_after(c, f);
     } else if (e->kind == .unary) {
         unary_after(c, f);
-    } else if (e->kind == .binary && f.stage == 4) {
-        binary_dot_next(c, w, f);
     } else if (e->kind == .binary) {
-        binary_after(c, f);
+        binary_stage(c, w, f);
     } else if (e->kind == .assign) {
         if (f.stage == 1) {
             assign_target_done(c, w, f);
