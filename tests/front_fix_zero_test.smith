@@ -106,7 +106,7 @@ export void test_front_fix_zero_array_fill_keeps_an_existing_import_of_std_array
 
 // A C parameter named `fn` (a function pointer, called or passed on) is written `fn_`: `fn` is a keyword of smith's own
 // syntax (#2412). A lambda's `fn` stays.
-export void test_front_fix_a_parameter_named_fn_is_written_fn_() {
+export void test_front_fix_a_parameter_named_fn_is_renamed() {
     expect_fixed("module m;\nint apply(int (*fn)(int), int x) {\n    return fn(x);\n}\n",
                  "fn apply(fn_: fn(i32) -> i32, x: i32) -> i32:\n    return fn_(x)\n");
 }
