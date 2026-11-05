@@ -344,10 +344,10 @@ static void apart_precondition_fails(const char *function) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     const char *name = format::push("apart precondition: ", function, " fails").data;
-    scratch::Run run = refuted(&p, name,
-                               format::push("--function=geometry::apart_precondition::", function,
-                                            " \"$c/geometry/apart_precondition.smith\"")
-                                   .data);
+    scratch::Run run = refuted(
+        &p, name,
+        format::push("--function=geometry::apart_precondition::", function, " \"$c/geometry/apart_precondition.smith\"")
+            .data);
     has(format::push(name, " at the call").data, &run, "the call of geometry::apart_precondition::copy may break");
 }
 
