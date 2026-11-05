@@ -47,6 +47,7 @@ export typedef enum {
     libc;
     format;
     count_zeros;
+    atomic_add;
     filled;
     type_query;
 } Shape;
@@ -101,6 +102,8 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .libc, "nextafterf ff f");
     } else if (same(name, "__builtin_snprintf")) {
         *found = made(name, .format, "snprintf");
+    } else if (same(name, "__atomic_fetch_add")) {
+        *found = made(name, .atomic_add, "add");
     } else if (same(name, "__builtin_clzll")) {
         *found = made(name, .count_zeros, "ctlz");
     } else {
@@ -212,10 +215,11 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
     return types::lookup_path(&c->scopes, path) == nullptr;
 }
 
-// Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), or the
-// tag string of `nan`, which is ignored.
+// Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), the
+// tag string of `nan`, which is ignored, or the memory order of an atomic, a predefined macro the checker reads.
 export Bool is_type_argument(Entry entry, Usize index) {
     if (entry.shape == .bit_cast || entry.shape == .filled || entry.shape == .type_query) return index == 0;
+    if (entry.shape == .atomic_add) return index == 2;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
 }
 
@@ -398,10 +402,10 @@ export types::TypeRef format_pointer(types::Checked *c) {
     return types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true);
 }
 
-// `__builtin_snprintf(out, n, format, rest...)`: a pointer, a size, a format and any number of integers and pointers;
-// the result is an I32.
+// `__builtin_snprintf(out, n, format, rest...)`: a pointer, a size, a format and any number of integers, floats and
+// pointers; the result is an I32.
 static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
-    Str wanted = "a pointer, a size, a format and integers or pointers";
+    Str wanted = "a pointer, a size, a format and integers, floats or pointers";
     if (countof(args) < 3) return wrong(c, e->span, entry, wanted);
     for (Usize i = 0; i < countof(args); i++) {
         types::TypeRef t = value_type(c, args[i]);
@@ -415,12 +419,31 @@ static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry 
                             element_address_fix(args[i]));
             return c->table.invalid;
         }
-        if (i == 1 ? !integer : (i == 0 || i == 2) ? !pointer : !(pointer || integer)) {
+        if (i == 1 ? !integer : (i == 0 || i == 2) ? !pointer : !(pointer || integer || t->kind == .floating)) {
             types::failf(c, args[i]->span, "`", entry.name, "` takes ", wanted, ", found ", types::show(t));
             return c->table.invalid;
         }
     }
     return named(c, "I32");
+}
+
+// `__atomic_fetch_add(p, n, order)`: adds the integer `n` to what the pointer `p` points to and gives the old value.
+// The memory order is the macro `__ATOMIC_RELAXED`, the only one the emitter lowers (a monotonic `atomicrmw`).
+static types::TypeRef check_atomic_add(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "a pointer to an integer, an integer and a memory order";
+    if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
+    types::TypeRef p = value_type(c, args[0]);
+    types::TypeRef n = value_type(c, args[1]);
+    if (p == c->table.invalid || n == c->table.invalid) return c->table.invalid;
+    if (is_open(p) || is_open(n)) return c->table.invalid;
+    const ast::Expr *order = args[2];
+    if (order->kind != .name || countof(order->kind.name.path.segments) != 1 ||
+        !same(order->kind.name.path.segments[0].text, "__ATOMIC_RELAXED"))
+        return wrong(c, e->span, entry,
+                     "a pointer to an integer, an integer and `__ATOMIC_RELAXED`, the one order smith lowers");
+    if (p->kind != .pointer || p->element->kind != .integer || n->kind != .integer)
+        return wrong(c, e->span, entry, wanted);
+    return p->element;
 }
 
 // The element type `array.filled` is called with (its first argument), for the checker to expect of the value; null
@@ -496,6 +519,8 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         if (countof(args) != 1) return wrong(c, e->span, entry, "one type; write `(typeof(x))`");
         if (type_argument(c, args[0], entry.name) == nullptr) return c->table.invalid;
         return c->table.bool_type;
+    case .atomic_add:
+        return check_atomic_add(c, e, entry, args);
     case .count_zeros:
         if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
         return named(c, "I32");
