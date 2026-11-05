@@ -241,6 +241,10 @@ export void test_the_optimize_header_compiles_alone() {
     generated("optimize");
 }
 
+export void test_the_array_header_compiles_alone() {
+    generated("array");
+}
+
 export void test_the_wrapping_header_compiles_alone() {
     generated("wrapping");
 }

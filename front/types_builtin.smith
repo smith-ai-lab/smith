@@ -17,6 +17,9 @@
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
+//   filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
+//   (#2339):
+//                                                                        n copies of value; n is a constant
 //   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
 //   end in `f`)
 //
@@ -40,6 +43,7 @@ export typedef enum {
     constant;
     libc;
     count_zeros;
+    filled;
 } Shape;
 
 export struct Entry {
@@ -150,8 +154,27 @@ export Bool find(Str name, Entry *found) {
     return true;
 }
 
-// The builtin a call's callee names, when it is one: a single plain name that no scope declares.
+// Whether the callee is `array.filled`, the name `filled` read through a module that `import std.array` bound.
+static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
+    types::Names names = {};
+    if (callee->kind == .member && !callee->kind.member.arrow) {
+        names = types::member_names(callee);
+    } else if (callee->kind == .name) {
+        ast::Path path = callee->kind.name.path;
+        if (countof(path.segments) != 2) return false;
+        names = (types::Names){.count = 2, .items = {path.segments[0].text, path.segments[1].text}};
+    }
+    if (names.count != 2 || !same(names.items[1], "filled")) return false;
+    const types::Symbol *module = types::scoped(c, names.items[0]);
+    return module != nullptr && module->kind == .module_name && same(types::module_dotted(module), "std.array");
+}
+
+// The builtin a call's callee names, when it is one: a single plain name that no scope declares, or `array.filled`.
 export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry *found) {
+    if (names_filled(c, callee)) {
+        *found = made("array.filled", .filled, "");
+        return true;
+    }
     if (callee->kind != .name) return false;
     ast::Path path = callee->kind.name.path;
     if (countof(path.segments) != 1) return false;
@@ -162,12 +185,12 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
 // Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), or the
 // tag string of `nan`, which is ignored.
 export Bool is_type_argument(Entry entry, Usize index) {
-    if (entry.shape == .bit_cast) return index == 0;
+    if (entry.shape == .bit_cast || entry.shape == .filled) return index == 0;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
 }
 
 // The type written as argument of a builtin: a name of a type, or a type written as a value.
-static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg) {
+static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg, Str callee_name) {
     if (arg->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
         if (s != nullptr && s->kind == .type_name) return s->type;
@@ -189,7 +212,7 @@ static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg) {
         if (t != c->table.invalid) return t;
         return nullptr;
     }
-    types::failf(c, arg->span, "the first argument of `__builtin_bit_cast` is a type; write a type such as `u64`");
+    types::failf(c, arg->span, "the first argument of `", callee_name, "` is a type; write a type such as `u64`");
     return nullptr;
 }
 
@@ -228,7 +251,7 @@ static types::TypeRef check_overflow(types::Checked *c, const ast::Expr *e, Entr
 
 static types::TypeRef check_bit_cast(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
     if (countof(args) != 2) return wrong(c, e->span, entry, "a type and a value; write `(u64, x)`");
-    types::TypeRef to = type_argument(c, args[0]);
+    types::TypeRef to = type_argument(c, args[0], entry.name);
     if (to == nullptr) return c->table.invalid;
     if (value_type(c, args[1]) == c->table.invalid) return c->table.invalid;
     return to;
@@ -320,6 +343,42 @@ static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry en
     return libc_type(c, result, first);
 }
 
+// The element type `array.filled` is called with (its first argument), for the checker to expect of the value; null
+// when the call is malformed (`check` reports it).
+export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
+    if (e->kind != .call) return nullptr;
+    ast::ExprRef args[:] = e->kind.call.args;
+    if (countof(args) != 3) return nullptr;
+    Usize errors = c->error_count;
+    types::TypeRef t = type_argument(c, args[0], "array.filled");
+    c->error_count = errors;
+    return t;
+}
+
+// `array.filled(T, n, value)`: `[n]T`. `n` folds to a constant; `value` has the type `T`.
+static types::TypeRef check_filled(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "a type, a constant length and a value; write `(u32, 256, 0)`";
+    if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
+    types::TypeRef element = type_argument(c, args[0], entry.name);
+    if (element == nullptr) return c->table.invalid;
+    U64 count = 0;
+    if (!types::fold_length(c, args[1], &count)) {
+        types::fail(c, args[1]->span,
+                    "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
+        return c->table.invalid;
+    }
+    types::TypeRef value = value_type(c, args[2]);
+    if (value == c->table.invalid) return c->table.invalid;
+    if (value != element) {
+        types::failf(c, args[2]->span, "`array.filled` needs a value of type ", types::show(element), ", found ",
+                     types::show(value));
+        return c->table.invalid;
+    }
+    types::TypeRef made_type = types::array_of(&c->table, element, count, false);
+    types::set_length(c, e, count);
+    return made_type;
+}
+
 // The type of a call of the builtin, once its arguments are typed (a type argument is read here); the invalid type,
 // with the error reported, when the arguments do not fit.
 export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) {
@@ -349,6 +408,8 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_constant(c, e, entry, args);
     case .libc:
         return check_libc(c, e, entry, args);
+    case .filled:
+        return check_filled(c, e, entry, args);
     case .count_zeros:
         if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
         return named(c, "I32");

@@ -1648,6 +1648,11 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
     return true;
 }
 
+// The value of `root` when it is known at compile time as an array length is (`array.filled(u8, n, 0)`, #2339).
+export Bool fold_length(const Checked *r, const ast::Expr *root, U64 *out) {
+    return constant_length(r, root, out);
+}
+
 // The value of a `match` pattern known at compile time (#2336): an integer, character or boolean literal, its negation,
 // a name of a constant whose initializer is one, or what `constant_length` folds. False for anything else, such as a
 // C header's constant, whose value the checker does not hold.

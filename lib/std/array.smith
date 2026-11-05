@@ -1,0 +1,18 @@
+// smith-build: header
+// std::array, <smith/array.h>: arrays built whole. C zeroes a file-level or `static` array; smith has no zero values,
+// so an array that must start with a value says which (#2339, a slice of the library designed on #1823).
+//
+//   import std.array
+//
+//   table := array.filled(u32, 256, 0)                        # [256]u32, every element 0
+//   mut buf: [named_length]char = array.filled(char, named_length, 0)   # a global, emitted as constant data
+//
+// `array.filled(T, n, value)` is `[n]T` with `n` copies of `value`. The compiler knows the call, as it knows `countof`
+// and `sizeof`: `n` is a constant (an integer literal, a `const`, or `+ - * / % << >>` of those), `value` is a scalar
+// constant or a construction of constants, and `T` is the type of `value`. At file scope the result is a constant
+// initializer (all zero, or one value repeated), so the object file holds data and no code runs at startup; in a
+// function it is a fill loop, or a memset when the value is zero. When the compiler can evaluate a function at compile
+// time, the body can move here with no change to callers (front/types_builtin.smith, `filled`).
+//
+// Nothing else of #1823 (shape, indexing, operations) is built yet.
+module std::array;

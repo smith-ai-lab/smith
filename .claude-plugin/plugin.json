@@ -24,6 +24,7 @@
     "./.agents/skills/smith-adopt/",
     "./.agents/skills/smith-adopt-build/",
     "./.agents/skills/smith-adopt-prove/",
+    "./.agents/skills/smith-array/",
     "./.agents/skills/smith-arena/",
     "./.agents/skills/smith-arena-c/",
     "./.agents/skills/smith-autodiff/",

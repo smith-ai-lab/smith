@@ -6,7 +6,9 @@ module front::emit_builtin;
 
 import front::ast;
 import front::emit_state as state;
+import front::types as types;
 import front::types_builtin as table;
+import std::arena;
 import std::format;
 import std::mem;
 import <llvm-c/Core.h>;
@@ -146,6 +148,8 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return libc_call(e, entry, v, result);
     case .count_zeros:
         return count_zeros(e, v[0], result);
+    case .filled:
+        return nullptr; // lowered by `filled`
     case .constant:
         return c::LLVMConstRealOfStringAndSize(result.llvm, entry.intrinsic.data, 3);
     }
@@ -188,5 +192,89 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     for (Usize i = countof(args); i > 0; i--) {
         if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], state::no_hint());
     }
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `array.filled(T, n, value)` (#2339)
+
+// Whether the call `x` is one of `array.filled`: the checker recorded its length `n` on the call.
+export Bool is_filled(const state::Emitter *e, const ast::Expr *x) {
+    U64 count = 0;
+    return x->kind == .call && e->options.checked != nullptr && countof(x->kind.call.args) == 3 &&
+           types::length_of(e->options.checked, x, &count);
+}
+
+// The expression of the value `array.filled` repeats.
+export const ast::Expr *filled_value(const ast::Expr *x) {
+    if (x->kind != .call) return nullptr;
+    return x->kind.call.args[2];
+}
+
+// The cells of a constant array, a struct so that `mem::alloc_slice` takes it.
+export struct Cells {
+    c::LLVMValueRef item;
+};
+
+// The array: a constant when the value is one (all zero is the null constant, any other a repeat), else a loop that
+// stores the value into every element of a slot, read back as the array.
+static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
+    state::Ty array = w->ty;
+    state::Value item = state::pop_value(e);
+    if (!state::same_type(item.ty, *array.element)) {
+        try state::convert(e, item, *array.element, w->span, .initialize);
+        item = state::pop_value(e);
+    }
+    if (c::LLVMIsConstant(item.llvm) != 0) {
+        if (c::LLVMIsNull(item.llvm) != 0) {
+            state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(array.llvm), .ty = array});
+            return state::success();
+        }
+        Cells cells[:] = mem::alloc_slice(Cells, array.count);
+        for (Usize i = 0; i < array.count; i++)
+            cells[i].item = item.llvm;
+        c::LLVMValueRef made = c::LLVMConstArray2(array.element->llvm, (c::LLVMValueRef *)cells.data, array.count);
+        mem::free(cells.data);
+        state::push_value(e, (state::Value){.llvm = made, .ty = array});
+        return state::success();
+    }
+    c::LLVMValueRef slot = state::new_alloca(e, array, "filled");
+    c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
+    state::Ty counter = {};
+    counter.kind = .integer;
+    counter.llvm = word;
+    counter.bits = 64;
+    counter.name = "U64";
+    c::LLVMValueRef at = state::new_alloca(e, counter, "at");
+    c::LLVMBuildStore(e->builder, c::LLVMConstInt(word, 0, 0), at);
+    c::LLVMBasicBlockRef test = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fill.test");
+    c::LLVMBasicBlockRef body = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fill.body");
+    c::LLVMBasicBlockRef done = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fill.done");
+    c::LLVMBuildBr(e->builder, test);
+    c::LLVMPositionBuilderAtEnd(e->builder, test);
+    c::LLVMValueRef index = c::LLVMBuildLoad2(e->builder, word, at, "i");
+    c::LLVMValueRef more =
+        c::LLVMBuildICmp(e->builder, c::LLVMIntULT, index, c::LLVMConstInt(word, array.count, 0), "more");
+    c::LLVMBuildCondBr(e->builder, more, body, done);
+    c::LLVMPositionBuilderAtEnd(e->builder, body);
+    c::LLVMValueRef zero = c::LLVMConstInt(word, 0, 0);
+    c::LLVMValueRef path[2] = {zero, index};
+    c::LLVMValueRef place = c::LLVMBuildInBoundsGEP2(e->builder, array.llvm, slot, path, 2, "cell");
+    c::LLVMBuildStore(e->builder, item.llvm, place);
+    c::LLVMBuildStore(e->builder, c::LLVMBuildAdd(e->builder, index, c::LLVMConstInt(word, 1, 0), "next"), at);
+    c::LLVMBuildBr(e->builder, test);
+    c::LLVMPositionBuilderAtEnd(e->builder, done);
+    state::push_value(e, (state::Value){.llvm = c::LLVMBuildLoad2(e->builder, array.llvm, slot, "array"), .ty = array});
+    return state::success();
+}
+
+// Emits `array.filled(T, n, value)` as a value of the array type the checker gave the call.
+export state::Status filled(state::Emitter *e, const ast::Expr *x) {
+    state::TyResult typed = state::type_of_node(e, x);
+    if (typed == .error) return {.error = typed.error};
+    state::Ty array = typed.ok;
+    if (array.kind != .array) return state::fail("array.filled is not an array", x->span);
+    state::push_then(e, (state::Work){.then = filled_finish, .expr = x, .ty = array, .span = x->span});
+    state::push_eval(e, filled_value(x), state::hint_of(*array.element));
     return state::success();
 }

@@ -38,6 +38,7 @@ module front::emit_memory;
 
 import front::ast;
 import front::emit_arith as arith;
+import front::emit_builtin as builtin;
 import front::emit_match as matching;
 import front::emit_state as state;
 import front::types;
@@ -1446,6 +1447,12 @@ static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMVa
         const ast::Expr *inner = x->kind.unary.operand;
         if (inner->kind == .integer) return integer_constant(ty, inner->kind.integer.value, true, x->span, out);
     }
+    if (ty.kind == .integer && x->kind == .character)
+        return integer_constant(ty, x->kind.character.value, false, x->span, out);
+    if (ty.kind == .floating && x->kind == .floating) {
+        *out = c::LLVMConstReal(ty.llvm, x->kind.floating.value);
+        return state::success();
+    }
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
@@ -1511,7 +1518,30 @@ static state::Status construction_constant(state::Emitter *e, state::Ty ty, cons
     return state::success();
 }
 
+// `array.filled(T, n, value)` at file scope (#2339): a constant array of `n` copies of the value's constant, the null
+// constant when the value is zero, so the object holds zero or constant data and runs no code.
+static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (ty.kind != .array) return state::failf(x->span, "array.filled where ", ty.name, " is expected");
+    c::LLVMValueRef item = nullptr;
+    const ast::Expr *value = builtin::filled_value(x);
+    if (ty.element->kind == .record && value->kind == .call)
+        try construction_constant(e, *ty.element, value, &item);
+    else
+        try scalar_constant(*ty.element, value, &item);
+    if (c::LLVMIsNull(item) != 0) {
+        *out = c::LLVMConstNull(ty.llvm);
+        return state::success();
+    }
+    builtin::Cells cells[:] = mem::alloc_slice(builtin::Cells, ty.count);
+    for (Usize i = 0; i < ty.count; i++)
+        cells[i].item = item;
+    *out = c::LLVMConstArray2(ty.element->llvm, (c::LLVMValueRef *)cells.data, ty.count);
+    mem::free(cells.data);
+    return state::success();
+}
+
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
     if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
     if (ty.kind == .array) return array_constant(ty, x, out);
     if (x->kind != .compound) {
