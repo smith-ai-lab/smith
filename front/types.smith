@@ -2259,7 +2259,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                       "type such as `i32`, or drop `pub`");
             }
         }
-        declare(&r->scopes, (Symbol){.name = p->name, .kind = .variable, .type = params[i].type});
+        declare(
+            &r->scopes,
+            (Symbol){
+                .name = p->name, .kind = .variable, .type = params[i].type, .is_new = p->is_new, .written = p->type});
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
