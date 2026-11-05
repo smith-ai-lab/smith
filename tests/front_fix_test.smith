@@ -190,7 +190,7 @@ export void test_a_file_is_stored_and_a_second_run_applies_nothing() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str path = "/tmp/front_fix_test_scratch.smith";
-    check_flag(fix::store(path, "let a = 1\n"), true);
+    check_flag(fix::store(path, "a := 1\n"), true);
     check_signed(fix::fix_file(path), 0);
     files::BytesResult back = files::read_file(path);
     if (back == .error) {
@@ -199,7 +199,7 @@ export void test_a_file_is_stored_and_a_second_run_applies_nothing() {
     }
     char chars[:] = mem::view(back.ok, char);
     Str got = chars;
-    check_text(got, "let a = 1\n");
+    check_text(got, "a := 1\n");
     check_signed(fix::fix_file("/tmp/front_fix_test_missing.smith"), -1);
 }
 
@@ -224,7 +224,7 @@ export void test_a_source_without_old_forms_has_no_warnings() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse(file_name, "let a = 1\n");
+    parser::Parsed parsed = parser::parse(file_name, "a := 1\n");
     check_count(countof(parsed.errors), 0);
     check_count(countof(parsed.warnings), 0);
 }
@@ -270,10 +270,9 @@ export void test_a_top_level_if_constexpr_becomes_when() {
         "t.smith", "import target;\n\nif constexpr (target::os == target::macos) {\n"
                    "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
                    "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
-    check_text(fixed.text,
-               "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
-               "let mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nlet mut a: i32 = 2\n"
-               "@when(target.os != .macos && target.os != .linux)\nlet mut a: i32 = 3\nlet mut after: i32 = 4\n");
+    check_text(fixed.text, "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
+                           "mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nmut a: i32 = 2\n"
+                           "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
 }
 
 // `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
@@ -284,8 +283,8 @@ export void test_a_top_level_if_constexpr_on_the_processor_becomes_when() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "import target;\n\nif constexpr (target::arch == target::aarch64) {\n"
                                                 "    int a = 1;\n} else {\n    int a = 2;\n}\n");
-    check_text(fixed.text, "\n@when(target.arch == .aarch64)\nlet mut a: i32 = 1\n"
-                           "@when(target.arch != .aarch64)\nlet mut a: i32 = 2\n");
+    check_text(fixed.text, "\n@when(target.arch == .aarch64)\nmut a: i32 = 1\n"
+                           "@when(target.arch != .aarch64)\nmut a: i32 = 2\n");
 }
 
 // A condition that names a constant is kept as written, and its `else` is `!(...)` (#2142).
@@ -296,8 +295,8 @@ export void test_a_top_level_if_constexpr_on_a_constant_becomes_when() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "constexpr bool wide = true;\n\nif constexpr (wide) {\n"
                                                 "    int a = 1;\n} else {\n    int a = 2;\n}\n");
-    check_text(fixed.text, "const wide: bool = true\n\n@when(wide)\nlet mut a: i32 = 1\n"
-                           "@when(!(wide))\nlet mut a: i32 = 2\n");
+    check_text(fixed.text, "const wide: bool = true\n\n@when(wide)\nmut a: i32 = 1\n"
+                           "@when(!(wide))\nmut a: i32 = 2\n");
 }
 
 // In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
@@ -307,11 +306,10 @@ export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed new_file =
-        parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    let a: i32 = 1\n}\n");
+    parser::Parsed new_file = parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    a: i32 = 1\n}\n");
     check_count(countof(new_file.errors) > 0 ? 1 : 0, 1);
     fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (sizeof(int) == 4) {\n    int a = 1;\n}\n");
-    check_text(kept.text, "if constexpr (sizeof(i32) == 4) {\n    let mut a: i32 = 1\n}\n");
+    check_text(kept.text, "if constexpr (sizeof(i32) == 4) {\n    mut a: i32 = 1\n}\n");
 }
 
 // An `#if` that is not about the system, is inside a function or holds another directive stays as it is.
@@ -376,7 +374,7 @@ export void test_a_typedef_of_a_function_pointer_keeps_its_name() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef void (*Callback)(void);\n"
                                                 "typedef int (*Binary)(int, int);\n");
-    check_text(fixed.text, "let Callback = fn()\nlet Binary = fn(i32, i32) -> i32\n");
+    check_text(fixed.text, "Callback := fn()\nBinary := fn(i32, i32) -> i32\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
@@ -429,8 +427,7 @@ export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node "
                                                 "make(void) {\n    Node n = {.a = 1};\n    return n;\n}\n");
-    check_text(fixed.text,
-               "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    let n = Node(a = 1)\n    return n\n");
+    check_text(fixed.text, "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    n := Node(a = 1)\n    return n\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
@@ -487,8 +484,8 @@ export void test_a_typedef_of_a_function_type_with_parameter_names_is_rewritten(
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
     check_flag(fixed.applied > 0, true);
-    check_text(fixed.text, "let Callback = fn(u32) -> u32\nlet Plain = fn(i32) -> i32\n"
-                           "let Make = fn(*Node, u32) -> *Node\n");
+    check_text(fixed.text, "Callback := fn(u32) -> u32\nPlain := fn(i32) -> i32\n"
+                           "Make := fn(*Node, u32) -> *Node\n");
 }
 
 // `c.printf` with no `c` bound, after `import c <stdio.h>`, is mended to the binding: `stdio.printf` (#1678).
@@ -554,7 +551,7 @@ export void test_a_forward_declared_struct_loses_its_semicolon() {
     check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    a: i32\n");
 }
 
-// A value cast to `void` as a statement is `let _ = x`, whether it was written `(void)x` or `x.to(void)`: the second
+// A value cast to `void` as a statement is `_ := x`, whether it was written `(void)x` or `x.to(void)`: the second
 // form has nothing before the operand, so the fix must remove the cast after it too (#2224).
 export void test_a_cast_to_void_becomes_a_discard() {
     arena::Arena memory = test::memory(1U << 22);
@@ -562,7 +559,7 @@ export void test_a_cast_to_void_becomes_a_discard() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "pub fn f(x: i32):\n    x.to(void)\n");
-    check_text(fixed.text, "pub fn f(x: i32):\n    let _ = x\n");
+    check_text(fixed.text, "pub fn f(x: i32):\n    _ := x\n");
 }
 
 // Unbraced bodies that end together close together, so the inner `if` is mended in the same pass (#2224).
@@ -603,7 +600,7 @@ export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
     fix::Fixed fixed = fix::fix_text("t.smith", "void f(Usize *dims) {\n    struct smith_array_T_n result = {};\n"
                                                 "    for (Usize i = 0; i < 3; i++)\n"
                                                 "        result.count[i] = (Usize)dims[i];\n}\n");
-    check_text(fixed.text, "fn f(dims: *usize):\n    let result: c.smith_array_T_n = {}\n    for i in range(0, 3):\n"
+    check_text(fixed.text, "fn f(dims: *usize):\n    result: c.smith_array_T_n = {}\n    for i in range(0, 3):\n"
                            "        result.count[i] = dims[i].to(usize)\n");
 }
 
@@ -628,7 +625,7 @@ export void test_maybe_unused_on_an_export_keeps_the_name() {
     check_text(fixed.text, "pub inline fn f(x: i32) -> i32:\n    return x\n");
 }
 
-// A call whose result is dropped is written `let _ = f(x)` (#2311): the checker knows the result is not `Void`.
+// A call whose result is dropped is written `_ := f(x)` (#2311): the checker knows the result is not `Void`.
 export void test_a_call_statement_with_an_unused_result_is_discarded() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -636,7 +633,7 @@ export void test_a_call_statement_with_an_unused_result_is_discarded() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "module m;\nstatic int f(int x) { return x; }\nstatic void g(int x) {\n    f(x);\n}\n");
-    check_text(fixed.text, "static fn f(x: i32) -> i32:\n    return x\nstatic fn g(x: i32):\n    let _ = f(x)\n");
+    check_text(fixed.text, "static fn f(x: i32) -> i32:\n    return x\nstatic fn g(x: i32):\n    _ := f(x)\n");
     fix::Fixed again = fix::fix_text("t.smith", fixed.text);
     check_text(again.text, fixed.text);
 }

@@ -1,0 +1,60 @@
+# Declarations without `let` (#2316): `:=`, `mut`, a written type, destructuring, a discard, globals, and `if` and
+# `while` that bind.
+Step := fn(i32) -> i32
+
+limit: i32 = 40
+mut calls: i32 = 0
+step: i32 = 2
+
+fn divmod(a: i32, b: i32) -> (i32, i32):
+    calls += 1
+    (a / b, a % b)
+
+fn half(n: i32) -> ?i32:
+    if n % 2 != 0:
+        return .none
+    n / 2
+
+fn repeat(n: i32, body: fn()):
+    mut i := 0
+    while i < n:
+        body()
+        i += 1
+
+pub fn check() -> i32:
+    x := 5
+    mut n := 0
+    count: usize = 3
+    mut buf: [4]u8 = undefined
+    buf[0] = 7
+    (q, mut r) := divmod(17, 5)
+    r += 1
+    _ := divmod(1, 1)
+    if q != 3 || r != 3 || calls != 2:
+        return 1
+    n = x + count.to(i32) + step
+    if n != 10 || buf[0] != 7:
+        return 2
+    if h := half(limit):
+        if h != 20:
+            return 3
+    else:
+        return 4
+    if _ := half(7):
+        return 5
+    mut k := 48
+    mut halvings := 0
+    while h := half(k):
+        k = h
+        halvings += 1
+    if halvings != 4 || k != 3:
+        return 6
+    mut total := 0
+    repeat(3):
+        total += step
+    if total != 6:
+        return 7
+    twice: Step = fn(v): v * 2
+    if twice(21) != 42:
+        return 8
+    0

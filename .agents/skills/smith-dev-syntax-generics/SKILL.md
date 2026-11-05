@@ -57,4 +57,4 @@ let p = IntPair(1, 2)                           # or Pair(i32)(first = 1, second
 
 ## Not settled yet
 
-A computed result type (`-> leaf_of(T)`); which module a std generic's instance counts as for private fields.
+A computed result type (`-> leaf_of(T)`); which module a std generic's instance counts as for private fields. The parser reads the brackets (`function.generics`); checking them and working them out from a call is #2349.

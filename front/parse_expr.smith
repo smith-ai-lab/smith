@@ -1967,7 +1967,9 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     if (fn_type_cast(p) || old_pointer_cast(p)) {
         Bool was_new = p->new_syntax;
         p->new_syntax = !old_pointer_cast(p) && was_new;
+        p->in_cast = true;
         ast::TypeExpr *type = parse::type(p);
+        p->in_cast = false;
         p->new_syntax = was_new;
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
@@ -2021,7 +2023,9 @@ static Step paren(parse::Parser *p, Stack *st) {
     U32 start = parse::advance(p).span.start;
     if (p->new_syntax) return group_or_tuple(p, st, start);
     if (parse_type::starts_type(p, 0) || type_value_cast(p) || c_literal_type(p) || array_type_ahead(p)) {
+        p->in_cast = true;
         ast::TypeExpr *type = parse::type(p);
+        p->in_cast = false;
         lex::Token close = parse::expect(p, lex::right_paren, "`)` to end the cast's type");
         if (type == nullptr) return .failed;
         if (parse::at(p, lex::left_brace)) {

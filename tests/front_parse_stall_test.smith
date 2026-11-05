@@ -1,0 +1,28 @@
+// A statement the parser cannot take does not repeat its error (#2262): a brace body inside a file in the indented
+// form meets a layout `dedent` that no `}` closes, and the loop of `parse_stmt::statement` used to add one error per
+// step (thousands of them, each growing the error list by a copy), which took 5 GB of arena on `lib/std/slice.smith`.
+module front_parse_stall_test;
+
+import front::parser;
+import std::test;
+
+// The source of a braced function followed by indented ones, the last with a header and no body.
+static Str stalled_source() {
+    return "pub void copy(auto dst[restrict :]) {\n"
+           "    for i in range(0, countof(dst)) {\n"
+           "        dst[i] = 1\n"
+           "    }\n"
+           "}\n"
+           "\n"
+           "pub fn take(xs: *mut []auto, n: usize) -> typeof((xs.*)[0:0]):\n"
+           "    let m: usize = n\n"
+           "    return (xs.*)[0:m]\n"
+           "\n"
+           "pub fn take_while(xs: *[]auto, pred: auto) -> typeof((xs.*)[0:0]):\n";
+}
+
+export void test_parse_stall_a_stuck_statement_adds_a_few_errors_not_one_per_step() {
+    parser::Parsed parsed = parser::parse_new("x.smith", stalled_source());
+    test::check(countof(parsed.errors) > 0);
+    test::check(countof(parsed.errors) < 32);
+}

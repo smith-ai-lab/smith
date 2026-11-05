@@ -689,7 +689,8 @@ export void test_front_types_expr_what_is_not_typed_yet_is_reported_with_its_kin
     ast::ExprKind attempt = {.try_expr = {.operand = ast::name("x")}};
     test::check_condition(types_expr::infer(&r, ast::expr(attempt)) == r.table.invalid);
     test::check_condition(says(
-        last(&r), "`try` needs a `?T`, found `U8`; write `try` before an option, or use `if let` for any other value"));
+        last(&r),
+        "`try` needs a `?T`, found `U8`; write `try` before an option, or use `if x := value:` for any other value"));
     ast::ExprKind value = {.type_value = {.type = ast::named("U8")}};
     // #1916: a type used as a value is `Auto`; the instance decides, and nothing is reported.
     test::check_condition(types_expr::infer(&r, ast::expr(value)) == r.table.automatic);
@@ -972,8 +973,9 @@ export void test_front_types_expr_optionals_some_none_and_if_let() {
     test::check_condition(says(last(&r), "`.none` has no value to bind; write `.none` alone"));
     ast::Stmt *plain = ast::if_let(ast::pattern("some", "v"), ast::name("x"), braces(num(1)), braces(num(2)));
     types_expr::infer(&r, as_value(plain));
-    test::check_condition(says(last(&r), "`if let` takes an optional, but this is a `U8`; write a value of type `?T`, "
-                                         "or an `if` with a comparison"));
+    test::check_condition(says(last(&r),
+                               "`if x := value:` takes an optional, but this is a `U8`; write a value of type `?T`, "
+                               "or an `if` with a comparison"));
     // a match over `?T` names both
     ast::Pattern got[1] = {ast::pattern("some", "v")};
     ast::MatchArm arms[2] = {ast::match_arm(got[0:1], ast::name("v")), arm("none", num(0))};
