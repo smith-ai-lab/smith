@@ -62,6 +62,7 @@ struct Entry {
     char stage[stage_size];
     char message[message_size];
     char position[position_size];
+    Usize file; // index of the file in the tree: the rows are put in file order at the end of a run (#2426)
 };
 
 struct Group {
@@ -76,6 +77,8 @@ struct Group {
 
 static struct Entry entries[entries_max];
 static Usize entry_count = 0;
+// The file whose rows add_entry is adding.
+static Usize entry_file = 0;
 // Rows that did not fit in the table: any makes the run an error, never a smaller count (#2264).
 static Usize entries_dropped = 0;
 static struct Group groups[groups_max];
@@ -132,6 +135,7 @@ static void add_entry(const char path[:], const char stage[:], const char messag
     copy_text(entry->stage[0:stage_size], stage);
     copy_text(entry->message[0:message_size], message);
     copy_text(entry->position[0:position_size], position);
+    entry->file = entry_file;
     entry_count += 1;
 }
 
@@ -646,6 +650,7 @@ static void job_finish() {
     job_head = (job_head + 1) % job_limit;
     job_count -= 1;
     struct Ran ran = read_job(job);
+    entry_file = job->file;
     if (!job->is_fix) {
         finish_measure(job->file, &ran);
     } else if (ran.status != 0) {
@@ -733,7 +738,7 @@ static void measure(const char *smith, const char *scratch, Usize file) {
     char home[path_size * 2];
     (void)format::to(home, sizeof home, scratch, countof(folder) > 0 ? "/" : "", folder);
     if (c::chdir(home) != 0) {
-        jobs_drain(); // the rows stay in the order of the files
+        entry_file = file;
         add_entry(view_of(path), "parse", "cannot enter the project folder", "");
         return;
     }
@@ -1045,6 +1050,20 @@ static I32 check_total(Bool all) {
     return 0;
 }
 
+// The rows in the order of the files, each file's rows in the order they were added (an insertion sort: the rows
+// nearly always come in order already, and then it moves none).
+static void sort_entries() {
+    for (Usize i = 1; i < entry_count; i++) {
+        Usize at = i;
+        while (at > 0 && entries[at - 1].file > entries[at].file) {
+            struct Entry moved = entries[at];
+            entries[at] = entries[at - 1];
+            entries[at - 1] = moved;
+            at -= 1;
+        }
+    }
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1095,6 +1114,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     jobs_drain();
     console::print_error("frontend_coverage: compile phase ", (clock::monotonic() - phase_start) / clock::millisecond,
                          " ms\n");
+    sort_entries();
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
