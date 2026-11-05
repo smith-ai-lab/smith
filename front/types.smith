@@ -1530,9 +1530,29 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
     return vector_of(&r->table, element, count->kind.integer.value);
 }
 
-static TypeRef build_applied(Checked *r, ast::Span span, ast::Path applied_name, Usize args, const Walk *w, Usize base,
-                             Usize n) {
+static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out);
+
+// `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
+// constant, or `countof` of a pack.
+static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef element) {
+    if (!(node->kind == .applied)) return r->table.invalid;
+    ast::TypeArg args[:] = node->kind.applied.args;
+    U64 count = 0;
+    const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
+    if (second == nullptr || !(*second == .value) || !constant_length(r, second->value.value, &count) || count < 1) {
+        failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
+        return r->table.invalid;
+    }
+    if (count == 1) return slice_of(&r->table, element, false);
+    return block_of(&r->table, element, count);
+}
+
+static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path applied_name, Usize args, const Walk *w,
+                             Usize base, Usize n) {
+    ast::Span span = node->span;
     Str name = path_text(applied_name);
+    if ((same_text(name, "slice_of") || same_text(name, "arena::slice_of")) && args == 2 && n == 1)
+        return build_slice_of(r, node, w->values[base].type);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
     if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
@@ -1656,6 +1676,15 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             continue;
         }
         ast::Path path = {};
+        if (e->kind == .query && e->kind.query.op == .count_of && e->kind.query.operand != nullptr &&
+            e->kind.query.operand->kind == .name) {
+            // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
+            const Symbol *pack = type_through_modules(r, e->kind.query.operand->kind.name.path);
+            if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
+                return false;
+            values[have++] = countof(pack->type->slots);
+            continue;
+        }
         if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
             if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
@@ -1796,7 +1825,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
             failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
             return r->table.invalid;
         }
-        return build_applied(r, node->span, applied_name, args, w, base, n);
+        return build_applied(r, node, applied_name, args, w, base, n);
     }
     return r->table.invalid;
 }
