@@ -473,7 +473,7 @@ static void report_loop(types::Checked *r, const ast::Stmt *s) {
         spelled = "a `for` with no condition";
     } else if (s->kind == .for_stmt && always(s->kind.for_stmt.condition)) {
         spelled = "a `for` with a constant condition";
-    } else if (s->kind == .while_stmt && always(s->kind.while_stmt.condition)) {
+    } else if (s->kind == .while_stmt && !s->kind.while_stmt.binds && always(s->kind.while_stmt.condition)) {
         spelled = "a `while` with a constant condition";
     } else if (s->kind == .do_while && always(s->kind.do_while.condition)) {
         spelled = "a `do ... while` with a constant condition";

@@ -49,16 +49,15 @@ export void test_front_fix_std_cast_to_a_c_type() {
 }
 
 export void test_front_fix_std_array_of_pointers_with_a_list() {
-    expect_fixed(
-        "module m;\nvoid f(char *program) {\n    char *arguments[3] = {program, \"x\", nullptr};\n    "
-        "work(arguments);\n}\n",
-        "fn f(program: *char):\n    let arguments: [3]*char = [program, \"x\", nullptr]\n    work(arguments)\n");
+    expect_fixed("module m;\nvoid f(char *program) {\n    char *arguments[3] = {program, \"x\", nullptr};\n    "
+                 "work(arguments);\n}\n",
+                 "fn f(program: *char):\n    arguments: [3]*char = [program, \"x\", nullptr]\n    work(arguments)\n");
 }
 
 export void test_front_fix_std_pointer_init_of_a_for_with_a_comment_in_the_body() {
     expect_fixed("module m;\nvoid f(char *folder) {\n    for (char *slash = c::strchr(folder + 1, '/'); slash != "
                  "nullptr; slash = c::strchr(slash + 1, '/')) {\n        *slash = 0; // cut\n    }\n}\n",
-                 "fn f(folder: *char):\n    let mut slash: *char = c.strchr(folder + 1, '/')\n    while slash != "
+                 "fn f(folder: *char):\n    mut slash: *char = c.strchr(folder + 1, '/')\n    while slash != "
                  "nullptr:\n        slash.* = 0 # cut\n        slash = c.strchr(slash + 1, '/')\n");
 }
 
@@ -77,7 +76,7 @@ export void test_front_fix_std_variants_of_an_enum_with_a_representation() {
 export void test_front_fix_std_array_of_structs_written_as_a_list_of_lists() {
     expect_fixed("module m;\nstruct Line {\n    const char *text;\n    I32 value;\n};\nvoid f(I32 a, I32 b) {\n    "
                  "Line lines[2] = {{.text = \"a\", .value = b}, {.text = \"b\", .value = a}};\n    work(lines);\n}\n",
-                 "struct Line:\n    text: *char\n    value: i32\nfn f(a: i32, b: i32):\n    let lines: [2]Line = "
+                 "struct Line:\n    text: *char\n    value: i32\nfn f(a: i32, b: i32):\n    lines: [2]Line = "
                  "[Line(text = \"a\", value = b), Line(text = \"b\", value = a)]\n    work(lines)\n");
 }
 
@@ -107,7 +106,7 @@ export void test_front_fix_std_struct_c_tag_field() {
 export void test_front_fix_std_increment_in_an_assignment() {
     expect_fixed("module m;\nbool glob(const char *pattern, const char *text) {\n    const char *star = nullptr;\n    "
                  "star = pattern++;\n    text = ++star;\n    return true;\n}\n",
-                 "fn glob(mut pattern: *char, mut text: *char) -> bool:\n    let mut star: *char = nullptr\n    star = "
+                 "fn glob(mut pattern: *char, mut text: *char) -> bool:\n    mut star: *char = nullptr\n    star = "
                  "pattern\n    pattern += 1\n    star += 1\n    text = star\n    return true\n");
 }
 
@@ -119,7 +118,7 @@ export void test_front_fix_std_function_pointer_parameter_with_named_parameters(
 export void test_front_fix_std_conditional_across_lines() {
     expect_fixed("module m;\nvoid f(I32 down, I32 right, Usize i) {\n    I32 best = down > right\n                   ? "
                  "down\n                   : right;\n    work(best);\n}\n",
-                 "fn f(down: i32, right: i32, i: usize):\n    let best: i32 = if down > right: down else: right\n    "
+                 "fn f(down: i32, right: i32, i: usize):\n    best: i32 = if down > right: down else: right\n    "
                  "work(best)\n");
 }
 
