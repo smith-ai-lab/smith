@@ -116,6 +116,7 @@ struct Frame {
     Usize switch_edit_count;
     Usize switch_warning; // where its warning is in `warnings`
     Usize last_label;     // the edit of the open case's last label
+    Usize case_from;      // and the token where its body starts
     Bool switch_bad;      // a case has no `match` arm: the warning keeps no fix
 };
 
@@ -782,6 +783,39 @@ static ast::Pattern read_pattern(parse::Parser *p) {
     return result;
 }
 
+// A pattern of a `match` arm: a variant (`.a`, `.b(x)`), the default `_`, or a constant (`1`, `'a'`, `limit`,
+// `kind_x`).
+static ast::Pattern read_arm_pattern(parse::Parser *p) {
+    if (parse::at(p, lex::dot)) return read_pattern(p);
+    U32 start = parse::peek(p).span.start;
+    Str underscore = "_";
+    if (parse::at(p, lex::name) && mem::equal(parse::text(p, parse::peek(p)), underscore) &&
+        (parse::peek_at(p, 1).kind == lex::colon || parse::peek_at(p, 1).kind == lex::fat_arrow)) {
+        parse::advance(p);
+        ast::Pattern any = ast::wildcard_pattern();
+        any.span = parse::span_from(p, start);
+        return any;
+    }
+    ast::Expr *value = expression(p);
+    ast::Pattern result = ast::constant_pattern(value);
+    result.span = parse::span_from(p, start);
+    return result;
+}
+
+// The result of a `match` arm: an expression, a `return`, `break` or `continue`, or the indented block on the next
+// lines, each as the value of a statement.
+static ast::Expr *arm_result(parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    Bool jump = kind == lex::kw_return || kind == lex::kw_break || kind == lex::kw_continue;
+    if (!jump && !(p->layout && kind == lex::newline)) return expression(p);
+    U32 start = parse::peek(p).span.start;
+    ast::Stmt *stmt = parse::statement(p);
+    if (stmt == nullptr) return nullptr;
+    ast::Expr *value = ast::stmt_expr(stmt);
+    value->span = parse::span_from(p, start);
+    return value;
+}
+
 // Whether the head of an `if` or a `while` binds (#2316): `x := opt` unwraps an option, `.circle(c) := shape` tests a
 // variant (with its leading `.`, as a `match` arm writes it). A fixed lookahead: no expression has `:=` there.
 static Bool binding_head(const parse::Parser *p) {
@@ -1038,13 +1072,15 @@ static ast::Stmt *match_layout(parse::Parser *p) {
         ast::Pattern patterns[:] = {};
         for (Usize j = 0; j < limit && countof(p->errors) == before; j++) {
             patterns = mem::realloc(patterns, countof(patterns) + 1);
-            patterns[countof(patterns) - 1] = read_pattern(p);
+            patterns[countof(patterns) - 1] = read_arm_pattern(p);
             if (!parse::accept(p, lex::comma)) break;
         }
         if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:` after the pattern");
         ast::Expr *result = nullptr;
-        if (countof(p->errors) == before) result = expression(p);
-        Bool block_ended = p->position > 0 && p->tokens[p->position - 1].kind == lex::dedent; // `.a: do:` and its block
+        if (countof(p->errors) == before) result = arm_result(p);
+        Bool block_ended =
+            p->position > 0 && (p->tokens[p->position - 1].kind == lex::dedent ||
+                                p->tokens[p->position - 1].kind == lex::newline); // `.a: do:` and its block
         if (countof(p->errors) == before && !block_ended && !parse::at(p, lex::newline) && !parse::at(p, lex::dedent))
             parse::error(p, parse::peek(p).span, "expected the end of the line: one arm per line");
         if (countof(p->errors) == before) parse::accept(p, lex::newline);
@@ -1080,12 +1116,12 @@ static ast::Stmt *match_statement(parse::Parser *p) {
         ast::Pattern patterns[:] = {};
         for (Usize j = 0; j < limit && countof(p->errors) == before; j++) {
             patterns = mem::realloc(patterns, countof(patterns) + 1);
-            patterns[countof(patterns) - 1] = read_pattern(p);
+            patterns[countof(patterns) - 1] = read_arm_pattern(p);
             if (!parse::accept(p, lex::comma)) break;
         }
         if (countof(p->errors) == before) parse::expect(p, lex::fat_arrow, "`=>`");
         ast::Expr *result = nullptr;
-        if (countof(p->errors) == before) result = expression(p);
+        if (countof(p->errors) == before) result = arm_result(p);
         if (countof(p->errors) == before && !last_token_ends_line(p) && !parse::at(p, lex::right_brace))
             parse::error(p, parse::peek(p).span, "expected the end of the line: one arm per line");
         arms = mem::realloc(arms, countof(arms) + 1);
@@ -1502,30 +1538,89 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
 
 // The arm of a closing case of an old switch: the last label ends in ` =>` and the `break` goes. A case of any other
 // shape leaves the switch with no fix.
-static void case_fix(Frame *frame) {
+static Bool alone_on_line(Str source, ast::Span span) {
+    Usize from = span.start;
+    while (from > 0 && source[from - 1] == ' ')
+        from -= 1;
+    Usize to = span.end;
+    if (to < countof(source) && source[to] == ';') to += 1;
+    while (to < countof(source) && source[to] == ' ')
+        to += 1;
+    return from > 0 && source[from - 1] == '\n' && (to >= countof(source) || source[to] == '\n');
+}
+
+static Usize breaks_in(const parse::Parser *p, Usize from) {
+    Usize count = 0;
+    for (Usize i = from; i < p->position && i < countof(p->tokens); i++) {
+        if (p->tokens[i].kind == lex::kw_break) count += 1;
+    }
+    return count;
+}
+
+static void case_fix(const parse::Parser *p, Frame *frame) {
     if (frame->switch_bad) return;
-    if (frame->body_count != 2 || frame->case_default || frame->value_count == 0) {
+    if (frame->body_count == 0 || (frame->value_count == 0 && !frame->case_default)) {
         frame->switch_bad = true;
         return;
     }
     ast::Stmt *first = frame->body[0];
-    ast::Stmt *second = frame->body[1];
-    if (first->kind != .expression || second->kind != .break_stmt) {
+    ast::Stmt *last = frame->body[frame->body_count - 1];
+    Bool ends_break = last->kind == .break_stmt;
+    Bool jump = last->kind == .return_stmt || last->kind == .continue_stmt;
+    if ((!ends_break && !jump) || breaks_in(p, frame->case_from) != (ends_break ? 1 : 0) ||
+        (ends_break && frame->body_count == 1)) {
         frame->switch_bad = true;
         return;
     }
     Str label = frame->switch_edits[frame->last_label].text;
-    char arm[:] = format::push(label[0:countof(label) - 2], " => ");
-    frame->switch_edits[frame->last_label].text = arm;
     Str nothing = "";
-    ast::Span gone = {.start = first->span.end, .end = second->span.end};
-    add_switch_edit(frame, edit(gone, nothing));
+    Bool plain = frame->body_count == 2 && first->kind == .expression && ends_break;
+    Bool single = frame->body_count == 1 && jump;
+    if (plain || single) {
+        char arm[:] = format::push(label[0:countof(label) - 2], " => ");
+        frame->switch_edits[frame->last_label].text = arm;
+        ast::Span gone = {.start = first->span.end, .end = first->span.end};
+        if (plain) gone.end = last->span.end;
+        if (single && gone.end < countof(p->source) && p->source[gone.end] == ';') gone.end += 1;
+        add_switch_edit(frame, edit(gone, nothing));
+        return;
+    }
+    // A body of several statements: the arm is `label => {` and the statements below it, the `break` (or a line after
+    // the last statement) the `}`; fix_blocks writes it as `label:` and the indented body.
+    ast::Span written = frame->switch_edits[frame->last_label].span;
+    Bool below = false;
+    for (Usize i = written.start; i < first->span.start && i < countof(p->source); i++) {
+        if (p->source[i] == '\n') below = true;
+    }
+    if (!below || (ends_break && !alone_on_line(p->source, last->span))) {
+        frame->switch_bad = true;
+        return;
+    }
+    Usize gap = written.end;
+    while (gap > written.start && (p->source[gap - 1] == ' ' || p->source[gap - 1] == '\n'))
+        gap -= 1;
+    char arm[:] = format::push(label[0:countof(label) - 2], " => {", p->source[gap:written.end]);
+    frame->switch_edits[frame->last_label].text = arm;
+    Usize end = last->span.end;
+    if (end < countof(p->source) && p->source[end] == ';') end += 1;
+    if (ends_break) {
+        add_switch_edit(frame, edit((ast::Span){.start = (U32)last->span.start, .end = (U32)end}, "}"));
+        return;
+    }
+    Usize line = written.start;
+    while (line > 0 && p->source[line - 1] != '\n')
+        line -= 1;
+    Usize indent = 0;
+    while (line + indent < countof(p->source) && p->source[line + indent] == ' ')
+        indent += 1;
+    char close[:] = format::push("\n", p->source[line:line + indent], "}");
+    add_switch_edit(frame, edit((ast::Span){.start = (U32)end, .end = (U32)end}, close));
 }
 
 // The open case of a switch frame goes to its list of cases.
 static void flush_case(const parse::Parser *p, Frame *frame) {
     if (!frame->case_open) return;
-    case_fix(frame);
+    case_fix(p, frame);
     ast::SwitchCase one = {.values = frame->values[0:frame->value_count],
                            .is_default = frame->case_default,
                            .body = frame->body[0:frame->body_count],
@@ -1732,11 +1827,11 @@ static void take_label(parse::Parser *p, Stack *stack) {
         frame->case_start = token.span.start;
     }
     Usize before = countof(p->errors);
-    Bool plain = token.kind == lex::kw_case && parse::peek_at(p, 0).kind == lex::dot &&
-                 parse::peek_at(p, 1).kind == lex::name && parse::peek_at(p, 2).kind == lex::colon;
-    if (!plain) frame->switch_bad = true;
-    Str name = "";
-    if (plain) name = tokens_text(p, 0, 1);
+    // A label is `case .name:`, `case 1:` or `case limit:` (a constant), or `default:` alone; a `default` stacked with
+    // another label has no `match` form (the fix keeps no edit for it).
+    if (token.kind == lex::kw_default && frame->value_count > 0) frame->switch_bad = true;
+    if (token.kind == lex::kw_case && frame->case_default) frame->switch_bad = true;
+    Usize first = p->position;
     if (token.kind == lex::kw_default) {
         frame->case_default = true;
     } else {
@@ -1747,13 +1842,24 @@ static void take_label(parse::Parser *p, Stack *stack) {
             frame->value_count += 1;
         }
     }
+    Usize last = p->position;
     if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:`");
     if (countof(p->errors) > before) skip_label(p);
-    if (plain && countof(p->errors) == before) {
+    if (countof(p->errors) > before) frame->switch_bad = true;
+    if (countof(p->errors) == before && !frame->switch_bad) {
+        Str name = "_";
+        if (token.kind == lex::kw_case) {
+            if (last == first) {
+                frame->switch_bad = true;
+                return;
+            }
+            name = parse::mended(p, p->tokens[first].span.start, p->tokens[last - 1].span.end);
+        }
         ast::Span label = {.start = token.span.start, .end = p->tokens[p->position].span.start};
         char comma[:] = format::push(name, ", ");
         add_switch_edit(frame, edit(label, comma));
         frame->last_label = frame->switch_edit_count - 1;
+        frame->case_from = p->position;
     }
 }
 
