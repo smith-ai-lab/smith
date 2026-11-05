@@ -30,11 +30,11 @@ fn area(s: Shape) -> f64:
         .empty: 0
 
 pub fn main() -> i32:
-    let mut shapes = list.init(Shape)       # a type is an ordinary argument
+    mut shapes := list.init(Shape)          # a type is an ordinary argument
     shapes.push(.circle(Circle(radius = 2)))
     shapes.push(.circle(Circle()))          # every field has a default
     shapes.push(.square(2))
-    let total = sum(for s in shapes.items(): s.area())   # area is in this module: the method form is the one way
+    total := sum(for s in shapes.items(): s.area())      # area is in this module: the method form is the one way
     stdio.printf("%.2f\n", total)
     0
 ```
@@ -44,13 +44,13 @@ pub fn main() -> i32:
 ## HTML with trailing blocks
 
 ```smith
-let page = html:
-    head:
-        title: "hello"
-    body:
+page := html():
+    head():
+        title(): "hello"
+    body():
         h1(class = "my class"): "my heading"
         for todo in todos:
             li(class = "done"): text(todo.title)
 ```
 
-A call whose last parameter is a `fn()` takes an indented block after `:`; with no other arguments the parentheses go too. One whose last parameter takes arguments is written `sort(people) fn(a, b): a.age < b.age` ([smith-dev-syntax-functions](../smith-dev-syntax-functions/SKILL.md)).
+A call whose last parameter is a `fn()` takes an indented block after `:`; with no other arguments it keeps its `()` (`html():`), since a statement starting `name:` is a typed declaration. One whose last parameter takes arguments is written `sort(people) fn(a, b): a.age < b.age` ([smith-dev-syntax-functions](../smith-dev-syntax-functions/SKILL.md)).

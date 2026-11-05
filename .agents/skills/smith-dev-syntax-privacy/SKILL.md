@@ -29,7 +29,7 @@ pub fn List(T: type) -> type:       # in std.list
 pub fn init(T: type) -> List(T):    # a plain function: no special rule
     List(T)()                       # in its own module, every field has a default
 
-let mut xs = list.init(i32)         # an empty list
+mut xs := list.init(i32)            # an empty list
 reset(list.init(i32))
 ```
 
@@ -43,8 +43,8 @@ pub struct Options:
     pub retry: bool = false
     pub port: u16 = 443
 
-let a = Options()                   # every field has a default
-let b = Options(port = 80)
+a := Options()                      # every field has a default
+b := Options(port = 80)
 ```
 
 - There are no zero values: every field is given, unless the struct declares a default. A default is a compile-time constant. `T()` is not an empty value; it builds a struct only when every field has a default.

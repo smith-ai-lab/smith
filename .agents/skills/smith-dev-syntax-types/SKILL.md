@@ -11,7 +11,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 |---|---|
 | primitives | `i8 i16 i32 i64 u8 u16 u32 u64 isize usize f16 bf16 f32 f64 bool char str void` |
 | pointer | `*T` read-only, `*mut T` writable; never null |
-| nullable pointer | `?*T`: `.none` is C's null, and `if let` unwraps it |
+| nullable pointer | `?*T`: `.none` is C's null, and `if p := maybe:` unwraps it |
 | void pointer | `*void`, `*mut void`, `?*mut void`: for C interop only |
 | option | `?T` (`.some(x)`, `.none`, or a plain value where `?T` is expected) |
 | fixed array | `[5]T` |
@@ -29,17 +29,17 @@ C's `int x`, `unsigned n`, `char *s` are errors whose fix names the sized type. 
 A `*void` is passed on, or converted with `.cast(T)`; a deref, a field access or an index through one is a compile error.
 
 ```smith
-let v: vec(f32, 4) = [1, 2, 3, 4]   # an array literal where a vec is expected
-let w = v.xy * 2.0                  # swizzles .x .y .z .w, any order and count, for N <= 4
-let mut u = v
+v: vec(f32, 4) = [1, 2, 3, 4]       # an array literal where a vec is expected
+w := v.xy * 2.0                     # swizzles .x .y .z .w, any order and count, for N <= 4
+mut u := v
 u.xy = w                            # write lanes through a mut
-let lane = v[2]
+lane := v[2]
 
-let part = xs[2:5]                  # a sub-slice; xs[2:] and xs[:5] too, checked against the length
-let n = countof(xs)                 # countof, sizeof and alignof are built-in functions
-let fill = fn(out: []mut u8): out[0] = 1
-let ctx: *mut void = state.cast(*mut void)   # handed to a C callback
-let back = ctx.cast(*mut State)
+part := xs[2:5]                     # a sub-slice; xs[2:] and xs[:5] too, checked against the length
+n := countof(xs)                    # countof, sizeof and alignof are built-in functions
+fill := fn(out: []mut u8): out[0] = 1
+ctx: *mut void = state.cast(*mut void)       # handed to a C callback
+back := ctx.cast(*mut State)
 ```
 
 A `[]mut T` converts to `[]T` on its own, as `*mut T` does to `*T`. A fixed array converts to a slice where one is expected, so today's `xs[:]` is just `xs`.

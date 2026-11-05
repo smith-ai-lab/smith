@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-modules
-description: "New syntax (#1428): imports (`import std.math`, nothing from std without one, `import std.math as m`, `from std.math import sin`, `pub import`), headers as namespaces (`import c <stdio.h>`, `import cpp`, `import objc`, `cstr.of`), `pub`, globals (`let mut` at the top level), `extern`, build.smith and tests. Load when writing imports, globals, build files or tests in the new syntax."
+description: "New syntax (#1428): imports (`import std.math`, nothing from std without one, `import std.math as m`, `from std.math import sin`, `pub import`), headers as namespaces (`import c <stdio.h>`, `import cpp`, `import objc`, `cstr.of`), `pub`, globals (`x := v`, `mut x := v`, `x: T = v` at the top level), `extern`, build.smith and tests. Load when writing imports, globals, build files or tests in the new syntax."
 ---
 
 # Modules, interop, globals, builds and tests
@@ -29,7 +29,7 @@ import objc <Foundation/Foundation.h>
 ## Headers are namespaces
 
 ```smith
-let mut info: st.stat = undefined   # a C struct, filled by the call
+mut info: st.stat = undefined       # a C struct, filled by the call
 if st.stat(cstr.of("a.txt"), &info) == 0:   # cstr.of: a str to a NUL-terminated C string
     stdio.printf("%lld bytes\n", info.st_size)
 ```
@@ -40,9 +40,9 @@ There is no global `c` bucket: every name comes through its header's name (or `f
 
 ```smith
 pub const VERSION = "1.4"
-let mut requests: u64 = 0           # a module global; pub let mut shares it
+mut requests: u64 = 0               # a module global; pub mut shares it
 extern fn legacy_init(flags: u32) -> i32    # defined in C
-extern let mut errno: i32
+extern mut errno: i32
 extern fn printf(f: *u8, ...) -> i32   # symbol = own name; `...` only here, args C scalars
 ```
 
