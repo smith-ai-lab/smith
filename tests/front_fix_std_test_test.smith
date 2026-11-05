@@ -95,7 +95,7 @@ export void test_front_fix_std_attribute_group_is_a_gnu_attribute() {
 export void test_front_fix_std_capability_struct() {
     expect_fixed("module m;\n[[std::c_name(\"SmithRunner\")]] export typedef struct "
                  "[[clang::annotate(\"std::capability\")]] {\n    I32 argc;\n} Runner;\n",
-                 "@capability @c_name(\"SmithRunner\") pub struct Runner:\n    argc: i32\n");
+                 "@capability @c_name(\"SmithRunner\") pub struct Runner:\n    pub argc: i32\n");
 }
 
 export void test_front_fix_std_struct_c_tag_field() {

@@ -103,3 +103,15 @@ export void test_front_fix_zero_array_fill_keeps_an_existing_import_of_std_array
                  "import std.array\nstruct P:\n    a: i32\nfn f():\n    mut xs: [2]P = array.filled(P, 2, P(a = 0))\n"
                  "    xs[0].a = 1\n");
 }
+
+// A C parameter named `fn` (a function pointer, called or passed on) is written `fn_`: `fn` is a keyword of smith's own
+// syntax (#2412). A lambda's `fn` stays.
+export void test_front_fix_a_parameter_named_fn_is_renamed() {
+    expect_fixed("module m;\nint apply(int (*fn)(int), int x) {\n    return fn(x);\n}\n",
+                 "fn apply(fn_: fn(i32) -> i32, x: i32) -> i32:\n    return fn_(x)\n");
+}
+
+export void test_front_fix_a_lambda_keeps_its_fn() {
+    expect_fixed("module m;\nvoid f(void) {\n    g([](int a) -> int { return a; });\n}\n",
+                 "fn f():\n    g(fn(a: i32) -> i32: a)\n");
+}

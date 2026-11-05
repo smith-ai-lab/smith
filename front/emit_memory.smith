@@ -1328,6 +1328,11 @@ export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint
     } else {
         return state::fail("a compound literal needs a type", x->span);
     }
+    if (ty.kind == .slice && countof(x->kind.compound.items) == 0) {
+        // `{}` where a slice is wanted is the empty slice: a null pointer and no elements.
+        state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
+        return state::success();
+    }
     if (ty.kind != .record && ty.kind != .array) return state::not_emitted("compound literal of this type", x->span);
     c::LLVMValueRef slot = state::new_alloca(e, ty, "compound");
     c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);
