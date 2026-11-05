@@ -57,10 +57,23 @@ static Str list_source() {
            "pub struct Other:\n    n: i32\n";
 }
 
+// A second module with its own type and its own `size`, and a third whose type has no `size`.
+static Str ring_source() {
+    return "pub struct Ring:\n    pub n: i32\n\n"
+           "pub fn size(r: Ring) -> i32:\n    r.n * 2\n";
+}
+
+static Str bare_source() {
+    return "pub struct Bare:\n    pub n: i32\n";
+}
+
 static const ast::Module *load(const char *name) {
     Str path = name[0:c::strlen(name)];
-    if (!same(path, "lib.list")) return nullptr;
-    parser::Parsed p = parser::parse_new("t.smith", list_source());
+    Str source = list_source();
+    if (same(path, "lib.ring")) source = ring_source();
+    else if (same(path, "lib.bare")) source = bare_source();
+    else if (!same(path, "lib.list")) return nullptr;
+    parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
@@ -171,4 +184,18 @@ export void test_front_types_method_a_function_taking_a_pointer_to_the_type_stil
     fails("struct S:\n    size: i32\n\nfn size(s: *S) -> i32:\n    s.size\n\nfn run(s: *S) -> i32:\n    "
           "s.size()\n",
           "a field and a method of one type cannot share a name", "");
+}
+
+// A generic function calls `x.f()` on a `T`: the method is looked up per instance, in the module of the instance's type.
+export void test_front_types_method_on_a_generic_t_resolves_in_each_instances_module() {
+    clean("import lib.list\nimport lib.ring\n\n"
+          "fn total[T](x: T) -> i32:\n    x.size()\n\n"
+          "fn run(l: list.List, r: ring.Ring) -> i32:\n    total(l) + total(r)\n");
+}
+
+export void test_front_types_method_on_a_generic_t_missing_for_an_instance_is_named() {
+    fails("import lib.list\nimport lib.bare\n\n"
+          "fn total[T](x: T) -> i32:\n    x.size()\n\n"
+          "fn run(l: list.List, b: bare.Bare) -> i32:\n    total(l) + total(b)\n",
+          "has no method `size`", "Bare");
 }
