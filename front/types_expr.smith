@@ -5257,6 +5257,7 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
     if (!(e->kind == .binary)) {
         return;
     }
+    ast::BinaryOp op = e->kind.binary.op;
     Bool dotted_right = f.stage == 2;
     const ast::Expr *typed = dotted_right ? e->kind.binary.left : e->kind.binary.right;
     const ast::Expr *dotted = dotted_right ? e->kind.binary.right : e->kind.binary.left;
@@ -5266,6 +5267,13 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
         return;
     }
     push(w, e, f.expected, 1);
+    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
+    // carries.
+    if (is_equality(op) && want->kind == .enumeration && want->has_payload && dotted->kind == .variant &&
+        types::member(want, dotted->kind.variant.name) != nullptr) {
+        types::set_type(c, dotted, want);
+        return;
+    }
     push(w, dotted, want, 0);
 }
 
