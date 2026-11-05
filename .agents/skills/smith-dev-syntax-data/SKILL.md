@@ -43,15 +43,15 @@ pub enum Shape:                     # a payload enum; C's union is an error in a
 | option | `.some(x)`, `.none`, or a plain value where `?T` is expected |
 
 ```smith
-let p = Point(1, 2)
-let cfg = Config(                   # newlines inside parentheses are ignored
+p := Point(1, 2)
+cfg := Config(                      # newlines inside parentheses are ignored
     host = "example.org",
     retry = true,
 )
-let o = Options()                   # every field has a default
-let color: Color = .green
-let r = (count = 3, ms = 1.5)
-let ms = r.ms                       # fields(typeof(r)) reads it too
+o := Options()                      # every field has a default
+color: Color = .green
+r := (count = 3, ms = 1.5)
+ms := r.ms                          # fields(typeof(r)) reads it too
 ```
 
 - Every field is given, unless the struct declares a default for it. There is no zero value: `T()` builds only a struct whose fields all have defaults. A struct with private fields is built outside its module by a function of that module ([smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md)).

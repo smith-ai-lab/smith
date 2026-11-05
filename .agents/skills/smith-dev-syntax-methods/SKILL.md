@@ -14,11 +14,11 @@ from std.math import sum
 fn total(xs: *list.List(i32)) -> i32: ...
 
 pub fn main() -> i32:
-    let mut xs = list.init(i32)     # init is a plain function of std.list
+    mut xs := list.init(i32)        # init is a plain function of std.list
     xs.push(5)                      # list.push(&xs, 5): push is in List's module
-    let t = xs.total()              # total is in this module
-    let s = [1, 2, 3].sum()         # sum was imported into this module by name
-    let n = t.to(i64)               # a built-in function
+    t := xs.total()                 # total is in this module
+    s := [1, 2, 3].sum()            # sum was imported into this module by name
+    n := t.to(i64)                  # a built-in function
     0
 ```
 

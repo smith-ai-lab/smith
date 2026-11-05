@@ -16,18 +16,18 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `struct c::stat`, `c::EOF` | `stat.stat`, `stdio.EOF` through the header's name |
 | `export U32 next() { ... }` | `pub fn next() -> u32:` and an indented body |
 | `export typedef struct { ... } Replay;` | `pub struct Replay:` and indented fields |
-| `typedef Pair(I32) IntPair;` | `let IntPair = Pair(i32)` |
+| `typedef Pair(I32) IntPair;` | `IntPair := Pair(i32)` |
 | `U32`, `Usize`, `Bool`, `F64` | `u32`, `usize`, `bool`, `f64` |
-| `int x = 3;`, `unsigned n;` | `let x: i32 = 3`, `let mut n: u32 = 0` (the fix names the sized type) |
-| `const I32 a = 3;` | `let a = 3` (constant is the default) |
-| `I32 a = 3; a = 4;` | `let mut a = 3` then `a = 4` |
-| `I32 buf[64];` filled later | `let mut buf: [64]i32 = undefined` |
+| `int x = 3;`, `unsigned n;` | `x: i32 = 3`, `mut n: u32 = 0` (the fix names the sized type) |
+| `const I32 a = 3;` | `a := 3` (constant is the default) |
+| `I32 a = 3; a = 4;` | `mut a := 3` then `a = 4` |
+| `I32 buf[64];` filled later | `mut buf: [64]i32 = undefined` |
 | `constexpr I32 N = 64;`, `#define N 64` | `const N = 64` |
 | `T *p`, `const T *p`, `p->x`, `*p` | `p: *mut T`, `p: *T`, `p.x`, `p.*` |
 | `NULL` | `.none` of a `?*T` |
 | `void *p`, `const void *p` | `p: *mut void`, `p: *void` (C interop only: pass on or `.cast(T)`) |
 | `(F64)x`, `(U8 *)p` | `x.to(f64)` (or `x.wrap(u8)` to keep the low bits), `p.cast(*u8)` |
-| `Point p = {.x = 1, .y = 2};` | `let p = Point(x = 1, y = 2)`, or `Point(1, 2)` |
+| `Point p = {.x = 1, .y = 2};` | `p := Point(x = 1, y = 2)`, or `Point(1, 2)` |
 | `Point p = {0};`, `I32 t[256] = {0};` | every field written, `Point(0, 0)`, or a default in the struct; `array.filled(i32, 256, 0)` |
 | `I32 xs[:]`, `I32 xs[5]`, `xs[:]` | `xs: []i32`, `xs: [5]i32`, `xs` |
 | `{ ... }` | `:` and an indented block; `do:` where a block is a value |
@@ -46,8 +46,8 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `[[std::effects(alloc, net)]]` | `@effects(.alloc, .net)` |
 | `#if defined(__APPLE__)` around declarations | `@when(target.os == .macos)` on each |
 | `#define F(x) ...`, `#pragma`, `#error "..."` | a function or a generic, an attribute, `static_assert(...)` |
-| `extern I32 errno;`, `extern int f(void);` | `extern let mut errno: i32`, `extern fn f() -> i32` |
-| `static I32 count;` at file scope | `let mut count: i32 = 0` |
+| `extern I32 errno;`, `extern int f(void);` | `extern mut errno: i32`, `extern fn f() -> i32` |
+| `static I32 count;` at file scope | `mut count: i32 = 0` |
 | `union`, `goto` and labels | a payload `enum`; `defer`, `break`, `continue`, `match` |
 | `&mut x`, `impl`, `x?`, `.iter().map()` (other languages) | errors naming `&x`, a module's functions, `try x`, `for` |
 

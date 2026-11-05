@@ -22,7 +22,7 @@ A type is a parameter like any other, of type `type`; `const` marks a compile-ti
 fn push[T](xs: *mut List(T), x: T): ...         # T worked out from the arguments
 fn sum[T: num](xs: []T) -> T: ...               # T restricted to a concept
 fn first[T, n: usize](data: [n]T) -> T: data[0] # a type and a compile-time value
-let total = sum[f64](xs)                        # brackets at a call pin T explicitly
+total := sum[f64](xs)                           # brackets at a call pin T explicitly
 ```
 
 - Brackets in a declaration are only for parameters worked out from the arguments: `T`, `T: concept` or `n: usize`. A parameter no argument can supply is an ordinary `T: type` or `const` parameter instead.
@@ -34,10 +34,10 @@ fn larger(a: num, b: typeof(a)) -> typeof(a):   # a concept stands where a type 
     if a > b: a else: b
 fn shape(T: type) -> bool:                      # a concept is a predicate: fn(T: type) -> bool
     requires(s: *T):                            # true when the block type-checks; never runs
-        let _: f64 = s.area()                   # the function exists and returns exactly f64
+        _: f64 = s.area()                       # the function exists and returns exactly f64
 static_assert(shape(Circle))                    # the convention, beside each concept
 fn count[C](c: *C) -> usize:
-    if requires(x: *C): let _: usize = x.len()  # a compile-time bool anywhere: only the taken branch is checked
+    if requires(x: *C): _: usize = x.len()      # a compile-time bool anywhere: only the taken branch is checked
         c.len()
     else: sum(for _ in c: 1)
 ```
@@ -51,8 +51,8 @@ fn Pair(T: type) -> type:
     struct:                                     # the one unnamed struct; it takes the name Pair(T)
         first: T
         second: T
-let IntPair = Pair(i32)                         # an alias; Option(T) returns an unnamed `enum:` the same way
-let p = IntPair(1, 2)                           # or Pair(i32)(first = 1, second = 2)
+IntPair := Pair(i32)                            # an alias; Option(T) returns an unnamed `enum:` the same way
+p := IntPair(1, 2)                              # or Pair(i32)(first = 1, second = 2)
 ```
 
 ## Not settled yet
