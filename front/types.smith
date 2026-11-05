@@ -749,6 +749,8 @@ export struct Scopes {
     Usize count;
     Usize marks[:];
     Usize depth;
+    Str prefix;  // while the body of a generic's instance from another module is checked: that module's prefix
+    Usize floor; // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
 };
 
 export void push_scope(Scopes *s) {
@@ -788,8 +790,18 @@ export Bool declare(Scopes *s, Symbol symbol) {
     return true;
 }
 
-// The innermost symbol called `name`, or null.
+// The innermost symbol called `name`, or null. In the body of a generic instance from another module the body's own
+// names come first, then the module's (`util::name`), then the names of the module being checked.
 export const Symbol *lookup(const Scopes *s, Str name) {
+    if (countof(s->prefix) > 0) {
+        for (Usize i = s->count; i > s->floor; i--) {
+            if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
+        }
+        Str own = msg(format::push(s->prefix, name));
+        for (Usize i = s->floor; i > 0; i--) {
+            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
+        }
+    }
     for (Usize i = s->count; i > 0; i--) {
         if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
     }
@@ -816,6 +828,18 @@ static Bool is_path(Str name, ast::Path path) {
 
 // The innermost symbol whose whole name is `path`, or null (`c::printf` is the name `c::printf`).
 export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
+    if (countof(s->prefix) > 0) {
+        for (Usize i = s->count; i > s->floor; i--) {
+            if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
+        }
+        Str joined_path = path.segments[0].text;
+        for (Usize k = 1; k < countof(path.segments); k++)
+            joined_path = msg(format::push(joined_path, "::", path.segments[k].text));
+        Str own = msg(format::push(s->prefix, joined_path));
+        for (Usize i = s->floor; i > 0; i--) {
+            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
+        }
+    }
     for (Usize i = s->count; i > 0; i--) {
         if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
     }
@@ -893,6 +917,7 @@ export struct Instance {
     Binding bindings[:];
     TypeRef signature;
     Bool checked;
+    Str prefix; // the module the template is declared in, as its names carry it (`util::`), empty for this one
 };
 
 export const Usize max_instances = 256;
@@ -2259,7 +2284,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
                       "type such as `i32`, or drop `pub`");
             }
         }
-        declare(&r->scopes, (Symbol){.name = p->name, .kind = .variable, .type = params[i].type});
+        declare(
+            &r->scopes,
+            (Symbol){
+                .name = p->name, .kind = .variable, .type = params[i].type, .is_new = p->is_new, .written = p->type});
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
@@ -2523,7 +2551,7 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
-export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]) {
+export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
     if (template->kind != .function) return max_instances;
@@ -2541,7 +2569,7 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     ast::Param generics[:] = copy->kind.function.generics;
     Usize generic_count = countof(generics);
     Usize kept_count = bind_given(r, generics, all, given, bindings, &auto_syntax);
-    Instance made = {.template = template, .decl = copy, .bindings = bindings};
+    Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix};
     bind_instance(r, &made);
     expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
     if (copy->kind != .function) return max_instances;
@@ -2767,6 +2795,15 @@ static Str prefix_of_import(const ast::Decl *imported) {
     if (imported->kind == .import_from) return msg(format::push(joined(imported->kind.import_from.path, "::"), "::"));
     if (imported->kind != .import_module) return "";
     return msg(format::push(joined(imported->kind.import_module.path, "::"), "::"));
+}
+
+// The prefix a declaration's table name carries: `util::` for `util::apply`, empty for a name of the module being
+// checked.
+export Str module_prefix(Str name) {
+    Usize end = 0;
+    for (Usize i = 0; i + 1 < countof(name); i++)
+        if (name[i] == ':' && name[i + 1] == ':') end = i + 2;
+    return name[0:end];
 }
 
 // The module's path as written, `std.math`.

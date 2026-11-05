@@ -163,3 +163,9 @@ export void test_front_fix_std_nested_designated_list_is_a_named_tuple() {
                  "import c <sys/time.h>\nfn f(t: i64):\n    cpu := time.itimerval(it_value = (tv_sec = t))\n    "
                  "work(&cpu)\n");
 }
+
+// An empty body of a loop is written `()`, so the text parses (#2328).
+export void test_front_fix_std_an_empty_while_body_is_written_as_unit() {
+    expect_fixed("module m;\nvoid f(I32 a) {\n    while (a < g(&a)) {\n    }\n    h(a);\n}\n",
+                 "fn f(a: i32):\n    while a < g(&a): ()\n    h(a)\n");
+}

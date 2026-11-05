@@ -164,7 +164,9 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (verdict.ok) {
         return true;
     }
-    types::fail(c, e->span, verdict.message);
+    // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
+    Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
+    types::fail_fix(c, e->span, verdict.message, drops_const ? types_expr::pointer_fix(c, e) : (syntax::Edits){});
     return false;
 }
 
@@ -1066,8 +1068,17 @@ static void check_instances(types::Checked *r) {
         r->instances[i].checked = true;
         types::Instance instance = r->instances[i];
         types::push_scope(&r->scopes);
+        Str outer = r->prefix;
+        Str outer_scopes = r->scopes.prefix;
+        Usize outer_floor = r->scopes.floor;
+        r->prefix = instance.prefix; // the template's own names, as when its module was declared
+        r->scopes.prefix = instance.prefix;
+        r->scopes.floor = r->scopes.count;
         types::bind_instance(r, &instance);
         check_function(r, instance.decl, instance.signature);
+        r->prefix = outer;
+        r->scopes.prefix = outer_scopes;
+        r->scopes.floor = outer_floor;
         types::pop_scope(&r->scopes);
     }
 }
