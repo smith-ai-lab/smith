@@ -164,12 +164,29 @@ static Str construct(Str name, types::TypeRef t) {
     return construct_two(name, t);
 }
 
+// The zero value of an element type as the file writes it (`char`, `bool`, `u8`, `f64`), for when the checker did not
+// resolve the element (`char` is a C type to it until the file is converted); empty for any other.
+static Str written_zero(Str element) {
+    if (same(element, "char")) return "0";
+    if (same(element, "bool")) return "false";
+    if (same(element, "f32") || same(element, "f64")) return "0.0";
+    if (same(element, "isize") || same(element, "usize")) return "0";
+    if (countof(element) < 2 || (element[0] != 'i' && element[0] != 'u')) return "";
+    for (Usize i = 1; i < countof(element); i++) {
+        if (element[i] < '0' || element[i] > '9') return "";
+    }
+    return "0";
+}
+
 // `array.filled(P, 12, P(...))` for an array of structs (#2385, decided on #1406): C zeroes `P xs[12] = {}` and smith
 // has no zero value, so the one zero element is written out and `std.array` fills the rest. `element` is the element
 // type as the file writes it; empty for any other array, or a struct that cannot be filled.
 static Str construct_array(Str element, types::TypeRef t) {
     if (t->kind != .array || t->count == 0) return "";
-    Str one = construct_three(element, t->element);
+    // a number, `Bool` or pointer element is its own zero: `static char buf[named_length]` (#1901)
+    Str one = scalar_zero(t->element);
+    if (countof(one) == 0) one = written_zero(element);
+    if (countof(one) == 0) one = construct_three(element, t->element);
     if (countof(one) == 0) return "";
     return types::message_of(format::push("array.filled(", element, ", ", t->count, ", ", one, ")"));
 }
@@ -286,7 +303,11 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     // The declared type: in braces (`x: P = {}` before the blocks are indented) `{}` reads as an empty block, so
     // the initializer has no type of its own. Resolving it again must not leave an error behind.
     Usize errors_before = c->error_count;
+    // The element `char` is a C type until the file is converted, so it is read as the new spelling (#1901).
+    Bool was_new = c->new_syntax;
+    c->new_syntax = true;
     types::TypeRef t = types::resolve(c, written);
+    c->new_syntax = was_new;
     c->error_count = errors_before;
     if (t == nullptr || (t->kind != .record && t->kind != .array)) return none;
     Str name = d->kind.variable.name;
