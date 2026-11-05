@@ -25,6 +25,6 @@ export void test_lint_fix_one_run_adds_mut_to_a_file_with_uppercase_variants() {
             "a.smith && "
             "smith lint --fix a.smith 2>&1 && cat a.smith && smith lint --fix a.smith 2>&1");
     scratch::expect_status("the file is fixed", 0, &run);
-    scratch::expect_contains("the local is mut at once", run.out, "let mut total: usize = 0");
+    scratch::expect_contains("the local is mut at once", run.out, "    mut total: usize = 0");
     scratch::expect_contains("a second run applies nothing", run.out, "a.smith: 0 fixes applied");
 }

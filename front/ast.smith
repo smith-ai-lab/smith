@@ -446,6 +446,7 @@ export typedef enum {
     struct {
         Expr *condition;
         Stmt *body;
+        Bool binds; // `while x := v:`, read as `while true:` around `if x := v: ... else: break` (#2316)
     } while_stmt;
     struct {
         Stmt *body;
@@ -539,7 +540,8 @@ export typedef enum {
         Bool is_constexpr;
         Bool is_thread_local;
         Bool is_mut; // `x: T = v` mutable local in the new syntax
-        Bool is_new; // written in smith's own syntax (`let x = v`, `let x: T = v`, `let mut x ...`)
+        Bool is_new; // written in smith's own syntax (`x := v`, `x: T = v`, `mut x ...`, the old `let x = v`)
+        U32 name_at; // where its name starts, in smith's own syntax: a fix writes `mut ` there
     } variable;      // `auto x = ...` has the type auto_type
     struct {
         Text name;
