@@ -1872,10 +1872,31 @@ static Ty *own(Table *t, TypeRef x) {
     return nullptr;
 }
 
+// The field `name` of an anonymous struct or union member of the record (`union { I64 signed_value; };`), whose
+// fields belong to the record itself; `at` is the slot of the anonymous member that holds it. Null when there is none.
+export const Slot *inner_member(TypeRef t, Str name, Usize *at) {
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        Str own_name = t->slots[i].name;
+        TypeRef inner = t->slots[i].type;
+        if (countof(own_name) != 0 || inner == nullptr || inner->kind != .record) continue;
+        for (Usize k = 0; k < countof(inner->slots); k++) {
+            if (same_text(inner->slots[k].name, name)) {
+                *at = i;
+                return &inner->slots[k];
+            }
+        }
+    }
+    return nullptr;
+}
+
 // The field of a record, or the enumerator of an enumeration, called `name`; null when there is none.
 export const Slot *member(TypeRef t, Str name) {
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) return &t->slots[i];
+    }
+    if (t->kind == .record) {
+        Usize at = 0;
+        return inner_member(t, name, &at);
     }
     return nullptr;
 }

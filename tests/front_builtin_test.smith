@@ -304,6 +304,30 @@ export void test_front_builtin_snprintf() {
                        "    0\n");
 }
 
+// A float argument of `snprintf` is passed as a double; an `F32` is widened first, as C's promotions do (#2440).
+export void test_front_builtin_snprintf_float() {
+    passes("snprintf_float", "pub fn check() -> i32:\n"
+                             "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
+                             "    let half: f32 = 0.5\n"
+                             "    let n: i32 = __builtin_snprintf(&out[0], 16, \"%g %g\", 2.5, half)\n"
+                             "    if n != 7:\n        return 1\n"
+                             "    0\n");
+}
+
+// `__atomic_fetch_add(p, n, __ATOMIC_RELAXED)` adds and gives the old value (#2440); another order is refused.
+export void test_front_builtin_atomic_fetch_add() {
+    passes("atomic_add", "pub fn check() -> i32:\n"
+                         "    let mut count: u64 = 5\n"
+                         "    let old: u64 = __atomic_fetch_add(&count, 3, __ATOMIC_RELAXED)\n"
+                         "    if old != 5:\n        return 1\n"
+                         "    if count != 8:\n        return 2\n"
+                         "    0\n");
+    refused("atomic_add_order",
+            "pub fn check() -> i32:\n    let mut count: u64 = 5\n"
+            "    __atomic_fetch_add(&count, 1, __ATOMIC_SEQ_CST)\n    0\n",
+            "__atomic_fetch_add");
+}
+
 // A `%s` argument that is an `if` of two literals is a C string like the format (#2427).
 export void test_front_builtin_snprintf_conditional_string() {
     passes("snprintf_if", "pub fn check(flag: bool) -> i32:\n"

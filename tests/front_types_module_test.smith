@@ -335,3 +335,17 @@ export void test_front_types_module_a_payload_enum_is_built_by_naming_its_varian
     clean("struct Circle:\n    radius: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\nfn run() -> Shape:\n    "
           "return Shape(circle = Circle(radius = 1))\n");
 }
+
+// The same value as a bare `{.circle = payload}` where the enumeration is the expected type, an argument or a return
+// (#2434): the fixer cannot see the type there, so the checker reads the list as `.circle(payload)`.
+export void test_front_types_module_a_braced_variant_list_is_a_payload_enum_value() {
+    clean("struct Circle:\n    radius: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\nfn take(s: Shape) -> "
+          "Shape:\n    "
+          "return s\n\nfn run() -> Shape:\n    return take({.circle = Circle(radius = 1)})\n");
+    clean("struct Number:\n    value: u64\n    suffix: str\n\nenum Kind:\n    integer: Number\n    empty\n\nfn make(k: "
+          "Kind) -> Kind:\n    "
+          "return k\n\nfn run(s: str) -> Kind:\n    return make({.integer = (value = 1, suffix = s)})\n");
+    fails("struct Circle:\n    radius: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\nfn run() -> Shape:\n    "
+          "return {.square = Circle(radius = 1)}\n",
+          "a `{...}` list makes a struct", "");
+}

@@ -217,12 +217,75 @@ static state::Status literal_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// `(a = 1, b = 2)` where a record is expected (the fixer's spelling of a braced value of a field of record type): the
+// values are on the stack, the first deepest; each goes into the field of its name.
+static state::Status record_finish(state::Emitter *e, const state::Work *w) {
+    const ast::Expr *literal_node = w->expr;
+    if (!(literal_node->kind == .tuple_lit)) return state::fail("not a tuple", w->span);
+    ast::ExprRef items[:] = literal_node->kind.tuple_lit.items;
+    state::RecordType record = e->records[(Usize)w->number];
+    state::Value values[max_parts];
+    for (Usize i = countof(items); i > 0; i--) {
+        values[i - 1] = state::pop_value(e);
+    }
+    c::LLVMValueRef built = c::LLVMConstNull(record.ty.llvm);
+    for (Usize i = 0; i < countof(items); i++) {
+        const ast::Expr *item = items[i];
+        if (!(item->kind == .named_arg)) return state::fail("not a named field", w->span);
+        Str name = item->kind.named_arg.name;
+        Bool found = false;
+        for (Usize k = 0; k < countof(record.fields) && !found; k++) {
+            if (!state::same_text(record.fields[k].name, name)) continue;
+            found = true;
+            try state::convert(e, values[i], record.fields[k].ty, w->span, .initialize);
+            state::Value converted = state::pop_value(e);
+            built = c::LLVMBuildInsertValue(e->builder, built, converted.llvm, (U32)k, "field");
+        }
+        if (!found) return state::failf(w->span, "no field ", name, " in ", record.name);
+    }
+    state::push_value(e, (state::Value){.llvm = built, .ty = record.ty});
+    return state::success();
+}
+
+// Whether `x` is a named tuple of a record the hint names: the record's index in `e->records`.
+static Bool record_hint(state::Emitter *e, const ast::Expr *x, state::Hint hint, Usize *at) {
+    if (!(x->kind == .tuple_lit)) return false;
+    ast::ExprRef items[:] = x->kind.tuple_lit.items;
+    if (!hint.present || hint.ty.kind != .record || countof(items) == 0 || countof(items) > max_parts) return false;
+    for (Usize i = 0; i < countof(items); i++) {
+        const ast::Expr *item = items[i];
+        if (!(item->kind == .named_arg)) return false;
+    }
+    for (Usize i = 0; i < e->record_count; i++) {
+        state::RecordType record = e->records[i];
+        if (record.ty.llvm != hint.ty.llvm || countof(record.fields) != countof(items)) continue;
+        *at = i;
+        return true;
+    }
+    return false;
+}
+
 export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .tuple_lit) {
         return state::fail("not a tuple", x->span);
     }
     ast::ExprRef items[:] = x->kind.tuple_lit.items;
     Usize count = countof(items);
+    Usize record_at = 0;
+    if (record_hint(e, x, hint, &record_at)) {
+        state::push_then(e, (state::Work){.then = record_finish, .expr = x, .number = (U64)record_at, .span = x->span});
+        for (Usize i = count; i > 0; i--) {
+            const ast::Expr *item = items[i - 1];
+            if (!(item->kind == .named_arg)) continue;
+            state::RecordType record = e->records[record_at];
+            Usize field = 0;
+            for (Usize k = 0; k < count; k++) {
+                if (state::same_text(record.fields[k].name, item->kind.named_arg.name)) field = k;
+            }
+            state::push_eval(e, item->kind.named_arg.value, state::hint_of(record.fields[field].ty));
+        }
+        return state::success();
+    }
     state::Ty ty = {};
     if (hint.present && hint.ty.kind == .tuple && hint.ty.part_count == count) {
         ty = hint.ty;
