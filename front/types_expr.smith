@@ -4870,6 +4870,23 @@ static void enum_variant_after(types::Checked *c, Frame f) {
     finish(c, f.node, t, f.expected);
 }
 
+// The arguments of a clang builtin, last first: `array.filled(u8, 4, 0)`: the value takes the element type; a format
+// is a C string, and so is a `%s` argument that is an `if` picking a literal (#2427).
+static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *e, ast::ExprRef args[:],
+                                   builtins::Entry builtin) {
+    for (Usize i = countof(args); i > 0; i--) {
+        if (builtins::is_type_argument(builtin, i - 1)) continue;
+        types::TypeRef expected = nullptr;
+        if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
+        if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
+        const ast::Expr *value = argument_value(args[i - 1]);
+        if (builtin.shape == .format && i > 3 && (value->kind == .conditional || value->kind == .stmt_expr)) {
+            expected = builtins::format_pointer(c);
+        }
+        push(w, value, expected, 0);
+    }
+}
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -4919,13 +4936,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     builtins::Entry builtin = {};
     if (builtins::callee_entry(c, callee, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
-        for (Usize i = countof(args); i > 0; i--) {
-            if (builtins::is_type_argument(builtin, i - 1)) continue;
-            types::TypeRef expected = nullptr; // `array.filled(u8, 4, 0)`: the value takes the element type
-            if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
-            if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
-            push(w, argument_value(args[i - 1]), expected, 0);
-        }
+        push_builtin_arguments(c, w, e, args, builtin);
         return;
     }
     if (has_spread(args)) {

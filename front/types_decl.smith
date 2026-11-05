@@ -128,6 +128,7 @@ struct State {
     types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
     const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
+    const ast::Decl *declaring; // the local whose initializer is being checked, for the fix on its written type
 };
 
 static State state;
@@ -160,6 +161,26 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
+// The edit for a local written `*mut *T` and initialized with a `*mut *mut T`: the inner pointer becomes `*mut T`,
+// since what the initializer points at is writable (std.mem's `buckets` from `table(...)`, #2427).
+static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    syntax::Edits edits = {};
+    const ast::Decl *d = state.declaring;
+    if (d == nullptr || d->kind != .variable || d->kind.variable.init != e) return edits;
+    if (from->element->kind != .pointer || to->element->kind != .pointer) return edits;
+    if (from->element->element != to->element->element) return edits;
+    if (from->element->pointee_const || !to->element->pointee_const) return edits;
+    const ast::TypeExpr *outer = d->kind.variable.type;
+    if (outer->kind != .pointer) return edits;
+    const ast::TypeExpr *inner = outer->kind.pointer.pointee;
+    if (inner->kind != .pointer || inner->kind.pointer.is_mut) return edits;
+    edits = mem::realloc(edits, 1);
+    U32 after_star = inner->span.start + 1;
+    Str word = "mut ";
+    edits[0] = (syntax::Edit){.span = {.start = after_star, .end = after_star}, .text = word};
+    return edits;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok) {
@@ -168,6 +189,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
     Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, e) : (syntax::Edits){};
+    if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
+        fix = inner_mut_fix(e, from, to);
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type))
         fix = types_builtin::element_address_fix(e);
@@ -213,7 +236,14 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
     }
     types_convert::Verdict verdict = types_convert::cast_ok(&c->table, from, to, lit);
     if (!verdict.ok) {
-        types::fail_fix(c, e->span, verdict.message, discard_fix(e, to));
+        // A `p.cast(*mut T)` of a `*T` drops const: the fix writes `*mut T` on the parameter or local `p` comes from
+        // (std.mem's `self: *Allocator` cast to `*mut Checked`, #2427).
+        syntax::Edits fix = discard_fix(e, to);
+        if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && from->pointee_const &&
+            !to->pointee_const) {
+            fix = types_expr::pointer_fix(c, e->kind.cast.operand);
+        }
+        types::fail_fix(c, e->span, verdict.message, fix);
         return false;
     }
     if (verdict.checked && form != .wrapping) {
@@ -426,7 +456,9 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     } else if (is_auto(type)) {
         type = auto_type(r, d, name, init);
     } else if (init != nullptr) {
+        state.declaring = d;
         types_expr::check(r, init, type);
+        state.declaring = nullptr;
     }
     if (is_constexpr) {
         require_constant(r, name, init);

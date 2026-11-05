@@ -154,3 +154,20 @@ export void test_front_fix_mut_a_local_of_todays_syntax_gets_mut_in_one_run() {
     expect("I32 f(I32 n) {\n    I32 total = 0;\n    total = total + n;\n    return total;\n}\n",
            "fn f(n: i32) -> i32:\n    mut total: i32 = 0\n    total = total + n\n    return total\n", 5);
 }
+
+// A `*T` parameter cast to `*mut U` (std.mem's `self: *Allocator` read as the `Checked` around it, #2427) becomes `*mut
+// T`.
+export void test_front_fix_mut_a_pointer_cast_to_mut_becomes_mut() {
+    expect("struct A:\n    x: i32\n\nstruct B:\n    a: A\n\nfn f(p: *A) -> *mut B:\n    q: *mut B = p.cast(*mut B)\n   "
+           " q\n",
+           "struct A:\n    x: i32\n\nstruct B:\n    a: A\n\nfn f(p: *mut A) -> *mut B:\n    q: *mut B = p.cast(*mut "
+           "B)\n    q\n",
+           1);
+}
+
+// A local written `*mut *T` and given a `*mut *mut T` becomes `*mut *mut T`.
+export void test_front_fix_mut_an_inner_pointer_of_a_local_becomes_mut() {
+    expect("fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *i32 = g(p)\n",
+           "fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *mut i32 = g(p)\n",
+           1);
+}
