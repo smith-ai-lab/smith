@@ -84,6 +84,42 @@ static c::LLVMValueRef predicate(state::Emitter *e, table::Entry entry, state::V
     return c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, difference, c::LLVMConstReal(x.ty.llvm, 0.0), "isfinite");
 }
 
+// The value `v` as the C type a letter of a libc signature names: `z` a 64-bit integer, `i` an int, `d` a double, `f` a
+// float; a pointer is as it is.
+static c::LLVMValueRef coerced(state::Emitter *e, state::Value v, U8 letter) {
+    if (letter == 'z')
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt64TypeInContext(e->context), v.ty.is_signed ? 1 : 0,
+                                    "");
+    if (letter == 'i')
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context), v.ty.is_signed ? 1 : 0,
+                                    "");
+    return v.llvm;
+}
+
+// A call of the libc function the entry names, declared on first use with the types of the arguments.
+static c::LLVMValueRef libc_call(state::Emitter *e, table::Entry entry, state::Value *v, state::Ty result) {
+    Str params = table::libc_params(entry);
+    c::LLVMValueRef args[3] = {};
+    c::LLVMTypeRef types[3] = {};
+    for (Usize i = 0; i < countof(params); i++) {
+        args[i] = coerced(e, v[i], (U8)params[i]);
+        types[i] = c::LLVMTypeOf(args[i]);
+    }
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)countof(params), 0);
+    char *label = state::cstr(table::libc_name(entry));
+    c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, label);
+    if (function == nullptr) function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    return c::LLVMBuildCall2(e->builder, type, function, args, (U32)countof(params), "");
+}
+
+// `__builtin_clzll(x)`: `llvm.ctlz` (an undefined result for zero, as C), truncated to an int.
+static c::LLVMValueRef count_zeros(state::Emitter *e, state::Value x, state::Ty result) {
+    c::LLVMValueRef args[2] = {x.llvm, c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 1, 0)};
+    c::LLVMValueRef counted = named_intrinsic(e, "", "ctlz", "", x.ty.llvm, args, 2);
+    return c::LLVMBuildTrunc(e->builder, counted, result.llvm, "clz");
+}
+
 // The value of the call, from its entry and its arguments' values (the type argument has none).
 static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, state::Ty result) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
@@ -106,6 +142,10 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return smallest(e, v[0], v[1]);
     case .predicate:
         return predicate(e, entry, v[0]);
+    case .libc:
+        return libc_call(e, entry, v, result);
+    case .count_zeros:
+        return count_zeros(e, v[0], result);
     case .constant:
         return c::LLVMConstRealOfStringAndSize(result.llvm, entry.intrinsic.data, 3);
     }
@@ -118,7 +158,9 @@ static state::Status finish(state::Emitter *e, const state::Work *w) {
     table::Entry entry = {};
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
     state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
-    if (entry.shape != .assume && entry.shape != .trap) {
+    Bool no_value =
+        entry.shape == .assume || entry.shape == .trap || (entry.shape == .libc && table::libc_result(entry) == 'v');
+    if (!no_value) {
         state::TyResult typed = state::type_of_node(e, x);
         if (typed == .error) return {.error = typed.error};
         result = typed.ok;
