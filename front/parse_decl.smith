@@ -2087,7 +2087,10 @@ static ast::DeclKind record_kind(parse::Parser *p, Style *style) {
     } else if (parse::accept(p, lex::left_brace)) {
         fields = parse_fields(p, style);
         parse::expect(p, lex::right_brace, "`}`");
-    } else if (parse::at(p, lex::semicolon)) {
+    } else if (parse::at(p, lex::semicolon) || (countof(name) > 0 && line_ended(p))) {
+        // `struct Name` alone on its line is opaque in braces too: the fixer writes a forward declaration so (the
+        // passes read their own output with braces, #2014), and a parse that stops here leaves the file's other forms
+        // (a nested `switch`) unmended.
         opaque = true;
     } else if (countof(name) > 0) {
         char message[:] = format::push("`struct ", name, "` is C's spelling: a tag is a type name, write `", name, "`");
