@@ -26,7 +26,7 @@ constexpr char expected_digest[_] = "df39a217d8c29f80";
 constexpr char warn[_] = "-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wimplicit-fallthrough -Wmissing-prototypes "
                          "-Wstrict-prototypes -Wvla -Werror";
 constexpr char sources[_] = "-I lowered tests/random.c lib/std/arena.smith lib/std/math.smith lib/std/math_trig.smith "
-                            "lib/std/contract.smith lib/trace.c";
+                            "lib/std/contract.smith lib/trace.c lib/optimize_asm.c";
 
 // A project holding the files the commands compile: the libraries and the program of the test, copied in.
 static scratch::Project sources_project() {

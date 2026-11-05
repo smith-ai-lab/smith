@@ -501,6 +501,7 @@ static void corpus_case(const char *name) {
         scratch::copy_tree(&p, "lib/handlers.c", "mirror/lib/handlers.c");
         scratch::copy_tree(&p, "lib/std/text.smith", "mirror/lib/std/text.smith");
         scratch::copy_tree(&p, "lib/trace.c", "mirror/lib/trace.c");
+        scratch::copy_tree(&p, "lib/optimize_asm.c", "mirror/lib/optimize_asm.c");
         scratch::copy_tree(&p, "include", "mirror/include");
     }
     Bool update = test::updating();
