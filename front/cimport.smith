@@ -17,7 +17,7 @@ import std::mem;
 // The kinds of CType. The layout of the shim's flat result (shim/cimport.cpp) is the source of these numbers.
 constexpr U32 kind_void = 0;
 constexpr U32 kind_bool = 1;
-constexpr U32 kind_integer = 2;     // a = bits, b = 1 when signed
+constexpr U32 kind_integer = 2;     // a = bits, b = 1 when signed, 2 for plain `char`
 constexpr U32 kind_floating = 3;    // a = bits
 constexpr U32 kind_pointer = 4;     // a = pointee
 constexpr U32 kind_array = 5;       // a = element, b = count
@@ -337,6 +337,7 @@ static ast::TypeExpr *build_type(const Table *t, TypeList done, U32 index) {
     CType c = t->types[index];
     if (c.kind == kind_void) return ast::named("Void");
     if (c.kind == kind_bool) return ast::named("Bool");
+    if (c.kind == kind_integer && c.b == 2) return ast::named("Char");
     if (c.kind == kind_integer) return ast::named(integer_name(c.a, c.b == 1));
     if (c.kind == kind_floating) {
         Str spelled = "F64";
@@ -407,6 +408,16 @@ static Bool first_typedef(const Table *t, Usize index) {
         }
     }
     return true;
+}
+
+// `size_t` and `uintptr_t` are `Usize`, `ssize_t`, `ptrdiff_t` and `intptr_t` are `Isize`, not the 64-bit integer the
+// platform spells them with: a `const size_t *` handed a `const Usize *` is the same pointer.
+static ast::TypeRef word_typedef(Str name, ast::TypeRef underlying) {
+    if (c::strcmp(name.data, "size_t") == 0 || c::strcmp(name.data, "uintptr_t") == 0) return ast::named("Usize");
+    if (c::strcmp(name.data, "ssize_t") == 0 || c::strcmp(name.data, "ptrdiff_t") == 0 ||
+        c::strcmp(name.data, "intptr_t") == 0)
+        return ast::named("Isize");
+    return underlying;
 }
 
 static ast::Decl *from_c(ast::Decl *d) {
@@ -512,8 +523,8 @@ export Header read(arena::Arena *a, const char *name, Bool quoted, const char *f
         if (!first_typedef(&t, i)) {
             continue;
         }
-        block[at++] =
-            placed(from_c(ast::type_alias(t.types[i].name, types[t.types[i].a])), typedef_place(&t, t.types[i].name));
+        ast::TypeRef target = word_typedef(t.types[i].name, types[t.types[i].a]);
+        block[at++] = placed(from_c(ast::type_alias(t.types[i].name, target)), typedef_place(&t, t.types[i].name));
     }
     for (Usize i = 0; i < countof(t.enums); i++)
         block[at++] = enumeration_decl(&t, (U32)i, types);
