@@ -25,6 +25,7 @@ import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
 import front::fix_method;
+import front::fix_opaque;
 import front::fix_variants;
 import front::lex;
 import front::parse_decl;
@@ -383,7 +384,13 @@ export Fixed fix_text(Str file, Str source) {
     for (Usize pass = 0; pass < fix_passes; pass++) {
         parser::Parsed parsed = parse_for_fix(file, total.text);
         core::Errors errors = parsed.errors;
-        if (countof(errors) == 0) {
+        // A struct declared twice is mended whatever else the file still has to mend (#2224).
+        core::Errors opaque = fix_opaque::edits(total.text, &parsed.module);
+        for (Usize i = 0; i < countof(opaque); i++) {
+            errors = mem::realloc(errors, countof(errors) + 1);
+            errors[countof(errors) - 1] = opaque[i];
+        }
+        if (countof(parsed.errors) == 0) {
             core::Errors more = checker_fixes(total.text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);

@@ -7,6 +7,14 @@
 //                                              folder with a build.c, build.smith or main.smith, else the repo) with
 //                                              the roots `src` (the project folder itself) and `lib` (the standard
 //                                              library); the results go to standard output as a table (see summarize)
+//   frontend_coverage run SMITH ROOT SCRATCH FILES
+//                                              the same for only the files named in FILES (paths relative to ROOT,
+//                                              separated by commas) and every module they import, transitively (#2309);
+//                                              each is fixed and compiled exactly as in a full run, so its rows are the
+//                                              rows of a full run
+//   frontend_coverage chain RESULTS ROOT FILES  reads the table of a filtered run and prints, for each file in it, its
+//                                              stage and first error, and under it `imports <module>: <stage>: <first
+//                                              error>` for every import that fails: the chain that blocks it
 //   frontend_coverage summarize RESULTS [SMITH]
 //                                              reads a table and prints one line per file, then the summary; with
 //                                              SMITH, the summary names the smith that was measured
@@ -23,6 +31,10 @@
 // files first; then 20 `frontend-cause:` lines for the CI log. A parse error is the only one of its file (the parser
 // stops at the first, parser recovery is not counted here): the summary says how many files are stopped there. The real
 // files are never changed: only the copies are.
+//
+// The fixer's work is cached (#2309) in `SCRATCH/../fixed/<hash>`: the fixed text of a file, keyed by the file, every
+// module it imports transitively (the fixer checks against them), the tracked C headers and the smith that fixes. A
+// file that fails to fix is never cached. A cache entry never changes a result.
 module main;
 
 import std::console;
@@ -479,6 +491,8 @@ static void link_roots(const char *scratch) {
         typeof(const char[:]) name = text_of(projects[i][0:path_size]);
         format::Written made = format::to(folder, sizeof folder, scratch, countof(name) > 0 ? "/" : "", name);
         (void)format::to(link, sizeof link, (const char *)folder, "/src");
+        // a link left by an earlier run is made again, so that the names in the results do not depend on it (#2309)
+        (void)c::unlink(link);
         if (!files::exists(view_of(link))) {
             linked_source[i] = c::symlink(".", link) == 0;
         }
@@ -636,12 +650,277 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     release(&compiled);
 }
 
+// ---------------------------------------------------------------------------------------- imports, hashes and cache
+
+constexpr Usize imports_max = 64;
+constexpr U64 fnv_prime = 1099511628211ULL;
+
+struct Hash {
+    U64 a;
+    U64 b;
+};
+
+static struct Hash hash_start() {
+    return (struct Hash){.a = 14695981039346656037ULL, .b = 0x9E3779B97F4A7C15ULL};
+}
+
+static struct Hash hash_bytes(struct Hash h, const char text[:]) {
+    for (Usize i = 0; i < countof(text); i++) {
+        h.a = (h.a ^ (U64)(U8)text[i]) * fnv_prime;
+        h.b = (h.b + (U64)(U8)text[i] + 1) * fnv_prime;
+    }
+    return h;
+}
+
+static struct Hash hash_number(struct Hash h, U64 value) {
+    for (Usize i = 0; i < 8; i++) {
+        h.a = (h.a ^ ((value >> (i * 8)) & 255)) * fnv_prime;
+        h.b = (h.b + ((value >> (i * 8)) & 255) + 1) * fnv_prime;
+    }
+    return h;
+}
+
+static struct Hash own_hash[files_max];
+static Usize import_list[files_max][imports_max];
+static Usize import_count[files_max];
+static Bool wanted[files_max];
+static Usize queue[files_max];
+static struct Hash headers_hash;
+static struct Hash smith_hash;
+
+// The index in the tree of `path`, or tree_count.
+static Usize tree_find(const char path[:]) {
+    for (Usize i = 0; i < tree_count; i++) {
+        if (same(text_of(tree[i][0:path_size]), path)) return i;
+    }
+    return tree_count;
+}
+
+// The file the module `name` (`std.math` or `std::math`) of file `file` is: under the project's source folder, else
+// under its own or the tree's `lib`, as `load_module` looks (front/compile.smith). tree_count when none holds it.
+static Usize resolve_import(Usize file, const char name[:]) {
+    char inside[path_size];
+    Usize n = 0;
+    for (Usize i = 0; i < countof(name) && n + 2 < path_size; i++) {
+        if (name[i] == ':' && i + 1 < countof(name) && name[i + 1] == ':') i += 1;
+        inside[n] = name[i] == ':' || name[i] == '.' ? '/' : name[i];
+        n += 1;
+    }
+    inside[n] = '\0';
+    Usize project = project_of(text_of(tree[file][0:path_size]));
+    const char *const middles[_] = {"src/", "", "lib/", "lib/", ""};
+    for (Usize r = 0; r < 5; r++) {
+        // then the tree's own library, and the folder of the file itself
+        const char *folder = r == 3 ? "" : (const char *)projects[project];
+        if (r == 2 && folder[0] == '\0') continue;
+        char own[path_size];
+        if (r == 4) {
+            Usize slash = length_of(tree[file][0:path_size]);
+            while (slash > 0 && tree[file][slash - 1] != '/')
+                slash -= 1;
+            if (slash == 0) continue;
+            copy_text(own[0:path_size], text_of(tree[file][0:slash - 1]));
+            folder = own;
+        }
+        char candidate[path_size * 2];
+        format::Written w = format::to(candidate, sizeof candidate, folder, folder[0] != '\0' ? "/" : "", middles[r],
+                                       (const char *)inside, ".smith");
+        Usize found = tree_find(candidate[0:w.length]);
+        if (found != tree_count) return found;
+    }
+    return tree_count;
+}
+
+static Bool name_char(char c) {
+    return c == '_' || c == ':' || c == '.' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || is_digit(c);
+}
+
+// The module a line imports: the name after `import` (`from X import` and `pub import` too), empty for a C header.
+static typeof(const char[:]) imported_by(const char line[:]) {
+    Usize at = 0;
+    if (countof(line) > 4 && same(line[0:4], "pub ")) at = 4;
+    if (countof(line) > at + 5 && same(line[at:at + 5], "from ")) {
+        at += 5;
+    } else if (countof(line) > at + 7 && same(line[at:at + 7], "import ")) {
+        at += 7;
+    } else {
+        return line[0:0];
+    }
+    Usize end = at;
+    while (end < countof(line) && name_char(line[end]))
+        end += 1;
+    return line[at:end];
+}
+
+static void add_import(Usize file, Usize found) {
+    if (found == tree_count || found == file || import_count[file] == imports_max) return;
+    for (Usize k = 0; k < import_count[file]; k++) {
+        if (import_list[file][k] == found) return;
+    }
+    import_list[file][import_count[file]] = found;
+    import_count[file] += 1;
+}
+
+// The hash of file `i` of the real tree and the files it imports, from its text.
+static Bool index_file(const char *root, Usize i) {
+    char from[path_size * 2];
+    format::Written a = format::to(from, sizeof from, root, "/", (const char *)tree[i]);
+    files::BytesResult loaded = files::read_file(from[0:a.length]);
+    if (loaded == .error) return false;
+    defer mem::free(loaded.ok.data);
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    own_hash[i] = hash_bytes(hash_bytes(hash_start(), text_of(tree[i][0:path_size])), text);
+    if (!is_smith(tree[i])) return true;
+    Usize at = 0;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) name = imported_by(text[at:end]);
+        if (countof(name) > 0) add_import(i, resolve_import(i, name));
+        at = end + 1;
+    }
+    return true;
+}
+
+// Hashes every tracked file and the imports of every .smith file, once.
+static Bool index_tree(const char *root) {
+    struct Hash headers = hash_start();
+    for (Usize i = 0; i < tree_count; i++) {
+        import_count[i] = 0;
+        if (!index_file(root, i)) return false;
+        if (!is_smith(tree[i])) headers = hash_number(hash_number(headers, own_hash[i].a), own_hash[i].b);
+    }
+    headers_hash = headers;
+    return true;
+}
+
+// Marks `first` and everything it imports transitively in `wanted`; the order of `queue` is the order of discovery.
+// Returns how many are marked.
+static Usize mark_closure(Usize first, Usize count) {
+    if (wanted[first]) return count;
+    wanted[first] = true;
+    queue[count] = first;
+    Usize head = count;
+    count += 1;
+    while (head < count) {
+        Usize at = queue[head];
+        head += 1;
+        for (Usize k = 0; k < import_count[at]; k++) {
+            Usize next = import_list[at][k];
+            if (wanted[next]) continue;
+            wanted[next] = true;
+            queue[count] = next;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+// The cache key of the fix of file `i`: the smith, the C headers, the file's path, and each file it imports, directly
+// or not, added so that the order does not matter.
+static struct Hash fix_key(Usize i) {
+    static Bool seen[files_max];
+    static Usize stack[files_max];
+    for (Usize k = 0; k < tree_count; k++)
+        seen[k] = false;
+    U64 sum_a = 0;
+    U64 sum_b = 0;
+    Usize top = 1;
+    stack[0] = i;
+    seen[i] = true;
+    while (top > 0) {
+        top -= 1;
+        Usize at = stack[top];
+        sum_a += own_hash[at].a;
+        sum_b ^= own_hash[at].b;
+        for (Usize k = 0; k < import_count[at]; k++) {
+            Usize next = import_list[at][k];
+            if (seen[next]) continue;
+            seen[next] = true;
+            stack[top] = next;
+            top += 1;
+        }
+    }
+    // the file itself, apart from the sum: two files of an import cycle have the same closure (#2309)
+    struct Hash h = hash_number(hash_number(smith_hash, own_hash[i].a), own_hash[i].b);
+    h = hash_number(hash_number(h, headers_hash.a), headers_hash.b);
+    return hash_number(hash_number(h, sum_a), sum_b);
+}
+
+static void hex_of(char out[:], struct Hash h) {
+    const char *digits = "0123456789abcdef";
+    for (Usize i = 0; i < 16; i++) {
+        out[i] = digits[(h.a >> (60 - i * 4)) & 15];
+        out[16 + i] = digits[(h.b >> (60 - i * 4)) & 15];
+    }
+    out[32] = '\0';
+}
+
+static Usize cache_hits = 0;
+static Usize cache_misses = 0;
+static const char *cache_folder = nullptr;
+
+// Fixes the copy of file `i` (the process is in the scratch tree) with the fixer, or with a cache entry made by a
+// fixer that read the same files. Records a failure. A file that fails to fix is never cached.
+static void fix_cached(const char *smith, Usize i) {
+    char name[33];
+    char entry[path_size * 2];
+    hex_of(name[0:33], fix_key(i));
+    format::Written e = format::to(entry, sizeof entry, cache_folder, "/", (const char *)name);
+    files::BytesResult cached = files::read_file(entry[0:e.length]);
+    if (cached != .error) {
+        defer mem::free(cached.ok.data);
+        char to[path_size];
+        copy_text(to[0:path_size], text_of(tree[i][0:path_size]));
+        files::CountResult put = files::write_file(view_of(to), cached.ok, files::Replace);
+        if (put != .error) {
+            cache_hits += 1;
+            return;
+        }
+    }
+    cache_misses += 1;
+    Usize before = entry_count;
+    fix(smith, tree[i]);
+    if (entry_count != before) return;
+    files::BytesResult fixed = files::read_file(text_of(tree[i][0:path_size]));
+    if (fixed == .error) return;
+    defer mem::free(fixed.ok.data);
+    (void)files::write_file(entry[0:e.length], fixed.ok, files::Replace);
+}
+
+// The hash of the smith that fixes: its file.
+static Bool hash_smith(const char *smith) {
+    files::BytesResult loaded = files::read_file(view_of(smith));
+    if (loaded == .error) return false;
+    defer mem::free(loaded.ok.data);
+    typeof(char[:]) text = mem::view(loaded.ok, char);
+    smith_hash = hash_bytes(hash_start(), text);
+    return true;
+}
+
+// Marks the files named in `list` (separated by commas) and what they import. Returns how many are marked, or 0 when
+// a name is not a tracked file.
+static Usize mark_files(const char list[:]) {
+    Usize count = 0;
+    Usize at = 0;
+    while (at < countof(list)) {
+        Usize end = find(list, ',', at);
+        Usize found = tree_find(list[at:end]);
+        if (found == tree_count || !is_smith(tree[found])) {
+            console::print_error("frontend_coverage: error: ", list[at:end], " is not a tracked .smith file\n");
+            return 0;
+        }
+        count = mark_closure(found, count);
+        at = end + 1;
+    }
+    return count;
+}
+
 // The count must be the file list: one group of rows per tracked .smith file, none dropped, none missing. A mismatch is
 // an error (exit 1), never a smaller total (#2264).
-static I32 check_total() {
+static I32 check_total(Bool all) {
     Usize expected = 0;
     for (Usize i = 0; i < tree_count; i++) {
-        if (is_smith(tree[i])) expected += 1;
+        if (is_smith(tree[i]) && (all || wanted[i])) expected += 1;
     }
     Usize measured = 0;
     for (Usize i = 0; i < entry_count; i++) {
@@ -659,7 +938,7 @@ static I32 check_total() {
     return 0;
 }
 
-static I32 run(const char *smith, const char *root, const char *scratch) {
+static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
         console::print_error("frontend_coverage: cannot list the files of ", root, "\n");
@@ -670,17 +949,29 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
         return 1;
     }
     list_projects(root);
+    char folder[path_size * 2];
+    (void)format::to(folder, sizeof folder, scratch, "/../fixed");
+    cache_folder = folder;
+    (void)files::make_folder(view_of(folder));
+    if (!hash_smith(smith) || !index_tree(root)) {
+        console::print_error("frontend_coverage: cannot read the smith or the files of ", root, "\n");
+        return 1;
+    }
+    // With a list, only these files and what they import (transitively) are measured.
+    Bool all = countof(list) == 0;
+    if (!all && mark_files(list) == 0) return 2;
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
     if (c::chdir(scratch) != 0) return 1;
     // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
     Bool fixed[files_max];
     for (Usize i = 0; i < tree_count; i++) {
         fixed[i] = false;
-        if (!is_smith(tree[i])) continue;
+        if (!is_smith(tree[i]) || (!all && !wanted[i])) continue;
         Usize before = entry_count;
-        fix(smith, tree[i]);
+        fix_cached(smith, i);
         fixed[i] = entry_count == before;
     }
+    console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed\n");
     link_roots(scratch);
     for (Usize i = 0; i < tree_count; i++) {
         if (fixed[i]) measure(smith, scratch, tree[i]);
@@ -689,14 +980,87 @@ static I32 run(const char *smith, const char *root, const char *scratch) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
     }
-    return check_total();
+    return check_total(all);
+}
+
+// ------------------------------------------------------------------------------------------------------------ chain
+
+// The first entry of the file `path`, or entry_count.
+static Usize first_entry(const char path[:]) {
+    for (Usize i = 0; i < entry_count; i++) {
+        if (starts_file(i) && same(text_of(entries[i].path[0:path_size]), path)) return i;
+    }
+    return entry_count;
+}
+
+// `path`'s stage and first error on one line: `pass`, or `[stage] message` (with the position when it has one).
+static void print_result(Usize at) {
+    if (at == entry_count) {
+        console::print("not measured\n");
+    } else if (is_pass(&entries[at])) {
+        console::print("pass\n");
+    } else if (entries[at].position[0] != '\0') {
+        console::print("[", (const char *)entries[at].stage, "] ", (const char *)entries[at].position, " ",
+                       (const char *)entries[at].message, "\n");
+    } else {
+        console::print("[", (const char *)entries[at].stage, "] ", (const char *)entries[at].message, "\n");
+    }
+}
+
+// The module a path is: `lib/std/mem.smith` is `std.mem`; any other path is printed as it is.
+static void print_module(const char path[:]) {
+    Bool library = countof(path) > 4 && same(path[0:4], "lib/");
+    Usize from = library ? 4 : 0;
+    Usize to = countof(path) > 6 ? countof(path) - 6 : countof(path);
+    for (Usize i = from; i < to; i++) {
+        if (library && path[i] == '/') {
+            console::print(".");
+        } else {
+            console::print(path[i:i + 1]);
+        }
+    }
+}
+
+// The line of each file of the chain (the files named, then what they import) and under it every import that fails
+// (#2309): `imports std.optimize: [check] 3:1 message`. A file that passes and was not named is left out.
+static I32 chain(const char results[:], const char *root, const char list[:]) {
+    include_root = root;
+    if (!read_table(results) || !list_tree(root)) return 1;
+    list_projects(root);
+    if (!index_tree(root)) return 1;
+    Usize count = mark_files(list);
+    if (count == 0) return 2;
+    Usize passed = 0;
+    for (Usize q = 0; q < count; q++) {
+        Usize at = first_entry(text_of(tree[queue[q]][0:path_size]));
+        Bool named = q == 0 || at == entry_count || !is_pass(&entries[at]);
+        if (at != entry_count && is_pass(&entries[at])) passed += 1;
+        if (!named) continue;
+        console::print((const char *)tree[queue[q]], ": ");
+        print_result(at);
+        for (Usize k = 0; k < import_count[queue[q]]; k++) {
+            Usize dep = import_list[queue[q]][k];
+            Usize found = first_entry(text_of(tree[dep][0:path_size]));
+            if (found != entry_count && is_pass(&entries[found])) continue;
+            console::print("    imports ");
+            print_module(text_of(tree[dep][0:path_size]));
+            console::print(": ");
+            print_result(found);
+        }
+    }
+    console::print("frontend-coverage: ", passed, " of ", count,
+                   " files pass (the files named and what they import)\n");
+    return 0;
 }
 
 I32 main(Str args[:]) {
-    if (countof(args) == 5 && same(args[1], "run")) return run(args[2].data, args[3].data, args[4].data);
+    if (countof(args) == 5 && same(args[1], "run")) return run(args[2].data, args[3].data, args[4].data, args[4][0:0]);
+    if (countof(args) == 6 && same(args[1], "run")) return run(args[2].data, args[3].data, args[4].data, args[5]);
+    if (countof(args) == 5 && same(args[1], "chain")) return chain(args[2], args[3].data, args[4]);
     if (countof(args) == 3 && same(args[1], "summarize")) return summarize(args[2], nullptr);
     if (countof(args) == 4 && same(args[1], "summarize")) return summarize(args[2], args[3].data);
     console::print_error(
-        "usage: frontend_coverage run SMITH ROOT SCRATCH | frontend_coverage summarize RESULTS [SMITH]\n");
+        "usage: frontend_coverage run SMITH ROOT SCRATCH [FILES] | frontend_coverage chain RESULTS ROOT FILES | "
+        "frontend_coverage summarize RESULTS [SMITH]\n");
     return 2;
 }
