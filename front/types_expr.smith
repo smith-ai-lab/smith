@@ -71,6 +71,7 @@ import front::parse as syntax;
 import front::types;
 import front::types_builtin as builtins;
 import front::types_fn;
+import front::when;
 import std::arena;
 import std::format;
 import std::mem;
@@ -481,6 +482,26 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     syntax::Edits edits = {};
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
+    }
+    if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .member) {
+        // `&figures.user_ns` of a local record: the fix is the one for `&figures` (#2456). A field reached through a
+        // pointer is writable when the pointer is, which is another fix.
+        const ast::Expr *root = base->kind.unary.operand;
+        while (root->kind == .member && !root->kind.member.arrow) root = root->kind.member.base;
+        types::TypeRef held = root->kind == .name ? types::type_of(c, root) : nullptr;
+        if (held != nullptr && held->kind == .record) return address_fix(c, root);
+    }
+    if (base->kind == .member && !base->kind.member.arrow && same_text(base->kind.member.name, "data") &&
+        base->kind.member.base->kind == .name) {
+        // `xs.data` of a slice parameter `xs: []T` handed where a `*mut T` is wanted: the slice is `[]mut T` (#2456).
+        const types::Symbol *slice = types::lookup_path(&c->scopes, base->kind.member.base->kind.name.path);
+        if (slice == nullptr || slice->kind != .variable || !slice->is_new || slice->written == nullptr) return edits;
+        if (slice->written->kind != .slice || slice->written->kind.slice.is_mut) return edits;
+        edits = mem::realloc(edits, 1);
+        U32 after_brackets = slice->written->span.start + 2;
+        Str word = "mut ";
+        edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
+        return edits;
     }
     if (base->kind == .member) {
         return field_fix(c, base);
@@ -897,6 +918,36 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     return true;
 }
 
+// `target.os == target.macos` as a value (#2456): the system and the processor smith runs on, and the names the facts
+// are compared with, are numbers (`when`'s `Os` and `Arch`), so the comparison folds like any constant. True when `e`
+// was one of these.
+static Bool fold_target_system(types::Checked *c, Frame f, types::Names names) {
+    const ast::Expr *e = f.node;
+    if (names.count != 2 || !same_text(names.items[0], "target")) return false;
+    if (types::scoped(c, "target") != nullptr) return false;
+    Str fact = names.items[1];
+    U64 value = 0;
+    if (same_text(fact, "os")) {
+        value = when::host();
+    } else if (same_text(fact, "macos")) {
+        value = when::os_macos;
+    } else if (same_text(fact, "linux")) {
+        value = when::os_linux;
+    } else if (same_text(fact, "arch")) {
+        value = when::host_arch();
+    } else if (same_text(fact, "aarch64")) {
+        value = when::arch_aarch64;
+    } else if (same_text(fact, "x86_64")) {
+        value = when::arch_x86_64;
+    } else {
+        return false;
+    }
+    ast::Expr *node = (ast::Expr *)(Usize)e; // the checker settles the node's meaning in place
+    node->kind = (ast::ExprKind){.integer = {.value = value}};
+    finish(c, e, types::builtin(&c->table, "U32"), f.expected);
+    return true;
+}
+
 // `m.sin`, `m.b.T`, `m::sin`: names read through modules (#1677). A function or constant takes its type; a module, a
 // type and a name that is missing are errors that say so. False when the first name is not a module.
 static Bool module_value(types::Checked *c, Frame f, types::Names names) {
@@ -946,7 +997,7 @@ static void name_expr(types::Checked *c, Frame f) {
         types::Names names = {.count = countof(path.segments)};
         for (Usize i = 0; i < names.count; i++)
             names.items[i] = path.segments[i].text;
-        if (fold_target(c, f, names)) return;
+        if (fold_target(c, f, names) || fold_target_system(c, f, names)) return;
         if (module_value(c, f, names)) return;
     }
     if (s == nullptr) {
@@ -2884,6 +2935,11 @@ static void member_after(types::Checked *c, Frame f) {
             return;
         }
         finish(c, e, element->type, f.expected);
+        return;
+    }
+    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "data")) {
+        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
+        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
         return;
     }
     types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
@@ -5177,7 +5233,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
             poison(c, e);
             return;
         }
-        if (fold_target(c, f, types::member_names(e))) return;
+        if (fold_target(c, f, types::member_names(e)) || fold_target_system(c, f, types::member_names(e))) return;
         if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);

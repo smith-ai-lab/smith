@@ -783,6 +783,12 @@ static state::Status member_finish(state::Emitter *e, const state::Work *w) {
         base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
         record = *base.ty.element;
     }
+    if (record.kind == .slice && !w->flag && state::same_text(name, "data") && record.element != nullptr) {
+        // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
+        c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");
+        state::push_value(e, (state::Value){.llvm = first, .ty = pointer_to(e, *record.element, 0)});
+        return state::success();
+    }
     return push_field(e, record, base.llvm, name, w->span);
 }
 

@@ -70,6 +70,7 @@ struct Field {
 struct Record {
     Str name;    // empty for an anonymous struct that no typedef names
     Bool opaque; // no definition, or members that could not be imported
+    Bool is_union;
     Field fields[:];
 };
 
@@ -270,7 +271,7 @@ static Table read_table(arena::Arena *a, const char *name, Bool quoted, const ch
     header.structs = arena::push_slice(a, Record, w[9]);
     for (U32 i = 0; i < w[9]; i++) {
         Usize at = w[8] + 4 * (Usize)i;
-        Record s = {.name = text(pool, w[at]), .opaque = (w[at + 3] & 1) != 0};
+        Record s = {.name = text(pool, w[at]), .opaque = (w[at + 3] & 1) != 0, .is_union = (w[at + 3] & 2) != 0};
         s.fields = arena::push_slice(a, Field, w[at + 2]);
         for (U32 j = 0; j < w[at + 2]; j++) {
             Usize f = w[10] + 2 * ((Usize)w[at + 1] + j);
@@ -445,7 +446,7 @@ static ast::Decl *record_decl(const Table *t, U32 index, TypeList types) {
             fields[i].doc = row->doc;
         }
     }
-    ast::DeclKind kind = {.record = {.name = s->name, .opaque = s->opaque, .fields = fields}};
+    ast::DeclKind kind = {.record = {.name = s->name, .is_union = s->is_union, .opaque = s->opaque, .fields = fields}};
     return placed(from_c(ast::decl((ast::Decl){}, kind)), place_of(t, place_struct, index));
 }
 

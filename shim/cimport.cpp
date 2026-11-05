@@ -12,7 +12,8 @@
 //   words[4..5]   types: first word, count      (5 words each: kind, flags, a, b, c)
 //   words[6..7]   functions: first word, count  (5 words each: name, return type, first parameter, parameter count,
 //                 flags)
-//   words[8..9]   structs: first word, count    (4 words each: name, first field, field count, flags)
+//   words[8..9]   structs: first word, count    (4 words each: name, first field, field count, flags: bit 0 opaque,
+//                 bit 1 union)
 //   words[10..11] fields: first word, count     (2 words each: name, type)
 //   words[12..13] parameters: first word, count (2 words each: name, type)
 //   words[14..15] not imported: first word, count (3 words each: kind, name, reason)
@@ -37,7 +38,7 @@
 // Type kinds: 0 void; 1 bool; 2 integer (a = bits, b = 1 when signed, 2 for plain `char`); 3 floating (a = bits); 4
 // pointer (a = pointee); 5 array (a = element, b = count); 6 typedef (a = name, b = underlying); 7 struct (a = struct
 // index); 8 function (a = return type, b = first parameter, c = parameter count; flags bit 2 = variadic); 9 unsupported
-// (a = the spelling of the C type that has no smith equivalent: a union, `long double`, a bit-field); 11 string
+// (a = the spelling of the C type that has no smith equivalent: `long double`, a bit-field); 11 string
 // (smith's `Str`, the type of a string macro); 10 function pointer (a = the function type; smith has no
 // pointer-to-function syntax, it is `Fn` applied to the function type). Type flags: 1 const, 2 restrict. A declaration
 // that uses an unsupported type is still read, with that type, and is also in the not imported list with the reason:
@@ -325,10 +326,6 @@ uint32_t Reader::convert_inner(clang::QualType type, bool behind) {
     }
     if (const auto *t = type->getAs<clang::RecordType>()) {
         const clang::RecordDecl *decl = t->getDecl();
-        if (decl->isUnion()) {
-            fail("a union is not imported");
-            return bad;
-        }
         uint32_t index = record(decl);
         return type_node(Struct, flags, index, 0, 0);
     }
@@ -350,6 +347,9 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
     std::string name = key->getName().str();
     if (name.empty())
         if (const clang::TypedefNameDecl *t = key->getTypedefNameForAnonDecl()) name = t->getName().str();
+    // An anonymous member (`union { long ru_maxrss; };`) is a type no one names: the checker reaches its fields
+    // through the record that holds it, so it gets a name of its own (#2456).
+    if (name.empty()) name = "smith_anonymous_" + std::to_string(index);
     structs.push_back({text(name), 0, 0, 1});
     place(1, index, key);
     if (definition == nullptr) return index; // opaque
@@ -372,7 +372,7 @@ uint32_t Reader::record(const clang::RecordDecl *decl) {
     failure = outer;
     structs[index][1] = static_cast<uint32_t>(fields.size());
     structs[index][2] = static_cast<uint32_t>(read.size());
-    structs[index][3] = 0;
+    structs[index][3] = key->isUnion() ? 2 : 0; // bit 0 opaque, bit 1 union (#2456)
     for (size_t i = 0; i < read.size(); i++) {
         place(2, static_cast<uint32_t>(fields.size()), read_decls[i]);
         fields.push_back(read[i]);
@@ -548,13 +548,6 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             seen[f->getName().str()] = true;
             function(f);
         } else if (const auto *r = llvm::dyn_cast<clang::RecordDecl>(d)) {
-            if (r->isUnion()) {
-                std::string name = r->getName().str();
-                if (name.empty() && r->getTypedefNameForAnonDecl())
-                    name = r->getTypedefNameForAnonDecl()->getName().str();
-                if (r->isThisDeclarationADefinition()) skip(0, "union " + name, "a union is not imported");
-                continue;
-            }
             if (r->isThisDeclarationADefinition() || r->getDefinition() == nullptr) record(r);
         } else if (const auto *e = llvm::dyn_cast<clang::EnumDecl>(d)) {
             enumeration(e);

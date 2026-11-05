@@ -128,8 +128,15 @@ static Bool arguments_iterable(types::Checked *r, const ast::Expr *call, Str nam
 // `(i, x)`, which needs the tuple type (#1557).
 export types::TypeRef element_type(types::Checked *r, const ast::Expr *iterable, Bool is_tuple) {
     Str fn_name = stream_function(r, iterable);
+    if (is_tuple && same(fn_name, "enumerate") && iterable->kind == .call && countof(iterable->kind.call.args) == 1) {
+        // `for (i, x) in enumerate(xs)`: `i` is a `Usize` and `x` the element (the caller binds both, #2456).
+        const ast::Expr *inner = iterable->kind.call.args[0];
+        return built_in(r, inner, types_expr::infer(r, inner));
+    }
     if (is_tuple) {
-        types::failf(r, iterable->span, "not yet typed: a tuple pattern, `for (i, x) in ...`; it needs the tuple type ",
+        types::failf(r, iterable->span,
+                     "not yet typed: a tuple pattern, `for (i, x) in ...`, over anything but `enumerate`; it needs the "
+                     "tuple type ",
                      "(#1557). Bind one name, `for x in xs`");
         if (countof(fn_name) > 0) {
             arguments_iterable(r, iterable, fn_name);
