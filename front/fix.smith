@@ -421,7 +421,7 @@ static Str rename_in_names(Str source) {
 
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
-export Fixed fix_text(Str file, Str source) {
+static Fixed fix_round(Str file, Str source) {
     Str renamed = rename_in_names(rename_type_names(source));
     Fixed total = {.text = renamed};
     if (!mem::equal(renamed, source)) total.applied = 1;
@@ -468,6 +468,21 @@ export Fixed fix_text(Str file, Str source) {
     // indentation replace them (#2253). A text with another gap left is converted too: `fix_blocks` leaves alone a
     // body it cannot read, so the file then fails only on its own gap, not also on the braces.
     if (total.applied > 0) total.text = fix_blocks::convert(total.text);
+    return total;
+}
+
+// `fix_round` until a round applies nothing (at most 4). The checker's fixes read a declaration only once it is written
+// in smith's own syntax, which the last step of a round makes of the text, so what they mend (a `*T` local that is
+// returned as `*mut T`, #2368) waits for the next round; a second `smith lint --fix` used to apply it.
+export Fixed fix_text(Str file, Str source) {
+    Fixed total = fix_round(file, source);
+    for (Usize round = 1; round < 4 && total.applied > 0; round++) {
+        Fixed next = fix_round(file, total.text);
+        if (next.applied == 0) break;
+        total.text = next.text;
+        total.applied += next.applied;
+        total.skipped = next.skipped;
+    }
     return total;
 }
 
