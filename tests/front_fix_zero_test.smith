@@ -87,11 +87,19 @@ export void test_front_fix_zero_leaves_a_field_named_like_a_keyword() {
                  "struct Q:\n    in: i32\nfn f():\n    z: Q = {}\n    g(&z)\n");
 }
 
-// #2385: `T xs[n] = {}` of a struct element is a `mut` array of the zero value of each element, three structs deep.
+// #2385 (decided on #1406): `T xs[n] = {}` of a struct element is a `mut` array filled with the zero value of the
+// element, three structs deep, and the file gets `import std.array` once.
 export void test_front_fix_zero_fills_an_array_of_nested_structs() {
-    expect_fixed("module m;\nstruct In {\n    int f;\n};\nstruct Mid {\n    long a;\n    In flags;\n};\n"
-                 "void f(void) {\n    Mid xs[2] = {};\n    xs[0].a = 1;\n}\n",
-                 "struct In:\n    f: i32\nstruct Mid:\n    a: i64\n    flags: In\n"
-                 "fn f():\n    mut xs: [2]Mid = [Mid(a = 0, flags = In(f = 0)), Mid(a = 0, flags = In(f = 0))]\n    "
-                 "xs[0].a = 1\n");
+    expect_fixed(
+        "module m;\nstruct In {\n    int f;\n};\nstruct Mid {\n    long a;\n    In flags;\n};\n"
+        "void f(void) {\n    Mid xs[2] = {};\n    xs[0].a = 1;\n}\n",
+        "import std.array\nstruct In:\n    f: i32\nstruct Mid:\n    a: i64\n    flags: In\n"
+        "fn f():\n    mut xs: [2]Mid = array.filled(Mid, 2, Mid(a = 0, flags = In(f = 0)))\n    xs[0].a = 1\n");
+}
+
+export void test_front_fix_zero_array_fill_keeps_an_existing_import_of_std_array() {
+    expect_fixed("module m;\nimport std::array;\nstruct P {\n    int a;\n};\nvoid f(void) {\n    P xs[2] = {};\n"
+                 "    xs[0].a = 1;\n}\n",
+                 "import std.array\nstruct P:\n    a: i32\nfn f():\n    mut xs: [2]P = array.filled(P, 2, P(a = 0))\n"
+                 "    xs[0].a = 1\n");
 }
