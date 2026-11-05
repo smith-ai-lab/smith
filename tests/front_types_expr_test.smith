@@ -1302,9 +1302,9 @@ export void test_front_types_expr_pointers_compare_when_one_points_to_void() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Checked r = fresh();
-    var(&r, "p", "U8 *");
-    var(&r, "v", "const Void *");
-    var(&r, "q", "I32 *");
+    declare(&r, "p", .variable, types::pointer_to(&r.table, ty(&r, "U8"), false), false);
+    declare(&r, "v", .variable, types::pointer_to(&r.table, ty(&r, "Void"), true), false);
+    declare(&r, "q", .variable, types::pointer_to(&r.table, ty(&r, "I32"), false), false);
     test::check_condition(types_expr::infer(&r, binary(.equal, ast::name("p"), ast::name("v"))) == r.table.bool_type);
     test::check_condition(types_expr::infer(&r, binary(.not_equal, ast::name("v"), ast::name("p"))) == r.table.bool_type);
     test::check_condition(r.error_count == 0);
