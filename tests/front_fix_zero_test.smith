@@ -115,3 +115,26 @@ export void test_front_fix_a_lambda_keeps_its_fn() {
     expect_fixed("module m;\nvoid f(void) {\n    g([](int a) -> int { return a; });\n}\n",
                  "fn f():\n    g(fn(a: i32) -> i32: a)\n");
 }
+
+// A C function named `yield` is written `yield_` at its declaration and at a call through its module (#2403): `yield`
+// is a keyword of smith's own syntax. Its `@c_name` keeps the C symbol.
+export void test_front_fix_a_function_named_yield_is_renamed() {
+    expect_fixed("module m;\n[[std::c_name(\"m_yield\")]] export bool yield(int x) {\n    return x > 0;\n}\n",
+                 "@c_name(\"m_yield\") pub fn yield_(x: i32) -> bool:\n    return x > 0\n");
+}
+
+export void test_front_fix_a_call_of_a_module_yield_is_renamed() {
+    expect_fixed("module m;\nimport std::stream;\nbool f(Stream *s) {\n    return stream::yield(s);\n}\n",
+                 "import std.stream\nfn f(s: *Stream) -> bool:\n    return stream.yield_(s)\n");
+}
+
+// A function type after a `:` keeps its `fn`, and so does the `fn` before a name that is a keyword (#2442).
+export void test_front_fix_a_function_type_and_a_keyword_name_keep_their_fn() {
+    Str keyword_name = "fn double(x: i32) -> i32:\n    return x * 2\n";
+    expect_fixed(keyword_name, keyword_name);
+}
+
+export void test_front_fix_a_function_type_after_a_colon_keeps_its_fn() {
+    Str source = "fn repeat(n: i32, body: fn()):\n    body()\n";
+    expect_fixed(source, source);
+}

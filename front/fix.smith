@@ -452,12 +452,15 @@ static Str rename_in_names(Str source) {
 
 // `fn` is a keyword of smith's own syntax: a C name `fn` (a parameter holding a function, a local) is written `fn_`,
 // in the declaration and every use. The keyword stays: `fn` before a name (`fn area(...)`), or before a lambda's
-// parameters (`fn(x): ...`, `fn(x) -> T: ...`), where the `)` that closes them is followed by `:` or `->`.
+// parameters (`fn(x): ...`, `fn(x) -> T: ...`), where the `)` that closes them is followed by `:` or `->`, or a
+// function type after a `:` or `->` (`body: fn()`).
 static Bool is_fn_keyword(lex::Tokens tokens, Usize i) {
     if (i + 1 >= countof(tokens)) return false;
     lex::TokenKind next = tokens[i + 1].kind;
-    if (next == lex::name || next == lex::type_name) return true;
+    if (next == lex::name || next == lex::type_name || lex::is_keyword(next)) return true; // `fn double(x: i32)`
     if (next != lex::left_paren) return false;
+    // A function type (`body: fn()`, `-> fn(i32) -> i32`) stands after the `:` of a declaration or after an arrow.
+    if (i > 0 && (tokens[i - 1].kind == lex::colon || tokens[i - 1].kind == lex::arrow)) return true;
     Usize depth = 0;
     for (Usize j = i + 1; j < countof(tokens); j++) {
         if (tokens[j].kind == lex::left_paren) depth += 1;
@@ -469,17 +472,34 @@ static Bool is_fn_keyword(lex::Tokens tokens, Usize i) {
     return false;
 }
 
+// `yield x` in smith's own syntax is a statement: the `yield` has no `::` or `.` before it and a name or literal after
+// it on its line. Any other `yield` (a declaration `bool yield(`, a call `stream::yield(s)`, `s.yield`) is a C name.
+static Bool is_yield_keyword(lex::Tokens tokens, Usize i) {
+    if (i > 0 && (tokens[i - 1].kind == lex::colon_colon || tokens[i - 1].kind == lex::dot)) return false;
+    if (i + 1 >= countof(tokens) || tokens[i].line_break) return false;
+    lex::TokenKind next = tokens[i + 1].kind;
+    return next == lex::name || next == lex::type_name || next == lex::integer || next == lex::floating ||
+           next == lex::character || next == lex::string;
+}
+
+// `yield` is a keyword of smith's own syntax too (#2403): a C function or variable named `yield` is written `yield_`,
+// at its declaration and every use, in this file and, as `stream.yield_`, in the files that call it. A function that
+// exports a C symbol keeps it through `@c_name`.
 static Str rename_fn_names(Str source) {
     lex::Lexed lexed = lex::tokenize(source);
     if (lexed == .error) return source;
     lex::Tokens tokens = lexed.ok;
     Str fn_word = "fn";
+    Str yield_word = "yield";
     Str out = "";
     Usize at = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
-        if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), fn_word)) continue;
-        if (is_fn_keyword(tokens, i)) continue;
-        out = as_str(format::push(out, source[at:tokens[i].span.start], "fn_"));
+        if (tokens[i].kind != lex::name) continue;
+        Str word = lex::text(source, tokens[i]);
+        Bool is_fn = mem::equal(word, fn_word);
+        if (!is_fn && !mem::equal(word, yield_word)) continue;
+        if (is_fn ? is_fn_keyword(tokens, i) : is_yield_keyword(tokens, i)) continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], is_fn ? "fn_" : "yield_"));
         at = tokens[i].span.end;
     }
     if (at == 0) return source;
