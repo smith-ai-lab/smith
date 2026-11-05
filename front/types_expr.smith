@@ -421,11 +421,36 @@ static syntax::Edits mut_fix(const types::Symbol *s) {
     return edits;
 }
 
+// The edits for `&x` handed where a `*mut T` is wanted and `x` is a constant: `x` becomes `mut x`, and when `x` is
+// itself written `*T`, it becomes `*mut T` (what `&x` points at is then writable through the pointer).
+static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name) {
+    syntax::Edits edits = {};
+    if (!(name->kind == .name)) {
+        return edits;
+    }
+    const types::Symbol *x = types::lookup_path(&c->scopes, name->kind.name.path);
+    if (x == nullptr || x->kind != .variable || !x->is_new) {
+        return edits;
+    }
+    edits = mut_fix(x);
+    const ast::TypeExpr *written = x->written;
+    if (countof(edits) == 1 && written != nullptr && written->kind == .pointer && !written->kind.pointer.is_mut) {
+        edits = mem::realloc(edits, 2);
+        U32 after_star = written->span.start + 1;
+        Str word = "mut ";
+        edits[1] = (syntax::Edit){.span = {.start = after_star, .end = after_star}, .text = word};
+    }
+    return edits;
+}
+
 // The edits that let a write go through the pointer `base` (`p` in `p.* = v`): when `p` is written `*T`, its type
 // becomes `*mut T`; when `p` is taken from `&x` of a constant `x`, `x` becomes `mut x` in the same fix. Empty when
 // neither is so (the pointer comes from somewhere a fix cannot see).
 export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits edits = {};
+    if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
+        return address_fix(c, base->kind.unary.operand);
+    }
     if (base->kind != .name) {
         return edits;
     }

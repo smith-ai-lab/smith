@@ -105,3 +105,9 @@ export void test_front_fix_mut_a_written_pointer_local_becomes_mut() {
     expect("fn f() -> i32:\n    x: i32 = 0\n    q: *i32 = &x\n    q.* = 3\n    return x\n",
            "fn f() -> i32:\n    mut x: i32 = 0\n    q: *mut i32 = &x\n    q.* = 3\n    return x\n", 1);
 }
+
+// `&x` handed where a `*mut T` is wanted (#2368): the constant `x` becomes `mut x`, and its `*T` becomes `*mut T`.
+export void test_front_fix_mut_an_address_argument_makes_the_local_mut() {
+    expect("fn g(p: *mut *mut i32):\n    p.* = nullptr\nfn f():\n    q: *i32 = nullptr\n    g(&q)\n",
+           "fn g(p: *mut *mut i32):\n    p.* = nullptr\nfn f():\n    mut q: *mut i32 = nullptr\n    g(&q)\n", 1);
+}
