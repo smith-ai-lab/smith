@@ -24,6 +24,7 @@ import front::cimport;
 import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
+import front::fix_generic_c;
 import front::fix_method;
 import front::fix_opaque;
 import front::fix_variants;
@@ -207,6 +208,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(zeros); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = zeros[i];
+    }
+    // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
+    core::Errors generic = fix_generic_c::edits(source, module, &checked);
+    for (Usize i = 0; i < countof(generic); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = generic[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
