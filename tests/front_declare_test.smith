@@ -191,15 +191,16 @@ export void test_front_declare_if_let_warns_with_a_fix() {
 export void test_front_declare_a_bare_block_warns_with_a_fix() {
     Str message = "a block call takes parentheses, even with no arguments: write `html():`";
     test::check_equal(first_warning("fn f():\n    html:\n        body()\n"), message);
-    fixes_to("fn f():\n    html:\n        body:\n            h1()\n", "fn f():\n    html():\n        body():\n            h1()\n",
-             2);
+    fixes_to("fn f():\n    html:\n        body:\n            h1()\n",
+             "fn f():\n    html():\n        body():\n            h1()\n", 2);
 }
 
 // The checker's `mut` fix lands before the name with or without `let` (it used to skip four bytes for `let `).
 export void test_front_declare_the_mut_fix_goes_before_the_name() {
-    fixes_to("fn f():\n    total := 0\n    total = total + 1\n", "fn f():\n    mut total := 0\n    total = total + 1\n", 1);
-    fixes_to("fn f():\n    let total = 0\n    total = total + 1\n", "fn f():\n    mut total := 0\n    total = total + 1\n",
-             2);
+    fixes_to("fn f():\n    total := 0\n    total = total + 1\n", "fn f():\n    mut total := 0\n    total = total + 1\n",
+             1);
+    fixes_to("fn f():\n    let total = 0\n    total = total + 1\n",
+             "fn f():\n    mut total := 0\n    total = total + 1\n", 2);
 }
 
 // `mut x = 5` is a declaration with no type: the error's fix writes `:=`.

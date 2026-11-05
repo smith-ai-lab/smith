@@ -270,10 +270,9 @@ export void test_a_top_level_if_constexpr_becomes_when() {
         "t.smith", "import target;\n\nif constexpr (target::os == target::macos) {\n"
                    "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
                    "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
-    check_text(fixed.text,
-               "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
-               "mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nmut a: i32 = 2\n"
-               "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
+    check_text(fixed.text, "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
+                           "mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nmut a: i32 = 2\n"
+                           "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
 }
 
 // `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
@@ -307,8 +306,7 @@ export void test_a_top_level_if_constexpr_is_an_error_in_the_new_syntax() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed new_file =
-        parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    a: i32 = 1\n}\n");
+    parser::Parsed new_file = parser::parse_new("t.smith", "if constexpr (target.os == .macos) {\n    a: i32 = 1\n}\n");
     check_count(countof(new_file.errors) > 0 ? 1 : 0, 1);
     fix::Fixed kept = fix::fix_text("t.smith", "if constexpr (sizeof(int) == 4) {\n    int a = 1;\n}\n");
     check_text(kept.text, "if constexpr (sizeof(i32) == 4) {\n    mut a: i32 = 1\n}\n");
@@ -429,8 +427,7 @@ export void test_a_variable_with_a_designated_list_is_rewritten_to_a_call() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node "
                                                 "make(void) {\n    Node n = {.a = 1};\n    return n;\n}\n");
-    check_text(fixed.text,
-               "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    n := Node(a = 1)\n    return n\n");
+    check_text(fixed.text, "struct Node:\n    a: i32\nstatic fn make() -> Node:\n    n := Node(a = 1)\n    return n\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }

@@ -91,11 +91,10 @@ export void test_front_fix_blocks_a_c_for_with_a_continue_steps_before_it() {
 }
 
 export void test_front_fix_blocks_a_continue_of_an_inner_loop_is_not_stepped() {
-    check(
-        "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        for x in xs {\n            continue\n        }\n    "
-        "}\n}\n",
-        "fn f():\n    mut i: usize = 9\n    while i > 0:\n        for x in xs:\n            continue\n        i -= "
-        "1\n");
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        for x in xs {\n            continue\n        }\n    "
+          "}\n}\n",
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        for x in xs:\n            continue\n        i -= "
+          "1\n");
 }
 
 export void test_front_fix_blocks_a_continue_inside_a_one_line_block_gets_the_step() {

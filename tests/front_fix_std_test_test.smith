@@ -49,10 +49,9 @@ export void test_front_fix_std_cast_to_a_c_type() {
 }
 
 export void test_front_fix_std_array_of_pointers_with_a_list() {
-    expect_fixed(
-        "module m;\nvoid f(char *program) {\n    char *arguments[3] = {program, \"x\", nullptr};\n    "
-        "work(arguments);\n}\n",
-        "fn f(program: *char):\n    arguments: [3]*char = [program, \"x\", nullptr]\n    work(arguments)\n");
+    expect_fixed("module m;\nvoid f(char *program) {\n    char *arguments[3] = {program, \"x\", nullptr};\n    "
+                 "work(arguments);\n}\n",
+                 "fn f(program: *char):\n    arguments: [3]*char = [program, \"x\", nullptr]\n    work(arguments)\n");
 }
 
 export void test_front_fix_std_pointer_init_of_a_for_with_a_comment_in_the_body() {

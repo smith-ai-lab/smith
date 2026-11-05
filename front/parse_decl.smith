@@ -2570,10 +2570,10 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
 // smith's own syntax (#1428): `a := v`, `a: T = v`, `mut a := 0`, `const X = v`, `(q, r) := f()`, `fn`
 //
 // What tells the new form from the old one is the first one or two tokens, never the rest: `fn`, `mut` and `@` start
-// only the new forms; a name followed by `:=`, or by `:` and an `=` on the line, is a binding (the old forms start with a type and never have a
-// name before a `:`); `const` followed by such a name is a constant (the old `const` is followed by a type, and a type
-// is never followed by `:=` or `:`); a field is a lowercase name and `:` (an old field starts with a type); an
-// enumerator is a lowercase name that ends its line, or a name and `:`.
+// only the new forms; a name followed by `:=`, or by `:` and an `=` on the line, is a binding (the old forms start with
+// a type and never have a name before a `:`); `const` followed by such a name is a constant (the old `const` is
+// followed by a type, and a type is never followed by `:=` or `:`); a field is a lowercase name and `:` (an old field
+// starts with a type); an enumerator is a lowercase name that ends its line, or a name and `:`.
 
 // Whether the token at `at` is the word `let` and a name, `mut` or `(` follows (`if let .some(x)` has a `.`). `let` is
 // the old spelling of a declaration (#2316): it still parses, with a warning whose fix writes the form without it.
@@ -2591,7 +2591,8 @@ static Bool assigns_on_line(const parse::Parser *p, Usize at) {
     for (Usize step = 0; step < countof(p->tokens); step++) {
         lex::Token token = parse::peek_at(p, at + step);
         lex::TokenKind kind = token.kind;
-        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::indent || kind == lex::dedent) return false;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::indent || kind == lex::dedent)
+            return false;
         if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) depth += 1;
         if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) {
             if (depth == 0) return false;
@@ -2777,8 +2778,8 @@ export ast::Stmt *destructure(parse::Parser *p) {
         Bool is_mut = parse::accept(p, lex::kw_mut);
         lex::Token token = parse::peek(p);
         if (!is_name(token.kind)) {
-            char message[:] = format::push("a destructuring lists names: write `(q, r) := f()`, found `",
-                                           parse::text(p, token), "`");
+            char message[:] =
+                format::push("a destructuring lists names: write `(q, r) := f()`, found `", parse::text(p, token), "`");
             parse::error(p, token.span, message);
             recover_line(p);
             return nullptr;

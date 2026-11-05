@@ -408,9 +408,8 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         type = r->table.invalid;
     } else if (types_expr::is_undefined(init) && types::lookup(&r->scopes, "undefined") == nullptr) {
         if (is_auto(type)) {
-            types::failf(r, init->span, "`mut ", name,
-                         " := undefined` has no type to take; write the type, e.g. `mut ", name,
-                         ": i32 = undefined`");
+            types::failf(r, init->span, "`mut ", name, " := undefined` has no type to take; write the type, e.g. `mut ",
+                         name, ": i32 = undefined`");
             type = r->table.invalid;
         }
     } else if (is_auto(type)) {

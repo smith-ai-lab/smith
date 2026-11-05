@@ -517,8 +517,7 @@ static ast::Stmt *bare_block_statement(parse::Parser *p) {
     if (body == nullptr) return settle(p, start, before, empty_stmt());
     ast::Identifier captures[:] = {};
     ast::Param params[:] = {};
-    ast::Expr *block =
-        ast::expr({.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});
+    ast::Expr *block = ast::expr({.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});
     block->span = parse::span_from(p, block_start);
     ast::ExprRef args[:] = {};
     args = parse_type::with_expr(args, block);
