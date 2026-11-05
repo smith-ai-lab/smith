@@ -665,3 +665,20 @@ export void test_parse_stmt_layout_braced_bodies_inside_a_kept_switch() {
                  "    }\n";
     test::golden("tests/front/parse_stmt/braced_switch.txt", first_error(source));
 }
+
+// An arm of a braced `match` may be a block with declarations and a `return`, not a struct literal (#2397).
+export void test_parse_stmt_layout_braced_match_arm_is_a_block() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = ":\n"
+                 "    switch (s) {\n"
+                 "    case 1:\n"
+                 "        match t {\n"
+                 "        .ok => {\n            seen: Bytes = f()\n            return seen\n        }\n"
+                 "        _ => ()\n        }\n"
+                 "        break\n"
+                 "    }\n";
+    test::golden("tests/front/parse_stmt/braced_match_block.txt", first_error(source));
+}
