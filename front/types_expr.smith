@@ -2368,6 +2368,38 @@ static void stream_after(types::Checked *c, Frame f) {
 // ---------------------------------------------------------------------------------------------------------------
 // Construction: `Point(x = 1, y = 2)` (spec "Structs, enums and building values" of #1428)
 
+// A named tuple `(value = v, suffix = s)` where a payload struct is wanted is that struct's list `{.value = v, .suffix
+// = s}` (#2434), so each field is checked against its own type. Any other payload is as written.
+static ast::Expr *payload_value(types::TypeRef wanted, ast::Expr *payload) {
+    if (!(payload->kind == .tuple_lit) || !(wanted->kind == .record)) {
+        return payload;
+    }
+    ast::ExprRef items[:] = payload->kind.tuple_lit.items;
+    for (Usize i = 0; i < countof(items); i++) {
+        const ast::Expr *item = items[i];
+        if (!(item->kind == .named_arg)) {
+            return payload;
+        }
+    }
+    if (countof(items) == 0) {
+        return payload;
+    }
+    ast::Initializer list[:] = mem::alloc_slice(ast::Initializer, countof(items));
+    for (Usize i = 0; i < countof(items); i++) {
+        list[i].designators = mem::alloc_slice(ast::Designator, 1);
+        const ast::Expr *item = items[i];
+        if (item->kind == .named_arg) {
+            ast::Designator d = {.field = {.name = item->kind.named_arg.name}};
+            list[i].designators[0] = d;
+            list[i].value = item->kind.named_arg.value;
+        }
+    }
+    ast::Expr *made = mem::alloc(ast::Expr);
+    made->span = payload->span;
+    made->kind = {.compound = {.type = nullptr, .items = list}};
+    return made;
+}
+
 // The type a call's callee names (a struct, an enumeration or an alias of one), else null.
 static types::TypeRef named_type(const types::Checked *c, const ast::Expr *callee) {
     ast::Path path = {};
@@ -2411,7 +2443,8 @@ static const ast::Expr *enum_variant_call(const types::Checked *c, ast::Span spa
     if (slot == nullptr || !carries_value(slot->type)) return nullptr;
     ast::Expr *variant = mem::alloc(ast::Expr);
     variant->span = span;
-    variant->kind = {.variant = {.name = arg->kind.named_arg.name, .payload = arg->kind.named_arg.value}};
+    variant->kind = {
+        .variant = {.name = arg->kind.named_arg.name, .payload = payload_value(slot->type, arg->kind.named_arg.value)}};
     *made = t;
     return variant;
 }
@@ -3051,6 +3084,27 @@ static Bool listable(types::TypeRef t) {
     return t->kind == .record || t->kind == .array || t->kind == .option || t->kind == .result_type;
 }
 
+// `{.circle = payload}` where a payload enumeration is wanted builds the value `.circle(payload)` of it, the same as
+// `Shape(circle = payload)` (#2434): C's `(E){.name = payload}` reaches the checker untyped when the fixer cannot see
+// the type, as an argument. False when the list is no such form.
+static Bool payload_list(Work *w, Frame f, types::TypeRef t, ast::Initializer items[:]) {
+    const ast::Expr *e = f.node;
+    if (!(t->kind == .enumeration) || !t->has_payload || countof(items) != 1 || !field_designator(&items[0])) {
+        return false;
+    }
+    Str name = field_name(&items[0]);
+    const types::Slot *slot = types::member(t, name);
+    if (slot == nullptr || !carries_value(slot->type)) {
+        return false;
+    }
+    ast::Expr *variant = mem::alloc(ast::Expr);
+    variant->span = e->span;
+    variant->kind = {.variant = {.name = name, .payload = payload_value(slot->type, items[0].value)}};
+    push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 11, .twin = variant});
+    push(w, variant, t, 0);
+    return true;
+}
+
 static void compound_expr(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .compound)) {
@@ -3071,6 +3125,9 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     }
     if (t->kind == .slice && countof(e->kind.compound.items) == 0) {
         finish(c, e, t, f.expected);
+        return;
+    }
+    if (payload_list(w, f, t, e->kind.compound.items)) {
         return;
     }
     if (!listable(t)) {
@@ -5110,6 +5167,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         array_literal_after(c, f);
     } else if (e->kind == .tuple_lit) {
         tuple_after(c, f);
+    } else if (e->kind == .compound) {
+        enum_variant_after(c, f);
     } else {
         query_after(c, f);
     }
