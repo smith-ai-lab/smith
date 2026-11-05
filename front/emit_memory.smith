@@ -79,6 +79,11 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
     return ty;
 }
 
+// A pointer to `element` in the default address space (`*Word` when `Word` is a type alias).
+export state::Ty pointer_over(state::Emitter *e, state::Ty element) {
+    return pointer_to(e, element, 0);
+}
+
 static state::Ty array_of(state::Emitter *e, state::Ty element, U64 count) {
     state::Ty *inner = own(e, element);
     state::Ty ty = {.kind = .array, .llvm = c::LLVMArrayType2(element.llvm, count), .name = "array", .element = inner};

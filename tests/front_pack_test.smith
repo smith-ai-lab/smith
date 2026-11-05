@@ -5,6 +5,7 @@ module front_pack_test;
 import front::ast;
 import front::emit;
 import front::emit_jit;
+import front::parse;
 import front::parser;
 import front::types;
 import front::types_decl;
@@ -197,4 +198,75 @@ export void test_front_pack_for_over_a_runtime_value_is_still_an_error() {
                  "        s = s + 1\n"
                  "    s\n";
     test::check_equal(errors_of(source) > 0, true);
+}
+
+export void test_front_pack_typed_converts_each_argument() {
+    Str source = "fn sum(nums: i64...) -> i64:\n"
+                 "    nums.0 + nums.1 * 10 + nums.2 * 100\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let small: i32 = 5\n"
+                 "    sum(small, 2, 3).to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)325);
+}
+
+export void test_front_pack_typed_a_failed_conversion_is_an_error() {
+    Str source = "fn sum(nums: i32...) -> i32:\n"
+                 "    nums.0\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let wide: i64 = 5\n"
+                 "    sum(1, wide)\n";
+    test::check_equal(errors_of(source) > 0, true);
+}
+
+export void test_front_pack_concept_keeps_each_type() {
+    Str source = "fn total(nums: int...) -> i64:\n"
+                 "    nums.0.to(i64) + nums.1.to(i64) * 10\n"
+                 "\n"
+                 "fn width(nums: int...) -> usize:\n"
+                 "    let x = nums.0\n"
+                 "    let y = nums.1\n"
+                 "    sizeof(x) * 100 + sizeof(y)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    let a: u8 = 3\n"
+                 "    let b: i64 = 4\n"
+                 "    (total(a, b) + width(a, b).to(i64) * 1000).to(i32)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)108043);
+}
+
+export void test_front_pack_concept_rejects_a_value_outside_it() {
+    Str source = "fn total(nums: int...) -> i32:\n"
+                 "    1\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    total(1, 2.5)\n";
+    test::check_equal(errors_of(source) > 0, true);
+}
+
+static void expect_text(Str got, Str want) {
+    test::check_equal(mem::equal(got, want), true);
+}
+
+static parser::Parsed parse_text(Str source) {
+    return parse_new(source);
+}
+
+export void test_front_pack_old_dots_have_a_fix() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn f(a: i32, rest: ...) -> i32:\n"
+                 "    a\n";
+    parser::Parsed parsed = parse_text(source);
+    test::check_equal(countof(parsed.errors), (Usize)1);
+    parse::Edits fix = parsed.errors[0].fix;
+    test::check_equal(countof(fix), (Usize)1);
+    Str before = source[0:fix[0].span.start];
+    Str after = source[fix[0].span.end:countof(source)];
+    expect_text(before, "fn f(a: i32, rest");
+    expect_text(fix[0].text, "...");
+    expect_text(after, ") -> i32:\n    a\n");
 }

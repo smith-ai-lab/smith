@@ -1224,6 +1224,26 @@ static Str c_type_fix(Str name) {
     return "";
 }
 
+// The concept a written type names (`int`, `Num`): its lowercase name, or empty when it is no concept (#1821).
+export Str written_concept(const ast::TypeExpr *t) {
+    if (t == nullptr || t->kind != .named || countof(t->kind.named.path.segments) != 1) return "";
+    Str written = t->kind.named.path.segments[0].text;
+    if (is_own_concept(written)) return written;
+    return lowercase_concept(written);
+}
+
+// Whether the type satisfies the concept: `int` any integer, `signed` and `unsigned` by sign, `float`, `num` either,
+// `pointer` any pointer (#1821).
+export Bool concept_holds(Str concept, TypeRef t) {
+    if (same_text(concept, "int")) return t->kind == .integer;
+    if (same_text(concept, "signed")) return t->kind == .integer && t->is_signed;
+    if (same_text(concept, "unsigned")) return t->kind == .integer && !t->is_signed;
+    if (same_text(concept, "float")) return t->kind == .floating;
+    if (same_text(concept, "num")) return t->kind == .integer || t->kind == .floating;
+    if (same_text(concept, "pointer")) return t->kind == .pointer;
+    return false;
+}
+
 // The concept a capitalized concept name of today's spelling stands for (`Int` is `int`), or empty.
 static Str concept_lower(Str name) {
     if (same_text(name, "Int")) return "int";
@@ -1906,6 +1926,35 @@ static ast::TypeExpr *tuple_as_type(Checked *r, const ast::Expr *e) {
     return ast::make_type({.tuple = {.elements = elements}});
 }
 
+// `let Allocator = c.SmithAllocator`: `c` a binding of an imported C header (or the old global `c`) and the name a type
+// of that header. The alias stands for the type written as the path `c.SmithAllocator`; null when `init` is anything
+// else.
+static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
+    ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
+    if (init->kind == .member && !init->kind.member.arrow && init->kind.member.base->kind == .name &&
+        countof(init->kind.member.base->kind.name.path.segments) == 1) {
+        segments[0] = init->kind.member.base->kind.name.path.segments[0];
+        segments[1] = (ast::Identifier){.text = init->kind.member.name, .span = init->span};
+    } else if (init->kind == .name && countof(init->kind.name.path.segments) == 2) {
+        // a capitalized `c.Thing` is read as one qualified name
+        segments[0] = init->kind.name.path.segments[0];
+        segments[1] = init->kind.name.path.segments[1];
+    } else {
+        return nullptr;
+    }
+    Str first = segments[0].text;
+    if (!same_text(first, "c") && header_binding(r, first) == nullptr) return nullptr;
+    ast::Path path = {.segments = segments, .span = init->span};
+    const Symbol *found = nullptr;
+    if (same_text(first, "c")) {
+        found = lookup(&r->scopes, msg(format::push("c::", segments[1].text)));
+    } else {
+        found = type_through_modules(r, path);
+    }
+    if (found == nullptr || found->kind != .type_name) return nullptr;
+    return ast::make_type({.named = {.path = path}});
+}
+
 // The type a `let`/`const` of smith's own syntax stands for, or null when it is a value: `let Line = []u8` is a type
 // value, `const Pair = (i32, f32)` a tuple of types. It is plain substitution.
 static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
@@ -1914,7 +1963,7 @@ static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
     if (init == nullptr) return nullptr;
     if (init->kind == .type_value) return init->kind.type_value.type;
     if (init->kind == .tuple_lit) return tuple_as_type(r, init);
-    return nullptr;
+    return header_type_alias(r, init);
 }
 
 static void declare_own_alias(Checked *r, const ast::Decl *d) {

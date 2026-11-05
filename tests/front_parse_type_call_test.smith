@@ -20,7 +20,7 @@ export void test_return_type_is_a_qualified_type_function() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = "pub fn alloc_slice(T: type, dims: ...) -> arena.slice_of(T, countof(dims)):\n"
+    Str source = "pub fn alloc_slice(T: type, dims...) -> arena.slice_of(T, countof(dims)):\n"
                  "    return undefined\n";
     Str got = first_error(source);
     Str want = "no error";
