@@ -836,10 +836,21 @@ static ast::Pattern read_arm_pattern(parse::Parser *p) {
 
 // The result of a `match` arm: an expression, a `return`, `break` or `continue`, or the indented block on the next
 // lines, each as the value of a statement.
+// Whether the `{` at the position opens a block of statements, not a struct literal (#2397): a declaration, a jump, an
+// `if`, `while` or `for` follows it. A literal starts with `.name =`, `}` or a value.
+static Bool block_arm(const parse::Parser *p) {
+    if (parse::peek(p).kind != lex::left_brace) return false;
+    lex::TokenKind first = parse::peek_at(p, 1).kind;
+    if (first == lex::kw_return || first == lex::kw_if || first == lex::kw_while || first == lex::kw_for) return true;
+    if (first != lex::name) return false;
+    lex::TokenKind second = parse::peek_at(p, 2).kind;
+    return second == lex::colon || second == lex::colon_equal;
+}
+
 static ast::Expr *arm_result(parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
     Bool jump = kind == lex::kw_return || kind == lex::kw_break || kind == lex::kw_continue;
-    if (!jump && !(p->layout && kind == lex::newline)) return expression(p);
+    if (!jump && !block_arm(p) && !(p->layout && kind == lex::newline)) return expression(p);
     U32 start = parse::peek(p).span.start;
     ast::Stmt *stmt = parse::statement(p);
     if (stmt == nullptr) return nullptr;
