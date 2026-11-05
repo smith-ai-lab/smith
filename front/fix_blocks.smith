@@ -13,7 +13,7 @@
 //   struct S { a: i32, b: i32 }        one field to a line
 //   f(fn(a) { b })    f(fn(a): b)      a block inside parentheses stays on its line, and a multi-line one is left
 //   header {          header:          a `}` that ends the last statement's line goes without a line of its own
-//   for (T i = a; c; s) { b }          `let mut i: T = a`, then `while c:` with `s` as the last line of the body
+//   for (T i = a; c; s) { b }          `mut i: T = a`, then `while c:` with `s` as the last line of the body
 //   (#2225);
 //                                      the names already declared in the scope get an assignment instead of a `let`; a
 //                                      loop with a `continue`, a comma, or a body on the header's line is left
@@ -187,6 +187,37 @@ static Str colon_for(lex::Tokens tokens, Usize open) {
     Str none = "";
     Str colon = ":";
     return open > 0 && tokens[open - 1].kind == lex::colon ? none : colon;
+}
+
+// Whether the block is the arms of a `match`: its header line starts with `match`.
+static Bool match_header(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    while (i < open && tokens[i].kind == lex::right_brace)
+        i += 1;
+    return tokens[i].kind == lex::kw_match;
+}
+
+// The arms of a `match { .a => x }` as `match:` arms: each line is indented one step more than the header (when it is
+// not already), and an arm's `=>` is `:`.
+static void match_arms(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    if (brace.close == brace.open + 1 || !match_header(tokens, brace.open)) return;
+    Bool shift =
+        indent_of(source, tokens[brace.open + 1].span.start) <= indent_of(source, tokens[brace.open].span.start);
+    Usize nest = 0;
+    for (Usize i = brace.open + 1; i < brace.close; i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        Bool closer = kind == lex::right_brace && tokens[i + 1].kind != lex::kw_else; // its line goes
+        if (shift && tokens[i - 1].line_break && !closer) {
+            Usize at = line_start(source, tokens[i].span.start);
+            add_cut(cuts, at, at, spaces(step));
+        }
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) nest += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest -= 1;
+        if (kind == lex::fat_arrow && nest == 0)
+            add_cut(cuts, spaces_before(source, tokens[i].span.start), tokens[i].span.end, ":");
+    }
 }
 
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
@@ -530,7 +561,7 @@ static Str while_head(Header h, Bool declare, Usize indent) {
             Str automatic = "auto";
             Str kind = "";
             if (h.has_type && !mem::equal(h.type, automatic)) kind = as_str(format::push(": ", h.type));
-            line = as_str(format::push("let mut ", h.name, kind, " = ", h.value));
+            line = as_str(format::push("mut ", h.name, kind, " = ", h.value));
         }
         out = as_str(format::push(line, "\n", spaces(indent)));
     }
@@ -647,7 +678,9 @@ static Str apply(Str source, Cuts cuts) {
         Cut taken = cuts[best];
         cuts[best] = cuts[i];
         cuts[i] = taken;
-        if (taken.start < from) return source;
+        // A cut inside the text of an earlier one (a one-line block in the body of another) waits for the next round
+        // (#2310).
+        if (taken.start < from) continue;
         out = as_str(format::push(out, source[from:taken.start], taken.text));
         from = taken.end;
     }
@@ -811,7 +844,7 @@ static Str join_value_ifs(Str source) {
     return changed ? out : source;
 }
 
-export Str convert(Str source) {
+static Str convert_once(Str source) {
     for (Usize round = 0; round < 8; round++) {
         Str plain = plain_forms(source);
         if (mem::equal(plain, source)) break;
@@ -822,6 +855,14 @@ export Str convert(Str source) {
     lex::Tokens tokens = lexed.ok;
     Braces braces = braces_of(tokens);
     mark_c_functions(tokens, braces);
+    // The arms of a `match` come first, alone: they move lines, which the other cuts read where they stand.
+    Cuts arms = {};
+    for (Usize i = 0; i < countof(braces); i++) {
+        Brace brace = braces[i];
+        if (!brace.block || brace.skip || brace.inside || same_line(tokens, brace.open, brace.close)) continue;
+        if (multi_line_ready(tokens, brace)) match_arms(source, tokens, brace, &arms);
+    }
+    if (countof(arms) > 0) return apply(source, arms);
     Cuts cuts = {};
     string_runs(tokens, braces, &cuts);
     c_for_loops(source, tokens, braces, &cuts);
@@ -836,4 +877,14 @@ export Str convert(Str source) {
     }
     if (countof(cuts) == 0) return join_value_ifs(source);
     return join_value_ifs(apply(source, cuts));
+}
+
+// `convert_once` until the text stops changing: a one-line block inside another one-line block is cut in a later round.
+export Str convert(Str source) {
+    for (Usize round = 0; round < 8; round++) {
+        Str next = convert_once(source);
+        if (mem::equal(next, source)) break;
+        source = next;
+    }
+    return source;
 }

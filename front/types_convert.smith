@@ -166,6 +166,7 @@ static Str literal_text(Literal lit) {
 
 // Whether the constant is in the range of an integer of `bits` bits.
 static Bool fits(U32 bits, Bool is_signed, Literal lit) {
+    if (bits > 64) return is_signed || !lit.negative || lit.magnitude == 0; // a literal is a 64-bit value
     if (bits >= 64) {
         if (is_signed) {
             U64 limit = (U64)1 << 63;

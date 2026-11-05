@@ -36,6 +36,24 @@
         (block
           (expression (name f))))
       (match (name s) (arm (pattern a) (name v)) (arm (pattern b x) (name w)) (arm (pattern c) (pattern d) (name u)))
+      (match
+        (name k)
+        (arm (pattern  (name 1)) (name v))
+        (arm
+          (pattern  (name limit))
+          (pattern  (name 'a'))
+          (statement_expr
+            (return (name w))))
+        (arm
+          (pattern  (name -2))
+          (statement_expr
+            (block
+              (expression (name f))
+              (expression (name g)))))
+        (arm
+          (pattern _)
+          (statement_expr
+            (break))))
       (if_let
         (pattern some x)
         (name e)

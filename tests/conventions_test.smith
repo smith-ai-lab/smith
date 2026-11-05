@@ -256,7 +256,7 @@ export void test_conventions_library_include_files_links_files() {
     defer mem::set_allocator(outside);
     scratch::expect_text("library: #include <smith/files.h> links files", "found 1", last_line(&p, "smith run"));
     scratch::expect_text("library: ... and the libraries files needs",
-                         "arena.o contract.o env.o files.o math.o math_trig.o mem.o optimize.o trace.o",
+                         "arena.o contract.o env.o files.o math.o math_trig.o mem.o optimize.o optimize_asm.o trace.o",
                          scratch::capture(&p, "ls build/debug/smith | tr '\\n' ' ' | sed 's/ $//'"));
 }
 

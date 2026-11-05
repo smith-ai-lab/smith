@@ -181,7 +181,7 @@ static Str msg(char chars[:]) {
     return chars;
 }
 
-static Bool same_text(Str a, Str b) {
+export Bool same_text(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
         if (a[i] != b[i]) return false;
@@ -324,11 +324,13 @@ export Table start(Target target) {
     add_number(&t, "I16", .integer, 16, true);
     add_number(&t, "I32", .integer, 32, true);
     add_number(&t, "I64", .integer, 64, true);
+    add_number(&t, "I128", .integer, 128, true);
     add_number(&t, "Isize", .integer, word, true);
     add_number(&t, "U8", .integer, 8, false);
     add_number(&t, "U16", .integer, 16, false);
     add_number(&t, "U32", .integer, 32, false);
     add_number(&t, "U64", .integer, 64, false);
+    add_number(&t, "U128", .integer, 128, false);
     add_number(&t, "Usize", .integer, word, false);
     add_number(&t, "F16", .floating, 16, true);  // IEEE half (LLVM `half`)
     add_number(&t, "BF16", .floating, 16, true); // bfloat16 (LLVM `bfloat`)
@@ -346,7 +348,7 @@ export TypeRef builtin(const Table *t, Str name) {
     return nullptr;
 }
 
-// `I8`..`I64`, `U8`..`U64` (bits 8, 16, 32 or 64); null for another width.
+// `I8`..`I128`, `U8`..`U128` (bits 8, 16, 32, 64 or 128); null for another width.
 export TypeRef integer(const Table *t, U32 bits, Bool is_signed) {
     for (Usize i = 0; i < countof(t->builtins); i++) {
         const Ty *x = t->builtins[i].type;
@@ -1194,11 +1196,13 @@ static Str own_builtin(Str name) {
     if (same_text(name, "i16")) return "I16";
     if (same_text(name, "i32")) return "I32";
     if (same_text(name, "i64")) return "I64";
+    if (same_text(name, "i128")) return "I128";
     if (same_text(name, "isize")) return "Isize";
     if (same_text(name, "u8")) return "U8";
     if (same_text(name, "u16")) return "U16";
     if (same_text(name, "u32")) return "U32";
     if (same_text(name, "u64")) return "U64";
+    if (same_text(name, "u128")) return "U128";
     if (same_text(name, "usize")) return "Usize";
     if (same_text(name, "f16")) return "F16";
     if (same_text(name, "bf16")) return "BF16";
@@ -1955,6 +1959,15 @@ static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
     return ast::make_type({.named = {.path = path}});
 }
 
+// `Count := U64`, `Image := Other`: a binding whose value is the name of a type declared before it is an alias of that
+// type (#2323). The rule is on the binding's value, not on the keyword that spells it.
+static ast::TypeExpr *named_type_alias(Checked *r, const ast::Expr *init) {
+    if (init->kind != .name || countof(init->kind.name.path.segments) != 1) return nullptr;
+    const Symbol *found = lookup(&r->scopes, init->kind.name.path.segments[0].text);
+    if (found == nullptr || found->kind != .type_name) return nullptr;
+    return ast::make_type({.named = {.path = init->kind.name.path}});
+}
+
 // The type a `let`/`const` of smith's own syntax stands for, or null when it is a value: `let Line = []u8` is a type
 // value, `const Pair = (i32, f32)` a tuple of types. It is plain substitution.
 static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
@@ -1963,7 +1976,9 @@ static ast::TypeExpr *own_alias_type(Checked *r, const ast::Decl *d) {
     if (init == nullptr) return nullptr;
     if (init->kind == .type_value) return init->kind.type_value.type;
     if (init->kind == .tuple_lit) return tuple_as_type(r, init);
-    return header_type_alias(r, init);
+    ast::TypeExpr *header = header_type_alias(r, init);
+    if (header != nullptr) return header;
+    return named_type_alias(r, init);
 }
 
 static void declare_own_alias(Checked *r, const ast::Decl *d) {
@@ -2320,6 +2335,24 @@ static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool
     }
 }
 
+// The copy of the template that an instance is made of. A `for x in rest` over the pack becomes one copy of its body
+// for each element of the tuple the pack is bound to (#2293).
+static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
+    if (template->kind != .function) return ast_clone::clone_decl(template);
+    ast::Param params[:] = template->kind.function.params;
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
+            if (bound >= countof(given) || given[bound].type == nullptr) break;
+            TypeRef pack = given[bound].type;
+            if (!(pack->kind == .tuple)) break;
+            return ast_clone::clone_decl_unrolling(template, params[i].name, countof(pack->slots));
+        }
+        if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
+    }
+    return ast_clone::clone_decl(template);
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
@@ -2332,7 +2365,7 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
               " instances; a generic function that calls itself with ever larger types never ends");
         return max_instances;
     }
-    ast::Decl *copy = ast_clone::clone_decl(template);
+    ast::Decl *copy = clone_instance(template, given);
     if (copy->kind != .function) return max_instances;
     ast::Param all[:] = copy->kind.function.params;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));

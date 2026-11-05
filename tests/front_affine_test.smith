@@ -96,8 +96,8 @@ export void test_front_affine_the_error_names_the_first_use() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str source = text_of(format::push(
-        prelude(), "fn twice(key: Key) -> u64:\n    let a = draw(key)\n    let b = draw(key)\n    a + b\n"));
+    Str source = text_of(
+        format::push(prelude(), "fn twice(key: Key) -> u64:\n    a := draw(key)\n    b := draw(key)\n    a + b\n"));
     parser::Parsed p = parser::parse_new("t.smith", source);
     types::Checked r = types_decl::check_module(&p.module, types::lp64());
     test::check_equal(r.error_count, (Usize)1);

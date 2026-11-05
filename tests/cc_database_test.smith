@@ -1,0 +1,52 @@
+// `smith cc --front-end=new` reads a file's C headers with the flags the build gave that file in compile_commands.json
+// (the `-I` of a library's include folder, #2313), as clang does: `import <inner.h>;` finds a header in a folder only
+// the database names, and says it cannot read it where there is no database.
+// smith-covers: runtime/front_flag.c
+module cc_database_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+static const char *database() {
+    return "[\n  {\n    \"directory\": \".\",\n    \"file\": \"deep/nested/a.smith\",\n    \"arguments\": [\n"
+           "      \"smith-cc\",\n      \"-I\",\n      \"third/inc\",\n      \"-c\",\n      \"deep/nested/a.smith\"\n"
+           "    ]\n  }\n]\n";
+}
+
+static void prepare(const scratch::Project *p) {
+    scratch::Run made = scratch::sh(p, "mkdir -p deep/nested third/inc");
+    scratch::expect_status("the folders are made", 0, &made);
+    scratch::write(p, "third/inc/inner.h", "int inner_value(void);\n");
+    scratch::write(p, "deep/nested/a.smith",
+                   "import <inner.h>;\n\nexport I32 g() {\n    return c::inner_value();\n}\n");
+}
+
+export void test_cc_reads_a_header_with_the_flags_of_the_compile_database() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::write(&p, "compile_commands.json", database());
+    scratch::Run run =
+        scratch::sh(&p, "unset SMITH_FRONT_CIMPORT_FLAGS; smith cc --front-end=new -c deep/nested/a.smith -o a.o 2>&1");
+    scratch::expect_status("the file compiles", 0, &run);
+    scratch::expect_lacks("nothing is refused", run.out, "cannot read the C header");
+}
+
+export void test_cc_cannot_read_a_header_in_a_folder_no_flag_names() {
+    scratch::Project p = scratch::make("p", "lint_cache");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prepare(&p);
+    scratch::Run run =
+        scratch::sh(&p, "unset SMITH_FRONT_CIMPORT_FLAGS; smith cc --front-end=new -c deep/nested/a.smith -o a.o 2>&1");
+    scratch::expect_contains("the header is refused", run.out, "cannot read the C header `inner.h`");
+}

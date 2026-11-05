@@ -30,7 +30,7 @@ word := match color:
     .green, .blue: "go"                               # several variants share an arm
 ```
 
-`match` is exhaustive with no fall-through, over enums, payload enums, `?T` and results; `if .circle(c) := shape:` tests one variant and binds its payload. C's `switch` is an error whose fix is `match`. There is no `goto`, no labels, and `++`/`--` are errors whose fix is `+= 1`.
+`match` is exhaustive with no fall-through, over enums, payload enums, `?T` and results; `if .circle(c) := shape:` tests one variant and binds its payload. A `match` also takes constants (owner, 2026-11-05; the parser reads them, the checker and emitter not yet, #2328): `kind_a: x`, `0, 1: y`, `_: return z`; a bare name in a pattern is an existing constant, never a binding, `_` is the default (required unless every value is covered), and an arm body is an expression, a `return`/`break`/`continue` or an indented block. C's `switch` with no fall-through is an error whose fix is such a `match`. There is no `goto`, no labels, and `++`/`--` are errors whose fix is `+= 1`.
 
 ## defer, errdefer and try
 

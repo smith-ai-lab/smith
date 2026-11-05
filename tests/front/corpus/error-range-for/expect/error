@@ -1,2 +1,3 @@
+src/main.smith:3:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
 src/main.smith:4:14: error: `const I32 *` is not iterable: a pointer has no length; slice it, `p[0:n]`
 src/main.smith:6:14: error: `I32` is not iterable: only arrays, slices, `str`, blocks and streams are; write `range(n)` to count

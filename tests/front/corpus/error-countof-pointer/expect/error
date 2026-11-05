@@ -1,1 +1,2 @@
+src/main.smith:6:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
 src/main.smith:3:5: error: countof takes an array or a slice, found `const U32 *`; write the name of an array or a slice

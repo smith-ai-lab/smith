@@ -568,6 +568,9 @@ static void finish(types::Checked *c, const ast::Expr *e, types::TypeRef found, 
 // Whether `value` (negated when `negated`) is a value of the integer type `t`.
 static Bool fits(types::TypeRef t, U64 value, Bool negated) {
     U64 one = 1;
+    if (t->bits > 64) {
+        return t->is_signed || !negated || value == 0; // a literal is a 64-bit value: 128 bits hold them all
+    }
     if (t->is_signed) {
         U64 limit = one << (t->bits - 1);
         if (negated) {
@@ -586,6 +589,11 @@ static Bool fits(types::TypeRef t, U64 value, Bool negated) {
 
 static Str range_text(types::TypeRef t) {
     U64 one = 1;
+    if (t->bits > 64) {
+        if (t->is_signed)
+            return msg("-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727");
+        return msg("0 to 340282366920938463463374607431768211455");
+    }
     if (t->is_signed) {
         U64 limit = one << (t->bits - 1);
         return msg(format::push("-", limit, " to ", limit - 1));
@@ -841,7 +849,7 @@ static void name_expr(types::Checked *c, Frame f) {
     ast::Path path = e->kind.name.path;
     const types::Symbol *s = types::lookup_path(&c->scopes, path);
     if (s == nullptr && is_undefined(e)) {
-        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `let mut x: i32 = undefined`");
+        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `mut x: i32 = undefined`");
         poison(c, e);
         return;
     }
@@ -939,7 +947,7 @@ static void try_after(types::Checked *c, Frame f) {
     }
     if (operand->kind != .option) {
         types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
-                     "`; write `try` before an option, or use `if let` for any other value");
+                     "`; write `try` before an option, or use `if x := value:` for any other value");
         poison(c, e);
         return;
     }
@@ -2116,7 +2124,11 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
     }
     const types::Symbol *local = function_named(c, name, false);
     if (record->kind == .record && types::member(record, name) != nullptr) {
-        if (own != nullptr || local != nullptr) {
+        // Only a function that takes this type first is a method of it, so only it clashes with the field: `mem.alloc`
+        // takes a type first, and `a.alloc(...)` on an allocator can only mean the field (#2342).
+        Bool own_clashes = own != nullptr && first_parameter(own) == record;
+        Bool local_clashes = local != nullptr && first_parameter(local) == record;
+        if (own_clashes || local_clashes) {
             types::failf(c, e->span, "`", types::show(record), "` has a field `", name, "` and a function `", name,
                          "`; rename one, a field and a method of one type cannot share a name");
             poison(c, e);
@@ -2570,7 +2582,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     Str found = types::show(base);
     if (base->kind == .enumeration && base->has_payload) {
         types::failf(c, e->span, "`", found, "` is a payload enumeration, so a payload can't be read with `.",
-                     arrow ? "->" : ".", "`; test the variant first, with `if let .variant(v) = x:` or a `match`");
+                     arrow ? "->" : ".", "`; test the variant first, with `if .variant(v) := x:` or a `match`");
     } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
@@ -3342,7 +3354,7 @@ static void bind_stage(types::Checked *c, Frame f) {
         return;
     }
     if (t->kind != .option) {
-        types::failf(c, s->span, "`if let` takes an optional, but this is a `", types::show(t),
+        types::failf(c, s->span, "`if x := value:` takes an optional, but this is a `", types::show(t),
                      "`; write a value of type `?T`, or an `if` with a comparison");
     } else if (!same_text(name, "some") && !same_text(name, "none")) {
         types::failf(c, s->span, "a `?T` is either `.some(x)` or `.none`, not `.", name, "`; write one of those");
@@ -4210,8 +4222,7 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
 // Spread: `f(x; s...)` passes each field of the struct or named tuple `s` as the named argument of that name (#1914)
 
 static Bool is_spread(const ast::Expr *arg) {
-    if (arg->kind == .expand) return arg->kind.expand.named;
-    return false;
+    return arg->kind == .expand; // `s...` after the `;` spreads named fields, `rest...` a pack into positions (#2293)
 }
 
 // The value a spread argument spreads.
@@ -4236,12 +4247,40 @@ static Bool plain_place(const ast::Expr *e) {
     return at->kind == .name;
 }
 
+// `rest...` in a call: each element of the tuple `t` is passed as the next argument, `rest.0, rest.1, ...` (#2293). A
+// run-time index or slice is not a pack: the error says to use a slice.
+static Bool spread_positions(types::Checked *c, const ast::Expr *arg, types::TypeRef t, ast::ExprRef out[:],
+                             Usize *count) {
+    ast::Expr *pattern = spread_value(arg);
+    if (!(t->kind == .tuple)) {
+        types::failf(c, arg->span, "cannot spread a value of type `", types::show(t),
+                     "` into arguments: only a pack or a tuple can be; a run-time index of a slice cannot, ",
+                     "pass a slice `[]T` instead");
+        return false;
+    }
+    if (!plain_place(pattern)) {
+        types::failf(c, arg->span, "a spread reads each element of its value; spread a name, such as `rest...`");
+        return false;
+    }
+    for (Usize k = 0; k < countof(t->slots); k++) {
+        char chars[:] = format::push(k);
+        Str index = chars;
+        ast::ExprKind member = {.member = {.base = pattern, .name = index}};
+        ast::Expr *element = ast::expr(member);
+        element->span = arg->span;
+        out[*count] = element;
+        *count += 1;
+    }
+    return true;
+}
+
 // The arguments of a call with each spread replaced by one `field = s.field` per field of `s`; null when the spread
 // is refused (the error is reported).
 static Bool spread_into(types::Checked *c, const ast::Expr *arg, ast::ExprRef out[:], Usize *count) {
     ast::Expr *pattern = spread_value(arg);
     types::TypeRef t = typ(c, pattern);
     if (t == invalid(c)) return false;
+    if (!(arg->kind == .expand) || !arg->kind.expand.named) return spread_positions(c, arg, t, out, count);
     if (t->kind != .record && t->kind != .tuple) {
         types::failf(c, arg->span, "cannot spread a value of type `", types::show(t),
                      "`; spread a struct or a named tuple after the `;`");
@@ -4377,7 +4416,7 @@ static void assign_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     push(w, e, f.expected, 1);
     if (is_bare_underscore(target)) {
-        types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `let _ = x`");
+        types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `_ := x`");
         poison(c, target);
         return;
     }

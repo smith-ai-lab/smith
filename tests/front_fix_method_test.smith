@@ -73,8 +73,8 @@ static void expect(Str before, Str after, Usize applied) {
 }
 
 export void test_front_fix_method_a_call_taking_the_address_is_written_as_a_method() {
-    expect("fn run():\n    let mut xs = list.make()\n    list.push(&xs, 5)\n",
-           "fn run():\n    let mut xs = list.make()\n    xs.push(5)\n", 1);
+    expect("fn run():\n    mut xs := list.make()\n    list.push(&xs, 5)\n",
+           "fn run():\n    mut xs := list.make()\n    xs.push(5)\n", 1);
 }
 
 export void test_front_fix_method_a_pointer_is_passed_on_and_a_value_stays_a_value() {

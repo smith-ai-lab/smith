@@ -21,10 +21,10 @@ static void expect(Str before, Str after) {
 }
 
 export void test_front_check_discard_a_discarded_name() {
-    expect("void f(U64 x) {\n    (void)x;\n}\n", "fn f(x: u64):\n    let _ = x\n");
+    expect("void f(U64 x) {\n    (void)x;\n}\n", "fn f(x: u64):\n    _ := x\n");
 }
 
 export void test_front_check_discard_a_discarded_call() {
     expect("U64 g(U64 x) {\n    return x;\n}\nvoid f(U64 x) {\n    (void)g(x);\n}\n",
-           "fn g(x: u64) -> u64:\n    return x\nfn f(x: u64):\n    let _ = g(x)\n");
+           "fn g(x: u64) -> u64:\n    return x\nfn f(x: u64):\n    _ := g(x)\n");
 }

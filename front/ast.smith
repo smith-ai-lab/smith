@@ -270,10 +270,14 @@ export struct Param {
     Span span;
 };
 
-// A pattern of `match`, `if let` and `for`: `.name`, or `.name(binding)` with a binding (empty when absent).
+// A pattern of `match`, `if let` and `for`: `.name`, or `.name(binding)` with a binding (empty when absent). An arm of
+// `match` may also be a constant (`1`, `limit`, `kind_signed`): `constant` is its expression, `name` empty. `_` is the
+// default arm: `wildcard`, `name` empty and no constant.
 export struct Pattern {
     Text name;
     Text binding;
+    Expr *constant;
+    Bool wildcard;
     Span span;
 };
 
@@ -442,6 +446,7 @@ export typedef enum {
     struct {
         Expr *condition;
         Stmt *body;
+        Bool binds; // `while x := v:`, read as `while true:` around `if x := v: ... else: break` (#2316)
     } while_stmt;
     struct {
         Stmt *body;
@@ -535,7 +540,8 @@ export typedef enum {
         Bool is_constexpr;
         Bool is_thread_local;
         Bool is_mut; // `x: T = v` mutable local in the new syntax
-        Bool is_new; // written in smith's own syntax (`let x = v`, `let x: T = v`, `let mut x ...`)
+        Bool is_new; // written in smith's own syntax (`x := v`, `x: T = v`, `mut x ...`, the old `let x = v`)
+        U32 name_at; // where its name starts, in smith's own syntax: a fix writes `mut ` there
     } variable;      // `auto x = ...` has the type auto_type
     struct {
         Text name;
@@ -951,6 +957,16 @@ export Expr *stmt_expr(Stmt *stmt) {
 // `.name` or `.name(binding)`; an empty binding is none.
 export Pattern pattern(Str text, Str binding) {
     return (Pattern){.name = text, .binding = binding};
+}
+
+// A constant pattern of a `match`: `1`, `limit`, `kind_signed`.
+export Pattern constant_pattern(Expr *value) {
+    return (Pattern){.constant = value};
+}
+
+// The default arm of a `match`: `_`.
+export Pattern wildcard_pattern() {
+    return (Pattern){.wildcard = true};
 }
 
 // `.a, .b => value`.
@@ -1509,6 +1525,7 @@ static void other_children_more(Items *items, Node node) {
             add(items, {.pattern = &node.arm->patterns[i]});
         add_expr(items, node.arm->value, false);
     }
+    if (node == .pattern) add_expr(items, node.pattern->constant, false);
     if (node == .decl_group) add_decls(items, node.decl_group.decls);
     if (node == .typed) add_type(items, node.typed.type, false);
 }
@@ -2086,7 +2103,10 @@ static void initializer_head(Output *text, Node node) {
 static void pattern_head(Output *text, Node node) {
     if (node == .pattern) {
         put(text, "pattern ");
-        put(text, node.pattern->name);
+        if (node.pattern->wildcard)
+            put(text, "_");
+        else
+            put(text, node.pattern->name);
         if (countof(node.pattern->binding) > 0) put_word(text, node.pattern->binding);
     }
     if (node == .arm) put(text, "arm");

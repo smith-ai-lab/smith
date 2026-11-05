@@ -161,3 +161,14 @@ export void test_front_types_method_current_module_shadowing_the_type_module_is_
 export void test_front_types_method_a_field_holding_a_function_is_called_as_before() {
     clean("struct S:\n    f: fn(i32) -> i32\n\nfn run(s: S) -> i32:\n    s.f(1)\n");
 }
+
+export void test_front_types_method_a_function_taking_a_type_first_does_not_clash_with_a_field() {
+    clean("struct A:\n    alloc: fn(i32) -> i32\n\nfn alloc(T: type, n: usize) -> usize:\n    n\n\n"
+          "fn run(a: A) -> i32:\n    a.alloc(1)\n");
+}
+
+export void test_front_types_method_a_function_taking_a_pointer_to_the_type_still_clashes_with_a_field() {
+    fails("struct S:\n    size: i32\n\nfn size(s: *S) -> i32:\n    s.size\n\nfn run(s: *S) -> i32:\n    "
+          "s.size()\n",
+          "a field and a method of one type cannot share a name", "");
+}

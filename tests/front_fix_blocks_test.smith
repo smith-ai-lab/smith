@@ -61,24 +61,24 @@ export void test_front_fix_blocks_a_c_signature_is_left_whole() {
 }
 
 export void test_front_fix_blocks_a_c_for_with_an_unbraced_body() {
-    check("fn f(uri: str) {\n    let mut same: bool = true\n    for (usize k = 0; same && k < n; k++)\n        same = "
+    check("fn f(uri: str) {\n    mut same: bool = true\n    for (usize k = 0; same && k < n; k++)\n        same = "
           "a[k] == uri[k]\n    done()\n}\n",
-          "fn f(uri: str):\n    let mut same: bool = true\n    let mut k: usize = 0\n    while same && k < n:\n        "
+          "fn f(uri: str):\n    mut same: bool = true\n    mut k: usize = 0\n    while same && k < n:\n        "
           "same = a[k] == uri[k]\n        k += 1\n    done()\n");
 }
 
 export void test_front_fix_blocks_a_c_for_with_a_braced_body() {
     check("fn f(xs: []i32) {\n    for (usize i = countof(xs); i > 0; i--) {\n        use(xs[i - 1])\n    }\n}\n",
-          "fn f(xs: []i32):\n    let mut i: usize = countof(xs)\n    while i > 0:\n        use(xs[i - 1])\n        i "
+          "fn f(xs: []i32):\n    mut i: usize = countof(xs)\n    while i > 0:\n        use(xs[i - 1])\n        i "
           "-= 1\n");
     check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a()\n        b() }\n}\n",
-          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        a()\n        b()\n        i -= 1\n");
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        a()\n        b()\n        i -= 1\n");
 }
 
 export void test_front_fix_blocks_a_second_loop_with_the_same_counter_assigns() {
     check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        a()\n    }\n    for (usize i = 7; i > 0; i--) {\n    "
           "    b()\n    }\n}\n",
-          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        a()\n        i -= 1\n    i = 7\n    while i > "
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        a()\n        i -= 1\n    i = 7\n    while i > "
           "0:\n        b()\n        i -= 1\n");
 }
 
@@ -86,21 +86,20 @@ export void test_front_fix_blocks_a_c_for_with_a_continue_steps_before_it() {
     check(
         "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        if skip(i) {\n            continue\n        }\n        "
         "a(i)\n    }\n}\n",
-        "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        if skip(i):\n            i -= 1\n            "
+        "fn f():\n    mut i: usize = 9\n    while i > 0:\n        if skip(i):\n            i -= 1\n            "
         "continue\n        a(i)\n        i -= 1\n");
 }
 
 export void test_front_fix_blocks_a_continue_of_an_inner_loop_is_not_stepped() {
-    check(
-        "fn f() {\n    for (usize i = 9; i > 0; i--) {\n        for x in xs {\n            continue\n        }\n    "
-        "}\n}\n",
-        "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        for x in xs:\n            continue\n        i -= "
-        "1\n");
+    check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        for x in xs {\n            continue\n        }\n    "
+          "}\n}\n",
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        for x in xs:\n            continue\n        i -= "
+          "1\n");
 }
 
 export void test_front_fix_blocks_a_continue_inside_a_one_line_block_gets_the_step() {
     check("fn f() {\n    for (usize i = 9; i > 0; i--) {\n        if skip(i) { continue }\n        a(i)\n    }\n}\n",
-          "fn f():\n    let mut i: usize = 9\n    while i > 0:\n        if skip(i):\n            i -= 1\n"
+          "fn f():\n    mut i: usize = 9\n    while i > 0:\n        if skip(i):\n            i -= 1\n"
           "            continue\n        a(i)\n        i -= 1\n");
 }
 
@@ -169,4 +168,11 @@ export void test_front_fix_blocks_an_if_value_after_an_assignment_joins_its_line
 export void test_front_fix_blocks_a_case_label_keeps_its_one_colon() {
     check("fn f() {\n    switch (x) {\n    case .a: {\n        g()\n    }\n    }\n}\n",
           "fn f():\n    switch (x):\n    case .a:\n        g()\n");
+}
+
+export void test_front_fix_blocks_a_one_line_block_inside_another_converts_in_a_later_round() {
+    check("const a: i32 = if x { 1 } else { 2 }\nfn f(x: i32) -> i32 {\n    if x < 0 { return if x == 1 { 5 } else { 6 "
+          "} }\n    return 0\n}\n",
+          "const a: i32 = if x: 1 else: 2\nfn f(x: i32) -> i32:\n    if x < 0:\n        return if x == 1: 5 else: 6\n  "
+          "  return 0\n");
 }
