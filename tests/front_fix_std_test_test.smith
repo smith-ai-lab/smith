@@ -128,3 +128,8 @@ export void test_front_fix_std_noreturn_after_a_constant() {
                  "c::abort();\n}\n",
                  "const capacity: usize = 128\n\n# A function.\n[[noreturn]] fn stop():\n    c.abort()\n");
 }
+
+export void test_front_fix_std_a_c_variadic_definition_keeps_its_dots() {
+    expect_fixed("module m;\nvoid log_to(const char *format, ...) {\n    work(format);\n}\n",
+                 "fn log_to(format: *char, ...):\n    work(format)\n");
+}

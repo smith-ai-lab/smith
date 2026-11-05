@@ -1290,7 +1290,10 @@ static Bool new_parameters(const parse::Parser *p, Usize open, Usize close, Str 
         if (i < close && (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace))
             depth -= 1;
         if (i == close || (kind == lex::comma && depth == 0)) {
-            Str one = new_parameter(p, from, i);
+            // A C-variadic definition keeps its `...` last (`fn f(format: *char, ...)`, #2333).
+            Bool dots = i == close && i == from + 1 && p->tokens[from].kind == lex::ellipsis;
+            Str one = "...";
+            if (!dots) one = new_parameter(p, from, i);
             if (countof(one) == 0) return false;
             if (countof(*out) > 0)
                 *out = as_str(format::push(*out, ", ", one));
@@ -2926,7 +2929,7 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
 // Layout path: the `:` and the body of `fn name(...) -> r:`, the block indented or one statement on the line; a `:`
 // with nothing after it is an empty body.
 static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, U32 start, lex::Token name,
-                                         ParamList params, ast::TypeExpr *result, Usize errors_before) {
+                                         ParamList params, ast::TypeExpr *result, Usize errors_before, Bool variadic) {
     if (!failed_since(p, errors_before) && !parse::accept(p, lex::colon)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `:` after the parameters");
     }
@@ -2942,7 +2945,8 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
     } else {
         body = parse::statement(p);
     }
-    ast::DeclKind kind = {.function = {.name = parse::text(p, name), .params = params, .result = result, .body = body}};
+    ast::DeclKind kind = {
+        .function = {.name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
     return make(p, start, pre, kind);
 }
 
@@ -2953,16 +2957,11 @@ static void check_pack(ast::Param *param, Bool after_semicolon) {
     param->is_gather = true;
 }
 
-// A bare `...` ends the parameters of an `extern fn`: it declares a C variadic. True; an error elsewhere.
-static Bool parse_bare_dots(parse::Parser *p, const Prefixes *pre) {
-    lex::Token dots = parse::advance(p);
-    if (!pre->is_extern) {
-        parse::error(p, dots.span,
-                     "a Smith function names its variadic parameters: `rest...`; a bare `...` only declares a "
-                     "C function with `extern fn`");
-    } else if (!parse::at(p, lex::right_paren)) {
-        parse::error(p, parse::peek(p).span, "`...` is the last parameter of an `extern fn`");
-    }
+// A bare `...` ends the parameters of a function: it is a C variadic, declared by an `extern fn` or defined with a body
+// (#2333). True; an error when it is not last.
+static Bool parse_bare_dots(parse::Parser *p) {
+    parse::advance(p);
+    if (!parse::at(p, lex::right_paren)) parse::error(p, parse::peek(p).span, "`...` is the last parameter of a function");
     return true;
 }
 
@@ -2994,7 +2993,7 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     Bool variadic = false;
     while (!failed_since(p, errors_before) && !parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         if (parse::at(p, lex::ellipsis)) {
-            variadic = parse_bare_dots(p, pre);
+            variadic = parse_bare_dots(p);
             break;
         }
         ast::Param param = {};
@@ -3026,7 +3025,7 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     if (pre->is_extern && !failed_since(p, errors_before) && !parse::at(p, lex::colon) &&
         !parse::at(p, lex::left_brace))
         return extern_function(p, pre, start, parse::text(p, name), params, result, variadic);
-    if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before);
+    if (p->layout) return finish_layout_function(p, pre, start, name, params, result, errors_before, variadic);
     if (!failed_since(p, errors_before) && !parse::at(p, lex::left_brace)) {
         parse::error(p, parse::peek(p).span, "a function has a body: expected `{` after the parameters");
     }
@@ -3035,7 +3034,8 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
         return nullptr;
     }
     ast::Stmt *body = parse::statement(p);
-    ast::DeclKind kind = {.function = {.name = parse::text(p, name), .params = params, .result = result, .body = body}};
+    ast::DeclKind kind = {
+        .function = {.name = parse::text(p, name), .params = params, .result = result, .body = body, .variadic = variadic}};
     return make(p, start, pre, kind);
 }
 
