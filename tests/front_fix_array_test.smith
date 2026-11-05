@@ -40,3 +40,13 @@ export void test_front_fix_array_a_static_array_is_zero_filled() {
 export void test_front_fix_array_an_empty_list_is_zero_filled() {
     expect("void f(void) {\n    I32 xs[2] = {};\n}\n", "fn f():\n    let mut xs: [2]i32 = [0, 0]\n");
 }
+
+// A text buffer C zeroes is written with its zero values; a prototype before its definition goes (#1901).
+export void test_front_fix_array_a_char_buffer_is_zero_filled() {
+    expect("void f(void) {\n    char name[4] = {};\n}\n", "fn f():\n    let mut name: [4]char = [0, 0, 0, 0]\n");
+}
+
+export void test_front_fix_array_a_prototype_before_its_definition_goes() {
+    expect("const char *name(I32 x);\nconst char *name(I32 x) {\n    return nullptr;\n}\n",
+           "fn name(x: i32) -> *char:\n    return nullptr\n");
+}

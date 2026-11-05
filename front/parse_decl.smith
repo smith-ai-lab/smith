@@ -1419,6 +1419,7 @@ static Str zero_element(Str type) {
     if (same_text(type, "f32") || same_text(type, "f64")) return "0.0";
     if (is_number_type(type)) return "0";
     if (same_text(type, "bool")) return "false";
+    if (same_text(type, "char")) return "0";
     if (countof(type) > 1 && type[0] == '*') return "nullptr";
     return "";
 }
@@ -1600,6 +1601,36 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     warn(p, head.type_start, last.span.end, message, edits);
 }
 
+// Whether the file defines a function called `name` with a body: the name, its parenthesized parameters, then `{`.
+static Bool has_definition(const parse::Parser *p, Str name) {
+    Usize count = countof(p->tokens);
+    for (Usize i = 0; i + 2 < count; i += 1) {
+        if (p->tokens[i].kind != lex::name || !same_text(parse::text(p, p->tokens[i]), name)) continue;
+        if (p->tokens[i + 1].kind != lex::left_paren) continue;
+        Usize depth = 0;
+        Usize k = i + 1;
+        for (; k < count; k += 1) {
+            if (p->tokens[k].kind == lex::left_paren) depth += 1;
+            if (p->tokens[k].kind == lex::right_paren) depth -= 1;
+            if (depth == 0) break;
+        }
+        if (k + 1 < count && p->tokens[k + 1].kind == lex::left_brace) return true;
+    }
+    return false;
+}
+
+// `char *f(A a);` before the definition `char *f(A a) { ... }` of the same file goes: smith has no forward
+// declarations, a module's order does not matter (#1901). A prototype with no definition here keeps its warning.
+static Bool drop_prototype(parse::Parser *p, const Prefixes *pre, Str name, U32 start) {
+    if (!pre->top || pre->is_extern || !parse::at(p, lex::semicolon) || !has_definition(p, name)) return false;
+    U32 end = p->tokens[p->position].span.end;
+    if (end < countof(p->source) && p->source[end] == '\n') end += 1;
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(start, end, ""));
+    warn(p, start, end, "a function's prototype before its definition goes: smith has no forward declarations", edits);
+    return true;
+}
+
 static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head head, U32 start, ast::TypeExpr *type) {
     Bool variadic = false;
     Usize errors_before = countof(p->errors);
@@ -1611,7 +1642,8 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
     }
     Str name = parse::text(p, head.name);
     Usize close = p->position - 1;
-    Bool renamed = pre->top && fix_function(p, pre, head, open, close, parse::at(p, lex::left_brace));
+    Bool dropped = drop_prototype(p, pre, name, start);
+    Bool renamed = !dropped && pre->top && fix_function(p, pre, head, open, close, parse::at(p, lex::left_brace));
     ast::Stmt *body = nullptr;
     if (parse::at(p, lex::left_brace)) {
         body = parse::statement(p);
