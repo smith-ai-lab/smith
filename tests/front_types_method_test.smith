@@ -70,9 +70,12 @@ static Str bare_source() {
 static const ast::Module *load(const char *name) {
     Str path = name[0:c::strlen(name)];
     Str source = list_source();
-    if (same(path, "lib.ring")) source = ring_source();
-    else if (same(path, "lib.bare")) source = bare_source();
-    else if (!same(path, "lib.list")) return nullptr;
+    if (same(path, "lib.ring"))
+        source = ring_source();
+    else if (same(path, "lib.bare"))
+        source = bare_source();
+    else if (!same(path, "lib.list"))
+        return nullptr;
     parser::Parsed p = parser::parse_new("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     ast::Module *copy = mem::alloc(ast::Module);
@@ -186,7 +189,8 @@ export void test_front_types_method_a_function_taking_a_pointer_to_the_type_stil
           "a field and a method of one type cannot share a name", "");
 }
 
-// A generic function calls `x.f()` on a `T`: the method is looked up per instance, in the module of the instance's type.
+// A generic function calls `x.f()` on a `T`: the method is looked up per instance, in the module of the instance's
+// type.
 export void test_front_types_method_on_a_generic_t_resolves_in_each_instances_module() {
     clean("import lib.list\nimport lib.ring\n\n"
           "fn total[T](x: T) -> i32:\n    x.size()\n\n"
