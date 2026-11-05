@@ -378,6 +378,48 @@ static core::ParseError import_array(const ast::Module *module) {
     return found;
 }
 
+// `front.ast.Span` as the file names it: `ast.Span` when it imports `front::ast` (or the alias it gave it). The types
+// print with the module's whole path (#2460).
+static Str local_names(const ast::Module *module, Str text) {
+    for (Usize d_index = 0; d_index < 2; d_index++) {
+        Str divider = ".";
+        if (d_index == 1) divider = "::";
+        for (Usize i = 0; i < countof(module->decls); i++) {
+            const ast::Decl *d = module->decls[i];
+            if (d->kind != .import_module) continue;
+            ast::Identifier segments[:] = d->kind.import_module.path.segments;
+            if (countof(segments) < 2) continue;
+            Str whole = "";
+            for (Usize k = 0; k < countof(segments); k++)
+                whole = types::message_of(format::push(whole, segments[k].text, divider));
+            Str local = d->kind.import_module.alias;
+            if (countof(local) == 0) local = segments[countof(segments) - 1].text;
+            Str out = "";
+            Usize at = 0;
+            for (Usize j = 0; j + countof(whole) <= countof(text); j++) {
+                Bool word =
+                    j > 0 && (text[j - 1] == '_' || text[j - 1] == '.' || (text[j - 1] >= 'a' && text[j - 1] <= 'z') ||
+                              (text[j - 1] >= 'A' && text[j - 1] <= 'Z') || (text[j - 1] >= '0' && text[j - 1] <= '9'));
+                if (word || !same(text[j:j + countof(whole)], whole)) continue;
+                out = types::message_of(format::push(out, text[at:j], local, divider));
+                at = j + countof(whole);
+                j = at - 1;
+            }
+            if (at > 0) text = types::message_of(format::push(out, text[at:countof(text)]));
+        }
+    }
+    return text;
+}
+
+// Writes every fix of `errors` with the names the file gives its modules.
+static void localize(const ast::Module *module, core::Errors errors) {
+    for (Usize i = 0; i < countof(errors); i++) {
+        core::Edits fix = errors[i].fix;
+        for (Usize k = 0; k < countof(fix); k++)
+            fix[k].text = local_names(module, fix[k].text);
+    }
+}
+
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
@@ -412,5 +454,6 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         push_children(&w, s);
     }
     if (filled) out = add(out, import_array(module));
+    localize(module, out);
     return out;
 }

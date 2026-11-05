@@ -4,12 +4,19 @@
 module front_fix_type_name_test;
 
 import front::fix;
+import front::parser;
 import std::arena;
 import std::mem;
+import std::slice;
 import std::test;
 
 static void check_text(Str got, Str want) {
     test::check_equal(got, want);
+}
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
 }
 
 export void test_front_fix_type_name_after_a_slice_colon() {
@@ -21,4 +28,19 @@ export void test_front_fix_type_name_after_a_slice_colon() {
                                                 "= g();\n    Str p = source[start:type.end];\n    return p;\n}\n");
     check_text(fixed.text, "static fn f(source: str, start: u32) -> str:\n    ty: ast.Span = g()\n    p: str = "
                            "source[start:ty.end]\n    return p\n");
+}
+
+// A C enumerator written bare is `.name` (the type comes from the other operand), and plain enums are ordered by
+// declaration (owner, 2026-11-05, #2460).
+export void test_front_fix_bare_enumerator_in_a_comparison() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\ntypedef enum {\n    red,\n    green,\n    blue\n} Color;\nstatic Bool "
+                                 "late(Color c) {\n    return c >= green && c != blue;\n}\n");
+    Str want = "return c >= .green && c != .blue";
+    test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
+    test::check_equal(errors_in(fixed.text), (Usize)0);
 }
