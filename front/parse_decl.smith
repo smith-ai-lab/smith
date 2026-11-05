@@ -1236,6 +1236,15 @@ static Dims read_dims(const parse::Parser *p, Usize first, Usize last) {
     return dims;
 }
 
+// Whether the written type has the word `const` in it.
+static Bool mentions_const(Str raw) {
+    Str word = "const";
+    for (Usize i = 0; i + countof(word) <= countof(raw); i++) {
+        if (mem::equal(raw[i:i + countof(word)], word)) return true;
+    }
+    return false;
+}
+
 // One parameter, the tokens `from` to `to` (not taken), as smith writes it: `name: T`, `const n: T`, `T: type`,
 // `rest: ...`, an attribute first. An array suffix moves in front of the type (`I32 xs[3]` is `xs: [3]I32`). Empty when
 // it has no mechanical fix (no name, `auto x`, a qualified slice).
@@ -1274,6 +1283,8 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
     type = as_str(format::push(dims, type));
+    // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
+    if (countof(dims) > 0 && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
     return as_str(format::push(prefix, name, ": ", type));
 }

@@ -1777,6 +1777,7 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .slice) {
         Bool is_const = node->kind.slice.element->qualifiers.is_const;
+        if (r->new_syntax) is_const = !node->kind.slice.is_mut; // smith's own `[]T` is read-only, `[]mut T` writable
         return slice_of(&r->table, w->values[base].type, is_const);
     }
     if (node->kind == .array) {

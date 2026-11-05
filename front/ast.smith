@@ -135,7 +135,8 @@ export typedef enum {
     } array;
     struct {
         TypeExpr *element;
-    } slice; // `T[:]`; `T[:][2]` is a slice of arrays
+        Bool is_mut; // `[]mut T` in smith's own syntax
+    } slice;         // `T[:]`; `T[:][2]` is a slice of arrays
     struct {
         TypeRef params[:];
         TypeExpr *result;
