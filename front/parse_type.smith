@@ -362,6 +362,17 @@ static ast::TypeExpr *type_of(parse::Parser *p, U32 start, ast::Qualifiers q) {
     return node(start, p, q, {.type_of = {.operand = operand}});
 }
 
+// Whether the `,` at the offset follows a field's name, `F32 low, high;`: a word that a type or a `*` or `]` precedes.
+// A tuple's element is a type, whose last word follows a `{`, a `,` or a `.`.
+static Bool declares_field(const parse::Parser *p, Usize comma) {
+    if (comma < 2) return false;
+    lex::TokenKind word = parse::peek_at(p, comma - 1).kind;
+    lex::TokenKind before = parse::peek_at(p, comma - 2).kind;
+    if (word != lex::name) return false;
+    return before == lex::name || before == lex::type_name || before == lex::star || before == lex::right_bracket ||
+           is_keyword_type(before);
+}
+
 // Whether `struct { ... }` at the position is a tuple: the first thing at the braces' own depth that ends an element is
 // a `,` or the `}` (a record's field ends with `;`). An empty `struct {}` is a record. A scan of the tokens, no
 // speculative parse.
@@ -378,7 +389,7 @@ export Bool tuple_ahead(const parse::Parser *p) {
             if (depth == 0) return true;
             depth -= 1;
         }
-        if (kind == lex::comma && depth == 0) return true;
+        if (kind == lex::comma && depth == 0) return !declares_field(p, offset);
     }
     return false;
 }
@@ -425,6 +436,13 @@ static void drop_tag_keyword(parse::Parser *p, lex::Token keyword, lex::Token na
     parse::warning_fix(p, name.span, "a type is named without `struct`, `union` or `enum`", drop);
 }
 
+// `(128)` after `_BitInt`, with `unsigned` or `signed` before it: the width is part of the type's spelling (#2224).
+static void bit_int_width(parse::Parser *p) {
+    parse::expect(p, lex::left_paren, "`(` after `_BitInt`");
+    parse::expect(p, lex::integer, "the width of `_BitInt`, a number");
+    parse::expect(p, lex::right_paren, "`)` after the width");
+}
+
 // The base of a type without an applied form: `auto`, `struct X`, a keyword type, `typeof`, a path. Null after an
 // error.
 static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
@@ -461,9 +479,10 @@ static ast::TypeExpr *plain(parse::Parser *p, U32 start, ast::Qualifiers q) {
     default:
         break;
     }
-    if (is_keyword_type(token.kind)) {
+    if (is_keyword_type(token.kind) || token.kind == lex::kw_bit_int) {
         while (is_keyword_type(parse::peek(p).kind))
             parse::advance(p);
+        if (parse::accept(p, lex::kw_bit_int)) bit_int_width(p);
         return spelled(p, token.span.start, q);
     }
     if (is_segment(token.kind)) {
