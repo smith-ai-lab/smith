@@ -23,3 +23,15 @@ export void test_front_fix_opaque_moves_its_name_to_the_definition() {
                  "struct Chunk {\n    Chunk *next;\n};\n",
                  "@c_name(\"MChunk\") pub struct Chunk:\n    next: *Chunk\n");
 }
+
+// A forward declaration is read in braces too, so a `switch` nested in a case is mended in the same run (#2329).
+export void test_front_fix_forward_declaration_does_not_stop_a_nested_switch() {
+    expect_fixed("module m;\nexport struct Node;\nexport struct Node {\n    I32 kind;\n    I32 inner;\n};\n"
+                 "void f(Node *n) {\n    switch (n->kind) {\n    case 1:\n        g(1);\n        break;\n"
+                 "    case 2:\n        switch (n->inner) {\n        case 1:\n            g(2);\n"
+                 "            break;\n        case 2:\n            g(3);\n            break;\n        }\n"
+                 "        break;\n    }\n}\n",
+                 "pub struct Node\npub struct Node:\n    kind: i32\n    inner: i32\nfn f(n: *Node):\n"
+                 "    match n.kind:\n        1: g(1)\n        2:\n            match n.inner:\n"
+                 "                1: g(2)\n                2: g(3)\n");
+}

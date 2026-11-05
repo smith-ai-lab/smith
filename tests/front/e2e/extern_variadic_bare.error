@@ -1,1 +1,1 @@
-<dir>/src/extern_variadic_bare.smith:1:19: error: a Smith function names its variadic parameters: `rest...`; a bare `...` only declares a C function with `extern fn`
+<dir>/src/extern_variadic_bare.smith:1:1: error: not emitted yet: variadic function with a body

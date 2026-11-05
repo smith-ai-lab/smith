@@ -43,7 +43,7 @@ pub const VERSION = "1.4"
 let mut requests: u64 = 0           # a module global; pub let mut shares it
 extern fn legacy_init(flags: u32) -> i32    # defined in C
 extern let mut errno: i32
-extern fn printf(f: *u8, ...) -> i32   # symbol = own name; `...` only here, args C scalars
+extern fn printf(f: *u8, ...) -> i32   # symbol = own name; `...` in an `extern fn`, args C scalars; a definition may end in `...` too (functions skill)
 ```
 
 `pub` makes a declaration visible to other modules and to C (it replaces `export`): functions, types, constants, globals, imports and struct fields ([smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md)). A module's generated C header declares its `pub` names, with their doc comments. There is no function-local `static`.
