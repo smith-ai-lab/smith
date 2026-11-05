@@ -675,13 +675,15 @@ jobs:
         run: '"$SMITH" build release'
 
   frontend-coverage:
-    # the count of how many .smith files the new front end handles (#2073, #1885), measured on Linux (CI's machine, not
-    # a developer's Mac) on every merge to main with the smith this job builds for that commit: a push to main runs no
-    # test job, and no release job hands its smith over, so `setup-smith` builds one here (cache-warm, a few minutes).
-    # It gates nothing: it is not in `ci`'s needs, and a failure to measure is reported (`unmeasured`), never a red main.
-    # `timeout-minutes` counts queue time too (knowledge/ci-hosted.md), and the count itself takes about 2 minutes.
-    needs: changes
-    if: ${{ github.event_name == 'push' && needs.changes.outputs.scope == 'release' }}
+    # the count of how many .smith files the new front end handles (#2073, #1885, #2433), measured on Linux (CI's machine,
+    # not a developer's Mac) in the merge-queue run, on the smith `build-linux` built for that very commit: the commit the
+    # queue fast-forwards main to, so every merge is counted and a drop is pinned on one group. No second build: it
+    # restores the `build-linux` artifact like the test shards do, so it runs wherever `build-linux` does (scope full).
+    # It gates nothing: it is not in `ci`'s needs nor the ruleset's required checks, so the queue never waits for it, and a
+    # failure to measure is reported (`unmeasured`), never a red run. A group the queue cancels cancels it too; the next
+    # group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count takes about 9 minutes on 4 cores (#2426).
+    needs: [changes, build-linux]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -694,6 +696,8 @@ jobs:
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux
       - name: Count
         id: count
         # never fails the job: the output is read afterwards, whatever happened
