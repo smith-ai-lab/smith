@@ -544,6 +544,16 @@ export void test_a_typedef_of_an_opaque_tag_is_rewritten() {
     check_text(fixed.text, "@c_name(\"SmithChunk\") pub struct Chunk\nstruct Node\n");
 }
 
+// A forward declaration `export struct Name;` is the opaque `pub struct Name`: a type ends with the line (#2312).
+export void test_a_forward_declared_struct_loses_its_semicolon() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nexport struct Expr;\nexport struct Expr { I32 a; };\n");
+    check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    a: i32\n");
+}
+
 // A value cast to `void` as a statement is `let _ = x`, whether it was written `(void)x` or `x.to(void)`: the second
 // form has nothing before the operand, so the fix must remove the cast after it too (#2224).
 export void test_a_cast_to_void_becomes_a_discard() {
