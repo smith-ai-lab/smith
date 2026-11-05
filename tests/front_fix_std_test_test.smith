@@ -137,3 +137,8 @@ export void test_front_fix_std_an_unbraced_else_with_a_statement_over_two_lines(
     expect_fixed("module m;\nvoid f(I32 a) {\n    if (a)\n        g(1);\n    else\n        g(2,\n          3);\n}\n",
                  "fn f(a: i32):\n    if a:\n        g(1)\n    else:\n        g(2,\n          3)\n");
 }
+
+export void test_front_fix_std_a_conditional_with_a_call_in_an_unbraced_if() {
+    expect_fixed("module m;\nI32 f(I32 a) {\n    if (a < 0) return g(a) == 1 ? 3 : 4;\n    return 0;\n}\n",
+                 "fn f(a: i32) -> i32:\n    if a < 0:\n        return if g(a) == 1: 3 else: 4\n    return 0\n");
+}
