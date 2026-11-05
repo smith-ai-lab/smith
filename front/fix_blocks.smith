@@ -233,11 +233,33 @@ static void match_arms(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     }
 }
 
+// `else { g(2,\n 3) }`: the braces the parser gave the unbraced body of an `else` hold one statement that starts on
+// the `{`'s line and ends on the `}`'s, which ends its line.
+static Bool else_one_statement(lex::Tokens tokens, Brace brace) {
+    if (brace.open == 0 || tokens[brace.open - 1].kind != lex::kw_else) return false;
+    if (open_ends_line(tokens, brace.open) || tokens[brace.close - 1].line_break) return false;
+    return closes_cleanly(tokens, brace.close) && tokens[brace.close].line_break;
+}
+
+// The `{` becomes `:` and the statement moves to a line of its own, one step in; the ` }` goes.
+static void else_statement(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    lex::Token open = tokens[brace.open];
+    lex::Token close = tokens[brace.close];
+    Usize indent = indent_of(source, open.span.start);
+    Str head = as_str(format::push(":\n", spaces(indent + step)));
+    add_cut(cuts, spaces_before(source, open.span.start), tokens[brace.open + 1].span.start, head);
+    add_cut(cuts, spaces_before(source, close.span.start), close.span.end, "");
+}
+
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
 // `else` follows, or the `}` alone when it ends the last statement's line).
 static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
+    if (else_one_statement(tokens, brace)) {
+        else_statement(source, tokens, brace, cuts);
+        return;
+    }
     if (!multi_line_ready(tokens, brace)) return;
     enum_base_cut(tokens, brace, cuts);
     add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon_for(tokens, brace.open));
