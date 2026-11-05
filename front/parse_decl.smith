@@ -1169,11 +1169,17 @@ static Bool take_tag_keyword(parse::Parser *p) {
 }
 
 // The type of a variable or function: `auto`, an anonymous record, or the type hook's.
-static ast::TypeExpr *declared_type(parse::Parser *p) {
+// An `extern` declaration's type is C's own, so its stars keep their writability (`extern char **environ;` is `**mut
+// char`, which a `char *const *` parameter accepts; `**char` would drop the inner `mut`, #2456).
+static ast::TypeExpr *declared_type(parse::Parser *p, Bool is_extern) {
     if (parse::at(p, lex::kw_auto)) return auto_type(parse::advance(p).span);
     if (at_anonymous_record(p)) return parse_anonymous_record(p);
     if (!take_tag_keyword(p)) return nullptr;
-    return parse::type(p);
+    Bool was_cast = p->in_cast;
+    p->in_cast = was_cast || is_extern;
+    ast::TypeExpr *type = parse::type(p);
+    p->in_cast = was_cast;
+    return type;
 }
 
 static Bool failed_since(const parse::Parser *p, Usize errors_before) {
@@ -1785,7 +1791,7 @@ static ast::Decl *parse_typed(parse::Parser *p, const Prefixes *pre, U32 start) 
         return nullptr;
     }
     U32 type_start = parse::peek(p).span.start;
-    ast::TypeExpr *type = declared_type(p);
+    ast::TypeExpr *type = declared_type(p, pre->is_extern);
     if (type == nullptr) {
         recover(p);
         return nullptr;
