@@ -1600,7 +1600,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
     Bool suffixed = countof(dims.text) > 0;
-    Bool fixable = last.kind == lex::semicolon && !dims.blocked && !pre->is_extern && !p->for_init;
+    // `extern char **environ;` is `extern environ: **char`: the linker provides the value, so no `mut`, no `=
+    // undefined`.
+    Bool bare_extern = pre->is_extern && !has_init && !suffixed && !automatic && !pre->is_constexpr;
+    Bool fixable = last.kind == lex::semicolon && !dims.blocked && (!pre->is_extern || bare_extern) && !p->for_init;
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
     Str value = "";
     parse::Edits item_edits = {};
@@ -1636,7 +1639,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         if (p->named_list.positional) drop_array_fix(p, p->named_list.open.start);
     }
     if (type_value || automatic) text = as_str(format::push(lead, name, untyped));
-    if (!has_init) {
+    if (bare_extern) {
+        text = as_str(format::push(name, ": ", written));
+        to = head.name.span.end;
+    } else if (!has_init) {
         Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
         text = as_str(format::push("mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
         to = suffixed ? dims.end : head.name.span.end;
