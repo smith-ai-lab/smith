@@ -2445,6 +2445,10 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     ast::Identifier parts[8];
     if (callee->kind == .name) {
         path = callee->kind.name.path;
+    } else if (callee->kind == .member && types::c_member(c, callee) != nullptr) {
+        // `spawn_h.posix_spawn_file_actions_t(...)`: a struct of a header the file imports (#2446).
+        const types::Symbol *header_type = types::c_member(c, callee);
+        return header_type->kind == .type_name ? header_type->type : nullptr;
     } else if (callee->kind == .member && !callee->kind.member.arrow && callee->kind.member.base->kind == .name) {
         // `words.Pair(...)`: a record of another module, written with the module's name.
         ast::Path base = callee->kind.member.base->kind.name.path;
