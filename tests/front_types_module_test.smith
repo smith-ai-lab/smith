@@ -314,3 +314,10 @@ export void test_front_types_module_a_default_must_be_a_constant_in_order() {
     fails("fn f(a: i32, b: i32 = a) -> i32:\n    b\n", "a default must be a compile-time constant", "");
     fails("fn f(a: i32 = 1, b: i32) -> i32:\n    b\n", "has no default but follows one that has", "");
 }
+
+// A payload enumeration built the way the fixer writes C's `(E){.circle = {...}}` (#2416): `Shape(circle = payload)` is
+// `.circle(payload)`, and the type name is no value there.
+export void test_front_types_module_a_payload_enum_is_built_by_naming_its_variant() {
+    clean("struct Circle:\n    radius: i32\n\nenum Shape:\n    circle: Circle\n    empty\n\nfn run() -> Shape:\n    "
+          "return Shape(circle = Circle(radius = 1))\n");
+}
