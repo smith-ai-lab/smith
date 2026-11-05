@@ -57,4 +57,4 @@ let p = IntPair(1, 2)                           # or Pair(i32)(first = 1, second
 
 ## Not settled yet
 
-A computed result type (`-> leaf_of(T)`); which module a std generic's instance counts as for private fields. The parser reads the brackets (`function.generics`); checking them and working them out from a call is #2349.
+A computed result type (`-> leaf_of(T)`); which module a std generic's instance counts as for private fields. The parser reads the brackets (`function.generics`). The checker (#2349) makes one instance per set of bindings, binding each name from the arguments' types (a bare `T`, through `*`, `[]`, `[n]`, `?` and tuples; literals bind last, only what nothing else does) or from `f[T](x)` (first name only); a name nothing binds, or bound two ways, is an error at the call. Not yet: `List(T)` (user type functions), several names in one pair of brackets at a call.

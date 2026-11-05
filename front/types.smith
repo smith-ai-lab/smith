@@ -2172,6 +2172,7 @@ export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
 // #1934): its body is checked in each instance, not here. A type function (`-> type`) and a prototype are ordinary.
 static Bool is_template(const ast::Decl *d, ast::Param list[:], const ast::TypeExpr *result_type) {
     if (d->kind != .function || d->kind.function.body == nullptr || is_type_name(result_type)) return false;
+    if (countof(d->kind.function.generics) > 0) return true; // `fn f[T](...)`: one instance per set of bindings (#1698)
     for (Usize i = 0; i < countof(list); i++) {
         if (is_compile_time(&list[i]) || is_auto_param(&list[i])) return true;
     }
@@ -2408,9 +2409,20 @@ export Bool expand_reflection(Checked *r, ast::Decl *function) {
 // `r->instances`, or `max_instances` when there are too many.
 // Fills `bindings` from what the call passed, one per compile-time or `auto` parameter in order. Returns how many
 // parameters the instance keeps; `auto_syntax` is set when the kept parameters are written in today's syntax.
-static Usize bind_given(Checked *r, ast::Param all[:], Binding given[:], Binding bindings[:], Bool *auto_syntax) {
+static Usize bind_given(Checked *r, ast::Param generics[:], ast::Param all[:], Binding given[:], Binding bindings[:],
+                        Bool *auto_syntax) {
     Usize kept_count = 0;
     Usize bound = 0;
+    for (Usize i = 0; i < countof(generics); i++) { // `fn f[T, n: usize]`: bound first, passed by no argument
+        bindings[bound] = given[bound];
+        bindings[bound].name = generics[i].name;
+        if (!bindings[bound].is_type) {
+            r->new_syntax = true;
+            bindings[bound].type = resolve(r, generics[i].type);
+            r->new_syntax = false;
+        }
+        bound += 1;
+    }
     for (Usize i = 0; i < countof(all); i++) {
         if (is_auto_param(&all[i])) {
             kept_count += 1;
@@ -2437,10 +2449,10 @@ static Usize bind_given(Checked *r, ast::Param all[:], Binding given[:], Binding
 }
 
 // The parameters an instance keeps, with their types: an `auto` parameter has the type it was bound to.
-static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool auto_syntax, ast::Param kept[:],
-                        Slot slots[:]) {
+static void keep_params(Checked *r, Usize generic_count, ast::Param all[:], Binding bindings[:], Bool auto_syntax,
+                        ast::Param kept[:], Slot slots[:]) {
     Usize at = 0;
-    Usize taken = 0; // the next binding for an `auto` parameter
+    Usize taken = generic_count; // the next binding for an `auto` parameter, after those of the generics
     for (Usize i = 0; i < countof(all); i++) {
         if (is_compile_time(&all[i])) {
             taken += 1;
@@ -2467,7 +2479,7 @@ static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool
 static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
     if (template->kind != .function) return ast_clone::clone_decl(template);
     ast::Param params[:] = template->kind.function.params;
-    Usize bound = 0;
+    Usize bound = countof(template->kind.function.generics);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
             if (bound >= countof(given) || given[bound].type == nullptr) break;
@@ -2498,14 +2510,16 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
     Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     push_scope(&r->scopes);
-    Usize kept_count = bind_given(r, all, given, bindings, &auto_syntax);
+    ast::Param generics[:] = copy->kind.function.generics;
+    Usize generic_count = countof(generics);
+    Usize kept_count = bind_given(r, generics, all, given, bindings, &auto_syntax);
     Instance made = {.template = template, .decl = copy, .bindings = bindings};
     bind_instance(r, &made);
     expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
     if (copy->kind != .function) return max_instances;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
-    keep_params(r, all, bindings, auto_syntax, kept, slots);
+    keep_params(r, generic_count, all, bindings, auto_syntax, kept, slots);
     for (Usize i = 0; i < kept_count; i++) { // the parameters, for a `typeof(v)` in the result
         Symbol parameter = {.name = slots[i].name, .kind = .variable, .type = slots[i].type};
         declare(&r->scopes, parameter);
@@ -2518,6 +2532,7 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     }
     pop_scope(&r->scopes);
     copy->kind.function.params = kept;
+    copy->kind.function.generics = copy->kind.function.generics[0:0]; // the instance has none: they are bound
     copy->kind.function.name = instance_name(copy->kind.function.name, bindings);
     made.signature = function_of(&r->table, slots, result, copy->kind.function.variadic);
     if (r->instance_count == countof(r->instances)) {
@@ -2528,6 +2543,108 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     r->instances[r->instance_count] = made;
     r->instance_count += 1;
     return r->instance_count - 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Working the bracketed parameters of `fn f[T, n: usize](...)` out from the types of a call's arguments (#1698)
+
+// Whether a bracketed parameter is a type (`T`, or `T: num` with a concept), else a constant (`n: usize`).
+export Bool is_generic_type(const ast::Param *g) {
+    return g->type == nullptr || countof(written_concept(g->type)) > 0;
+}
+
+export struct Unified {
+    Bool conflict;  // a generic was bound twice, to different things
+    Usize generic;  // which one
+    TypeRef before; // what it was bound to
+    TypeRef now;    // what this argument binds it to
+};
+
+struct UnifyPair {
+    const ast::TypeExpr *written;
+    TypeRef given;
+};
+
+// The index of the generic a written type names (`T`), or the count when it names none.
+static Usize generic_named(ast::Param generics[:], const ast::TypeExpr *written) {
+    if (!(written->kind == .named)) return countof(generics);
+    Str name = path_text(written->kind.named.path);
+    for (Usize i = 0; i < countof(generics); i++) {
+        if (is_generic_type(&generics[i]) && same_text(generics[i].name, name)) return i;
+    }
+    return countof(generics);
+}
+
+// Binds the generic `at` to `type` (or to the constant `value`); false, with the clash recorded, when it is already
+// bound to something else and `strict`.
+static Bool bind_generic(Binding bound[:], Bool set[:], Usize at, Bool is_type, TypeRef type, U64 value, Bool strict,
+                         Unified *out) {
+    if (set[at]) {
+        Bool same = is_type ? bound[at].type == type : bound[at].value == value;
+        if (same || !strict) return true;
+        out->conflict = true;
+        out->generic = at;
+        out->before = bound[at].type;
+        out->now = type;
+        return false;
+    }
+    set[at] = true;
+    bound[at] = (Binding){.is_type = is_type, .type = type, .value = value};
+    return true;
+}
+
+// Matches a parameter's written type against the type an argument has, binding the generics it names. A shape that
+// does not match binds nothing: the call's own check reports it. A walk with an explicit stack.
+export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written, TypeRef given, Binding bound[:],
+                           Bool set[:], Bool strict, Unified *out) {
+    UnifyPair stack[32] = {};
+    Usize top = 1;
+    stack[0] = (UnifyPair){.written = written, .given = given};
+    while (top > 0) {
+        top -= 1;
+        UnifyPair pair = stack[top];
+        const ast::TypeExpr *w = pair.written;
+        TypeRef g = pair.given;
+        if (w == nullptr || g == nullptr) continue;
+        Usize at = generic_named(generics, w);
+        if (at < countof(generics)) {
+            if (!bind_generic(bound, set, at, true, g, 0, strict, out)) return false;
+            continue;
+        }
+        const ast::TypeExpr *inner = nullptr;
+        TypeRef inner_given = nullptr;
+        if (w->kind == .pointer && g->kind == .pointer) {
+            inner = w->kind.pointer.pointee;
+            inner_given = g->element;
+        } else if (w->kind == .slice && g->kind == .slice) {
+            inner = w->kind.slice.element;
+            inner_given = g->element;
+        } else if (w->kind == .option && g->kind == .option) {
+            inner = w->kind.option.inner;
+            inner_given = g->element;
+        } else if (w->kind == .array && g->kind == .array) {
+            inner = w->kind.array.element;
+            inner_given = g->element;
+            const ast::Expr *count = w->kind.array.count;
+            if (count != nullptr && count->kind == .name) {
+                Str name = path_text(count->kind.name.path);
+                for (Usize i = 0; i < countof(generics); i++) {
+                    if (is_generic_type(&generics[i]) || !same_text(generics[i].name, name)) continue;
+                    if (!bind_generic(bound, set, i, false, nullptr, g->count, strict, out)) return false;
+                }
+            }
+        } else if (w->kind == .tuple && g->kind == .tuple && countof(w->kind.tuple.elements) == countof(g->slots)) {
+            for (Usize i = 0; i < countof(g->slots) && top < countof(stack); i++) {
+                stack[top] = (UnifyPair){.written = w->kind.tuple.elements[i], .given = g->slots[i].type};
+                top += 1;
+            }
+        }
+        if (inner != nullptr && top < countof(stack)) {
+            stack[top] = (UnifyPair){.written = inner, .given = inner_given};
+            top += 1;
+        }
+    }
+    return true;
 }
 
 // The type a literal initializer gives `let a = 3` (smith's own syntax: `i32` for an integer, `f64` for a float, the
