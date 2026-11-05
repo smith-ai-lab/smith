@@ -56,6 +56,8 @@ static Str math_source() {
            "fn helper(x: f64) -> f64:\n    x\n\n"
            "pub fn wrap[T](x: T) -> f64:\n    return helper(1.0) + hidden().to(f64)\n\n"
            "pub let tau = 6.28\n\n"
+           "pub Length := f64\n\n"
+           "pub fn measured[T](x: T) -> Length:\n    return 1.0\n\n"
            "pub struct Point:\n    pub x: f64\n    pub y: f64\n\n"
            "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
            "pub fn handle() -> Handle:\n    return Handle(len = 1, items = 2)\n\n"
@@ -163,6 +165,12 @@ export void test_front_types_module_generic_body_reads_its_own_modules_names() {
     clean("import lib.math as m\n\nfn run() -> f64:\n    m.wrap(1)\n");
 }
 
+// The result of a generic from another module is written in that module: its type alias `Length` is not a name of the
+// importer (#2431: `format.push` returns `Chars`).
+export void test_front_types_module_generic_result_names_a_type_of_its_own_module() {
+    clean("import lib.math as m\n\nfn run() -> f64:\n    m.measured(1)\n");
+}
+
 // A module's types may name those of the module it imports, which is found after it (#1902).
 export void test_front_types_module_type_names_a_type_of_its_own_import() {
     clean("import lib.outer as o\n\nfn run(h: o.Holder) -> i32:\n    h.shape.sides\n");
@@ -255,6 +263,12 @@ export void test_front_types_module_a_struct_with_a_private_field_is_built_only_
     fails("import lib.math as m\nlet Handle = m.Handle\n\nfn run() -> m.Handle:\n    return Handle(1, 2)\n",
           "has private fields; build it with a function of `lib.math`: `handle`", "");
     clean("import lib.math as m\n\nfn run() -> m.Handle:\n    return m.handle()\n");
+}
+
+// A struct is built through the name of the module that declares it, `m.Point(...)`, with no `let` first (#2431).
+export void test_front_types_module_a_struct_is_built_through_the_module_name() {
+    clean("import lib.math as m\n\nfn run() -> m.Point:\n    return m.Point(x = 1.0, y = 2.0)\n");
+    clean("import lib.math as m\n\nfn run() -> m.Point:\n    return m.Point(1.0, 2.0)\n");
 }
 
 export void test_front_types_module_a_struct_of_pub_fields_is_built_anywhere() {
