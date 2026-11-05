@@ -62,7 +62,13 @@ export void test_front_fix_two_array_globals_in_a_row() {
 }
 
 export void test_front_fix_an_extern_variable() {
-    expect_fixed("module m;\nextern char **environ;\n", "extern environ: **char\n");
+    expect_fixed("module m;\nextern char **environ;\n", "extern environ: *mut *mut char\n");
+}
+
+// A C `char *const *` parameter takes `environ`: the extern keeps the writable stars (#2456).
+export void test_front_fix_an_extern_keeps_its_writable_stars() {
+    expect_fixed("module m;\nextern char *const *tail;\nextern const char *name;\n",
+                 "extern tail: **mut char\nextern name: *char\n");
 }
 
 export void test_front_fix_an_extern_with_an_asm_label() {
