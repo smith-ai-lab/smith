@@ -118,6 +118,26 @@ export void test_front_fix_mut_an_address_argument_makes_the_local_mut() {
            "fn g(p: *mut *mut i32):\n    p.* = nullptr\nfn f():\n    mut q: *mut i32 = nullptr\n    g(&q)\n", 1);
 }
 
+// A local read-only pointer of a C loop, returned where `*mut T` is wanted (#2368): one run of the fixer writes the
+// declaration in smith's syntax and then makes it `*mut T`, so a second run has nothing left.
+export void test_front_fix_mut_a_c_loop_pointer_returned_becomes_mut() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed("struct R {\n    Usize x;\n    R *next;\n};\n\n"
+                    "struct B {\n    void *buckets;\n};\n\n"
+                    "R *find(const B *self) {\n    for (R *r = ((R **)self->buckets)[0]; r != nullptr; r = r->next)\n"
+                    "        if (r->x == 1) return r;\n    return nullptr;\n}\n",
+                    &count);
+    Usize again = 0;
+    Str twice = fixed(got, &again);
+    test::check_equal(again, (Usize)0);
+    test::check_equal(errors_in(got), (Usize)0);
+    test::check_equal(twice, got);
+}
+
 // A fixed array handed where a bare pointer is wanted (C's decay, #2386): the fix writes the address of its first
 // element.
 export void test_front_fix_mut_an_array_passed_as_a_pointer_becomes_the_address_of_its_first_element() {
