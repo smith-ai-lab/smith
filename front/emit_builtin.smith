@@ -119,7 +119,8 @@ static c::LLVMValueRef libc_call(state::Emitter *e, table::Entry entry, state::V
 
 // `__builtin_snprintf(out, n, format, rest...)`: a call of the variadic libc function. A size is a 64-bit integer; an
 // integer narrower than an int is widened to one, as C's promotions do; any other value is passed as it is.
-static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state::Value *v, Usize count, state::Ty result) {
+static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state::Value *v, Usize count,
+                                   state::Ty result) {
     c::LLVMValueRef args[max_values] = {};
     c::LLVMTypeRef types[max_values] = {};
     for (Usize i = 0; i < count; i++) {
@@ -215,7 +216,15 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
         return state::failf(x->span, entry.name, " takes at most 8 arguments, the call has ", (U64)values);
     state::push_then(e, (state::Work){.then = finish, .expr = x, .number = values, .span = x->span});
     for (Usize i = countof(args); i > 0; i--) {
-        if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], state::no_hint());
+        state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
+        if (entry.shape == .format && i == 3) {
+            state::Ty pointer = {};
+            pointer.kind = .pointer;
+            pointer.llvm = state::pointer_type(e, 0);
+            pointer.name = "Char *";
+            hint = state::hint_of(pointer);
+        }
+        if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], hint);
     }
     return state::success();
 }
