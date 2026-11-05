@@ -15,6 +15,7 @@ warning (no fix): smith has no goto: use a loop, `break` or `defer`
 {
 match v {
 1 => x = 1
+_ => ()
 }
 goto done;
 }
