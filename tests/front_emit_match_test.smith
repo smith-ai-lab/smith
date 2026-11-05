@@ -338,6 +338,7 @@ export void test_front_emit_match_over_constants_is_a_switch_with_a_default() {
                      "        'b', 'c':\n"
                      "            seen = 2\n"
                      "            seen += k\n"
+                     "        'z': ()\n"
                      "        _: return 9\n"
                      "    seen\n"
                      "pub fn truth(k: i32) -> i32:\n"
