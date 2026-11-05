@@ -514,6 +514,23 @@ static ast::Expr *expansion(parse::Parser *p, ast::Expr *value) {
     return make(parse::span_from(p, value->span.start), {.expand = {.pattern = value}});
 }
 
+// A designated item whose value is itself a list with no type, `.it_value = {.tv_sec = 1}`, has no type to write in
+// front of the nested list: its warning gets the fix that writes the named tuple `(tv_sec = 1)`, which parses (#2335).
+static void tuple_for_nested(parse::Parser *p, const ast::Expr *value) {
+    if (value == nullptr || value->kind != .compound || value->kind.compound.type != nullptr) return;
+    for (Usize i = 0; i < countof(p->listed); i += 1) {
+        parse::NamedList list = p->listed[i];
+        if (list.open.start != value->span.start) continue;
+        for (Usize j = 0; j < countof(p->warnings); j += 1) {
+            parse::Edits present = p->warnings[j].fix;
+            if (p->warnings[j].span.start != list.open.start || countof(present) > 0) continue;
+            parse::Edits edits = list.edits;
+            edits = with_edit(edits, list.open, "(");
+            p->warnings[j].fix = with_edit(edits, list.close, ")");
+        }
+    }
+}
+
 // One item of an initializer list: designators then `=` then a value, or a value.
 static ast::Initializer item(parse::Parser *p, ListFix *fix) {
     U32 first = parse::peek(p).span.start;
@@ -539,6 +556,7 @@ static ast::Initializer item(parse::Parser *p, ListFix *fix) {
     fix->designated += 1;
     result.designators = found[0:count];
     result.value = parse::expression(p);
+    tuple_for_nested(p, result.value);
     return result;
 }
 

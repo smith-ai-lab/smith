@@ -154,3 +154,12 @@ export void test_front_fix_std_an_old_if_after_a_function_pointer_signature_and_
         "    return 0\npub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    # Tables.\n"
         "    s.* = S(a = 1,\n              b = 2)\n    if s.n != 0:\n        r.c = k(s)\n    return 1\n");
 }
+
+// A C designated list as the value of a field, `{.it_value = {.tv_sec = t}}`, has no type to name for the inner list:
+// it is the named tuple `(tv_sec = t)`, which parses (#2335).
+export void test_front_fix_std_nested_designated_list_is_a_named_tuple() {
+    expect_fixed("module m;\nimport <sys/time.h>;\nvoid f(I64 t) {\n    struct c::itimerval cpu = {.it_value = "
+                 "{.tv_sec = t}};\n    work(&cpu);\n}\n",
+                 "import c <sys/time.h>\nfn f(t: i64):\n    cpu := time.itimerval(it_value = (tv_sec = t))\n    "
+                 "work(&cpu)\n");
+}
