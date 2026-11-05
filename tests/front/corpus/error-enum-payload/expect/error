@@ -1,2 +1,3 @@
+src/main.smith:11:5: error: `match` over `Shape` does not cover `.empty`; add an arm for each, since a `match` must name every case
 src/main.smith:15:20: error: `.circle` carries a `Circle`; write `.circle(value)`
 src/main.smith:16:20: error: `Shape` has no enumerator `nothing`; write one of its enumerators, such as `.circle`

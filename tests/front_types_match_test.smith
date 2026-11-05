@@ -1,0 +1,220 @@
+// Tests of `match` over constants in the checker (#2336, part of #1631; the design is the lead's on #1406,
+// 2026-11-05): an arm's pattern is a literal, a named constant or alternatives `a, b`; `_` is the default, needed
+// unless the arms cover every value; a value named twice is an error; a bare name is a constant, never a binding. Each
+// scenario is source text in smith's own syntax, an accepted case and a refused one with its message.
+module front_types_match_test;
+
+import front::ast;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str join(Str a, Str b) {
+    char out[:] = mem::alloc_slice(char, countof(a) + countof(b));
+    for (Usize i = 0; i < countof(a); i++) {
+        out[i] = a[i];
+    }
+    for (Usize i = 0; i < countof(b); i++) {
+        out[countof(a) + i] = b[i];
+    }
+    return out;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The errors, one per line.
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        text = join(text, join(r->errors[i].message, "\n"));
+    }
+    return text;
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    Str none = "";
+    test::check_equal(errors, none);
+}
+
+// `source` gives exactly one error, which says `first` and `second`.
+static void fails(Str source, Str first, Str second) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    test::check_equal(r.error_count, (Usize)1);
+    test::check_condition(has(errors, first));
+    test::check_condition(has(errors, second));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Constant patterns
+
+export void test_front_types_match_over_constants_checks() {
+    clean("const limit: i32 = 7\n"
+          "fn pick(k: i32, a: i32, b: i32, c: i32) -> i32:\n"
+          "    match k:\n"
+          "        1: a / limit\n"
+          "        limit, 2, -3: b\n"
+          "        _: return c\n"
+          "fn letter(ch: char) -> i32:\n"
+          "    let mut seen = 0\n"
+          "    match ch:\n"
+          "        'a': seen = 1\n"
+          "        'b', 'c':\n"
+          "            seen = 2\n"
+          "            seen += 1\n"
+          "        _: return 9\n"
+          "    seen\n"
+          "fn truth(b: bool) -> i32:\n"
+          "    let v = match b:\n"
+          "        true: 1\n"
+          "        false: return 0\n"
+          "    v\n");
+}
+
+export void test_front_types_match_over_a_number_needs_a_default() {
+    fails("fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        1: 10\n"
+          "        2: 20\n",
+          "`match` over `I32` does not cover every value", "add a `_` arm");
+}
+
+export void test_front_types_match_over_a_bool_with_both_needs_no_default() {
+    fails("fn pick(b: bool) -> i32:\n"
+          "    match b:\n"
+          "        true: 1\n",
+          "`match` over `Bool` does not cover every value", "");
+}
+
+export void test_front_types_match_a_value_named_twice_is_an_error() {
+    fails("const two: i32 = 2\n"
+          "fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        1, 2: 10\n"
+          "        two: 20\n"
+          "        _: 0\n",
+          "this value is matched twice", "remove one");
+}
+
+export void test_front_types_match_a_second_default_is_an_error() {
+    fails("fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        _: 10\n"
+          "        _: 20\n",
+          "`_` is written twice", "");
+}
+
+export void test_front_types_match_a_bare_name_is_a_constant_never_a_binding() {
+    fails("fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        other: 10\n"
+          "        _: 0\n",
+          "unknown name `other`", "");
+}
+
+export void test_front_types_match_a_variable_is_not_a_pattern() {
+    fails("fn pick(k: i32, n: i32) -> i32:\n"
+          "    let mut m = n\n"
+          "    m += 1\n"
+          "    match k:\n"
+          "        m: 10\n"
+          "        _: 0\n",
+          "`m` is a variable, but a pattern compares with a constant", "");
+}
+
+export void test_front_types_match_a_pattern_is_a_literal_or_a_name() {
+    fails("fn pick(k: i32, n: i32) -> i32:\n"
+          "    match k:\n"
+          "        n + 1: 10\n"
+          "        _: 0\n",
+          "a pattern is a literal or the name of a constant", "");
+}
+
+export void test_front_types_match_a_pattern_has_the_type_of_the_value() {
+    fails("fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        true: 10\n"
+          "        _: 0\n",
+          "expected I32, found Bool", "");
+}
+
+export void test_front_types_match_a_variant_over_a_number_is_an_error() {
+    fails("fn pick(k: i32) -> i32:\n"
+          "    match k:\n"
+          "        .red: 10\n"
+          "        _: 0\n",
+          "`.red` is a variant, but this `match` is over `I32`", "");
+}
+
+export void test_front_types_match_a_constant_over_an_enumeration_is_an_error() {
+    fails("enum Color:\n"
+          "    red\n"
+          "    green\n"
+          "fn pick(c: Color) -> i32:\n"
+          "    match c:\n"
+          "        1: 10\n"
+          "        _: 0\n",
+          "a `match` over `Color` names its cases with a dot", "");
+}
+
+export void test_front_types_match_a_default_covers_the_rest_of_an_enumeration() {
+    clean("enum Color:\n"
+          "    red\n"
+          "    green\n"
+          "    blue\n"
+          "fn pick(c: Color) -> i32:\n"
+          "    match c:\n"
+          "        .red: 10\n"
+          "        _: 0\n");
+}
+
+export void test_front_types_match_checks_its_arms_as_statements() {
+    fails("enum Color:\n"
+          "    red\n"
+          "    green\n"
+          "fn pick(c: Color) -> i32:\n"
+          "    let mut x = 0\n"
+          "    match c:\n"
+          "        .red: x = nope\n"
+          "        .green: x = 2\n"
+          "    x\n",
+          "unknown name `nope`", "");
+}

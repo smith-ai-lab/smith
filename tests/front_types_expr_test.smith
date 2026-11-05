@@ -938,11 +938,16 @@ export void test_front_types_expr_match_is_exhaustive_over_an_enumeration() {
     ast::MatchArm twice[2] = {arm("red", num(1)), arm("red", num(2))};
     types_expr::infer(&r, as_value(ast::match_stmt(ast::name("color"), twice[0:2])));
     test::check_condition(says(last(&r), "`.red` is matched twice; remove one arm"));
-    // a match on a number is not one
+    // a match on a number takes constants, not variants (#2336)
     var(&r, "x", "U8");
     types_expr::infer(&r, as_value(ast::match_stmt(ast::name("x"), all[0:3])));
-    test::check_condition(says(last(&r), "`match` takes an enumeration or a `?T`, but this is a `U8`; match on an "
-                                         "enumerator, or write an `if`"));
+    test::check_condition(
+        says(last(&r), "`.blue` is a variant, but this `match` is over `U8`; write a constant such as `1` or `limit`"));
+    // a match on a real is not one
+    var(&r, "f", "F32");
+    types_expr::infer(&r, as_value(ast::match_stmt(ast::name("f"), all[0:3])));
+    test::check_condition(says(last(&r), "`match` takes an enumeration, a `?T`, a number, a `char` or a `bool`, but "
+                                         "this is a `F32`; write an `if`"));
 }
 
 export void test_front_types_expr_optionals_some_none_and_if_let() {
