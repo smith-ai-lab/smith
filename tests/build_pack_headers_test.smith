@@ -1,0 +1,29 @@
+// The resource packer (build.c: build_resource_pack) compiles release/pack.smith with the std modules it imports, and
+// so reads their headers under .smith/include/smith/. A header that a step of the build writes must be an input of the
+// packer, or the two run side by side and the packer reads half a file: the merge queue failed #2331 on
+// `.smith/include/smith/arena.h:25:49: error: a type specifier is required` (and #2307 on files.h) when a new smith
+// rebuilt the tree. This reads smith's own graph (.smith/build.ninja, which the build of the smith under test wrote),
+// and names each module the packer compiles whose header step is not among its inputs, so a missing edge is a failure.
+// smith-covers: build.c
+module build_pack_headers_test;
+
+import std::test;
+import scratch;
+
+// For each `build .smith/include/smith/<m>.h:` step whose lib/std/<m>.smith the packer compiles, prints <m> unless the
+// packer's own `build` line lists that header.
+constexpr char missing_script[_] =
+    "cd \"$SMITH_REPO\" && pack=$(grep '^build build/[^/]*/pack:' .smith/build.ninja) && "
+    "[ -n \"$pack\" ] || { echo 'no packer step in .smith/build.ninja'; exit 0; }; "
+    "for header in $(sed -n 's|^build \\(\\.smith/include/smith/[a-z_]*\\.h\\):.*|\\1|p' .smith/build.ninja); do "
+    "module=$(basename \"$header\" .h); "
+    "case \"$pack\" in *\" lib/std/$module.smith \"*) ;; *) continue ;; esac; "
+    "case \"$pack \" in *\" $header \"*) ;; *) echo \"$module\" ;; esac; done";
+
+export void test_build_pack_headers_the_packer_waits_for_the_headers_of_the_modules_it_compiles() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    const char *missing = scratch::capture(&p, missing_script);
+    defer scratch::release(missing);
+    scratch::expect_text("modules the packer compiles whose header step is not its input", "", missing);
+}
