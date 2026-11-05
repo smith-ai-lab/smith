@@ -293,3 +293,13 @@ export void test_front_builtin_libc_wrong_arguments() {
     refused("libc_wrong", "pub fn check() -> i32:\n    let x: i32 = 1\n    __builtin_strlen(x)\n    0\n",
             "__builtin_strlen");
 }
+
+export void test_front_builtin_snprintf() {
+    passes("snprintf", "pub fn check() -> i32:\n"
+                       "    let s: [2]u8 = [120, 0]\n"
+                       "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
+                       "    let n: i32 = __builtin_snprintf(&out[0], 16, \"%s-%d\", &s[0], 7)\n"
+                       "    if n != 3:\n        return 1\n"
+                       "    if out[2] != 55:\n        return 2\n"
+                       "    0\n");
+}
