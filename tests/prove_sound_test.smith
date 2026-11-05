@@ -24,19 +24,23 @@ import std::mem;
 constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
                              "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
 
-// The two files every harness links, compiled once for each smith under test and each content of the sources, into
+// The three files every harness links (trace, contract and the optimization barriers that std::random and std::math
+// call, #2303), compiled once for each smith under test and each content of the sources, into
 // $SMITH_TEST_CACHE/prove-sound/<key>/ (#967): built in a folder of their own, moved into place by a rename, so
 // tests that start together build them at most a few times and never read half an object. The command prints the
 // folder.
 constexpr char common_script[_] =
     "c=\"$SMITH_TEST_CACHE/prove-sound\"; r=\"$SMITH_REPO\"; s=$(command -v smith); "
     "id=$(stat -L -c %s.%Y \"$s\" 2>/dev/null || stat -L -f %z.%m \"$s\"); "
-    "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/std/contract.smith\" \"$r/.smith/include/smith/trace.h\" "
+    "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/optimize_asm.c\" \"$r/lib/std/contract.smith\" "
+    "\"$r/.smith/include/smith/trace.h\" "
     "\"$r/.smith/include/smith/handlers.h\"; echo \"$id $F\") | cksum | cut -d\" \" -f1); d=\"$c/$k\"; "
-    "if [ ! -f \"$d/trace.o\" ] || [ ! -f \"$d/contract.o\" ]; then "
+    "if [ ! -f \"$d/trace.o\" ] || [ ! -f \"$d/contract.o\" ] || [ ! -f \"$d/optimize_asm.o\" ]; then "
     "mkdir -p \"$c\" && t=$(mktemp -d \"$c/tmp-XXXXXX\") && mkdir -p \"$t/lib/std\" && "
-    "cp \"$r/lib/trace.c\" \"$t/lib/\" && cp \"$r/lib/std/contract.smith\" \"$t/lib/std/\" && cd \"$t\" && "
+    "cp \"$r/lib/trace.c\" \"$r/lib/optimize_asm.c\" \"$t/lib/\" && cp \"$r/lib/std/contract.smith\" \"$t/lib/std/\" "
+    "&& cd \"$t\" && "
     "eval \"smith cc $F -c lib/trace.c -o trace.o\" 2>&1 && "
+    "eval \"smith cc $F -I \\\"$r/include\\\" -c lib/optimize_asm.c -o optimize_asm.o\" 2>&1 && "
     "eval \"smith cc $F -c lib/std/contract.smith -o contract.o\" 2>&1 "
     "|| exit 1; cd \"$c\" && rm -rf \"$t/lib\"; if [ -d \"$d\" ]; then rm -rf \"$t\"; else mv \"$t\" \"$d\"; fi; fi; "
     "echo \"$d\"";
@@ -174,10 +178,10 @@ static void sound(const char *name) {
         test::check_condition(scratch::contains(proved.out, format::push("ok    ", fn, "  (").data));
     }
     const char *sources = link_sources(memory, &p, name, links);
-    scratch::Run built =
-        scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " ", source, sources, " ", objects,
-                                     "/trace.o ", objects, "/contract.o -o ", name, "/run 2>&1")
-                            .data);
+    scratch::Run built = scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " ", source,
+                                                      sources, " ", objects, "/trace.o ", objects, "/optimize_asm.o ",
+                                                      objects, "/contract.o -o ", name, "/run 2>&1")
+                                             .data);
     scratch::expect_status("prove_sound: the harness builds", 0, &built);
     const char *seeds = test::full() ? "1 2 3 4 5 6 7 8" : "1";
     const char *count = test::full() ? "50000" : "2000";
@@ -208,9 +212,10 @@ static void unsound(const char *name) {
     const char *text = scratch::read(&p, source);
     scratch::Run proved =
         scratch::sh(&p, format::push("smith prove -v ", source, " -- -I \"$SMITH_REPO/.smith/include\" 2>&1").data);
-    scratch::Run built = scratch::sh(&p, format::push("smith cc ", cc_flags, " ", source, " ", objects, "/trace.o ",
-                                                      objects, "/contract.o -o claims 2>&1")
-                                             .data);
+    scratch::Run built =
+        scratch::sh(&p, format::push("smith cc ", cc_flags, " ", source, " ", objects, "/trace.o ", objects,
+                                     "/optimize_asm.o ", objects, "/contract.o -o claims 2>&1")
+                            .data);
     scratch::expect_status("prove_sound: the corpus builds", 0, &built);
     for (const char *line = text; *line != '\0';) {
         Usize length = 0;
