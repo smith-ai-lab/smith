@@ -3203,7 +3203,9 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
         wanted = f.expected->element;
     }
     if (countof(items) == 0 && wanted == nullptr) {
-        types::failf(c, e->span, "an empty `[]` needs a type for now: write `xs: []i32 = []`, or pass it where a slice is expected (inferring it from later uses is planned)");
+        types::failf(c, e->span,
+                     "an empty `[]` needs a type for now: write `xs: []i32 = []`, or pass it where a slice is expected "
+                     "(inferring it from later uses is planned)");
         poison(c, e);
         return;
     }
