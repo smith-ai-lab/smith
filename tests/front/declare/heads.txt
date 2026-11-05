@@ -1,0 +1,28 @@
+(module 
+  (function f
+    (param opt new (option (named i32)))
+    (param shape new (named Shape))
+    (param it new (pointer mut (named Items)))
+    (result (named i32))
+    (block
+      (if_let
+        (pattern some x)
+        (name opt)
+        (block
+          (return (name x)))
+        (block
+          (return (integer 0))))
+      (if_let
+        (pattern circle c)
+        (name shape)
+        (block
+          (return (name c))))
+      (while
+        (boolean true)
+        (if_let
+          (pattern some item)
+          (call (member next (name it)))
+          (block
+            (expression (call (name use) (name item))))
+          (break)))
+      (expression (integer 0)))))

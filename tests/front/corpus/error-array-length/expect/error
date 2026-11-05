@@ -1,1 +1,2 @@
+src/main.smith:3:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
 src/main.smith:3:22: error: `I32[3]` holds 3 elements but this has 2; write exactly 3 elements

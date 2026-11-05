@@ -1,0 +1,262 @@
+// Tests of declarations without `let` (#2316): `x := v`, `mut n := 0`, `x: T = v`, `(q, mut r) := f()`, `_ := f()`,
+// the same at the top level, `if x := opt:`, `while item := it.next():` and `if .circle(c) := shape:`, and block calls
+// that always take `()`. The old `let` and a bare `html:` still parse, each with a warning whose fix writes the new
+// form; a second run of the fixer changes nothing.
+module front_declare_test;
+
+import front::ast;
+import front::fix;
+import front::lsp_server;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// `source` parses with no error and no warning, and its tree is the golden file `name`.
+static void parses_clean(Str source, Str golden) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    Str none = "none";
+    Str error = none;
+    if (countof(p.errors) > 0) error = p.errors[0].message;
+    Str warning = none;
+    if (countof(p.warnings) > 0) warning = p.warnings[0].message;
+    test::check_equal(error, none);
+    test::check_equal(warning, none);
+    test::golden(golden, ast::dump(&p.module));
+}
+
+// The fixer turns `before` into `after` with `fixes` fixes, and a second run has nothing to do.
+static void fixes_to(Str before, Str after, Usize fixes) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    test::check_equal(first.applied, fixes);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.text, after);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+// The first warning of `source`, or "none".
+static Str first_warning(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    if (countof(p.warnings) == 0) return "none";
+    return p.warnings[0].message;
+}
+
+// The first parse error of `source`, or "none".
+static Str first_error(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    if (countof(p.errors) == 0) return "none";
+    return p.errors[0].message;
+}
+
+// The checker's errors of `source`, one per line (it parses with no error).
+static Str check_errors(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    Str none = "none";
+    Str error = none;
+    if (countof(p.errors) > 0) error = p.errors[0].message;
+    test::check_equal(error, none);
+    types::Checked r = types_decl::check_module(&p.module, types::lp64());
+    Str text = "";
+    for (Usize i = 0; i < r.error_count; i++) {
+        text = as_str(format::push(text, r.errors[i].message, "\n"));
+    }
+    return text;
+}
+
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(check_errors(source), none);
+}
+
+static void fails(Str source, Str needle) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str errors = check_errors(source);
+    test::check_condition(has(errors, needle));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The forms
+
+export void test_front_declare_every_form_in_a_body() {
+    parses_clean("fn divmod(a: i32, b: i32) -> (i32, i32):\n    (a / b, a % b)\n\n"
+                 "fn f() -> i32:\n"
+                 "    x := 5\n"
+                 "    mut n := 0\n"
+                 "    count: usize = 0\n"
+                 "    mut buf: [4096]u8 = undefined\n"
+                 "    (q, mut r) := divmod(17, 5)\n"
+                 "    _ := divmod(1, 1)\n"
+                 "    T := i32\n"
+                 "    p := Pair(i32)(1, 2)\n"
+                 "    size: c.size_t = 0\n"
+                 "    n = x + q\n"
+                 "    r = 1\n"
+                 "    n\n",
+                 "tests/front/declare/body.txt");
+}
+
+export void test_front_declare_every_form_at_the_top_level() {
+    parses_clean("limit := 5\nmut shares := 0\ncount: usize = 0\nmut total: u64 = 0\npub open := 1\n"
+                 "extern mut errno: i32\nconst N = 4\nconst M: usize = 4\nT := i32\n",
+                 "tests/front/declare/top.txt");
+}
+
+export void test_front_declare_if_and_while_bind() {
+    parses_clean("fn f(opt: ?i32, shape: Shape, it: *mut Items) -> i32:\n"
+                 "    if x := opt:\n        return x\n    else:\n        return 0\n"
+                 "    if .circle(c) := shape:\n        return c\n"
+                 "    while item := it.next():\n        use(item)\n"
+                 "    0\n",
+                 "tests/front/declare/heads.txt");
+}
+
+export void test_front_declare_block_calls_take_parentheses() {
+    parses_clean("fn f():\n"
+                 "    page := html():\n        body():\n            h1(class = \"big\"):\n                \"hello\"\n"
+                 "    retry(times = 3):\n        fetch(url)\n"
+                 "    sort(xs) fn(a, b): a < b\n"
+                 "    html():\n        g := fn(x): x * 2\n        g(1)\n",
+                 "tests/front/declare/blocks.txt");
+}
+
+// `x : = 5` is not `:=`: the declaration is one token.
+export void test_front_declare_colon_equal_is_one_token() {
+    test::check_condition(!same(first_error("fn f():\n    x : = 5\n"), "none"));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The old forms warn, and the fix writes the new ones
+
+export void test_front_declare_let_warns_with_a_fix() {
+    Str message = "`let` is gone: declare with `name := value`, or `name: T = value` with a type";
+    test::check_equal(first_warning("fn f():\n    let a = 1\n    a\n"), message);
+    fixes_to("fn f() -> i32:\n    let a = 1\n    let mut b: i32 = 2\n    let mut c = 3\n    let (q, mut r) = g()\n"
+             "    b = a + c + q + r\n    b\n",
+             "fn f() -> i32:\n    a := 1\n    mut b: i32 = 2\n    mut c := 3\n    (q, mut r) := g()\n"
+             "    b = a + c + q + r\n    b\n",
+             4);
+    fixes_to("let top = 1\npub let mut shared: u64 = 0\nextern let mut errno: i32\n",
+             "top := 1\npub mut shared: u64 = 0\nextern mut errno: i32\n", 3);
+}
+
+export void test_front_declare_if_let_warns_with_a_fix() {
+    fixes_to("fn f(o: ?i32, s: Shape) -> i32:\n    if let x = o:\n        return x\n    if let .circle(c) = s:\n"
+             "        return c\n    0\n",
+             "fn f(o: ?i32, s: Shape) -> i32:\n    if x := o:\n        return x\n    if .circle(c) := s:\n"
+             "        return c\n    0\n",
+             2);
+}
+
+export void test_front_declare_a_bare_block_warns_with_a_fix() {
+    Str message = "a block call takes parentheses, even with no arguments: write `html():`";
+    test::check_equal(first_warning("fn f():\n    html:\n        body()\n"), message);
+    fixes_to("fn f():\n    html:\n        body:\n            h1()\n",
+             "fn f():\n    html():\n        body():\n            h1()\n", 2);
+}
+
+// The checker's `mut` fix lands before the name with or without `let` (it used to skip four bytes for `let `).
+export void test_front_declare_the_mut_fix_goes_before_the_name() {
+    fixes_to("fn f():\n    total := 0\n    total = total + 1\n", "fn f():\n    mut total := 0\n    total = total + 1\n",
+             1);
+    fixes_to("fn f():\n    let total = 0\n    total = total + 1\n",
+             "fn f():\n    mut total := 0\n    total = total + 1\n", 2);
+}
+
+// `mut x = 5` is a declaration with no type: the error's fix writes `:=`.
+export void test_front_declare_mut_with_a_plain_equal_is_an_error() {
+    Str message = "a declaration with no type is written `mut x := value`";
+    test::check_equal(first_error("fn f():\n    mut x = 5\n"), message);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The checker
+
+export void test_front_declare_shadowing_says_to_assign() {
+    fails("fn f():\n    x := 1\n    x := 2\n", "assign with `=`, or choose another name");
+    fails("fn f(x: i32):\n    x := 2\n", "assign with `=`, or choose another name");
+}
+
+export void test_front_declare_assigning_an_undeclared_name_is_unknown() {
+    fails("fn f():\n    y = 2\n", "unknown name `y`");
+}
+
+export void test_front_declare_values_of_every_kind() {
+    clean("struct Pair:\n    a: i32\n    b: i32\n\n"
+          "fn f() -> i32:\n    p := Pair(1, 2)\n    twice := fn(x: i32) -> i32: x * 2\n"
+          "    n: i32 = twice(p.a)\n    n\n");
+}
+
+export void test_front_declare_if_and_while_check() {
+    clean("fn half(n: i32) -> ?i32:\n    if n % 2 != 0:\n        return .none\n    n / 2\n\n"
+          "fn f(o: ?i32) -> i32:\n    if x := o:\n        return x\n    mut k := 8\n    mut steps := 0\n"
+          "    while h := half(k):\n        k = h\n        steps += 1\n    steps\n");
+    clean("struct Circle:\n    radius: f32\nenum Shape:\n    circle: Circle\n    empty\n\n"
+          "fn r(s: Shape) -> f32:\n    if .circle(c) := s:\n        return c.radius\n    0.0\n");
+}
+
+// An affine value declared with `:=` moves as one declared with `let` did.
+export void test_front_declare_an_affine_value_moves() {
+    Str prelude = "@affine\npub struct Key:\n    bits: u64\n\nfn draw(key: Key) -> u64:\n    key.bits\n\n";
+    fails(as_str(format::push(prelude, "fn twice(key: Key) -> u64:\n    k := key\n    a := draw(k)\n    b := draw(k)\n"
+                                       "    a + b\n")),
+          "'k' is used again");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The editor
+
+export void test_front_declare_hover_over_a_name_declared_with_colon_equal() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)lsp_server::handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":"
+                             "{\"uri\":\"file:///t/d.smith\",\"text\":\"fn main() -> i32:\\n    count := 3\\n"
+                             "    return count\\n\"}}}");
+    Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/hover\",\"params\":"
+                                 "{\"textDocument\":{\"uri\":\"file:///t/d.smith\"},\"position\":{\"line\":2,"
+                                 "\"character\":12}}}");
+    test::check(has(out, "\"id\":4"));
+    test::check(has(out, "I32"));
+}

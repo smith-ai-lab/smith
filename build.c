@@ -303,6 +303,18 @@ static const char *const *build_header_modules(SmithBuild *b) {
     return build_marked(b, "// smith-build: header");
 }
 
+// The headers of the linked libraries (`// smith-build: link`), which their smith_object steps write: a step that
+// compiles one of those modules' importers outside smith_object (the resource packer) waits for them. Without the
+// edge it ran beside the header step that rewrote .smith/include/smith/arena.h and read half a file (#2331, #2307).
+static const char *const *build_linked_headers(SmithBuild *b) {
+    const char *const *linked = build_marked(b, "// smith-build: link");
+    const char *const *headers = smith_list(b, nullptr);
+    for (size_t i = 0; linked[i] != nullptr; i++) // bounded by the tree
+        headers = smith_cat(b, headers, smith_list(b, smith_fmt(b, ".smith/include/smith/%s.h", linked[i]), nullptr),
+                            nullptr);
+    return headers;
+}
+
 // The compiler's own file, which a header step lists as an input: it is the smith that writes the header.
 static const char *build_compiler_file(SmithBuild *b, const BuildConfig *config) {
     if (strchr(config->cc, '/') != nullptr) return config->cc;
@@ -592,8 +604,8 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
                       smith_list(b, "-o", smith_fmt(b, "%s/pack", folder), nullptr), nullptr),
             nullptr),
         .inputs = sources,
-        .implicit_inputs =
-            smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers, nullptr),
+        .implicit_inputs = smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers,
+                                     build_linked_headers(b), nullptr),
         .outputs = smith_list(b, smith_fmt(b, "%s/pack", folder), nullptr),
         .description = "compiling the resource packer",
     };

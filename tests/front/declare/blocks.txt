@@ -1,0 +1,51 @@
+(module 
+  (function f
+    (block
+      (declaration
+        (variable page new
+          (auto)
+          (call
+            (name html)
+            (lambda
+              (block
+                (expression
+                  (call
+                    (name body)
+                    (lambda
+                      (block
+                        (expression
+                          (call
+                            (name h1)
+                            (named_arg class (string "big"))
+                            (lambda
+                              (block
+                                (expression (string "hello")))))))))))))))
+      (expression
+        (call
+          (name retry)
+          (named_arg times (integer 3))
+          (lambda
+            (block
+              (expression (call (name fetch) (name url)))))))
+      (expression
+        (call
+          (name sort)
+          (name xs)
+          (lambda
+            (param a)
+            (param b)
+            (block
+              (expression (binary less (name a) (name b)))))))
+      (expression
+        (call
+          (name html)
+          (lambda
+            (block
+              (declaration
+                (variable g new
+                  (auto)
+                  (lambda
+                    (param x)
+                    (block
+                      (expression (binary multiply (name x) (integer 2)))))))
+              (expression (call (name g) (integer 1))))))))))
