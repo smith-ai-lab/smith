@@ -272,9 +272,23 @@ static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state
     return state::success();
 }
 
+// `p + n` and `p - n`: the pointer moved by n elements (bytes for a `void` or an untyped pointee), as C does.
+static state::Status pointer_offset(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right) {
+    c::LLVMTypeRef unit = c::LLVMInt8TypeInContext(e->context);
+    if (left.ty.element != nullptr && c::LLVMGetTypeKind(left.ty.element->llvm) != c::LLVMVoidTypeKind)
+        unit = left.ty.element->llvm;
+    c::LLVMValueRef steps = right.llvm;
+    if (op == .subtract) steps = c::LLVMBuildNeg(e->builder, steps, "");
+    c::LLVMValueRef out = c::LLVMBuildGEP2(e->builder, unit, left.llvm, &steps, 1, "offset");
+    state::push_value(e, (state::Value){.llvm = out, .ty = left.ty});
+    return state::success();
+}
+
 // `left op right` with the checks, pushed as a Value of their type. `span` is the node's, for the errors.
 export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right,
                                   ast::Span span) {
+    if (left.ty.kind == .pointer && right.ty.kind == .integer && (op == .add || op == .subtract))
+        return pointer_offset(e, op, left, right);
     if (!state::same_type(left.ty, right.ty))
         return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     if (left.ty.kind == .floating) return float_arithmetic(e, op, left, right, span);
@@ -297,13 +311,33 @@ static Bool fits(state::Ty ty, U64 value) {
     return value < (1ULL << usable);
 }
 
+// The type of a literal with a suffix (`7u`, `0x9EULL`): as the checker decides it (types_expr default_integer).
+static void suffixed_type(state::Emitter *e, U64 value, Str suffix, state::Ty *out) {
+    Bool unsigned_literal = false;
+    Bool wide = false;
+    for (Usize i = 0; i < countof(suffix); i++) {
+        if (suffix[i] == 'u' || suffix[i] == 'U') unsigned_literal = true;
+        if (suffix[i] == 'l' || suffix[i] == 'L') wide = true;
+    }
+    Str name = "U64";
+    if (unsigned_literal) {
+        if (!wide && value <= 4294967295) name = "U32";
+    } else if (!wide && value <= 2147483647) {
+        name = "I32";
+    } else if (value <= 9223372036854775807) {
+        name = "I64";
+    }
+    state::scalar_type(e, name, out);
+}
+
 export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .integer) {
         return state::fail("not an integer literal", x->span);
     }
-    if (countof(x->kind.integer.suffix) > 0) return state::not_emitted("integer literal with a suffix", x->span);
     state::Ty ty = {};
-    if (hint.present)
+    if (countof(x->kind.integer.suffix) > 0)
+        suffixed_type(e, x->kind.integer.value, x->kind.integer.suffix, &ty);
+    else if (hint.present)
         ty = hint.ty;
     else
         state::scalar_type(e, "I32", &ty);
@@ -476,7 +510,9 @@ static state::Status binary_middle(state::Emitter *e, const state::Work *w) {
     }
     state::Value left = state::peek_value(e);
     state::push_then(e, (state::Work){.then = binary_finish, .expr = w->expr, .span = w->span});
-    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(left.ty));
+    state::Ty wanted = left.ty;
+    if (left.ty.kind == .pointer) state::scalar_type(e, "Usize", &wanted); // `p + 1`: the offset is a count
+    state::push_eval(e, w->expr->kind.binary.right, state::hint_of(wanted));
     return state::success();
 }
 

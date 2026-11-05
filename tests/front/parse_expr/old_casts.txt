@@ -138,3 +138,15 @@ p->a->b
   fixed: x.to(u16).to(u8).to(i32)
   warnings left: 0
 
+(Usize)-1
+  warning 1-6: write the type `Usize` as `usize` in smith's own syntax
+  warning 0-9: a cast is `x.wrap(T)`: write `x.wrap(usize)`
+  fixed: (-1).wrap(usize)
+  warnings left: 0
+
+(I32)-1
+  warning 1-4: write the type `I32` as `i32` in smith's own syntax
+  warning 0-7: a cast is `x.to(T)`: write `x.to(i32)`
+  fixed: (-1).to(i32)
+  warnings left: 0
+

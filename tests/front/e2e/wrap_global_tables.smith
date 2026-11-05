@@ -1,0 +1,25 @@
+# #2474: a wrapping conversion of a constant, global tables of float expressions and of strings, a suffixed literal and
+# a pointer moved by elements.
+const sanitized: bool = target.address_sanitizer
+
+static mut terms: [3]f64 = [-1.0 / 6.0, 1.0 / 120.0, 2.0]
+
+static mut names: [2]*char = ["ab", "cde"]
+
+fn largest() -> usize:
+    (-1).wrap(usize)
+
+pub fn check() -> i32:
+    if largest().wrap(u64) != 0xFFFFFFFFFFFFFFFFULL:
+        return 1
+    if terms[2] != 2.0 || terms[0] >= 0.0:
+        return 2
+    if names[1][2] != 'e':
+        return 3
+    mut values: [3]u32 = [10, 20, 30]
+    second: *mut u32 = &values[0] + 1
+    if second.* != 20:
+        return 4
+    if sanitized && !sanitized:
+        return 5
+    0

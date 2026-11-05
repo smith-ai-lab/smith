@@ -1442,8 +1442,47 @@ static state::Status integer_constant(state::Ty ty, U64 value, Bool negative, as
     return state::success();
 }
 
+// The value of a floating literal, `-literal` or an integer literal (`2`, `-1.0`); false for anything else.
+static Bool float_operand(const ast::Expr *x, F64 *out) {
+    Bool negative = false;
+    if (x->kind == .unary && x->kind.unary.op == .negate) {
+        negative = true;
+        x = x->kind.unary.operand;
+    }
+    if (x->kind == .floating) {
+        *out = x->kind.floating.value;
+    } else if (x->kind == .integer) {
+        *out = (F64)x->kind.integer.value;
+    } else {
+        return false;
+    }
+    if (negative) *out = -*out;
+    return true;
+}
+
+// A floating constant from a literal or one operation on two of them: `-1.0 / 6.0` in a table of coefficients.
+static Bool float_constant(const ast::Expr *x, F64 *out) {
+    if (x->kind != .binary) return float_operand(x, out);
+    F64 left = 0.0;
+    F64 right = 0.0;
+    if (!float_operand(x->kind.binary.left, &left) || !float_operand(x->kind.binary.right, &right)) return false;
+    ast::BinaryOp op = x->kind.binary.op;
+    if (op == .add) {
+        *out = left + right;
+    } else if (op == .subtract) {
+        *out = left - right;
+    } else if (op == .multiply) {
+        *out = left * right;
+    } else if (op == .divide) {
+        *out = left / right;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
-static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .null_pointer && ty.kind == .pointer) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
@@ -1460,15 +1499,27 @@ static state::Status scalar_constant(state::Ty ty, const ast::Expr *x, c::LLVMVa
     }
     if (ty.kind == .integer && x->kind == .character)
         return integer_constant(ty, x->kind.character.value, false, x->span, out);
-    if (ty.kind == .floating && x->kind == .floating) {
-        *out = c::LLVMConstReal(ty.llvm, x->kind.floating.value);
+    if (ty.kind == .pointer && x->kind == .string) { // `"text"` in a table of names: the address of its bytes
+        Str bytes = x->kind.string.bytes;
+        c::LLVMValueRef text = c::LLVMConstStringInContext2(e->context, bytes.data, countof(bytes), 0);
+        c::LLVMValueRef global = c::LLVMAddGlobal(
+            e->module, c::LLVMArrayType2(c::LLVMInt8TypeInContext(e->context), countof(bytes) + 1), ".str");
+        c::LLVMSetInitializer(global, text);
+        c::LLVMSetGlobalConstant(global, 1);
+        c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
+        *out = global;
+        return state::success();
+    }
+    F64 real = 0.0;
+    if (ty.kind == .floating && float_constant(x, &real)) {
+        *out = c::LLVMConstReal(ty.llvm, real);
         return state::success();
     }
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
 // An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
-static state::Status array_constant(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+static state::Status array_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .string && ty.element->kind == .integer && ty.element->bits == 8) {
         Str bytes = x->kind.string.bytes;
         if (countof(bytes) + 1 > ty.count) return state::failf(x->span, "the string does not fit ", ty.name);
@@ -1488,7 +1539,7 @@ static state::Status array_constant(state::Ty ty, const ast::Expr *x, c::LLVMVal
     c::LLVMValueRef values[256];
     for (Usize i = 0; i < ty.count; i++) {
         values[i] = c::LLVMConstNull(ty.element->llvm);
-        if (i < countof(items)) try scalar_constant(*ty.element, items[i], &values[i]);
+        if (i < countof(items)) try scalar_constant(e, *ty.element, items[i], &values[i]);
     }
     *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
     return state::success();
@@ -1518,12 +1569,12 @@ static state::Status construction_constant(state::Emitter *e, state::Ty ty, cons
             arg = arg->kind.named_arg.value;
         }
         if (field >= count) return state::failf(arg->span, "too many fields for ", ty.name);
-        try scalar_constant(e->records[at].fields[field].ty, arg, &values[field]);
+        try scalar_constant(e, e->records[at].fields[field].ty, arg, &values[field]);
         given[field] = true;
     }
     for (Usize i = 0; i < count; i++) {
         const ast::Expr *fallback = e->records[at].fields[i].default_value;
-        if (!given[i] && fallback != nullptr) try scalar_constant(e->records[at].fields[i].ty, fallback, &values[i]);
+        if (!given[i] && fallback != nullptr) try scalar_constant(e, e->records[at].fields[i].ty, fallback, &values[i]);
     }
     *out = c::LLVMConstNamedStruct(ty.llvm, values, (U32)count);
     return state::success();
@@ -1538,7 +1589,7 @@ static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast:
     if (ty.element->kind == .record && value->kind == .call)
         try construction_constant(e, *ty.element, value, &item);
     else
-        try scalar_constant(*ty.element, value, &item);
+        try scalar_constant(e, *ty.element, value, &item);
     if (c::LLVMIsNull(item) != 0) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
@@ -1554,9 +1605,9 @@ static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast:
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
     if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
-    if (ty.kind == .array) return array_constant(ty, x, out);
+    if (ty.kind == .array) return array_constant(e, ty, x, out);
     if (x->kind != .compound) {
-        return scalar_constant(ty, x, out);
+        return scalar_constant(e, ty, x, out);
     }
     ast::Initializer items[:] = x->kind.compound.items;
     Usize at = 0;
@@ -1576,7 +1627,7 @@ static state::Status compound_constant(state::Emitter *e, state::Ty ty, const as
         if (found == .error) {
             return found;
         }
-        state::Status made = scalar_constant(e->records[at].fields[field].ty, items[i].value, &values[field]);
+        state::Status made = scalar_constant(e, e->records[at].fields[field].ty, items[i].value, &values[field]);
         if (made == .error) {
             return made;
         }
