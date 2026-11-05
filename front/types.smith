@@ -128,6 +128,7 @@ export struct Slot {
     const ast::Expr *default_value; // `x: T = 3`: the field's default (null when none)
     Str doc;                        // the comment above the field, for `fields(T)` (#2295)
     ast::Attribute attributes[:];   // the attributes written on the field, for `f.attr(X)`
+    const ast::TypeExpr *written;   // a field written in smith's own syntax: its type as written (for a fix-it)
 };
 
 // Which fields mean something depends on `kind`:
@@ -2113,6 +2114,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         fields[i].default_value = f->default_value;
         fields[i].doc = f->doc;
         fields[i].attributes = f->attributes;
+        fields[i].written = f->is_new ? f->type : nullptr;
         if (f->is_pub && !(d->is_pub || d->exported)) {
             failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
                   "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");
