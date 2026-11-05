@@ -423,3 +423,13 @@ export void test_front_types_decl_a_bare_underscore_assignment_is_refused() {
     fails("fn g(x: i32):\n    _ = x\n", "`_`", "write `_ := x`");
     reading_new = false;
 }
+
+// Part of #2329: an alias of a builtin type, a forward declaration and the struct that follows it, a pointer alias
+// and a slice written `[]mut T`.
+export void test_front_types_decl_aliases_forward_structs_and_mut_slices() {
+    reading_new = true;
+    clean("Wide := u128\nfn f(x: Wide) -> Wide:\n    return x\n");
+    clean("pub struct Node\nPtr := *Node\npub struct Node:\n    next: Ptr\n");
+    clean("fn f(xs: []mut u8):\n    xs[0] = 1\n");
+    reading_new = false;
+}
