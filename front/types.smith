@@ -3166,7 +3166,10 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
 static void declare_headers(Checked *r, const ast::Module *m);
 
 static void declare_imported(Checked *r, Pending list[:], Usize count) {
-    for (Usize k = 0; k < count; k++) {
+    // The list is in the order the imports were found: a module comes before the ones it imports. A module's types
+    // name those of its imports, so the deepest is declared first.
+    for (Usize n = 0; n < count; n++) {
+        Usize k = count - 1 - n;
         const ast::Module *m = list[k].module;
         // The headers the module imports bind their names for its own declarations only (`[k.SIDE]u8` in a field),
         // so the bindings go once the module is declared.
