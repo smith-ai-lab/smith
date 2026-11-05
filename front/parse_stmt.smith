@@ -1553,10 +1553,20 @@ static Bool alone_on_line(Str source, ast::Span span) {
     return from > 0 && source[from - 1] == '\n' && (to >= countof(source) || source[to] == '\n');
 }
 
-static Usize breaks_in(const parse::Parser *p, Usize from) {
+// The `break`s from the token `from` on that end this case: not those of a switch nested in its body, which end that
+// switch.
+static Usize breaks_in(const parse::Parser *p, const Frame *frame, Usize from) {
     Usize count = 0;
     for (Usize i = from; i < p->position && i < countof(p->tokens); i++) {
-        if (p->tokens[i].kind == lex::kw_break) count += 1;
+        if (p->tokens[i].kind != lex::kw_break) continue;
+        Bool nested = false;
+        for (Usize j = 0; j < frame->body_count; j++) {
+            ast::Stmt *inner = frame->body[j];
+            if (inner->kind == .switch_stmt && p->tokens[i].span.start >= inner->span.start &&
+                p->tokens[i].span.end <= inner->span.end)
+                nested = true;
+        }
+        if (!nested) count += 1;
     }
     return count;
 }
@@ -1571,13 +1581,21 @@ static void case_fix(const parse::Parser *p, Frame *frame) {
     ast::Stmt *last = frame->body[frame->body_count - 1];
     Bool ends_break = last->kind == .break_stmt;
     Bool jump = last->kind == .return_stmt || last->kind == .continue_stmt;
-    if ((!ends_break && !jump) || breaks_in(p, frame->case_from) != (ends_break ? 1 : 0) ||
-        (ends_break && frame->body_count == 1)) {
+    if ((!ends_break && !jump) || breaks_in(p, frame, frame->case_from) != (ends_break ? 1 : 0)) {
         frame->switch_bad = true;
         return;
     }
     Str label = frame->switch_edits[frame->last_label].text;
     Str nothing = "";
+    if (ends_break && frame->body_count == 1) {
+        // A case that only breaks does nothing: the arm is `labels => ()` (a `break` in an arm would leave the loop).
+        char empty[:] = format::push(label[0:countof(label) - 2], " => ()");
+        frame->switch_edits[frame->last_label].text = empty;
+        Usize stop = last->span.end;
+        if (stop < countof(p->source) && p->source[stop] == ';') stop += 1;
+        add_switch_edit(frame, edit((ast::Span){.start = (U32)last->span.start, .end = (U32)stop}, nothing));
+        return;
+    }
     Bool plain = frame->body_count == 2 && first->kind == .expression && ends_break;
     Bool single = frame->body_count == 1 && jump;
     if (plain || single) {
@@ -1913,6 +1931,9 @@ static ast::Stmt *step(parse::Parser *p, Stack *stack) {
     return start(p, stack);
 }
 
+// Steps in a row that add an error and move nowhere before `statement` gives up.
+constexpr Usize stalls_max = 4;
+
 // Reads one statement. After an error it is an `empty` placeholder and the parser stands at the next statement.
 export ast::Stmt *statement(parse::Parser *p) {
     Usize skipped_max = countof(p->tokens);
@@ -1928,8 +1949,15 @@ export ast::Stmt *statement(parse::Parser *p) {
     Stack stack = {};
     // Every step takes a token or closes a frame the tokens opened, so a count of eight steps to a token is a bound.
     Usize steps_max = 8 * countof(p->tokens) + 16;
-    for (Usize steps = 0; steps < steps_max; steps++) {
+    // A step that adds an error and takes no token is a stall (a `}` frame that meets a layout `dedent`, #2262): each
+    // would add one more error to a list that is copied whole on every growth, so a few stalls in a row end the loop.
+    Usize stalls = 0;
+    for (Usize steps = 0; steps < steps_max && stalls < stalls_max; steps++) {
+        Usize errors_before = countof(p->errors);
+        Usize position_before = p->position;
         ast::Stmt *done = step(p, &stack);
+        Bool stalled = countof(p->errors) > errors_before && p->position == position_before;
+        stalls = stalled ? stalls + 1 : 0;
         if (done == nullptr) continue;
         done = deliver(p, &stack, done);
         if (done != nullptr) return done;

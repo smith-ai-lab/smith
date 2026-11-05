@@ -5,9 +5,33 @@
   warnings left: 0
 
 (Point *)p
-  warning 1-8: write the type `Point *` as `*Point` in smith's own syntax
-  warning 0-10: a cast is `x.cast(T)`: write `x.cast(*Point)`
+  warning 1-8: write the type `Point *` as `*mut Point` in smith's own syntax
+  warning 0-10: a cast is `x.cast(T)`: write `x.cast(*mut Point)`
+  fixed: p.cast(*mut Point)
+  warnings left: 0
+
+(const Point *)p
+  warning 1-14: write the type `const Point *` as `*Point` in smith's own syntax
+  warning 0-16: a cast is `x.cast(T)`: write `x.cast(*Point)`
   fixed: p.cast(*Point)
+  warnings left: 0
+
+(const void *)p
+  warning 1-13: write the type `const void *` as `*void` in smith's own syntax
+  warning 0-15: a cast is `x.cast(T)`: write `x.cast(*void)`
+  fixed: p.cast(*void)
+  warnings left: 0
+
+(void *)p
+  warning 1-7: write the type `void *` as `*mut void` in smith's own syntax
+  warning 0-9: a cast is `x.cast(T)`: write `x.cast(*mut void)`
+  fixed: p.cast(*mut void)
+  warnings left: 0
+
+(const Point *const *)p
+  warning 1-21: write the type `const Point *const *` as `**Point` in smith's own syntax
+  warning 0-23: a cast is `x.cast(T)`: write `x.cast(**Point)`
+  fixed: p.cast(**Point)
   warnings left: 0
 
 (I32)(U8)x
@@ -36,9 +60,9 @@
   warnings left: 0
 
 *(Point *)p
-  warning 2-9: write the type `Point *` as `*Point` in smith's own syntax
+  warning 2-9: write the type `Point *` as `*mut Point` in smith's own syntax
   warning 0-11: `*p` reads through a pointer as `p.*`
-  fixed: p.cast(*Point).*
+  fixed: p.cast(*mut Point).*
   warnings left: 0
 
 (t)x
@@ -101,9 +125,9 @@ p->a->b
   warnings left: 0
 
 *(I32 *)p
-  warning 2-7: write the type `I32 *` as `*i32` in smith's own syntax
+  warning 2-7: write the type `I32 *` as `*mut i32` in smith's own syntax
   warning 0-9: `*p` reads through a pointer as `p.*`
-  fixed: p.cast(*i32).*
+  fixed: p.cast(*mut i32).*
   warnings left: 0
 
 (I32)(U8)(U16)x

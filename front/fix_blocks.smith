@@ -687,13 +687,28 @@ static Str apply(Str source, Cuts cuts) {
     return as_str(format::push(out, source[from:countof(source)]));
 }
 
-// Whether the `.` starts a line that goes on the line before it: `.name` after a `)`, `]` or a name.
+// Whether the line that starts at the `.` is the arm of a `match` (`.b => x`, `.b(v), .c: x`): a `=>` or a `:` outside
+// every bracket before the line ends.
+static Bool arm_line(lex::Tokens tokens, Usize dot) {
+    Usize nest = 0;
+    for (Usize i = dot; i < countof(tokens); i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) nest += 1;
+        if ((kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) && nest > 0) nest -= 1;
+        if (nest == 0 && (kind == lex::fat_arrow || kind == lex::colon)) return true;
+        if (nest == 0 && tokens[i].line_break) return false;
+    }
+    return false;
+}
+
+// Whether the `.` starts a line that goes on the line before it: `.name` after a `)`, `]` or a name. The first token
+// of a `match` arm (`.b => x`) starts its own line.
 static Bool continues_line(lex::Tokens tokens, Usize dot) {
     if (dot == 0 || dot + 1 >= countof(tokens) || !tokens[dot - 1].line_break) return false;
     if (tokens[dot].kind != lex::dot) return false;
     lex::TokenKind before = tokens[dot - 1].kind;
     if (before != lex::right_paren && before != lex::right_bracket && before != lex::name) return false;
-    return tokens[dot + 1].kind == lex::name;
+    return tokens[dot + 1].kind == lex::name && !arm_line(tokens, dot);
 }
 
 // A `{ continue }` on one line is put on lines of its own, so that the loop it is in can write its step before the
