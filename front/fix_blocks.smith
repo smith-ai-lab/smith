@@ -252,6 +252,16 @@ static void else_statement(Str source, lex::Tokens tokens, Brace brace, Cuts *cu
     add_cut(cuts, spaces_before(source, close.span.start), close.span.end, "");
 }
 
+// Whether the `{` closes a statement header (`while`, `for`, `if`, `else`) whose empty body needs a statement.
+static Bool does_nothing_body(lex::Tokens tokens, Usize open) {
+    Usize i = open;
+    while (i > 0 && !tokens[i - 1].line_break)
+        i -= 1;
+    if (i < open && tokens[i].kind == lex::right_brace) i += 1;
+    lex::TokenKind kind = tokens[i].kind;
+    return kind == lex::kw_while || kind == lex::kw_for || kind == lex::kw_if || kind == lex::kw_else;
+}
+
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
 // `else` follows, or the `}` alone when it ends the last statement's line).
 static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
@@ -263,7 +273,10 @@ static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     }
     if (!multi_line_ready(tokens, brace)) return;
     enum_base_cut(tokens, brace, cuts);
-    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon_for(tokens, brace.open));
+    Str colon = colon_for(tokens, brace.open);
+    if (brace.close == brace.open + 1 && does_nothing_body(tokens, brace.open))
+        colon = as_str(format::push(colon, " ()"));
+    add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon);
     if (!tokens[brace.close - 1].line_break) {
         add_cut(cuts, spaces_before(source, close.span.start), close.span.end, brace.tail);
         return;
@@ -345,6 +358,9 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     enum_base_cut(tokens, brace, cuts);
     Str body = "";
     if (!brace.inside && !empty) body = lines_of(source, tokens, brace, indent + step);
+    // An empty loop or `if` body is written `()`, as an arm that does nothing is (#2328); a function or a type may be
+    // empty.
+    if (!brace.inside && empty && does_nothing_body(tokens, brace.open)) body = " ()";
     if (brace.inside) {
         add_cut(cuts, before, open.span.end, ":");
         // The body of a lambda in a call is an expression, and its value is the lambda's: `return` goes.

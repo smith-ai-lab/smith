@@ -154,3 +154,9 @@ export void test_front_fix_std_an_old_if_after_a_function_pointer_signature_and_
         "    return 0\npub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    # Tables.\n"
         "    s.* = S(a = 1,\n              b = 2)\n    if s.n != 0:\n        r.c = k(s)\n    return 1\n");
 }
+
+// An empty body of a loop is written `()`, so the text parses (#2328).
+export void test_front_fix_std_an_empty_while_body_is_written_as_unit() {
+    expect_fixed("module m;\nvoid f(I32 a) {\n    while (a < g(&a)) {\n    }\n    h(a);\n}\n",
+                 "fn f(a: i32):\n    while a < g(&a): ()\n    h(a)\n");
+}
