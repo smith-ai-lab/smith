@@ -1,0 +1,191 @@
+// front::fix_typeof, the fix-it for `typeof` of something the new syntax has no `typeof` for (#2340, part of #2224):
+// a generic over a slice is an inferred parameter, so `realloc(auto xs, ...)` that names `typeof(xs)`,
+// `typeof(xs.data)` and `typeof(xs.data.*)` is written `realloc[T](xs: []mut T, ...)` with `[]mut T`, `*mut T` and `T`
+// in their places; `typeof([]u8)`, a `typeof` of a type written out, is that type.
+//
+// The slice is `[]mut T` when the function writes through the parameter (`xs[i] = v`, `xs.data[i] = v`) or builds a
+// value of its type (`: typeof(xs) =`): a slice it makes is one its caller writes. Otherwise it is `[]T`. A function
+// with more than one `auto` parameter, an `auto` that is not used as a slice, or a `typeof` of any other expression
+// is left alone: the checker still reports it.
+//
+//   fix_typeof::edits(source, module)   one fix for each generic function and each `typeof` of a written type
+module front::fix_typeof;
+
+import front::ast;
+import front::parse as core;
+import std::mem;
+
+static Bool at(Str s, Usize i, Str pattern) {
+    if (i + countof(pattern) > countof(s)) return false;
+    return mem::equal(s[i:i + countof(pattern)], pattern);
+}
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// The offset of the `)` that closes the `(` at `open`, or `to` when there is none.
+static Usize close_of(Str s, Usize open, Usize to) {
+    Usize depth = 0;
+    for (Usize i = open; i < to; i++) {
+        if (s[i] == '(') depth += 1;
+        if (s[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return to;
+}
+
+static core::Edits push(core::Edits edits, Usize from, Usize to, Str text) {
+    edits = mem::realloc(edits, countof(edits) + 1);
+    edits[countof(edits) - 1] = (core::Edit){.span = {.start = (U32)from, .end = (U32)to}, .text = text};
+    return edits;
+}
+
+// Whether `arg` is `name` followed by exactly `rest`.
+static Bool is_use(Str arg, Str name, Str rest) {
+    if (countof(arg) != countof(name) + countof(rest)) return false;
+    return at(arg, 0, name) && at(arg, countof(name), rest);
+}
+
+// What `typeof(arg)` is written for the slice parameter `name`, or empty when it is something else.
+static Str spelling(Str arg, Str name, Bool mutable) {
+    if (is_use(arg, name, "")) return mutable ? "[]mut T" : "[]T";
+    if (is_use(arg, name, ".data")) return mutable ? "*mut T" : "*T";
+    if (is_use(arg, name, ".data.*")) return "T";
+    return "";
+}
+
+// Whether `text` holds `name` as a whole word followed by `rest`.
+static Bool word_then(Str text, Usize i, Str name, Str rest) {
+    if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) return false;
+    return at(text, i, name) && at(text, i + countof(name), rest);
+}
+
+// The offset after the `]` that closes the `[` at `open`, or the end of `text`.
+static Usize after_bracket(Str text, Usize open) {
+    Usize depth = 0;
+    for (Usize i = open; i < countof(text); i++) {
+        if (text[i] == '[') depth += 1;
+        if (text[i] == ']') {
+            depth -= 1;
+            if (depth == 0) return i + 1;
+        }
+    }
+    return countof(text);
+}
+
+// Whether the function's text writes through `name` or builds a value of its type.
+static Bool writes(Str text, Str name) {
+    for (Usize i = 0; i < countof(text); i++) {
+        if (at(text, i, ": typeof(") && at(text, i + 9, name) && at(text, i + 9 + countof(name), ") =")) return true;
+        Usize open = i + countof(name);
+        if (word_then(text, i, name, ".data["))
+            open += 5;
+        else if (!word_then(text, i, name, "["))
+            continue;
+        Usize j = after_bracket(text, open);
+        while (j < countof(text) && text[j] == ' ')
+            j += 1;
+        if (j + 1 < countof(text) && text[j] == '=' && text[j + 1] != '=') return true;
+    }
+    return false;
+}
+
+// Whether `text` uses `typeof(name` and reads `name` as a slice.
+static Bool used_as_slice(Str text, Str name) {
+    Bool typed = false;
+    Bool sliced = false;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (at(text, i, "typeof(") && at(text, i + 7, name)) typed = true;
+        if (word_then(text, i, name, ".data") || word_then(text, i, name, ".count")) sliced = true;
+    }
+    return typed && sliced;
+}
+
+// The edits of every `typeof(...)` in source[from:to] that the slice parameter `name` spells.
+static core::Edits rewrite_uses(core::Edits edits, Str source, Usize from, Usize to, Str name, Bool mutable) {
+    for (Usize i = from; i + 7 < to; i++) {
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1]))) continue;
+        Usize close = close_of(source, i + 6, to);
+        if (close == to) continue;
+        Str text = spelling(source[i + 7:close], name, mutable);
+        if (countof(text) > 0) edits = push(edits, i, close + 1, text);
+    }
+    return edits;
+}
+
+// The fix of the generic function `d`: its `auto` parameter, its name's `[T]` and every `typeof` of the parameter.
+static core::ParseError generic_fix(Str source, const ast::Decl *d) {
+    core::ParseError none = {};
+    if (d->kind != .function) return none;
+    ast::Param params[:] = d->kind.function.params;
+    Usize found = countof(params);
+    for (Usize i = 0; i < countof(params); i++) {
+        const ast::TypeExpr *type = params[i].type;
+        if (type == nullptr || type->kind != .auto_type) continue;
+        if (found != countof(params) || params[i].is_rest) return none; // one `auto`, no pack
+        found = i;
+    }
+    if (found == countof(params) || d->kind.function.body == nullptr) return none;
+    Usize start = d->span.start;
+    Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    Str name = params[found].name;
+    Str text = source[start:end];
+    if (!used_as_slice(text, name) || word_then(text, 0, "T", "")) return none;
+    Usize param_end = params[found].span.end;
+    if (param_end < 4 || param_end > end || !at(source, param_end - 4, "auto")) return none;
+    // The name of the function: `fn <name>(`.
+    Str fname = d->kind.function.name;
+    Usize name_end = end;
+    for (Usize i = start; i + 3 + countof(fname) < end; i++)
+        if (at(source, i, "fn ") && at(source, i + 3, fname) && source[i + 3 + countof(fname)] == '(') {
+            name_end = i + 3 + countof(fname);
+            break;
+        }
+    if (name_end == end) return none;
+    Bool mutable = writes(text, name);
+    core::Edits edits = {};
+    edits = push(edits, name_end, name_end, "[T]");
+    edits = push(edits, param_end - 4, param_end, mutable ? "[]mut T" : "[]T");
+    edits = rewrite_uses(edits, source, start, end, name, mutable);
+    core::ParseError out = {};
+    out.span = d->span;
+    out.message = "an `auto` slice parameter is an inferred parameter: write `[T]` and `[]T`";
+    out.fix = edits;
+    return out;
+}
+
+// The fix of the `typeof([...])` that starts at `i`: the type inside, or none.
+static core::ParseError written_type(Str source, Usize i) {
+    core::ParseError none = {};
+    if (!at(source, i, "typeof([") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    Usize close = close_of(source, i + 6, countof(source));
+    if (close == countof(source)) return none;
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)i, .end = (U32)(close + 1)};
+    out.message = "`typeof` of a type written out is that type";
+    out.fix = push(out.fix, i, close + 1, source[i + 7:close]);
+    return out;
+}
+
+// The fixes of the module: each generic function over a slice, and each `typeof` of a type written out.
+export core::Errors edits(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .function) continue;
+        core::ParseError found = generic_fix(source, d);
+        if (countof(found.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = found;
+    }
+    for (Usize i = 0; i < countof(source); i++) {
+        core::ParseError found = written_type(source, i);
+        if (countof(found.fix) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}
