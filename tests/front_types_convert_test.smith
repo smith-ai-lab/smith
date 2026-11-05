@@ -300,7 +300,7 @@ export void test_front_types_convert_casts() {
     refused(cast(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *", "found const I32 *",
             "drops const");
     refused(cast(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
-    refused(cast(&t, int32, t.void_type), "expected Void", "found I32", "let _ = x");
+    refused(cast(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
     refused(cast(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
             "convert the parts one at a time");
     refused(cast(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");

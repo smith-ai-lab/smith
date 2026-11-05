@@ -1,8 +1,8 @@
-// front::fix_zero, the fix-it for the empty list of a struct (#2224, decided on #1406): `P x = {}` of C is `let x: P =
+// front::fix_zero, the fix-it for the empty list of a struct (#2224, decided on #1406): `P x = {}` of C is `x: P =
 // {}` after the declaration's own fix, and `{}` with no type has no form in smith.
 //
-//   let x: P = {}              let x: P = P(a = 0, p = nullptr)     every field given, zero values from the types
-//   let mut x: P = {}          let mut x: P = undefined             when the statements right after the declaration, in
+//   x: P = {}                  x: P = P(a = 0, p = nullptr)         every field given, zero values from the types
+//   mut x: P = {}              mut x: P = undefined                 when the statements right after the declaration, in
 //   x.a = 1                    x.a = 1                              the same block, assign every field by name and
 //   x.p = q                    x.p = q                              none reads `x`
 //
@@ -208,7 +208,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     const ast::Expr *init = d->kind.variable.init;
     ast::TypeExpr *written = d->kind.variable.type;
     if (init == nullptr || written == nullptr || !is_empty_braces(init)) return none;
-    // The declared type: in braces (`let x: P = {}` before the blocks are indented) `{}` reads as an empty block, so
+    // The declared type: in braces (`x: P = {}` before the blocks are indented) `{}` reads as an empty block, so
     // the initializer has no type of its own. Resolving it again must not leave an error behind.
     Usize errors_before = c->error_count;
     types::TypeRef t = types::resolve(c, written);
