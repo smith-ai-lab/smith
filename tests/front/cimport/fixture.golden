@@ -20,6 +20,7 @@
     (enumerator Red (integer 0))
     (enumerator Green (integer 5))
     (enumerator Below (unary negate (integer 3))))
+  (function poison from_c (param region (pointer (named Void const))) (param size (named U64)) (result (named Void)))
   (function add from_c (param a (named I32)) (param b (named I32)) (result (named I32)))
   (function log_line variadic from_c (param format (pointer (named I8 const))) (result (named I32)))
   (function origin from_c (result (named Point)))

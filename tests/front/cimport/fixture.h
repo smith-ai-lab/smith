@@ -23,6 +23,7 @@ struct Flags {
     int ready : 1;
 };
 
+void poison(void const volatile *region, unsigned long size); // a volatile pointee in a parameter is read as plain
 int add(int a, int b);
 int log_line(const char *format, ...);
 struct Point origin(void);
