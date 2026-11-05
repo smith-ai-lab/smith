@@ -77,6 +77,10 @@ static const ast::Module *load(const char *name) {
         source = math_source();
     else if (same(path, "lib.re"))
         source = re_source();
+    else if (same(path, "lib.outer"))
+        source = "import lib.shapes\n\npub struct Holder:\n    pub shape: shapes.Shape\n";
+    else if (same(path, "lib.shapes"))
+        source = "pub struct Shape:\n    pub sides: i32\n";
     else if (same(path, "lib.cycle"))
         source = cycle_source();
     else if (same(path, "lib.uses_broken"))
@@ -157,6 +161,11 @@ export void test_front_types_module_constant_and_result_type() {
 // The body of a generic from another module is checked with that module's own names, public or not (#1902).
 export void test_front_types_module_generic_body_reads_its_own_modules_names() {
     clean("import lib.math as m\n\nfn run() -> f64:\n    m.wrap(1)\n");
+}
+
+// A module's types may name those of the module it imports, which is found after it (#1902).
+export void test_front_types_module_type_names_a_type_of_its_own_import() {
+    clean("import lib.outer as o\n\nfn run(h: o.Holder) -> i32:\n    h.shape.sides\n");
 }
 
 export void test_front_types_module_type_through_the_module() {
