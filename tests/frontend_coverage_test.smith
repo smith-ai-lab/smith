@@ -57,3 +57,39 @@ export void test_frontend_coverage_groups_failures_and_counts_the_passes() {
     scratch::release(run.out);
     scratch::release(run.err);
 }
+
+// #2309: `run ... FILES` measures the files named and what they import, and a row it makes is the row of a full run;
+// `chain` names the import that blocks a file.
+export void test_frontend_coverage_filtered_run_equals_the_full_run_and_names_the_chain() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::expect_status("frontend_coverage: the repository is made", 0, &made);
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "import b\n\nfn main() -> i32:\n    return b.one()\n");
+    scratch::write(&p, "repo/b.smith", "import c\n\npub fn one() -> i32:\n    return c.two() - 1\n");
+    scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return nothing_here\n");
+    scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
+    scratch::Run run = scratch::sh(
+        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+            "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/all\" > all.tsv && "
+            "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/some\" a.smith > some.tsv; "
+            "for f in a b c; do grep \"^$f.smith\" all.tsv > all_$f.tsv; grep \"^$f.smith\" some.tsv > some_$f.tsv; "
+            "cmp all_$f.tsv some_$f.tsv || echo \"DIFFERENT $f\"; done; "
+            "grep -c '^d.smith' some.tsv; "
+            "smith run -- chain some.tsv \"$PWD/repo\" a.smith");
+    scratch::expect_lacks("frontend_coverage: a filtered row is the row of the full run", run.out, "DIFFERENT");
+    scratch::expect_contains("frontend_coverage: a file that is not imported is not measured", run.out, "0\na.smith: ");
+    scratch::expect_contains("frontend_coverage: the chain names the file that fails, with its first error", run.out,
+                             "c.smith: [check] 2:12 unknown name `nothing_here`");
+    scratch::expect_contains("frontend_coverage: the files named and what they import are counted", run.out,
+                             "2 of 3 files pass (the files named and what they import)");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}

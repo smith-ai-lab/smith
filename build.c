@@ -876,7 +876,8 @@ static const char *const build_front_modules[] = {
     "emit_debug",   "emit_object",     "roots",          "fix",          "cimport",
     "compile",      "emit_option",     "emit_match",     "emit_value",   "emit_iter",
     "emit_tuple",   "emit_lambda",     "emit_vector",    "emit_stream",  "fix_directive",
-    "fix_blocks",   "fix_generic_c",   "fix_method",     "fix_zero",     "lsp_server",
+    "fix_blocks",   "fix_generic_c",   "fix_method",     "fix_zero",     "fix_opaque",
+    "lsp_server",
     "lsp_hover",    "lsp_semantic",    "lsp_definition", "lsp_symbols",  "lsp_completion",
     "format_space", "format",          "effects_table",  "fix_variants",
 };
@@ -3310,13 +3311,14 @@ static int build_coverage_fetch(SmithRun *run) {
     return 0;
 }
 
-// `smith build frontend-coverage [-Dsmith=<path>]` (#1730): how much of the tree smith's own front end handles. Every
-// .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with `smith lint --fix` and compiled
-// with `smith cc --front-end=new`; the real files are never touched. scripts/frontend_coverage/main.smith is the tool:
-// a project of its own under .smith/frontend-coverage/tool, built by the smith that runs this build (as
-// build_defer_make does). It writes the results to .smith/frontend-coverage/results.tsv and prints the summary: files
-// passed out of total, the failures per stage and the failures grouped by message. `-Dsmith` names the smith to
-// measure.
+// `smith build frontend-coverage [-Dsmith=<path>] [-Dfiles=<path>,...]` (#1730, #2309): how much of the tree smith's
+// own front end handles. Every .smith file git tracks is copied to .smith/frontend-coverage/tree, fixed there with
+// `smith lint --fix` and compiled with `smith cc --front-end=new`; the real files are never touched.
+// scripts/frontend_coverage/main.smith is the tool: a project of its own under .smith/frontend-coverage/tool, built by
+// the smith that runs this build (as build_defer_make does). It writes the results to
+// .smith/frontend-coverage/results.tsv and prints the summary: files passed out of total, the failures per stage and
+// the failures grouped by message. `-Dsmith` names the smith to measure; `-Dfiles` measures only those files and the
+// modules they import, and prints the chain of imports.
 static const char *build_absolute(SmithBuild *b, const char *path) {
     char home[PATH_MAX];
     if (path[0] == '/' || getcwd(home, sizeof home) == nullptr) return path;
@@ -3355,6 +3357,9 @@ static int build_frontend_coverage(SmithRun *run) {
                                                      .tail = 20});
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
+    // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
+    const char *files = run->args[1];
+    const char *tree = smith_fmt(b, "%s/tree", work);
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
     if (access("compile_commands.json", R_OK) == 0) {
@@ -3365,10 +3370,13 @@ static int build_frontend_coverage(SmithRun *run) {
         if (status != 0) return status;
     }
     status = build_spawn(&(BuildSpawn){
-        .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
+        .argv = files[0] != '\0' ? smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, files, nullptr)
+                                 : smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, nullptr),
         .log = results,
         .stdout_only = true});
-    return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    if (status != 0) return status;
+    return files[0] != '\0' ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
+                            : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
@@ -3393,6 +3401,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .run = build_frontend_coverage,
         .args = smith_list(
             b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
+            smith_option_value(b, "files", "", "frontend-coverage: only these files and what they import (#2309)"),
             smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
