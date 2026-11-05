@@ -135,7 +135,7 @@ export void test_cimport_string_h_has_strlen_returning_usize_of_a_const_char_poi
     Str want_result = "size_t";
     Str result = type_text(length_fn->kind.function.result);
     test::check_condition(slice::equal(result, want_result));
-    Str want_param = "*const I8";
+    Str want_param = "*const Char";
     Str param = type_text(length_fn->kind.function.params[0].type);
     test::check_condition(slice::equal(param, want_param));
 }
@@ -333,4 +333,28 @@ export void test_cimport_places_and_comments_survive_a_round_trip_through_the_ca
     Header back = {};
     test::check_condition(cimport_cache::round_trip(&memory, &h, &back));
     check_places(&back);
+}
+
+export void test_cimport_size_t_is_usize_and_a_plain_char_is_char() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "string.h", false);
+    test::check_equal(countof(h.error), 0);
+    const ast::Decl *word = find_any(&h, "size_t");
+    if (word == nullptr || word->kind != .type_alias) {
+        test::check_condition(false);
+        return;
+    }
+    // The alias is `Usize`, so a `const size_t *` accepts a `const Usize *` (mem::say_site, #2368); `char *` is `Char`.
+    Str want_word = "Usize";
+    test::check_condition(slice::equal(type_text(word->kind.type_alias.type), want_word));
+    const ast::Decl *copy = find(&h, "strcpy");
+    if (copy == nullptr || copy->kind != .function) {
+        test::check_condition(false);
+        return;
+    }
+    Str want_text = "*Char";
+    test::check_condition(slice::equal(type_text(copy->kind.function.params[0].type), want_text));
 }
