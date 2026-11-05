@@ -292,14 +292,12 @@ export ast::Decl *declaration(Parser *p) {
     return p->hooks.declaration(p);
 }
 
-// A parser at the first token with no errors and hooks that report "not installed". The tokens must end with the end of the file, as
-// lex::tokenize gives them.
+// A parser at the first token with no errors and hooks that report "not installed". The tokens must end with the end of
+// the file, as lex::tokenize gives them.
 export Parser make(lex::Tokens tokens, Str source) {
     ast::Span nowhere = {.start = 0, .end = 0};
-    Hooks hooks = {.expression = no_expression,
-                   .type = no_type,
-                   .statement = no_statement,
-                   .declaration = no_declaration};
+    Hooks hooks = {
+        .expression = no_expression, .type = no_type, .statement = no_statement, .declaration = no_declaration};
     NamedList no_list = {.plain = false, .positional = false, .open = nowhere, .close = nowhere};
     Parser parser = {.tokens = tokens, .source = source, .position = 0, .hooks = hooks, .named_list = no_list};
     return parser;

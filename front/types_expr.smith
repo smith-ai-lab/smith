@@ -1713,7 +1713,8 @@ static void binary_dot_next(types::Checked *c, Work *w, Frame f) {
     }
     types::TypeRef t = typ(c, other);
     push(w, e, f.expected, 1);
-    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it carries.
+    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
+    // carries.
     if (is_equality(op) && t->kind == .enumeration && t->has_payload &&
         types::member(t, dot->kind.variant.name) != nullptr) {
         types::set_type(c, dot, t);
