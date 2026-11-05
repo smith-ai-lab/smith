@@ -28,7 +28,8 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    # 3 minutes of work plus the 20-minute cap of `yield-to-queue` (#2356)
+    timeout-minutes: 25
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       matrix: ${{ steps.linux.outputs.matrix }}
@@ -45,6 +46,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Yield to the merge queue
+        # a pull request's run waits (at most 20 minutes) while a queue run waits for runners, before any heavy job
+        # starts (#2356, knowledge/ci-hosted.md); first, so the picks below are made when the jobs are about to start
+        uses: ./.github/actions/yield-to-queue
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
