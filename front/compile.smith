@@ -277,6 +277,18 @@ static const ast::Module *load_embedded(Str dotted) {
     return copy;
 }
 
+// The folder of `path`: everything before its last `/`, or `.`.
+static Str folder_of(Str path) {
+    for (Usize i = countof(path); i > 0; i--) {
+        if (path[i - 1] != '/') continue;
+        if (i == 1) return path[0:1];
+        return path[0:i - 1];
+    }
+    return ".";
+}
+
+constexpr Usize ancestors_max = 6;
+
 // The folders `load_module` looks in: those of the file being compiled (the checker's loader takes no context).
 static roots::Roots import_roots;
 
@@ -291,8 +303,15 @@ static const ast::Module *load_module(const char *dotted) {
         if (relative[i] == '.') piece = "/";
         inside = as_str(format::push(inside, piece));
     }
-    Str folders[3] = {import_roots.source, import_roots.library, import_roots.local};
-    for (Usize k = 0; k < 3; k++) {
+    // After the three roots, the folders above the compiled file's: a file that says `module t::uses;` sits below the
+    // root that names `t::point` (#2041).
+    Str folders[3 + ancestors_max] = {import_roots.source, import_roots.library, import_roots.local};
+    Str above = import_roots.local;
+    for (Usize k = 3; k < 3 + ancestors_max && countof(above) > 0 && !roots::same(above, "."); k++) {
+        above = folder_of(above);
+        folders[k] = above;
+    }
+    for (Usize k = 0; k < 3 + ancestors_max; k++) {
         if (countof(folders[k]) == 0) continue;
         Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
@@ -307,7 +326,11 @@ static const ast::Module *load_module(const char *dotted) {
                                                         parsed.errors[0].message)));
             return nullptr;
         }
-        if (countof(name_module(&parsed.module, path, import_roots)) > 0) return nullptr;
+        // A file found beside the compiled one is named from that folder alone: `src` may also hold it (the coverage
+        // tree links `src` to the repo), and a `module runner;` line then disagrees with `tests::runner` (#2041).
+        roots::Roots named_by = import_roots;
+        if (k >= 2) named_by = (roots::Roots){.local = folders[k]};
+        if (countof(name_module(&parsed.module, path, named_by)) > 0) return nullptr;
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
         return copy;
@@ -320,15 +343,6 @@ static Str header_folder;
 static arena::Arena header_arena;
 static Bool header_arena_made = false;
 
-// The folder of `path`: everything before its last `/`, or `.`.
-static Str folder_of(Str path) {
-    for (Usize i = countof(path); i > 0; i--) {
-        if (path[i - 1] != '/') continue;
-        if (i == 1) return path[0:1];
-        return path[0:i - 1];
-    }
-    return ".";
-}
 
 // The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
 // when clang cannot read it.
