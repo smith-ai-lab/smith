@@ -1,2 +1,5 @@
+src/main.smith:5:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
+src/main.smith:6:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
+src/main.smith:7:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
 src/main.smith:7:37: error: expected `]` to end the index, found `:`
 src/main.smith:7:37: error: a declaration is one line: expected a line break after it, found `:`

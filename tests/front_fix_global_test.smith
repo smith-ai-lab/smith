@@ -21,11 +21,11 @@ static void expect(Str before, Str after) {
 }
 
 export void test_front_fix_global_an_exported_global_is_pub_let_mut() {
-    expect("export Usize counter = 3;\n", "pub let mut counter: usize = 3\n");
+    expect("export Usize counter = 3;\n", "pub mut counter: usize = 3\n");
 }
 
 export void test_front_fix_global_a_plain_global_is_let_mut() {
-    expect("Usize plain = 1;\n", "let mut plain: usize = 1\n");
+    expect("Usize plain = 1;\n", "mut plain: usize = 1\n");
 }
 
 export void test_front_fix_global_a_constexpr_global_is_const() {

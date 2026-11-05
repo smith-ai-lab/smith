@@ -21,8 +21,8 @@
 // The new syntax (#1428, S4) is read beside these, into the same nodes. A statement ends at a `;` or at the end of its
 // line (the lexer's line-break flag, Go's rule: `lex::ends_statement`), or before a `}`.
 //
-//   if c { } else if d { } else { }     no parentheses, braces required; `if let .some(x) = e { } else { }`
-//   while c { }
+//   if c { } else if d { } else { }     no parentheses, braces required; `if x := opt:`, `if .circle(c) := s:`
+//   while c { }                         `while item := it.next():`
 //   for x in xs { }                     `for (i, x) in e { }`: a `for_in`
 //   match s { .a => v ... }             one arm per line; `.b(x) => v`; `.c, .d => v`
 //
@@ -480,17 +480,52 @@ static ast::Stmt *declaration_statement(parse::Parser *p) {
     return settle(p, start, before, new_stmt({.declaration = {.decl = decl}}));
 }
 
-// Whether the statement is a binding in smith's own syntax: `let a = v`, `let mut a: T = v` or `const A = v`.
+// Whether the statement is a binding in smith's own syntax: `a := v`, `mut a: T = v`, `const A = v` or the old `let`.
 static Bool new_binding(const parse::Parser *p) {
     return parse_decl::starts_binding(p);
 }
 
-// `let (q, mut r) = f()`: the declaration parser reads it, whole.
+// `(q, mut r) := f()`: the declaration parser reads it, whole.
 static ast::Stmt *destructure_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
     ast::Stmt *built = parse_decl::destructure(p);
     return settle(p, start, before, built);
+}
+
+// Whether the statement is a bare block call, `html:` and an indented block under it (layout path). A block call takes
+// parentheses even with no arguments (#2316), so a statement that starts `name:` is otherwise a typed declaration.
+static Bool bare_block(const parse::Parser *p) {
+    return p->layout && parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon &&
+           parse::peek_at(p, 2).kind == lex::newline && parse::peek_at(p, 3).kind == lex::indent;
+}
+
+// `html:` is the old spelling of `html():`: read as that call, its block the last argument, with a warning whose fix
+// writes the `()`.
+static ast::Stmt *bare_block_statement(parse::Parser *p) {
+    lex::Token name = parse::advance(p);
+    U32 start = name.span.start;
+    Usize before = countof(p->errors);
+    Str word = parse::text(p, name);
+    parse::Edits edits = edit_list(1);
+    edits[0] = edit(point(name.span.end), "()");
+    char message[:] = format::push("a block call takes parentheses, even with no arguments: write `", word, "():`");
+    parse::warning_fix(p, name.span, message, edits);
+    ast::Expr *callee = ast::name(word);
+    callee->span = name.span;
+    U32 block_start = parse::advance(p).span.start;
+    ast::Stmt *body = parse::statement(p);
+    if (body == nullptr) return settle(p, start, before, empty_stmt());
+    ast::Identifier captures[:] = {};
+    ast::Param params[:] = {};
+    ast::Expr *block = ast::expr({.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});
+    block->span = parse::span_from(p, block_start);
+    ast::ExprRef args[:] = {};
+    args = parse_type::with_expr(args, block);
+    ast::Expr *call = ast::call(callee, args);
+    call->span = parse::span_from(p, start);
+    if (countof(p->errors) == before) end_statement(p);
+    return settle(p, start, before, new_stmt({.expression = {.value = call}}));
 }
 
 static ast::Stmt *expression_statement(parse::Parser *p) {
@@ -541,6 +576,10 @@ static ast::Stmt *jump(parse::Parser *p, ast::StmtKind kind) {
 static ast::Stmt *return_statement(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
+    if (p->layout && parse_decl::at_returned_tag(p)) {
+        parse_decl::fix_returned_tag(p, start);
+        return settle(p, start, before, empty_stmt());
+    }
     ast::Expr *value = nullptr;
     Bool bare = parse::at(p, lex::semicolon) || parse::at(p, lex::right_brace) || last_token_ends_line(p);
     if (!bare) value = expression(p);
@@ -781,18 +820,58 @@ static ast::Expr *arm_result(parse::Parser *p) {
     return value;
 }
 
-// `if c {` and `while c {`, without parentheses. `if let .some(x) = e {` is the `if` with a pattern.
-static Frame open_bare(parse::Parser *p, FrameKind kind) {
+// Whether the head of an `if` or a `while` binds (#2316): `x := opt` unwraps an option, `.circle(c) := shape` tests a
+// variant (with its leading `.`, as a `match` arm writes it). A fixed lookahead: no expression has `:=` there.
+static Bool binding_head(const parse::Parser *p) {
+    if (parse::peek(p).kind == lex::name && parse::peek_at(p, 1).kind == lex::colon_equal) return true;
+    if (parse::peek(p).kind != lex::dot || parse::peek_at(p, 1).kind != lex::name) return false;
+    if (parse::peek_at(p, 2).kind == lex::colon_equal) return true;
+    return parse::peek_at(p, 2).kind == lex::left_paren && parse::peek_at(p, 3).kind == lex::name &&
+           parse::peek_at(p, 4).kind == lex::right_paren && parse::peek_at(p, 5).kind == lex::colon_equal;
+}
+
+// Whether the head is the old `let x = opt` or `let .some(x) = opt`.
+static Bool old_let_head(const parse::Parser *p) {
     Str let_word = "let";
+    if (!parse::at(p, lex::name) || !mem::equal(parse::text(p, parse::peek(p)), let_word)) return false;
+    lex::TokenKind next = parse::peek_at(p, 1).kind;
+    return next == lex::dot || (next == lex::name && parse::peek_at(p, 2).kind == lex::equal);
+}
+
+// The pattern of a binding head: a plain name is `.some(name)`; the position is then at the `:=` or `=`.
+static ast::Pattern head_pattern(parse::Parser *p) {
+    if (!parse::at(p, lex::name)) return read_pattern(p);
+    lex::Token name = parse::advance(p);
+    ast::Pattern result = ast::pattern("some", parse::text(p, name));
+    result.span = name.span;
+    return result;
+}
+
+// `if x := opt`, `if .circle(c) := shape` and the old `if let .some(x) = opt`, whose warning's fix removes `let ` and
+// writes `:=`. The frame takes the pattern; the condition, its value, is read after.
+static void open_binding_head(parse::Parser *p, Frame *frame) {
+    Bool old = old_let_head(p);
+    ast::Span cut = {.start = parse::peek(p).span.start, .end = parse::peek_at(p, 1).span.start};
+    if (old) parse::advance(p);
+    frame->is_let = true;
+    frame->pattern = head_pattern(p);
+    if (!old) {
+        parse::expect(p, lex::colon_equal, "`:=` after the pattern");
+        return;
+    }
+    lex::Token equal = parse::expect(p, lex::equal, "`=` after the pattern");
+    parse::Edits edits = edit_list(2);
+    edits[0] = edit(cut, "");
+    edits[1] = edit(equal.span, ":=");
+    parse::warning_fix(p, cut, "`if let` is gone: write `if x := opt:` or `if .variant(v) := value:`", edits);
+}
+
+// `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
+// `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
+static Frame open_bare(parse::Parser *p, FrameKind kind) {
     Frame frame = {.kind = kind, .start = parse::advance(p).span.start, .braced = true};
     Usize before = countof(p->errors);
-    if (kind == if_then && parse::at(p, lex::name) && mem::equal(parse::text(p, parse::peek(p)), let_word) &&
-        parse::peek_at(p, 1).kind == lex::dot) {
-        parse::advance(p);
-        frame.is_let = true;
-        frame.pattern = read_pattern(p);
-        parse::expect(p, lex::equal, "`=` after the pattern");
-    }
+    if (binding_head(p) || old_let_head(p)) open_binding_head(p, &frame);
     p->head = true;
     if (countof(p->errors) == before) frame.condition = expression(p);
     p->head = false;
@@ -1247,7 +1326,7 @@ static Bool new_pointer_init(const parse::Parser *p) {
 }
 
 // `*T name = v;` as a statement: a declaration whose type an earlier pass wrote in smith's own form (the init of a
-// `for` that became a `while`), not the dereference `*T` (#2224). It is `let mut name: *T = v`.
+// `for` that became a `while`), not the dereference `*T` (#2224). It is `mut name: *T = v`.
 static ast::Stmt *pointer_statement(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize stars = 0;
@@ -1265,11 +1344,11 @@ static ast::Stmt *pointer_statement(parse::Parser *p) {
     if (countof(p->errors) == before) parse::expect(p, lex::semicolon, "`;`");
     if (countof(p->errors) == before) {
         parse::Edits edits = edit_list(2);
-        char text[:] = format::push("let mut ", name, ": ", pointer, " =");
+        char text[:] = format::push("mut ", name, ": ", pointer, " =");
         edits[0] = edit((ast::Span){.start = start, .end = equal_end}, text);
         edits[1] = edit(semicolon.span, "");
         ast::Span whole = {.start = start, .end = semicolon.span.end};
-        parse::warning_fix(p, whole, "a pointer variable is written `let mut p: *T = v`", edits);
+        parse::warning_fix(p, whole, "a pointer variable is written `mut p: *T = v`", edits);
     }
     return settle(p, start, before, new_stmt({.expression = {.value = value}}));
 }
@@ -1446,6 +1525,7 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     }
     if (parse_decl::at_destructure(p)) return destructure_statement(p);
     if (new_binding(p)) return declaration_statement(p);
+    if (bare_block(p)) return bare_block_statement(p);
     if (parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
         push(stack, open_label(p));
         return nullptr;
@@ -1631,6 +1711,16 @@ static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
     return spanned(p, frame.start, built);
 }
 
+// `while item := it.next(): body` is `while true: if item := it.next(): body else: break` (#2316): the loop has no
+// node of its own, so the checker and the emitter see an `if` with a pattern they already know.
+static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *done) {
+    ast::Expr *always = ast::expr({.boolean = {.value = true}});
+    always->span = frame.pattern.span;
+    ast::Stmt *stop = spanned(p, frame.start, new_stmt(break_kind()));
+    ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
+    return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
+}
+
 // A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)
 static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
     ast::Stmt *built = nullptr;
@@ -1656,6 +1746,10 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
                                       .is_constexpr = frame.is_constexpr}});
         break;
     case while_body:
+        if (frame.is_let) {
+            built = binding_loop(p, frame, done);
+            break;
+        }
         built = new_stmt({.while_stmt = {.condition = frame.condition, .body = done}});
         break;
     case for_body:
