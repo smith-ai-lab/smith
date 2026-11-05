@@ -664,6 +664,23 @@ export Decl *decl(Decl base, DeclKind kind) {
     return new_decl(base);
 }
 
+// A declaration with no flags set, no attributes, no place and no doc: every field is written, since a `Decl` has no
+// zero value in the new syntax (`kind` and the strings have none).
+static Decl *plain_decl(DeclKind kind) {
+    Place place = {.file = "", .line = 0, .column = 0};
+    Span span = {.start = 0, .end = 0};
+    return new_decl((Decl){.span = span,
+                           .exported = false,
+                           .is_pub = false,
+                           .is_static = false,
+                           .is_extern = false,
+                           .is_inline = false,
+                           .from_c = false,
+                           .place = place,
+                           .doc = "",
+                           .kind = kind});
+}
+
 typedef Param ParamList[:];
 typedef ExprRef ExprRefList[:];
 typedef StmtRef StmtRefList[:];
@@ -799,52 +816,64 @@ export Param param(Str text, TypeExpr *type) {
 // the helpers take the names as arguments). Set `exported` and the other flags on the result.
 export Decl *variable(Str text, TypeExpr *type, Expr *init) {
     DeclKind kind = {.variable = {.name = text, .type = type, .init = init}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 export Decl *function(Str text, Param params[:], TypeExpr *result, Stmt *body) {
     DeclKind kind = {.function = {.name = text, .params = copy_params(params), .result = result, .body = body}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 export FieldDecl field(Str text, TypeExpr *type) {
-    return (FieldDecl){.name = text, .type = type};
+    Span span = {.start = 0, .end = 0};
+    Place place = {.file = "", .line = 0, .column = 0};
+    return (FieldDecl){.name = text,
+                       .type = type,
+                       .bit_width = nullptr,
+                       .default_value = nullptr,
+                       .is_new = false,
+                       .is_pub = false,
+                       .span = span,
+                       .place = place,
+                       .doc = ""};
 }
 
 export Decl *record_decl(Str text, FieldDecl members[:]) {
     DeclKind kind = {.record = {.name = text, .fields = copy_fields(members)}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 export Enumerator enumerator(Str text, Expr *value, TypeExpr *payload) {
-    return (Enumerator){.name = text, .value = value, .payload = payload};
+    Span span = {.start = 0, .end = 0};
+    Place place = {.file = "", .line = 0, .column = 0};
+    return (Enumerator){.name = text, .value = value, .payload = payload, .span = span, .place = place, .doc = ""};
 }
 
 export Decl *enumeration(Str text, TypeExpr *underlying, Enumerator items[:]) {
     DeclKind kind = {.enumeration = {.name = text, .underlying = underlying, .items = copy_enumerators(items)}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 export Decl *type_alias(Str text, TypeExpr *type) {
     DeclKind kind = {.type_alias = {.name = text, .type = type}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 // `import std::arena;`
 export Decl *import_module(Str text) {
     DeclKind kind = {.import_module = {.path = path(text)}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 // `import <stdio.h>;` (angled) and `import "x.h";`.
 export Decl *import_c(Str header, Bool angled) {
     DeclKind kind = {.import_c = {.header = header, .angled = angled}};
-    return decl((Decl){}, kind);
+    return plain_decl(kind);
 }
 
 // A module of these declarations; its name is a path (`geometry::shapes`) and its file is empty.
 export Module new_module(Str text, DeclRef decls[:]) {
-    return (Module){.name = path(text), .decls = copy_decls(decls)};
+    return (Module){.name = path(text), .file = "", .decls = copy_decls(decls)};
 }
 
 export Expr *string(Str bytes) {
@@ -964,12 +993,12 @@ export Pattern pattern(Str text, Str binding) {
 
 // A constant pattern of a `match`: `1`, `limit`, `kind_signed`.
 export Pattern constant_pattern(Expr *value) {
-    return (Pattern){.constant = value};
+    return (Pattern){.name = "", .binding = "", .constant = value};
 }
 
 // The default arm of a `match`: `_`.
 export Pattern wildcard_pattern() {
-    return (Pattern){.wildcard = true};
+    return (Pattern){.name = "", .binding = "", .wildcard = true};
 }
 
 // `.a, .b => value`.

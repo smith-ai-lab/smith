@@ -6,7 +6,6 @@ description: "New syntax (#1428): `struct` and `enum` declarations with indented
 # Structs, enums and building values
 
 Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428.
-
 ## Declaring
 
 ```smith
@@ -28,6 +27,8 @@ pub enum Shape:                     # a payload enum; C's union is an error in a
     rect: Rect
     empty
 ```
+
+The variants of a `pub enum` are public with it, with no `pub` of their own (`lex.kw_const`). `<`, `<=`, `>` and `>=` work on enums without payloads, in declaration order (`kind >= .kw_alignas`); a leading-dot name takes its type from the other operand, as in `==`; a payload enum is not ordered, but `shape == .circle` tests its tag.
 
 ## Building values
 

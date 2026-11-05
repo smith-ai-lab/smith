@@ -845,6 +845,8 @@ export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
     for (Usize i = s->count; i > 0; i--) {
         if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
     }
+    // A bare enumerator of a plain enumeration is a name of its own, as in C, when nothing else has the name.
+    if (countof(path.segments) == 1) return lookup(s, msg(format::push("@", path.segments[0].text)));
     return nullptr;
 }
 
@@ -2827,6 +2829,29 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
 }
 
 static Bool declare_module_alias(Checked *r, const ast::Decl *d);
+export Bool is_public(const Symbol *s);
+
+// The enumerators of a `pub` enumeration without payloads are public with it (owner, 2026-11-05): other modules write
+// `lex.kw_const`. Each is a constant of the enumeration's type with the value the enumerator has.
+static void declare_public_enumerators(Checked *r, const ast::Decl *d) {
+    if (d->from_c || r->in_header || d->kind != .enumeration) return;
+    const Symbol *named = lookup(&r->scopes, qualified(r, false, d->kind.enumeration.name));
+    if (named == nullptr || named->decl != d || !is_public(named) || named->type->has_payload) return;
+    for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
+        Str item = d->kind.enumeration.items[i].name;
+        const Slot *slot = member(named->type, item);
+        if (slot == nullptr) continue;
+        ast::Decl *constant = ast::variable(item, ast::named("I32"), ast::integer(slot->value));
+        constant->is_pub = true;
+        Symbol symbol = {.name = qualified(r, false, msg(format::push("@", item))),
+                         .kind = .variable,
+                         .type = named->type,
+                         .decl = constant,
+                         .exported = true,
+                         .is_const = true};
+        declare(&r->scopes, symbol);
+    }
+}
 
 // Pass 3 for one declaration.
 static void declare_member(Checked *r, const ast::Decl *d) {
@@ -2838,6 +2863,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
     } else if (d->kind == .enumeration) {
         Str name = qualified(r, from_c, d->kind.enumeration.name);
         fill_enumeration(r, name, d->kind.enumeration.items);
+        declare_public_enumerators(r, d);
     } else if (d->kind == .function) {
         Str name = qualified(r, from_c, d->kind.function.name);
         declare_function(r, d, name, d->kind.function.params, d->kind.function.result, d->kind.function.variadic);
@@ -2933,6 +2959,8 @@ export const Symbol *scoped(const Checked *r, Str name) {
     const Symbol *found = nullptr;
     if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, name)));
     if (found == nullptr) found = lookup(&r->scopes, name);
+    // An enumerator of a plain enumeration is a name of its own, as in C, when nothing else has the name (`@name`).
+    if (found == nullptr) found = lookup(&r->scopes, msg(format::push("@", name)));
     return found;
 }
 
@@ -3032,6 +3060,7 @@ export Through through_modules(const Checked *r, const Names *names) {
         Str prefix = prefix_of_import(module->decl);
         Str full = msg(format::push(prefix, names->items[i]));
         const Symbol *next = lookup(&r->scopes, full);
+        if (next == nullptr) next = lookup(&r->scopes, msg(format::push(prefix, "@", names->items[i])));
         if (next == nullptr || (countof(r->prefix) == 0 && !is_public(next))) {
             return (Through){.module = module, .missing = names->items[i]};
         }

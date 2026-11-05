@@ -1527,7 +1527,7 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
                      "`; write numbers, Bools, enumerators or pointers");
         return invalid(c);
     }
-    if (is_ordering(op) && l->kind != .pointer && !is_number(l)) {
+    if (is_ordering(op) && l->kind != .pointer && !is_number(l) && !(l->kind == .enumeration && !l->has_payload)) {
         return need_number(c, span, op, l, false);
     }
     if (comparable_pointers(l, r)) {
@@ -1671,6 +1671,55 @@ static void vector_binary(types::Checked *c, const ast::Expr *e, types::TypeRef 
     } else {
         finish(c, e, v, nullptr);
     }
+}
+
+// A comparison with a leading-dot name on one side (`kind >= .kw_alignas`, `kind == .cast`): the other side is typed
+// first (stage 4), and the name takes that type (the owner, 2026-11-05).
+static Bool is_bare_variant(const ast::Expr *e) {
+    return e->kind == .variant && e->kind.variant.payload == nullptr;
+}
+
+static void binary_before(Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    ast::BinaryOp op = e->kind.binary.op;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    if ((is_ordering(op) || is_equality(op)) && is_bare_variant(left) != is_bare_variant(right)) {
+        push(w, e, f.expected, 4);
+        push(w, is_bare_variant(left) ? right : left, nullptr, 0);
+        return;
+    }
+    push(w, e, f.expected, 1);
+    push(w, right, nullptr, 0);
+    push(w, left, nullptr, 0);
+}
+
+// Stage 4: the side without the name is typed; type the name as it, then finish as any binary.
+static void binary_dot_next(types::Checked *c, Work *w, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    ast::BinaryOp op = e->kind.binary.op;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    const ast::Expr *dot = is_bare_variant(left) ? left : right;
+    const ast::Expr *other = is_bare_variant(left) ? right : left;
+    if (!(dot->kind == .variant)) {
+        return;
+    }
+    types::TypeRef t = typ(c, other);
+    push(w, e, f.expected, 1);
+    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it carries.
+    if (is_equality(op) && t->kind == .enumeration && t->has_payload &&
+        types::member(t, dot->kind.variant.name) != nullptr) {
+        types::set_type(c, dot, t);
+        return;
+    }
+    push(w, dot, t == invalid(c) ? nullptr : t, 0);
 }
 
 static void binary_after(types::Checked *c, Frame f) {
@@ -5150,11 +5199,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
-        const ast::Expr *right = e->kind.binary.right;
-        const ast::Expr *left = e->kind.binary.left;
-        push(w, e, f.expected, 1);
-        push(w, right, nullptr, 0);
-        push(w, left, nullptr, 0);
+        binary_before(w, f);
     } else if (e->kind == .assign) {
         assign_before(c, w, f);
     } else if (e->kind == .conditional) {
@@ -5221,6 +5266,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         type_value_after(c, f);
     } else if (e->kind == .unary) {
         unary_after(c, f);
+    } else if (e->kind == .binary && f.stage == 4) {
+        binary_dot_next(c, w, f);
     } else if (e->kind == .binary) {
         binary_after(c, f);
     } else if (e->kind == .assign) {
