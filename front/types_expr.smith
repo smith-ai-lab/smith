@@ -4187,16 +4187,18 @@ static void auto_before(types::Checked *c, Work *w, Frame f, const types::Symbol
         poison(c, e);
         return;
     }
-    for (Usize i = 0; i < countof(params); i++) {
-        if (types::is_compile_time(&params[i])) {
-            types::failf(c, e->span, "not yet: `", template->name, "` has both `auto` and compile-time parameters");
-            poison(c, e);
-            return;
-        }
-    }
     push(w, e, f.expected, 4);
     for (Usize i = countof(args); i > 0; i--) {
         const ast::Expr *arg = argument_value(args[i - 1]);
+        if (types::is_compile_time(&params[i - 1])) {
+            // A type argument is read as a written type in `auto_resolved`; a constant is typed on its own.
+            if (types::is_type_parameter(&params[i - 1])) {
+                types::set_type(c, arg, types::builtin(&c->table, "type"));
+            } else {
+                push(w, arg, nullptr, 0);
+            }
+            continue;
+        }
         types::TypeRef wanted = params[i - 1].is_pack ? pack_expected(c, &params[i - 1], arg) : nullptr;
         push(w, arg, wanted, 0);
     }
@@ -4318,6 +4320,21 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     call_after(c, f);
 }
 
+// The binding a compile-time parameter takes from its argument: the type written, or the constant. False, with the
+// error, when the argument is neither.
+static Bool compile_time_binding(types::Checked *c, const ast::Param *p, const ast::Expr *arg, types::Binding *out) {
+    if (types::is_type_parameter(p)) {
+        types::TypeRef t = type_argument(c, p, arg);
+        if (t == nullptr) return false;
+        *out = (types::Binding){.is_type = true, .type = t};
+        return true;
+    }
+    U64 value = 0;
+    if (!value_argument(c, p, arg, &value)) return false;
+    *out = (types::Binding){.value = value};
+    return true;
+}
+
 // Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
 static void auto_resolved(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
@@ -4336,6 +4353,14 @@ static void auto_resolved(types::Checked *c, Frame f) {
     types::Binding given[:] = mem::alloc_slice(types::Binding, countof(params));
     Usize bound = 0;
     for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) {
+            if (!compile_time_binding(c, &params[i], argument_value(args[i]), &given[bound])) {
+                poison(c, e);
+                return;
+            }
+            bound += 1;
+            continue;
+        }
         if (!types::is_auto_param(&params[i])) continue;
         types::TypeRef t = typ(c, argument_value(args[i]));
         if (t == invalid(c) || (params[i].is_pack && !pack_satisfies(c, &params[i], argument_value(args[i])))) {
