@@ -516,7 +516,8 @@ static Str old_source(Usize which) {
         return "{\nswitch (v) {\ncase .a:\n x = 1;\n break;\ndefault:\n x = 2;\n break;\n}\n"
                "switch (w) {\ncase .a:\n return 1;\n}\nswitch (u) {\ncase 1:\n x = 1;\n break;\n}\n}";
     case 9:
-        return "{\nswitch (k) {\ncase limit:\ncase 2:\n x = 1;\n y = 2;\n return;\ncase 3:\n if (a)\n  x = 4;\n break;\n"
+        return "{\nswitch (k) {\ncase limit:\ncase 2:\n x = 1;\n y = 2;\n return;\ncase 3:\n if (a)\n  x = 4;\n "
+               "break;\n"
                "default:\n return;\n}\nswitch (k) {\ncase 1:\n if (a) break;\n x = 1;\n break;\ncase 2:\n x = 2;\n}\n}";
     default:
         return "";

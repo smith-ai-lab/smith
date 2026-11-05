@@ -203,7 +203,8 @@ static Bool match_header(lex::Tokens tokens, Usize open) {
 // not already), and an arm's `=>` is `:`.
 static void match_arms(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     if (brace.close == brace.open + 1 || !match_header(tokens, brace.open)) return;
-    Bool shift = indent_of(source, tokens[brace.open + 1].span.start) <= indent_of(source, tokens[brace.open].span.start);
+    Bool shift =
+        indent_of(source, tokens[brace.open + 1].span.start) <= indent_of(source, tokens[brace.open].span.start);
     Usize nest = 0;
     for (Usize i = brace.open + 1; i < brace.close; i++) {
         lex::TokenKind kind = tokens[i].kind;

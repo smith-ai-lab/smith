@@ -748,7 +748,8 @@ static ast::Pattern read_pattern(parse::Parser *p) {
     return result;
 }
 
-// A pattern of a `match` arm: a variant (`.a`, `.b(x)`), the default `_`, or a constant (`1`, `'a'`, `limit`, `kind_x`).
+// A pattern of a `match` arm: a variant (`.a`, `.b(x)`), the default `_`, or a constant (`1`, `'a'`, `limit`,
+// `kind_x`).
 static ast::Pattern read_arm_pattern(parse::Parser *p) {
     if (parse::at(p, lex::dot)) return read_pattern(p);
     U32 start = parse::peek(p).span.start;
@@ -1002,8 +1003,9 @@ static ast::Stmt *match_layout(parse::Parser *p) {
         if (countof(p->errors) == before) parse::expect(p, lex::colon, "`:` after the pattern");
         ast::Expr *result = nullptr;
         if (countof(p->errors) == before) result = arm_result(p);
-        Bool block_ended = p->position > 0 && (p->tokens[p->position - 1].kind == lex::dedent ||
-                                               p->tokens[p->position - 1].kind == lex::newline); // `.a: do:` and its block
+        Bool block_ended =
+            p->position > 0 && (p->tokens[p->position - 1].kind == lex::dedent ||
+                                p->tokens[p->position - 1].kind == lex::newline); // `.a: do:` and its block
         if (countof(p->errors) == before && !block_ended && !parse::at(p, lex::newline) && !parse::at(p, lex::dedent))
             parse::error(p, parse::peek(p).span, "expected the end of the line: one arm per line");
         if (countof(p->errors) == before) parse::accept(p, lex::newline);
