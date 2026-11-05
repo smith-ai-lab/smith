@@ -450,10 +450,46 @@ static Str rename_in_names(Str source) {
     return as_str(format::push(out, source[at:countof(source)]));
 }
 
+// `fn` is a keyword of smith's own syntax: a C name `fn` (a parameter holding a function, a local) is written `fn_`,
+// in the declaration and every use. The keyword stays: `fn` before a name (`fn area(...)`), or before a lambda's
+// parameters (`fn(x): ...`, `fn(x) -> T: ...`), where the `)` that closes them is followed by `:` or `->`.
+static Bool is_fn_keyword(lex::Tokens tokens, Usize i) {
+    if (i + 1 >= countof(tokens)) return false;
+    lex::TokenKind next = tokens[i + 1].kind;
+    if (next == lex::name || next == lex::type_name) return true;
+    if (next != lex::left_paren) return false;
+    Usize depth = 0;
+    for (Usize j = i + 1; j < countof(tokens); j++) {
+        if (tokens[j].kind == lex::left_paren) depth += 1;
+        if (tokens[j].kind != lex::right_paren) continue;
+        depth -= 1;
+        if (depth > 0) continue;
+        return j + 1 < countof(tokens) && (tokens[j + 1].kind == lex::colon || tokens[j + 1].kind == lex::arrow);
+    }
+    return false;
+}
+
+static Str rename_fn_names(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str fn_word = "fn";
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), fn_word)) continue;
+        if (is_fn_keyword(tokens, i)) continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], "fn_"));
+        at = tokens[i].span.end;
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_in_names(rename_type_names(source));
+    Str renamed = rename_fn_names(rename_in_names(rename_type_names(source)));
     Fixed total = {.text = renamed};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
