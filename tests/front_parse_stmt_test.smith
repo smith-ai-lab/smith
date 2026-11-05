@@ -282,6 +282,8 @@ export void test_parse_stmt_the_new_forms() {
                  "    for x in xs:\n        f\n"
                  "    for (i, x) in es:\n        f\n"
                  "    match s:\n        .a: v\n        .b(x): w\n        .c, .d: u\n"
+                 "    match k:\n        1: v\n        limit, 'a': return w\n        -2:\n            f\n            g\n"
+                 "        _: break\n"
                  "    if let .some(x) = e:\n        x\n    else:\n        y\n"
                  "    if let .none = e:\n        x\n"
                  "    defer f\n"
@@ -326,7 +328,7 @@ static Str malformed(Usize which) {
     case 3:
         return ":\n    for x in xs\n";
     case 4:
-        return ":\n    match s:\n        a: v\n    z\n";
+        return ":\n    match s:\n        .: v\n    z\n";
     case 5:
         return ":\n    match s:\n        .a v\n    z\n";
     case 6:
@@ -484,8 +486,10 @@ static Str old_name(Usize which) {
         return "switch_and_goto";
     case 7:
         return "switch_match";
-    default:
+    case 8:
         return "switch_no_match";
+    default:
+        return "switch_constants";
     }
 }
 
@@ -511,6 +515,10 @@ static Str old_source(Usize which) {
     case 8:
         return "{\nswitch (v) {\ncase .a:\n x = 1;\n break;\ndefault:\n x = 2;\n break;\n}\n"
                "switch (w) {\ncase .a:\n return 1;\n}\nswitch (u) {\ncase 1:\n x = 1;\n break;\n}\n}";
+    case 9:
+        return "{\nswitch (k) {\ncase limit:\ncase 2:\n x = 1;\n y = 2;\n return;\ncase 3:\n if (a)\n  x = 4;\n "
+               "break;\n"
+               "default:\n return;\n}\nswitch (k) {\ncase 1:\n if (a) break;\n x = 1;\n break;\ncase 2:\n x = 2;\n}\n}";
     default:
         return "";
     }
@@ -521,7 +529,7 @@ export void test_parse_stmt_old_forms_have_warnings_with_fixes() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    for (Usize i = 0; i < 9; i++) {
+    for (Usize i = 0; i < 10; i++) {
         Str name = old_name(i);
         char path[:] = format::push("tests/front/parse_stmt/old_", name, ".txt");
         Str source = old_source(i);
@@ -575,6 +583,8 @@ export void test_parse_stmt_layout_blocks() {
                  "    for x in xs:\n        f\n"
                  "    for (i, x) in es:\n        f\n"
                  "    match s:\n        .a: v\n        .b(x): w\n        .c, .d: u\n"
+                 "    match k:\n        1: v\n        limit, 'a': return w\n        -2:\n            f\n            g\n"
+                 "        _: break\n"
                  "    if let .some(x) = e:\n        x\n    else:\n        y\n"
                  "    if let .none = e:\n        x\n"
                  "    defer f\n"
@@ -613,7 +623,7 @@ static Str malformed_layout(Usize which) {
     case 3:
         return ":\n    for x in:\n        f\n";
     case 4:
-        return ":\n    match s:\n        a: v\n    z\n";
+        return ":\n    match s:\n        .: v\n    z\n";
     case 5:
         return ":\n    match s:\n        .a v\n    z\n";
     case 6:

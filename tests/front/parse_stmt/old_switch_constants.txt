@@ -1,0 +1,61 @@
+{
+switch (k) {
+case limit:
+case 2:
+ x = 1;
+ y = 2;
+ return;
+case 3:
+ if (a)
+  x = 4;
+ break;
+default:
+ return;
+}
+switch (k) {
+case 1:
+ if (a) break;
+ x = 1;
+ break;
+case 2:
+ x = 2;
+}
+}
+===
+warning (fix): a `switch` is a `match` in smith: write it so
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+---
+{
+match k {
+limit, 2 => {
+ x = 1
+ y = 2
+ return
+}
+3 => {
+ if a {
+  x = 4 }
+ }
+_ => return
+}
+switch (k) {
+case 1:
+ if a { break }
+ x = 1
+ break
+case 2:
+ x = 2
+}
+}

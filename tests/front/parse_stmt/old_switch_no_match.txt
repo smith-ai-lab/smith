@@ -18,33 +18,26 @@ case 1:
 }
 }
 ===
-warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a `switch` is a `match` in smith: write it so
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
-warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a `switch` is a `match` in smith: write it so
 warning (fix): a statement ends with the line, not `;`: remove it
-warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
+warning (fix): a `switch` is a `match` in smith: write it so
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
 ---
 {
-switch (v) {
-case .a:
- x = 1
- break
-default:
- x = 2
- break
+match v {
+.a => x = 1
+_ => x = 2
 }
-switch (w) {
-case .a:
- return 1
+match w {
+.a => return 1
 }
-switch (u) {
-case 1:
- x = 1
- break
+match u {
+1 => x = 1
 }
 }
