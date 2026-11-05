@@ -1648,6 +1648,45 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
     return true;
 }
 
+// The value of a `match` pattern known at compile time (#2336): an integer, character or boolean literal, its negation,
+// a name of a constant whose initializer is one, or what `constant_length` folds. False for anything else, such as a
+// C header's constant, whose value the checker does not hold.
+export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
+    const ast::Expr *e = root;
+    Bool negated = false;
+    for (Usize budget = 0; e != nullptr && budget < 32; budget++) {
+        U64 value = 0;
+        Bool known = true;
+        ast::Path path = {};
+        if (e->kind == .integer) {
+            value = e->kind.integer.value;
+        } else if (e->kind == .character) {
+            value = e->kind.character.value;
+        } else if (e->kind == .boolean) {
+            value = e->kind.boolean.value ? 1 : 0;
+        } else if (e->kind == .unary && e->kind.unary.op == .negate) {
+            negated = !negated;
+            e = e->kind.unary.operand;
+            continue;
+        } else if (names_a_constant(e, &path)) {
+            const Symbol *s = type_through_modules(r, path);
+            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
+            Bool fixed = s->is_const;
+            if (s->decl->kind.variable.is_new)
+                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
+            if (!fixed) return false;
+            e = s->decl->kind.variable.init;
+            continue;
+        } else {
+            known = constant_length(r, e, &value);
+        }
+        if (!known) return false;
+        *out = negated ? 0 - value : value;
+        return true;
+    }
+    return false;
+}
+
 // Makes the type of a composite node from its children's, which are `n` values from `base`.
 static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
     if (any_invalid(r, w, base, n)) return r->table.invalid;

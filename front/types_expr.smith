@@ -3280,6 +3280,18 @@ static void read_if_let(Plan *p, const ast::Stmt *s) {
     push_step(p, then_branch, visit);
 }
 
+// Whether a constant pattern is a name (`limit`, `kind_a`, `lex.name`, `LIMIT`): over an enumeration it names an
+// enumerator (`lex.name` is `.name`, as the fixer writes a C `case` label); over a number it names a constant.
+export Bool names_case(const ast::Expr *e) {
+    if (e->kind == .member) {
+        return !e->kind.member.arrow;
+    }
+    if (e->kind == .type_value) {
+        return e->kind.type_value.type != nullptr && e->kind.type_value.type->kind == .named;
+    }
+    return e->kind == .name;
+}
+
 static void read_match(Plan *p, const ast::Stmt *s) {
     if (!(s->kind == .match_stmt)) {
         return;
@@ -3287,8 +3299,19 @@ static void read_match(Plan *p, const ast::Stmt *s) {
     emit_expr(p, s->kind.match_stmt.value, nullptr);
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     for (Usize a = 0; a < countof(arms); a++) {
+        ast::Pattern pats[:] = arms[a].patterns;
+        for (Usize k = 0; k < countof(pats); k++) {
+            if (pats[k].constant != nullptr && !names_case(pats[k].constant)) {
+                emit_expr(p, pats[k].constant, nullptr); // a literal pattern, typed before its arm
+            }
+        }
         emit_pseudo(p, stage_arm, s, a);
-        emit_leaf(p, arms[a].value);
+        const ast::Expr *value = arms[a].value;
+        if (value != nullptr && value->kind == .stmt_expr && leaves_early(value->kind.stmt_expr.stmt)) {
+            emit_pseudo(p, stage_statement, value->kind.stmt_expr.stmt, 0); // `return`: the arm gives no value
+        } else {
+            emit_leaf(p, value);
+        }
         emit_pseudo(p, stage_leave, s, 0);
     }
     emit_pseudo(p, stage_coverage, s, 0);
@@ -3401,8 +3424,10 @@ static void bind_stage(types::Checked *c, Frame f) {
 
 // The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
 // it names none (and `report` says so).
+static Str case_name(const ast::Expr *e);
+
 static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::Pattern pat, Bool report) {
-    Str name = pat.name;
+    Str name = pat.constant != nullptr ? case_name(pat.constant) : pat.name;
     if (t->kind == .option) {
         if (same_text(name, "some")) {
             return 0;
@@ -3434,8 +3459,93 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
     return countof(t->slots);
 }
 
+// A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
+static Bool scalar_match(types::TypeRef t) {
+    return t->kind == .integer || t->kind == .bool_type;
+}
+
 static Bool matchable(types::TypeRef t) {
-    return t->kind == .enumeration || t->kind == .option;
+    return t->kind == .enumeration || t->kind == .option || scalar_match(t);
+}
+
+// Whether a pattern has the form of a constant: a literal, its negation, a name or a header's `k.NAME`.
+static Bool constant_form(const ast::Expr *e) {
+    if (e->kind == .unary && e->kind.unary.op == .negate) {
+        e = e->kind.unary.operand;
+    }
+    return e->kind == .integer || e->kind == .character || e->kind == .boolean || e->kind == .name ||
+           e->kind == .type_value || (e->kind == .member && !e->kind.member.arrow);
+}
+
+// The last name of a pattern that `names_case`: `name` for `lex.name`; empty for any other pattern.
+static Str case_name(const ast::Expr *e) {
+    ast::Path path = {};
+    if (e->kind == .member) {
+        return e->kind.member.name;
+    }
+    if (e->kind == .name) {
+        path = e->kind.name.path;
+    } else if (e->kind == .type_value && e->kind.type_value.type != nullptr &&
+               e->kind.type_value.type->kind == .named) {
+        path = e->kind.type_value.type->kind.named.path;
+    }
+    if (countof(path.segments) == 0) {
+        return "";
+    }
+    return path.segments[countof(path.segments) - 1].text;
+}
+
+// A name in a pattern over a number that no frame typed (a `match` used as a value): the constant it names, found in
+// scope; a name through a module or a header stays as written. False when it names nothing, with the error.
+static Bool type_pattern_name(types::Checked *c, const ast::Expr *e) {
+    if (typ(c, e) != nullptr || !(e->kind == .name) || countof(e->kind.name.path.segments) != 1) {
+        return true;
+    }
+    const types::Symbol *named = types::lookup_path(&c->scopes, e->kind.name.path);
+    if (named == nullptr || named->kind != .variable) {
+        Str name = e->kind.name.path.segments[0].text;
+        types::failf(c, e->span, "unknown name `", name, "`; a name in a pattern is a constant it compares with, ",
+                     "never a new name: declare the constant, or write `_` for any value");
+        return false;
+    }
+    types::set_type(c, e, named->type);
+    return true;
+}
+
+// A constant pattern of a `match` over `t`: over an enumeration, the name of one of its enumerators; over a number,
+// a `char` or a `bool`, typed as the value, and a literal or a constant, never a variable. A bare name is the constant
+// it names, never a new binding.
+static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern pat) {
+    if (t == invalid(c) || !matchable(t)) {
+        return;
+    }
+    if (t->kind == .enumeration && names_case(pat.constant)) {
+        _ = case_of(c, pat.span, t, pat, true);
+        return;
+    }
+    if (!scalar_match(t)) {
+        types::failf(c, pat.span, "a `match` over `", types::show(t),
+                     "` names its cases with a dot; write the case as `.name`");
+        return;
+    }
+    if (!constant_form(pat.constant)) {
+        types::failf(c, pat.span, "a pattern is a literal or the name of a constant; test anything else with `if`");
+        return;
+    }
+    if (!type_pattern_name(c, pat.constant)) {
+        return;
+    }
+    types::TypeRef got = typ(c, pat.constant); // typed before the arm, by the caller's frames or by its name
+    if (got == nullptr || got == invalid(c) || !conform(c, pat.constant, got, t) || !(pat.constant->kind == .name)) {
+        return;
+    }
+    U64 value = 0;
+    const types::Symbol *named = types::lookup_path(&c->scopes, pat.constant->kind.name.path);
+    if (named != nullptr && named->kind == .variable && named->decl != nullptr &&
+        !types::constant_case(c, pat.constant, &value)) {
+        types::failf(c, pat.span, "`", named->name, "` is a variable, but a pattern compares with a constant; ",
+                     "declare it `const`, or test it with `if`");
+    }
 }
 
 static Usize case_count(types::TypeRef t) {
@@ -3446,18 +3556,29 @@ static Usize case_count(types::TypeRef t) {
 }
 
 // One arm of a `match`: its patterns are cases of the scrutinee, and the scope has what the arm binds.
-static void arm_stage(types::Checked *c, Frame f) {
-    const ast::Stmt *s = f.source;
+export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
     types::push_scope(&c->scopes);
     if (!(s->kind == .match_stmt)) {
         return;
     }
     types::TypeRef t = typ(c, s->kind.match_stmt.value);
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
-    ast::Pattern pats[:] = arms[f.index].patterns;
+    ast::Pattern pats[:] = arms[arm].patterns;
     Bool known = t != invalid(c) && matchable(t);
     for (Usize k = 0; k < countof(pats); k++) {
         types::TypeRef element = invalid(c);
+        if (pats[k].wildcard) {
+            continue;
+        }
+        if (pats[k].constant != nullptr) {
+            constant_pattern(c, t, pats[k]);
+            continue;
+        }
+        if (known && scalar_match(t)) {
+            types::failf(c, pats[k].span, "`.", pats[k].name, "` is a variant, but this `match` is over `",
+                         types::show(t), "`; write a constant such as `1` or `limit`");
+            continue;
+        }
         if (known) {
             Usize at = case_of(c, s->span, t, pats[k], true);
             if (t->kind == .option && at == 0) {
@@ -3468,6 +3589,10 @@ static void arm_stage(types::Checked *c, Frame f) {
         }
         bind_name(c, pats[k].binding, element);
     }
+}
+
+static void arm_stage(types::Checked *c, Frame f) {
+    match_arm(c, f.source, f.index);
 }
 
 // The enumerators no arm named, as "`.a`, `.b`".
@@ -3493,9 +3618,68 @@ static Str missing_list(types::TypeRef t, Bool seen[:]) {
     return text;
 }
 
+// Whether an arm before this pattern names `_`, which is then written twice.
+static Bool second_wildcard(types::Checked *c, ast::Pattern pat, Bool *wild) {
+    if (!pat.wildcard) {
+        return false;
+    }
+    if (*wild) {
+        types::failf(c, pat.span, "`_` is written twice; remove one arm");
+    }
+    *wild = true;
+    return true;
+}
+
+// After the arms of a `match` over a number, a `char` or a `bool`: no value is named twice, and `_` takes the values
+// no arm names, unless the arms name both `true` and `false`.
+static void scalar_coverage(types::Checked *c, const ast::Stmt *s, types::TypeRef t) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    U64 values[:] = {};
+    Bool wild = false;
+    Bool clean = true;
+    for (Usize a = 0; a < countof(arms); a++) {
+        ast::Pattern pats[:] = arms[a].patterns;
+        for (Usize k = 0; k < countof(pats); k++) {
+            U64 value = 0;
+            if (second_wildcard(c, pats[k], &wild)) {
+                continue;
+            }
+            if (pats[k].constant == nullptr) {
+                clean = false;
+                continue;
+            }
+            if (!types::constant_case(c, pats[k].constant, &value)) {
+                continue;
+            }
+            if (t->kind == .bool_type) {
+                value = value != 0 ? 1 : 0;
+            }
+            Bool twice = false;
+            for (Usize i = 0; i < countof(values); i++) {
+                twice = twice || values[i] == value;
+            }
+            if (twice) {
+                types::failf(c, pats[k].span, "this value is matched twice: an arm above names it; remove one");
+                clean = false;
+                continue;
+            }
+            values = mem::realloc(values, countof(values) + 1);
+            values[countof(values) - 1] = value;
+        }
+    }
+    Bool both = t->kind == .bool_type && countof(values) == 2;
+    mem::free(values.data);
+    if (clean && !wild && !both) {
+        types::failf(c, s->span, "`match` over `", types::show(t), "` does not cover every value; add a `_` arm ",
+                     "for the values no arm names");
+    }
+}
+
 // After the arms: every case of the enumeration or `?T` is named, and none twice.
-static void coverage_stage(types::Checked *c, Frame f) {
-    const ast::Stmt *s = f.source;
+export void match_coverage(types::Checked *c, const ast::Stmt *s) {
     if (!(s->kind == .match_stmt)) {
         return;
     }
@@ -3504,22 +3688,31 @@ static void coverage_stage(types::Checked *c, Frame f) {
         return;
     }
     if (!matchable(t)) {
-        types::failf(c, s->span, "`match` takes an enumeration or a `?T`, but this is a `", types::show(t),
-                     "`; match on an enumerator, or write an `if`");
+        types::failf(c, s->span, "`match` takes an enumeration, a `?T`, a number, a `char` or a `bool`, but this is ",
+                     "a `", types::show(t), "`; write an `if`");
+        return;
+    }
+    if (scalar_match(t)) {
+        scalar_coverage(c, s, t);
         return;
     }
     Usize total = case_count(t);
     Bool seen[:] = mem::alloc_slice(Bool, total + 1);
     Bool clean = true;
+    Bool wild = false;
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     for (Usize a = 0; a < countof(arms); a++) {
         ast::Pattern pats[:] = arms[a].patterns;
         for (Usize k = 0; k < countof(pats); k++) {
+            if (second_wildcard(c, pats[k], &wild)) {
+                continue;
+            }
             Usize at = case_of(c, s->span, t, pats[k], false);
             if (at >= total) {
                 clean = false;
             } else if (seen[at]) {
-                types::failf(c, s->span, "`.", pats[k].name, "` is matched twice; remove one arm");
+                Str twice = pats[k].constant != nullptr ? case_name(pats[k].constant) : pats[k].name;
+                types::failf(c, s->span, "`.", twice, "` is matched twice; remove one arm");
                 clean = false;
             } else {
                 seen[at] = true;
@@ -3527,10 +3720,14 @@ static void coverage_stage(types::Checked *c, Frame f) {
         }
     }
     Str missing = missing_list(t, seen[0:total]);
-    if (clean && countof(missing) > 0) {
+    if (clean && !wild && countof(missing) > 0) {
         types::failf(c, s->span, "`match` over `", types::show(t), "` does not cover ", missing,
                      "; add an arm for each, since a `match` must name every case");
     }
+}
+
+static void coverage_stage(types::Checked *c, Frame f) {
+    match_coverage(c, f.source);
 }
 
 // A statement of a block that is not an expression, in the scope the block opened.
