@@ -3372,6 +3372,7 @@ static int build_frontend_coverage(SmithRun *run) {
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
     const char *files = run->args[1];
     const char *tree = smith_fmt(b, "%s/tree", work);
+    if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
     if (access("compile_commands.json", R_OK) == 0) {
@@ -3414,7 +3415,9 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .args = smith_list(
             b, smith_option_value(b, "smith", binary, "frontend-coverage: the smith to measure"),
             smith_option_value(b, "files", "", "frontend-coverage: only these files and what they import (#2309)"),
-            smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"), nullptr),
+            smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"),
+            smith_option_value(b, "jobs", "", "frontend-coverage: files compiled at once (default: the cores, #2420)"),
+            nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);

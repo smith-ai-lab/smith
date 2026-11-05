@@ -591,21 +591,137 @@ static Usize record_errors(const char *path, const char output[:], const char st
     return made;
 }
 
-// The fixer on the copy of one file (the process is in the scratch tree). Records a failure.
-static void fix(const char *smith, const char *path) {
-    char message[message_size];
-    const char *const fix[_] = {smith, "lint", "--fix", path};
-    struct Ran fixed = run_program(fix[0:4]);
-    if (fixed.status != 0) {
-        copy_text(message[0:message_size], fixed.text);
-        add_entry(view_of(path), "fixer", message[0:message_size], "");
+// Programs that run at once (#2420). The fixer and the compile of each file are started without waiting, up to
+// `job_limit` of them (the cores, or SMITH_COVERAGE_JOBS), in a fixed ring of slots. The oldest is always finished
+// first, so the rows of the table come in the order of the files, as in a serial run. A child's output goes to two
+// files in the jobs folder (its standard output and its standard error), one pair per slot.
+constexpr Usize jobs_max = 64;
+constexpr Usize job_args_max = 40;
+
+struct Job {
+    process::Child child;
+    Usize file;
+    Bool is_fix;
+    Bool started;
+    char out[path_size * 2];
+    char err[path_size * 2];
+    char cache[path_size * 2];
+    Usize cache_length;
+};
+
+static struct Job jobs[jobs_max];
+static Usize job_limit = 1;
+static Usize job_head = 0;
+static Usize job_count = 0;
+static const char *job_folder = nullptr;
+static Bool fixed_ok[files_max];
+
+static void finish_measure(Usize file, const struct Ran *compiled);
+
+// The result of a finished job: its status, and its error stream as text (its output when the error stream is empty).
+static struct Ran read_job(struct Job *job) {
+    struct Ran ran = {.status = 127, .text = ""};
+    if (!job->started) return ran;
+    process::ExitResult ended = process::wait(&job->child);
+    process::close(&job->child);
+    if (ended == .error) return ran;
+    ran.status = ended.ok.signal != 0 ? 128 + (I32)ended.ok.signal : (I32)ended.ok.status;
+    files::BytesResult out = files::read_file(view_of(job->out));
+    files::BytesResult err = files::read_file(view_of(job->err));
+    if (out != .error) {
+        ran.text = mem::view(out.ok, char);
+        ran.owned_out = (char *)out.ok.data;
     }
-    release(&fixed);
+    if (err != .error) {
+        if (countof(err.ok) > 0) ran.text = mem::view(err.ok, char);
+        ran.owned_err = (char *)err.ok.data;
+    }
+    return ran;
 }
 
-// The new front end on one fixed file, from the folder of its project. Records the result.
-static void measure(const char *smith, const char *scratch, const char *path) {
-    char stage[stage_size];
+// Finishes the oldest job and records its result.
+static void job_finish() {
+    struct Job *job = &jobs[job_head];
+    job_head = (job_head + 1) % job_limit;
+    job_count -= 1;
+    struct Ran ran = read_job(job);
+    if (!job->is_fix) {
+        finish_measure(job->file, &ran);
+    } else if (ran.status != 0) {
+        char message[message_size];
+        copy_text(message[0:message_size], ran.text);
+        add_entry(view_of(tree[job->file]), "fixer", message[0:message_size], "");
+        fixed_ok[job->file] = false;
+    } else if (job->cache_length > 0) {
+        // A file that fails to fix is never cached.
+        files::BytesResult fixed = files::read_file(text_of(tree[job->file][0:path_size]));
+        if (fixed != .error) {
+            (void)files::write_file(job->cache[0:job->cache_length], fixed.ok, files::Replace);
+            mem::free(fixed.ok.data);
+        }
+    }
+    release(&ran);
+}
+
+static void jobs_drain() {
+    while (job_count > 0)
+        job_finish();
+}
+
+// Starts `program` in the current folder with an address space capped at `limit` (a ulimit -v value), after the oldest
+// job when all the slots are busy.
+static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const char *const program[:]) {
+    if (job_count == job_limit) job_finish();
+    Usize slot = (job_head + job_count) % job_limit;
+    job_count += 1;
+    struct Job *job = &jobs[slot];
+    *job = (struct Job){.file = file, .is_fix = is_fix};
+    (void)format::to(job->out, sizeof job->out, job_folder, "/", slot, ".out");
+    (void)format::to(job->err, sizeof job->err, job_folder, "/", slot, ".err");
+    const char *argv[job_args_max];
+    argv[0] = "/bin/sh";
+    argv[1] = "-c";
+    argv[2] = "ulimit -v \"$1\"; o=$2; e=$3; shift 3; exec \"$@\" >\"$o\" 2>\"$e\"";
+    argv[3] = "sh";
+    argv[4] = limit;
+    argv[5] = job->out;
+    argv[6] = job->err;
+    Usize n = 7;
+    for (Usize i = 0; i < countof(program) && n < job_args_max; i++) {
+        argv[n] = program[i];
+        n += 1;
+    }
+    const char *const *fixed_argv = (const char *const *)argv;
+    process::ChildResult spawned = process::spawn(fixed_argv[0:n]);
+    if (spawned == .ok) {
+        job->child = spawned.ok;
+        job->started = true;
+    }
+    return job;
+}
+
+// How many programs run at once: SMITH_COVERAGE_JOBS (-Djobs), else the cores.
+static Usize jobs_wanted() {
+    env::Value given = env::get("SMITH_COVERAGE_JOBS");
+    I64 count = given == .some && countof(given.some) > 0 ? c::strtol(given.some.data, nullptr, 10) : 0;
+    if (count <= 0) count = (I64)process::cores();
+    if (count > (I64)jobs_max) count = (I64)jobs_max;
+    return (Usize)count;
+}
+
+// Starts the fixer on the copy of one file (the process is in the scratch tree). A failure is recorded when the job
+// finishes. `cache` is the cache entry to fill then, or empty.
+static void fix(const char *smith, Usize i, const char cache[:]) {
+    const char *const fixer[_] = {smith, "lint", "--fix", tree[i]};
+    struct Job *job = job_start(true, i, "unlimited", fixer[0:4]);
+    copy_text(job->cache[0:path_size * 2], cache);
+    job->cache_length = countof(cache);
+}
+
+// Starts the new front end on one fixed file, from the folder of its project. The result is recorded when the job
+// finishes.
+static void measure(const char *smith, const char *scratch, Usize file) {
+    const char *path = tree[file];
     Usize project = project_of(view_of(path));
     typeof(const char[:]) folder = text_of(projects[project][0:path_size]);
     typeof(const char[:]) inside = view_of(path)[countof(folder) > 0 ? countof(folder) + 1 : 0:countof(view_of(path))];
@@ -616,6 +732,7 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     char home[path_size * 2];
     (void)format::to(home, sizeof home, scratch, countof(folder) > 0 ? "/" : "", folder);
     if (c::chdir(home) != 0) {
+        jobs_drain(); // the rows stay in the order of the files
         add_entry(view_of(path), "parse", "cannot enter the project folder", "");
         return;
     }
@@ -627,27 +744,21 @@ static void measure(const char *smith, const char *scratch, const char *path) {
     (void)format::to(own, sizeof own, "-I", include_root, "/include");
     // The address space of one compile is capped (6 GB): two files of front/ make the front end grow to 13 GB
     // before it fails, which killed the 16 GB hosted runner (#2254); a file over the cap fails alone, as `parse` does.
-    const char *const compile[_] = {"/bin/sh",
-                                    "-c",
-                                    "ulimit -v 6291456; exec \"$@\"",
-                                    "sh",
-                                    smith,
-                                    "cc",
-                                    "--front-end=new",
-                                    (const char *)include,
-                                    (const char *)own,
-                                    "-c",
-                                    name,
-                                    "-o",
-                                    object};
-    struct Ran compiled = run_program(compile[0:13]);
-    if (compiled.status == 0) {
+    const char *const compile[_] = {
+        smith, "cc", "--front-end=new", (const char *)include, (const char *)own, "-c", name, "-o", object};
+    (void)job_start(false, file, "6291456", compile[0:9]);
+}
+
+// The result of the compile of file `file`.
+static void finish_measure(Usize file, const struct Ran *compiled) {
+    char stage[stage_size];
+    const char *path = tree[file];
+    if (compiled->status == 0) {
         add_entry(view_of(path), "pass", "", "");
     } else {
-        stage_named(compiled.text, stage[0:stage_size]);
-        (void)record_errors(path, compiled.text, text_of(stage[0:stage_size]), compiled.status);
+        stage_named(compiled->text, stage[0:stage_size]);
+        (void)record_errors(path, compiled->text, text_of(stage[0:stage_size]), compiled->status);
     }
-    release(&compiled);
 }
 
 // ---------------------------------------------------------------------------------------- imports, hashes and cache
@@ -860,7 +971,8 @@ static Usize cache_misses = 0;
 static const char *cache_folder = nullptr;
 
 // Fixes the copy of file `i` (the process is in the scratch tree) with the fixer, or with a cache entry made by a
-// fixer that read the same files. Records a failure. A file that fails to fix is never cached.
+// fixer that read the same files. A failure is recorded (and fixed_ok cleared) when the fixer's job finishes. A file
+// that fails to fix is never cached.
 static void fix_cached(const char *smith, Usize i) {
     char name[33];
     char entry[path_size * 2];
@@ -878,13 +990,7 @@ static void fix_cached(const char *smith, Usize i) {
         }
     }
     cache_misses += 1;
-    Usize before = entry_count;
-    fix(smith, tree[i]);
-    if (entry_count != before) return;
-    files::BytesResult fixed = files::read_file(text_of(tree[i][0:path_size]));
-    if (fixed == .error) return;
-    defer mem::free(fixed.ok.data);
-    (void)files::write_file(entry[0:e.length], fixed.ok, files::Replace);
+    fix(smith, i, entry[0:e.length]);
 }
 
 // The hash of the smith that fixes: its file.
@@ -963,19 +1069,25 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
     if (c::chdir(scratch) != 0) return 1;
     // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
-    Bool fixed[files_max];
+    job_limit = jobs_wanted();
+    char jobs_path[path_size * 2];
+    (void)format::to(jobs_path, sizeof jobs_path, scratch, "/../jobs");
+    job_folder = jobs_path;
+    (void)files::make_folder(view_of(jobs_path));
     for (Usize i = 0; i < tree_count; i++) {
-        fixed[i] = false;
+        fixed_ok[i] = false;
         if (!is_smith(tree[i]) || (!all && !wanted[i])) continue;
-        Usize before = entry_count;
+        fixed_ok[i] = true;
         fix_cached(smith, i);
-        fixed[i] = entry_count == before;
     }
-    console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed\n");
+    jobs_drain();
+    console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
+                         job_limit, " at once\n");
     link_roots(scratch);
     for (Usize i = 0; i < tree_count; i++) {
-        if (fixed[i]) measure(smith, scratch, tree[i]);
+        if (fixed_ok[i]) measure(smith, scratch, i);
     }
+    jobs_drain();
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
