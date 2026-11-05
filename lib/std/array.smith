@@ -16,3 +16,6 @@
 //
 // Nothing else of #1823 (shape, indexing, operations) is built yet.
 module std::array;
+
+// The call is the compiler's, so the module holds no function; this keeps it a translation unit with a declaration.
+static_assert(true, "std::array has no function: array.filled is known to the compiler");

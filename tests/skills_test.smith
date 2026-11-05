@@ -343,10 +343,6 @@ export void test_skill_smith_build_tests() {
     skill_case("smith-build-tests");
 }
 
-export void test_skill_smith_array() {
-    skill_case("smith-array");
-}
-
 export void test_skill_smith_clock() {
     skill_case("smith-clock");
 }

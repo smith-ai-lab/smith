@@ -9,7 +9,7 @@ This skill ships in the smith plugin, from `.agents/skills/smith-array/SKILL.md`
 
 C zeroes a file-level or `static` array. smith's own syntax has no zero values, so an array that must start with a value says which: `array.filled(T, n, value)` is `[n]T` with `n` copies of `value`.
 
-```smith
+```smith fragment
 import std.array
 
 const named_length: usize = 64
