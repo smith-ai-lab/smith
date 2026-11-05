@@ -16,6 +16,7 @@
 //   smallest         (number a, number b)                    its type    llvm.minnum, llvm.smin, llvm.umin
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
+//   format           (*char out, n, *char format, rest...)   I32         a variadic call of snprintf
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
 //   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
 //   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
@@ -43,6 +44,7 @@ export typedef enum {
     predicate;
     constant;
     libc;
+    format;
     count_zeros;
     filled;
     type_query;
@@ -96,6 +98,8 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .libc, "ldexp di d");
     } else if (same(name, "__builtin_nextafterf")) {
         *found = made(name, .libc, "nextafterf ff f");
+    } else if (same(name, "__builtin_snprintf")) {
+        *found = made(name, .format, "snprintf");
     } else if (same(name, "__builtin_clzll")) {
         *found = made(name, .count_zeros, "ctlz");
     } else {
@@ -368,6 +372,22 @@ static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry en
     return libc_type(c, result, first);
 }
 
+// `__builtin_snprintf(out, n, format, rest...)`: a pointer, a size, a format and any number of integers and pointers; the
+// result is an I32.
+static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "a pointer, a size, a format and integers or pointers";
+    if (countof(args) < 3) return wrong(c, e->span, entry, wanted);
+    for (Usize i = 0; i < countof(args); i++) {
+        types::TypeRef t = value_type(c, args[i]);
+        if (t == c->table.invalid) return c->table.invalid;
+        if (is_open(t)) continue;
+        Bool pointer = t->kind == .pointer;
+        Bool integer = t->kind == .integer;
+        if (i == 1 ? !integer : (i == 0 || i == 2) ? !pointer : !(pointer || integer)) return wrong(c, e->span, entry, wanted);
+    }
+    return named(c, "I32");
+}
+
 // The element type `array.filled` is called with (its first argument), for the checker to expect of the value; null
 // when the call is malformed (`check` reports it).
 export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
@@ -433,6 +453,8 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_constant(c, e, entry, args);
     case .libc:
         return check_libc(c, e, entry, args);
+    case .format:
+        return check_format(c, e, entry, args);
     case .filled:
         return check_filled(c, e, entry, args);
     case .type_query:

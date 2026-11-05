@@ -86,6 +86,8 @@ static c::LLVMValueRef predicate(state::Emitter *e, table::Entry entry, state::V
     return c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, difference, c::LLVMConstReal(x.ty.llvm, 0.0), "isfinite");
 }
 
+constexpr Usize max_values = 8;
+
 // The value `v` as the C type a letter of a libc signature names: `z` a 64-bit integer, `i` an int, `d` a double, `f` a
 // float; a pointer is as it is.
 static c::LLVMValueRef coerced(state::Emitter *e, state::Value v, U8 letter) {
@@ -115,6 +117,25 @@ static c::LLVMValueRef libc_call(state::Emitter *e, table::Entry entry, state::V
     return c::LLVMBuildCall2(e->builder, type, function, args, (U32)countof(params), "");
 }
 
+// `__builtin_snprintf(out, n, format, rest...)`: a call of the variadic libc function. A size is a 64-bit integer; an
+// integer narrower than an int is widened to one, as C's promotions do; any other value is passed as it is.
+static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state::Value *v, Usize count, state::Ty result) {
+    c::LLVMValueRef args[max_values] = {};
+    c::LLVMTypeRef types[max_values] = {};
+    for (Usize i = 0; i < count; i++) {
+        args[i] = v[i].llvm;
+        if (i == 1) args[i] = coerced(e, v[i], 'z');
+        if (i > 2 && v[i].ty.kind == .integer && v[i].ty.bits < 32) args[i] = coerced(e, v[i], 'i');
+        types[i] = c::LLVMTypeOf(args[i]);
+    }
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, 3, 1);
+    char *label = state::cstr(entry.intrinsic);
+    c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, label);
+    if (function == nullptr) function = c::LLVMAddFunction(e->module, label, type);
+    mem::free(label);
+    return c::LLVMBuildCall2(e->builder, type, function, args, (U32)count, "");
+}
+
 // `__builtin_clzll(x)`: `llvm.ctlz` (an undefined result for zero, as C), truncated to an int.
 static c::LLVMValueRef count_zeros(state::Emitter *e, state::Value x, state::Ty result) {
     c::LLVMValueRef args[2] = {x.llvm, c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 1, 0)};
@@ -123,7 +144,7 @@ static c::LLVMValueRef count_zeros(state::Emitter *e, state::Value x, state::Ty 
 }
 
 // The value of the call, from its entry and its arguments' values (the type argument has none).
-static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, state::Ty result) {
+static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, Usize count, state::Ty result) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
     switch (entry.shape) {
     case .overflow:
@@ -146,6 +167,8 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return predicate(e, entry, v[0]);
     case .libc:
         return libc_call(e, entry, v, result);
+    case .format:
+        return format_call(e, entry, v, count, result);
     case .count_zeros:
         return count_zeros(e, v[0], result);
     case .filled:
@@ -170,10 +193,10 @@ static state::Status finish(state::Emitter *e, const state::Work *w) {
         if (typed == .error) return {.error = typed.error};
         result = typed.ok;
     }
-    state::Value values[3] = {};
+    state::Value values[max_values] = {};
     for (Usize i = (Usize)w->number; i > 0; i--)
         values[i - 1] = state::pop_value(e);
-    c::LLVMValueRef made = lowered(e, entry, values, result);
+    c::LLVMValueRef made = lowered(e, entry, values, (Usize)w->number, result);
     state::push_value(e, (state::Value){.llvm = made, .ty = result});
     return state::success();
 }
@@ -188,7 +211,8 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     for (Usize i = 0; i < countof(args); i++) {
         if (table::is_type_argument(entry, i)) values -= 1;
     }
-    if (values > 3) return state::failf(x->span, entry.name, " takes at most 3 arguments, the call has ", (U64)values);
+    if (values > max_values)
+        return state::failf(x->span, entry.name, " takes at most 8 arguments, the call has ", (U64)values);
     state::push_then(e, (state::Work){.then = finish, .expr = x, .number = values, .span = x->span});
     for (Usize i = countof(args); i > 0; i--) {
         if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], state::no_hint());
