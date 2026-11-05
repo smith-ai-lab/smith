@@ -6,6 +6,7 @@ module front_fix_type_name_test;
 import front::fix;
 import std::arena;
 import std::mem;
+import std::slice;
 import std::test;
 
 static void check_text(Str got, Str want) {
@@ -21,4 +22,16 @@ export void test_front_fix_type_name_after_a_slice_colon() {
                                                 "= g();\n    Str p = source[start:type.end];\n    return p;\n}\n");
     check_text(fixed.text, "static fn f(source: str, start: u32) -> str:\n    ty: ast.Span = g()\n    p: str = "
                            "source[start:ty.end]\n    return p\n");
+}
+
+// A plain enum written as an index, `names[c]` (C allows it), is `names[c.to(usize)]` (#2460).
+export void test_front_fix_enum_as_an_index() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nenum Color { red, green };\nstatic Str names[2] = {\"r\", "
+                                                "\"g\"};\nstatic Str f(Color c) {\n    return names[c];\n}\n");
+    Str want = "return names[c.to(usize)]";
+    test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
 }

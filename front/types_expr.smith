@@ -421,6 +421,19 @@ static syntax::Edits mut_fix(const types::Symbol *s) {
     return edits;
 }
 
+// The edit for a plain enum written as an index (`names[kind]`, which C allows): `.to(usize)` after a name or a member
+// (#2460). Another expression, or an enum with payloads, has no mechanical fix.
+static syntax::Edits index_enum_fix(const ast::Expr *index, types::TypeRef t) {
+    syntax::Edits edits = {};
+    if (t->kind != .enumeration || t->has_payload || !(index->kind == .name || index->kind == .member)) {
+        return edits;
+    }
+    edits = mem::realloc(edits, 1);
+    Str word = ".to(usize)";
+    edits[0] = (syntax::Edit){.span = {.start = index->span.end, .end = index->span.end}, .text = word};
+    return edits;
+}
+
 // The edits for `&x` handed where a `*mut T` is wanted and `x` is a constant: `x` becomes `mut x`, and when `x` is
 // itself written `*T`, it becomes `*mut T` (what `&x` points at is then writable through the pointer).
 static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name) {
@@ -2749,8 +2762,11 @@ static void index_after(types::Checked *c, Frame f) {
         return;
     }
     if (!is_integer(it)) {
-        types::failf(c, index->span, "an index is an integer, found `", types::show(it),
-                     "`; write an integer expression such as `i`");
+        syntax::Edits fix = index_enum_fix(index, it);
+        types::fail_fix(c, index->span,
+                        msg(format::push("an index is an integer, found `", types::show(it),
+                                         "`; write an integer expression such as `i`")),
+                        fix);
         poison(c, e);
         return;
     }
