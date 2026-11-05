@@ -831,9 +831,10 @@ static Bool fn_has_body(const parse::Parser *p) {
             depth -= 1;
         }
         if (depth > 0) continue;
-        // The result type ends with its line: a `{` on a later line opens the next declaration, not this body.
-        if (parse::peek_at(p, i).line_break) return false;
         if (kind == body_opener(p)) return true;
+        // The result type ends with its line (`line_break` is set on the last token of a line): a `{` on a later line
+        // opens the next declaration, not this body.
+        if (parse::peek_at(p, i).line_break) return false;
         if (kind == lex::comma || kind == lex::semicolon || kind == lex::equal || kind == lex::right_brace)
             return false;
         if (kind == lex::end_of_file || kind == lex::newline || kind == lex::dedent) return false;
