@@ -2690,7 +2690,10 @@ static void slice_after(types::Checked *c, Frame f) {
     types::TypeRef result = bad;
     Bool typed_pointer = base->kind == .pointer && base->element->kind != .void_type;
     if (base->kind == .array || base->kind == .slice || typed_pointer) {
-        result = types::slice_of(&c->table, base->element, base->pointee_const);
+        // The tree does not record whether a slice written `[]T` is writable (the parser drops `[]mut T`), so in
+        // smith's own syntax a slice of a read-only pointer is a `[]T` too: its const would make it no `[]T` (#2386).
+        Bool element_const = base->pointee_const && !(typed_pointer && c->new_body);
+        result = types::slice_of(&c->table, base->element, element_const);
     } else if (base->kind == .text || base->kind == .block) {
         result = base;
     } else if (base != bad) {

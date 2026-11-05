@@ -626,6 +626,15 @@ export void test_maybe_unused_on_an_export_keeps_the_name() {
     check_text(fixed.text, "pub inline fn f(x: i32) -> i32:\n    return x\n");
 }
 
+// A static `[[maybe_unused]]` function that the module calls keeps its name: `_` would break the call (#2386).
+export void test_maybe_unused_on_a_called_static_keeps_the_name() {
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\n[[maybe_unused]] static Bool ok(I32 x) {\n    return x > "
+                                                "0;\n}\nBool g(I32 x) {\n    return ok(x);\n}\n");
+    check_flag(fixed.text.data != nullptr, true);
+    check_text(fixed.text,
+               "static fn ok(x: i32) -> bool:\n    return x > 0\nfn g(x: i32) -> bool:\n    return ok(x)\n");
+}
+
 // A call whose result is dropped is written `_ := f(x)` (#2311): the checker knows the result is not `Void`.
 export void test_a_call_statement_with_an_unused_result_is_discarded() {
     arena::Arena memory = test::memory(1U << 22);

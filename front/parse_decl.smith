@@ -474,8 +474,15 @@ static Mapped map_group(Str inner) {
 
 // The name of a declaration with its `[[maybe_unused]]` written as a prefix. An exported name stays: `_` would make it
 // private, and a public declaration is never unused (#2303).
-static Str named(const Prefixes *pre, Str name) {
+static Str named(parse::Parser *p, const Prefixes *pre, Str name) {
     if (!pre->unused || pre->exported || pre->is_pub) return name;
+    // A `[[maybe_unused]]` name that the module reads is not unused: `_` would break its uses.
+    Usize seen = 0;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        if (p->tokens[i].span.end > countof(p->source)) continue;
+        if (same_text(parse::text(p, p->tokens[i]), name)) seen += 1;
+    }
+    if (seen > 1) return name;
     return as_str(format::push("_", name));
 }
 
@@ -1345,7 +1352,7 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     // `fn run() {` read with today's tokenizer (`smith lint --fix` does until the switch) is a function whose type is
     // the name `fn`: it is smith's own form already.
     if (same_text(trimmed(source_between(p, head.type_start, head.name.span.start)), "fn")) return false;
-    Str name = named(pre, parse::text(p, head.name));
+    Str name = named(p, pre, parse::text(p, head.name));
     Str params = "";
     // `extern void f(A a);` is `extern fn f(a: A)`: the linker provides the body, so the `;` goes (#2224).
     Bool prototype =
@@ -1594,7 +1601,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     lex::Token last = p->tokens[p->position - 1];
     Bool has_init = equal_end > 0;
     Bool automatic = type->kind == .auto_type;
-    Str name = named(pre, parse::text(p, head.name));
+    Str name = named(p, pre, parse::text(p, head.name));
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
