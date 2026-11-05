@@ -2,6 +2,6 @@ expected `:` before the body |
 expected an indented block or a statement on the same line | 
 expected `:` or `if` after `else` | 
 expected an expression, found `:` | 
-expected `.` before a variant name, found `a` | 
+expected a variant name, found `:` | 
 expected `:` after the pattern, found `v` | 
 expected `=` after the pattern, found `x` | 

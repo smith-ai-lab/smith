@@ -230,6 +230,7 @@ static MatchArmList take_arms(Work *work, ast::MatchArm list[:]) {
         ast::Pattern target[:] = mem::alloc_slice(ast::Pattern, countof(source));
         for (Usize k = 0; k < countof(source); k++) {
             target[k] = source[k];
+            if (source[k].constant != nullptr) target[k].constant = take_expr(work, source[k].constant);
         }
         copy[i].patterns = target;
     }
