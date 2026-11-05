@@ -2324,6 +2324,24 @@ static void keep_params(Checked *r, ast::Param all[:], Binding bindings[:], Bool
     }
 }
 
+// The copy of the template that an instance is made of. A `for x in rest` over the pack becomes one copy of its body
+// for each element of the tuple the pack is bound to (#2293).
+static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
+    if (template->kind != .function) return ast_clone::clone_decl(template);
+    ast::Param params[:] = template->kind.function.params;
+    Usize bound = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
+            if (bound >= countof(given) || given[bound].type == nullptr) break;
+            TypeRef pack = given[bound].type;
+            if (!(pack->kind == .tuple)) break;
+            return ast_clone::clone_decl_unrolling(template, params[i].name, countof(pack->slots));
+        }
+        if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
+    }
+    return ast_clone::clone_decl(template);
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
@@ -2336,7 +2354,7 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
               " instances; a generic function that calls itself with ever larger types never ends");
         return max_instances;
     }
-    ast::Decl *copy = ast_clone::clone_decl(template);
+    ast::Decl *copy = clone_instance(template, given);
     if (copy->kind != .function) return max_instances;
     ast::Param all[:] = copy->kind.function.params;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
