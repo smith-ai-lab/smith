@@ -1,5 +1,5 @@
 // Tests of the fixer's arrays with no length written (#2092, piece of #2053): `T xs[_] = {a, b};` is
-// `let xs: [2]T = [a, b]`, the count of the elements standing in for the `_` that smith has no spelling for.
+// `xs: [2]T = [a, b]`, the count of the elements standing in for the `_` that smith has no spelling for.
 module front_fix_array_test;
 
 import front::fix;
@@ -30,4 +30,13 @@ export void test_front_fix_array_an_array_of_pointers_to_text() {
 
 export void test_front_fix_array_a_trailing_comma_is_not_an_element() {
     expect("void f(void) {\n    I32 xs[_] = {1, 2,};\n}\n", "fn f():\n    xs: [2]i32 = [1, 2,]\n");
+}
+
+// A static or file-level array C zeroes, and `T xs[3] = {}`, are written with their zero values (#1901).
+export void test_front_fix_array_a_static_array_is_zero_filled() {
+    expect("static Bool seen[3];\n", "static mut seen: [3]bool = [false, false, false]\n");
+}
+
+export void test_front_fix_array_an_empty_list_is_zero_filled() {
+    expect("void f(void) {\n    I32 xs[2] = {};\n}\n", "fn f():\n    mut xs: [2]i32 = [0, 0]\n");
 }

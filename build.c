@@ -867,64 +867,18 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
 
 // The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
 static const char *const build_front_modules[] = {
-    "ast",
-    "ast_clone",
-    "when",
-    "lex",
-    "parse",
-    "parse_expr",
-    "parse_type",
-    "parse_stmt",
-    "parse_decl",
-    "parser",
-    "types",
-    "types_expr",
-    "types_convert",
-    "types_decl",
-    "types_attr",
-    "types_stream",
-    "types_undefined",
-    "types_builtin",
-    "lint",
-    "affine",
-    "affine_loops",
-    "types_fn",
-    "types_iter",
-    "emit_state",
-    "emit",
-    "emit_arith",
-    "emit_builtin",
-    "emit_control",
-    "emit_call",
-    "emit_memory",
-    "emit_debug",
-    "emit_object",
-    "roots",
-    "fix",
-    "cimport",
-    "compile",
-    "emit_option",
-    "emit_match",
-    "emit_value",
-    "emit_iter",
-    "emit_tuple",
-    "emit_lambda",
-    "emit_vector",
-    "emit_stream",
-    "fix_directive",
-    "fix_blocks",
-    "fix_method",
-    "fix_zero",
-    "lsp_server",
-    "lsp_hover",
-    "lsp_semantic",
-    "lsp_definition",
-    "lsp_symbols",
-    "lsp_completion",
-    "format_space",
-    "format",
-    "effects_table",
-    "fix_variants",
+    "ast",          "ast_clone",       "when",           "lex",          "parse",
+    "parse_expr",   "parse_type",      "parse_stmt",     "parse_decl",   "parser",
+    "types",        "types_expr",      "types_convert",  "types_decl",   "types_attr",
+    "types_stream", "types_undefined", "types_builtin",  "lint",         "affine",
+    "affine_loops", "types_fn",        "types_iter",     "emit_state",   "emit",
+    "emit_arith",   "emit_builtin",    "emit_control",   "emit_call",    "emit_memory",
+    "emit_debug",   "emit_object",     "roots",          "fix",          "cimport",
+    "compile",      "emit_option",     "emit_match",     "emit_value",   "emit_iter",
+    "emit_tuple",   "emit_lambda",     "emit_vector",    "emit_stream",  "fix_directive",
+    "fix_blocks",   "fix_method",      "fix_zero",       "fix_opaque",   "lsp_server",
+    "lsp_hover",    "lsp_semantic",    "lsp_definition", "lsp_symbols",  "lsp_completion",
+    "format_space", "format",          "effects_table",  "fix_variants",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
@@ -3401,6 +3355,15 @@ static int build_frontend_coverage(SmithRun *run) {
                                                      .tail = 20});
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
+    // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
+    // reads a header with from the compile_commands.json of the folder it runs in (#2313).
+    if (access("compile_commands.json", R_OK) == 0) {
+        status = build_make_folder(b, smith_fmt(b, "%s/tree", work));
+        status = status != 0 ? status
+                             : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
+                                                     smith_fmt(b, "%s/tree/compile_commands.json", work), nullptr));
+        if (status != 0) return status;
+    }
     status = build_spawn(&(BuildSpawn){
         .argv = smith_list(b, tool, "run", smith, build_absolute(b, "."), smith_fmt(b, "%s/tree", work), nullptr),
         .log = results,

@@ -929,9 +929,9 @@ export void test_parse_decl_old_variables_without_a_fix_warn_and_stay() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    expect_fixed("I32 xs[4];\n", "i32 xs[4];\n", 1);
+    expect_fixed("Str xs[4];\n", "str xs[4];\n", 1);
     expect_fixed("extern I32 e;\n", "extern i32 e;\n", 1);
-    parser::Parsed parsed = parser::parse("t.smith", "I32 xs[4];\n");
+    parser::Parsed parsed = parser::parse("t.smith", "Str xs[4];\n");
     test::check_equal(countof(parsed.warnings), (Usize)2);
     parse::Edits type_fix = parsed.warnings[0].fix;
     test::check_equal(countof(type_fix), (Usize)1);
@@ -990,7 +990,7 @@ export void test_parse_decl_old_array_suffixes_without_a_fix_stay() {
     defer mem::set_allocator(outside);
     expect_fixed("struct B {\n    U32 flag : 3;\n};\n", "struct B {\n    u32 flag : 3;\n};\n", 1);
     expect_fixed("struct C {\n    I32 xs[const :];\n};\n", "struct C {\n    i32 xs[const :];\n};\n", 1);
-    expect_fixed("static I32 table[4];\n", "static i32 table[4];\n", 1);
+    expect_fixed("static Str table[4];\n", "static str table[4];\n", 1);
 }
 
 export void test_parse_decl_old_attributes() {

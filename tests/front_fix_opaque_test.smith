@@ -1,0 +1,25 @@
+// Tests of the fix-it for a struct declared twice (#2224): `typedef struct Tag Name;` and the later `struct Name {...}`
+// are one declaration, with the attributes and `pub` of the first.
+module front_fix_opaque_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_opaque_moves_its_name_to_the_definition() {
+    expect_fixed("module m;\n[[std::c_name(\"MChunk\")]] export typedef struct MChunk Chunk;\n"
+                 "struct Chunk {\n    Chunk *next;\n};\n",
+                 "@c_name(\"MChunk\") pub struct Chunk:\n    next: *Chunk\n");
+}
