@@ -58,3 +58,7 @@ let p = IntPair(1, 2)                           # or Pair(i32)(first = 1, second
 ## Not settled yet
 
 A computed result type (`-> leaf_of(T)`); which module a std generic's instance counts as for private fields.
+
+## Where it stands
+
+The parser reads the brackets after a function's name (`ast::function.generics`: the names, and the type or concept after `:`); checking the function and working the parameters out from a call's arguments is #2349.
