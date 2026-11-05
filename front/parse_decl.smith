@@ -1527,9 +1527,23 @@ static void warn_by_hand(parse::Parser *p, Head head, Str name, Str written) {
     warn(p, head.type_start, head.name.span.end, message, none);
 }
 
-// `T a = v;` is `let a: T = v`, `T a;` is `let mut a: T = undefined` (`= 0` for a static or a file's number, which C
-// zeroes), `auto a = v;` is `let a = v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
-// `let N = T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
+// The word before a fixed variable's name: a global of C is writable, `mut` (`pub mut` with the `export` before it);
+// a local is a constant, with no word; a `constexpr` value is `const`.
+static Str variable_lead(const Prefixes *pre, Bool type_value) {
+    if (pre->is_constexpr && !type_value) return "const ";
+    if (!pre->is_constexpr && pre->top) return "mut ";
+    return "";
+}
+
+// What follows the name when no type is written: `name := v`, but `const N = v`.
+static Str untyped_of(Str lead) {
+    if (same_text(lead, "const ")) return " =";
+    return " :=";
+}
+
+// `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
+// zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
+// `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
 // the like are a warning with no edits.
 static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
                          Dims dims) {
@@ -1549,7 +1563,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str zeros = zero_fill(pre, dims, written, has_init, value);
     if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
     if (suffixed && countof(zeros) == 0 && countof(value) > 0 && value[0] == '{') {
-        // `T xs[_] = {a, b};` is `let xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
+        // `T xs[_] = {a, b};` is `xs: [2]T = [a, b]`: smith has no `[_]` length (not settled), so the count of the
         // elements is written; any other `{...}` list on an array has no spelling yet.
         // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
         // checker's error, not a silent zero fill.
@@ -1567,28 +1581,26 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         warn_by_hand(p, head, name, written);
         return;
     }
-    // A global of C is writable: `let mut` (`pub let mut` with the `export` before it); a local is `let`.
-    Str lead = "let ";
-    if (pre->is_constexpr && !type_value) lead = "const ";
-    if (!pre->is_constexpr && pre->top) lead = "let mut ";
+    Str lead = variable_lead(pre, type_value);
+    Str untyped = untyped_of(lead);
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = item_edits;
     if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
-        text = as_str(format::push(lead, name, " ="));
+        text = as_str(format::push(lead, name, untyped));
         list_edits = named_list_edits(p, written);
         if (p->named_list.positional) drop_array_fix(p, p->named_list.open.start);
     }
-    if (type_value || automatic) text = as_str(format::push(lead, name, " ="));
+    if (type_value || automatic) text = as_str(format::push(lead, name, untyped));
     if (!has_init) {
         Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
-        text = as_str(format::push("let mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
+        text = as_str(format::push("mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
         to = suffixed ? dims.end : head.name.span.end;
     }
     if (countof(zeros) > 0) {
-        // `T xs[3];` and `T xs[3] = {};` are `let mut xs: [3]T = [0, 0, 0]`.
-        text = as_str(format::push("let mut ", name, ": ", written, " = ", zeros));
+        // `T xs[3];` and `T xs[3] = {};` are `mut xs: [3]T = [0, 0, 0]`.
+        text = as_str(format::push("mut ", name, ": ", written, " = ", zeros));
         to = has_init ? last.span.start : dims.end;
     }
     parse::Edits edits = {};
@@ -2172,6 +2184,60 @@ static ast::DeclKind tag_kind(parse::Parser *p, Style *style) {
     return record_kind(p, style);
 }
 
+// Whether the position is `enum {` or `struct {` after a `return`: the old spelling of the unnamed type a type function
+// returns (#2251).
+export Bool at_returned_tag(const parse::Parser *p) {
+    lex::TokenKind kind = parse::peek(p).kind;
+    return (kind == lex::kw_enum || kind == lex::kw_struct) && parse::peek_at(p, 1).kind == lex::left_brace;
+}
+
+// The white space at the start of the line that holds `offset`.
+static Str line_indent(const parse::Parser *p, U32 offset) {
+    U32 from = offset;
+    while (from > 0 && p->source[from - 1] != '\n')
+        from -= 1;
+    U32 to = from;
+    while (to < offset && (p->source[to] == ' ' || p->source[to] == '\t'))
+        to += 1;
+    return p->source[from:to];
+}
+
+// `return enum { T some; none; };` (or `struct { T first; T second; }`), the position at the keyword and `start` at the
+// `return`: the type function's last line is the unnamed block `enum:` with its members indented, one to a line
+// (`some: T`, `none`), and the `return` and the `;` go (#2251). Only in smith's own layout, where the function body is
+// already indented; the brace pass has run first.
+export void fix_returned_tag(parse::Parser *p, U32 start) {
+    Style style = {.top = false};
+    Bool is_enum = parse::at(p, lex::kw_enum);
+    ast::DeclKind kind = tag_kind(p, &style);
+    parse::accept(p, lex::semicolon);
+    if (!p->layout) return;
+    U32 end = p->tokens[p->position - 1].span.end;
+    Str indent = line_indent(p, start);
+    char text[:] = format::push(is_enum ? "enum:" : "struct:");
+    if (kind == .enumeration) {
+        for (Usize i = 0; i < countof(kind.enumeration.items); i++) {
+            const ast::Enumerator *item = &kind.enumeration.items[i];
+            if (item->payload == nullptr) {
+                text = format::push(text, "\n", indent, "    ", item->name);
+            } else {
+                Str written = trimmed(source_between(p, item->payload->span.start, item->payload->span.end));
+                text = format::push(text, "\n", indent, "    ", item->name, ": ", written);
+            }
+        }
+    } else if (kind == .record) {
+        for (Usize i = 0; i < countof(kind.record.fields); i++) {
+            const ast::FieldDecl *field = &kind.record.fields[i];
+            Str written = trimmed(source_between(p, field->type->span.start, field->type->span.end));
+            text = format::push(text, "\n", indent, "    ", field->name, ": ", written);
+        }
+    }
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(start, end, as_str(text)));
+    warn(p, start, end, "a type function returns its unnamed type as the last line: `enum:` and the members indented",
+         edits);
+}
+
 // `struct Name {...};`, `union`, `enum`: a declaration of the type by itself.
 static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     Usize errors_before = countof(p->errors);
@@ -2207,19 +2273,19 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     return make(p, start, pre, kind);
 }
 
-// `typedef T Name;` is `let Name = T` (the type follows the name); an array suffix is a warning with no edits.
+// `typedef T Name;` is `Name := T` (the type follows the name); an array suffix is a warning with no edits.
 static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, lex::Token semi, Dims dims) {
     Str name = parse::text(p, head.name);
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     parse::Edits edits = {};
     if (dims.blocked || semi.kind != lex::semicolon) {
         warn(p, typedef_start, semi.span.end,
-             "an alias is written `let Name = T`: one with `[]` or `[const :]` after the name has no mechanical fix: "
+             "an alias is written `Name := T`: one with `[]` or `[const :]` after the name has no mechanical fix: "
              "write it by hand",
              edits);
         return;
     }
-    char text[:] = format::push("let ", name, " = ", dims.text, written);
+    char text[:] = format::push(name, " := ", dims.text, written);
     edits = with_edit(edits, edit(typedef_start, semi.span.end, text));
     char message[:] = format::push("an alias is written `", text, "`");
     warn(p, typedef_start, semi.span.end, message, edits);
@@ -2648,15 +2714,16 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// smith's own syntax (#1428): `let a = v`, `a: T = v`, `let mut a = 0`, `const X = v`, `let (q, r) = f()`, `fn`
+// smith's own syntax (#1428): `a := v`, `a: T = v`, `mut a := 0`, `const X = v`, `(q, r) := f()`, `fn`
 //
 // What tells the new form from the old one is the first one or two tokens, never the rest: `fn`, `mut` and `@` start
-// only the new forms; a name followed by `:=` or `:` is a binding (the old forms start with a type and never have a
-// name before a `:`); `const` followed by such a name is a constant (the old `const` is followed by a type, and a type
-// is never followed by `:=` or `:`); a field is a lowercase name and `:` (an old field starts with a type); an
-// enumerator is a lowercase name that ends its line, or a name and `:`.
+// only the new forms; a name followed by `:=`, or by `:` and an `=` on the line, is a binding (the old forms start with
+// a type and never have a name before a `:`); `const` followed by such a name is a constant (the old `const` is
+// followed by a type, and a type is never followed by `:=` or `:`); a field is a lowercase name and `:` (an old field
+// starts with a type); an enumerator is a lowercase name that ends its line, or a name and `:`.
 
-// Whether the token at `at` is the word `let` and a name, `mut` or `(` follows (`if let .some(x)` has a `.`).
+// Whether the token at `at` is the word `let` and a name, `mut` or `(` follows (`if let .some(x)` has a `.`). `let` is
+// the old spelling of a declaration (#2316): it still parses, with a warning whose fix writes the form without it.
 static Bool let_at(const parse::Parser *p, Usize at) {
     lex::Token word = parse::peek_at(p, at);
     if (word.kind != lex::name || !same_text(parse::text(p, word), "let")) return false;
@@ -2664,26 +2731,89 @@ static Bool let_at(const parse::Parser *p, Usize at) {
     return is_name(next) || next == lex::kw_mut || next == lex::left_paren;
 }
 
-// `let a = v`, `let a: T = v`, `let mut a: T = v` and `const X = v`; a `const` and a `mut` together is read to be
-// told off. A destructuring `let (q, r) = f()` is `at_destructure`'s.
+// Whether the tokens from `at` to the end of the line hold an `=` outside any brackets: `count: usize = 0` is a
+// declaration, while a bare block `html:` and an old label `l: s` hold none.
+static Bool assigns_on_line(const parse::Parser *p, Usize at) {
+    Usize depth = 0;
+    for (Usize step = 0; step < countof(p->tokens); step++) {
+        lex::Token token = parse::peek_at(p, at + step);
+        lex::TokenKind kind = token.kind;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::indent || kind == lex::dedent)
+            return false;
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) depth += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) {
+            if (depth == 0) return false;
+            depth -= 1;
+        }
+        if (depth == 0 && kind == lex::equal) return true;
+        if (depth == 0 && kind == lex::semicolon) return false;
+        if (!p->layout && token.line_break) return false;
+    }
+    return false;
+}
+
+// Whether a declaration with no keyword starts at `at`: `x := v`, or `x: T = v` in smith's own syntax (a statement
+// that starts `name:` is never a block call, #2316).
+static Bool colon_binding_at(const parse::Parser *p, Usize at) {
+    if (!is_name(parse::peek_at(p, at).kind)) return false;
+    lex::TokenKind next = parse::peek_at(p, at + 1).kind;
+    if (next == lex::colon_equal) return true;
+    return next == lex::colon && (p->new_syntax || p->layout) && assigns_on_line(p, at + 2);
+}
+
+// `x := v`, `mut n := 0`, `x: T = v`, `mut buf: T = undefined`, `const X = v`, and the old `let a = v`; a `const` and
+// a `mut` together is read to be told off. A destructuring `(q, r) := f()` is `at_destructure`'s.
 export Bool starts_binding(const parse::Parser *p) {
     if (let_at(p, 0)) return parse::peek_at(p, 1).kind != lex::left_paren;
-    if (parse::peek(p).kind != lex::kw_const) return false;
+    lex::TokenKind first = parse::peek(p).kind;
+    if (first == lex::kw_mut) return is_name(parse::peek_at(p, 1).kind);
+    if (colon_binding_at(p, 0)) return true;
+    if (first != lex::kw_const) return false;
     if (parse::peek_at(p, 1).kind == lex::kw_mut) return true; // read to be told off
     lex::TokenKind after = parse::peek_at(p, 2).kind;
     return is_name(parse::peek_at(p, 1).kind) && (after == lex::equal || after == lex::colon);
 }
 
-// What follows the name of a binding: `: T` and then `= v`, or `= v`. A binding with no value is an error that says
-// to give one or to write `= undefined`; an `extern let` (`bare`) has none. False after an error.
-static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str opener, Bool bare, ast::TypeExpr **type,
-                                ast::Expr **init) {
+// The warning on an old `let` (#2316): its fix removes the word, from `cut_start` to `cut_end`, and writes `:=` for
+// the `=` of a declaration with no type (`let a = v` is `a := v`, `let mut a: T = v` is `mut a: T = v`).
+static void let_warning(parse::Parser *p, U32 cut_start, U32 cut_end, lex::Token equal, Bool typed) {
+    parse::Edits edits = {};
+    Str nothing = "";
+    Str walrus = ":=";
+    edits = with_edit(edits, edit(cut_start, cut_end, nothing));
+    if (!typed) edits = with_edit(edits, edit(equal.span.start, equal.span.end, walrus));
+    Str message = "`let` is gone: declare with `name := value`, or `name: T = value` with a type";
+    warn(p, cut_start, cut_end, message, edits);
+}
+
+// What follows the name of a binding: `:= v`, `: T = v`, or `= v` after `let` or `const`. A binding with no value is
+// an error that says to give one or to write `= undefined`; an `extern` one (`bare`) has none. `lead` is what is
+// written before the name (`const `, `mut ` or nothing). `walrus` is set for a binding with no keyword, where `=` with
+// no type is an error whose fix writes `:=`. The `=` or `:=` taken is left in `equal`. False after an error.
+static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str lead, Bool bare, Bool walrus,
+                                ast::TypeExpr **type, ast::Expr **init, lex::Token *equal) {
     *type = auto_type(name.span);
+    *equal = parse::peek(p);
+    if (parse::accept(p, lex::colon_equal)) {
+        *init = parse::expression(p);
+        return *init != nullptr;
+    }
+    Bool typed = false;
     if (parse::accept(p, lex::colon)) {
         *type = parse::type(p);
         if (*type == nullptr) return false;
+        typed = true;
     }
+    *equal = parse::peek(p);
     if (parse::accept(p, lex::equal)) {
+        if (walrus && !typed) {
+            Str word = parse::text(p, name);
+            char message[:] = format::push("a declaration with no type is written `", lead, word, " := value`");
+            parse::Edits edits = {};
+            Str colon_equal = ":=";
+            edits = with_edit(edits, edit(equal->span.start, equal->span.end, colon_equal));
+            parse::error_fix(p, equal->span, message, edits);
+        }
         *init = parse::expression(p);
         return *init != nullptr;
     }
@@ -2693,7 +2823,7 @@ static Bool parse_binding_value(parse::Parser *p, lex::Token name, Str opener, B
     Str word = parse::text(p, name);
     Str written = "T";
     if (!automatic) written = type_text(p, given);
-    char message[:] = format::push("`", word, "` needs a value: write `", opener, " ", word, ": ", written,
+    char message[:] = format::push("`", word, "` needs a value: write `", lead, word, ": ", written,
                                    " = value`, or `= undefined` to leave it unset");
     parse::error(p, name.span, message);
     return false;
@@ -2715,9 +2845,12 @@ static void infer_array_length(ast::TypeExpr *type, const ast::Expr *init) {
     }
 }
 
-// `let a = v`, `let a: T = v`, `let mut a: usize = 0`, `const X = v`; the position is at the first of them.
+// `x := v`, `x: T = v`, `mut n: usize = 0`, `const X = v` and the old `let a = v`; the position is at the first of
+// them.
 static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start) {
     Bool is_let = let_at(p, 0);
+    U32 cut_start = parse::peek(p).span.start;
+    U32 cut_end = parse::peek_at(p, 1).span.start;
     if (is_let) parse::advance(p);
     Bool is_const = !is_let && parse::accept(p, lex::kw_const);
     Bool is_mut = parse::accept(p, lex::kw_mut);
@@ -2738,27 +2871,32 @@ static ast::Decl *parse_binding(parse::Parser *p, const Prefixes *pre, U32 start
     parse::advance(p);
     ast::TypeExpr *type = nullptr;
     ast::Expr *init = nullptr;
-    Str kind_word = is_const ? "const" : "let";
-    if (!parse_binding_value(p, name, kind_word, pre->is_extern, &type, &init)) {
+    lex::Token equal = {};
+    Str lead = is_const ? "const " : "";
+    if (is_mut) lead = "mut ";
+    if (!parse_binding_value(p, name, lead, pre->is_extern, !is_let && !is_const, &type, &init, &equal)) {
         recover_line(p);
         return nullptr;
     }
     end_line(p, "declaration");
+    if (is_let) let_warning(p, cut_start, cut_end, equal, type->kind != .auto_type);
     infer_array_length(type, init);
     ast::DeclKind kind = {.variable = {.name = parse::text(p, name),
                                        .type = type,
                                        .init = init,
                                        .is_constexpr = is_const,
                                        .is_mut = is_mut,
-                                       .is_new = true}};
+                                       .is_new = true,
+                                       .name_at = name.span.start}};
     return make(p, start, pre, kind);
 }
 
-// Whether the position starts `let (q, mut r) = f()`: `let`, a parenthesized list and then `=`, which no expression
-// statement starting with the word `let` is.
+// Whether the position starts a destructuring: `(q, mut r) := f()`, or the old `let (q, r) = f()`. A parenthesized
+// list followed by `:=` is no expression statement, nor is `let (...)` followed by `=`.
 export Bool at_destructure(const parse::Parser *p) {
-    if (!let_at(p, 0) || parse::peek_at(p, 1).kind != lex::left_paren) return false;
-    Usize at = 1;
+    Usize open = let_at(p, 0) ? 1 : 0;
+    if (parse::peek_at(p, open).kind != lex::left_paren) return false;
+    Usize at = open;
     Usize depth = 0;
     for (Usize step = 0; step < countof(p->tokens); step++) {
         lex::TokenKind kind = parse::peek_at(p, at).kind;
@@ -2766,25 +2904,29 @@ export Bool at_destructure(const parse::Parser *p) {
         if (kind == lex::left_paren) depth += 1;
         if (kind == lex::right_paren) {
             depth -= 1;
-            if (depth == 0) return parse::peek_at(p, at + 1).kind == lex::equal;
+            if (depth == 0) return parse::peek_at(p, at + 1).kind == (open == 1 ? lex::equal : lex::colon_equal);
         }
         at += 1;
     }
     return false;
 }
 
-// `let (q, mut r) = f()`: a statement, not a declaration (it declares no one thing), so it is not behind the
-// declaration hook: the statement parser calls this where `at_destructure` says so. `mut` marks one name.
+// `(q, mut r) := f()`: a statement, not a declaration (it declares no one thing), so it is not behind the declaration
+// hook: the statement parser calls this where `at_destructure` says so. `mut` marks one name. The old `let (q, r) =
+// f()` is read too, with the warning of `let`.
 export ast::Stmt *destructure(parse::Parser *p) {
-    parse::advance(p);
+    Bool is_let = let_at(p, 0);
+    U32 cut_start = parse::peek(p).span.start;
+    U32 cut_end = parse::peek_at(p, 1).span.start;
+    if (is_let) parse::advance(p);
     parse::expect(p, lex::left_paren, "`(`");
     IdentifierList names = {};
     while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
         Bool is_mut = parse::accept(p, lex::kw_mut);
         lex::Token token = parse::peek(p);
         if (!is_name(token.kind)) {
-            char message[:] = format::push("a destructuring lists names: write `let (q, r) = f()`, found `",
-                                           parse::text(p, token), "`");
+            char message[:] =
+                format::push("a destructuring lists names: write `(q, r) := f()`, found `", parse::text(p, token), "`");
             parse::error(p, token.span, message);
             recover_line(p);
             return nullptr;
@@ -2797,17 +2939,23 @@ export ast::Stmt *destructure(parse::Parser *p) {
     }
     lex::Token close = parse::expect(p, lex::right_paren, "`)`");
     if (countof(names) == 0) {
-        parse::error(p, close.span, "a destructuring lists names: write `let (q, r) = f()`");
+        parse::error(p, close.span, "a destructuring lists names: write `(q, r) := f()`");
         recover_line(p);
         return nullptr;
     }
-    parse::expect(p, lex::equal, "`=` after the names");
+    lex::Token equal = parse::peek(p);
+    if (is_let) {
+        parse::expect(p, lex::equal, "`=` after the names");
+    } else {
+        parse::expect(p, lex::colon_equal, "`:=` after the names");
+    }
     ast::Expr *init = parse::expression(p);
     if (init == nullptr) {
         recover_line(p);
         return nullptr;
     }
     end_line(p, "declaration");
+    if (is_let) let_warning(p, cut_start, cut_end, equal, false);
     return ast::destructure(names, false, init);
 }
 
@@ -2993,12 +3141,14 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
     if (kind == lex::kw_fn) return parse_new_function(p, &pre, start);
     if (at_destructure(p)) {
         parse::error(p, parse::peek(p).span,
-                     "a destructuring `let (q, r) = f()` is a statement, not a declaration of a module");
+                     "a destructuring `(q, r) := f()` is a statement, not a declaration of a module");
         recover_line(p);
         return nullptr;
     }
     if (at_from_import(p)) return parse_from_import(p, &pre, start);
     if (starts_binding(p)) return parse_binding(p, &pre, start);
+    // `extern errno: i32`: an extern binding has no value, so it has no `=` for `starts_binding` to see.
+    if (pre.is_extern && is_name(kind) && parse::peek_at(p, 1).kind == lex::colon) return parse_binding(p, &pre, start);
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);

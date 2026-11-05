@@ -1,0 +1,10 @@
+(module 
+  (variable limit new (auto) (integer 5))
+  (variable shares mut new (auto) (integer 0))
+  (variable count new (named usize) (integer 0))
+  (variable total mut new (named u64) (integer 0))
+  (variable open new pub (auto) (integer 1))
+  (variable errno mut new extern (named i32))
+  (variable N constexpr new (auto) (integer 4))
+  (variable M constexpr new (named usize) (integer 4))
+  (variable T new (auto) (name i32)))

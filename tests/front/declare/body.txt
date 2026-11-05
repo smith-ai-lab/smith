@@ -1,0 +1,30 @@
+(module 
+  (function divmod
+    (param a new (named i32))
+    (param b new (named i32))
+    (result (tuple (named i32) (named i32)))
+    (block
+      (expression (tuple_literal (binary divide (name a) (name b)) (binary remainder (name a) (name b))))))
+  (function f
+    (result (named i32))
+    (block
+      (declaration
+        (variable x new (auto) (integer 5)))
+      (declaration
+        (variable n mut new (auto) (integer 0)))
+      (declaration
+        (variable count new (named usize) (integer 0)))
+      (declaration
+        (variable buf mut new (array (named u8) (integer 4096)) (name undefined)))
+      (destructure q mut r (call (name divmod) (integer 17) (integer 5)))
+      (declaration
+        (variable _ new (auto) (call (name divmod) (integer 1) (integer 1))))
+      (declaration
+        (variable T new (auto) (name i32)))
+      (declaration
+        (variable p new (auto) (call (type_value (applied Pair (type_arg (named i32)))) (integer 1) (integer 2))))
+      (declaration
+        (variable size new (named c::size_t) (integer 0)))
+      (expression (assign plain (name n) (binary add (name x) (name q))))
+      (expression (assign plain (name r) (integer 1)))
+      (expression (name n)))))

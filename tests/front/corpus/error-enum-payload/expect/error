@@ -1,3 +1,6 @@
 src/main.smith:11:5: error: `match` over `Shape` does not cover `.empty`; add an arm for each, since a `match` must name every case
+src/main.smith:15:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
+src/main.smith:16:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
+src/main.smith:17:5: warning: `let` is gone: declare with `name := value`, or `name: T = value` with a type
 src/main.smith:15:20: error: `.circle` carries a `Circle`; write `.circle(value)`
 src/main.smith:16:20: error: `Shape` has no enumerator `nothing`; write one of its enumerators, such as `.circle`

@@ -108,7 +108,7 @@ export void test_front_types_stream_plain_return_ends_the_stream() {
 
 export void test_front_types_stream_last_line_value_is_refused() {
     fails("fn one() -> i32:\n    1\n\nfn g(n: i32) -> stream::Stream(i32):\n    yield n\n    one()\n", "is not used",
-          "let _ = ...");
+          "_ := ...");
 }
 
 export void test_front_types_stream_returning_a_stream_without_yield_is_ordinary() {

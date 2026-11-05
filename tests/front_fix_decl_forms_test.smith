@@ -53,11 +53,25 @@ export void test_front_fix_static_assert_with_joined_strings() {
 }
 
 export void test_front_fix_bit_int_type_parses() {
-    expect_fixed("module m;\ntypedef unsigned _BitInt(128) Wide;\n", "let Wide = u128\n");
+    expect_fixed("module m;\ntypedef unsigned _BitInt(128) Wide;\n", "Wide := u128\n");
 }
 
 export void test_front_fix_field_and_local_named_type() {
     expect_fixed(
         "module m;\nstruct Node {\n    I32 type;\n};\nI32 f(Node *n) {\n    I32 type = n->type;\n    return type;\n}\n",
-        "struct Node:\n    ty: i32\nfn f(n: *Node) -> i32:\n    let ty: i32 = n.ty\n    return ty\n");
+        "struct Node:\n    ty: i32\nfn f(n: *Node) -> i32:\n    ty: i32 = n.ty\n    return ty\n");
+}
+
+// A type function's `return enum { T some; none; };` is the unnamed `enum:` block as its last line, and `struct` the
+// same (#2251).
+export void test_front_fix_type_function_returns_an_unnamed_enum() {
+    expect_fixed(
+        "module m;\nexport Type Option(Type T) {\n    return enum {\n        T some;\n        none;\n    };\n}\n",
+        "pub fn Option(T: type) -> type:\n    enum:\n        some: T\n        none\n");
+}
+
+export void test_front_fix_type_function_returns_an_unnamed_struct() {
+    expect_fixed(
+        "module m;\nexport Type Pair(Type T) {\n    return struct {\n        T first;\n        T second;\n    };\n}\n",
+        "pub fn Pair(T: type) -> type:\n    struct:\n        first: T\n        second: T\n");
 }

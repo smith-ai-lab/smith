@@ -849,7 +849,7 @@ static void name_expr(types::Checked *c, Frame f) {
     ast::Path path = e->kind.name.path;
     const types::Symbol *s = types::lookup_path(&c->scopes, path);
     if (s == nullptr && is_undefined(e)) {
-        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `let mut x: i32 = undefined`");
+        types::failf(c, e->span, "`undefined` is only valid as a whole initializer, e.g. `mut x: i32 = undefined`");
         poison(c, e);
         return;
     }
@@ -947,7 +947,7 @@ static void try_after(types::Checked *c, Frame f) {
     }
     if (operand->kind != .option) {
         types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
-                     "`; write `try` before an option, or use `if let` for any other value");
+                     "`; write `try` before an option, or use `if x := value:` for any other value");
         poison(c, e);
         return;
     }
@@ -2124,7 +2124,11 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
     }
     const types::Symbol *local = function_named(c, name, false);
     if (record->kind == .record && types::member(record, name) != nullptr) {
-        if (own != nullptr || local != nullptr) {
+        // Only a function that takes this type first is a method of it, so only it clashes with the field: `mem.alloc`
+        // takes a type first, and `a.alloc(...)` on an allocator can only mean the field (#2342).
+        Bool own_clashes = own != nullptr && first_parameter(own) == record;
+        Bool local_clashes = local != nullptr && first_parameter(local) == record;
+        if (own_clashes || local_clashes) {
             types::failf(c, e->span, "`", types::show(record), "` has a field `", name, "` and a function `", name,
                          "`; rename one, a field and a method of one type cannot share a name");
             poison(c, e);
@@ -2578,7 +2582,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     Str found = types::show(base);
     if (base->kind == .enumeration && base->has_payload) {
         types::failf(c, e->span, "`", found, "` is a payload enumeration, so a payload can't be read with `.",
-                     arrow ? "->" : ".", "`; test the variant first, with `if let .variant(v) = x:` or a `match`");
+                     arrow ? "->" : ".", "`; test the variant first, with `if .variant(v) := x:` or a `match`");
     } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
@@ -3361,7 +3365,7 @@ static void bind_stage(types::Checked *c, Frame f) {
         return;
     }
     if (t->kind != .option) {
-        types::failf(c, s->span, "`if let` takes an optional, but this is a `", types::show(t),
+        types::failf(c, s->span, "`if x := value:` takes an optional, but this is a `", types::show(t),
                      "`; write a value of type `?T`, or an `if` with a comparison");
     } else if (!same_text(name, "some") && !same_text(name, "none")) {
         types::failf(c, s->span, "a `?T` is either `.some(x)` or `.none`, not `.", name, "`; write one of those");
@@ -4555,7 +4559,7 @@ static void assign_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     push(w, e, f.expected, 1);
     if (is_bare_underscore(target)) {
-        types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `let _ = x`");
+        types::fail(c, target->span, "`_` is not a name you can assign to; to discard a value write `_ := x`");
         poison(c, target);
         return;
     }
