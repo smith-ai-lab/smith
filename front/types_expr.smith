@@ -4169,8 +4169,7 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
 // Spread: `f(x; s...)` passes each field of the struct or named tuple `s` as the named argument of that name (#1914)
 
 static Bool is_spread(const ast::Expr *arg) {
-    if (arg->kind == .expand) return arg->kind.expand.named;
-    return false;
+    return arg->kind == .expand; // `s...` after the `;` spreads named fields, `rest...` a pack into positions (#2293)
 }
 
 // The value a spread argument spreads.
@@ -4195,12 +4194,40 @@ static Bool plain_place(const ast::Expr *e) {
     return at->kind == .name;
 }
 
+// `rest...` in a call: each element of the tuple `t` is passed as the next argument, `rest.0, rest.1, ...` (#2293). A
+// run-time index or slice is not a pack: the error says to use a slice.
+static Bool spread_positions(types::Checked *c, const ast::Expr *arg, types::TypeRef t, ast::ExprRef out[:],
+                             Usize *count) {
+    ast::Expr *pattern = spread_value(arg);
+    if (!(t->kind == .tuple)) {
+        types::failf(c, arg->span, "cannot spread a value of type `", types::show(t),
+                     "` into arguments: only a pack or a tuple can be; a run-time index of a slice cannot, ",
+                     "pass a slice `[]T` instead");
+        return false;
+    }
+    if (!plain_place(pattern)) {
+        types::failf(c, arg->span, "a spread reads each element of its value; spread a name, such as `rest...`");
+        return false;
+    }
+    for (Usize k = 0; k < countof(t->slots); k++) {
+        char chars[:] = format::push(k);
+        Str index = chars;
+        ast::ExprKind member = {.member = {.base = pattern, .name = index}};
+        ast::Expr *element = ast::expr(member);
+        element->span = arg->span;
+        out[*count] = element;
+        *count += 1;
+    }
+    return true;
+}
+
 // The arguments of a call with each spread replaced by one `field = s.field` per field of `s`; null when the spread
 // is refused (the error is reported).
 static Bool spread_into(types::Checked *c, const ast::Expr *arg, ast::ExprRef out[:], Usize *count) {
     ast::Expr *pattern = spread_value(arg);
     types::TypeRef t = typ(c, pattern);
     if (t == invalid(c)) return false;
+    if (!(arg->kind == .expand) || !arg->kind.expand.named) return spread_positions(c, arg, t, out, count);
     if (t->kind != .record && t->kind != .tuple) {
         types::failf(c, arg->span, "cannot spread a value of type `", types::show(t),
                      "`; spread a struct or a named tuple after the `;`");

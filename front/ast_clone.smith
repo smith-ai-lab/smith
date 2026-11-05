@@ -13,6 +13,7 @@ module front::ast_clone;
 
 import front::ast;
 import std::arena;
+import std::format;
 import std::mem;
 
 typedef ast::ExprRef ExprRefList[:];
@@ -492,5 +493,72 @@ export ast::Decl *clone_decl_choosing(const ast::Decl *d, Choose choose) {
     choosing = choose;
     ast::Decl *copy = clone_decl(d);
     choosing = nullptr;
+    return copy;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Unrolling `for x in rest` over a pack (#2293, part of #1821)
+
+static Str unrolled_pack;
+static Usize unrolled_count = 0;
+
+// The statement `let name = pack.at`.
+static ast::Stmt *element_binding(ast::Identifier name, Str pack, Usize at) {
+    char chars[:] = format::push(at);
+    Str index = chars;
+    ast::Expr *base = ast::name(pack);
+    ast::Expr *element = ast::expr({.member = {.base = base, .name = index}});
+    element->span = name.span;
+    ast::TypeExpr *automatic = ast::make_type((ast::TypeKind){});
+    automatic->kind = .auto_type;
+    ast::DeclKind kind = {.variable = {.name = name.text, .type = automatic, .init = element, .is_new = true}};
+    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    d->span = name.span;
+    ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
+    s->span = name.span;
+    return s;
+}
+
+// One copy of the body of the loop `s`, for the element `at` of the pack: a block with the binding and the body.
+static ast::Stmt *unrolled_copy(const ast::Stmt *s, Usize at) {
+    if (!(s->kind == .for_in)) return nullptr;
+    ast::StmtRef *block = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 2, alignof(ast::StmtRef));
+    block[0] = element_binding(s->kind.for_in.names[0], unrolled_pack, at);
+    block[1] = s->kind.for_in.body;
+    StmtRefList items = block[0:2];
+    ast::Stmt *copy = ast::block(items);
+    copy->span = s->span;
+    return copy;
+}
+
+// A `for x in <pack>` becomes a block with one copy of the body for each element of the pack.
+static const ast::Stmt *unroll(const ast::Stmt *s) {
+    if (s->kind != .for_in || s->kind.for_in.is_tuple || countof(s->kind.for_in.names) != 1) return s;
+    const ast::Expr *iterable = s->kind.for_in.iterable;
+    if (iterable->kind != .name || countof(iterable->kind.name.path.segments) != 1) return s;
+    Str written = iterable->kind.name.path.segments[0].text;
+    if (countof(written) != countof(unrolled_pack)) return s;
+    for (Usize i = 0; i < countof(written); i++) {
+        if (written[i] != unrolled_pack[i]) return s;
+    }
+    ast::StmtRef *block =
+        (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), unrolled_count, alignof(ast::StmtRef));
+    for (Usize at = 0; at < unrolled_count; at++) {
+        block[at] = unrolled_copy(s, at);
+    }
+    StmtRefList items = block[0:unrolled_count];
+    ast::Stmt *all = ast::block(items);
+    all->span = s->span;
+    return all;
+}
+
+// `clone_decl`, with each `for x in pack` of the body unrolled into `count` copies of its body, one for each element
+// of the pack, which is `pack.0`, `pack.1`, ... (the loop variable is bound to it in each copy).
+export ast::Decl *clone_decl_unrolling(const ast::Decl *d, Str pack, Usize count) {
+    unrolled_pack = pack;
+    unrolled_count = count;
+    ast::Decl *copy = clone_decl_choosing(d, unroll);
+    Str none = {};
+    unrolled_pack = none;
     return copy;
 }
