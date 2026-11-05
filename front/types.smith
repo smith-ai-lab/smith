@@ -699,12 +699,13 @@ export Str show(TypeRef t) {
     Usize top = 0;
     push_piece(stack, &top, of(t));
     while (top > 0) {
-        if (top + 8 + 2 * layout_depth > capacity) {
+        top -= 1;
+        Piece piece = stack[top];
+        Usize pushes = piece.type == nullptr ? 0 : 2 * countof(piece.type->slots);
+        while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
         }
-        top -= 1;
-        Piece piece = stack[top];
         if (piece.type == nullptr)
             put(&text, piece.word);
         else
