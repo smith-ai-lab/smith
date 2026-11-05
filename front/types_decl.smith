@@ -63,6 +63,7 @@ module front::types_decl;
 import front::ast;
 import front::types;
 import front::types_attr;
+import front::types_builtin;
 import front::types_convert;
 import front::types_expr;
 import front::types_fn;
@@ -561,6 +562,12 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     }
     if (is_constexpr) {
         not_yet(r, s, "if constexpr in a body");
+        return;
+    }
+    Bool answer = false;
+    if (types_builtin::query_value(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+        const ast::Stmt *live = answer ? then_branch : else_branch;
+        if (live != nullptr) push(live, nullptr, enter);
         return;
     }
     types_expr::check(r, test, r->table.bool_type);

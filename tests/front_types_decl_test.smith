@@ -433,3 +433,14 @@ export void test_front_types_decl_aliases_forward_structs_and_mut_slices() {
     clean("fn f(xs: []mut u8):\n    xs[0] = 1\n");
     reading_new = false;
 }
+
+// #1902: `is_slice(typeof(x))` and its kin ask the type of an instance, and the instance checks only the live branch.
+export void test_front_types_decl_a_type_question_keeps_one_branch_of_an_instance() {
+    reading_new = false;
+    clean("Usize size(auto x) {\n    if (is_slice(typeof(x))) {\n        return countof(x);\n    } else {\n        return "
+          "sizeof(*x);\n    }\n}\n"
+          "Usize run() {\n    U8 buf[4] = {};\n    I32 n = 0;\n    return size(buf[:]) + size(&n);\n}\n");
+    fails("Usize size(auto x) {\n    if (is_pointer(typeof(x))) {\n        return sizeof(*x);\n    } else {\n        "
+          "return countof(x);\n    }\n}\nUsize run() {\n    I32 n = 0;\n    return size(n);\n}\n",
+          "countof", "");
+}
