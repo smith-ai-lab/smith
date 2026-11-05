@@ -768,17 +768,25 @@ static Bool require_colon(parse::Parser *p, Usize before) {
     return false;
 }
 
-// Whether the position is inside an open `{`: layout (and so a `:` body) does not exist there, since the lexer gives
-// none inside brackets.
+// Whether the position is inside the braces of a kept C `switch`: some open `{` whose line starts with `switch`. The
+// lexer gives no layout there, so a body keeps its braces.
 static Bool inside_braces(const parse::Parser *p) {
     Usize closed = 0;
     for (Usize i = p->position; i > 0; i--) {
         lex::TokenKind kind = p->tokens[i - 1].kind;
         if (kind == lex::right_brace) closed += 1;
-        if (kind == lex::left_brace) {
-            if (closed == 0) return true;
+        if (kind != lex::left_brace) continue;
+        if (closed > 0) {
             closed -= 1;
+            continue;
         }
+        Usize line = i - 1;
+        while (line > 0 && !p->tokens[line - 1].line_break)
+            line -= 1;
+        while (line < i - 1 && (p->tokens[line].kind == lex::newline || p->tokens[line].kind == lex::indent ||
+                                p->tokens[line].kind == lex::dedent))
+            line += 1;
+        if (p->tokens[line].kind == lex::kw_switch) return true;
     }
     return false;
 }
