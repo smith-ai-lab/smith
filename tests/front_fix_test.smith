@@ -551,7 +551,7 @@ export void test_a_forward_declared_struct_loses_its_semicolon() {
     check_text(fixed.text, "pub struct Expr\npub struct Expr:\n    a: i32\n");
 }
 
-// A value cast to `void` as a statement is `let _ = x`, whether it was written `(void)x` or `x.to(void)`: the second
+// A value cast to `void` as a statement is `_ := x`, whether it was written `(void)x` or `x.to(void)`: the second
 // form has nothing before the operand, so the fix must remove the cast after it too (#2224).
 export void test_a_cast_to_void_becomes_a_discard() {
     arena::Arena memory = test::memory(1U << 22);
@@ -604,7 +604,7 @@ export void test_a_plain_c_tag_declaration_is_mended_with_its_function() {
                            "        result.count[i] = dims[i].to(usize)\n");
 }
 
-// A call whose result is dropped is written `let _ = f(x)` (#2311): the checker knows the result is not `Void`.
+// A call whose result is dropped is written `_ := f(x)` (#2311): the checker knows the result is not `Void`.
 export void test_a_call_statement_with_an_unused_result_is_discarded() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -612,7 +612,7 @@ export void test_a_call_statement_with_an_unused_result_is_discarded() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "module m;\nstatic int f(int x) { return x; }\nstatic void g(int x) {\n    f(x);\n}\n");
-    check_text(fixed.text, "static fn f(x: i32) -> i32:\n    return x\nstatic fn g(x: i32):\n    let _ = f(x)\n");
+    check_text(fixed.text, "static fn f(x: i32) -> i32:\n    return x\nstatic fn g(x: i32):\n    _ := f(x)\n");
     fix::Fixed again = fix::fix_text("t.smith", fixed.text);
     check_text(again.text, fixed.text);
 }
