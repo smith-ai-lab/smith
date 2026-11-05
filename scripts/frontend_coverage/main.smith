@@ -666,8 +666,8 @@ static struct Hash hash_start() {
 
 static struct Hash hash_bytes(struct Hash h, const char text[:]) {
     for (Usize i = 0; i < countof(text); i++) {
-        h.a = (h.a ^ (U64)(unsigned char)text[i]) * fnv_prime;
-        h.b = (h.b + (U64)(unsigned char)text[i] + 1) * fnv_prime;
+        h.a = (h.a ^ (U64)(U8)text[i]) * fnv_prime;
+        h.b = (h.b + (U64)(U8)text[i] + 1) * fnv_prime;
     }
     return h;
 }
