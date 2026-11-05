@@ -7,9 +7,10 @@
 //   x.p = q                    x.p = q                              none reads `x`
 //
 // A zero value is written for a number (`0`, `0.0`), a `Bool`, a pointer, an array of those (`[0, 0]`, up to
-// `array_limit` elements) and a struct of those, one level down. A struct with any other field (an enum, a slice, a
-// union, a struct two levels down) keeps its warning: it needs a spelling smith has not settled. A list that has no
-// struct type (`struct smith_array_T_n`, `typeof(xs)`) is left alone too.
+// `array_limit` elements) and a struct of those, one level down (three for the element of `T xs[n] = {}`, which
+// becomes `array.filled(T, n, zero)` with `import std.array` added once, #2385). A struct with any other field (an
+// enum, a slice, a union, a struct two levels down) keeps its warning: it needs a spelling smith has not settled. A
+// list that has no struct type (`struct smith_array_T_n`, `typeof(xs)`) is left alone too.
 //
 // A construction that leaves fields out, `E(k = k)` (from the C list `(E){.k = k}`), is `E(k = k, s = S(a = 0, b = 0))`
 // (#2329, decided on #1406): C zeroes the fields a list does not name, and smith's construction demands them. The
@@ -117,13 +118,42 @@ static Str flat_zero(types::TypeRef t) {
     return types::message_of(format::push(out, "]"));
 }
 
-// `T(a = 0, b = nullptr)` of a struct whose fields are all flat; empty when one is not (`allow_nested` false), or, with
-// it, `T(a = 0, inner = U(x = 0))` where a field is a struct of flat fields.
-static Str construct_flat(Str name, types::TypeRef t) {
+// `T(a = 0, inner = U(x = 0))`: a struct whose fields are numbers, `Bool`s, pointers, arrays of those and structs of
+// the same, one, two or three structs deep (a C struct such as `LLVMOrcCSymbolMapPair` is three). No recursion is
+// allowed, so each level is a function that calls the one below it.
+static Str construct_one(Str name, types::TypeRef t) {
     if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
-        Str zero = flat_zero(t->slots[i].type);
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = "";
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+static Str construct_two(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+static Str construct_three(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_two(types::show(field), field);
         if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
     }
@@ -131,16 +161,17 @@ static Str construct_flat(Str name, types::TypeRef t) {
 }
 
 static Str construct(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
-    Str out = types::message_of(format::push(name, "("));
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        types::TypeRef field = t->slots[i].type;
-        Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
-        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
-        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
-    }
-    return types::message_of(format::push(out, ")"));
+    return construct_two(name, t);
+}
+
+// `array.filled(P, 12, P(...))` for an array of structs (#2385, decided on #1406): C zeroes `P xs[12] = {}` and smith
+// has no zero value, so the one zero element is written out and `std.array` fills the rest. `element` is the element
+// type as the file writes it; empty for any other array, or a struct that cannot be filled.
+static Str construct_array(Str element, types::TypeRef t) {
+    if (t->kind != .array || t->count == 0) return "";
+    Str one = construct_three(element, t->element);
+    if (countof(one) == 0) return "";
+    return types::message_of(format::push("array.filled(", element, ", ", t->count, ", ", one, ")"));
 }
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
@@ -152,7 +183,7 @@ static Str omitted(types::TypeRef record, U64 given) {
         if ((given & ((U64)1 << k)) != 0 || record->slots[k].default_value != nullptr) continue;
         types::TypeRef field = record->slots[k].type;
         Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
+        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
         if (countof(zero) == 0 || !nameable(record->slots[k].name)) return "";
         out = types::message_of(format::push(out, ", ", record->slots[k].name, " = ", zero));
     }
@@ -245,7 +276,8 @@ static Bool is_empty_braces(const ast::Expr *e) {
 constexpr Usize no_block = ~(Usize)0;
 
 // The fix of the variable `d`, which is `items[at]` of a block (`at` is `no_block` for a global).
-static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d, ast::StmtRef items[:], Usize at) {
+static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d, ast::StmtRef items[:], Usize at,
+                               Bool *filled) {
     core::ParseError none = {};
     if (d->kind != .variable) return none;
     const ast::Expr *init = d->kind.variable.init;
@@ -256,11 +288,18 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     Usize errors_before = c->error_count;
     types::TypeRef t = types::resolve(c, written);
     c->error_count = errors_before;
-    if (t == nullptr || t->kind != .record) return none;
+    if (t == nullptr || (t->kind != .record && t->kind != .array)) return none;
     Str name = d->kind.variable.name;
     Str text = "";
-    if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
-        written_first(source, items, at, name, t)) {
+    if (t->kind == .array) {
+        Str written_text = source[written->span.start:written->span.end];
+        Usize close = 0;
+        while (close < countof(written_text) && written_text[close] != ']')
+            close += 1;
+        if (close + 1 < countof(written_text)) text = construct_array(written_text[close + 1:countof(written_text)], t);
+        if (countof(text) > 0) *filled = true;
+    } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
+               written_first(source, items, at, name, t)) {
         text = "undefined";
     } else {
         text = construct(source[written->span.start:written->span.end], t);
@@ -283,6 +322,41 @@ static core::Errors add(core::Errors out, core::ParseError found) {
     return out;
 }
 
+// Whether the module imports `std.array` (`import std.array`, `import std::array;`, with or without an alias).
+static Bool imports_array(const ast::Module *module) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .import_module) continue;
+        ast::Identifier segments[:] = d->kind.import_module.path.segments;
+        if (countof(segments) == 2 && same(segments[0].text, "std") && same(segments[1].text, "array")) return true;
+    }
+    return false;
+}
+
+// The fix that adds `import std.array` once, in front of the module's first import (or its first declaration).
+static core::ParseError import_array(const ast::Module *module) {
+    core::ParseError none = {};
+    if (imports_array(module) || countof(module->decls) == 0) return none;
+    const ast::Decl *first = module->decls[0];
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .import_module) {
+            first = d;
+            break;
+        }
+    }
+    ast::Span at = {.start = first->span.start, .end = first->span.start};
+    core::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    Str line = "import std.array\n";
+    edits[0] = (core::Edit){.span = at, .text = line};
+    core::ParseError found = {};
+    found.span = at;
+    found.message = "`array.filled` needs `import std.array`";
+    found.fix = edits;
+    return found;
+}
+
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
@@ -293,13 +367,14 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         last = error.left_out_call;
         out = add(out, left_out_fix(error.left_out_call, error.left_out_record, error.left_out_given));
     }
+    Bool filled = false;
     Work w = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (d->kind == .function) push(&w, d->kind.function.body);
         if (d->kind == .variable) {
             ast::StmtRef none[:] = {};
-            out = add(out, fix_of(source, c, d, none, no_block));
+            out = add(out, fix_of(source, c, d, none, no_block, &filled));
         }
     }
     while (w.top > 0) {
@@ -310,10 +385,11 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
             for (Usize i = 0; i < countof(items); i++) {
                 const ast::Stmt *item = items[i];
                 if (item->kind == .declaration)
-                    out = add(out, fix_of(source, c, item->kind.declaration.decl, items, i));
+                    out = add(out, fix_of(source, c, item->kind.declaration.decl, items, i, &filled));
             }
         }
         push_children(&w, s);
     }
+    if (filled) out = add(out, import_array(module));
     return out;
 }
