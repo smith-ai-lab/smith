@@ -21,6 +21,8 @@ Every ticket has exactly one difficulty label and one priority label, set when i
 ## Split rule
 A ticket is one cause, fixed completely in one PR, with its files listed: a failure cause from the goal's measure (for the switch-over, a first error in the count, with the number of files it holds back in **Why**), a feature, or a fix. Size it by the cause, not by the clock; a few hours is fine. Don't slice one cause into pieces by count ("7 of 19 cases"): each slice pays a full queue build and touches the same files (owner, 2026-11-04: "We can definitely combine"). Split only when one cause needs two areas that can merge on their own. No two tickets share a file. Each piece gets its own files, difficulty and the parent's priority.
 
+**One ticket, one PR, even for a chain of errors.** The count shows a file's first error only; the next appears once it is fixed. Such a ticket names the file, its first error and the files it blocks, and a cap: the runner fixes errors in a row until `-Dfiles=<file>` passes, or about 4 fixes or 300 changed lines, then opens one PR that closes the ticket and files what is left as a new ticket in the same shape. Never write "repeat until it parses" and never leave a ticket open for `Part of` PRs: #2368 (std.mem) took six runners and six PRs, each paying a runner's startup and two full CI builds for one fix (owner, 2026-11-05: "I assumed one ticket meant one PR").
+
 ## Sections
 1. **Why**: one paragraph. The problem and what it costs.
 2. **The design as decided**: every decision stated, with the owner's words (quoted) where they matter. Leave nothing to be guessed.
