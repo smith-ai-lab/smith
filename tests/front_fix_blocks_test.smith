@@ -177,3 +177,7 @@ export void test_front_fix_blocks_a_one_line_block_inside_another_converts_in_a_
           "const a: i32 = if x: 1 else: 2\nfn f(x: i32) -> i32:\n    if x < 0:\n        return if x == 1: 5 else: 6\n  "
           "  return 0\n");
 }
+
+export void test_front_fix_blocks_an_enum_with_an_underlying_type() {
+    check("enum End : u8 {\n    a,\n    b,\n}\n", "enum End(u8):\n    a,\n    b,\n");
+}

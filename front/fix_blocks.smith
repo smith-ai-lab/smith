@@ -182,10 +182,23 @@ static Bool multi_line_ready(lex::Tokens tokens, Brace brace) {
     return !(brace.close + 1 < countof(tokens) && !tokens[brace.close].line_break);
 }
 
+// Whether the `{` ends the header `enum Name : u8 {`: the underlying type is one token between the `:` and the `{`.
+static Bool enum_base(lex::Tokens tokens, Usize open) {
+    if (open < 4) return false;
+    return tokens[open - 4].kind == lex::kw_enum && tokens[open - 2].kind == lex::colon && !tokens[open - 1].line_break;
+}
+
+// `enum Name : u8 {` is `enum Name(u8):` (#2334): the `(` takes the place of the ` : `, and `colon_for` closes it.
+static void enum_base_cut(lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    if (!enum_base(tokens, brace.open)) return;
+    add_cut(cuts, tokens[brace.open - 3].span.end, tokens[brace.open - 1].span.start, "(");
+}
+
 // What the `{` becomes: `:`, or nothing after the `:` of a `case .a: {` label, which already ends the header.
 static Str colon_for(lex::Tokens tokens, Usize open) {
     Str none = "";
     Str colon = ":";
+    if (enum_base(tokens, open)) return "):";
     return open > 0 && tokens[open - 1].kind == lex::colon ? none : colon;
 }
 
@@ -226,6 +239,7 @@ static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
     if (!multi_line_ready(tokens, brace)) return;
+    enum_base_cut(tokens, brace, cuts);
     add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon_for(tokens, brace.open));
     if (!tokens[brace.close - 1].line_break) {
         add_cut(cuts, spaces_before(source, close.span.start), close.span.end, brace.tail);
@@ -305,6 +319,7 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     Bool else_next =
         brace.close + 1 < countof(tokens) && !close.line_break && tokens[brace.close + 1].kind == lex::kw_else;
     if (!brace.inside && !closes_cleanly(tokens, brace.close)) return;
+    enum_base_cut(tokens, brace, cuts);
     Str body = "";
     if (!brace.inside && !empty) body = lines_of(source, tokens, brace, indent + step);
     if (brace.inside) {
