@@ -74,6 +74,7 @@ import front::types_fn;
 import std::arena;
 import std::format;
 import std::mem;
+import target;
 
 // ---------------------------------------------------------------------------------------------------------------
 // The hooks
@@ -873,6 +874,33 @@ export Bool is_undefined(const ast::Expr *e) {
     return countof(path.segments) == 1 && same_text(path.segments[0].text, "undefined");
 }
 
+// `target.<fact>` (`target::<fact>` in today's syntax) as a value (#2461): `target` is built in and known at compile
+// time, so the checker decides it as a constant from the facts of the build smith runs in (the way `when::host()` reads
+// the system) and rewrites the node into that literal, which folds before emit. Facts with a name of their own (`os`,
+// `arch`) are read by `@when` and by `==` against a variant, not here. True when `e` was one of these.
+static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
+    const ast::Expr *e = f.node;
+    if (names.count != 2 || !same_text(names.items[0], "target")) return false;
+    if (types::scoped(c, "target") != nullptr) return false;
+    Str fact = names.items[1];
+    ast::Expr *node = (ast::Expr *)(Usize)e; // the checker settles the node's meaning in place
+    if (same_text(fact, "address_sanitizer")) {
+        node->kind = (ast::ExprKind){.boolean = {.value = target::address_sanitizer}};
+    } else if (same_text(fact, "undefined_sanitizer")) {
+        node->kind = (ast::ExprKind){.boolean = {.value = target::undefined_sanitizer}};
+    } else if (same_text(fact, "thread_sanitizer")) {
+        node->kind = (ast::ExprKind){.boolean = {.value = target::thread_sanitizer}};
+    } else if (same_text(fact, "assertions")) {
+        node->kind = (ast::ExprKind){.boolean = {.value = target::assertions}};
+    } else if (same_text(fact, "static_analyzer")) {
+        node->kind = (ast::ExprKind){.boolean = {.value = false}}; // never under clang's analyzer, as in `when`
+    } else {
+        return false;
+    }
+    finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
+    return true;
+}
+
 // `m.sin`, `m.b.T`, `m::sin`: names read through modules (#1677). A function or constant takes its type; a module, a
 // type and a name that is missing are errors that say so. False when the first name is not a module.
 static Bool module_value(types::Checked *c, Frame f, types::Names names) {
@@ -922,6 +950,7 @@ static void name_expr(types::Checked *c, Frame f) {
         types::Names names = {.count = countof(path.segments)};
         for (Usize i = 0; i < names.count; i++)
             names.items[i] = path.segments[i].text;
+        if (fold_target(c, f, names)) return;
         if (module_value(c, f, names)) return;
     }
     if (s == nullptr) {
@@ -5148,6 +5177,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
             poison(c, e);
             return;
         }
+        if (fold_target(c, f, types::member_names(e))) return;
         if (module_value(c, f, types::member_names(e))) return;
         push(w, e, f.expected, 1);
         push(w, base, nullptr, 0);
