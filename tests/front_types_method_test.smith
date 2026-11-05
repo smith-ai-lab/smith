@@ -203,3 +203,24 @@ export void test_front_types_method_on_a_generic_t_missing_for_an_instance_is_na
           "fn run(l: list.List, b: bare.Bare) -> i32:\n    total(l) + total(b)\n",
           "has no method `size`", "Bare");
 }
+
+// #2452: a function by its name next to the `Fn(...)` of its signature compares as a function pointer.
+export void test_front_types_a_fn_field_compares_with_a_function_of_its_signature() {
+    clean("fn checked(x: i32) -> i32:\n    x\n\nfn run() -> bool:\n    f := fn(x: i32) -> i32: x\n    f == checked\n");
+}
+
+// #2452: `p + n` of a read-only field handed where a `*mut` is wanted is mended through the field (the fix exists).
+export void test_front_types_a_read_only_field_in_a_pointer_sum_has_a_fix() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r =
+        check_text("pub struct B:\n    pub memory: *u8\n    pub used: usize\n\n"
+                   "fn run(b: *mut B) -> *mut u8:\n    result: *mut u8 = b.memory + b.used\n    result\n");
+    Str none = "";
+    if (r.error_count != 1) test::check_equal(errors_of(&r), none);
+    test::check_equal(r.error_count, (Usize)1);
+    parse::Edits fix = r.errors[0].fix;
+    test::check_equal(countof(fix), (Usize)1);
+}
