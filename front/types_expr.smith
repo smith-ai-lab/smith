@@ -447,7 +447,7 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
 
 // The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
 // becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
-static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member) {
+static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member, Bool slice_field) {
     syntax::Edits edits = {};
     if (!(member->kind == .member)) {
         return edits;
@@ -462,6 +462,14 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member)
     for (Usize i = 0; i < countof(owner->slots); i++) {
         const ast::TypeExpr *written = owner->slots[i].written;
         if (!types::same_text(owner->slots[i].name, member->kind.member.name) || written == nullptr) continue;
+        if (written->kind == .slice && !written->kind.slice.is_mut && slice_field) {
+            // A `[]T` field whose `.data` is handed where a `*mut T` is wanted is `[]mut T` (#2456).
+            edits = mem::realloc(edits, 1);
+            U32 after_brackets = written->span.start + 2;
+            Str word = "mut ";
+            edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
+            continue;
+        }
         // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
         if (!(written->kind == .pointer)) continue;
         Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
@@ -483,13 +491,24 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
     }
+    if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .index) {
+        // `&watched[0]` of a local array: the fix is the one for `&watched` (#2456).
+        const ast::Expr *array = base->kind.unary.operand->kind.index.base;
+        types::TypeRef held = array->kind == .name ? types::type_of(c, array) : nullptr;
+        if (held != nullptr && held->kind == .array) return address_fix(c, array);
+    }
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .member) {
         // `&figures.user_ns` of a local record: the fix is the one for `&figures` (#2456). A field reached through a
         // pointer is writable when the pointer is, which is another fix.
         const ast::Expr *root = base->kind.unary.operand;
-        while (root->kind == .member && !root->kind.member.arrow) root = root->kind.member.base;
+        while (root->kind == .member && !root->kind.member.arrow)
+            root = root->kind.member.base;
         types::TypeRef held = root->kind == .name ? types::type_of(c, root) : nullptr;
         if (held != nullptr && held->kind == .record) return address_fix(c, root);
+    }
+    if (base->kind == .member && !base->kind.member.arrow && same_text(base->kind.member.name, "data") &&
+        base->kind.member.base->kind == .member) {
+        return field_fix(c, base->kind.member.base, true);
     }
     if (base->kind == .member && !base->kind.member.arrow && same_text(base->kind.member.name, "data") &&
         base->kind.member.base->kind == .name) {
@@ -504,7 +523,7 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
         return edits;
     }
     if (base->kind == .member) {
-        return field_fix(c, base);
+        return field_fix(c, base, false);
     }
     if (base->kind != .name) {
         return edits;
@@ -514,6 +533,14 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
         return edits;
     }
     const ast::TypeExpr *written = p->written;
+    if (written != nullptr && written->kind == .slice && !written->kind.slice.is_mut) {
+        // A `[]T` local or parameter handed where a `[]mut T` is wanted: it is written `[]mut T` (#2456).
+        edits = mem::realloc(edits, 1);
+        U32 after_brackets = written->span.start + 2;
+        Str word = "mut ";
+        edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
+        return edits;
+    }
     if (written != nullptr && written->kind == .pointer && !written->kind.pointer.is_mut) {
         edits = mem::realloc(edits, 1);
         U32 after_star = written->span.start + 1;
@@ -1117,7 +1144,9 @@ static void variant_expr(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (expected->kind == .option && same_text(name, "none")) {
+    // `x == .some` and `x != .some` test an option's tag, so a bare `.some` is the option too (#2456).
+    if (expected->kind == .option &&
+        (same_text(name, "none") || (same_text(name, "some") && e->kind.variant.payload == nullptr))) {
         types::set_type(c, e, expected);
         return;
     }

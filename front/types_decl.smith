@@ -188,6 +188,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
     Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
+    drops_const =
+        drops_const || (from->kind == .slice && to->kind == .slice && from->pointee_const && !to->pointee_const);
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
     const ast::Expr *source = e;
     while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))

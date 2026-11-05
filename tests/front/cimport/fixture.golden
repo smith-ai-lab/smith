@@ -10,6 +10,9 @@
     (field name (pointer (named Char const)))
     (field id (named Id))
     (field weights (array (named F32) (integer 4))))
+  (union Either from_c
+    (field whole (named I32))
+    (field part (named F32)))
   (struct Flags from_c
     (field ready (unsupported_c "bit-field int")))
   (typedef Id from_c (named U64))
@@ -35,7 +38,6 @@
   (variable NAME constexpr from_c (named Str) (string "smith"))
   (variable NEG constexpr from_c (named I32) (unary negate (integer 1)))
   (variable BIG constexpr from_c (named U64) (integer 8192)))
-not imported union Either: a union is not imported
 not imported struct Flags: the field `ready` is a bit-field
 not imported precise: the type `long double` is not imported
 not imported MAX: a function-like macro
