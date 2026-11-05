@@ -165,3 +165,10 @@ export void test_front_types_fn_two_modules_in_two_arenas_with_a_lambda_argument
     test::check_equal(errors_in_own_arena(source), (Usize)0);
     test::check_equal(errors_in_own_arena(source), (Usize)0);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// result types of functions with no parameters (#1901)
+
+export void test_front_types_fn_without_parameters_reads_its_result_in_smiths_syntax() {
+    clean("fn ready() -> bool:\n    true\n");
+}

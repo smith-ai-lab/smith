@@ -2312,7 +2312,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
-        r->new_syntax = countof(list) > 0 && list[0].is_new;
+        r->new_syntax = (countof(list) > 0 && list[0].is_new) || (d->kind == .function && d->kind.function.is_new);
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
     }
