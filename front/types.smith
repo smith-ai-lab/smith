@@ -856,6 +856,11 @@ export struct Error {
     ast::Span related;   // where
     Str related_message; // and what the note says
     syntax::Edits fix;   // the edits `smith lint --fix` applies together (#1516); empty: none
+    // A construction that leaves a field out (#2329): the call, the record, and which fields (bit k for field k) it
+    // gives. The fixer writes the zero values (`front::fix_zero`), which the checker cannot spell without its imports.
+    const ast::Expr *left_out_call;
+    const Ty *left_out_record;
+    U64 left_out_given;
 };
 
 // One entry of the side table.
@@ -968,6 +973,17 @@ export void fail(Checked *r, ast::Span span, Str message) {
     }
     r->errors[r->error_count] = (Error){.message = msg(format::push(message)), .span = span};
     r->error_count += 1;
+}
+
+// Records the error of a construction that leaves a field out: `call` builds `record` and gives the fields marked in
+// `given` (bit k for field k; a record of more than 64 fields is not recorded for the fixer).
+export void fail_left_out(Checked *r, ast::Span span, Str message, const ast::Expr *call, const Ty *record, U64 given) {
+    fail(r, span, message);
+    if (countof(record->slots) <= 64) {
+        r->errors[r->error_count - 1].left_out_call = call;
+        r->errors[r->error_count - 1].left_out_record = record;
+        r->errors[r->error_count - 1].left_out_given = given;
+    }
 }
 
 // Records an error at `span` that is also about another place: `related` gets the note `related_message`, and a `$line`
