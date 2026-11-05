@@ -129,19 +129,25 @@ prs_state() {
   done
 }
 
-# The front-end coverage count (#2073): CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on
-# every push to main (`unmeasured` in place of the numbers when it could not count). Wake the lead when the passed
-# count of a main commit is lower than that of the commit measured before it, naming both. Read through `gh api`: the
-# newest push runs of ci.yml on main, each one's job log; a run with no number (job skipped, unmeasured) is passed over.
+# The front-end coverage count (#2073, #2433): CI's job `frontend-coverage` runs in the merge-queue run (`merge_group`) on
+# the queue's own `build-linux` and logs `frontend-coverage: <sha> <passed> <total>` (`unmeasured` in place of the numbers
+# when it could not count), <sha> being the merge-group commit. Wake the lead when the passed count of a main commit is
+# lower than that of the commit counted before it, naming both. Read through `gh api`: the newest completed merge_group
+# runs of ci.yml, each one's job log. Only a count whose sha is on main is used (a group that never landed, or was
+# re-grouped, is ignored: a group's commit is on main when `compare` says main is ahead of or identical to it); a run with
+# no number (job skipped, cancelled, unmeasured) is passed over.
 coverage() {
   prev=
-  for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
-    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage")|.id' 2>/dev/null | head -1)
+  for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?event=merge_group&per_page=30" --jq '.workflow_runs[].id' 2>/dev/null); do
+    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")|.id' 2>/dev/null | head -1)
     [ -z "$job" ] && continue
     got=$(gh api "repos/$R/actions/jobs/$job/logs" 2>/dev/null | grep -oE 'frontend-coverage: [0-9a-f]{40} [0-9]+ [0-9]+$' | tail -1)
     [ -z "$got" ] && continue
     set -- $got   # frontend-coverage: sha passed total
-    # runs come newest first: $prev is the newer commit, $got the one measured before it
+    # on main only: `compare` main...sha says `behind` or `identical` when the commit is in main's history
+    st=$(gh api "repos/$R/compare/main...$2" --jq .status 2>/dev/null)
+    [ "$st" = behind ] || [ "$st" = identical ] || continue
+    # runs come newest first: $prev is the newer commit, $got the one counted before it
     if [ -n "$prev" ]; then
       set -- $prev; nsha=$2; npass=$3; ntotal=$4; set -- $got; osha=$2; opass=$3
       [ "$npass" -lt "$opass" ] && seen "cov-$nsha" && echo "the front-end coverage count dropped from $opass (main $osha) to $npass of $ntotal (main $nsha): a regression; the job summary of that run has the top causes"
@@ -311,5 +317,5 @@ done
 - **The mailbox:** each minute it asks GitHub only for #1406's comments since the last `@lead:` it delivered (`lead-mark` beside `SEEN`), and on a wake prints every new one, not just the last. Two bugs this fixes: it counted only the first 100 comments of #1406, so it would have gone deaf past 100; and it counted from its own restart, so an `@lead:` posted while the lead was working was never delivered.
 - **Flow (hourly, owner 2026-11-04):** more than two PRs opened in the last hour beyond those merged wakes the lead: production outruns the queue, so start no runner and find why merges are slow (on 2026-11-03, 27 opened in an hour against 5 merged and 64 piled up unseen). Work in progress (open PRs plus `claimed` tickets no open PR names) over `WIP=` on #73 wakes it the same way; under the limit by more than two while the pool is `running`, it wakes the lead to start runners up to the limit, since runners start at most their own replacement.
 - **Merged PRs' runners:** each PR merged in the last three hours with a runner session in its body wakes the lead once to archive that session (unless it is working or asking). Only the lead can: a runner's `archive_session` is denied, and the old rule, successors archive predecessors, left 73 finished runners in the owner's sidebar on 2026-11-04. Set `LEAD_SESSION` to the lead's own session id so its PRs are skipped.
-- **The front-end coverage count (every 15 minutes, `coverage`):** CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` on each push to main (#2073). The watcher reads the log of the two newest main runs that have a number through `gh api` and wakes the lead once when the passed count dropped, naming both commits. A run that logged `unmeasured` or has no such job is passed over.
+- **The front-end coverage count (every 15 minutes, `coverage`):** CI's job `frontend-coverage` logs `frontend-coverage: <sha> <passed> <total>` in each merge-queue run that builds `build-linux`, on that run's own build (#2433). The watcher reads the log of the two newest `merge_group` runs that have a number and whose commit is on main, through `gh api`, and wakes the lead once when the passed count dropped, naming both commits. A run that logged `unmeasured`, has no such job (no full build) or was cancelled, and a group that never landed, is passed over.
 - **The merge queue has no REST listing:** "stalled" means no new commit on main for an hour while pull requests are open.
