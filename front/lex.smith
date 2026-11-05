@@ -28,7 +28,7 @@ import front::ast;
 import std::arena;
 import std::ascii;
 import std::mem;
-import std::text;
+import std::text as texts;
 
 // What a token is. The keywords are `kw_alignas` to `kw_countof` and the punctuators `left_paren` to `dot_star`, each
 // run in one piece. `newline`, `indent` and `dedent` come only from `layout` (no text, a span of no width).
@@ -458,12 +458,12 @@ static const char *const kind_texts[136] = {
 
 // The name of a kind as a dump prints it (`kw_if`, `left_paren`).
 export Str kind_name(TokenKind kind) {
-    return text::make(kind_names[kind]);
+    return texts::make(kind_names[kind]);
 }
 
 // The text of a keyword or a punctuator, empty for the kinds that have none (names and literals).
 export Str kind_text(TokenKind kind) {
-    return text::make(kind_texts[kind]);
+    return texts::make(kind_texts[kind]);
 }
 
 // Whether a kind is one of the keywords.
