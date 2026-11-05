@@ -51,6 +51,8 @@ constexpr Usize entries_max = 262144;
 constexpr Usize groups_max = 2048;
 constexpr Usize examples_max = 3;
 constexpr Usize causes_listed = 20;
+constexpr Usize names_max = 8192;
+constexpr Usize names_listed = 15;
 constexpr Usize path_size = 256;
 constexpr Usize message_size = 240;
 constexpr Usize stage_size = 16;
@@ -73,12 +75,28 @@ struct Group {
     Usize examples[examples_max];
 };
 
+// A name behind `unknown name` or `unknown type` (#2413): the first backticked text of the message, counted per kind.
+struct Name {
+    char text[message_size];
+    Usize kind;
+    Usize count;
+    Usize files;
+    Usize last_file;
+    Usize stopped;
+    Usize appeared;
+};
+
 static struct Entry entries[entries_max];
 static Usize entry_count = 0;
 // Rows that did not fit in the table: any makes the run an error, never a smaller count (#2264).
 static Usize entries_dropped = 0;
 static struct Group groups[groups_max];
 static Usize group_count = 0;
+static struct Name names[names_max];
+static Usize name_count = 0;
+// The kinds of name that are counted, in the order they print; `kind_labels` is the label of the CI line.
+static const char *const kind_prefixes[_] = {"unknown name", "unknown type"};
+static const char *const kind_labels[_] = {"unknown-name", "unknown-type"};
 
 // Copies the text up to a newline, a tab or the end of `size - 1` bytes into `out`, and ends it.
 static void copy_text(char out[:], const char text[:]) {
@@ -231,6 +249,86 @@ static struct Group *group_of(const char cause[:]) {
     return made;
 }
 
+// The kind of a message that names a culprit (0 `unknown name`, 1 `unknown type`), or the number of kinds when it is
+// neither.
+static Usize kind_of(const char message[:]) {
+    for (Usize k = 0; k < countof(kind_prefixes); k++) {
+        const char *prefix = kind_prefixes[k];
+        Usize n = 0;
+        while (prefix[n] != '\0' && n < countof(message) && message[n] == prefix[n])
+            n += 1;
+        if (prefix[n] == '\0') return k;
+    }
+    return countof(kind_prefixes);
+}
+
+// Copies the first backticked text of `message` into `out`; false when there is none.
+static Bool first_name(char out[:], const char message[:]) {
+    Usize open = find(message, '`', 0);
+    if (open >= countof(message)) return false;
+    Usize close = find(message, '`', open + 1);
+    if (close >= countof(message)) return false;
+    Usize o = 0;
+    for (Usize i = open + 1; i < close && o + 1 < countof(out); i++) {
+        out[o] = message[i];
+        o += 1;
+    }
+    out[o] = '\0';
+    return true;
+}
+
+// The row of `name` of `kind`, made when it is the first of its kind; the last row takes the overflow.
+static struct Name *name_of(Usize kind, const char name[:]) {
+    for (Usize i = 0; i < name_count; i++) {
+        if (names[i].kind == kind && same(text_of(names[i].text[0:message_size]), name)) return &names[i];
+    }
+    if (name_count == names_max) return &names[names_max - 1];
+    struct Name *made = &names[name_count];
+    copy_text(made->text[0:message_size], name);
+    made->kind = kind;
+    made->count = 0;
+    made->files = 0;
+    made->last_file = 0;
+    made->stopped = 0;
+    made->appeared = name_count;
+    name_count += 1;
+    return made;
+}
+
+// The same order as ranks_below, over the names.
+static Bool name_ranks_below(const struct Name *a, const struct Name *b) {
+    if (a->stopped != b->stopped) return a->stopped < b->stopped;
+    if (a->files != b->files) return a->files < b->files;
+    if (a->count != b->count) return a->count < b->count;
+    return a->appeared > b->appeared;
+}
+
+static void sort_names() {
+    for (Usize i = 1; i < name_count; i++) {
+        struct Name moved = names[i];
+        Usize at = i;
+        while (at > 0 && name_ranks_below(&names[at - 1], &moved)) {
+            names[at] = names[at - 1];
+            at -= 1;
+        }
+        names[at] = moved;
+    }
+}
+
+// The culprit of an `unknown name` or `unknown type` diagnostic counts under its own name.
+static void count_name(Usize i, Usize file) {
+    Usize kind = kind_of(text_of(entries[i].message[0:message_size]));
+    char name[message_size];
+    if (kind == countof(kind_prefixes) || !first_name(name[0:message_size], text_of(entries[i].message[0:message_size]))) return;
+    struct Name *row = name_of(kind, text_of(name[0:message_size]));
+    row->count += 1;
+    if (starts_file(i)) row->stopped += 1;
+    if (row->last_file != file) {
+        row->last_file = file;
+        row->files += 1;
+    }
+}
+
 // Every diagnostic of a failed file counts, in the group of its cause; `file` numbers the files from 1.
 static void group_failures() {
     Usize file = 0;
@@ -248,6 +346,7 @@ static void group_failures() {
             group->last_file = file;
             group->files += 1;
         }
+        count_name(i, file);
     }
 }
 
@@ -359,6 +458,34 @@ static void print_cause_lines() {
     }
 }
 
+// The top names of each kind: occurrences, files, files where it is the first error, the name.
+static void print_names() {
+    for (Usize k = 0; k < countof(kind_prefixes); k++) {
+        console::print("\ntop ", names_listed, " names behind `", kind_prefixes[k], "`:\n");
+        console::print("  first  count  files  name\n");
+        Usize shown = 0;
+        for (Usize n = 0; n < name_count && shown < names_listed; n++) {
+            if (names[n].kind != k) continue;
+            console::print(format::pad(names[n].stopped, 7), format::pad(names[n].count, 7),
+                           format::pad(names[n].files, 7), "  ", (const char *)names[n].text, "\n");
+            shown += 1;
+        }
+    }
+}
+
+// One fixed line per top name, for the CI log: `frontend-name: <first> <files> <count> <kind> <name>`.
+static void print_name_lines() {
+    for (Usize k = 0; k < countof(kind_prefixes); k++) {
+        Usize shown = 0;
+        for (Usize n = 0; n < name_count && shown < names_listed; n++) {
+            if (names[n].kind != k) continue;
+            console::print("frontend-name: ", names[n].stopped, " ", names[n].files, " ", names[n].count, " ",
+                           kind_labels[k], " ", (const char *)names[n].text, "\n");
+            shown += 1;
+        }
+    }
+}
+
 static I32 summarize(const char file[:], const char *smith) {
     if (!read_table(file)) {
         console::print_error("frontend_coverage: cannot read ", file, "\n");
@@ -382,13 +509,16 @@ static I32 summarize(const char file[:], const char *smith) {
     }
     group_failures();
     sort_groups();
+    sort_names();
     console::print("\n");
     if (smith != nullptr) print_measured(smith);
     console::print("frontend-coverage: ", passed, " of ", files, " files pass\n");
     print_stages();
     print_causes();
+    print_names();
     console::print("\n");
     print_cause_lines();
+    print_name_lines();
     return 0;
 }
 

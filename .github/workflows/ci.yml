@@ -736,6 +736,8 @@ jobs:
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
           # the top 20 causes, one fixed line each (#2247): frontend-cause: <first> <files> <count> <cause>
           grep '^frontend-cause: ' "$out" 2>/dev/null
+          # the top 15 names behind `unknown name` and `unknown type` (#2413): frontend-name: <first> <files> <count> <kind> <name>
+          grep '^frontend-name: ' "$out" 2>/dev/null
       - name: Save the table
         if: always()
         uses: actions/upload-artifact@v4
