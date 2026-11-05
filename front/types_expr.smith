@@ -1461,8 +1461,18 @@ static Bool comparable_pointers(types::TypeRef l, types::TypeRef r) {
     return l->element == r->element || l->element->kind == .void_type || r->element->kind == .void_type;
 }
 
+// A function by its name next to the `Fn(...)` of the same signature (`allocator.alloc == checked_alloc`): the
+// function stands for its `Fn`, so both sides compare as function pointers.
+static Bool fn_against_function(types::TypeRef l, types::TypeRef r) {
+    if (l->kind == .fn_value && r->kind == .function) return l->element == r;
+    return r->kind == .fn_value && l->kind == .function && r->element == l;
+}
+
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
+    if (is_equality(op) && fn_against_function(l, r)) {
+        return c->table.bool_type;
+    }
     if (is_equality(op) && (null_against(l, r) || null_against(r, l))) {
         return c->table.bool_type;
     }
