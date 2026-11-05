@@ -143,6 +143,63 @@ export void test_front_pack_a_named_argument_is_an_error() {
     test::check_equal(errors_of(source) > 0, true);
 }
 
+export void test_front_pack_for_unrolls_over_mixed_types() {
+    Str source = "fn total(rest...) -> i32:\n"
+                 "    let mut sum = 0\n"
+                 "    for x in rest:\n"
+                 "        sum = sum + x.to(i32)\n"
+                 "    sum\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    total(1, 'a', 2.0) + total() + total(10)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)(1 + 97 + 2 + 10));
+}
+
+export void test_front_pack_for_over_an_empty_pack_runs_no_body() {
+    Str source = "fn count(rest...) -> i32:\n"
+                 "    let mut n = 0\n"
+                 "    for _ in rest:\n"
+                 "        n = n + 1\n"
+                 "    n\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    count() * 100 + count(1, 2, 3)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)3);
+}
+
+export void test_front_pack_spread_forwards_the_pack() {
+    Str source = "fn add3(a: i32, b: i32, c: i32) -> i32:\n"
+                 "    a + b * 10 + c * 100\n"
+                 "\n"
+                 "fn forward(rest...) -> i32:\n"
+                 "    add3(rest...)\n"
+                 "\n"
+                 "fn forward_more(first: i32, rest...) -> i32:\n"
+                 "    add3(first, rest...)\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    forward(1, 2, 3) + forward_more(1, 2, 3)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)642);
+}
+
+export void test_front_pack_index_out_of_range_is_an_error() {
+    Str source = "fn f(rest...) -> i32:\n"
+                 "    rest.2\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    f(1, 2)\n";
+    test::check_equal(errors_of(source) > 0, true);
+}
+
+export void test_front_pack_for_over_a_runtime_value_is_still_an_error() {
+    Str source = "fn f(n: i32) -> i32:\n"
+                 "    let mut s = 0\n"
+                 "    for x in n:\n"
+                 "        s = s + 1\n"
+                 "    s\n";
+    test::check_equal(errors_of(source) > 0, true);
+}
+
 export void test_front_pack_typed_converts_each_argument() {
     Str source = "fn sum(nums: i64...) -> i64:\n"
                  "    nums.0 + nums.1 * 10 + nums.2 * 100\n"

@@ -237,7 +237,7 @@ uint32_t Reader::builtin(const clang::BuiltinType *type, uint32_t flags) {
     using B = clang::BuiltinType;
     if (type->getKind() == B::Void) return type_node(Void, flags, 0, 0, 0);
     if (type->getKind() == B::Bool) return type_node(Bool, flags, 0, 0, 0);
-    if (type->isInteger() && type->getKind() != B::Int128 && type->getKind() != B::UInt128) {
+    if (type->isInteger()) {
         uint32_t bits = static_cast<uint32_t>(context().getTypeSize(clang::QualType(type, 0)));
         return type_node(Integer, flags, bits, type->isSignedInteger() ? 1 : 0, 0);
     }

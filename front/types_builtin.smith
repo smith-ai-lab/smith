@@ -15,6 +15,8 @@
 //   absolute         (int or float x)                        its type    llvm.fabs, llvm.abs
 //   smallest         (number a, number b)                    its type    llvm.minnum, llvm.smin, llvm.umin
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
+//   libc             (see libc_name)                         see libc_name  a call of the libc function
+//   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
 //   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
 //   end in `f`)
 //
@@ -36,6 +38,8 @@ export typedef enum {
     smallest;
     predicate;
     constant;
+    libc;
+    count_zeros;
 } Shape;
 
 export struct Entry {
@@ -54,6 +58,44 @@ static Bool same(Str a, Str b) {
 
 static Entry made(Str name, Shape shape, Str intrinsic) {
     return (Entry){.name = name, .shape = shape, .intrinsic = intrinsic};
+}
+
+// The libc-shaped and bit-counting builtins of the table (see `libc_name`).
+static Bool find_libc(Str name, Entry *found) {
+    if (same(name, "__builtin_memcpy")) {
+        *found = made(name, .libc, "memcpy ppz v");
+    } else if (same(name, "__builtin_memmove")) {
+        *found = made(name, .libc, "memmove ppz v");
+    } else if (same(name, "__builtin_memset")) {
+        *found = made(name, .libc, "memset piz v");
+    } else if (same(name, "__builtin_memcmp")) {
+        *found = made(name, .libc, "memcmp ppz i");
+    } else if (same(name, "__builtin_strlen")) {
+        *found = made(name, .libc, "strlen p z");
+    } else if (same(name, "__builtin_strcmp")) {
+        *found = made(name, .libc, "strcmp pp i");
+    } else if (same(name, "__builtin_strncmp")) {
+        *found = made(name, .libc, "strncmp ppz i");
+    } else if (same(name, "__builtin_strcpy")) {
+        *found = made(name, .libc, "strcpy pp v");
+    } else if (same(name, "__builtin_strncpy")) {
+        *found = made(name, .libc, "strncpy ppz v");
+    } else if (same(name, "__builtin_strchr")) {
+        *found = made(name, .libc, "strchr pi p");
+    } else if (same(name, "__builtin_strstr")) {
+        *found = made(name, .libc, "strstr pp p");
+    } else if (same(name, "__builtin_strcspn")) {
+        *found = made(name, .libc, "strcspn pp z");
+    } else if (same(name, "__builtin_ldexp")) {
+        *found = made(name, .libc, "ldexp di d");
+    } else if (same(name, "__builtin_nextafterf")) {
+        *found = made(name, .libc, "nextafterf ff f");
+    } else if (same(name, "__builtin_clzll")) {
+        *found = made(name, .count_zeros, "ctlz");
+    } else {
+        return false;
+    }
+    return true;
 }
 
 // The entry named `name`; false when it is not a builtin of the table.
@@ -103,7 +145,7 @@ export Bool find(Str name, Entry *found) {
     } else if (same(name, "__builtin_nanf")) {
         *found = made(name, .constant, "nan32");
     } else {
-        return false;
+        return find_libc(name, found);
     }
     return true;
 }
@@ -214,6 +256,70 @@ static types::TypeRef check_constant(types::Checked *c, const ast::Expr *e, Entr
     return types::floating(&c->table, same(entry.intrinsic[3:5], "32") ? 32 : 64);
 }
 
+// The built-in type called `name` (`I32`, `Usize`), read from the table: the checker's own lookup, without a call
+// into a header (a pointer-returning function of another module needs an ownership idiom in the lint's table).
+static types::TypeRef named(const types::Checked *c, Str name) {
+    for (Usize i = 0; i < countof(c->table.builtins); i++) {
+        if (same(c->table.builtins[i].name, name)) return c->table.builtins[i].type;
+    }
+    return c->table.invalid;
+}
+
+// A libc-shaped builtin (`__builtin_memcpy`, `__builtin_strlen`): its entry's text is `<libc name> <parameters>
+// <result>` with one letter each: `p` a pointer, `z` a 64-bit unsigned integer (a Usize), `i` an integer (I32 as a
+// result), `d` an F64, `f` an F32; as a result, `p` is the type of the first argument and `v` is Void (the copy
+// functions' pointer result is never used). The call lowers to a call of the libc function.
+export Str libc_name(Entry entry) {
+    Usize end = 0;
+    while (entry.intrinsic[end] != ' ')
+        end += 1;
+    return entry.intrinsic[0:end];
+}
+
+export Str libc_params(Entry entry) {
+    Usize start = countof(libc_name(entry)) + 1;
+    Usize end = start;
+    while (entry.intrinsic[end] != ' ')
+        end += 1;
+    return entry.intrinsic[start:end];
+}
+
+export U8 libc_result(Entry entry) {
+    return (U8)entry.intrinsic[countof(entry.intrinsic) - 1];
+}
+
+// The type a letter of a libc builtin's signature stands for, given the type of the first argument.
+export types::TypeRef libc_type(const types::Checked *c, U8 letter, types::TypeRef first) {
+    if (letter == 'p') return first;
+    if (letter == 'v') return c->table.void_type;
+    if (letter == 'z') return named(c, "Usize");
+    if (letter == 'i') return named(c, "I32");
+    return types::floating(&c->table, letter == 'd' ? 64 : 32);
+}
+
+static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
+    if (is_open(t)) return true;
+    if (letter == 'p') return t->kind == .pointer;
+    if (letter == 'z' || letter == 'i') return t->kind == .integer;
+    return t == want;
+}
+
+static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str params = libc_params(entry);
+    Str wanted = "arguments of the types of the C function";
+    if (countof(args) != countof(params)) return wrong(c, e->span, entry, wanted);
+    types::TypeRef first = nullptr;
+    for (Usize i = 0; i < countof(args); i++) {
+        types::TypeRef t = value_type(c, args[i]);
+        if (t == c->table.invalid) return c->table.invalid;
+        if (i == 0) first = t;
+        if (!letter_fits((U8)params[i], t, libc_type(c, (U8)params[i], first))) return wrong(c, e->span, entry, wanted);
+    }
+    U8 result = libc_result(entry);
+    if (result == 'p' && first->kind != .pointer) return c->table.invalid;
+    return libc_type(c, result, first);
+}
+
 // The type of a call of the builtin, once its arguments are typed (a type argument is read here); the invalid type,
 // with the error reported, when the arguments do not fit.
 export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) {
@@ -241,6 +347,11 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_numbers(c, e, entry, args, 2, false);
     case .constant:
         return check_constant(c, e, entry, args);
+    case .libc:
+        return check_libc(c, e, entry, args);
+    case .count_zeros:
+        if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
+        return named(c, "I32");
     case .predicate:
         if (check_numbers(c, e, entry, args, 1, true) == c->table.invalid) return c->table.invalid;
         return c->table.bool_type;

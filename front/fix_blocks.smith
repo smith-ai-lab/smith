@@ -647,7 +647,9 @@ static Str apply(Str source, Cuts cuts) {
         Cut taken = cuts[best];
         cuts[best] = cuts[i];
         cuts[i] = taken;
-        if (taken.start < from) return source;
+        // A cut inside the text of an earlier one (a one-line block in the body of another) waits for the next round
+        // (#2310).
+        if (taken.start < from) continue;
         out = as_str(format::push(out, source[from:taken.start], taken.text));
         from = taken.end;
     }
@@ -811,7 +813,7 @@ static Str join_value_ifs(Str source) {
     return changed ? out : source;
 }
 
-export Str convert(Str source) {
+static Str convert_once(Str source) {
     for (Usize round = 0; round < 8; round++) {
         Str plain = plain_forms(source);
         if (mem::equal(plain, source)) break;
@@ -836,4 +838,14 @@ export Str convert(Str source) {
     }
     if (countof(cuts) == 0) return join_value_ifs(source);
     return join_value_ifs(apply(source, cuts));
+}
+
+// `convert_once` until the text stops changing: a one-line block inside another one-line block is cut in a later round.
+export Str convert(Str source) {
+    for (Usize round = 0; round < 8; round++) {
+        Str next = convert_once(source);
+        if (mem::equal(next, source)) break;
+        source = next;
+    }
+    return source;
 }
