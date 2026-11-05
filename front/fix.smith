@@ -384,6 +384,37 @@ static Str rename_type_names(Str source) {
     return as_str(format::push(out, source[at:countof(source)]));
 }
 
+// The passes of `fix_text`: parse, apply the fixes, parse the result again, until a pass applies none.
+static void mend_passes(Str file, Fixed *total) {
+    for (Usize pass = 0; pass < fix_passes; pass++) {
+        parser::Parsed parsed = parse_for_fix(file, total->text);
+        core::Errors errors = parsed.errors;
+        // A struct declared twice is mended whatever else the file still has to mend (#2224).
+        core::Errors opaque = fix_opaque::edits(total->text, &parsed.module);
+        for (Usize i = 0; i < countof(opaque); i++) {
+            errors = mem::realloc(errors, countof(errors) + 1);
+            errors[countof(errors) - 1] = opaque[i];
+        }
+        if (countof(parsed.errors) == 0) {
+            core::Errors more = checker_fixes(total->text, &parsed.module);
+            for (Usize i = 0; i < countof(more); i++) {
+                errors = mem::realloc(errors, countof(errors) + 1);
+                errors[countof(errors) - 1] = more[i];
+            }
+        }
+        Fixed fixed = apply_fixes(total->text, errors, parsed.warnings);
+        if (fixed.applied == 0) break;
+        total->text = fixed.text;
+        // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
+        // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
+        // an old declaration and mends it again (#1956).
+        Str hashed = hash_comments(total->text);
+        if (!mem::equal(hashed, total->text) && lex::tokenize_new(hashed) != .error) total->text = hashed;
+        total->applied += fixed.applied;
+        total->skipped = fixed.skipped;
+    }
+}
+
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
@@ -396,33 +427,7 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
-    for (Usize pass = 0; pass < fix_passes; pass++) {
-        parser::Parsed parsed = parse_for_fix(file, total.text);
-        core::Errors errors = parsed.errors;
-        // A struct declared twice is mended whatever else the file still has to mend (#2224).
-        core::Errors opaque = fix_opaque::edits(total.text, &parsed.module);
-        for (Usize i = 0; i < countof(opaque); i++) {
-            errors = mem::realloc(errors, countof(errors) + 1);
-            errors[countof(errors) - 1] = opaque[i];
-        }
-        if (countof(parsed.errors) == 0) {
-            core::Errors more = checker_fixes(total.text, &parsed.module);
-            for (Usize i = 0; i < countof(more); i++) {
-                errors = mem::realloc(errors, countof(errors) + 1);
-                errors[countof(errors) - 1] = more[i];
-            }
-        }
-        Fixed fixed = apply_fixes(total.text, errors, parsed.warnings);
-        if (fixed.applied == 0) break;
-        total.text = fixed.text;
-        // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
-        // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
-        // an old declaration and mends it again (#1956).
-        Str hashed = hash_comments(total.text);
-        if (!mem::equal(hashed, total.text) && lex::tokenize_new(hashed) != .error) total.text = hashed;
-        total.applied += fixed.applied;
-        total.skipped = fixed.skipped;
-    }
+    mend_passes(file, &total);
     if (header_arena_made) { // what the headers declared is not needed once the passes are done
         arena::release(&header_arena);
         header_arena_made = false;
@@ -433,6 +438,21 @@ export Fixed fix_text(Str file, Str source) {
     // indentation replace them (#2253). A text with another gap left is converted too: `fix_blocks` leaves alone a
     // body it cannot read, so the file then fails only on its own gap, not also on the braces.
     if (total.applied > 0) total.text = fix_blocks::convert(total.text);
+    // The checker mends a local only once it is declared in smith's own syntax (`mut sum`, `&xs[0]`), which the blocks
+    // pass has just finished writing: one more round, so that a second run of the fixer has nothing left (#2386).
+    if (total.applied > 0 && countof(total.text) > 0) {
+        Fixed more = {.text = total.text};
+        mend_passes(file, &more);
+        if (more.applied > 0) {
+            total.text = fix_blocks::convert(hash_comments(more.text));
+            total.applied += more.applied;
+            total.skipped = more.skipped;
+        }
+    }
+    if (header_arena_made) {
+        arena::release(&header_arena);
+        header_arena_made = false;
+    }
     return total;
 }
 
