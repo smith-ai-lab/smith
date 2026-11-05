@@ -78,3 +78,11 @@ export void test_front_fix_zero_leaves_a_field_named_like_a_keyword() {
     expect_fixed("module m;\nstruct Q {\n    int in;\n};\nvoid f(void) {\n    Q z = {};\n    g(&z);\n}\n",
                  "struct Q:\n    in: i32\nfn f():\n    z: Q = {}\n    g(&z)\n");
 }
+
+// #2385: `T xs[n] = {}` of a struct element is a `mut` array of the zero value of each element, three structs deep.
+export void test_front_fix_zero_fills_an_array_of_nested_structs() {
+    expect_fixed("module m;\nstruct In {\n    int f;\n};\nstruct Mid {\n    long a;\n    In flags;\n};\n"
+                 "void f(void) {\n    Mid xs[2] = {};\n    xs[0].a = 1;\n}\n",
+                 "struct In:\n    f: i32\nstruct Mid:\n    a: i64\n    flags: In\n"
+                 "fn f():\n    mut xs: [2]Mid = [Mid(a = 0, flags = In(f = 0)), Mid(a = 0, flags = In(f = 0))]\n    xs[0].a = 1\n");
+}

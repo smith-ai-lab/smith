@@ -1587,6 +1587,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     // A static or file-level array with no value is zeroed by C, and a `{...}` list has no spelling yet: by hand.
     Str value = "";
     parse::Edits item_edits = {};
+    Bool zero_later = false;
     if (has_init) value = trimmed(source_between(p, equal_end, last.span.start));
     Str zeros = zero_fill(pre, dims, written, has_init, value);
     if (suffixed && !has_init && (pre->is_static || pre->top) && countof(zeros) == 0) fixable = false;
@@ -1596,7 +1597,12 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         // A length that is written (`[5]`, `[names_count]`) stays, with a flat list: a list of another length is the
         // checker's error, not a silent zero fill.
         U32 count = list_length(p, equal_end, last.span.start);
-        if (count == 0) {
+        // `T xs[3] = {};` of a struct element: the declaration is written and `{}` stays for the zero fix (fix_zero),
+        // which has the element's fields; a variable of C is writable, so it is `mut`.
+        if (same_text(value, "{}") && single_dimension(dims.text) && !same_text(dims.text, "[_]")) {
+            zero_later = true;
+            count = 1;
+        } else if (count == 0) {
             // A list of lists, `T xs[2] = {{.a = 1}, {.a = 2}}`: each is a `T(a = 1)`.
             count = item_lists(p, equal_end, last.span.start, trimmed(written), &item_edits);
         }
@@ -1610,6 +1616,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         return;
     }
     Str lead = variable_lead(pre, type_value);
+    if (zero_later && !pre->is_constexpr) lead = "mut ";
     Str untyped = untyped_of(lead);
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));

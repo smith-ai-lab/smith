@@ -112,13 +112,42 @@ static Str flat_zero(types::TypeRef t) {
     return types::message_of(format::push(out, "]"));
 }
 
-// `T(a = 0, b = nullptr)` of a struct whose fields are all flat; empty when one is not (`allow_nested` false), or, with
-// it, `T(a = 0, inner = U(x = 0))` where a field is a struct of flat fields.
-static Str construct_flat(Str name, types::TypeRef t) {
+// `T(a = 0, inner = U(x = 0))`: a struct whose fields are numbers, `Bool`s, pointers, arrays of those and structs of
+// the same, one, two or three structs deep (a C struct such as `LLVMOrcCSymbolMapPair` is three). No recursion is
+// allowed, so each level is a function that calls the one below it.
+static Str construct_one(Str name, types::TypeRef t) {
     if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
-        Str zero = flat_zero(t->slots[i].type);
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = "";
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+static Str construct_two(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_one(types::show(field), field);
+        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+    }
+    return types::message_of(format::push(out, ")"));
+}
+
+static Str construct_three(Str name, types::TypeRef t) {
+    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    Str out = types::message_of(format::push(name, "("));
+    for (Usize i = 0; i < countof(t->slots); i++) {
+        types::TypeRef field = t->slots[i].type;
+        Str zero = flat_zero(field);
+        if (countof(zero) == 0) zero = construct_two(types::show(field), field);
         if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
         out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
     }
@@ -126,16 +155,18 @@ static Str construct_flat(Str name, types::TypeRef t) {
 }
 
 static Str construct(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
-    Str out = types::message_of(format::push(name, "("));
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        types::TypeRef field = t->slots[i].type;
-        Str zero = flat_zero(field);
-        if (countof(zero) == 0) zero = construct_flat(types::show(field), field);
-        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
-        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
-    }
-    return types::message_of(format::push(out, ")"));
+    return construct_two(name, t);
+}
+
+// `[P(...), P(...)]` for an array of structs of at most `array_limit` elements; empty for any other.
+static Str construct_array(types::TypeRef t) {
+    if (t->kind != .array || t->count == 0 || t->count > array_limit) return "";
+    Str one = construct_three(types::show(t->element), t->element);
+    if (countof(one) == 0) return "";
+    Str out = "[";
+    for (Usize i = 0; i < t->count; i++)
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", one));
+    return types::message_of(format::push(out, "]"));
 }
 
 // Whether `text` holds `name` as a whole word.
@@ -213,10 +244,12 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     Usize errors_before = c->error_count;
     types::TypeRef t = types::resolve(c, written);
     c->error_count = errors_before;
-    if (t == nullptr || t->kind != .record) return none;
+    if (t == nullptr || (t->kind != .record && t->kind != .array)) return none;
     Str name = d->kind.variable.name;
     Str text = "";
-    if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
+    if (t->kind == .array) {
+        text = construct_array(t);
+    } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
         written_first(source, items, at, name, t)) {
         text = "undefined";
     } else {
