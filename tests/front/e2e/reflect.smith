@@ -1,0 +1,56 @@
+# `fields(T)` and `parameters(F)` are compile-time lists (#2295): an unrolled `for`, `value.[f]`, `.name`, `.doc`,
+# `.attr(X)`, a compile-time index and `countof`. The `log` and `dump` of #1821, with the numbers they would print added up
+# (the corpus links no standard library, so nothing prints).
+
+@attribute
+pub struct Label:
+    text: str
+
+pub struct Point:
+    ## across
+    @Label(text = "horizontal")
+    x: i32
+    ## down
+    y: i32
+
+fn log(msg: i32, rest...) -> i32:
+    let mut total = msg
+    for x in rest:
+        total = total + x
+    total
+
+fn dump(T: type, value: T) -> i32:
+    let mut total = 0
+    for f in fields(T):
+        let name: usize = countof(f.name)
+        let doc: usize = countof(f.doc)
+        total = total + value.[f] * 1000 + name.to(i32) * 100 + doc.to(i32)
+    total
+
+fn labelled(T: type) -> i32:
+    let mut total = 0
+    for f in fields(T):
+        if let .some(label) = f.attr(Label):
+            let n: usize = countof(label.text)
+            total = total + n.to(i32)
+    total
+
+fn describe(left: i32, right: i32) -> i32:
+    left - right
+
+pub fn check() -> i32:
+    if log(1, 2, 3) != 6:
+        return 1
+    # x = 3: 3000 + 1 * 100 + 6 ("across"); y = 4: 4000 + 1 * 100 + 4 ("down")
+    if dump(Point, Point(x = 3, y = 4)) != 7210:
+        return 2
+    if labelled(Point) != 10:
+        return 3
+    let first = fields(Point)[0]
+    let n: usize = countof(fields(Point))
+    if n != 2 || countof(first.name) != 1:
+        return 4
+    let params: usize = countof(parameters(describe))
+    if params != 2:
+        return 5
+    0

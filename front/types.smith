@@ -125,6 +125,8 @@ export struct Slot {
     U64 value;   // an enumerator's value
     Bool is_pub; // a field other modules may name (`pub x: T`, or any field written in today's syntax)
     const ast::Expr *default_value; // `x: T = 3`: the field's default (null when none)
+    Str doc;                        // the comment above the field, for `fields(T)` (#2295)
+    ast::Attribute attributes[:];   // the attributes written on the field, for `f.attr(X)`
 };
 
 // Which fields mean something depends on `kind`:
@@ -2020,6 +2022,8 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         fields[i].name = f->name;
         fields[i].is_pub = f->is_pub || !f->is_new;
         fields[i].default_value = f->default_value;
+        fields[i].doc = f->doc;
+        fields[i].attributes = f->attributes;
         if (f->is_pub && !(d->is_pub || d->exported)) {
             failf(r, f->span, "the field `", f->name, "` is `pub`, but `", name,
                   "` is not; nothing outside the module can see the type, so mark the struct `pub` or drop the `pub`");
@@ -2276,6 +2280,90 @@ export Usize instance_called(const Checked *r, const ast::Expr *call) {
     return max_instances;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The lists `fields(T)` and `parameters(F)` (#2295): what front::reflect asks of the checker
+
+static Checked *reflecting = nullptr;
+
+static const Symbol *reflected_symbol(Str subject, Bool is_type) {
+    if (reflecting == nullptr) return nullptr;
+    const Symbol *s = lookup(&reflecting->scopes, subject);
+    if (s == nullptr) return nullptr;
+    if (is_type) return s->kind == .type_name ? s : nullptr;
+    return s->kind == .function_symbol ? s : nullptr;
+}
+
+// The fields the module being checked may name, in order.
+static Usize visible_fields(const Ty *record, Usize at, const Slot **found) {
+    Usize seen = 0;
+    for (Usize i = 0; i < countof(record->slots); i++) {
+        if (!field_visible(record, &record->slots[i])) continue;
+        if (seen == at) *found = &record->slots[i];
+        seen += 1;
+    }
+    return seen;
+}
+
+// The type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
+static Str written_name(TypeRef t) {
+    Str shown = show(t);
+    if (t->kind != .integer && t->kind != .floating && t->kind != .bool_type && t->kind != .text) return shown;
+    char lowered[:] = mem::alloc_slice(char, countof(shown));
+    for (Usize i = 0; i < countof(shown); i++) {
+        char ch = shown[i];
+        lowered[i] = ch >= 'A' && ch <= 'Z' ? (char)(ch - 'A' + 'a') : ch;
+    }
+    Str text = lowered;
+    return text;
+}
+
+static Bool reflect_count(Str kind, Str subject, Usize *count) {
+    if (same_text(kind, "fields")) {
+        const Symbol *s = reflected_symbol(subject, true);
+        if (s == nullptr || s->type->kind != .record || !s->type->complete) return false;
+        const Slot *none = nullptr;
+        *count = visible_fields(s->type, 0, &none);
+        return true;
+    }
+    const Symbol *s = reflected_symbol(subject, false);
+    if (s == nullptr || s->decl == nullptr || s->decl->kind != .function || s->generic) return false;
+    *count = countof(s->decl->kind.function.params);
+    return true;
+}
+
+static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
+    ast_clone::Entry entry = {};
+    if (same_text(kind, "fields")) {
+        const Slot *slot = nullptr;
+        visible_fields(reflected_symbol(subject, true)->type, at, &slot);
+        entry = (ast_clone::Entry){.name = slot->name,
+                                   .type_name = written_name(slot->type),
+                                   .doc = slot->doc,
+                                   .attributes = slot->attributes};
+        return entry;
+    }
+    const Symbol *s = reflected_symbol(subject, false);
+    if (s->decl->kind != .function) return entry;
+    const ast::Param *param = &s->decl->kind.function.params[at];
+    Str shown = {};
+    if (at < countof(s->type->slots)) shown = written_name(s->type->slots[at].type);
+    entry = (ast_clone::Entry){.name = param->name, .type_name = shown, .attributes = param->attributes};
+    return entry;
+}
+
+static void reflect_fail(ast::Span span, Str message) {
+    failf(reflecting, span, message);
+}
+
+// Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
+export Bool expand_reflection(Checked *r, ast::Decl *function) {
+    reflecting = r;
+    ast_clone::set_reflection_source(reflect_count, reflect_at, reflect_fail);
+    Bool expanded = ast_clone::expand_reflection_lists(function);
+    reflecting = nullptr;
+    return expanded;
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
@@ -2374,6 +2462,8 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Binding given[:]
     Usize kept_count = bind_given(r, all, given, bindings, &auto_syntax);
     Instance made = {.template = template, .decl = copy, .bindings = bindings};
     bind_instance(r, &made);
+    expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
+    if (copy->kind != .function) return max_instances;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     keep_params(r, all, bindings, auto_syntax, kept, slots);
@@ -3026,7 +3116,10 @@ export Checked check(const ast::Module *m, Options o) {
     if (o.bodies == nullptr) return r;
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
-        if (d->kind == .function && d->kind.function.body != nullptr) o.bodies(&r, d);
+        if (d->kind == .function && d->kind.function.body != nullptr) {
+            expand_reflection(&r, m->decls[i]);
+            o.bodies(&r, d);
+        }
     }
     return r;
 }
