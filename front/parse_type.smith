@@ -75,18 +75,12 @@ static void bit_width(parse::Parser *p) {
 // The rest of a run of C's keyword types, after its first token: `unsigned long`, `unsigned _BitInt(128)` and `unsigned
 // __int128` (a name clang knows, not a keyword).
 static void keyword_run(parse::Parser *p) {
-    for (;;) {
+    for (Usize i = 0; i < 64; i++) {
         lex::Token next = parse::peek(p);
-        if (next.kind == lex::kw_bit_int) {
-            parse::advance(p);
-            bit_width(p);
-        } else if (is_keyword_type(next.kind) && next.kind != lex::kw_bit_int) {
-            parse::advance(p);
-        } else if (next.kind == lex::name && text::is(parse::text(p, next), "__int128")) {
-            parse::advance(p);
-        } else {
-            return;
-        }
+        Bool word = next.kind == lex::name && text::is(parse::text(p, next), "__int128");
+        if (!is_keyword_type(next.kind) && !word) return;
+        parse::advance(p);
+        if (next.kind == lex::kw_bit_int) bit_width(p);
     }
 }
 
@@ -791,10 +785,10 @@ static ast::TypeExpr *function_argument(parse::Parser *p) {
 // Whether a name is one of the lowercase built-in types of the new syntax (`i32`, `usize`, `str`...): a fixed list, so
 // no symbol table. Where a type or a value may stand, as an argument of a type function, such a name is a type.
 static Bool is_builtin_name(Str word) {
-    return text::is(word, "i8") || text::is(word, "i16") || text::is(word, "i32") || text::is(word, "i64") || text::is(word, "i128") || text::is(word, "u128") ||
-           text::is(word, "isize") || text::is(word, "u8") || text::is(word, "u16") || text::is(word, "u32") ||
-           text::is(word, "u64") || text::is(word, "usize") || text::is(word, "f32") || text::is(word, "f64") ||
-           text::is(word, "str");
+    return text::is(word, "i8") || text::is(word, "i16") || text::is(word, "i32") || text::is(word, "i64") ||
+           text::is(word, "i128") || text::is(word, "u128") || text::is(word, "isize") || text::is(word, "u8") ||
+           text::is(word, "u16") || text::is(word, "u32") || text::is(word, "u64") || text::is(word, "usize") ||
+           text::is(word, "f32") || text::is(word, "f64") || text::is(word, "str");
 }
 
 // One argument of a type function: a type, or a value when no type starts there.
@@ -1019,9 +1013,9 @@ static Bool same(Str a, Str b) {
 static Bool old_builtin(Str w) {
     return text::is(w, "I8") || text::is(w, "I16") || text::is(w, "I32") || text::is(w, "I64") ||
            text::is(w, "Isize") || text::is(w, "U8") || text::is(w, "U16") || text::is(w, "U32") ||
-           text::is(w, "U64") || text::is(w, "U128") || text::is(w, "I128") || text::is(w, "Usize") || text::is(w, "F32") || text::is(w, "F64") ||
-           text::is(w, "Bool") || text::is(w, "Char") || text::is(w, "Str") || text::is(w, "Void") ||
-           text::is(w, "Type");
+           text::is(w, "U64") || text::is(w, "U128") || text::is(w, "I128") || text::is(w, "Usize") ||
+           text::is(w, "F32") || text::is(w, "F64") || text::is(w, "Bool") || text::is(w, "Char") ||
+           text::is(w, "Str") || text::is(w, "Void") || text::is(w, "Type");
 }
 
 // The sized type of a C typedef name such as `size_t` or `uint32_t`; empty for any other name.
@@ -1051,7 +1045,8 @@ static Str keyword_type(Str w) {
     if (text::is(w, "unsigned long") || text::is(w, "unsigned long int") || text::is(w, "unsigned long long"))
         return "u64";
     if (text::is(w, "unsigned __int128") || text::is(w, "unsigned _BitInt(128)")) return "u128";
-    if (text::is(w, "signed __int128") || text::is(w, "_BitInt(128)") || text::is(w, "signed _BitInt(128)")) return "i128";
+    if (text::is(w, "signed __int128") || text::is(w, "_BitInt(128)") || text::is(w, "signed _BitInt(128)"))
+        return "i128";
     if (text::is(w, "signed char")) return "i8";
     if (text::is(w, "unsigned char")) return "u8";
     if (text::is(w, "float")) return "f32";

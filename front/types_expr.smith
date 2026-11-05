@@ -590,7 +590,8 @@ static Bool fits(types::TypeRef t, U64 value, Bool negated) {
 static Str range_text(types::TypeRef t) {
     U64 one = 1;
     if (t->bits > 64) {
-        if (t->is_signed) return msg("-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727");
+        if (t->is_signed)
+            return msg("-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727");
         return msg("0 to 340282366920938463463374607431768211455");
     }
     if (t->is_signed) {
