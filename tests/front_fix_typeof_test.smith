@@ -19,7 +19,7 @@ static void expect_fixed(Str before, Str want) {
 export void test_front_fix_typeof_a_slice_that_is_built_is_mut() {
     expect_fixed("module m;\nexport typeof(xs) grow(auto xs, Usize n) {\n    typeof(xs) r = {};\n"
                  "    r.data = (typeof(xs.data))nullptr;\n    r.count[0] = n;\n    return r;\n}\n",
-                 "pub fn grow[T](xs: []mut T, n: usize) -> []mut T:\n    let r: []mut T = {}\n    r.data = "
+                 "pub fn grow[T](xs: []mut T, n: usize) -> []mut T:\n    r: []mut T = {}\n    r.data = "
                  "nullptr.to(*mut T)\n    r.count[0] = n\n    return r\n");
 }
 
@@ -33,7 +33,7 @@ export void test_front_fix_typeof_a_slice_that_is_only_read_is_not_mut() {
     expect_fixed(
         "module m;\nexport Usize size(auto xs) {\n    typeof(*xs.data) first = xs.data[0];\n"
         "    return xs.count[0] + sizeof(first);\n}\n",
-        "pub fn size[T](xs: []T) -> usize:\n    let first: T = xs.data[0]\n    return xs.count[0] + sizeof(first)\n");
+        "pub fn size[T](xs: []T) -> usize:\n    first: T = xs.data[0]\n    return xs.count[0] + sizeof(first)\n");
 }
 
 export void test_front_fix_typeof_a_type_written_out_is_that_type() {
