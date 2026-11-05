@@ -541,6 +541,10 @@ static ast::Stmt *jump(parse::Parser *p, ast::StmtKind kind) {
 static ast::Stmt *return_statement(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     Usize before = countof(p->errors);
+    if (p->layout && parse_decl::at_returned_tag(p)) {
+        parse_decl::fix_returned_tag(p, start);
+        return settle(p, start, before, empty_stmt());
+    }
     ast::Expr *value = nullptr;
     Bool bare = parse::at(p, lex::semicolon) || parse::at(p, lex::right_brace) || last_token_ends_line(p);
     if (!bare) value = expression(p);
