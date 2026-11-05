@@ -752,6 +752,24 @@ static Bool is_tail(const ast::Stmt *s) {
     return false;
 }
 
+// Whether a call names a function marked `[[noreturn]]` (or `@noreturn`): as the last line it ends the function, so it
+// has no value to match against the result type (#2461: `std.arena` ends in `stop(...)`).
+static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
+    if (value->kind != .call || value->kind.call.callee->kind != .name) {
+        return false;
+    }
+    const types::Symbol *s = types::lookup_path(&r->scopes, value->kind.call.callee->kind.name.path);
+    if (s == nullptr || s->kind != .function_symbol || s->decl == nullptr) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(s->decl->attributes); i++) {
+        ast::Identifier segments[:] = s->decl->attributes[i].name.segments;
+        Usize n = countof(segments);
+        if (n > 0 && types::same_text(segments[n - 1].text, "noreturn")) return true;
+    }
+    return false;
+}
+
 // An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
 static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .expression)) {
@@ -759,7 +777,8 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     }
     const ast::Expr *value = s->kind.expression.value;
     types::TypeRef type = nullptr;
-    if (r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type) {
+    if (r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type &&
+        !calls_noreturn(r, value)) {
         type = types_expr::check(r, value, state.result); // the last line is the value: it takes the result's type
     } else {
         type = types_expr::infer(r, value);

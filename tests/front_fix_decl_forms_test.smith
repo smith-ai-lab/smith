@@ -108,3 +108,30 @@ export void test_front_fix_store_through_a_field_index_after_an_indexed_for_each
                  "fn f(argv: []*char) -> Vector:\n    result: Vector = {}\n    for (i, argument) in argv:\n"
                  "        result.items[i] = argument\n    result.items[countof(argv)] = nullptr\n    return result\n");
 }
+
+// `restrict` on a slice parameter goes when the function states its slices apart in a `requires` (#2463): the prover
+// checks that at each call, as it did `restrict`.
+export void test_front_fix_restrict_slice_goes_with_an_apart_precondition() {
+    expect_fixed("module m;\nimport std::contract;\nvoid copy(U8 dst[restrict :], const U8 src[restrict :]) {\n"
+                 "    contract::requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
+                 "&src[0] + countof(src) <= &dst[0]);\n    g(dst, src);\n}\n",
+                 "import std.contract\nfn copy(dst: []u8, src: []u8):\n"
+                 "    contract.requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
+                 "&src[0] + countof(src) <= &dst[0])\n    g(dst, src)\n");
+}
+
+// Without that precondition the guarantee would be lost: the fixer leaves the function and reports it.
+export void test_front_fix_restrict_slice_without_a_precondition_is_left_alone() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nvoid copy(U8 dst[restrict :], const U8 src[restrict :]) {\n    g(dst, src);\n}\n";
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    Str word = "restrict";
+    Bool kept = false;
+    for (Usize i = 0; i + 8 <= countof(first.text); i += 1) {
+        if (mem::equal(first.text[i:i + 8], word)) kept = true;
+    }
+    test::check_condition(kept);
+}

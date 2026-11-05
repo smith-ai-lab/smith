@@ -1214,6 +1214,8 @@ static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dim
         if (p->tokens[open].kind != lex::left_bracket || open <= at + 1) return 0;
         Str inner = trimmed(source_between(p, p->tokens[open].span.end, p->tokens[to - 1].span.start));
         if (countof(inner) == 0) return 0;
+        // `restrict` goes from a slice of a function that states its slices apart (#2463; parse_type::states_apart)
+        if (p->apart && starts_with(inner, "restrict")) inner = trimmed(inner[8:countof(inner)]);
         if (same_text(inner, ":")) inner = none;
         if (countof(inner) > 0 && inner[0] == ':') return 0;
         if (starts_with(inner, "const") || starts_with(inner, "restrict") || starts_with(inner, "static")) return 0;
@@ -1561,7 +1563,12 @@ static Bool single_dimension(Str text) {
 static Str zero_fill(const Prefixes *pre, Dims dims, Str type, Bool has_init, Str value) {
     if (countof(dims.text) == 0 || !single_dimension(dims.text)) return "";
     if (has_init ? !same_text(value, "{}") : !(pre->is_static || pre->top)) return "";
-    return zero_array(dims.text, type);
+    Str zeros = zero_array(dims.text, type);
+    // A static or file-level array of numbers longer than `zero_limit`, or with a named length, keeps `= {}` for
+    // fix_zero, which writes `array.filled(T, n, 0)` once the checker knows the length (#1901).
+    if (countof(zeros) == 0 && !has_init && !same_text(dims.text, "[_]") && countof(zero_element(type)) > 0)
+        return "{}";
+    return zeros;
 }
 
 // The number of elements the `{...}` list of an array declaration stands for, 0 when it has no spelling: a flat list
@@ -1715,8 +1722,10 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
     Bool variadic = false;
     Usize errors_before = countof(p->errors);
     Usize open = p->position;
+    p->apart = parse_type::states_apart(p->tokens, p->source, open);
     ParamList params = parse_params(p, &variadic);
     if (failed_since(p, errors_before)) {
+        p->apart = false;
         skip_function(p);
         return nullptr;
     }
@@ -1724,6 +1733,7 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
     Usize close = p->position - 1;
     Bool dropped = drop_prototype(p, pre, name, start);
     Bool renamed = !dropped && pre->top && fix_function(p, pre, head, open, close, parse::at(p, lex::left_brace));
+    p->apart = false;
     ast::Stmt *body = nullptr;
     if (parse::at(p, lex::left_brace)) {
         body = parse::statement(p);
