@@ -57,7 +57,7 @@ export void test_front_fix_std_array_of_pointers_with_a_list() {
 export void test_front_fix_std_pointer_init_of_a_for_with_a_comment_in_the_body() {
     expect_fixed("module m;\nvoid f(char *folder) {\n    for (char *slash = c::strchr(folder + 1, '/'); slash != "
                  "nullptr; slash = c::strchr(slash + 1, '/')) {\n        *slash = 0; // cut\n    }\n}\n",
-                 "fn f(folder: *char):\n    mut slash: *char = c.strchr(folder + 1, '/')\n    while slash != "
+                 "fn f(folder: *char):\n    mut slash: *mut char = c.strchr(folder + 1, '/')\n    while slash != "
                  "nullptr:\n        slash.* = 0 # cut\n        slash = c.strchr(slash + 1, '/')\n");
 }
 
