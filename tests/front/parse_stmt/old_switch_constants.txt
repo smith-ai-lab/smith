@@ -20,6 +20,26 @@ case 1:
 case 2:
  x = 2;
 }
+switch (k) {
+case .a:
+case .b:
+ break;
+case .c:
+ x = 3;
+ break;
+}
+switch (k) {
+case .a:
+ switch (m) {
+ case .x:
+  y = 1;
+  break;
+ }
+ break;
+case .b:
+ z = 2;
+ break;
+}
 }
 ===
 warning (fix): a `switch` is a `match` in smith: write it so
@@ -33,6 +53,17 @@ warning (fix): a statement ends with the line, not `;`: remove it
 warning (no fix): `switch` is `match` in smith: write `match v { .a => x }`, one arm per line
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): an `if` condition has no parentheses: write `if c { ... }`
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a `switch` is a `match` in smith: write it so
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a `switch` is a `match` in smith: write it so
+warning (fix): a `switch` is a `match` in smith: write it so
+warning (fix): a statement ends with the line, not `;`: remove it
+warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
 warning (fix): a statement ends with the line, not `;`: remove it
@@ -57,5 +88,17 @@ case 1:
  break
 case 2:
  x = 2
+}
+match k {
+.a, .b => ()
+.c => x = 3
+}
+match k {
+.a => {
+ match m {
+ .x => y = 1
+ }
+ }
+.b => z = 2
 }
 }

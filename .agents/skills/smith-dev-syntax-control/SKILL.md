@@ -30,7 +30,7 @@ let word = match color:
     .green, .blue: "go"                               # several variants share an arm
 ```
 
-`match` is exhaustive with no fall-through, over enums, payload enums, `?T` and results. C's `switch` is an error whose fix is `match`. A `match` also takes constants (owner, 2026-11-05; #2328, #2336) over a number, a `char` or a `bool`: `kind_a: x`, `0, 1: y`, `_: return z`; a bare name in a pattern is an existing constant, never a binding, `_` is the default (required unless every value is covered, as `true` and `false` do), a value named twice is an error, and an arm body is an expression, a `return`/`break`/`continue` or an indented block. C's `switch` with no fall-through is an error whose fix is such a `match`.
+`match` is exhaustive with no fall-through, over enums, payload enums, `?T` and results. C's `switch` is an error whose fix is `match`. A `match` also takes constants (owner, 2026-11-05; #2328, #2336) over a number, a `char` or a `bool`: `kind_a: x`, `0, 1: y`, `_: return z`; a bare name in a pattern is an existing constant, never a binding, `_` is the default (required unless every value is covered, as `true` and `false` do), a value named twice is an error, and an arm body is an expression, a `return`/`break`/`continue` or an indented block. An arm that does nothing is written `labels: ()` (`.integer, .floating, .name: ()`); a `break` or `continue` in an arm acts on the enclosing loop, never on the match, so the fixer drops a switch's ending `break` and writes `()` when nothing is left (lead, #2329). C's `switch` with no fall-through is an error whose fix is such a `match`.
 
 ## defer, errdefer and try
 
