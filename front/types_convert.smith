@@ -378,8 +378,26 @@ static How wrapped(types::TypeRef to) {
 
 // Whether a value of type `from` may be used where `to` is expected, with no written cast. `lit` is the value when it
 // is a constant. See the rules at the top of the file.
+// Whether the function type `from` may stand for `to`: the same result and parameters, except that a parameter `from`
+// reads through a `const T *` may be a `T *` in `to` (a function that only reads accepts what may be written).
+static Bool function_fits(types::TypeRef from, types::TypeRef to) {
+    if (from == to) return true;
+    if (to->kind != .function || from->variadic != to->variadic || from->element != to->element) return false;
+    if (countof(from->slots) != countof(to->slots)) return false;
+    for (Usize i = 0; i < countof(from->slots); i++) {
+        types::TypeRef have = from->slots[i].type;
+        types::TypeRef want = to->slots[i].type;
+        if (have == want) continue;
+        Bool wider = have->kind == .pointer && want->kind == .pointer && have->element == want->element;
+        if (!wider || !have->pointee_const || want->pointee_const) return false;
+    }
+    return true;
+}
+
 export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
     if (from == to || is_invalid_or_auto(from) || is_invalid_or_auto(to)) return accept(identity);
+    // A function by its name where its `Fn(...)` is expected (a field of function-pointer type: `alloc = f`).
+    if (from->kind == .function && to->kind == .fn_value && function_fits(from, to->element)) return accept(identity);
     Ctx c = {.from = from,
              .to = to,
              .shown = to,
