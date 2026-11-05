@@ -1851,9 +1851,81 @@ static Bool new_field_ahead(const parse::Parser *p) {
 }
 
 // `x: f64`, one to a line, with no `;` or `,` (the position is at the name).
+// The start of the line before the one that starts at `at` (0 when there is none).
+static Usize previous_line(Str source, Usize at) {
+    if (at < 2) return 0;
+    Usize i = at - 1; // the newline that ends the previous line
+    while (i > 0 && source[i - 1] != '\n')
+        i -= 1;
+    return i;
+}
+
+// Where the text of a line between `from` and `to` starts, past its indentation.
+static Usize indented(Str source, Usize from, Usize to) {
+    while (from < to && (source[from] == ' ' || source[from] == '\t'))
+        from += 1;
+    return from;
+}
+
+// Whether the line is a `##` comment line.
+static Bool is_doc_line(Str source, Usize from, Usize to) {
+    from = indented(source, from, to);
+    return to - from >= 2 && source[from] == '#' && source[from + 1] == '#';
+}
+
+// The text of a `##` comment line (`## the width` is `the width`).
+static Str doc_text(Str source, Usize from, Usize to) {
+    from = indented(source, from, to) + 2;
+    if (from < to && source[from] == ' ') from += 1;
+    while (to > from && (source[to - 1] == '\r' || source[to - 1] == ' '))
+        to -= 1;
+    return source[from:to];
+}
+
+// The `##` comment lines directly above the line that holds `start` (attribute lines between them and the field are
+// skipped), joined with newlines and without their markers; empty when there are none (#2295).
+static Str doc_above(Str source, U32 start) {
+    Str none = {};
+    Usize line = start;
+    while (line > 0 && source[line - 1] != '\n')
+        line -= 1;
+    Usize first = line; // the start of the first comment line found
+    Usize last = 0;     // and the end of the last one (0: none yet)
+    for (Usize k = 0; k < 64 && line > 0; k++) {
+        Usize before = previous_line(source, line);
+        Usize end = line - 1;
+        Usize at = indented(source, before, end);
+        Bool attribute = at < end && source[at] == '@';
+        if (!attribute && !is_doc_line(source, before, end)) break;
+        line = before;
+        if (attribute) continue;
+        if (last == 0) last = end;
+        first = before;
+    }
+    if (last == 0) return none;
+    char joined[:] = mem::alloc_slice(char, last - first);
+    Usize length = 0;
+    Usize at = first;
+    while (at < last) {
+        Usize end = at;
+        while (end < last && source[end] != '\n')
+            end += 1;
+        if (is_doc_line(source, at, end)) {
+            Str text = doc_text(source, at, end);
+            if (length > 0) joined[length++] = '\n';
+            for (Usize i = 0; i < countof(text); i++)
+                joined[length++] = text[i];
+        }
+        at = end + 1;
+    }
+    Str all = joined[0:length];
+    return all;
+}
+
 static ast::FieldDecl parse_new_field(parse::Parser *p) {
     ast::FieldDecl field = {.is_new = true};
     U32 start = parse::peek(p).span.start;
+    field.doc = doc_above(p->source, start);
     if (parse::accept(p, lex::kw_pub)) field.is_pub = true;
     field.name = parse::text(p, parse::advance(p));
     parse::advance(p);
