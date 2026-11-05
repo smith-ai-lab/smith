@@ -18,7 +18,7 @@
   (function table
     (param n new const (named usize))
     (param T new (named type))
-    (param rest rest new (auto))
+    (param rest new pack (auto))
     (result (named T))
     (block
       (return (name n))))

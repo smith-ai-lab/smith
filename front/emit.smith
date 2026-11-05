@@ -155,6 +155,9 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
     const ast::Expr *init = s->decl->kind == .variable ? s->decl->kind.variable.init : nullptr;
     // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
     if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
+    // `let Allocator = c.SmithAllocator`: a name for a type of a C header; the checker made its type.
+    if (init != nullptr && (init->kind == .member || init->kind == .name))
+        return type_of_checked(e, s->type, s->decl->span);
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);
     return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
 }
@@ -233,7 +236,22 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind == .option) return optional::type_option(e, t);
     if (t->kind == .tuple) return tupled::type_tuple(e, t);
     if (t->kind == .function) return lambdas::type_function(e, t);
-    if (t->kind == .pointer) return memory::type_pointer(e, t);
+    if (t->kind == .pointer) {
+        // `*Word` with `let Word = c.uint32_t`: the checker's alias, emitted as the type it names
+        const ast::TypeExpr *pointee = t->kind.pointer.pointee;
+        if (pointee->kind == .named && countof(pointee->kind.named.path.segments) == 1 &&
+            e->options.checked != nullptr) {
+            const types::Symbol *alias =
+                types::lookup(&e->options.checked->scopes, pointee->kind.named.path.segments[0].text);
+            if (is_alias_symbol(alias)) {
+                state::TyResult inner = type_of_alias(e, alias);
+                if (inner == .error) return inner;
+                state::Ty made = memory::pointer_over(e, inner.ok);
+                return made;
+            }
+        }
+        return memory::type_pointer(e, t);
+    }
     if (t->kind == .array) return memory::type_array(e, t);
     if (streams::is_stream_type(t)) return streams::type_stream(e, t);
     if (optional::is_applied(t)) return optional::type_applied(e, t);
@@ -1515,11 +1533,20 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
     const ast::Expr *init = d->kind.variable.init;
     if (init != nullptr && init->kind == .type_value) return true; // `let Plain = fn(u64) -> u64`: the checker's alias
-    if (init == nullptr || init->kind != .member) return false;
+    if (init == nullptr) return false;
+    if (init->kind == .name && countof(init->kind.name.path.segments) == 2) {
+        // a capitalized `let Word = c.Thing`: the checker declared a type for the name
+        const types::Symbol *own = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
+        return own != nullptr && own->kind == .type_name && own->decl == d;
+    }
+    if (init->kind != .member) return false;
     types::Names names = types::member_names(init);
     if (names.count < 2) return false;
     const types::Symbol *first = types::lookup(&e->options.checked->scopes, names.items[0]);
-    return first != nullptr && first->kind == .module_name;
+    if (first != nullptr && first->kind == .module_name) return true;
+    // `let Allocator = c.SmithAllocator`: the checker declared a type for the name
+    const types::Symbol *own = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
+    return own != nullptr && own->kind == .type_name && own->decl == d;
 }
 
 // `const Pair = (i32, f32)`: the checker declared a type for the name, with this declaration as its source. A `let Line

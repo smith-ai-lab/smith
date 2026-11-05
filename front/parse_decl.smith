@@ -2727,8 +2727,16 @@ export ast::Stmt *destructure(parse::Parser *p) {
     return ast::destructure(names, false, init);
 }
 
-// One parameter: `a: i32`, `mut b: i32`, `const n: usize`, `T: type`, `rest: ...`, after any `@attribute`. False after
-// an error.
+// `rest: ...` is gone: the error's fix writes `rest...`, replacing everything from the end of the name to the dots.
+static void pack_fix(parse::Parser *p, Str name, ast::Span name_span, ast::Span dots) {
+    Str message = as_str(format::push("a pack is written `", name, "...`: `", name, ": ...` is gone"));
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(name_span.end, dots.end, "..."));
+    parse::error_fix(p, dots, message, edits);
+}
+
+// One parameter: `a: i32`, `mut b: i32`, `const n: usize`, `T: type`, `rest...`, `nums: i32...`, after any
+// `@attribute`. False after an error.
 static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
     U32 start = parse::peek(p).span.start;
     Prefixes pre = {};
@@ -2759,12 +2767,18 @@ static Bool parse_new_param(parse::Parser *p, ast::Param *param) {
     param->name = parse::text(p, parse::advance(p));
     parse::advance(p);
     if (parse::at(p, lex::ellipsis)) {
-        param->type = auto_type(parse::advance(p).span);
-        param->is_rest = true;
+        ast::Span dots = parse::advance(p).span;
+        param->type = auto_type(dots);
+        param->is_pack = true;
+        pack_fix(p, param->name, name.span, dots);
     } else {
         param->type = parse::type(p);
         if (param->type == nullptr) return false;
-        if (parse::accept(p, lex::equal)) param->default_value = parse::expression(p);
+        if (parse::accept(p, lex::ellipsis)) {
+            param->is_pack = true; // `nums: i32...`, `nums: int...`
+        } else if (parse::accept(p, lex::equal)) {
+            param->default_value = parse::expression(p);
+        }
     }
     param->attributes = pre.attributes;
     param->span = parse::span_from(p, start);

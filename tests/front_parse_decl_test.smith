@@ -632,7 +632,7 @@ export void test_parse_decl_new_functions() {
                  "@c_name(\"smith_log\")\n"
                  "fn log(s: str):\n"
                  "    return s\n"
-                 "fn table(const n: usize, T: type, rest: ...) -> T:\n"
+                 "fn table(const n: usize, T: type, rest...) -> T:\n"
                  "    return n\n"
                  "fn Pair(T: type) -> type:\n"
                  "    return T\n"
