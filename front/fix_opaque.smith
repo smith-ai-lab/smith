@@ -33,7 +33,8 @@ static Bool has_typedef(Str text) {
     return false;
 }
 
-// The definition that completes `opaque` (a later struct of the same name that carries no attribute and no `pub`), or null.
+// The definition that completes `opaque` (a later struct of the same name that carries no attribute and no `pub`), or
+// null.
 static const ast::Decl *definition_of(const ast::Module *module, Usize after, Str name) {
     for (Usize j = after + 1; j < countof(module->decls); j++) {
         const ast::Decl *e = module->decls[j];
