@@ -1,0 +1,42 @@
+// Tests of the fix-it for `typeof` of a slice parameter (#2340): `auto xs` that is read as a slice becomes an inferred
+// parameter `[T](xs: []T)`, and `typeof(xs)`, `typeof(xs.data)` and `typeof(xs.data.*)` are `[]T`, `*T` and `T`.
+module front_fix_typeof_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+}
+
+export void test_front_fix_typeof_a_slice_that_is_built_is_mut() {
+    expect_fixed("module m;\nexport typeof(xs) grow(auto xs, Usize n) {\n    typeof(xs) r = {};\n"
+                 "    r.data = (typeof(xs.data))nullptr;\n    r.count[0] = n;\n    return r;\n}\n",
+                 "pub fn grow[T](xs: []mut T, n: usize) -> []mut T:\n    let r: []mut T = {}\n    r.data = "
+                 "nullptr.to(*mut T)\n    r.count[0] = n\n    return r\n");
+}
+
+export void test_front_fix_typeof_a_slice_that_is_written_is_mut() {
+    expect_fixed("module m;\nexport Usize first(auto xs) {\n    xs.data[0] = (typeof(*xs.data))1;\n"
+                 "    return xs.count[0];\n}\n",
+                 "pub fn first[T](xs: []mut T) -> usize:\n    xs.data[0] = 1.to(T)\n    return xs.count[0]\n");
+}
+
+export void test_front_fix_typeof_a_slice_that_is_only_read_is_not_mut() {
+    expect_fixed(
+        "module m;\nexport Usize size(auto xs) {\n    typeof(*xs.data) first = xs.data[0];\n"
+        "    return xs.count[0] + sizeof(first);\n}\n",
+        "pub fn size[T](xs: []T) -> usize:\n    let first: T = xs.data[0]\n    return xs.count[0] + sizeof(first)\n");
+}
+
+export void test_front_fix_typeof_a_type_written_out_is_that_type() {
+    expect_fixed("module m;\nstatic typeof(U8[:]) view(U8 *p) {\n    return p[0:1];\n}\n",
+                 "static fn view(p: *u8) -> []u8:\n    return p[0:1]\n");
+}
