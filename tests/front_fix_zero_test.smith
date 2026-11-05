@@ -84,5 +84,6 @@ export void test_front_fix_zero_fills_an_array_of_nested_structs() {
     expect_fixed("module m;\nstruct In {\n    int f;\n};\nstruct Mid {\n    long a;\n    In flags;\n};\n"
                  "void f(void) {\n    Mid xs[2] = {};\n    xs[0].a = 1;\n}\n",
                  "struct In:\n    f: i32\nstruct Mid:\n    a: i64\n    flags: In\n"
-                 "fn f():\n    mut xs: [2]Mid = [Mid(a = 0, flags = In(f = 0)), Mid(a = 0, flags = In(f = 0))]\n    xs[0].a = 1\n");
+                 "fn f():\n    mut xs: [2]Mid = [Mid(a = 0, flags = In(f = 0)), Mid(a = 0, flags = In(f = 0))]\n    "
+                 "xs[0].a = 1\n");
 }

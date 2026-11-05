@@ -250,7 +250,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     if (t->kind == .array) {
         text = construct_array(t);
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
-        written_first(source, items, at, name, t)) {
+               written_first(source, items, at, name, t)) {
         text = "undefined";
     } else {
         text = construct(source[written->span.start:written->span.end], t);
