@@ -37,6 +37,7 @@
 // file that fails to fix is never cached. A cache entry never changes a result.
 module main;
 
+import std::clock;
 import std::console;
 import std::env;
 import std::files;
@@ -1074,6 +1075,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     (void)format::to(jobs_path, sizeof jobs_path, scratch, "/../jobs");
     job_folder = jobs_path;
     (void)files::make_folder(view_of(jobs_path));
+    U64 phase_start = clock::monotonic();
     for (Usize i = 0; i < tree_count; i++) {
         fixed_ok[i] = false;
         if (!is_smith(tree[i]) || (!all && !wanted[i])) continue;
@@ -1081,13 +1083,18 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
         fix_cached(smith, i);
     }
     jobs_drain();
+    U64 fix_ms = (clock::monotonic() - phase_start) / clock::millisecond;
+    console::print_error("frontend_coverage: fix phase ", fix_ms, " ms\n");
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
                          job_limit, " at once\n");
     link_roots(scratch);
+    phase_start = clock::monotonic();
     for (Usize i = 0; i < tree_count; i++) {
         if (fixed_ok[i]) measure(smith, scratch, i);
     }
     jobs_drain();
+    console::print_error("frontend_coverage: compile phase ", (clock::monotonic() - phase_start) / clock::millisecond,
+                         " ms\n");
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
                        (const char *)entries[i].message, "\t", (const char *)entries[i].position, "\n");
