@@ -9,6 +9,7 @@ What smith is and the contracts its code keeps. Read only the concepts your task
 ## Architecture
 
 - [Affine types, a plugin linked into smith](affine-types.md): [[std::affine]] on a type makes each value used at most once, checked by one analysis in a clang plugin linked into smith that runs on every compile and in clangd with no flag.
+- [array.filled is a form the checker and emitter know](array-filled.md): std.array's first function builds an array of n copies of a value; the compiler folds n and emits file-scope results as constant data, because neither syntax can evaluate a function at compile time yet.
 - [Enzyme is linked into smith's lld, and std::autodiff is its interface](autodiff.md): An autodiff program links with full LTO and no passes, runs AddressSanitizer after Enzyme in debug and has no UBSan.
 - [smith build and build.c](build-file.md): smith build runs a project's build.c, which writes a ninja manifest that smith's own executor runs, with everything explicit and no macros.
 - [A C header is read through clang's C++ libraries, at one edge file](c-header-import.md): shim/cimport.cpp parses one header with clang's C++ libraries and returns its functions and structs as one flat array of 32-bit words, which front::cimport reads into records; what it cannot express is listed with a reason.

@@ -17,14 +17,18 @@
 //   enumeration  one LLVM `switch`; a block per arm, each of the arm's patterns a case of that block
 //                (`.green, .blue => ..`); a `_` arm is the default, else the default is a block with `unreachable`
 //                (the checker proved every enumerator is named).
+//   constants    a number, `char` or `bool` (#2336): the constant patterns are evaluated first with the scrutinee's
+//   type
+//                as hint; one `switch` when all are LLVM constants, else a chain of `icmp eq` in arm order; the
+//                default is the `_` arm, else `unreachable` (the checker made sure the arms cover every value).
 //   `?T`         a branch on `option::is_some`; `.some(x)` runs in a new scope with `x` a constant local holding
 //                `option::payload`; `.some(_)` and `.none` bind nothing.
 // As a statement each arm's value is evaluated and dropped. As a value each arm's value is evaluated with the hint
 // (the match's expected type, else the checker's type of the first arm's value), converted, and stored in one slot
 // that is loaded where the arms meet; one Value is pushed. An arm that already ended (`return`) gets no branch.
 //
-// Not here: payload enumerations, `match` over `Result`, `if let` over an enumeration, `switch`, a block as an arm
-// (it reports `not emitted yet` from front::emit_value).
+// An arm that is a statement (`return c`, or a block in a `match` that is a statement) runs as one and gives no value.
+// Not here: `match` over `Result`, `switch`.
 module front::emit_match;
 
 import front::ast;
@@ -277,6 +281,18 @@ static state::Status arm_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// An arm that ran as a statement is done: its scope ends, and it goes on at the end unless it left (`return`).
+static state::Status arm_done(state::Emitter *e, const state::Work *w) {
+    state::end_scope(e);
+    jump(e, w->blocks[1]);
+    return state::success();
+}
+
+// Whether an arm's statement leaves the match: `return`, `break` or `continue`.
+static Bool leaves(const ast::Stmt *s) {
+    return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
+}
+
 // The payload of the variant `name` of `o`, a payload enumeration's value (undefined when its tag is another).
 static state::Value variant_payload(state::Emitter *e, state::Value o, Str name) {
     Usize at = 0;
@@ -316,6 +332,13 @@ static state::Status arm_start(state::Emitter *e, const state::Work *w) {
     if (scrutinee(e, w->flag).ty.kind == .variant_enum)
         bind_variant(e, scrutinee(e, w->flag), first.name, first.binding);
     state::Work finish = *w;
+    const ast::Expr *value = arm->value;
+    if (value->kind == .stmt_expr && (!w->flag || leaves(value->kind.stmt_expr.stmt))) {
+        finish.then = arm_done; // `return c`, a block of statements: run as a statement, no value
+        state::push_then(e, finish);
+        state::push_statement(e, value->kind.stmt_expr.stmt);
+        return state::success();
+    }
     finish.then = arm_finish;
     state::push_then(e, finish);
     state::Hint hint = w->flag ? state::hint_of(w->ty) : state::no_hint();
@@ -346,6 +369,20 @@ static c::LLVMBasicBlockRef unreachable_block(state::Emitter *e, Str name) {
     return block;
 }
 
+// The enumerator a pattern names: `.name`, or a constant pattern that is a name (`name`, `lex.name`, as the fixer
+// writes a C `case` label); empty for a literal.
+static Str case_name(ast::Pattern p) {
+    if (p.constant == nullptr) return p.name;
+    const ast::Expr *e = p.constant;
+    if (e->kind == .member) return e->kind.member.name;
+    ast::Path path = {};
+    if (e->kind == .name) path = e->kind.name.path;
+    if (e->kind == .type_value && e->kind.type_value.type != nullptr && e->kind.type_value.type->kind == .named)
+        path = e->kind.type_value.type->kind.named.path;
+    if (countof(path.segments) == 0) return "";
+    return path.segments[countof(path.segments) - 1].text;
+}
+
 // The block of the first arm with a pattern named `name`, else of the `_` arm, else null.
 static c::LLVMBasicBlockRef arm_for(const ast::Stmt *s, c::LLVMBasicBlockRef blocks[64], Str name) {
     if (s->kind != .match_stmt) {
@@ -356,9 +393,10 @@ static c::LLVMBasicBlockRef arm_for(const ast::Stmt *s, c::LLVMBasicBlockRef blo
     for (Usize i = 0; i < countof(arms); i++) {
         ast::Pattern patterns[:] = arms[i].patterns;
         for (Usize k = 0; k < countof(patterns); k++) {
-            Str got = patterns[k].name;
-            if (state::same_text(got, name)) return blocks[i];
-            if (state::same_text(got, "_") && wild == nullptr) wild = blocks[i];
+            Str got = case_name(patterns[k]);
+            Bool any = patterns[k].wildcard || state::same_text(got, "_");
+            if (!any && state::same_text(got, name)) return blocks[i];
+            if (any && wild == nullptr) wild = blocks[i];
         }
     }
     return wild;
@@ -384,10 +422,11 @@ static state::Status switch_enum(state::Emitter *e, const ast::Stmt *s, state::V
         ast::Pattern patterns[:] = arms[i].patterns;
         for (Usize k = 0; k < countof(patterns); k++) {
             ast::Pattern p = patterns[k];
-            if (state::same_text(p.name, "_")) continue;
+            if (p.wildcard || state::same_text(p.name, "_")) continue;
+            Str name = case_name(p);
             U64 value = 0;
-            if (!find_enumerator(e, at, p.name, &value))
-                return state::failf(p.span, e->enums[at].name, " has no enumerator ", p.name);
+            if (!find_enumerator(e, at, name, &value))
+                return state::failf(p.span, e->enums[at].name, " has no enumerator ", name);
             c::LLVMAddCase(chosen, c::LLVMConstInt(subject_type, value, 0), blocks[i]);
         }
     }
@@ -422,15 +461,104 @@ static state::Status result_type(state::Emitter *e, const ast::Stmt *s, state::H
     return state::success();
 }
 
-// The scrutinee is on the value stack: dispatch to the arm blocks and queue the arms.
+// The number of constant patterns of `s` (`_` is none).
+static Usize constant_count(const ast::Stmt *s) {
+    if (s->kind != .match_stmt) return 0;
+    Usize count = 0;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    for (Usize i = 0; i < countof(arms); i++) {
+        ast::Pattern patterns[:] = arms[i].patterns;
+        for (Usize k = 0; k < countof(patterns); k++) {
+            if (patterns[k].constant != nullptr) count += 1;
+        }
+    }
+    return count;
+}
+
+// The value of a constant pattern, as the scrutinee's type.
+static c::LLVMValueRef case_value(state::Emitter *e, state::Value value, state::Value o) {
+    if (c::LLVMTypeOf(value.llvm) == o.ty.llvm) return value.llvm;
+    return c::LLVMBuildIntCast2(e->builder, value.llvm, o.ty.llvm, value.ty.is_signed, "case");
+}
+
+// The constant patterns are on the value stack above the scrutinee, in order: one `switch` when every one is a
+// constant LLVM knows (a literal), else a chain of comparisons in the order of the arms (a header's constant, a
+// global). With no `_` arm the default is `unreachable`: the checker made sure the arms cover every value.
+static state::Status branch_constants(state::Emitter *e, const ast::Stmt *s, c::LLVMBasicBlockRef blocks[64]) {
+    if (s->kind != .match_stmt) return state::fail("not a match", s->span);
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    Usize count = constant_count(s);
+    c::LLVMValueRef values[256];
+    if (count > countof(values)) return state::not_emitted("a match with over 256 constant patterns", s->span);
+    for (Usize i = count; i > 0; i--)
+        values[i - 1] = state::pop_value(e).llvm;
+    state::Value o = state::peek_value(e);
+    Bool constant = true;
+    for (Usize i = 0; i < count; i++) {
+        values[i] = case_value(e, (state::Value){.llvm = values[i], .ty = o.ty}, o);
+        constant = constant && c::LLVMIsAConstantInt(values[i]) != nullptr;
+    }
+    c::LLVMBasicBlockRef fallback = arm_for(s, blocks, "_");
+    if (fallback == nullptr) fallback = unreachable_block(e, "match_default");
+    c::LLVMValueRef chosen = constant ? c::LLVMBuildSwitch(e->builder, o.llvm, fallback, (U32)count) : nullptr;
+    Usize next = 0;
+    for (Usize i = 0; i < countof(arms); i++) {
+        ast::Pattern patterns[:] = arms[i].patterns;
+        for (Usize k = 0; k < countof(patterns); k++) {
+            if (patterns[k].constant == nullptr) continue;
+            c::LLVMValueRef value = values[next];
+            next += 1;
+            if (constant) {
+                c::LLVMAddCase(chosen, value, blocks[i]);
+                continue;
+            }
+            c::LLVMBasicBlockRef other = c::LLVMAppendBasicBlockInContext(e->context, e->function, "case_next");
+            c::LLVMValueRef same = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, o.llvm, value, "case");
+            c::LLVMBuildCondBr(e->builder, same, blocks[i], other);
+            c::LLVMPositionBuilderAtEnd(e->builder, other);
+        }
+    }
+    if (!constant) c::LLVMBuildBr(e->builder, fallback);
+    return state::success();
+}
+
+static state::Status dispatch_arms(state::Emitter *e, const state::Work *w);
+
+// The scrutinee is on the value stack: a match over a number, a `char` or a `bool` evaluates its constant patterns
+// first, with the scrutinee's type as their hint; the arms are dispatched once they are on the stack.
 static state::Status dispatch(state::Emitter *e, const state::Work *w) {
+    const ast::Stmt *s = w->stmt;
+    if (s->kind != .match_stmt) {
+        return state::fail("not a match", s->span);
+    }
+    state::Value o = state::peek_value(e);
+    Usize at = 0;
+    Bool scalar = o.ty.kind == .boolean || (o.ty.kind == .integer && !find_enum(e, o.ty.name, &at));
+    state::Work next = *w;
+    next.then = dispatch_arms;
+    next.flag = w->flag;
+    next.number = scalar ? 1 : 0;
+    state::push_then(e, next);
+    if (!scalar) return state::success();
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    for (Usize i = countof(arms); i > 0; i--) {
+        ast::Pattern patterns[:] = arms[i - 1].patterns;
+        for (Usize k = countof(patterns); k > 0; k--) {
+            if (patterns[k - 1].constant != nullptr)
+                state::push_eval(e, patterns[k - 1].constant, state::hint_of(o.ty));
+        }
+    }
+    return state::success();
+}
+
+// Dispatches to the arm blocks and queues the arms.
+static state::Status dispatch_arms(state::Emitter *e, const state::Work *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
     }
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     if (countof(arms) == 0 || countof(arms) > 64) return state::not_emitted("a match with no arms or over 64", s->span);
-    state::Value o = state::peek_value(e);
     state::Ty result = {};
     if (w->flag) try result_type(e, s, w->hint, &result);
     c::LLVMBasicBlockRef blocks[64];
@@ -438,12 +566,17 @@ static state::Status dispatch(state::Emitter *e, const state::Work *w) {
         blocks[i] = c::LLVMAppendBasicBlockInContext(e->context, e->function, "arm");
     c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "match_end");
     Usize at = 0;
-    if (o.ty.kind == .option)
-        try branch_option(e, s, o, blocks);
-    else if ((o.ty.kind == .integer || o.ty.kind == .variant_enum) && find_enum(e, o.ty.name, &at))
-        try switch_enum(e, s, o, at, blocks);
-    else
-        return state::failf(s->span, "match needs an enumeration or an option, not ", o.ty.name);
+    if (w->number == 1) {
+        try branch_constants(e, s, blocks);
+    } else {
+        state::Value o = state::peek_value(e);
+        if (o.ty.kind == .option)
+            try branch_option(e, s, o, blocks);
+        else if ((o.ty.kind == .integer || o.ty.kind == .variant_enum) && find_enum(e, o.ty.name, &at))
+            try switch_enum(e, s, o, at, blocks);
+        else
+            return state::failf(s->span, "match needs an enumeration, an option, a number or a bool, not ", o.ty.name);
+    }
     if (w->flag) {
         c::LLVMValueRef slot = state::new_alloca(e, result, "match");
         state::push_value(e, (state::Value){.llvm = slot, .ty = result});

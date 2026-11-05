@@ -1,0 +1,55 @@
+name: yield-to-queue
+description: >
+  A pull request's run waits while a merge-queue run of this workflow is waiting for runners (#2356). GitHub has no job
+  priority: a pull request's run takes 9 Linux runners, and on 2026-11-05 the queue's runs for #2346 and #2350 waited
+  20+ minutes for one while two pull request runs held them. `changes` calls this first, and every heavy job needs
+  `changes`, so a waiting run holds one small runner and the queue's jobs get the rest. It checks every 30 s that no
+  `merge_group` run of `ci.yml` is `queued` or `waiting`, and goes ahead after the cap, writing that to the job summary.
+  Does nothing on any other event than `pull_request`. An API failure counts as an empty queue, so a bad call never
+  stalls a run. Needs `GH_TOKEN` (`actions: read` is enough, also for a fork) and `GH_REPO`.
+
+inputs:
+  cap-minutes:
+    description: The longest wait, in minutes
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - name: Wait while a queue run waits for runners
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CAP: ${{ inputs.cap-minutes }}
+      run: |
+        repo=${GH_REPO:-$GITHUB_REPOSITORY}
+        # how many merge_group runs of ci.yml wait; a failed call counts as 0
+        waiting() {
+          local n=0 c status
+          for status in queued waiting; do
+            c=$(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status="$status" \
+              -f per_page=1 --jq .total_count 2>/dev/null) || c=0
+            n=$((n + ${c:-0}))
+          done
+          echo "$n"
+        }
+        start=$(date +%s)
+        n=$(waiting)
+        if [ "$n" = 0 ]; then
+          echo "yield-to-queue: no merge queue run waits, no wait" >>"$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        while [ "$n" != 0 ]; do
+          waited=$(($(date +%s) - start))
+          if [ "$waited" -ge $((CAP * 60)) ]; then
+            echo "yield-to-queue: $n merge queue run(s) still waiting after the ${CAP}-minute cap: going ahead (waited ${waited}s)" >>"$GITHUB_STEP_SUMMARY"
+            echo "::warning::yield-to-queue: cap of ${CAP} minutes reached with $n queue run(s) still waiting"
+            exit 0
+          fi
+          echo "$n merge queue run(s) wait for runners; ${waited}s waited"
+          sleep 30
+          n=$(waiting)
+        done
+        waited=$(($(date +%s) - start))
+        echo "yield-to-queue: waited ${waited}s for the merge queue's runs to take their runners" >>"$GITHUB_STEP_SUMMARY"

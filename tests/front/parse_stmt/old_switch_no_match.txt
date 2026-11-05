@@ -36,8 +36,10 @@ _ => x = 2
 }
 match w {
 .a => return 1
+_ => ()
 }
 match u {
 1 => x = 1
+_ => ()
 }
 }

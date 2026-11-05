@@ -316,3 +316,75 @@ export void test_front_emit_match_an_untyped_enumerator_is_an_error() {
         emit_state::free_text(made.error.message);
     }
 }
+
+// `match` over constants (#2336): integer and char literals, a named constant, alternatives, `_`, and arms that
+// return or run a block. Literal patterns are one `switch`; a named constant (a global here) is a chain of compares.
+export void test_front_emit_match_over_constants_is_a_switch_with_a_default() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("const limit: i32 = 7\n"
+                     "fn pick(k: i32, a: i32, b: i32, c: i32) -> i32:\n"
+                     "    match k:\n"
+                     "        1: a / limit\n"
+                     "        limit, 2: b\n"
+                     "        _: return c\n"
+                     "pub fn value(k: i32) -> i32:\n"
+                     "    pick(k, 70, 20, 0 - 1)\n"
+                     "pub fn letter(k: i32) -> i32:\n"
+                     "    let ch: char = (k + 96).to(char)\n"
+                     "    let mut seen = 0\n"
+                     "    match ch:\n"
+                     "        'a': seen = 1\n"
+                     "        'b', 'c':\n"
+                     "            seen = 2\n"
+                     "            seen += k\n"
+                     "        'z': ()\n"
+                     "        _: return 9\n"
+                     "    seen\n"
+                     "pub fn truth(k: i32) -> i32:\n"
+                     "    match k > 0:\n"
+                     "        true: 1\n"
+                     "        false: 0\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    test::check_equal(contains(ir, "switch i8"), true);
+    test::check_equal(contains(ir, "case_next"), true);
+    Pick value = (Pick)symbol_of(&host, "value");
+    test::check_equal(value(1), (I32)10);
+    test::check_equal(value(2), (I32)20);
+    test::check_equal(value(7), (I32)20);
+    test::check_equal(value(3), (I32)-1);
+    Pick letter = (Pick)symbol_of(&host, "letter");
+    test::check_equal(letter(1), (I32)1);
+    test::check_equal(letter(2), (I32)4);
+    test::check_equal(letter(3), (I32)5);
+    test::check_equal(letter(4), (I32)9);
+    Pick truth = (Pick)symbol_of(&host, "truth");
+    test::check_equal(truth(5), (I32)1);
+    test::check_equal(truth(0), (I32)0);
+    emit_jit::stop(&host);
+}
+
+// A C `case red:` label the fixer wrote as a bare name is the enumerator's case (#2336).
+export void test_front_emit_match_an_enumerator_name_is_its_case() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("enum Color:\n"
+                     "    red\n"
+                     "    green\n"
+                     "    blue\n"
+                     "fn score(c: Color) -> i32:\n"
+                     "    match c:\n"
+                     "        red: 1\n"
+                     "        Color.green: 2\n"
+                     "        _: 3\n"
+                     "pub fn pick(n: i32) -> i32:\n"
+                     "    score(n.to(Color))\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick pick = (Pick)symbol_of(&host, "pick");
+    test::check_equal(pick(0), (I32)1);
+    test::check_equal(pick(1), (I32)2);
+    test::check_equal(pick(2), (I32)3);
+    emit_jit::stop(&host);
+}

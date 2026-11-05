@@ -1,0 +1,6 @@
+import std.array
+
+pub fn check() -> i32:
+    mut n: usize = 4
+    xs := array.filled(u8, n, 0)
+    0

@@ -292,6 +292,8 @@ export void test_front_types_convert_casts() {
     types::TypeRef plain = types::pointer_to(&t, int32, false);
     types::TypeRef readonly = types::pointer_to(&t, int32, true);
     test::check_condition(cast(&t, nothing, plain).ok);
+    // A cast out of a read-only void pointer to a writable one is the C cast `(T *)p` (#2361).
+    test::check_condition(cast(&t, types::pointer_to(&t, named(&t, "Void"), true), plain).ok);
     test::check_condition(cast(&t, plain, types::pointer_to(&t, byte, false)).ok);
     test::check_condition(cast(&t, plain, named(&t, "Usize")).ok);
     test::check_condition(cast(&t, named(&t, "U64"), plain).ok);
@@ -300,7 +302,7 @@ export void test_front_types_convert_casts() {
     refused(cast(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *", "found const I32 *",
             "drops const");
     refused(cast(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
-    refused(cast(&t, int32, t.void_type), "expected Void", "found I32", "let _ = x");
+    refused(cast(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
     refused(cast(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
             "convert the parts one at a time");
     refused(cast(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");

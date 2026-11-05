@@ -27,6 +27,7 @@ import front::fix_blocks;
 import front::fix_generic_c;
 import front::fix_method;
 import front::fix_opaque;
+import front::fix_typeof;
 import front::fix_variants;
 import front::lex;
 import front::parse_decl;
@@ -215,6 +216,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = generic[i];
     }
+    // `typeof` of a slice parameter and of a written type (#2340): the new syntax has neither.
+    core::Errors typed = fix_typeof::edits(source, module);
+    for (Usize i = 0; i < countof(typed); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = typed[i];
+    }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
         for (Usize i = 0; i < countof(methods); i++) {
@@ -235,8 +242,9 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
         parser::Parsed braced = parser::parse_new_braces(file, source);
         if (countof(braced.errors) == 0) return braced;
         // Today's lexer reads no `#` comment: a text with some (the fixer wrote them once it lexed as smith's own
-        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106).
-        if (lex::tokenize(source) == .error) return own;
+        // syntax) and a form left to mend is mended by the errors the own syntax's parser reports (#2106). The braced
+        // reader is the one that reads a body still written with braces; the indented one skips it (#2328).
+        if (lex::tokenize(source) == .error) return countof(braced.errors) < countof(own.errors) ? braced : own;
     }
     return parser::parse(file, source);
 }

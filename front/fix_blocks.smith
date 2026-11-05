@@ -15,8 +15,9 @@
 //   header {          header:          a `}` that ends the last statement's line goes without a line of its own
 //   for (T i = a; c; s) { b }          `mut i: T = a`, then `while c:` with `s` as the last line of the body
 //   (#2225);
-//                                      the names already declared in the scope get an assignment instead of a `let`; a
-//                                      loop with a `continue`, a comma, or a body on the header's line is left
+//                                      the names already declared in the scope get an assignment instead of a
+//                                      declaration; a loop with a `continue`, a comma, or a body on the header's line
+//                                      is left
 //   "a"\n"b"          ("a"\n"b")        adjacent literals on several lines are one parenthesized expression
 //   void f(auto x) {                   a C signature the fixer did not convert is left with its braces, all of it:
 //                                      a signature is converted whole or not at all
@@ -182,10 +183,23 @@ static Bool multi_line_ready(lex::Tokens tokens, Brace brace) {
     return !(brace.close + 1 < countof(tokens) && !tokens[brace.close].line_break);
 }
 
+// Whether the `{` ends the header `enum Name : u8 {`: the underlying type is one token between the `:` and the `{`.
+static Bool enum_base(lex::Tokens tokens, Usize open) {
+    if (open < 4) return false;
+    return tokens[open - 4].kind == lex::kw_enum && tokens[open - 2].kind == lex::colon && !tokens[open - 1].line_break;
+}
+
+// `enum Name : u8 {` is `enum Name(u8):` (#2334): the `(` takes the place of the ` : `, and `colon_for` closes it.
+static void enum_base_cut(lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    if (!enum_base(tokens, brace.open)) return;
+    add_cut(cuts, tokens[brace.open - 3].span.end, tokens[brace.open - 1].span.start, "(");
+}
+
 // What the `{` becomes: `:`, or nothing after the `:` of a `case .a: {` label, which already ends the header.
 static Str colon_for(lex::Tokens tokens, Usize open) {
     Str none = "";
     Str colon = ":";
+    if (enum_base(tokens, open)) return "):";
     return open > 0 && tokens[open - 1].kind == lex::colon ? none : colon;
 }
 
@@ -220,12 +234,35 @@ static void match_arms(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     }
 }
 
+// `else { g(2,\n 3) }`: the braces the parser gave the unbraced body of an `else` hold one statement that starts on
+// the `{`'s line and ends on the `}`'s, which ends its line.
+static Bool else_one_statement(lex::Tokens tokens, Brace brace) {
+    if (brace.open == 0 || tokens[brace.open - 1].kind != lex::kw_else) return false;
+    if (open_ends_line(tokens, brace.open) || tokens[brace.close - 1].line_break) return false;
+    return closes_cleanly(tokens, brace.close) && tokens[brace.close].line_break;
+}
+
+// The `{` becomes `:` and the statement moves to a line of its own, one step in; the ` }` goes.
+static void else_statement(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
+    lex::Token open = tokens[brace.open];
+    lex::Token close = tokens[brace.close];
+    Usize indent = indent_of(source, open.span.start);
+    Str head = as_str(format::push(":\n", spaces(indent + step)));
+    add_cut(cuts, spaces_before(source, open.span.start), tokens[brace.open + 1].span.start, head);
+    add_cut(cuts, spaces_before(source, close.span.start), close.span.end, "");
+}
+
 // A block that spans lines: the `{` becomes `:` and the line of the `}` goes (or its `}` and the space after it when
 // `else` follows, or the `}` alone when it ends the last statement's line).
 static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
+    if (else_one_statement(tokens, brace)) {
+        else_statement(source, tokens, brace, cuts);
+        return;
+    }
     if (!multi_line_ready(tokens, brace)) return;
+    enum_base_cut(tokens, brace, cuts);
     add_cut(cuts, spaces_before(source, open.span.start), open.span.end, colon_for(tokens, brace.open));
     if (!tokens[brace.close - 1].line_break) {
         add_cut(cuts, spaces_before(source, close.span.start), close.span.end, brace.tail);
@@ -262,7 +299,7 @@ static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
 }
 
 // Whether the line of the `{` starts a statement or a declaration (`if`, `fn`, `struct`, ...), not a value: a block of
-// `let c = if a { b } else { d }` stays on its line.
+// `c := if a { b } else { d }` stays on its line.
 static Bool statement_line(lex::Tokens tokens, Usize open) {
     Usize i = open;
     while (i > 0 && !tokens[i - 1].line_break)
@@ -305,6 +342,7 @@ static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     Bool else_next =
         brace.close + 1 < countof(tokens) && !close.line_break && tokens[brace.close + 1].kind == lex::kw_else;
     if (!brace.inside && !closes_cleanly(tokens, brace.close)) return;
+    enum_base_cut(tokens, brace, cuts);
     Str body = "";
     if (!brace.inside && !empty) body = lines_of(source, tokens, brace, indent + step);
     if (brace.inside) {
@@ -328,9 +366,15 @@ static Bool c_signature(lex::Tokens tokens, Usize open) {
     while (i > 0 && !tokens[i - 1].line_break)
         i -= 1;
     Bool paren = false;
+    Usize first = i;
     for (; i < open; i++) {
         lex::TokenKind kind = tokens[i].kind;
         if (kind == lex::kw_fn || kind == lex::kw_struct || kind == lex::kw_enum || kind == lex::kw_union) return false;
+        // A value, not a signature: `return if g() == 1 { a } else { b }` has `(` and no `fn` (#2328). A statement that
+        // starts the line (`if constexpr (...) {` at the top) stays as it was.
+        if (kind == lex::kw_return || kind == lex::kw_if || kind == lex::kw_match) {
+            if (kind == lex::kw_return || i > first) return false;
+        }
         if (kind == lex::left_paren) paren = true;
     }
     return paren;

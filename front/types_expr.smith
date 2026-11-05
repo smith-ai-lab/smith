@@ -408,7 +408,7 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
     return nullptr;
 }
 
-// The edit that writes `mut ` before the name of `s` (`let x` becomes `let mut x`), when a fix may (a binding written
+// The edit that writes `mut ` before the name of `s` (`x := v` becomes `mut x := v`), when a fix may (a binding written
 // in smith's own syntax, with no attribute before it and not `const`), else an empty list.
 static syntax::Edits mut_fix(const types::Symbol *s) {
     syntax::Edits edits = {};
@@ -2032,6 +2032,35 @@ static types::TypeRef first_parameter(const types::Symbol *s) {
     return t;
 }
 
+// Whether the function is a template with bracketed generics (`fn push[T](xs: *mut List(T), x: T)`).
+static Bool has_generics(const types::Symbol *fn) {
+    return fn->generic && fn->decl != nullptr && fn->decl->kind == .function &&
+           countof(fn->decl->kind.function.generics) > 0 && countof(fn->decl->kind.function.params) > 0;
+}
+
+// Whether the first parameter of a function with bracketed generics is written as a pointer.
+static Bool generic_takes_pointer(const types::Symbol *fn) {
+    if (!(fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+    return written != nullptr && written->kind == .pointer;
+}
+
+// Whether the receiver can be the first parameter of a function with bracketed generics: its written type, seen
+// through one pointer, is a generic name or has the receiver's shape (a name or an applied type is left to the check
+// of the arguments).
+static Bool generic_first_fits(const types::Symbol *fn, types::TypeRef self_type) {
+    if (!(fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+    if (written == nullptr) return false;
+    if (written->kind == .pointer) written = written->kind.pointer.pointee;
+    if (written->kind == .slice) return self_type->kind == .slice;
+    if (written->kind == .array) return self_type->kind == .array;
+    if (written->kind == .option) return self_type->kind == .option;
+    if (written->kind == .tuple) return self_type->kind == .tuple;
+    if (written->kind == .pointer) return self_type->kind == .pointer;
+    return true;
+}
+
 // The call `f(x, args)`; `f(&x, args)` when `f` takes a pointer and `x` is not one, `f(x.*, args)` for the reverse.
 static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn, types::TypeRef base_type) {
     if (!(e->kind == .call)) {
@@ -2048,12 +2077,13 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
     ast::ExprRef all[:] = block[0:countof(given) + 1];
     ast::Expr *self = (ast::Expr *)callee->kind.member.base;
     types::TypeRef takes = fn->type->slots[0].type;
-    if (takes->kind == .pointer && base_type->kind != .pointer) {
+    Bool takes_pointer = has_generics(fn) ? generic_takes_pointer(fn) : takes->kind == .pointer;
+    if (takes_pointer && base_type->kind != .pointer) {
         ast::UnaryOp op = .address_of;
         ast::ExprKind address = {.unary = {.op = op, .operand = self}};
         self = ast::expr(address);
         self->span = callee->kind.member.base->span;
-    } else if (takes->kind != .pointer && base_type->kind == .pointer) {
+    } else if (!takes_pointer && base_type->kind == .pointer) {
         self = ast::deref(self);
         self->span = callee->kind.member.base->span;
     }
@@ -2150,7 +2180,10 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    if (fn == nullptr || first_parameter(fn) == nullptr || first_parameter(fn) != self_type) {
+    Bool fits =
+        fn != nullptr && (has_generics(fn) ? generic_first_fits(fn, self_type)
+                                           : first_parameter(fn) != nullptr && first_parameter(fn) == self_type);
+    if (!fits) {
         method_missing(c, e, fn, bt);
         push_arguments(w, args, nullptr);
         return;
@@ -3247,6 +3280,18 @@ static void read_if_let(Plan *p, const ast::Stmt *s) {
     push_step(p, then_branch, visit);
 }
 
+// Whether a constant pattern is a name (`limit`, `kind_a`, `lex.name`, `LIMIT`): over an enumeration it names an
+// enumerator (`lex.name` is `.name`, as the fixer writes a C `case` label); over a number it names a constant.
+export Bool names_case(const ast::Expr *e) {
+    if (e->kind == .member) {
+        return !e->kind.member.arrow;
+    }
+    if (e->kind == .type_value) {
+        return e->kind.type_value.type != nullptr && e->kind.type_value.type->kind == .named;
+    }
+    return e->kind == .name;
+}
+
 static void read_match(Plan *p, const ast::Stmt *s) {
     if (!(s->kind == .match_stmt)) {
         return;
@@ -3254,8 +3299,19 @@ static void read_match(Plan *p, const ast::Stmt *s) {
     emit_expr(p, s->kind.match_stmt.value, nullptr);
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     for (Usize a = 0; a < countof(arms); a++) {
+        ast::Pattern pats[:] = arms[a].patterns;
+        for (Usize k = 0; k < countof(pats); k++) {
+            if (pats[k].constant != nullptr && !names_case(pats[k].constant)) {
+                emit_expr(p, pats[k].constant, nullptr); // a literal pattern, typed before its arm
+            }
+        }
         emit_pseudo(p, stage_arm, s, a);
-        emit_leaf(p, arms[a].value);
+        const ast::Expr *value = arms[a].value;
+        if (value != nullptr && value->kind == .stmt_expr && leaves_early(value->kind.stmt_expr.stmt)) {
+            emit_pseudo(p, stage_statement, value->kind.stmt_expr.stmt, 0); // `return`: the arm gives no value
+        } else {
+            emit_leaf(p, value);
+        }
         emit_pseudo(p, stage_leave, s, 0);
     }
     emit_pseudo(p, stage_coverage, s, 0);
@@ -3368,8 +3424,10 @@ static void bind_stage(types::Checked *c, Frame f) {
 
 // The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
 // it names none (and `report` says so).
+static Str case_name(const ast::Expr *e);
+
 static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::Pattern pat, Bool report) {
-    Str name = pat.name;
+    Str name = pat.constant != nullptr ? case_name(pat.constant) : pat.name;
     if (t->kind == .option) {
         if (same_text(name, "some")) {
             return 0;
@@ -3401,8 +3459,93 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
     return countof(t->slots);
 }
 
+// A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
+static Bool scalar_match(types::TypeRef t) {
+    return t->kind == .integer || t->kind == .bool_type;
+}
+
 static Bool matchable(types::TypeRef t) {
-    return t->kind == .enumeration || t->kind == .option;
+    return t->kind == .enumeration || t->kind == .option || scalar_match(t);
+}
+
+// Whether a pattern has the form of a constant: a literal, its negation, a name or a header's `k.NAME`.
+static Bool constant_form(const ast::Expr *e) {
+    if (e->kind == .unary && e->kind.unary.op == .negate) {
+        e = e->kind.unary.operand;
+    }
+    return e->kind == .integer || e->kind == .character || e->kind == .boolean || e->kind == .name ||
+           e->kind == .type_value || (e->kind == .member && !e->kind.member.arrow);
+}
+
+// The last name of a pattern that `names_case`: `name` for `lex.name`; empty for any other pattern.
+static Str case_name(const ast::Expr *e) {
+    ast::Path path = {};
+    if (e->kind == .member) {
+        return e->kind.member.name;
+    }
+    if (e->kind == .name) {
+        path = e->kind.name.path;
+    } else if (e->kind == .type_value && e->kind.type_value.type != nullptr &&
+               e->kind.type_value.type->kind == .named) {
+        path = e->kind.type_value.type->kind.named.path;
+    }
+    if (countof(path.segments) == 0) {
+        return "";
+    }
+    return path.segments[countof(path.segments) - 1].text;
+}
+
+// A name in a pattern over a number that no frame typed (a `match` used as a value): the constant it names, found in
+// scope; a name through a module or a header stays as written. False when it names nothing, with the error.
+static Bool type_pattern_name(types::Checked *c, const ast::Expr *e) {
+    if (typ(c, e) != nullptr || !(e->kind == .name) || countof(e->kind.name.path.segments) != 1) {
+        return true;
+    }
+    const types::Symbol *named = types::lookup_path(&c->scopes, e->kind.name.path);
+    if (named == nullptr || named->kind != .variable) {
+        Str name = e->kind.name.path.segments[0].text;
+        types::failf(c, e->span, "unknown name `", name, "`; a name in a pattern is a constant it compares with, ",
+                     "never a new name: declare the constant, or write `_` for any value");
+        return false;
+    }
+    types::set_type(c, e, named->type);
+    return true;
+}
+
+// A constant pattern of a `match` over `t`: over an enumeration, the name of one of its enumerators; over a number,
+// a `char` or a `bool`, typed as the value, and a literal or a constant, never a variable. A bare name is the constant
+// it names, never a new binding.
+static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern pat) {
+    if (t == invalid(c) || !matchable(t)) {
+        return;
+    }
+    if (t->kind == .enumeration && names_case(pat.constant)) {
+        _ = case_of(c, pat.span, t, pat, true);
+        return;
+    }
+    if (!scalar_match(t)) {
+        types::failf(c, pat.span, "a `match` over `", types::show(t),
+                     "` names its cases with a dot; write the case as `.name`");
+        return;
+    }
+    if (!constant_form(pat.constant)) {
+        types::failf(c, pat.span, "a pattern is a literal or the name of a constant; test anything else with `if`");
+        return;
+    }
+    if (!type_pattern_name(c, pat.constant)) {
+        return;
+    }
+    types::TypeRef got = typ(c, pat.constant); // typed before the arm, by the caller's frames or by its name
+    if (got == nullptr || got == invalid(c) || !conform(c, pat.constant, got, t) || !(pat.constant->kind == .name)) {
+        return;
+    }
+    U64 value = 0;
+    const types::Symbol *named = types::lookup_path(&c->scopes, pat.constant->kind.name.path);
+    if (named != nullptr && named->kind == .variable && named->decl != nullptr &&
+        !types::constant_case(c, pat.constant, &value)) {
+        types::failf(c, pat.span, "`", named->name, "` is a variable, but a pattern compares with a constant; ",
+                     "declare it `const`, or test it with `if`");
+    }
 }
 
 static Usize case_count(types::TypeRef t) {
@@ -3413,18 +3556,29 @@ static Usize case_count(types::TypeRef t) {
 }
 
 // One arm of a `match`: its patterns are cases of the scrutinee, and the scope has what the arm binds.
-static void arm_stage(types::Checked *c, Frame f) {
-    const ast::Stmt *s = f.source;
+export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
     types::push_scope(&c->scopes);
     if (!(s->kind == .match_stmt)) {
         return;
     }
     types::TypeRef t = typ(c, s->kind.match_stmt.value);
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
-    ast::Pattern pats[:] = arms[f.index].patterns;
+    ast::Pattern pats[:] = arms[arm].patterns;
     Bool known = t != invalid(c) && matchable(t);
     for (Usize k = 0; k < countof(pats); k++) {
         types::TypeRef element = invalid(c);
+        if (pats[k].wildcard) {
+            continue;
+        }
+        if (pats[k].constant != nullptr) {
+            constant_pattern(c, t, pats[k]);
+            continue;
+        }
+        if (known && scalar_match(t)) {
+            types::failf(c, pats[k].span, "`.", pats[k].name, "` is a variant, but this `match` is over `",
+                         types::show(t), "`; write a constant such as `1` or `limit`");
+            continue;
+        }
         if (known) {
             Usize at = case_of(c, s->span, t, pats[k], true);
             if (t->kind == .option && at == 0) {
@@ -3435,6 +3589,10 @@ static void arm_stage(types::Checked *c, Frame f) {
         }
         bind_name(c, pats[k].binding, element);
     }
+}
+
+static void arm_stage(types::Checked *c, Frame f) {
+    match_arm(c, f.source, f.index);
 }
 
 // The enumerators no arm named, as "`.a`, `.b`".
@@ -3460,9 +3618,68 @@ static Str missing_list(types::TypeRef t, Bool seen[:]) {
     return text;
 }
 
+// Whether an arm before this pattern names `_`, which is then written twice.
+static Bool second_wildcard(types::Checked *c, ast::Pattern pat, Bool *wild) {
+    if (!pat.wildcard) {
+        return false;
+    }
+    if (*wild) {
+        types::failf(c, pat.span, "`_` is written twice; remove one arm");
+    }
+    *wild = true;
+    return true;
+}
+
+// After the arms of a `match` over a number, a `char` or a `bool`: no value is named twice, and `_` takes the values
+// no arm names, unless the arms name both `true` and `false`.
+static void scalar_coverage(types::Checked *c, const ast::Stmt *s, types::TypeRef t) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    U64 values[:] = {};
+    Bool wild = false;
+    Bool clean = true;
+    for (Usize a = 0; a < countof(arms); a++) {
+        ast::Pattern pats[:] = arms[a].patterns;
+        for (Usize k = 0; k < countof(pats); k++) {
+            U64 value = 0;
+            if (second_wildcard(c, pats[k], &wild)) {
+                continue;
+            }
+            if (pats[k].constant == nullptr) {
+                clean = false;
+                continue;
+            }
+            if (!types::constant_case(c, pats[k].constant, &value)) {
+                continue;
+            }
+            if (t->kind == .bool_type) {
+                value = value != 0 ? 1 : 0;
+            }
+            Bool twice = false;
+            for (Usize i = 0; i < countof(values); i++) {
+                twice = twice || values[i] == value;
+            }
+            if (twice) {
+                types::failf(c, pats[k].span, "this value is matched twice: an arm above names it; remove one");
+                clean = false;
+                continue;
+            }
+            values = mem::realloc(values, countof(values) + 1);
+            values[countof(values) - 1] = value;
+        }
+    }
+    Bool both = t->kind == .bool_type && countof(values) == 2;
+    mem::free(values.data);
+    if (clean && !wild && !both) {
+        types::failf(c, s->span, "`match` over `", types::show(t), "` does not cover every value; add a `_` arm ",
+                     "for the values no arm names");
+    }
+}
+
 // After the arms: every case of the enumeration or `?T` is named, and none twice.
-static void coverage_stage(types::Checked *c, Frame f) {
-    const ast::Stmt *s = f.source;
+export void match_coverage(types::Checked *c, const ast::Stmt *s) {
     if (!(s->kind == .match_stmt)) {
         return;
     }
@@ -3471,22 +3688,31 @@ static void coverage_stage(types::Checked *c, Frame f) {
         return;
     }
     if (!matchable(t)) {
-        types::failf(c, s->span, "`match` takes an enumeration or a `?T`, but this is a `", types::show(t),
-                     "`; match on an enumerator, or write an `if`");
+        types::failf(c, s->span, "`match` takes an enumeration, a `?T`, a number, a `char` or a `bool`, but this is ",
+                     "a `", types::show(t), "`; write an `if`");
+        return;
+    }
+    if (scalar_match(t)) {
+        scalar_coverage(c, s, t);
         return;
     }
     Usize total = case_count(t);
     Bool seen[:] = mem::alloc_slice(Bool, total + 1);
     Bool clean = true;
+    Bool wild = false;
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     for (Usize a = 0; a < countof(arms); a++) {
         ast::Pattern pats[:] = arms[a].patterns;
         for (Usize k = 0; k < countof(pats); k++) {
+            if (second_wildcard(c, pats[k], &wild)) {
+                continue;
+            }
             Usize at = case_of(c, s->span, t, pats[k], false);
             if (at >= total) {
                 clean = false;
             } else if (seen[at]) {
-                types::failf(c, s->span, "`.", pats[k].name, "` is matched twice; remove one arm");
+                Str twice = pats[k].constant != nullptr ? case_name(pats[k].constant) : pats[k].name;
+                types::failf(c, s->span, "`.", twice, "` is matched twice; remove one arm");
                 clean = false;
             } else {
                 seen[at] = true;
@@ -3494,10 +3720,14 @@ static void coverage_stage(types::Checked *c, Frame f) {
         }
     }
     Str missing = missing_list(t, seen[0:total]);
-    if (clean && countof(missing) > 0) {
+    if (clean && !wild && countof(missing) > 0) {
         types::failf(c, s->span, "`match` over `", types::show(t), "` does not cover ", missing,
                      "; add an arm for each, since a `match` must name every case");
     }
+}
+
+static void coverage_stage(types::Checked *c, Frame f) {
+    match_coverage(c, f.source);
 }
 
 // A statement of a block that is not an expression, in the scope the block opened.
@@ -3749,6 +3979,15 @@ static void tuple_after(types::Checked *c, Frame f) {
 // The template a call names, when the callee is a plain name of a function with compile-time parameters.
 static const types::Symbol *generic_callee(const types::Checked *c, const ast::Expr *callee) {
     const types::Symbol *s = nullptr;
+    if (callee->kind == .index && callee->kind.index.base->kind == .name) {
+        // `f[T](x)`: the brackets pin the generics of `f` (#1698)
+        const types::Symbol *named = types::lookup_path(&c->scopes, callee->kind.index.base->kind.name.path);
+        if (named != nullptr && named->kind == .function_symbol && named->generic && named->decl != nullptr &&
+            named->decl->kind == .function && countof(named->decl->kind.function.generics) > 0) {
+            return named;
+        }
+        return nullptr;
+    }
     if (callee->kind == .name) {
         s = types::lookup_path(&c->scopes, callee->kind.name.path);
     } else if (callee->kind == .member && !callee->kind.member.arrow) {
@@ -3906,6 +4145,106 @@ static Bool pack_satisfies(types::Checked *c, const ast::Param *pack, const ast:
     return true;
 }
 
+// `f[T](x)`: the brackets write the first generic. False, with the error, when it is not a type or constant.
+static Bool pin_first(types::Checked *c, const ast::Expr *e, ast::Param generics[:], types::Binding bound[:],
+                      Bool set[:]) {
+    if (!(e->kind == .call)) return false;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .index) return true;
+    const ast::Expr *pin = callee->kind.index.index;
+    if (types::is_generic_type(&generics[0])) {
+        types::TypeRef t = type_argument(c, &generics[0], pin);
+        if (t == nullptr) {
+            return false;
+        }
+        bound[0] = (types::Binding){.is_type = true, .type = t};
+    } else {
+        U64 value = 0;
+        if (!value_argument(c, &generics[0], pin, &value)) {
+            return false;
+        }
+        bound[0] = (types::Binding){.value = value};
+    }
+    set[0] = true;
+    return true;
+}
+
+// Binds the generics from the arguments' types, the literals in a second pass. False, with the error, on a clash.
+static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const types::Symbol *template,
+                                types::Binding bound[:], Bool set[:]) {
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return false;
+    ast::ExprRef args[:] = e->kind.call.args;
+    ast::Param params[:] = template->decl->kind.function.params;
+    ast::Param generics[:] = template->decl->kind.function.generics;
+    types::Unified clash = {};
+    for (Usize pass = 0; pass < 2; pass++) {
+        for (Usize i = 0; i < countof(params); i++) {
+            const ast::Expr *arg = argument_value(args[i]);
+            Bool literal = arg->kind == .integer || arg->kind == .floating;
+            if (literal != (pass == 1)) continue;
+            types::TypeRef t = typ(c, arg);
+            if (t == invalid(c)) return false;
+            if (!types::unify_generics(generics, params[i].type, t, bound, set, pass == 0, &clash)) {
+                types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
+                             "` from an earlier argument and `", types::show(clash.now),
+                             "` from this one; make the arguments agree, or write `", template->name, "[...]`");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
+// the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
+// binds last, and only a generic no other argument binds.
+static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *template) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .call) || !(template->decl->kind == .function)) return;
+    const ast::Expr *callee = e->kind.call.callee;
+    ast::Param params[:] = template->decl->kind.function.params;
+    ast::Param generics[:] = template->decl->kind.function.generics;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i]) || params[i].is_pack ||
+            params[i].is_gather) {
+            types::failf(c, params[i].span, "not yet: `", template->name,
+                         "` has both bracketed generics and compile-time, `auto` or rest parameters");
+            poison(c, e);
+            return;
+        }
+    }
+    types::Binding bound[:] = mem::alloc_slice(types::Binding, countof(generics));
+    Bool set[:] = mem::alloc_slice(Bool, countof(generics));
+    if (!pin_first(c, e, generics, bound, set) || !bind_from_arguments(c, e, template, bound, set)) {
+        poison(c, e);
+        return;
+    }
+    for (Usize i = 0; i < countof(generics); i++) {
+        if (set[i]) {
+            Str concept = types::written_concept(generics[i].type);
+            if (countof(concept) > 0 && !types::concept_holds(concept, bound[i].type)) {
+                types::failf(c, e->span, "`", generics[i].name, "` is `", types::show(bound[i].type),
+                             "`, which is not a `", concept, "`");
+                poison(c, e);
+                return;
+            }
+            continue;
+        }
+        types::failf(c, e->span, "cannot work out `", generics[i].name, "` from the arguments of `", template->name,
+                     "`: no argument has a type that contains it; write `", template->name, "[...]`");
+        poison(c, e);
+        return;
+    }
+    Usize at = types::instance_of(c, template->decl, bound);
+    if (at >= c->instance_count) {
+        poison(c, e);
+        return;
+    }
+    types::set_type(c, callee, c->instances[at].signature);
+    types::use_instance(c, e, at);
+    call_after(c, f);
+}
+
 // Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
 static void auto_resolved(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
@@ -3913,6 +4252,10 @@ static void auto_resolved(types::Checked *c, Frame f) {
     const types::Symbol *template = generic_callee(c, e->kind.call.callee);
     if (template == nullptr || !(template->decl->kind == .function)) {
         poison(c, e);
+        return;
+    }
+    if (countof(template->decl->kind.function.generics) > 0) {
+        infer_resolved(c, f, template);
         return;
     }
     ast::ExprRef args[:] = e->kind.call.args;
@@ -4157,7 +4500,8 @@ static void generic_before(types::Checked *c, Work *w, Frame f, const types::Sym
     }
     ast::ExprRef args[:] = e->kind.call.args;
     ast::Param params[:] = template->decl->kind.function.params;
-    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params)) {
+    if (gather_param(params) != nullptr || pack_param(params) != nullptr || has_auto_param(params) ||
+        countof(template->decl->kind.function.generics) > 0) {
         rewritten_before(c, w, f, template);
         return;
     }
@@ -4383,7 +4727,10 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     if (builtins::callee_entry(c, callee, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
         for (Usize i = countof(args); i > 0; i--) {
-            if (!builtins::is_type_argument(builtin, i - 1)) push(w, argument_value(args[i - 1]), nullptr, 0);
+            if (builtins::is_type_argument(builtin, i - 1)) continue;
+            types::TypeRef expected = nullptr; // `array.filled(u8, 4, 0)`: the value takes the element type
+            if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
+            push(w, argument_value(args[i - 1]), expected, 0);
         }
         return;
     }

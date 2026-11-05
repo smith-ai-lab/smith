@@ -87,6 +87,9 @@ enum Step {
     leave,     // leave the scope entered for a block or a `for`
     condition, // the expression must be a Bool
     advance,   // the expression is a statement of its own (a `for`'s step)
+    arm,       // a `match` arm `index` starts: its patterns, and a scope with what it binds (#2336)
+    cover,     // after a `match`'s arms: every case is named once
+    tail_arm,  // the expression is the function's result: an arm of a `match` that is the last line
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -94,6 +97,7 @@ struct Frame {
     const ast::Stmt *stmt;
     const ast::Expr *expr;
     Step step;
+    Usize index;
 };
 
 // A local that a body declared, for the golden tests.
@@ -672,6 +676,17 @@ static void find_tails(const ast::Stmt *root) {
             todo[n] = s->kind.if_stmt.then_branch;
             todo[n + 1] = s->kind.if_stmt.else_branch;
             n += 2;
+        } else if (s->kind == .match_stmt && state.tail_count < countof(state.tails)) {
+            state.tails[state.tail_count] = s; // its arms are the result
+            state.tail_count += 1;
+            ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+            for (Usize i = 0; i < countof(arms) && n < countof(todo); i++) {
+                const ast::Expr *value = arms[i].value;
+                if (value != nullptr && value->kind == .stmt_expr) {
+                    todo[n] = value->kind.stmt_expr.stmt;
+                    n += 1;
+                }
+            }
         } else if (s->kind == .expression && state.tail_count < countof(state.tails)) {
             state.tails[state.tail_count] = s;
             state.tail_count += 1;
@@ -746,6 +761,46 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// Types the constant patterns of arm `index` of a `match`, before the arm checks them against its value. Over an
+// enumeration a name is one of its enumerators (`lex.name`), which is not a value in scope, so it is not typed.
+static void match_patterns(types::Checked *r, const ast::Stmt *s, Usize index) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    ast::Pattern pats[:] = s->kind.match_stmt.arms[index].patterns;
+    types::TypeRef t = types::type_of(r, s->kind.match_stmt.value);
+    Bool enumeration = t != nullptr && t->kind == .enumeration;
+    for (Usize k = 0; k < countof(pats); k++) {
+        if (pats[k].constant != nullptr && !(enumeration && types_expr::names_case(pats[k].constant))) {
+            _ = types_expr::infer(r, pats[k].constant);
+        }
+    }
+}
+
+// `match v:` (#2336): the value is typed, then each arm in a scope of its own, with its patterns checked against the
+// value and what it binds; then the arms together cover every case. An arm's value is a statement (`return`, a block)
+// or an expression, which is the function's result when the `match` is its last line.
+static void match_statement(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    _ = types_expr::infer(r, s->kind.match_stmt.value);
+    Bool tail = r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type;
+    push(s, nullptr, cover);
+    for (Usize i = countof(arms); i > 0; i--) {
+        const ast::Expr *value = arms[i - 1].value;
+        push(nullptr, nullptr, leave);
+        if (value != nullptr && value->kind == .stmt_expr) {
+            push(value->kind.stmt_expr.stmt, nullptr, enter);
+        } else if (value != nullptr) {
+            push(nullptr, value, tail ? tail_arm : advance);
+        }
+        push(s, nullptr, arm);
+        state.work[state.top - 1].index = i - 1;
+    }
+}
+
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind == .expression) {
@@ -780,6 +835,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         push(s->kind.labeled.body, nullptr, enter);
     } else if (s->kind == .switch_stmt) {
         switch_statement(r, s);
+    } else if (s->kind == .match_stmt) {
+        match_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
         types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
     }
@@ -798,6 +855,8 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
         return_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
         types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+    } else if (s->kind == .break_stmt || s->kind == .continue_stmt) {
+        return; // a `match` arm that leaves the loop (#2336)
     } else {
         types::failf(r, s->span, "not yet typed: this statement inside a block that is used as a value");
     }
@@ -820,6 +879,13 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             types_expr::check(r, f.expr, r->table.bool_type);
         } else if (f.step == advance) {
             types_expr::infer(r, f.expr);
+        } else if (f.step == tail_arm) {
+            types_expr::check(r, f.expr, state.result);
+        } else if (f.step == arm) {
+            match_patterns(r, f.stmt, f.index);
+            types_expr::match_arm(r, f.stmt, f.index);
+        } else if (f.step == cover) {
+            types_expr::match_coverage(r, f.stmt);
         } else {
             enter_statement(r, f.stmt);
         }

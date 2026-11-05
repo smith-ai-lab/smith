@@ -36,7 +36,7 @@ log.warn("request failed"; req...)                 # ; x... spreads a struct or 
 ```
 
 - A default must be a compile-time constant. Positional arguments come first, then named ones; a call needs no `;` unless it spreads: `f(1; opts..., retry = 3)`. A name given twice is an error, and with no named arguments `kw` is `()`. Each call site makes its own instance for the names and types it gathers, as a generic does; a call gives every parameter before the `;`'s leftovers (a default is not filled in a call of a function with `; kw...` yet).
-- `fn f(x: str, xs...; kw...)`: `xs` gets the leftover positional arguments ([smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md)), `kw` the named ones.
+- `fn f(x: str, xs...; kw...)`: `xs` gets the leftover positional arguments ([smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md)), `kw` the named ones. A C variadic is defined with a bare `...` last and a `:` body (`fn log_to(format: *char, ...):`), every other parameter a C type, `va_start` and `va_end` C calls; the fixer drops `[[gnu::format]]` with a warning (#2333).
 
 ## Lambdas and trailing lambdas
 

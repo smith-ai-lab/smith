@@ -68,7 +68,7 @@ export void test_front_fix_std_variants_of_an_enum_with_a_representation() {
     defer mem::set_allocator(outside);
     Str got = fixed_with_variants("module m;\ntypedef enum : U8 {\n    End_Passed,\n    End_Check,\n} End;\nEnd f(I32 "
                                   "j) {\n    return j == 2 ? End_Check : End_Passed;\n}\n");
-    Str want = "enum End : u8:\n    end_passed\n    end_check\nfn f(j: i32) -> End:\n    return if j == 2: .end_check "
+    Str want = "enum End(u8):\n    end_passed\n    end_check\nfn f(j: i32) -> End:\n    return if j == 2: .end_check "
                "else: .end_passed\n";
     test::check_equal(got, want);
 }
@@ -126,4 +126,31 @@ export void test_front_fix_std_noreturn_after_a_constant() {
     expect_fixed("module m;\nconstexpr Usize capacity = 128;\n\n// A function.\n[[noreturn]] void stop(void) {\n    "
                  "c::abort();\n}\n",
                  "const capacity: usize = 128\n\n# A function.\n[[noreturn]] fn stop():\n    c.abort()\n");
+}
+
+export void test_front_fix_std_a_c_variadic_definition_keeps_its_dots() {
+    expect_fixed("module m;\nvoid log_to(const char *format, ...) {\n    work(format);\n}\n",
+                 "fn log_to(format: *char, ...):\n    work(format)\n");
+}
+
+export void test_front_fix_std_an_unbraced_else_with_a_statement_over_two_lines() {
+    expect_fixed("module m;\nvoid f(I32 a) {\n    if (a)\n        g(1);\n    else\n        g(2,\n          3);\n}\n",
+                 "fn f(a: i32):\n    if a:\n        g(1)\n    else:\n        g(2,\n          3)\n");
+}
+
+export void test_front_fix_std_a_conditional_with_a_call_in_an_unbraced_if() {
+    expect_fixed("module m;\nI32 f(I32 a) {\n    if (a < 0) return g(a) == 1 ? 3 : 4;\n    return 0;\n}\n",
+                 "fn f(a: i32) -> i32:\n    if a < 0:\n        return if g(a) == 1: 3 else: 4\n    return 0\n");
+}
+
+// The first pass writes a `#` comment, so the text no longer lexes as today's syntax; the next passes then read it with
+// the braced reader, not the indented one, which skips the body of every function still written with braces (#2328).
+export void test_front_fix_std_an_old_if_after_a_function_pointer_signature_and_a_comment() {
+    expect_fixed(
+        "module m;\nI32 f(I32 a) {\n    if (a < 0) return *g() == 1 || *g() == 2 ? 3 : 4;\n    return 0;\n}\n"
+        "export I32 search(U32 (*verdict)(void *context), void *context) {\n    // Tables.\n    *s = (S){.a = 1,\n"
+        "              .b = 2};\n    if (s->n != 0) r.c = k(s);\n    return 1;\n}\n",
+        "fn f(a: i32) -> i32:\n    if a < 0:\n        return if g().* == 1 || g().* == 2: 3 else: 4\n"
+        "    return 0\npub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    # Tables.\n"
+        "    s.* = S(a = 1,\n              b = 2)\n    if s.n != 0:\n        r.c = k(s)\n    return 1\n");
 }

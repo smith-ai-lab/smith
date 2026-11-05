@@ -177,6 +177,10 @@ export void test_front_fix_blocks_a_one_line_block_inside_another_converts_in_a_
           "  return 0\n");
 }
 
+export void test_front_fix_blocks_an_enum_with_an_underlying_type() {
+    check("enum End : u8 {\n    a,\n    b,\n}\n", "enum End(u8):\n    a,\n    b,\n");
+}
+
 export void test_front_fix_blocks_a_match_arm_that_starts_with_a_dot_stays_on_its_own_line() {
     check("fn f(e: E) {\n    match e {\n        .a => g(1)\n        .b(v), .c => g(v)\n        _ => g(3)\n    }\n}\n",
           "fn f(e: E):\n    match e:\n        .a: g(1)\n        .b(v), .c: g(v)\n        _: g(3)\n");

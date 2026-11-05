@@ -92,13 +92,16 @@ case 2:
 match k {
 .a, .b => ()
 .c => x = 3
+_ => ()
 }
 match k {
 .a => {
  match m {
  .x => y = 1
+ _ => ()
  }
  }
 .b => z = 2
+_ => ()
 }
 }
