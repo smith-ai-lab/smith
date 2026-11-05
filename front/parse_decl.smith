@@ -1563,7 +1563,12 @@ static Bool single_dimension(Str text) {
 static Str zero_fill(const Prefixes *pre, Dims dims, Str type, Bool has_init, Str value) {
     if (countof(dims.text) == 0 || !single_dimension(dims.text)) return "";
     if (has_init ? !same_text(value, "{}") : !(pre->is_static || pre->top)) return "";
-    return zero_array(dims.text, type);
+    Str zeros = zero_array(dims.text, type);
+    // A static or file-level array of numbers longer than `zero_limit`, or with a named length, keeps `= {}` for
+    // fix_zero, which writes `array.filled(T, n, 0)` once the checker knows the length (#1901).
+    if (countof(zeros) == 0 && !has_init && !same_text(dims.text, "[_]") && countof(zero_element(type)) > 0)
+        return "{}";
+    return zeros;
 }
 
 // The number of elements the `{...}` list of an array declaration stands for, 0 when it has no spelling: a flat list

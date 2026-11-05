@@ -138,3 +138,17 @@ export void test_front_fix_a_function_type_after_a_colon_keeps_its_fn() {
     Str source = "fn repeat(n: i32, body: fn()):\n    body()\n";
     expect_fixed(source, source);
 }
+
+// #1901: a `static` or file-level array of numbers with a named length (or longer than 64) is `array.filled(T, n, 0)`.
+export void test_front_fix_zero_fills_a_static_array_of_a_named_length() {
+    expect_fixed(
+        "module m;\nconstexpr int size = 100;\nvoid f(void) {\n    static char buf[size];\n    buf[0] = 1;\n}\n",
+        "import std.array\nconst size: i32 = 100\nfn f():\n    static mut buf: [size]char = array.filled(char, 100, "
+        "0)\n"
+        "    buf[0] = 1\n");
+}
+
+export void test_front_fix_zero_fills_a_long_global_array() {
+    expect_fixed("module m;\nstatic int table[1000];\n",
+                 "import std.array\nstatic mut table: [1000]i32 = array.filled(i32, 1000, 0)\n");
+}
