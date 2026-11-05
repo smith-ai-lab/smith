@@ -1,0 +1,5 @@
+import std.array
+
+pub fn check() -> i32:
+    xs := array.filled(u8, 4, 1.5)
+    0

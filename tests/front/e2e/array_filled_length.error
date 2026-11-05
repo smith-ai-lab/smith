@@ -1,0 +1,1 @@
+<dir>/src/array_filled_length.smith:5:28: error: the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them

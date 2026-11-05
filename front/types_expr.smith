@@ -4727,7 +4727,10 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     if (builtins::callee_entry(c, callee, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
         for (Usize i = countof(args); i > 0; i--) {
-            if (!builtins::is_type_argument(builtin, i - 1)) push(w, argument_value(args[i - 1]), nullptr, 0);
+            if (builtins::is_type_argument(builtin, i - 1)) continue;
+            types::TypeRef expected = nullptr; // `array.filled(u8, 4, 0)`: the value takes the element type
+            if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
+            push(w, argument_value(args[i - 1]), expected, 0);
         }
         return;
     }

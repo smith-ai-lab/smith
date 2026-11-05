@@ -1,0 +1,39 @@
+import std.array
+
+const named: usize = 8
+const doubled: usize = 16
+
+struct Cell:
+    hits: i32
+    step: i32 = 3
+
+mut bytes: [named]u8 = array.filled(u8, named, 0)
+mut ones: [doubled]u8 = array.filled(u8, doubled, 1)
+mut big: [1024]u8 = array.filled(u8, 1024, 0)
+mut letters: [4]char = array.filled(char, 4, 'x')
+mut weights: [3]f64 = array.filled(f64, 3, 1.5)
+mut cells: [2]Cell = array.filled(Cell, 2, Cell(hits = 4))
+
+fn runtime_fill(v: i32) -> i32:
+    xs := array.filled(i32, 5, v)
+    xs[0] + xs[4]
+
+pub fn check() -> i32:
+    if bytes[0] != 0 || bytes[named - 1] != 0 || countof(bytes) != 8:
+        return 1
+    if ones[0] != 1 || ones[15] != 1 || countof(ones) != 16:
+        return 2
+    if big[1023] != 0 || countof(big) != 1024:
+        return 3
+    if letters[3] != 'x':
+        return 4
+    if weights[2] != 1.5:
+        return 5
+    if cells[1].hits != 4 || cells[1].step != 3:
+        return 6
+    local := array.filled(f64, 4, 2.5)
+    if local[3] != 2.5 || countof(local) != 4:
+        return 7
+    if runtime_fill(7) != 14:
+        return 8
+    0

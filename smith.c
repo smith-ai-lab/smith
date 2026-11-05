@@ -1174,6 +1174,9 @@ static constexpr unsigned char smith_net_source[] = {
 #embed "lib/std/net.smith"
 };
 
+static constexpr unsigned char smith_array_source[] = {
+#embed "lib/std/array.smith"
+};
 static constexpr unsigned char smith_ascii_source[] = {
 #embed "lib/std/ascii.smith"
 };
@@ -1259,6 +1262,7 @@ typedef struct {
 // clang-format off
 static const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
+    SMITH_LIBRARY(array, true),
     SMITH_LIBRARY(ascii, true),
     SMITH_LIBRARY(autodiff, true),
     SMITH_LIBRARY(categorical, true),
