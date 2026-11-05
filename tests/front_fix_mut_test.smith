@@ -137,3 +137,20 @@ export void test_front_fix_mut_a_c_loop_pointer_returned_becomes_mut() {
     test::check_equal(errors_in(got), (Usize)0);
     test::check_equal(twice, got);
 }
+
+// A fixed array handed where a bare pointer is wanted (C's decay, #2386): the fix writes the address of its first
+// element.
+export void test_front_fix_mut_an_array_passed_as_a_pointer_becomes_the_address_of_its_first_element() {
+    expect(
+        "fn g(p: *f64) -> f64:\n    return p.*\n\nfn f() -> f64:\n    xs: [3]f64 = [1.0, 2.0, 3.0]\n    return g(xs)\n",
+        "fn g(p: *f64) -> f64:\n    return p.*\n\nfn f() -> f64:\n    xs: [3]f64 = [1.0, 2.0, 3.0]\n    return "
+        "g(&xs[0])\n",
+        1);
+}
+
+// A local written in today's syntax is mended in one run (#2386): the checker's `mut` needs the declaration in smith's
+// own syntax, which the blocks pass writes last, so the fixer reads its own output once more.
+export void test_front_fix_mut_a_local_of_todays_syntax_gets_mut_in_one_run() {
+    expect("I32 f(I32 n) {\n    I32 total = 0;\n    total = total + n;\n    return total;\n}\n",
+           "fn f(n: i32) -> i32:\n    mut total: i32 = 0\n    total = total + n\n    return total\n", 5);
+}

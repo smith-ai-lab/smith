@@ -1011,7 +1011,10 @@ export void add_error(Checked *r, Error error) {
 // Records an error that carries a fix: the edits that mend it, applied together or not at all.
 export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix) {
     fail(r, span, message);
-    r->errors[r->error_count - 1].fix = fix;
+    // The spans of a generic's body from another module are that module's: its edits would land in this file (#2386).
+    if (countof(r->prefix) == 0) {
+        r->errors[r->error_count - 1].fix = fix;
+    }
 }
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
