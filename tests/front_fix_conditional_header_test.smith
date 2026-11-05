@@ -1,0 +1,43 @@
+// Tests of a `c ? a : b` that is the whole condition of an old `if` or `while` (#2383, part of #1631): the condition
+// becomes the `if` value, and the parentheses stay around it, since `if if c: a else: b:` has no end to its condition.
+// Before, the first pass took the parentheses off and left `if if h:` with an `else { y }` the parser did not read, so
+// `front/parse_decl.smith` did not parse.
+module front_fix_conditional_header_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_conditional_as_an_unbraced_if_condition() {
+    expect_fixed("module m;\nvoid f(Bool h, Bool x, Bool y) {\n    if (h ? x : y) return;\n}\n",
+                 "fn f(h: bool, x: bool, y: bool):\n    if (if h: x else: y):\n        return\n");
+}
+
+export void test_front_fix_conditional_as_a_braced_if_condition() {
+    expect_fixed("module m;\nvoid f(Bool h, Bool x, Bool y) {\n    if (h ? x : y) {\n        work();\n    }\n}\n",
+                 "fn f(h: bool, x: bool, y: bool):\n    if (if h: x else: y):\n        work()\n");
+}
+
+export void test_front_fix_conditional_as_a_while_condition() {
+    expect_fixed("module m;\nvoid f(Bool h, Bool x, Bool y) {\n    while (h ? x : y) {\n        work();\n    }\n}\n",
+                 "fn f(h: bool, x: bool, y: bool):\n    while (if h: x else: y):\n        work()\n");
+}
