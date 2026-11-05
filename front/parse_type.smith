@@ -871,11 +871,13 @@ static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
         if (!parse::accept(p, lex::comma)) break;
     }
     parse::expect(p, lex::right_bracket, "`]` to end the array size");
-    Bool is_mut = countof(dims) == 1 && dims[0] == nullptr && parse::accept(p, lex::kw_mut);
+    // `[]mut T` is a writable slice. The tree does not record a slice's writability (every slice is writable to the
+    // checker today), so the word is read and dropped.
+    if (countof(dims) == 1 && dims[0] == nullptr) parse::accept(p, lex::kw_mut);
     ast::TypeExpr *element = parse::type(p);
     ast::Qualifiers none = {};
     if (countof(dims) > 1) return node(start, p, none, {.block_type = {.element = element, .dims = dims}});
-    if (dims[0] == nullptr) return node(start, p, none, {.slice = {.element = element, .is_mut = is_mut}});
+    if (dims[0] == nullptr) return node(start, p, none, {.slice = {.element = element}});
     return node(start, p, none, {.array = {.element = element, .count = dims[0]}});
 }
 

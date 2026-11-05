@@ -135,8 +135,7 @@ export typedef enum {
     } array;
     struct {
         TypeExpr *element;
-        Bool is_mut; // `[]mut T`
-    } slice;         // `T[:]`; `T[:][2]` is a slice of arrays
+    } slice; // `T[:]`; `T[:][2]` is a slice of arrays
     struct {
         TypeRef params[:];
         TypeExpr *result;
@@ -1965,7 +1964,6 @@ static void type_head(Output *text, TypeExpr *t) {
         break;
     case .slice:
         put(text, "slice");
-        put_flag(text, t->kind.slice.is_mut, "mut");
         break;
     case .function:
         put(text, "function_type");

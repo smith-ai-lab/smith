@@ -46,3 +46,11 @@
 (module m
   (variable t (slice (pointer mut (named Point)))))
 
+[]mut i32
+(module m
+  (variable t (slice (named i32))))
+
+Option([]mut i32)
+(module m
+  (variable t (applied Option (type_arg (slice (named i32))))))
+
