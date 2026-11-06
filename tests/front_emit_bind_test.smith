@@ -260,3 +260,34 @@ export void test_front_emit_bind_a_name_in_scope_is_an_error() {
                 "    h\n",
                 "hides a variable");
 }
+
+// `.v(mut x)` binds a name that can change (#2503).
+export void test_front_emit_bind_a_mut_binding_can_change() {
+    char source[:] = format::push(shapes, "pub fn grown(n: i32) -> i32:\n"
+                                          "    .circle(mut circle) := make(n) else: return -1\n"
+                                          "    circle.radius += 5\n"
+                                          "    circle.radius\n");
+    runs(source, "grown", 0, 7, 2, -1);
+}
+
+export void test_front_emit_bind_a_binding_without_mut_cannot_change() {
+    char source[:] = format::push(shapes, "fn grown(n: i32) -> i32:\n"
+                                          "    .circle(circle) := make(n) else: return -1\n"
+                                          "    circle.radius += 5\n"
+                                          "    circle.radius\n");
+    is_rejected(source, "circle");
+}
+
+// A refutable binding on a `?T` in a generic function, `T` its parameter.
+export void test_front_emit_bind_an_option_of_a_type_parameter_binds_it() {
+    runs("fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "fn or_else[T](o: ?T, fallback: T) -> T:\n"
+         "    v := o else: return fallback\n"
+         "    v\n"
+         "pub fn halved(n: i32) -> i32:\n"
+         "    or_else(half(n), -1)\n",
+         "halved", 8, 4, 3, -1);
+}
