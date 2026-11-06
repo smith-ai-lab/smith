@@ -870,39 +870,6 @@ static void nest(Wanted *w, types::Checked *c) {
     }
 }
 
-// The zero of the field `f` written as its default; empty when smith has none to write: a pointer, a function, a type
-// with no zero spelling (#2530 points 3 and 4). A pointer that a read tests against null is an option instead
-// (`nullable`, #2557); any other stays an error: `front.emit_state.Work`, whose pointers are null for some kinds and
-// read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with the same pattern goes
-// there too rather than unwrapping each read.
-static Str default_of(Str source, types::Checked *c, const ast::FieldDecl *f, const Wanted *w, Bool *filled) {
-    types::TypeRef t = field_type(c, f);
-    if (t == nullptr) return "";
-    if (t->kind == .text) return "\"\"";
-    if (t->kind == .option) return ".none";
-    if (t->kind == .pointer) return "";
-    Str zero = "";
-    if (t->kind == .record && countof(t->owner) == 0 && record_index(w, t->name) < w->count) {
-        zero = types::message_of(format::push(t->name, "()"));
-    } else if (t->kind == .record) {
-        Bool defaulted = countof(t->slots) > 0;
-        for (Usize k = 0; k < countof(t->slots); k++)
-            if (t->slots[k].default_value == nullptr) defaulted = false;
-        zero = defaulted ? types::message_of(format::push(types::show(t), "()")) : construct(types::show(t), t);
-    } else if (t->kind == .array) {
-        Str written = source[f->type->span.start:f->type->span.end];
-        Usize close = 0;
-        for (Usize k = 0; k < countof(written); k++)
-            if (written[k] == ']') close = k;
-        if (close + 1 < countof(written)) zero = construct_array(written[close + 1:countof(written)], t);
-        if (countof(zero) > 0 && !mentions(zero, "nullptr")) *filled = true;
-    } else {
-        zero = scalar_zero(t);
-    }
-    if (mentions(zero, "nullptr")) return "";
-    return zero;
-}
-
 // Whether the written type is a pointer or a function, or a name the module declares as one (`TypeRef := *Ty`, C's
 // `typedef const Ty *TypeRef;`). From the declarations alone, so that the struct's file and its importers agree.
 static Bool pointer_like(const ast::Module *module, const ast::TypeExpr *t) {
@@ -942,6 +909,56 @@ static U64 nullable(const ast::Module *module, const Wanted *w, Usize r) {
     return out;
 }
 
+// Whether a field of the record is a pointer or a function that stays one: it has no zero, so a value of the record
+// cannot be built from defaults.
+static Bool has_plain_pointer(const ast::Module *module, types::Checked *c, const Wanted *w, Usize e) {
+    U64 nulls = nullable(module, w, e); // those are options, with a default of their own
+    ast::FieldDecl fields[:] = w->records[e].fields;
+    for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+        if (fields[k].type == nullptr || (nulls & ((U64)1 << k)) != 0) continue;
+        types::TypeRef t = field_type(c, &fields[k]);
+        if (t != nullptr && t->kind == .pointer) return true;
+    }
+    return false;
+}
+
+// The zero of the field `f` written as its default; empty when smith has none to write: a pointer, a function, a type
+// with no zero spelling (#2530 points 3 and 4). A pointer that a read tests against null is an option instead
+// (`nullable`, #2557); any other stays an error: `front.emit_state.Work`, whose pointers are null for some kinds and
+// read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with the same pattern goes
+// there too rather than unwrapping each read.
+static Str default_of(const ast::Module *module, Str source, types::Checked *c, const ast::FieldDecl *f,
+                      const Wanted *w, Bool *filled) {
+    types::TypeRef t = field_type(c, f);
+    if (t == nullptr) return "";
+    if (t->kind == .text) return "\"\"";
+    if (t->kind == .option) return ".none";
+    if (t->kind == .pointer) return "";
+    Str zero = "";
+    if (t->kind == .record && countof(t->owner) == 0 && record_index(w, t->name) < w->count) {
+        // `R()` needs a default for every field of R, and a pointer that no read tests against null has none: C fills
+        // it before use, so the member is `undefined` like a local (lead on #2613, as D2 option B)
+        zero = types::message_of(format::push(t->name, "()"));
+        if (has_plain_pointer(module, c, w, record_index(w, t->name))) zero = "undefined";
+    } else if (t->kind == .record) {
+        Bool defaulted = countof(t->slots) > 0;
+        for (Usize k = 0; k < countof(t->slots); k++)
+            if (t->slots[k].default_value == nullptr) defaulted = false;
+        zero = defaulted ? types::message_of(format::push(types::show(t), "()")) : construct(types::show(t), t);
+    } else if (t->kind == .array) {
+        Str written = source[f->type->span.start:f->type->span.end];
+        Usize close = 0;
+        for (Usize k = 0; k < countof(written); k++)
+            if (written[k] == ']') close = k;
+        if (close + 1 < countof(written)) zero = construct_array(written[close + 1:countof(written)], t);
+        if (countof(zero) > 0 && !mentions(zero, "nullptr")) *filled = true;
+    } else {
+        zero = scalar_zero(t);
+    }
+    if (mentions(zero, "nullptr")) return "";
+    return zero;
+}
+
 // The fix that writes the pointer field `f` as an option with no value: `next: ?*Node = .none`.
 static core::ParseError nullable_fix(const ast::FieldDecl *f) {
     core::Edits fix = {};
@@ -977,7 +994,7 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
                 out = add(out, nullable_fix(f));
                 continue;
             }
-            Str zero = default_of(source, c, f, &w, filled);
+            Str zero = default_of(module, source, c, f, &w, filled);
             if (countof(zero) == 0) continue;
             core::Edits fix = {};
             fix = mem::realloc(fix, 1);
