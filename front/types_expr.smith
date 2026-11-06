@@ -3607,6 +3607,35 @@ static Bool narrowed_payload(types::Checked *c, Frame f) {
     return true;
 }
 
+// `text.data`, `xs.data` and `xs.count`, the members a `str` and a slice have of their own. True when `e` was one.
+static Bool builtin_member(types::Checked *c, Frame f, types::TypeRef base, Str name) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .member) {
+        return false;
+    }
+    Bool arrow = e->kind.member.arrow;
+    if (base->kind == .text && !arrow && same_text(name, "data")) {
+        // `text.data` is the pointer to a `str`'s bytes, read-only (a C string's `.data`, #2611).
+        finish(c, e, types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true), f.expected);
+        return true;
+    }
+    if (base->kind == .slice && !arrow && same_text(name, "data")) {
+        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
+        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
+        return true;
+    }
+    if (base->kind == .slice && !arrow && same_text(name, "count")) {
+        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
+        // hand with it, as `.data`).
+        types::TypeRef word = types::builtin(&c->table, "Usize");
+        if (word != nullptr) {
+            finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void member_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) {
@@ -3639,24 +3668,8 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, element->type, f.expected);
         return;
     }
-    if (base->kind == .text && !e->kind.member.arrow && same_text(name, "data")) {
-        // `text.data` is the pointer to a `str`'s bytes, read-only (a C string's `.data`, #2611).
-        finish(c, e, types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true), f.expected);
+    if (builtin_member(c, f, base, name)) {
         return;
-    }
-    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "data")) {
-        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
-        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
-        return;
-    }
-    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "count")) {
-        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
-        // hand with it, as `.data`).
-        types::TypeRef word = types::builtin(&c->table, "Usize");
-        if (word != nullptr) {
-            finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
-            return;
-        }
     }
     types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
     if (record == nullptr) {
@@ -4580,7 +4593,8 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
             return 1;
         }
         if (report) {
-            types::failf(c, span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name, "`; write one of those");
+            types::failf(c, span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
+                         "`; write one of those");
         }
         return 2;
     }

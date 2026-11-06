@@ -129,7 +129,7 @@ static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, Str op, sta
         __int128 right = c::LLVMConstIntGetSExtValue(b.llvm);
         __int128 exact = op[0] == '+' ? left + right : op[0] == '-' ? left - right : left * right;
         U32 bits = c::LLVMGetIntTypeWidth(ty.llvm);
-        __int128 limit = (__int128)1 << (bits - 1);
+        __int128 limit = (__int128)1 << (bits - 1); // NOLINT(bugprone-signed-bitwise): a power of two
         if (exact >= -limit && exact < limit) return c::LLVMConstInt(ty.llvm, (U64)(I64)exact, 1);
     }
     U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
