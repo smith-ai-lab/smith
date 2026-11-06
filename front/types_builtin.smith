@@ -427,6 +427,13 @@ static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
 export syntax::Edits element_address_fix(const ast::Expr *e) {
     syntax::Edits edits = {};
     if (e->kind != .name && e->kind != .member && e->kind != .index) return edits;
+    // `rest...` reads as a member whose name is the dots: a pack, not an array to take the address of.
+    if (e->kind == .member) {
+        Str field = e->kind.member.name;
+        Bool word = countof(field) > 0 &&
+                    (field[0] == '_' || (field[0] >= 'a' && field[0] <= 'z') || (field[0] >= 'A' && field[0] <= 'Z'));
+        if (!word) return edits;
+    }
     Str open = "&";
     Str close = "[0]";
     edits = mem::realloc(edits, 2);

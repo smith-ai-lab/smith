@@ -2656,17 +2656,13 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
         if (c_receivable(t) || is_string_literal(args[i])) continue;
         Str hint = " cannot go through `...`: C receives an integer, float, bool, char, pointer or C enum";
         if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
-        if (t->kind == .array &&
-            args[i]->kind != .expand) { // C's array decays to the address of its first element: `&names[0]`
-            syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
-            fix[0] =
-                (syntax::Edit){.span = {.start = args[i]->span.start, .end = args[i]->span.start}, .text = msg("&")};
-            fix[1] = (syntax::Edit){.span = {.start = args[i]->span.end, .end = args[i]->span.end}, .text = msg("[0]")};
+        if (t->kind == .array) { // C's array decays to the address of its first element: `&names[0]`
+            // A place gets the fix; `rest...` and other values get the error alone (a fix there would not parse).
             types::fail_fix(
                 c, args[i]->span,
                 msg(format::push("`", types::show(t), "` cannot go through `...`: C receives the address of ",
                                  "its first element, so write `&x[0]`")),
-                fix);
+                builtins::element_address_fix(args[i]));
             continue;
         }
         types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
