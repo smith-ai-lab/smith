@@ -53,10 +53,10 @@ static Bool needs_parens(const types::Checked *c, const ast::Expr *e) {
             if (p->kind.binary.left == e || p->kind.binary.right == e) return true;
         } else if (p->kind == .unary && p->kind.unary.op != .logical_not) {
             if (p->kind.unary.operand == e) return true;
-        } else if (p->kind == .member && p->kind.member.base == e) {
-            return true;
-        } else if (p->kind == .index && p->kind.index.base == e) {
-            return true;
+        } else if (p->kind == .member) {
+            if (p->kind.member.base == e) return true;
+        } else if (p->kind == .index) {
+            if (p->kind.index.base == e) return true;
         }
     }
     return false;
