@@ -39,7 +39,7 @@ export void test_math_log_is_fdlibm_in_both_types() {
 
 export void test_math_tan_wrap_clamp_lerp() {
     test::check_equal(math::tan(0.0f), 0.0f);
-    test::check_equal(math::wrap(0.0f), 0.0f);
+    test::check_equal(math::wrap_angle(0.0f), 0.0f);
     test::check_equal(math::clamp(2.0f, 0.0f, 1.0f), 1.0f);
     test::check_equal(math::lerp(0.0, 10.0, 0.25), 2.5);
 }
