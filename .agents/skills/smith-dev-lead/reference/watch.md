@@ -227,19 +227,21 @@ check() {
   gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h3" -f per_page=100 --jq '.items[]|"\(.number) \([(.body // "")|scan("session_[A-Za-z0-9]{20,}")][0] // "")"' 2>/dev/null |
     while read -r n s; do [ -n "$s" ] && [ "$s" != "${LEAD_SESSION:-none}" ] && seen "merged-runner-$n" && echo "merged #$n: archive its runner $s unless it is working or asking"; done
   # flow (owner, 2026-11-04): produce no faster than the queue consumes. 2026-11-03 opened 27 PRs in an hour while 5
-  # merged and open PRs reached 64 with no alarm. WIP = open PRs + claimed tickets with no PR, against W on #73.
+  # merged and open PRs reached 64 with no alarm. Two limits on #73 (owner, 2026-11-06, "perfect, yeah let's do this"):
+  # runners=N caps the runners working (claimed tickets no open PR names) and waiting=M caps the open PRs. A PR waiting
+  # for CI or the queue no longer takes a runner's slot: it held one for 34 of each PR's 83 minutes.
   h=$(date -u -d '-60 min' +%FT%TZ)
   opened=$(gh api -X GET search/issues -f q="repo:$R is:pull-request created:>=$h" --jq .total_count 2>/dev/null)
   merged=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
   [ "${opened:-0}" -gt $(( ${merged:-0} + 2 )) ] 2>/dev/null && seen "flow-$(date -u +%F-%H)" &&
     echo "flow: $opened PRs opened and $merged merged in the last hour: production outruns the queue; start no runner, find why merges are slow"
-  w=$(echo "$top" | sed -n 's/.*WIP=\([0-9]*\).*/\1/p')
+  w=$(echo "$top" | sed -n 's/.*runners=\([0-9]*\).*/\1/p'); m=$(echo "$top" | sed -n 's/.*waiting=\([0-9]*\).*/\1/p')
   openprs=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
   named=$(gh api "repos/$R/pulls?state=open&per_page=100" --jq '.[]|"\(.body // "") \(.head.ref)"' 2>/dev/null | grep -oE '#[0-9]+|/[0-9]+-' | tr -d '#/-' | sort -u | tr '\n' ' ')
   held=$(issues claimed '.[]|select(.pull_request==null)|.number' | while read -r i; do case " $named " in *" $i "*) ;; *) echo "$i";; esac; done | wc -l)
-  wip=$(( ${openprs:-0} + ${held:-0} ))
-  [ -n "$w" ] && [ "$wip" -gt "$w" ] && seen "wip-$(date -u +%F-%H)" && echo "WIP is $wip ($openprs open PRs + $held claimed with no open PR), over the limit $w: start no runner; find what holds the PRs"
-  [ -n "$w" ] && [[ $top == *"pool: running"* ]] && [ "$wip" -lt "$w" ] && seen "room-$(date -u +%F-%H)" && echo "WIP is $wip, under the limit $w: start runners for the top tickets until it reaches $w"
+  [ -n "$m" ] && [ "${openprs:-0}" -gt "$m" ] && seen "wip-$(date -u +%F-%H)" && echo "$openprs open PRs, over the limit waiting=$m: start no runner; find what holds the PRs"
+  [ -n "$w" ] && [ -n "$m" ] && [[ $top == *"pool: running"* ]] && [ "${held:-0}" -lt "$w" ] && [ "${openprs:-0}" -lt "$m" ] && seen "room-$(date -u +%F-%H)" &&
+    echo "$held runners working (limit $w), $openprs open PRs (limit $m): start runners for the top tickets until either limit is reached"
   # a ticket with no real body (a split that left `x`, 2026-11-02): runners skip it and the pool idles
   issues task '.[]|select(.pull_request==null and ((.body // "")|length) < 150)|.number' | while read -r i; do
     seen "thin$i" && echo "#$i is a task with an empty or near-empty body: write its body (files, design, Done when)"
