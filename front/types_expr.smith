@@ -530,6 +530,13 @@ static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *
     }
     if (root == operand || root->kind != .name) return none;
     types::TypeRef held = types::type_of(c, root);
+    if (held != nullptr && held->kind == .pointer && root->kind == .name) { // `&l.frames[i]` of a `*Loops`: `*mut`
+        const types::Symbol *x = types::lookup_path(&c->scopes, root->kind.name.path);
+        const ast::TypeExpr *written = x != nullptr ? x->written : nullptr;
+        if (written == nullptr || written->kind != .pointer || written->kind.pointer.is_mut) return none;
+        if (written->kind.pointer.pointee->span.start <= written->span.start) return none; // the old spelling `T *`
+        return mut_after(written->span.start + 1);
+    }
     return held != nullptr && (held->kind == .record || held->kind == .array) ? address_fix(c, root) : none;
 }
 

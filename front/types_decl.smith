@@ -150,6 +150,24 @@ static Str msg(char chars[:]) {
 // ---------------------------------------------------------------------------------------------------------------
 // The conversion hook (J1c into J1b)
 
+// `1U << 22`, `64 * 1024` and `4096 + 8` are constants too: two integer literals joined by `<<`, `*`, `+` or `|`
+// whose value fits 64 bits, so `test.memory(1U << 22)` passes a `usize` (the count's `expected Usize, found U32`).
+static types_convert::Literal folded_literal(const ast::Expr *e) {
+    if (e->kind != .binary) return types_convert::no_literal();
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    if (left->kind != .integer || right->kind != .integer) return types_convert::no_literal();
+    U64 a = left->kind.integer.value;
+    U64 b = right->kind.integer.value;
+    ast::BinaryOp op = e->kind.binary.op;
+    if (op == .shift_left && b < 63 && a < ((U64)1 << (63 - b))) return types_convert::constant_unsigned(a << b);
+    if (op == .multiply && a < (U64)0x80000000 && b < (U64)0x80000000) return types_convert::constant_unsigned(a * b);
+    if (op == .add && a < (U64)0x7fffffffffffffff && b < (U64)0x7fffffffffffffff)
+        return types_convert::constant_unsigned(a + b);
+    if (op == .bit_or) return types_convert::constant_unsigned(a | b);
+    return types_convert::no_literal();
+}
+
 // The constant that `e` is, when it is an integer or floating literal (possibly negated).
 static types_convert::Literal literal_of(const ast::Expr *e) {
     if (e->kind == .integer) {
@@ -168,6 +186,7 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     if (e->kind == .floating) {
         return types_convert::constant_float(e->kind.floating.value);
     }
+    if (e->kind == .binary) return folded_literal(e);
     return types_convert::no_literal();
 }
 

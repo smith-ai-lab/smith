@@ -1726,7 +1726,8 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
 // = []u8` is skipped by the same test; there is no value to emit.
 static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
-    if (d->kind.variable.init == nullptr || d->kind.variable.init->kind != .tuple_lit) return false;
+    if (d->kind.variable.init == nullptr) return false;
+    if (d->kind.variable.init->kind != .tuple_lit && d->kind.variable.init->kind != .name) return false;
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
     return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }
