@@ -3414,10 +3414,11 @@ static int build_frontend_coverage(SmithRun *run) {
                  ? status
                  : build_exec(smith_list(b, "/bin/cp", "scripts/frontend_coverage/main.smith", folder, nullptr));
     status = status != 0 ? status
-                         : build_spawn(&(BuildSpawn){.argv = smith_list(b, smith, "build", "release", nullptr),
-                                                     .folder = folder,
-                                                     .log = smith_fmt(b, "%s.log", folder),
-                                                     .tail = 20});
+                         : build_spawn(&(BuildSpawn){
+                               .argv = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "release", nullptr),
+                               .folder = folder,
+                               .log = smith_fmt(b, "%s.log", folder),
+                               .tail = 20});
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
