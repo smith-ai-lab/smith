@@ -3635,7 +3635,15 @@ static types::TypeRef lambda_result(types::Checked *c, const ast::Expr *e, types
         return nullptr;
     }
     if (e->kind.lambda.result != nullptr) {
-        return resolve_written(c, e->kind.lambda.result);
+        // a lambda written `fn(a: i32) -> bool` is smith's own syntax even inside a body that is still today's
+        Bool was = c->new_body;
+        ast::Param params[:] = e->kind.lambda.params;
+        for (Usize i = 0; i < countof(params); i += 1) {
+            c->new_body = c->new_body || params[i].is_new;
+        }
+        types::TypeRef found = resolve_written(c, e->kind.lambda.result);
+        c->new_body = was;
+        return found;
     }
     if (signature != nullptr) {
         return signature->element;

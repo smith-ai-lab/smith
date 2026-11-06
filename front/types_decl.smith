@@ -450,6 +450,10 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
     Bool is_constexpr = d->kind.variable.is_constexpr;
     Bool is_new = d->kind.variable.is_new;
     Bool is_mut = d->kind.variable.is_mut;
+    // the initializer is already smith's own syntax: a lambda in `let _ = f(fn(a: i32) -> bool: ...)` writes `bool`
+    if (is_new) {
+        r->new_body = true;
+    }
     types::TypeRef type = r->table.automatic;
     if (!(written->kind == .auto_type)) {
         r->new_syntax = is_new; // a local's `*T` is read-only in smith's own syntax (#1899), as a parameter's is
