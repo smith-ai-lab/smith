@@ -275,6 +275,15 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind == .pointer) {
         // `*Word` with `let Word = c.uint32_t`: the checker's alias, emitted as the type it names
         const ast::TypeExpr *pointee = t->kind.pointer.pointee;
+        state::TyResult scoped = {};
+        if (pointee->kind == .named && countof(pointee->kind.named.path.segments) == 1 &&
+            e->options.checked != nullptr && countof(e->import_scope) > 0 &&
+            type_in_import_scope(e, pointee->kind.named.path, &scoped)) {
+            // `*Tap` in a record of an imported module: that module's record, declared when first needed
+            if (scoped == .error) return scoped;
+            state::Ty made = emit_memory::pointer_over(e, scoped.ok);
+            return made;
+        }
         if (pointee->kind == .named && countof(pointee->kind.named.path.segments) == 1 &&
             e->options.checked != nullptr) {
             const types::Symbol *alias =
