@@ -896,8 +896,10 @@ export struct Guard {
     const ast::Expr *base; // `k`
     Str variant;           // `v`, which is also the name the fix binds
     ast::Span reads;       // the reads inside this span are the test's
+    ast::Span skip;        // except those in this one: the `else` of `k != .v: return`, which runs without `v`
     syntax::Edits head;    // the edits that write the test itself
     Bool head_sent;        // the first read carries them
+    Bool spoiled;          // a write through `k.v`, a change of `k` or a local named `v` leaves the site (#2503)
 };
 
 export struct Checked;
@@ -2832,6 +2834,14 @@ static TypeRef literal_type(Checked *r, const ast::Expr *init) {
         return builtin(&r->table, "F64");
     }
     if (negated) return nullptr;
+    if (init->kind == .call && init->kind.call.callee->kind == .name) {
+        // `const f = Format(24, -149)`: a record built by its name has that record's type, and the global's uses
+        // are checked before its initializer is
+        ast::Path path = init->kind.call.callee->kind.name.path;
+        const Symbol *named = lookup_path(&r->scopes, path);
+        if (named != nullptr && named->kind == .type_name && named->type->kind == .record) return named->type;
+        return nullptr;
+    }
     if (init->kind == .boolean) return r->table.bool_type;
     if (init->kind == .string) return r->table.text;
     return nullptr;

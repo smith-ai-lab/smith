@@ -1104,6 +1104,12 @@ static types::TypeRef carried_type(Frame f) {
     if (expected->kind == .option) {
         return same_text(name, "some") ? expected->element : nullptr;
     }
+    if (expected->kind == .result_type) {
+        if (same_text(name, "ok")) {
+            return expected->element;
+        }
+        return same_text(name, "error") ? expected->error : nullptr;
+    }
     if (expected->kind == .enumeration && expected->has_payload) {
         const types::Slot *slot = types::member(expected, name);
         if (slot != nullptr && carries_value(slot->type)) {
@@ -1151,14 +1157,30 @@ static void try_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (operand->kind != .option) {
-        types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
-                     "`; write `try` before an option, or use `if x := value:` for any other value");
+    if (operand->kind != .option && operand->kind != .result_type) {
+        types::failf(c, e->span, "`try` needs a `?T` or a `Result`, found `", types::show(operand),
+                     "`; write `try` before an option or a result, or use `if x := value:` for any other value");
         poison(c, e);
         return;
     }
     types::TypeRef want = nullptr;
     if (hooks.function_result != nullptr) want = hooks.function_result();
+    if (operand->kind == .result_type) {
+        if (want == nullptr || want->kind != .result_type) {
+            types::failf(c, e->span, "`try` on a `Result` returns its `.error` from the function, so the function ",
+                         "must return a `Result` too; change its result type or handle `.error` here");
+            poison(c, e);
+            return;
+        }
+        if (want->error != operand->error) {
+            types::failf(c, e->span, "`try` returns `", types::show(operand->error), "` but the function's error is `",
+                         types::show(want->error), "`; make them the same type, or handle `.error` here");
+            poison(c, e);
+            return;
+        }
+        finish(c, e, operand->element, f.expected);
+        return;
+    }
     if (want == nullptr || want->kind != .option) {
         types::failf(c, e->span, "`try` on a `?T` returns `.none` from the function, so the function must return a ",
                      "`?U`; change its result type or handle `.none` here");
@@ -1186,6 +1208,11 @@ static void variant_expr(types::Checked *c, Frame f) {
     if (expected->kind == .option &&
         (same_text(name, "none") || (same_text(name, "some") && e->kind.variant.payload == nullptr))) {
         types::set_type(c, e, expected);
+        return;
+    }
+    if (expected->kind == .result_type && (same_text(name, "ok") || same_text(name, "error"))) {
+        types::failf(c, e->span, "`.", name, "` carries a value; write `.", name, "(value)`");
+        poison(c, e);
         return;
     }
     const types::Slot *slot = nullptr;
@@ -1312,8 +1339,14 @@ static types::TypeRef unary_step(types::Checked *c, const ast::Expr *e, const as
     return invalid(c);
 }
 
+static void spoil_written(types::Checked *c, const ast::Expr *place);
+
 static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::UnaryOp op, const ast::Expr *operand,
                                  types::TypeRef t) {
+    if (op == .address_of || op == .pre_increment || op == .pre_decrement || op == .post_increment ||
+        op == .post_decrement) {
+        spoil_written(c, operand);
+    }
     if (op == .address_of) {
         return unary_address(c, e, operand, t);
     }
@@ -2022,6 +2055,7 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     const ast::Expr *value = e->kind.assign.value;
     types::TypeRef tt = typ(c, target);
+    spoil_written(c, target);
     if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
         typ(c, target->kind.index.base)->element->kind == .bool_type) {
         types::failf(c, target->span, "a lane of `", types::show(typ(c, target->kind.index.base)),
@@ -3148,31 +3182,86 @@ static Bool same_place(const ast::Expr *a, const ast::Expr *b) {
     return false;
 }
 
-// `k.v` where a test `k == .v` or `k != .v: return` guards the read (#2494): the read is the binding `v`, and the first
-// one of a test also writes the test as `.v(v) := k`. No edits when no test guards it.
-static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
-    syntax::Edits none = {};
+// The test that guards the read `k.v`, or null: one `k == .v` or `k != .v: return` whose reads hold it (#2494).
+static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
     if (!(e->kind == .member)) {
-        return none;
+        return nullptr;
     }
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
-        if (!inside || !same_text(g->variant, e->kind.member.name) || !same_place(g->base, e->kind.member.base)) {
-            continue;
+        Bool skipped = e->span.start >= g->skip.start && e->span.end <= g->skip.end && g->skip.end > g->skip.start;
+        if (inside && !skipped && same_text(g->variant, e->kind.member.name) &&
+            same_place(g->base, e->kind.member.base)) {
+            return g;
         }
-        syntax::Edits fix = {};
-        fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
-        fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
-        if (!g->head_sent) {
-            for (Usize k = 0; k < countof(g->head); k++) {
-                fix[1 + k] = g->head[k];
+    }
+    return nullptr;
+}
+
+// `k.v` where a test guards the read: the read is the binding `v`, and the first one of a test also writes the test as
+// `.v(v) := k`. No edits when no test guards it, or the site is spoiled.
+static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
+    syntax::Edits none = {};
+    types::Guard *g = guard_of(c, e);
+    if (g == nullptr || g->spoiled) {
+        return none;
+    }
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
+    fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
+    if (!g->head_sent) {
+        for (Usize k = 0; k < countof(g->head); k++) {
+            fix[1 + k] = g->head[k];
+        }
+    }
+    g->head_sent = true;
+    return fix;
+}
+
+// Whether `place` is `base` or a part of the chain that leads to it (`e` and `e.kind` for `e.kind`).
+static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
+    Bool found = same_place(place, base);
+    while (!found && base->kind == .member) {
+        base = base->kind.member.base;
+        found = same_place(place, base);
+    }
+    return found;
+}
+
+// A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
+// so the test's site is left as it is (#2503).
+static void spoil_written(types::Checked *c, const ast::Expr *place) {
+    for (Usize i = 0; i < c->guard_count; i++) {
+        types::Guard *g = &c->guards[i];
+        Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
+        if (inside && leads_to(place, g->base)) g->spoiled = true;
+    }
+    while (place->kind == .member || place->kind == .index) {
+        types::Guard *g = guard_of(c, place);
+        if (g != nullptr) g->spoiled = true;
+        if (place->kind == .member) {
+            place = place->kind.member.base;
+        } else if (place->kind == .index) {
+            place = place->kind.index.base;
+        }
+    }
+}
+
+// The fixes of the reads of a spoiled test, from the error `from` on, are taken back: the site stays as it is.
+export void drop_spoiled(types::Checked *c, Usize from) {
+    for (Usize i = 0; i < c->guard_count; i++) {
+        types::Guard *g = &c->guards[i];
+        if (!g->spoiled || !g->head_sent) continue;
+        for (Usize k = from; k < c->error_count; k++) {
+            types::Error *e = &c->errors[k];
+            Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+            if (inside && countof(e->fix) > 0 && same_text(e->fix[0].text, g->variant)) {
+                syntax::Edits none = {};
+                e->fix = none;
             }
         }
-        g->head_sent = true;
-        return fix;
     }
-    return none;
 }
 
 // The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
@@ -3190,7 +3279,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     }
     Str found = types::show(base);
     if (base->kind == .enumeration && base->has_payload) {
-        Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `.",
+        Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
                                      "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
         syntax::Edits fix = guarded_read(c, e);
@@ -4086,6 +4175,18 @@ static void bind_stage(types::Checked *c, Frame f) {
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
     if (t == invalid(c)) {
+        bind_name(c, binding, element);
+        return;
+    }
+    if (t->kind == .result_type) {
+        if (same_text(name, "ok")) {
+            element = t->element;
+        } else if (same_text(name, "error")) {
+            element = t->error;
+        } else {
+            types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
+                         "`; write one of those");
+        }
         bind_name(c, binding, element);
         return;
     }
@@ -5458,6 +5559,9 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
     for (Usize i = countof(args); i > 0; i--) {
         if (builtins::is_type_argument(builtin, i - 1)) continue;
         types::TypeRef expected = nullptr;
+        // the shape `[a, b]` of `array.filled` is read by the builtin, not typed as an array (#2496)
+        const ast::Expr *shape = args[i - 1];
+        if (builtin.shape == .filled && i == 2 && shape->kind == .array_lit) continue;
         if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);

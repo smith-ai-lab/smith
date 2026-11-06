@@ -802,18 +802,21 @@ static Bool require_body(parse::Parser *p, Usize before) {
     return require_brace(p, before);
 }
 
-// `.name` or `.name(binding)`; the errors are recorded and the pattern is then empty.
+// `.name`, `.name(binding)` or `.name(mut binding)`; the errors are recorded and the pattern is then empty.
 static ast::Pattern read_pattern(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     Usize before = countof(p->errors);
     parse::expect(p, lex::dot, "`.` before a variant name");
     Str name = parse::text(p, parse::expect(p, lex::name, "a variant name"));
     Str binding = "";
+    Bool is_mut = false;
     if (countof(p->errors) == before && parse::accept(p, lex::left_paren)) {
+        is_mut = parse::accept(p, lex::kw_mut);
         binding = parse::text(p, parse::expect(p, lex::name, "a name for the payload"));
         parse::expect(p, lex::right_paren, "`)`");
     }
     ast::Pattern result = ast::pattern(name, binding);
+    result.is_mut = is_mut;
     result.span = parse::span_from(p, start);
     return result;
 }
@@ -868,8 +871,10 @@ static Bool binding_head(const parse::Parser *p) {
     if (parse::peek(p).kind == lex::name && parse::peek_at(p, 1).kind == lex::colon_equal) return true;
     if (parse::peek(p).kind != lex::dot || parse::peek_at(p, 1).kind != lex::name) return false;
     if (parse::peek_at(p, 2).kind == lex::colon_equal) return true;
-    return parse::peek_at(p, 2).kind == lex::left_paren && parse::peek_at(p, 3).kind == lex::name &&
-           parse::peek_at(p, 4).kind == lex::right_paren && parse::peek_at(p, 5).kind == lex::colon_equal;
+    if (parse::peek_at(p, 2).kind != lex::left_paren) return false;
+    Usize at = parse::peek_at(p, 3).kind == lex::kw_mut ? 4 : 3; // `.v(mut x)` (#2503)
+    return parse::peek_at(p, at).kind == lex::name && parse::peek_at(p, at + 1).kind == lex::right_paren &&
+           parse::peek_at(p, at + 2).kind == lex::colon_equal;
 }
 
 // Whether the head is the old `let x = opt` or `let .some(x) = opt`.
@@ -1706,25 +1711,42 @@ static Bool alone_on_line(Str source, ast::Span span) {
     return from > 0 && source[from - 1] == '\n' && (to >= countof(source) || source[to] == '\n');
 }
 
-// The `break`s from the token `from` on that end this case: not those of a switch nested in its body, which end that
-// switch.
-static Usize breaks_in(const parse::Parser *p, const Frame *frame, Usize from) {
+// The `break`s from the token `from` on that end this case: not those inside a switch or a loop of its body, at any
+// depth, which end that switch or loop. Read from the tokens: a brace opened after a loop's or a switch's header holds
+// its own `break`s, and so does an unbraced loop body up to its `;`.
+static Usize breaks_in(const parse::Parser *p, Usize from) {
     Usize count = 0;
+    U32 owned[64] = {}; // for each open brace, whether a loop or a switch opened it
+    Usize depth = 0;
+    Usize parens = 0;
+    Bool header = false; // a loop's or a switch's keyword was met and its body has not started
     for (Usize i = from; i < p->position && i < countof(p->tokens); i++) {
-        if (p->tokens[i].kind != lex::kw_break) continue;
-        Bool nested = false;
-        for (Usize j = 0; j < frame->body_count; j++) {
-            ast::Stmt *inner = frame->body[j];
-            if (inner->kind == .switch_stmt && p->tokens[i].span.start >= inner->span.start &&
-                p->tokens[i].span.end <= inner->span.end)
-                nested = true;
+        lex::TokenKind kind = p->tokens[i].kind;
+        Bool loop = kind == lex::kw_for || kind == lex::kw_while || kind == lex::kw_do || kind == lex::kw_switch;
+        if (loop) header = true;
+        if (kind == lex::left_paren) parens += 1;
+        if (kind == lex::right_paren && parens > 0) parens -= 1;
+        if (kind == lex::left_brace && depth < countof(owned)) {
+            owned[depth] = header ? 1 : 0;
+            depth += 1;
+            header = false;
+        }
+        if (kind == lex::right_brace && depth > 0) depth -= 1;
+        if (kind != lex::kw_break) {
+            if (kind == lex::semicolon && parens == 0) header = false;
+            continue;
+        }
+        Bool nested = header && parens == 0;
+        for (Usize d = 0; d < depth; d++) {
+            if (owned[d] == 1) nested = true;
         }
         if (!nested) count += 1;
     }
     return count;
 }
 
-static void case_fix(const parse::Parser *p, Frame *frame) {
+// The last case of a switch (`closing`) need not end in a `break`: it runs to the end of the switch, as an arm does.
+static void case_fix(const parse::Parser *p, Frame *frame, Bool closing) {
     if (frame->switch_bad) return;
     if (frame->body_count == 0 || (frame->value_count == 0 && !frame->case_default)) {
         frame->switch_bad = true;
@@ -1733,8 +1755,8 @@ static void case_fix(const parse::Parser *p, Frame *frame) {
     ast::Stmt *first = frame->body[0];
     ast::Stmt *last = frame->body[frame->body_count - 1];
     Bool ends_break = last->kind == .break_stmt;
-    Bool jump = last->kind == .return_stmt || last->kind == .continue_stmt;
-    if ((!ends_break && !jump) || breaks_in(p, frame, frame->case_from) != (ends_break ? 1 : 0)) {
+    Bool jump = last->kind == .return_stmt || last->kind == .continue_stmt || (closing && !ends_break);
+    if ((!ends_break && !jump) || breaks_in(p, frame->case_from) != (ends_break ? 1 : 0)) {
         frame->switch_bad = true;
         return;
     }
@@ -1793,9 +1815,9 @@ static void case_fix(const parse::Parser *p, Frame *frame) {
 }
 
 // The open case of a switch frame goes to its list of cases.
-static void flush_case(const parse::Parser *p, Frame *frame) {
+static void flush_case(const parse::Parser *p, Frame *frame, Bool closing) {
     if (!frame->case_open) return;
-    case_fix(p, frame);
+    case_fix(p, frame, closing);
     ast::SwitchCase one = {.values = frame->values[0:frame->value_count],
                            .is_default = frame->case_default,
                            .body = frame->body[0:frame->body_count],
@@ -1824,12 +1846,37 @@ static void append(Frame *frame, ast::Stmt *done) {
     frame->item_count += 1;
 }
 
+// Whether the cases are `.ok` and `.error`, a switch on a result that names both (#2503): it needs no `_` arm.
+static Bool result_cases(const Frame *frame) {
+    Bool ok = false;
+    Bool error = false;
+    for (Usize i = 0; i < countof(frame->cases); i++) {
+        ast::ExprRef values[:] = frame->cases[i].values;
+        for (Usize k = 0; k < countof(values); k++) {
+            const ast::Expr *value = values[k];
+            if (!(value->kind == .variant)) return false;
+            Str name = value->kind.variant.name;
+            Str ok_name = "ok";
+            Str error_name = "error";
+            if (mem::equal(name, ok_name)) {
+                ok = true;
+            } else if (mem::equal(name, error_name)) {
+                error = true;
+            } else {
+                return false;
+            }
+        }
+    }
+    return ok && error;
+}
+
 // A C `switch` with no `default` does nothing for the other values, while a `match` must cover them: the fix adds a
 // last arm `_ => ()` on its own line before the `}`, indented like the arms.
 static void default_arm(const parse::Parser *p, Frame *frame) {
     for (Usize i = 0; i < countof(frame->cases); i++) {
         if (frame->cases[i].is_default) return;
     }
+    if (result_cases(frame)) return;
     if (frame->layout || p->position == 0 || frame->switch_edit_count == 0) return;
     Usize brace = p->tokens[p->position - 1].span.start;
     Usize line = brace;
@@ -1864,7 +1911,7 @@ static void return_tail(Frame *frame) {
 
 // `}` of a block or a switch: the construct is complete.
 static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
-    flush_case(p, &frame);
+    flush_case(p, &frame, true);
     if (frame.kind == bind_rest) { // the block it is in ends at the same token: the frame under it takes that
         return_tail(&frame);
         ast::Stmt *rest = new_stmt({.block = {.items = frame.items[0:frame.item_count]}});
@@ -2046,7 +2093,7 @@ static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
 static void take_label(parse::Parser *p, Stack *stack) {
     Frame *frame = top(stack);
     lex::Token token = parse::advance(p);
-    if (frame->case_open && frame->body_count > 0) flush_case(p, frame);
+    if (frame->case_open && frame->body_count > 0) flush_case(p, frame, false);
     if (!frame->case_open) {
         frame->case_open = true;
         frame->case_start = token.span.start;

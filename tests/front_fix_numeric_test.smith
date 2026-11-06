@@ -9,9 +9,11 @@ import front::fix;
 import front::parser;
 import front::roots;
 import std::arena;
+import std::files;
 import std::format;
 import std::mem;
 import std::process;
+import std::slice;
 import std::test;
 import <stdio.h>;
 import <sys/stat.h>;
@@ -83,6 +85,15 @@ static void write_text(Str path, Str text) {
     c::fclose(file);
 }
 
+static Str read_text(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    test::check_equal(loaded == .ok, true);
+    if (loaded == .error) return "";
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str text = chars;
+    return text;
+}
+
 static void remove_all(Str folder) {
     const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
@@ -105,5 +116,38 @@ export void test_front_fix_numeric_emit_literal_types_and_a_global_shift() {
     compile::Report report =
         compile::file(as_str(format::push(folder, "/src/a.smith")), as_str(format::push(folder, "/a.o")), "", where);
     test::check_equal(report.ok, true);
+    remove_all(folder);
+}
+
+// One run of the fixer settles a file: a variant of another module written `kinds::minus` inside a `for` that becomes
+// a `while` is `.minus` at the end of the one run, so a second run changes nothing (#2449).
+export void test_front_fix_numeric_one_run_settles_a_qualified_variant() {
+    Str folder = as_str(format::push("/tmp/front_fix_settle_", (I64)c::getpid()));
+    c::mkdir(folder.data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/kinds.smith")),
+               "module kinds;\nexport typedef enum {\n    Plus,\n    Minus,\n} Kind;\nexport typedef struct {\n    "
+               "Kind kind;\n} "
+               "Tok;\n");
+    write_text(
+        as_str(format::push(folder, "/src/use.smith")),
+        "module use;\nimport kinds;\nstatic int at(kinds::Tok *t, kinds::Kind k) {\n    return t->kind == k;\n}\n"
+        "static int f(kinds::Tok *t) {\n    int total = 0;\n    for (int i = 0; i < 9 && at(t, kinds::Minus); i += 1) "
+        "{\n"
+        "        total += i;\n    }\n    return total;\n}\n");
+    char before[4096];
+    (void)c::getcwd(before, sizeof before);
+    test::check_equal(c::chdir(folder.data), 0);
+    const char *const paths[2] = {"src/kinds.smith", "src/use.smith"};
+    test::check_equal(fix::fix_run(paths, 2), 0);
+    Str once = read_text("src/use.smith");
+    test::check_equal(fix::fix_run(paths, 2), 0);
+    Str twice = read_text("src/use.smith");
+    (void)c::chdir(before);
+    Str left = "at(t, kinds.minus)";
+    Str want = "at(t, .minus)";
+    test::check_equal(slice::find_slice(once, left) == .some, false);
+    test::check_equal(slice::find_slice(once, want) == .some, true);
+    test::check_equal(once, twice);
     remove_all(folder);
 }

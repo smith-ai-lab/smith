@@ -257,13 +257,47 @@ export struct Cells {
     c::LLVMValueRef item;
 };
 
+// The array types `array.filled` fills, outermost first: `[5, 64]char` is `[5][64]char`, two entries, the last one
+// whose element is the type of the value (`char`). The nested form `array.filled([64]char, 5, ...)` has one.
+export Usize filled_chain(state::Emitter *e, const ast::Expr *x, state::Ty array, state::Ty *chain) {
+    state::TyResult typed = state::type_of_node(e, filled_value(x));
+    Usize n = 0;
+    state::Ty at = array;
+    while (n < 16) {
+        chain[n] = at;
+        n += 1;
+        if (typed == .error || at.element->kind != .array || state::same_type(*at.element, typed.ok)) break;
+        at = *at.element;
+    }
+    return n;
+}
+
+// The constant array of the chain with `item` in every cell of the last dimension.
+export c::LLVMValueRef filled_nest(const state::Ty *chain, Usize n, c::LLVMValueRef item) {
+    c::LLVMValueRef made = item;
+    for (Usize d = n; d > 0; d--) {
+        Cells cells[:] = mem::alloc_slice(Cells, chain[d - 1].count);
+        for (Usize i = 0; i < chain[d - 1].count; i++)
+            cells[i].item = made;
+        made = c::LLVMConstArray2(chain[d - 1].element->llvm, (c::LLVMValueRef *)cells.data, chain[d - 1].count);
+        mem::free(cells.data);
+    }
+    return made;
+}
+
 // The array: a constant when the value is one (all zero is the null constant, any other a repeat), else a loop that
-// stores the value into every element of a slot, read back as the array.
+// stores the value into every cell of a slot, read back as the array.
 static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
     state::Ty array = w->ty;
+    state::Ty chain[16];
+    Usize n = filled_chain(e, w->expr, array, chain);
+    state::Ty leaf = *chain[n - 1].element;
+    Usize total = 1;
+    for (Usize d = 0; d < n; d++)
+        total *= chain[d].count;
     state::Value item = state::pop_value(e);
-    if (!state::same_type(item.ty, *array.element)) {
-        try state::convert(e, item, *array.element, w->span, .initialize);
+    if (!state::same_type(item.ty, leaf)) {
+        try state::convert(e, item, leaf, w->span, .initialize);
         item = state::pop_value(e);
     }
     if (c::LLVMIsConstant(item.llvm) != 0) {
@@ -271,12 +305,7 @@ static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
             state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(array.llvm), .ty = array});
             return state::success();
         }
-        Cells cells[:] = mem::alloc_slice(Cells, array.count);
-        for (Usize i = 0; i < array.count; i++)
-            cells[i].item = item.llvm;
-        c::LLVMValueRef made = c::LLVMConstArray2(array.element->llvm, (c::LLVMValueRef *)cells.data, array.count);
-        mem::free(cells.data);
-        state::push_value(e, (state::Value){.llvm = made, .ty = array});
+        state::push_value(e, (state::Value){.llvm = filled_nest(chain, n, item.llvm), .ty = array});
         return state::success();
     }
     c::LLVMValueRef slot = state::new_alloca(e, array, "filled");
@@ -294,13 +323,10 @@ static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMBuildBr(e->builder, test);
     c::LLVMPositionBuilderAtEnd(e->builder, test);
     c::LLVMValueRef index = c::LLVMBuildLoad2(e->builder, word, at, "i");
-    c::LLVMValueRef more =
-        c::LLVMBuildICmp(e->builder, c::LLVMIntULT, index, c::LLVMConstInt(word, array.count, 0), "more");
+    c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, c::LLVMIntULT, index, c::LLVMConstInt(word, total, 0), "more");
     c::LLVMBuildCondBr(e->builder, more, body, done);
     c::LLVMPositionBuilderAtEnd(e->builder, body);
-    c::LLVMValueRef zero = c::LLVMConstInt(word, 0, 0);
-    c::LLVMValueRef path[2] = {zero, index};
-    c::LLVMValueRef place = c::LLVMBuildInBoundsGEP2(e->builder, array.llvm, slot, path, 2, "cell");
+    c::LLVMValueRef place = c::LLVMBuildInBoundsGEP2(e->builder, leaf.llvm, slot, &index, 1, "cell");
     c::LLVMBuildStore(e->builder, item.llvm, place);
     c::LLVMBuildStore(e->builder, c::LLVMBuildAdd(e->builder, index, c::LLVMConstInt(word, 1, 0), "next"), at);
     c::LLVMBuildBr(e->builder, test);
@@ -316,6 +342,8 @@ export state::Status filled(state::Emitter *e, const ast::Expr *x) {
     state::Ty array = typed.ok;
     if (array.kind != .array) return state::fail("array.filled is not an array", x->span);
     state::push_then(e, (state::Work){.then = filled_finish, .expr = x, .ty = array, .span = x->span});
-    state::push_eval(e, filled_value(x), state::hint_of(*array.element));
+    state::Ty chain[16];
+    Usize n = filled_chain(e, x, array, chain);
+    state::push_eval(e, filled_value(x), state::hint_of(*chain[n - 1].element));
     return state::success();
 }
