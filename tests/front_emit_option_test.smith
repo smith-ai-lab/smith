@@ -72,14 +72,6 @@ static Bool has(Str text, Str needle) {
     return false;
 }
 
-// The text of `source` from `start`.
-static Bool starts_at(Str source, U32 start, Str needle) {
-    if (start > countof(source)) return false;
-    return has(
-        source[start:start + (countof(needle) < countof(source) - start ? countof(needle) : countof(source) - start)],
-        needle);
-}
-
 static Bool contains(const char *text, Str needle) {
     return text != nullptr && c::strstr(text, needle.data) != nullptr;
 }
@@ -108,25 +100,6 @@ static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
         test::check_equal(emitted.error.message, expected);
     }
     return text;
-}
-
-// Emits `source` and checks that it stops with `what` in its message at a span that starts with `at`.
-static void stops_with(Str source, Bool with_checker, Str what, Str at) {
-    Scenario s = {};
-    begin(&s, source, with_checker);
-    emit_jit::Jit host = start_jit();
-    c::LLVMContextRef context = c::LLVMContextCreate();
-    emit::ModuleResult emitted = emit::module(context, &s.parsed.module, options_for(host.target, &s));
-    test::check_equal(emitted == .error, true);
-    if (emitted == .error) {
-        test::check_equal(has(emitted.error.message, what), true);
-        test::check_equal(starts_at(source, emitted.error.span.start, at), true);
-        emit::free_error(emitted.error);
-    } else {
-        c::LLVMDisposeModule(emitted.ok);
-    }
-    c::LLVMContextDispose(context);
-    emit_jit::stop(&host);
 }
 
 typedef I32 (*Pick)(I32);
@@ -233,10 +206,25 @@ export void test_front_emit_option_a_value_passed_to_an_option_or_wider_paramete
     emit_jit::stop(&host);
 }
 
-export void test_front_emit_option_an_option_of_a_pointer_is_an_error_at_its_type() {
-    stops_with("fn f(x: ?*i32) -> i32:\n"
-               "    0\n",
-               false, "not emitted yet: an option of a pointer", "?*i32");
+export void test_front_emit_option_an_option_of_a_pointer_is_the_pointer_and_null_is_none() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn check(p: ?*mut i32) -> i32:\n"
+                     "    if let .some(q) = p:\n"
+                     "        return q.* \n"
+                     "    -1\n"
+                     "pub fn some_value(n: i32) -> i32:\n"
+                     "    mut x: i32 = n\n"
+                     "    check(.some(&x))\n"
+                     "pub fn none_value(n: i32) -> i32:\n"
+                     "    check(.none)\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Take some_value = (Take)symbol_of(&host, "some_value");
+    Take none_value = (Take)symbol_of(&host, "none_value");
+    test::check_equal(some_value(5), (I32)5);
+    test::check_equal(none_value(5), (I32)-1);
+    emit_jit::stop(&host);
 }
 
 // `emit` sends a `.none` with no hint and no checker to the enumerators, so the handler is called directly.
