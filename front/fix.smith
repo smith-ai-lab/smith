@@ -670,7 +670,11 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
 // standard output for each file (the renamed file counts one more), 0 when every file could be read and written.
 [[std::c_name("front_parser_fix_run")]] export I32 fix_run(const char *const *paths, Usize count) {
     I32 status = 0;
+    // The loader is the fixer's for this run only (#2560): left set, it made every later `fix_text` in the process
+    // (the next test in the same worker) parse the real modules of smith's library folder, and overflow its arena.
+    types::ModuleLoader outside = loader;
     loader = load_from_folders;
+    defer loader = outside;
     fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
     I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {
