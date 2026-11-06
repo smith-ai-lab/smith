@@ -117,3 +117,32 @@ export void test_front_fix_loader_import_in_todays_syntax_asks_for_mut() {
     check_text(got, "import front_fix_loader_reader\nstatic fn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
                     "    return front_fix_loader_reader.read(w, &v)\n");
 }
+
+// A call of an import's `auto... pieces` function whose result is dropped gets `_ :=` too (#2566): the pack was
+// untyped, so `console::print_error("...")` in a fixed file kept the error `is not used`.
+export void test_front_fix_loader_a_rest_import_result_is_discarded() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_rest.smith";
+    Str user_path = "/tmp/front_fix_loader_rest_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_rest;\nexport U64 put(auto... pieces) {\n"
+                                              "    return 1;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_rest_user;\nimport front_fix_loader_rest;\n"
+                                            "static void f(U64 n) {\n    front_fix_loader_rest::put(\"x\", n);\n"
+                                            "    U64 m = n;\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    if (back == .error) {
+        check_text("cannot read back", "the file");
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    check_text(got, "import front_fix_loader_rest\nstatic fn f(n: u64):\n    _ := front_fix_loader_rest.put(\"x\", n)\n"
+                    "    m: u64 = n\n");
+}

@@ -115,3 +115,9 @@ export void test_front_affine_a_discard_consumes_the_value() {
     cases("fn drop(key: Key):\n    let _ = key\n    let _ = key\n", 1, "'key' is used again");
     cases("fn drop(key: Key):\n    let _ = key\n", 0, "");
 }
+
+// `_ := key` is the discard (#2566): it moves the value like any use, so a second use after it is an error.
+export void test_front_affine_a_discard_counts_as_a_use() {
+    cases("fn drop(key: Key):\n    _ := key\n", 0, "");
+    cases("fn twice(key: Key) -> u64:\n    _ := key\n    draw(key)\n", 1, "'key' is used again");
+}
