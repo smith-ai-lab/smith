@@ -643,6 +643,12 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
     return (Info){.folder = status.folder, .writable = status.writable, .size = status.size};
 }
 
+// Whether the failed make of a folder was only that the folder is there already.
+Bool folder_exists(Path *where, I32 code) {
+    c::SmithFileStatus status = {};
+    return code == eexist && raw_stat(where->text, &status) == 0 && status.folder;
+}
+
 // Makes the folder and the ones above it that are missing, like `mkdir -p`; one that is there already is success.
 [[std::c_name("smith_fs_make_folder")]] export [[nodiscard]] DoneResult make_folder(const char path[:]) {
     Path where = path_make(path);
@@ -654,11 +660,8 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
         char kept = where.text[at];
         where.text[at] = 0;
         I32 code = raw_mkdir(where.text);
-        if (code != 0) {
-            c::SmithFileStatus status = {};
-            if (code != eexist || raw_stat(where.text, &status) != 0 || !status.folder) {
-                return {.error = error_from(code)};
-            }
+        if (code != 0 && !folder_exists(&where, code)) {
+            return {.error = error_from(code)};
         }
         where.text[at] = kept;
     }
@@ -859,7 +862,9 @@ I32 entry_compare(const void *a, const void *b) {
     if (is_folder) {
         return {.error = IsFolder};
     }
-    U8 view[:] = ((U8 *)(size == 0 ? (void *)where.text : bytes))[0:size];
+    U8 *base = (U8 *)bytes;
+    if (size == 0) base = (U8 *)&where.text[0]; // an empty file has no block: a view of the path's own bytes
+    U8 view[:] = base[0:size];
     return {.ok = view};
 }
 
@@ -937,7 +942,7 @@ Usize fake_new(Fake *fake, const char *path) {
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
-        fake->files[i] = (FakeFile){.used = true};
+        fake->files[i] = (FakeFile){.used = true, .data = nullptr};
         put(fake->files[i].path, path, length);
         return i;
     }
