@@ -28,3 +28,5 @@ pub fn main() -> i32:
 - A current-module function with the name of one in the type's module taking the same type is a shadowing error; a field and a function with one name on one type is an error.
 - In a generic function, `x.f()` on a `T` resolves per instance at compile time, in the generic's module and in `T`'s module.
 - `methods(T)` lists the functions in `T`'s module whose first parameter is `T`, `*T` or `*mut T` ([smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md)).
+
+`cast`, `to` and `wrap` are reserved as member names: a struct field or a function whose first parameter is a value may not be called so, since after a `.` they are the built-in conversions (error: "`to` is reserved for the built-in conversion `x.to(T)`: rename the field"; #2526).
