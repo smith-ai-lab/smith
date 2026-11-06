@@ -7,7 +7,8 @@
 //   built-ins   `@inline @noinline @cold @pure @affine @c_name(...) @attribute @effects(...)` are written
 //               unqualified; their arguments are the old lowering's business. Any other unqualified name must be a
 //               struct of this module marked `@attribute`, and an unknown one is an error that lists the built-ins.
-//   user ones   A struct marked `@attribute` is an attribute type. `@rename("id")` or `@rename(to = "id")` constructs
+//   user ones   A struct marked `@attribute` is an attribute type. `@rename("id")` or `@rename(new_name = "id")`
+//   constructs
 //               it, by position or by name as a call does, and every argument is known at compile time: a literal, a
 //               constant, or an operation on those.
 //   other module  `@serial::rename(...)` names a struct of another module, which the checker of one module cannot

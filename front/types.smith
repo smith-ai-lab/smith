@@ -1103,7 +1103,7 @@ export TypeRef type_of(const Checked *r, const ast::Expr *node) {
 export struct CastCheck {
     Bool needed;
     TypeRef from;
-    TypeRef to;
+    TypeRef target_type;
 };
 
 static NodeType *entry_of(Checked *r, const ast::Expr *node) {
@@ -1185,7 +1185,7 @@ export CastCheck cast_checked(const Checked *r, const ast::Expr *node) {
         if (r->nodes[at].node == node) {
             const NodeType *entry = &r->nodes[at];
             if (!entry->cast_checked) return (CastCheck){};
-            return (CastCheck){.needed = true, .from = entry->cast_from, .to = entry->type};
+            return (CastCheck){.needed = true, .from = entry->cast_from, .target_type = entry->type};
         }
         at = (at + 1) & (capacity - 1);
     }
@@ -1498,6 +1498,17 @@ static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     return r->table.invalid;
 }
 
+// `cast`, `to` and `wrap` after a `.` are always the built-in conversions `x.cast(T)`, `x.to(T)` and `x.wrap(T)`, so no
+// field and no function reached with method syntax may carry one of those names (#2526).
+static Bool is_conversion_name(Str name) {
+    return same_text(name, "cast") || same_text(name, "to") || same_text(name, "wrap");
+}
+
+static void reject_conversion_name(Checked *r, ast::Span span, Str name, Str what) {
+    if (!is_conversion_name(name)) return;
+    failf(r, span, "`", name, "` is reserved for the built-in conversion `x.", name, "(T)`: rename the ", what);
+}
+
 // An anonymous struct or union used as a type (a payload variant `struct { I32 a; } one;`): a nominal record of its
 // own, one per place it is written, whose fields are the children's types.
 static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
@@ -1507,6 +1518,7 @@ static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w
     for (Usize i = 0; i < n; i++) {
         fields[i].name = members[i].name;
         fields[i].is_pub = true;
+        reject_conversion_name(r, members[i].span, members[i].name, "field");
         fields[i].default_value = members[i].default_value;
         fields[i].type = w->values[base + i].type;
         for (Usize k = 0; k < i; k++) {
@@ -2209,6 +2221,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
     for (Usize i = 0; i < n; i++) {
         const ast::FieldDecl *f = &members[i];
         fields[i].name = f->name;
+        reject_conversion_name(r, f->span, f->name, "field");
         fields[i].is_pub = f->is_pub || !f->is_new;
         fields[i].default_value = f->default_value;
         fields[i].doc = f->doc;
@@ -2349,6 +2362,10 @@ static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Para
 
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
+    // a function whose first parameter is a value is reached as `x.name(...)`, which these names never mean
+    if (d->kind == .function && d->kind.function.is_new && countof(list) > 0 && !is_type_name(list[0].type)) {
+        reject_conversion_name(r, d->span, name, "function");
+    }
     if (is_template(d, list, result_type)) {
         declare_template(r, d, name, list);
         return;
