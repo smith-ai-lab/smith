@@ -282,7 +282,7 @@ static state::Status dispatch_unary(state::Emitter *e, const ast::Expr *x, ast::
     case .pre_decrement:
     case .post_increment:
     case .post_decrement:
-        return state::not_emitted("increment and decrement", x->span);
+        return arith::increment(e, x);
     }
 }
 
@@ -734,13 +734,19 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
 // the message.
 static state::Status static_assert_finish(state::Emitter *e, const state::Work *w) {
     state::Value condition = state::pop_value(e);
-    if (w->stmt->kind != .static_assert_stmt) return state::fail("not a static_assert", w->span);
+    Str message = "";
+    if (w->stmt == nullptr && w->decl->kind == .static_assert_decl)
+        message = w->decl->kind.static_assert_decl.message;
+    else if (w->stmt != nullptr && w->stmt->kind == .static_assert_stmt)
+        message = w->stmt->kind.static_assert_stmt.message;
+    else
+        return state::fail("not a static_assert", w->span);
     if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
     if (c::LLVMIsAConstantInt(condition.llvm) == nullptr)
         return state::fail("static_assert needs a condition known at compile time", w->span);
     if (c::LLVMConstIntGetZExtValue(condition.llvm) == 0) {
-        if (countof(w->stmt->kind.static_assert_stmt.message) == 0) return state::fail("static_assert failed", w->span);
-        return state::fail(w->stmt->kind.static_assert_stmt.message, w->span);
+        if (countof(message) == 0) return state::fail("static_assert failed", w->span);
+        return state::fail(message, w->span);
     }
     return state::success();
 }
@@ -1108,6 +1114,28 @@ static Bool ends_in_expression(const ast::Stmt *body) {
     return false;
 }
 
+// Whether the body's last line calls a module function declared `[[noreturn]]` (`stop(...)`): it has no value, so the
+// body is emitted as statements and the end of the function is never reached (#2510).
+static Bool ends_in_noreturn_call(const state::Emitter *e, const ast::Stmt *body) {
+    if (body->kind != .block) return false;
+    ast::StmtRef items[:] = body->kind.block.items;
+    const ast::Stmt *last = countof(items) > 0 ? items[countof(items) - 1] : nullptr;
+    if (last == nullptr || !is_expression_statement(last) || last->kind != .expression) return false;
+    const ast::Expr *value = last->kind.expression.value;
+    if (value->kind != .call || value->kind.call.callee->kind != .name) return false;
+    ast::Path path = value->kind.call.callee->kind.name.path;
+    if (countof(path.segments) != 1) return false;
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .function || !state::same_text(d->kind.function.name, path.segments[0].text)) continue;
+        for (Usize k = 0; k < countof(d->attributes); k++) {
+            ast::Path name = d->attributes[k].name;
+            if (countof(name.segments) == 1 && state::same_text(name.segments[0].text, "noreturn")) return true;
+        }
+    }
+    return false;
+}
+
 // The last line's value after a line that returned (`return 1` then `2`, or a compile-time `if` that kept a `return`,
 // #2277) goes into a block nothing jumps to, as a statement does.
 static state::Status value_after_end(state::Emitter *e, const state::Work *w) {
@@ -1262,7 +1290,7 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     Bool is_void_result = c::LLVMGetTypeKind(info.result.llvm) == c::LLVMVoidTypeKind;
     if (!is_void_result && ends_in_value_statement(body)) {
         try value_statement_block(e, body);
-    } else if (is_void_result || !ends_in_expression(body)) {
+    } else if (is_void_result || !ends_in_expression(body) || ends_in_noreturn_call(e, body)) {
         state::push_statement(e, body);
     } else {
         try value_block(e, body);
@@ -1593,7 +1621,7 @@ static state::Status declare_all(state::Emitter *e) {
         } else if (d->kind == .variable) {
             if (!is_module_alias(e, d) && !is_type_alias(e, d)) try memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
-                   d->kind != .import_from) {
+                   d->kind != .import_from && d->kind != .static_assert_decl) {
             return state::not_emitted("this kind of declaration", d->span);
         }
     }
@@ -1601,6 +1629,59 @@ static state::Status declare_all(state::Emitter *e) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
             try declare_instance(e, &e->options.checked->instances[i]);
         }
+    }
+    return state::success();
+}
+
+// `x` built in a function nothing keeps and folded to the constant of type `to` (a global's initializer, #2510).
+static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state::Ty to, c::LLVMValueRef *out) {
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
+    c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".fold", type);
+    state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
+    start_function(e, (state::FunctionInfo){.llvm = scratch, .llvm_type = type, .result = none});
+    state::begin_scope(e);
+    state::push_eval(e, x, state::hint_of(to));
+    e->folding = true;
+    state::Status ran = run(e);
+    e->folding = false;
+    state::Status result = ran;
+    if (ran != .error) {
+        state::Value value = state::pop_value(e);
+        if (c::LLVMIsAConstantInt(value.llvm) == nullptr) {
+            result = state::failf(x->span, "the initializer of a global is a constant known at compile time (", to.name,
+                                  ")");
+        } else if (state::same_type(value.ty, to)) {
+            *out = value.llvm;
+        } else { // the checker has accepted the width: a literal is built as an `i32` before it meets its field
+            U64 bits = value.ty.is_signed ? (U64)c::LLVMConstIntGetSExtValue(value.llvm)
+                                          : c::LLVMConstIntGetZExtValue(value.llvm);
+            *out = c::LLVMConstInt(to.llvm, bits, 0);
+        }
+    }
+    state::end_scope(e);
+    c::LLVMDeleteFunction(scratch);
+    return result;
+}
+
+// A module-level `static_assert(c, "m")` (#2510): the condition is built in a function nothing keeps, and must fold to
+// a constant; false stops the compile with the message.
+static state::Status check_static_asserts(state::Emitter *e) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .static_assert_decl) continue;
+        c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(e->context), nullptr, 0, 0);
+        c::LLVMValueRef scratch = c::LLVMAddFunction(e->module, ".static_assert", type);
+        state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
+        start_function(e, (state::FunctionInfo){.llvm = scratch, .llvm_type = type, .result = none});
+        state::begin_scope(e);
+        state::push_then(e, (state::Work){.then = static_assert_finish, .decl = d, .span = d->span});
+        state::push_eval(e, d->kind.static_assert_decl.condition, state::no_hint());
+        e->folding = true;
+        state::Status ran = run(e);
+        e->folding = false;
+        state::end_scope(e);
+        c::LLVMDeleteFunction(scratch);
+        try ran;
     }
     return state::success();
 }
@@ -1626,6 +1707,7 @@ static state::Status emit_all(state::Emitter *e) {
             next += 1;
         }
     }
+    try check_static_asserts(e);
     try debug::finish(e);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {
@@ -1650,6 +1732,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.node_type_hook = type_of_node;
     e.checked_type_hook = type_of_checked;
     e.convert_hook = convert_value;
+    e.fold_hook = fold_constant;
     if (countof(options.target.data_layout) > 0) {
         char *layout = state::cstr(options.target.data_layout);
         c::LLVMSetDataLayout(ir, layout);
