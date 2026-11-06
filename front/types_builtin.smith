@@ -343,7 +343,7 @@ static types::TypeRef check_constant(types::Checked *c, const ast::Expr *e, Entr
     Bool tagged = same(entry.intrinsic[0:3], "nan");
     if (countof(args) != (tagged ? 1 : 0))
         return wrong(c, e->span, entry, tagged ? "a tag string; write `(\"\")`" : "no arguments");
-    return types::floating(&c->table, same(entry.intrinsic[3:5], "32") ? 32 : 64);
+    return types::float_of_width(&c->table, same(entry.intrinsic[3:5], "32") ? 32 : 64);
 }
 
 // The built-in type called `name` (`I32`, `Usize`), read from the table: the checker's own lookup, without a call
@@ -384,7 +384,7 @@ export types::TypeRef libc_type(const types::Checked *c, U8 letter, types::TypeR
     if (letter == 'v') return c->table.void_type;
     if (letter == 'z') return named(c, "Usize");
     if (letter == 'i') return named(c, "I32");
-    return types::floating(&c->table, letter == 'd' ? 64 : 32);
+    return types::float_of_width(&c->table, letter == 'd' ? 64 : 32);
 }
 
 // A pointer that may be null (`?*T`): C's libc functions take it where they take a pointer.
@@ -451,7 +451,7 @@ static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry 
         if (is_open(t)) continue;
         Bool pointer = t->kind == .pointer;
         Bool integer = t->kind == .integer;
-        if (t->kind == .array && (i == 0 || i == 2)) {
+        if (t->kind == .array && i != 1) { // a `%s` argument too: the array decays in C (#2611)
             types::fail_fix(c, args[i]->span,
                             "a fixed array never converts to a bare pointer; write the address of an element: &xs[0]",
                             element_address_fix(args[i]));

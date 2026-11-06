@@ -233,6 +233,11 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
         return false;
     }
     const types::Symbol *target = types::lookup_as(&e->options.checked->scopes, full, false);
+    if (target != nullptr && target->kind == .type_name) { // a struct of the same name: the function is `name()`
+        Str tagged = state::msg(format::push(full, "()"));
+        target = types::lookup(&e->options.checked->scopes, tagged);
+        state::free_text(tagged);
+    }
     if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
         state::free_text(full);
         return false;

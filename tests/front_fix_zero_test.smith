@@ -357,3 +357,14 @@ export void test_front_fix_zero_a_struct_a_c_call_fills_is_undefined() {
                  "import c <sys/stat.h>\nfn size_of(path: *char) -> i32:\n    mut info: c.stat = undefined\n"
                  "    if stat.stat(path, &info) != 0:\n        return -1\n    return info.st_size.to(i32)\n");
 }
+
+// A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
+// `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
+export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
+    expect_fixed("module m;\nstruct Step {\n    const char *name;\n    int (*run)(int);\n    int n;\n};\n"
+                 "struct Owner {\n    int id;\n    Step step;\n};\n"
+                 "void f(Owner *o) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
+                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32 = 0\n"
+                 "struct Owner:\n    id: i32\n    step: Step = undefined\n"
+                 "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
+}

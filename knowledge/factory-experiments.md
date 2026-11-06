@@ -27,6 +27,20 @@ First, friction was reviewed daily by the lead: sum the minutes, re-rank, move p
 
 The cloud runners pause at the subscription's daily limit. A bash loop on the owner's Mac starts `claude -p` runners on the owner's Anthropic API credits and keeps the work going; the key comes from the login Keychain on the command line, and `mac` tickets (those needing the macOS SDK) go to it first. A loop, not a chain of successors, so a crash costs one ticket.
 
+## The work order from the count (2026-11-06)
+
+What changed: the order of work is no longer the labels. It is the numbered `## Work order` list on #73, ranked by the files each ticket unblocks in the latest `frontend-coverage` count, rewritten by the lead after every count. Runners take the top entry that is not claimed or blocked; `p0` still comes first, and the labels order only what the list does not name. Owner: "We should tell them to go fix off the top unclaimed ticket in that list, and then you can update that list every time we get a new count."
+
+Why: under the label order, 28 tickets sat at `p1`, so runners took the oldest. Overnight 35 PRs merged and the count went from 465 to 505 of 1546, flat for seven hours, while `lib/std/test.smith`, the first error of 267 files, had no ticket. The coverage job was also blind for about five hours (#2586) because it gates nothing.
+
+Measure: files passing per hour of runner time, and whether every top-5 cause has a claimed ticket at each count.
+
+## Where a runner's time goes (2026-11-06)
+
+Measured from the events of four runner sessions (#2567, #2552, #2566, #2486), 245 minutes in all: long checks 33% (the local `-Dall=1` count, `smith check`, wait loops cut off by the 10-minute Bash timeout), waiting on CI and the queue 30%, quick checks 18% (mostly 1–2 minute rebuilds after each edit), model thinking 13%, setup 5%, reading and editing 1%. The merged PRs were small: 7 to 100 lines, except #2614 at about 1000. Owner: "We need the agent to be working for longer then ci works."
+
+Changed: no local `-Dall=1` (the queue counts and gates since #2615), no line cap, push to the branch while working and open the PR once the module passes, `smith fmt` and `smith lint` on the changed files before the PR, long commands in the background. Measure next: the same split on four new sessions, and files gained per runner hour.
+
 ## Alternatives considered
 
 - **GitHub Projects ordering (GraphQL):** a board could hold the order, but agents' tools cannot reach it (GraphQL returns HTTP 403 in cloud sessions). Labels and `gh api` REST work everywhere.
