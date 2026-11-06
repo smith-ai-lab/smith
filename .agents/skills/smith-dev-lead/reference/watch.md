@@ -201,7 +201,7 @@ check() {
       case "${last#* }" in Handover*|handover*) [ "$lab" != null ] && [ "${last%% *}" \< "$h" ] && [ "$(echo "$prs" | jq length 2>/dev/null)" = 0 ] &&
         seen "handover-$f-${last%% *}" && echo "focus ticket #$f is claimed, its last comment is a handover from ${last%% *} and no open PR names it: release it and start a runner";; esac
     done
-    [ $anyopen = 1 ] && [ $live = 0 ] && seen "quiet-$(date -u +%F-%H)" && echo "the chain is quiet: no activity on any #73 focus ticket or a PR naming one for 45 minutes; start runners"
+    : # removed 2026-11-04 (stale #73 chain focus):     [ $anyopen = 1 ] && [ $live = 0 ] && seen "quiet-$(date -u +%F-%H)" && echo "the chain is quiet: no activity on any #73 focus ticket or a PR naming one for 45 minutes; start runners"
   fi
   coverage
   # the `ci` check of main's tip, not the workflow's conclusion: a cancelled cache-warming job (warm) fails the
@@ -239,7 +239,7 @@ check() {
   held=$(issues claimed '.[]|select(.pull_request==null)|.number' | while read -r i; do case " $named " in *" $i "*) ;; *) echo "$i";; esac; done | wc -l)
   wip=$(( ${openprs:-0} + ${held:-0} ))
   [ -n "$w" ] && [ "$wip" -gt "$w" ] && seen "wip-$(date -u +%F-%H)" && echo "WIP is $wip ($openprs open PRs + $held claimed with no open PR), over the limit $w: start no runner; find what holds the PRs"
-  [ -n "$w" ] && [[ $top == *"pool: running"* ]] && [ "$wip" -lt $(( w - 2 )) ] && seen "room-$(date -u +%F-%H)" && echo "WIP is $wip, under the limit $w: start runners for the top tickets until it reaches $w"
+  [ -n "$w" ] && [[ $top == *"pool: running"* ]] && [ "$wip" -lt "$w" ] && seen "room-$(date -u +%F-%H)" && echo "WIP is $wip, under the limit $w: start runners for the top tickets until it reaches $w"
   # a ticket with no real body (a split that left `x`, 2026-11-02): runners skip it and the pool idles
   issues task '.[]|select(.pull_request==null and ((.body // "")|length) < 150)|.number' | while read -r i; do
     seen "thin$i" && echo "#$i is a task with an empty or near-empty body: write its body (files, design, Done when)"
@@ -253,13 +253,44 @@ vitals() {
   claims=$(gh api "repos/$R/issues/comments?since=$h&sort=created&direction=desc&per_page=100" --jq '[.[].body|select(startswith("claimed by "))|split(" ")[2]|if startswith("mac-runner") then "mac" elif .=="the" then "lead" else "cloud" end]|group_by(.)|map("\(.[0]) \(length)")|join(", ")' 2>/dev/null)
   merges=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:merged merged:>=$h" --jq .total_count 2>/dev/null)
   open=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
-  wait=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[].created_at|fromdate]|if length>0 then ((now-min)/60|floor|tostring)+" min" else "none" end' 2>/dev/null)
+  wait=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[]|(.run_started_at // .created_at)|fromdate]|if length>0 then ((now-min)/60|floor|tostring)+" min" else "none" end' 2>/dev/null)
   held=$(issues claimed '[.[]|select(.pull_request==null)]|length')
   # the queue's pass rate on main (owner, 2026-11-04: measure before adding runners; target 90%): a group built on
   # main's tip (its base is on main, compare status identical or behind) passed or failed on its own merits
   qrate=$(gh api "repos/$R/actions/runs?event=merge_group&status=completed&created=>=$h&per_page=50" --jq '.workflow_runs[]|select(.conclusion=="success" or .conclusion=="failure")|"\(.conclusion) \(.head_branch|split("-")|last)"' 2>/dev/null |
     while read -r c b; do st=$(gh api "repos/$R/compare/main...$b" --jq .status 2>/dev/null); case $st in identical|behind) echo "$c";; esac; done | sort | uniq -c | awk '{n[$2]=$1} END {t=n["success"]+n["failure"]; if (t) printf "%d of %d", n["success"], t; else printf "none"}')
   echo "--- vitals (last hour): claims ${claims:-none}; merges ${merges:-?}; open PRs ${open:-?}; queue runs on main passed ${qrate:-?}; oldest queued CI run ${wait:-?}; tickets claimed now ${held:-?} (compare with the sessions working)"
+  # the work order (owner, 2026-11-06: "I thought we're always going based on what's going to move the count the most"):
+  # the latest count and its top causes by the files whose first error each is; every one of the top 5 needs a claimed ticket
+  for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?event=merge_group&status=completed&per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
+    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")|.id' 2>/dev/null | head -1)
+    [ -z "$job" ] && continue
+    log=$(gh api "repos/$R/actions/jobs/$job/logs" 2>/dev/null)
+    echo "--- count: $(printf '%s\n' "$log" | grep -oE 'frontend-coverage: [0-9a-f]{40} [0-9]+ [0-9]+' | head -1 | awk '{print $3" of "$4}'); top causes (first-error files, files, cause) - each needs a claimed ticket:"
+    printf '%s\n' "$log" | grep -E 'frontend-cause: [0-9]' | grep -v '\[36;1m' | sed 's/^[^ ]* frontend-cause: //' | sort -rn | head -5 | cut -c1-170 | sed 's/^/    /'
+    rate "$(printf '%s\n' "$log" | grep -oE 'frontend-coverage: [0-9a-f]{40} [0-9]+ [0-9]+' | head -1)"
+    break
+  done
+}
+
+# Progress against the goal, not activity (owner, 2026-11-06: "how is this not flagged?" after 70-line PRs and a
+# count of 2.5 files an hour went unremarked for a day). Files gained per hour over the last 24 hours, days to done,
+# and the median size of the PRs merged in the last 24 hours; over 3 days to done is URGENT, once a day.
+rate() {
+  set -- $1; [ -z "$3" ] && return
+  hist="$(dirname "$SEEN")/count-history.txt"
+  grep -q " $2 " "$hist" 2>/dev/null || echo "$(date +%s) $2 $3 $4" >> "$hist"
+  now=$(date +%s); old=$(awk -v t=$((now - 86400)) '$1 >= t {print; exit}' "$hist")
+  set -- $old; t0=$1; p0=$3; set -- $(tail -1 "$hist"); t1=$1; p1=$3; tot=$4
+  med=$(gh api "repos/$R/pulls?state=closed&sort=updated&direction=desc&per_page=60" --jq ".[]|select(.merged_at != null and .merged_at > \"$(date -u -d '-24 hours' +%FT%TZ)\")|.number" 2>/dev/null |
+    head -40 | while read -r n; do gh api "repos/$R/pulls/$n" --jq .additions 2>/dev/null; done | sort -n | awk '{a[NR]=$1} END{if(NR) print a[int((NR+1)/2)]" lines over "NR" PRs"}')
+  if [ "$t1" -gt "$t0" ] 2>/dev/null; then
+    fph=$(awk -v d=$((p1 - p0)) -v h=$(( (t1 - t0) )) 'BEGIN{printf "%.1f", d*3600/h}')
+    days=$(awk -v f="$fph" -v left=$((tot - p1)) 'BEGIN{if (f > 0) printf "%.1f", left/f/24; else print "never"}')
+    echo "--- rate: $fph files/hour over $(( (t1 - t0) / 3600 ))h; $((tot - p1)) left; $days days to done; median merged PR $med"
+    case "$days" in never) big=1;; *) big=$(awk -v d="$days" 'BEGIN{print (d > 3)}');; esac
+    [ "$big" = 1 ] && seen "slow-$(date -u +%F)" && echo "URGENT progress: $days days to done at $fph files/hour: bring it to the owner with the cause and a fix"
+  else echo "--- rate: one count so far ($p1 of $tot); median merged PR $med"; fi
 }
 
 # The queue stalled 10:51-11:31 on 2026-11-04 with its front groups green and nothing building; taking the front PR
@@ -273,10 +304,35 @@ stall() {
   [ "${idle:-1}" = 0 ] && seen "stall-$(date -u +%F-%H)" && echo "URGENT the merge queue holds $q PRs and nothing has built for 15 minutes: take the front PR out (close and reopen) so it rebuilds"
 }
 
+# Flow guards (owner, 2026-11-04: "I need you to be proactive and keep the factory moving"; the backlog reached 50 PRs
+# overnight while the lead only reported it). Each trips as URGENT so the lead acts at once, asleep owner or not.
+flow() {
+  open=$(gh api -X GET search/issues -f q="repo:$R is:pull-request is:open" --jq .total_count 2>/dev/null)
+  held=$(issues claimed '[.[]|select(.pull_request==null)]|length'); cap=$(( ${held:-0} > 3 ? ${held:-0} * 2 : 6 ))
+  [ "${open:-0}" -gt "$cap" ] && seen "flow-open-$(date -u +%F-%H)" && echo "URGENT backlog: $open open PRs, over twice the $held claimed tickets (cap $cap): start no runner; drive the open PRs to merge, take over or close stale ones"
+  slot=$(gh api "repos/$R/actions/runs?status=queued&per_page=100" --jq '[.workflow_runs[]|select(.event!="push")|(.run_started_at // .created_at)|fromdate]|if length>0 then ((now-min)/60|floor) else 0 end' 2>/dev/null)
+  [ "${slot:-0}" -ge 10 ] && seen "flow-slot-$(date -u +%F-%H)" && echo "URGENT CI: a run has waited ${slot} min for a runner: CI is saturated; start no runner until it clears, and find what holds the slots"
+  last=; for run in $(gh api "repos/$R/actions/workflows/ci.yml/runs?event=merge_group&status=completed&per_page=10" --jq '.workflow_runs[].id' 2>/dev/null); do
+    job=$(gh api "repos/$R/actions/runs/$run/jobs?per_page=60" --jq '.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")|.completed_at' 2>/dev/null | head -1)
+    [ -n "$job" ] && { last=$job; break; }
+  done
+  if [ -n "$last" ]; then age=$(( ($(date +%s) - $(date -d "$last" +%s)) / 60 )); else age=999; fi
+  [ "$age" -ge 60 ] && seen "flow-cov-$(date -u +%F-%H)" && echo "URGENT count: the frontend-coverage job has not measured main for $age min: the count is blind; make sure a runner owns the fix (#2254)"
+  # pool under its target (2026-11-04: for 45 minutes no runner worked while the lead believed two did). A runner claims
+  # its ticket when it starts and releases it when it ends, so claimed tickets count the working runners. The target is
+  # $(dirname "$SEEN")/pool.txt, set by the lead; under it for two checks in a row is URGENT.
+  target=$(cat "$(dirname "$SEEN")/pool.txt" 2>/dev/null || echo 0)
+  if [ "${held:-0}" -lt "$target" ]; then
+    lowf="$(dirname "$SEEN")/pool-low"; if [ -e "$lowf" ]; then
+      seen "flow-pool-$(date -u +%F-%H)" && echo "URGENT pool: $held tickets claimed, under the target of $target: start fresh runners on the top count tickets now"
+    else touch "$lowf"; fi
+  else rm -f "$(dirname "$SEEN")/pool-low"; fi
+}
+
 # Batched wakes (owner, 2026-11-04, after the lead woke about 140 times in 12 hours at about 200k tokens a wake):
 # the mailbox and lines marked URGENT (main's ci red, no merge for an hour, a queue failure, a stalled queue) wake the lead at once; everything else
 # collects in $PEND and wakes it at most every 30 minutes.
-PEND=$(dirname "$SEEN")/pending-wake; : > "$PEND"; start=$(date +%s)
+PEND=$(dirname "$SEEN")/pending-wake; : > "$PEND"; rm -f "$PEND.act"; start=$(date +%s)
 wake() { [ -s "$PEND" ] && cat "$PEND"; echo "$1"; vitals; exit 0; }
 t=0
 while :; do
@@ -285,13 +341,13 @@ while :; do
     wake "new @lead: on #1406$(echo "$new" | jq -r '.[]|"\n--- \(.created_at)\n\(.body|split("\n")[:40]|join("\n"))"')"
   fi
   why=
-  [ $((t % 10)) = 0 ] && why=$(fix; health; stall)
+  [ $((t % 10)) = 0 ] && why=$(fix; health; stall; flow)
   [ $((t % 15)) = 0 ] && why="$why${why:+$'\n'}$(check)"
   if [ -n "$why" ]; then
     echo "$why" | grep -q "URGENT\|main's ci is red\|no merge into main" && wake "$why"
-    echo "$why" >> "$PEND"
+    echo "$why" >> "$PEND"; echo "$why" | grep -qv "^merged #[0-9]*: archive its runner" && touch "$PEND.act"
   fi
-  [ -s "$PEND" ] && [ $(( $(date +%s) - start )) -ge 1800 ] && wake "(batched: 30 minutes of non-urgent lines above)"
+  [ -e "$PEND.act" ] && [ $(( $(date +%s) - start )) -ge 1800 ] && wake "(batched: 30 minutes of non-urgent lines above)"
   t=$((t+1)); sleep 60
 done
 ```
