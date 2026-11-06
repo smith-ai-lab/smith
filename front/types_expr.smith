@@ -2620,24 +2620,24 @@ static types::TypeRef first_parameter(const types::Symbol *s) {
 }
 
 // Whether the function is a template with bracketed generics (`fn push[T](xs: *mut List(T), x: T)`).
-static Bool has_generics(const types::Symbol *fn) {
-    return fn->generic && fn->decl != nullptr && fn->decl->kind == .function &&
-           countof(fn->decl->kind.function.generics) > 0 && countof(fn->decl->kind.function.params) > 0;
+static Bool has_generics(const types::Symbol *method_fn) {
+    return method_fn->generic && method_fn->decl != nullptr && method_fn->decl->kind == .function &&
+           countof(method_fn->decl->kind.function.generics) > 0 && countof(method_fn->decl->kind.function.params) > 0;
 }
 
 // Whether the first parameter of a function with bracketed generics is written as a pointer.
-static Bool generic_takes_pointer(const types::Symbol *fn) {
-    if (!(fn->decl->kind == .function)) return false;
-    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+static Bool generic_takes_pointer(const types::Symbol *method_fn) {
+    if (!(method_fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = method_fn->decl->kind.function.params[0].type;
     return written != nullptr && written->kind == .pointer;
 }
 
 // Whether the receiver can be the first parameter of a function with bracketed generics: its written type, seen
 // through one pointer, is a generic name or has the receiver's shape (a name or an applied type is left to the check
 // of the arguments).
-static Bool generic_first_fits(const types::Symbol *fn, types::TypeRef self_type) {
-    if (!(fn->decl->kind == .function)) return false;
-    const ast::TypeExpr *written = fn->decl->kind.function.params[0].type;
+static Bool generic_first_fits(const types::Symbol *method_fn, types::TypeRef self_type) {
+    if (!(method_fn->decl->kind == .function)) return false;
+    const ast::TypeExpr *written = method_fn->decl->kind.function.params[0].type;
     if (written == nullptr) return false;
     if (written->kind == .pointer) written = written->kind.pointer.pointee;
     if (written->kind == .slice) return self_type->kind == .slice;
@@ -2649,7 +2649,7 @@ static Bool generic_first_fits(const types::Symbol *fn, types::TypeRef self_type
 }
 
 // The call `f(x, args)`; `f(&x, args)` when `f` takes a pointer and `x` is not one, `f(x.*, args)` for the reverse.
-static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn, types::TypeRef base_type) {
+static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *method_fn, types::TypeRef base_type) {
     if (!(e->kind == .call)) {
         return e;
     }
@@ -2663,8 +2663,8 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
         (ast::ExprRef *)mem::alloc_array_raw(sizeof(ast::ExprRef), countof(given) + 1, alignof(ast::ExprRef));
     ast::ExprRef all[:] = block[0:countof(given) + 1];
     ast::Expr *self = (ast::Expr *)callee->kind.member.base;
-    types::TypeRef takes = fn->type->slots[0].type;
-    Bool takes_pointer = has_generics(fn) ? generic_takes_pointer(fn) : takes->kind == .pointer;
+    types::TypeRef takes = method_fn->type->slots[0].type;
+    Bool takes_pointer = has_generics(method_fn) ? generic_takes_pointer(method_fn) : takes->kind == .pointer;
     if (takes_pointer && base_type->kind != .pointer) {
         ast::UnaryOp op = .address_of;
         ast::ExprKind address = {.unary = {.op = op, .operand = self}};
@@ -2678,7 +2678,7 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
     for (Usize i = 0; i < countof(given); i++) {
         all[i + 1] = given[i];
     }
-    ast::Expr *name = ast::name(fn->name);
+    ast::Expr *name = ast::name(method_fn->name);
     name->span = callee->span;
     ast::Expr *made = ast::call(name, all);
     made->span = e->span;
@@ -2688,7 +2688,7 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *fn,
 // Stage 7: the base of `x.f(args)` is typed. A field `f` of a record is called as a value; else `f` is a function of
 // the module that defines the type of `x` or of this module, and the call is the one written with `x` first.
 // Reports a method call whose function is missing or does not take the receiver first.
-static void method_missing(types::Checked *c, const ast::Expr *e, const types::Symbol *fn, types::TypeRef bt) {
+static void method_missing(types::Checked *c, const ast::Expr *e, const types::Symbol *method_fn, types::TypeRef bt) {
     if (!(e->kind == .call)) {
         return;
     }
@@ -2698,7 +2698,7 @@ static void method_missing(types::Checked *c, const ast::Expr *e, const types::S
     }
     Str name = callee->kind.member.name;
     Str shown = types::show(bt);
-    if (fn == nullptr) {
+    if (method_fn == nullptr) {
         types::failf(c, callee->span, "`", shown, "` has no method `", name, "`; write a function `", name,
                      "` whose first parameter is a `", shown, "`, in this module or in the module that defines `",
                      shown, "`");
@@ -2756,7 +2756,7 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         push(w, callee, nullptr, 0);
         return;
     }
-    const types::Symbol *fn = own != nullptr ? own : local;
+    const types::Symbol *method_fn = own != nullptr ? own : local;
     types::TypeRef self_type = bt->kind == .pointer ? bt->element : bt;
     if (own != nullptr && local != nullptr && local != own && first_parameter(own) != nullptr &&
         first_parameter(own) == first_parameter(local)) {
@@ -2767,15 +2767,15 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    Bool fits =
-        fn != nullptr && (has_generics(fn) ? generic_first_fits(fn, self_type)
-                                           : first_parameter(fn) != nullptr && first_parameter(fn) == self_type);
+    Bool fits = method_fn != nullptr && (has_generics(method_fn) ? generic_first_fits(method_fn, self_type)
+                                                                 : first_parameter(method_fn) != nullptr &&
+                                                                       first_parameter(method_fn) == self_type);
     if (!fits) {
-        method_missing(c, e, fn, bt);
+        method_missing(c, e, method_fn, bt);
         push_arguments(w, args, nullptr);
         return;
     }
-    const ast::Expr *made = method_call(e, fn, bt);
+    const ast::Expr *made = method_call(e, method_fn, bt);
     types::set_method(c, e, made);
     push(w, e, nullptr, 8);
     push(w, made, f.expected, 0);

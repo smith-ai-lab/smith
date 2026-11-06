@@ -49,7 +49,7 @@ void release(Stream **s) {
 
 // The body hands over the value it wrote into the slot and waits for the next `next`. True when `next` resumed it;
 // false when the stream was closed: the body then runs to its end, and its `defer`s, and calls `finish`.
-[[std::c_name("smith_stream_yield")]] export Bool yield(Stream *s) {
+[[std::c_name("smith_stream_suspend")]] export Bool suspend(Stream *s) {
     contract::requires(s != nullptr);
     contract::trusted(); // the fiber and the allocator are the edge of this module
     if (s->closed) return false;
