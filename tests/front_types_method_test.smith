@@ -235,3 +235,8 @@ export void test_front_types_a_last_line_calling_a_noreturn_function_is_not_a_va
 export void test_front_types_target_address_sanitizer_is_a_bool_constant() {
     clean("const sanitized: bool = target.address_sanitizer\n\nfn run() -> bool:\n    sanitized\n");
 }
+
+// D14, #2647: `target.fast_math` is a `bool` constant of the build too.
+export void test_front_types_target_fast_math_is_a_bool_constant() {
+    clean("const fast: bool = target.fast_math\n\nfn run() -> bool:\n    fast\n");
+}

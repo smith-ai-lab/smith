@@ -295,7 +295,7 @@ export Bool is_folded_fact(const ast::Expr *cond) {
     if (!same_text(base->kind.name.path.segments[0].text, "target")) return false;
     Str fact = cond->kind.member.name;
     return same_text(fact, "address_sanitizer") || same_text(fact, "undefined_sanitizer") ||
-           same_text(fact, "thread_sanitizer") || same_text(fact, "assertions");
+           same_text(fact, "thread_sanitizer") || same_text(fact, "assertions") || same_text(fact, "fast_math");
 }
 
 // Whether `cond` names `target` anywhere (`target.x`, `target::x`, `target` alone), through `!`, `-`, the binary
