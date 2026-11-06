@@ -1139,14 +1139,16 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
         return state::fail("not a string literal", x->span);
     }
     Str bytes = x->kind.string.bytes;
-    if (hint.present && hint.ty.kind == .array && hint.ty.count > countof(bytes) + 1) {
+    if (hint.present && hint.ty.kind == .array && hint.ty.kind.array.count > countof(bytes) + 1) {
         // a literal given to a longer `[N]char`: the bytes, then zeros up to N (#2611)
-        if (hint.ty.count > 256) return state::not_emitted("string literal in an array of more than 256 elements", x->span);
+        state::SizedTy shape = hint.ty.kind.array;
+        if (shape.count > 256)
+            return state::not_emitted("string literal in an array of more than 256 elements", x->span);
         c::LLVMValueRef values[256];
-        for (Usize i = 0; i < hint.ty.count; i++)
-            values[i] = c::LLVMConstInt(hint.ty.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        state::push_value(e, (state::Value){.llvm = c::LLVMConstArray2(hint.ty.element->llvm, values, hint.ty.count),
-                                            .ty = hint.ty});
+        for (Usize i = 0; i < shape.count; i++)
+            values[i] = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        state::push_value(
+            e, (state::Value){.llvm = c::LLVMConstArray2(shape.element->llvm, values, shape.count), .ty = hint.ty});
         return state::success();
     }
     if (hint.present && hint.ty.kind == .array) { // a literal given to `[N]char`: the bytes and the zero byte
