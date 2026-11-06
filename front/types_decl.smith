@@ -821,7 +821,9 @@ static Bool error_item(const ast::Initializer *item) {
 // Returns whether the site is one.
 static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
     const ast::Decl *d = state.prev_decl;
-    if (d == nullptr || countof(fixed_source) == 0 || !(d->kind == .variable) || !(s->kind == .if_stmt)) return false;
+    if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || !(d->kind == .variable) ||
+        !(s->kind == .if_stmt))
+        return false;
     const ast::Expr *init = d->kind.variable.init;
     if (test == nullptr || !(test->kind == .binary) || init == nullptr || d->kind.variable.is_mut ||
         !d->kind.variable.is_new)
@@ -1328,6 +1330,8 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     r->guard_count = 0;
+    state.last_decl = nullptr; // a declaration of an earlier body would be a dangling pointer (#2506)
+    state.prev_decl = nullptr;
     Usize first_error = r->error_count;
     Usize first_local = state.local_count;
     find_tails(root);
