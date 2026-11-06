@@ -20,8 +20,8 @@ typedef struct {
 } Region;
 
 // The text as bytes.
-const U8 *bytes_of(const char *text) {
-    return (const U8 *)text;
+const U8 *bytes_of(const char *contents) {
+    return (const U8 *)contents;
 }
 
 // Unwrapping for the checks: the value of a result (a zero when it is an error: the test checked `== .ok` before) and
@@ -90,11 +90,11 @@ files::Error failure_info(files::InfoResult r) {
 }
 
 // Whether the bytes are the text.
-Bool is_text(const U8 got[:], const char *text) {
-    Usize length = __builtin_strlen(text);
+Bool is_text(const U8 got[:], const char *contents) {
+    Usize length = __builtin_strlen(contents);
     if (countof(got) != length) return false;
     for (Usize i = 0; i < length; i++) {
-        if (got[i] != (U8)text[i]) return false;
+        if (got[i] != (U8)contents[i]) return false;
     }
     return true;
 }
@@ -106,8 +106,8 @@ Bool is_named(files::Entry entry, const char *name) {
 }
 
 // Writes the text to the path through the module and returns the error code (-1 for none).
-I32 put_text(const char *path, const char *text, Usize length, files::Mode mode) {
-    files::CountResult written = files::write_file(path[0:__builtin_strlen(path)], bytes_of(text)[0:length], mode);
+I32 put_text(const char *path, const char *contents, Usize length, files::Mode mode) {
+    files::CountResult written = files::write_file(path[0:__builtin_strlen(path)], bytes_of(contents)[0:length], mode);
     if (written == .error) return (I32)written.error;
     return -1;
 }
@@ -125,11 +125,11 @@ export void test_files_a_whole_file_round_trips_through_the_fake() {
     files::CountResult written = files::write_file("notes.txt", hello, files::Replace);
     test::check_condition(written == .ok);
     test::check_equal(value_count(written), 5);
-    files::BytesResult text = files::read_file("notes.txt");
-    test::check_condition(text == .ok);
-    test::check_equal(countof(value_bytes(text)), 5);
-    test::check_condition(is_text(value_bytes(text), "hello"));
-    test::check_condition(allocator.base.owns(&allocator.base, value_bytes(text).data));
+    files::BytesResult contents = files::read_file("notes.txt");
+    test::check_condition(contents == .ok);
+    test::check_equal(countof(value_bytes(contents)), 5);
+    test::check_condition(is_text(value_bytes(contents), "hello"));
+    test::check_condition(allocator.base.owns(&allocator.base, value_bytes(contents).data));
 }
 
 export void test_files_a_missing_file_is_a_value() {
@@ -141,9 +141,9 @@ export void test_files_a_missing_file_is_a_value() {
     files::Handler *before = files::set_handler(&fake.base);
     defer files::set_handler(before);
 
-    files::BytesResult text = files::read_file("nothing.txt");
-    test::check_condition(text == .error);
-    test::check_condition(failure_bytes(text) == files::NotFound);
+    files::BytesResult contents = files::read_file("nothing.txt");
+    test::check_condition(contents == .error);
+    test::check_condition(failure_bytes(contents) == files::NotFound);
     files::InfoResult about = files::info("nothing.txt");
     test::check_condition(about == .error);
     test::check_condition(failure_info(about) == files::NotFound);
@@ -338,8 +338,8 @@ export void test_files_fake_add_replaces_a_file() {
 
     files::fake_add(&fake, "config.txt", hello);
     files::fake_add(&fake, "config.txt", hi);
-    files::BytesResult text = files::read_file("config.txt");
-    test::check_condition(text == .ok && is_text(text.ok, "hi"));
+    files::BytesResult contents = files::read_file("config.txt");
+    test::check_condition(contents == .ok && is_text(contents.ok, "hi"));
 }
 
 export void test_files_the_handler_is_restored() {
@@ -375,8 +375,8 @@ export void test_files_the_real_file_system_in_a_scratch_folder() {
     test::check_equal(put_text(path, "!", 1, files::Append), -1);
     test::check_equal(put_text(path, "real!", 5, files::Atomic), -1);
 
-    files::BytesResult text = files::read_file(path[0:__builtin_strlen(path)]);
-    test::check_condition(text == .ok && is_text(text.ok, "real!"));
+    files::BytesResult contents = files::read_file(path[0:__builtin_strlen(path)]);
+    test::check_condition(contents == .ok && is_text(contents.ok, "real!"));
     files::InfoResult about = files::info(path[0:__builtin_strlen(path)]);
     test::check_condition(about == .ok && !about.ok.folder);
     test::check_equal(value_info(about).size, 5);
@@ -417,8 +417,8 @@ LogEnv log_env(char *log) {
 
 // A whole text of the log, or "" when there is none: read with the variable not set, since a read is logged too.
 const char *log_text(const char *log) {
-    files::BytesResult text = files::read_file(log[0:__builtin_strlen(log)]);
-    files::Bytes got = value_bytes(text);
+    files::BytesResult contents = files::read_file(log[0:__builtin_strlen(log)]);
+    files::Bytes got = value_bytes(contents);
     char *copy = mem::alloc_slice(char, countof(got) + 1).data;
     for (Usize i = 0; i < countof(got); i++)
         copy[i] = (char)got[i];
@@ -427,17 +427,17 @@ const char *log_text(const char *log) {
 }
 
 // Whether the log has a line ending so (a path of the scratch folder, then the tail and a newline).
-Bool has_line(const char *text, const char *tail) {
+Bool has_line(const char *contents, const char *tail) {
     char line[64];
     __builtin_snprintf(line, sizeof line, "%s\n", tail);
-    return __builtin_strstr(text, line) != nullptr;
+    return __builtin_strstr(contents, line) != nullptr;
 }
 
 // How many lines the log has.
-Usize line_count(const char *text) {
+Usize line_count(const char *contents) {
     Usize lines = 0;
-    for (Usize i = 0; text[i] != 0; i++)
-        lines += text[i] == '\n' ? 1 : 0;
+    for (Usize i = 0; contents[i] != 0; i++)
+        lines += contents[i] == '\n' ? 1 : 0;
     return lines;
 }
 
@@ -475,11 +475,11 @@ export void test_files_the_reads_log_names_what_a_test_read() {
     test::check_condition(whole == .ok && listed == .ok && mapped == .ok && about == .ok);
     files::unmap(value_bytes(mapped));
 
-    const char *text = log_text(log);
-    test::check_condition(has_line(text, "/data/a.txt"));
-    test::check_condition(has_line(text, "/data/"));
-    test::check_condition(has_line(text, "/data/b.txt"));
-    test::check_equal(line_count(text), 3); // the write and the info are not in it
+    const char *contents = log_text(log);
+    test::check_condition(has_line(contents, "/data/a.txt"));
+    test::check_condition(has_line(contents, "/data/"));
+    test::check_condition(has_line(contents, "/data/b.txt"));
+    test::check_equal(line_count(contents), 3); // the write and the info are not in it
 }
 
 // Without the variable nothing is written, and over the fake nothing is, even with it: its paths are not real.
@@ -544,9 +544,9 @@ export void test_files_read_line_reads_the_lines_of_a_file() {
     files::Handler *before = files::set_handler(&fake.base);
     defer files::set_handler(before);
 
-    const char *text = "one\n\ntwo words\nlast";
+    const char *contents = "one\n\ntwo words\nlast";
     files::CountResult written =
-        files::write_file("lines.txt", bytes_of(text)[0:__builtin_strlen(text)], files::Replace);
+        files::write_file("lines.txt", bytes_of(contents)[0:__builtin_strlen(contents)], files::Replace);
     test::check_condition(written == .ok);
     files::OpenResult opened = files::open("lines.txt", files::Read);
     test::check_condition(opened == .ok);
@@ -578,9 +578,9 @@ export void test_files_read_line_too_long_is_an_error_and_a_full_buffer_fits() {
     files::Handler *before = files::set_handler(&fake.base);
     defer files::set_handler(before);
 
-    const char *text = "abcd\nabcde\n";
+    const char *contents = "abcd\nabcde\n";
     files::CountResult written =
-        files::write_file("long.txt", bytes_of(text)[0:__builtin_strlen(text)], files::Replace);
+        files::write_file("long.txt", bytes_of(contents)[0:__builtin_strlen(contents)], files::Replace);
     test::check_condition(written == .ok);
     files::File file = value_file(files::open("long.txt", files::Read));
     U8 buffer[4] = {};
@@ -599,10 +599,10 @@ export void test_files_describe_names_every_error() {
     test::check(text::is(files::describe(files::NotFound), "nothing is at the path"));
 }
 
-Bool is_chars(const char got[:], const char *text) {
-    if (countof(got) != __builtin_strlen(text)) return false;
+Bool is_chars(const char got[:], const char *contents) {
+    if (countof(got) != __builtin_strlen(contents)) return false;
     for (Usize i = 0; i < countof(got); i++)
-        if (got[i] != text[i]) return false;
+        if (got[i] != contents[i]) return false;
     return true;
 }
 

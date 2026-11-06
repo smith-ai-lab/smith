@@ -14,7 +14,7 @@ typedef ast::Param ParamList[:];
 
 // The parameters of the first function of source, which must parse without errors.
 static ParamList params_of(Str source) {
-    parser::Parsed parsed = parser::parse("x.smith", source);
+    parser::Parsed parsed = parser::parse_file("x.smith", source);
     test::check_equal(countof(parsed.errors), 0);
     test::check_condition(countof(parsed.module.decls) >= 1);
     ast::DeclKind kind = parsed.module.decls[0]->kind;

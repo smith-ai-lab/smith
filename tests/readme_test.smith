@@ -55,18 +55,18 @@ typedef struct {
     Usize count;
 } Blocks;
 
-static const char *copy_of(arena::Arena *arena, const char *at, Usize length) {
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+static const char *copy_of(arena::Arena *store, const char *at, Usize length) {
+    char *copy = arena::push_slice(store, char, length + 1).data;
     mem::copy(copy[0:length], at[0:length]);
     return copy;
 }
 
 // The words of an info string: the kind, then project=NAME, file=PATH, and the rest as flags.
-static void parse_info(arena::Arena *arena, const char *info, Block *block) {
+static void parse_info(arena::Arena *store, const char *info, Block *block) {
     block->kind = "";
     block->project = format::push("block-", block->number).data;
     block->path = nullptr;
-    char *flags = arena::push_slice(arena, char, c::strlen(info) + 3).data;
+    char *flags = arena::push_slice(store, char, c::strlen(info) + 3).data;
     Usize used = 0;
     flags[used++] = ',';
     Bool first = true;
@@ -77,11 +77,11 @@ static void parse_info(arena::Arena *arena, const char *info, Block *block) {
         }
         Usize length = c::strcspn(at, " ");
         if (first) {
-            block->kind = copy_of(arena, at, length);
+            block->kind = copy_of(store, at, length);
         } else if (c::strncmp(at, "project=", 8) == 0) {
-            block->project = copy_of(arena, at + 8, length - 8);
+            block->project = copy_of(store, at + 8, length - 8);
         } else if (c::strncmp(at, "file=", 5) == 0) {
-            block->path = copy_of(arena, at + 5, length - 5);
+            block->path = copy_of(store, at + 5, length - 5);
         } else {
             mem::copy(flags[used:used + length], at[0:length]);
             used += length;
@@ -101,19 +101,19 @@ static const char *line_end(const char *at) {
 }
 
 // The info string after a fence that starts at `at + spaces`, without its trailing blanks.
-static const char *info_after_fence(arena::Arena *arena, const char *at, Usize spaces, const char *next) {
+static const char *info_after_fence(arena::Arena *store, const char *at, Usize spaces, const char *next) {
     Usize length = (Usize)(next - at) - spaces - 3;
     while (length > 0 && (at[spaces + 2 + length] == '\n' || at[spaces + 2 + length] == ' ')) {
         length--;
     }
-    return copy_of(arena, at + spaces + 3, length);
+    return copy_of(store, at + spaces + 3, length);
 }
 
 // Walks the README (copied to README.md in the project): its blocks, with the text of each.
-static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *blocks) {
+static void read_blocks(arena::Arena *store, const scratch::Project *p, Blocks *blocks) {
     scratch::copy_tree(p, "README.md", "README.md");
     const char *at = scratch::read(p, "README.md");
-    char *body = arena::push_slice(arena, char, c::strlen(at) + 1).data;
+    char *body = arena::push_slice(store, char, c::strlen(at) + 1).data;
     Usize indent = 0;
     Usize used = 0;
     Bool open = false;
@@ -131,11 +131,11 @@ static void read_blocks(arena::Arena *arena, const scratch::Project *p, Blocks *
             Block *block = &blocks->items[blocks->count];
             block->number = blocks->count + 1;
             block->line = line;
-            parse_info(arena, info_after_fence(arena, at, spaces, next), block);
+            parse_info(store, info_after_fence(store, at, spaces, next), block);
         } else if (c::strncmp(at + spaces, "```", 3) == 0) {
             open = false;
             body[used] = '\0';
-            blocks->items[blocks->count].body = copy_of(arena, body, used);
+            blocks->items[blocks->count].body = copy_of(store, body, used);
             blocks->count++;
         } else if (open) {
             Usize skip = 0;
@@ -217,10 +217,10 @@ static const char *flags_of(const Blocks *blocks, const char *name) {
 }
 
 // The project this one starts from (`base=NAME`), or nullptr.
-static const char *base_of(arena::Arena *arena, const char *flags) {
+static const char *base_of(arena::Arena *store, const char *flags) {
     const char *at = c::strstr(flags, ",base=");
     if (at == nullptr) return nullptr;
-    return copy_of(arena, at + 6, c::strcspn(at + 6, ","));
+    return copy_of(store, at + 6, c::strcspn(at + 6, ","));
 }
 
 static Usize first_line_of(const Blocks *blocks, const char *name) {
@@ -308,12 +308,12 @@ static void project_case(const char *name) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    arena::Arena *arena = &memory;
+    arena::Arena *store = &memory;
     Blocks blocks = {};
-    read_blocks(arena, &p, &blocks);
+    read_blocks(store, &p, &blocks);
     const char *flags = flags_of(&blocks, name);
     Placed placed = {};
-    const char *base = base_of(arena, flags);
+    const char *base = base_of(store, flags);
     if (base != nullptr) place_blocks(&p, &blocks, base, true, &placed);
     placed.count = 0; // the project's own blocks may replace the files of its base
     place_blocks(&p, &blocks, name, false, &placed);
@@ -440,7 +440,7 @@ export void test_readme_smith_blocks_are_not_c_renamed() {
 
 // Whether `path` (relative to $SMITH_REPO) is there: the folder that holds it is listed through std::files, so that
 // the record of the test names the listing, and a file added or removed there selects the test.
-static Bool repo_has(arena::Arena *arena, const char *path) {
+static Bool repo_has(arena::Arena *store, const char *path) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
     Usize length = c::strlen(path);
@@ -449,8 +449,8 @@ static Bool repo_has(arena::Arena *arena, const char *path) {
     Usize slash = length;
     while (slash > 0 && path[slash - 1] != '/')
         slash--;
-    const char *name = copy_of(arena, path + slash, length - slash);
-    const char *parent = slash == 0 ? base : format::push(base, "/", copy_of(arena, path, slash - 1)).data;
+    const char *name = copy_of(store, path + slash, length - slash);
+    const char *parent = slash == 0 ? base : format::push(base, "/", copy_of(store, path, slash - 1)).data;
     files::EntriesResult listed = files::list(parent[0:c::strlen(parent)]);
     switch (listed) {
     case .ok:

@@ -40,7 +40,7 @@ static void begin(Scenario *s, Str source) {
     s->memory = test::memory(1U << 22);
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
-    s->parsed = parser::parse("t.smith", source);
+    s->parsed = parser::parse_file("t.smith", source);
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     test::check_equal(s->checked.error_count, (Usize)0);

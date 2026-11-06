@@ -12,14 +12,14 @@ import std::test;
 
 // The dump of a file, with no error allowed.
 static Str dump_of(Str source) {
-    parser::Parsed parsed = parser::parse("local.smith", source);
+    parser::Parsed parsed = parser::parse_file("local.smith", source);
     test::check_equal(countof(parsed.errors), 0);
     return ast::dump(&parsed.module);
 }
 
 // The first error of a file.
 static Str first_error(Str source) {
-    parser::Parsed parsed = parser::parse("local.smith", source);
+    parser::Parsed parsed = parser::parse_file("local.smith", source);
     test::check_condition(countof(parsed.errors) > 0);
     if (countof(parsed.errors) == 0) return "";
     return parsed.errors[0].message;
@@ -78,7 +78,7 @@ export void test_parse_local_error_c_tag_without_c() {
                  "    return 0;\n"
                  "}\n";
     Str expected = "`struct stat` names a C tag; write `struct c::stat`";
-    parser::Parsed parsed = parser::parse("local.smith", source);
+    parser::Parsed parsed = parser::parse_file("local.smith", source);
     Bool found = false;
     for (Usize i = 0; i < countof(parsed.warnings); i++) {
         if (mem::equal(parsed.warnings[i].message, expected)) found = true;

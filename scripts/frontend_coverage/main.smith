@@ -501,10 +501,10 @@ static I32 summarize(const char file[:], const char *smith) {
         return 1;
     }
     Usize passed = 0;
-    Usize files = 0;
+    Usize started = 0;
     for (Usize i = 0; i < entry_count; i++) {
         const char *path = entries[i].path;
-        if (starts_file(i)) files += 1;
+        if (starts_file(i)) started += 1;
         if (is_pass(&entries[i])) {
             passed += 1;
             console::print("pass  ", path, "\n");
@@ -521,7 +521,7 @@ static I32 summarize(const char file[:], const char *smith) {
     sort_names();
     console::print("\n");
     if (smith != nullptr) print_measured(smith);
-    console::print("frontend-coverage: ", passed, " of ", files, " files pass\n");
+    console::print("frontend-coverage: ", passed, " of ", started, " files pass\n");
     print_stages();
     print_causes();
     print_names();

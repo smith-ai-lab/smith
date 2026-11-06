@@ -101,17 +101,17 @@ static F64 cpu_median(struct Series *series) {
 }
 
 // The first position of `byte` in `text` from `from`, or the length of the text.
-static Usize find(const char text[:], char byte, Usize from) {
+static Usize find(const char contents[:], char byte, Usize from) {
     Usize i = from;
-    while (i < countof(text) && text[i] != byte) {
+    while (i < countof(contents) && contents[i] != byte) {
         i += 1;
     }
     return i;
 }
 
 // Reads the first word of `text` as a number; false when there is none.
-static Bool take_number(const char text[:], F64 *value) {
-    typeof(const char[:]) rest = text;
+static Bool take_number(const char contents[:], F64 *value) {
+    typeof(const char[:]) rest = contents;
     typeof(const char[:]) word = {};
     if (!text::take_word(&rest, &word)) return false;
     return text::parse_f64(word, value);
@@ -121,14 +121,14 @@ static Bool take_number(const char text[:], F64 *value) {
 static void read_steps(const char path[:]) {
     files::BytesResult loaded = files::read_file(path);
     if (loaded == .error) return;
-    typeof(char[:]) text = mem::view(loaded.ok, char);
+    typeof(char[:]) contents = mem::view(loaded.ok, char);
     defer mem::free(loaded.ok.data);
     Usize at = 0;
-    while (at < countof(text)) {
-        Usize end = find(text, '\n', at);
-        Usize tab = find(text, '\t', at);
+    while (at < countof(contents)) {
+        Usize end = find(contents, '\n', at);
+        Usize tab = find(contents, '\t', at);
         F64 value = 0;
-        if (tab < end && take_number(text[tab + 1:end], &value)) add(&steps, text[at:tab], value, 0);
+        if (tab < end && take_number(contents[tab + 1:end], &value)) add(&steps, contents[at:tab], value, 0);
         at = end + 1;
     }
 }
@@ -138,13 +138,13 @@ static void read_steps(const char path[:]) {
 static F64 read_test_log(const char path[:]) {
     files::BytesResult loaded = files::read_file(path);
     if (loaded == .error) return -1;
-    typeof(char[:]) text = mem::view(loaded.ok, char);
+    typeof(char[:]) contents = mem::view(loaded.ok, char);
     defer mem::free(loaded.ok.data);
     F64 total = -1;
     Usize at = 0;
-    while (at < countof(text)) {
-        Usize end = find(text, '\n', at);
-        typeof(const char[:]) line = text[at:end];
+    while (at < countof(contents)) {
+        Usize end = find(contents, '\n', at);
+        typeof(const char[:]) line = contents[at:end];
         at = end + 1;
         if (countof(line) < 4 || !slice::starts_with(line, text::make("cpu\t"))) continue;
         Usize tab = find(line, '\t', 4);
