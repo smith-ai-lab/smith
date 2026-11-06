@@ -3807,7 +3807,9 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
             Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
-            if (depth > 0 && !nested_fixable(p, &stack[depth - 1], chain, mended, &opened)) fixable = false;
+            if (depth > 0 && !nested_fixable(p, &stack[depth - 1], chain, mended, &opened)) {
+                fixable = false;
+            }
             stack[depth] = opened;
             depth += 1;
             continue;
