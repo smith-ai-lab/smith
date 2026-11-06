@@ -288,19 +288,8 @@ static Bool contains_text(Str text, Str needle) {
     return false;
 }
 
-// Set when `checker_fixes` left a guard for the next pass: that pass must run even if this one applied nothing.
-static Bool guards_held = false;
-
-// Whether one of the edits writes a guard head, `.error(error) := r`: the checker's guard of a variant test.
-static Bool has_guard_edit(core::Edits fix) {
-    for (Usize i = 0; i < countof(fix); i++) {
-        if (contains_text(fix[i].text, ") := ")) return true;
-    }
-    return false;
-}
-
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
-static core::Errors checker_fixes(Str source, const ast::Module *module, Bool hold_guards) {
+static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
     // A module that imports another reads that one's C types too (std.arena's SmithAllocator); a file with only the
     // old `import <h>;` keeps the header out of its first passes.
@@ -311,10 +300,6 @@ static core::Errors checker_fixes(Str source, const ast::Module *module, Bool ho
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
         if (countof(e.fix) == 0) continue;
-        if (hold_guards && has_guard_edit(e.fix)) {
-            guards_held = true;
-            continue;
-        }
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
@@ -599,19 +584,20 @@ static void mend_passes(Str file, Fixed *total, Bool with_checker) {
             errors = mem::realloc(errors, countof(errors) + 1);
             errors[countof(errors) - 1] = sized[i];
         }
-        if (with_checker && countof(parsed.errors) == 0) {
-            // While the first pass still mends old forms, a guard waits: `Result(T, E) r = f();` is `r: Result(T, E) =
-            // f()` first, so the `try` rewrite (#2506) sees a new declaration and not the `if .error(error) := r`
-            // guard that would take its place in the same pass (#2648).
-            core::Errors more = checker_fixes(total->text, &parsed.module, pass == 0 && countof(parsed.warnings) > 0);
+        // The checker waits one pass when the first still mends old forms of a file with a `Result` it tests:
+        // `Result(T, E) r = f();` is `r: Result(T, E) = f()` first, so the `try` rewrite (#2506) sees a new
+        // declaration and not the `if .error(error) := r` guard that would take its place in the same pass (#2648).
+        // Only these files wait: the guards of one test are edits at several places, so a pass cannot drop some.
+        Bool held = pass == 0 && countof(parsed.warnings) > 0 && contains_text(total->text, "Result(") &&
+                    contains_text(total->text, ".error");
+        if (with_checker && countof(parsed.errors) == 0 && !held) {
+            core::Errors more = checker_fixes(total->text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);
                 errors[countof(errors) - 1] = more[i];
             }
         }
         Fixed fixed = apply_fixes(total->text, errors, parsed.warnings);
-        Bool held = guards_held;
-        guards_held = false;
         if (fixed.applied == 0 && !held) break;
         total->text = fixed.text;
         // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`

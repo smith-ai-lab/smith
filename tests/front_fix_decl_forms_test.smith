@@ -173,3 +173,16 @@ export void test_front_fix_leaving_variant_test_is_a_binding_in_a_file_with_old_
                  "static fn c(k: Kind) -> usize:\n    .function(function) := k else:\n        return 0\n"
                  "    return function.params\n");
 }
+
+// #2648: the reads after `k != .v || k.v.f` all name the binding (`member.name`), whatever else the file mends first.
+export void test_front_fix_leaving_or_chain_binds_every_later_read() {
+    expect_fixed(
+        "module m;\nexport struct Mem { Bool arrow; Usize name; };\nexport typedef enum {\n    Mem member;\n    "
+        "leaf;\n} Kind;\n"
+        "static Bool a(Kind k) {\n    if (k != .member || k.member.arrow) return false;\n"
+        "    if (k.member.name == 3) return false;\n    return true;\n}\n",
+        "pub struct Mem:\n    pub arrow: bool\n    pub name: usize\npub enum Kind:\n    member: Mem\n    leaf\n"
+        "static fn a(k: Kind) -> bool:\n    .member(member) := k else:\n        return false\n    \n"
+        "    if member.arrow:\n        return false\n    if member.name == 3:\n        return false\n    return "
+        "true\n");
+}
