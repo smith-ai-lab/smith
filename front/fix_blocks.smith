@@ -100,16 +100,17 @@ static Bool starts_list(lex::TokenKind before) {
 static Bool compound_literal(lex::Tokens tokens, Usize open) {
     if (open < 3 || tokens[open - 1].kind != lex::right_paren) return false;
     Usize nest = 0;
-    Usize i = open - 1;
-    while (true) {
+    Usize i = open;
+    Bool found = false;
+    for (Usize back = 0; back < open && !found; back++) {
+        i = open - 1 - back;
         if (tokens[i].kind == lex::right_paren) nest += 1;
         if (tokens[i].kind == lex::left_paren) {
             nest -= 1;
-            if (nest == 0) break;
+            found = nest == 0;
         }
-        if (i == 0) return false;
-        i -= 1;
     }
+    if (!found) return false;
     if (i == 0) return false;
     lex::TokenKind before = tokens[i - 1].kind;
     return starts_list(before) || before == lex::semicolon || before == lex::kw_try;
