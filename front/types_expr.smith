@@ -338,7 +338,8 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     if (s != nullptr) {
         return s->is_new;
     }
-    // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
+    // no variable at the root: a call (`unerase(x).size`) or a cast (`p.cast(*T).size`) is in
+    // smith's own syntax when its body is (#2219)
     const ast::Expr *at = e;
     while (at != nullptr && (at->kind == .member || at->kind == .index)) {
         if (at->kind == .member) {
@@ -347,7 +348,7 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
             at = at->kind.index.base;
         }
     }
-    return at != nullptr && at->kind == .call && c->new_body;
+    return at != nullptr && (at->kind == .call || at->kind == .cast) && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -1950,6 +1951,13 @@ static void binary_after(types::Checked *c, Frame f) {
         expected = f.expected;
     }
     if (!is_shift(op) && !is_logical(op) && !adapt_literals(c, left, right, expected)) {
+        poison(c, e);
+        return;
+    }
+    // A shift has the type of its left operand, so a literal there takes the type the context expects: `64 << 10`
+    // for a `usize` is a `usize`, as `64` alone is.
+    if (is_shift(op) && literal_like(left) && expected != nullptr && is_number(expected) &&
+        adaptable(typ(c, left), expected) && !retype(c, left, expected)) {
         poison(c, e);
         return;
     }
