@@ -41,5 +41,6 @@ export void test_front_fix_global_a_comment_on_an_exported_constexpr_keeps_const
 export void test_front_fix_global_a_static_with_no_initializer_gets_the_zero_c_gives() {
     expect("static Bool asked;\n", "static mut asked: bool = false\n");
     expect("static Table steps;\n", "static mut steps: Table = Table()\n");
+    expect("static arena::ArenaAllocator allocator;\n", "static mut allocator: arena.ArenaAllocator = arena.ArenaAllocator()\n");
     expect("static arena::Arena memory;\n", "static mut memory: arena.Arena = arena.Arena()\n");
 }
