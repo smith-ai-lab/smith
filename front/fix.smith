@@ -27,6 +27,7 @@ import front::fix_blocks;
 import front::fix_generic_c;
 import front::fix_method;
 import front::fix_opaque;
+import front::fix_alloc;
 import front::fix_typeof;
 import front::fix_variants;
 import front::lex;
@@ -452,6 +453,12 @@ static void mend_passes(Str file, Fixed *total) {
         for (Usize i = 0; i < countof(opaque); i++) {
             errors = mem::realloc(errors, countof(errors) + 1);
             errors[countof(errors) - 1] = opaque[i];
+        }
+        // `mem.alloc_slice(T, a, b)` and `arena.push_slice(&x, T, a, b)` take a size or a shape (#2527)
+        core::Errors sized = fix_alloc::edits(total->text);
+        for (Usize i = 0; i < countof(sized); i++) {
+            errors = mem::realloc(errors, countof(errors) + 1);
+            errors[countof(errors) - 1] = sized[i];
         }
         if (countof(parsed.errors) == 0) {
             core::Errors more = checker_fixes(total->text, &parsed.module);

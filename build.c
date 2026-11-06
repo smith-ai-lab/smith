@@ -891,7 +891,7 @@ static const char *const build_front_modules[] = {
     "fix_blocks",   "fix_generic_c",   "fix_method",    "fix_zero",     "fix_opaque",
     "fix_typeof",   "lsp_server",      "lsp_hover",     "lsp_semantic", "lsp_definition",
     "lsp_symbols",  "lsp_completion",  "format_space",  "format",       "effects_table",
-    "fix_variants",
+    "fix_variants", "fix_alloc",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 

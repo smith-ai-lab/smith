@@ -278,6 +278,9 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
     Str prefix = "";
     for (Usize i = 0; i + 1 < names.count; i++) {
         const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
+        // `contract.trusted()` in the body of `mem.copy`'s instance: an import of the module the generic comes from
+        if (module == nullptr && i == 0 && countof(e->instance_scope) > 0)
+            module = types::lookup(scopes, state::msg(format::push(e->instance_scope, names.items[i])));
         if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return false;
         prefix = state::msg(format::push(join(module->decl->kind.import_module.path), "::"));
     }
@@ -830,8 +833,9 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Bool is_imported = false;
     Usize record = 0;
     if (callee_record(e, callee, &record)) return construct(e, x, record);
-    if (builtin::is_filled(e, x)) return builtin::filled(e, x); // `array.filled` (#2339)
-    if (builtin::is_call(x)) return builtin::call(e, x);        // a clang builtin (#2286)
+    if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
+    if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
+    if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         state::Local local = {};

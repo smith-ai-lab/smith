@@ -22,6 +22,9 @@
 //   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
 //   (#2339):
 //                                                                        n copies of value; n is a constant
+//   alloc                 (type T, n) or (type T, [a, b])         []T or [,]T `mem.alloc(T, n)` of std.mem (#2527):
+//                                                                        zeroed, the sizes known at run time; and
+//                         (*Arena, type T, n or [a, b])                       `arena.push_slice(&a, T, n)`
 //   == 0 constant         () or ("") for nan                      F64 or F32  the constant (`inf`, `nan`; the F32 ones
 //   end in `f`)
 //
@@ -49,6 +52,7 @@ export typedef enum {
     count_zeros;
     atomic_add;
     filled;
+    alloc;
     type_query;
 } Shape;
 
@@ -187,8 +191,8 @@ export Bool find(Str name, Entry *found) {
     return true;
 }
 
-// Whether the callee is `array.filled`, the name `filled` read through a module that `import std.array` bound.
-static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
+// Whether the callee is `<module>.<name>`, `name` read through a module that `import <module>` bound.
+static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str name) {
     types::Names names = {};
     if (callee->kind == .member && !callee->kind.member.arrow) {
         names = types::member_names(callee);
@@ -197,9 +201,27 @@ static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
         if (countof(path.segments) != 2) return false;
         names = (types::Names){.count = 2, .items = {path.segments[0].text, path.segments[1].text}};
     }
-    if (names.count != 2 || !same(names.items[1], "filled")) return false;
+    if (names.count != 2 || !same(names.items[1], name)) return false;
     const types::Symbol *module = types::scoped(c, names.items[0]);
-    return module != nullptr && module->kind == .module_name && same(types::module_dotted(module), "std.array");
+    return module != nullptr && module->kind == .module_name && same(types::module_dotted(module), module_path);
+}
+
+static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
+    return names_std(c, callee, "std.array", "filled");
+}
+
+// Whether a call of `callee` with that many arguments is `arena.push_slice(&a, T, n)` or `arena.push_slice(&a, T,
+// [a, b])` of std.arena: the same bridge as `mem.alloc`'s, for the same reason (arena.smith's `slice_of`, #2539).
+export Bool names_push_slice(const types::Checked *c, const ast::Expr *callee, Usize arguments) {
+    return arguments == 3 && names_std(c, callee, "std.arena", "push_slice");
+}
+
+// Whether a call of `callee` with that many arguments is `mem.alloc(T, n)` or `mem.alloc(T, [a, b])` of std.mem, where
+// `mem.alloc(T)` is the function of std.mem returning `*mut T`. A bridge while lib/std/mem.smith is in today's syntax,
+// which has no one function for both forms: #2539 makes `mem.alloc` an ordinary generic of mem.smith and deletes this
+// (#2527).
+export Bool names_alloc(const types::Checked *c, const ast::Expr *callee, Usize arguments) {
+    return (arguments == 2 && names_std(c, callee, "std.mem", "alloc")) || names_push_slice(c, callee, arguments);
 }
 
 // The builtin a call's callee names, when it is one: a single plain name that no scope declares, or `array.filled`.
@@ -215,9 +237,20 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
     return types::lookup_path(&c->scopes, path) == nullptr;
 }
 
+// The builtin a call names: `mem.alloc` with a size, or the builtin of its callee (`callee_entry`).
+export Bool call_entry(const types::Checked *c, const ast::Expr *call, Entry *found) {
+    if (call->kind == .call && names_alloc(c, call->kind.call.callee, countof(call->kind.call.args))) {
+        Bool arena = names_push_slice(c, call->kind.call.callee, countof(call->kind.call.args));
+        *found = made(arena ? "arena.push_slice" : "mem.alloc", .alloc, "");
+        return true;
+    }
+    return call->kind == .call && callee_entry(c, call->kind.call.callee, found);
+}
+
 // Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), the
 // tag string of `nan`, which is ignored, or the memory order of an atomic, a predefined macro the checker reads.
 export Bool is_type_argument(Entry entry, Usize index) {
+    if (entry.shape == .alloc) return index == (same(entry.name, "arena.push_slice") ? 1 : 0); // T after the arena
     if (entry.shape == .bit_cast || entry.shape == .filled || entry.shape == .type_query) return index == 0;
     if (entry.shape == .atomic_add) return index == 2;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
@@ -502,6 +535,41 @@ static types::TypeRef check_filled(types::Checked *c, const ast::Expr *e, Entry 
     return made_type;
 }
 
+// The type the sizes of `mem.alloc(T, n)` and `mem.alloc(T, [a, b])` are given: `usize`.
+export types::TypeRef size_type(const types::Checked *c) {
+    return named(c, "Usize");
+}
+
+// `mem.alloc(T, n)`: `[]T` of n zeroed elements; `mem.alloc(T, [a, b])`: one zeroed block `[,]T`, a comma for each
+// size after the first. The sizes are integers known at run time. `arena.push_slice(&a, T, ...)` the same, in `a`.
+static types::TypeRef check_alloc(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Usize first = same(entry.name, "arena.push_slice") ? 1 : 0;
+    Str wanted = first == 1 ? "an arena, a type and a size or a shape; write `(&a, u8, n)` or `(&a, f64, [rows, cols])`"
+                            : "a type and a size or a shape; write `(u8, n)` or `(f64, [rows, cols])`";
+    if (countof(args) != first + 2) return wrong(c, e->span, entry, wanted);
+    types::TypeRef arena = first == 1 ? value_type(c, args[0]) : nullptr;
+    if (arena != nullptr && arena->kind != .pointer) return wrong(c, e->span, entry, wanted);
+    types::TypeRef element = type_argument(c, args[first], entry.name);
+    if (element == nullptr) return c->table.invalid;
+    const ast::Expr *shape = args[first + 1];
+    Usize rank = 1;
+    if (shape->kind == .array_lit) {
+        rank = countof(shape->kind.array_lit.items);
+        if (rank == 0 || rank > 16) return wrong(c, e->span, entry, wanted);
+    }
+    for (Usize i = 0; i < rank; i++) {
+        const ast::Expr *size = shape->kind == .array_lit ? shape->kind.array_lit.items[i] : shape;
+        types::TypeRef t = value_type(c, size);
+        if (t == c->table.invalid) return c->table.invalid;
+        if (t->kind != .integer) {
+            types::failf(c, size->span, "a size of `", entry.name, "` is an integer, found ", types::show(t));
+            return c->table.invalid;
+        }
+    }
+    if (rank == 1) return types::slice_of(&c->table, element, false);
+    return types::block_of(&c->table, element, rank);
+}
+
 // The type of a call of the builtin, once its arguments are typed (a type argument is read here); the invalid type,
 // with the error reported, when the arguments do not fit.
 export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) {
@@ -535,6 +603,8 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return check_format(c, e, entry, args);
     case .filled:
         return check_filled(c, e, entry, args);
+    case .alloc:
+        return check_alloc(c, e, entry, args);
     case .type_query:
         if (countof(args) != 1) return wrong(c, e->span, entry, "one type; write `(typeof(x))`");
         if (type_argument(c, args[0], entry.name) == nullptr) return c->table.invalid;

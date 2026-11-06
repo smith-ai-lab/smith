@@ -409,6 +409,10 @@ static void visit_stmt_loops(Work *work, ast::Stmt *s) {
         s->kind.for_in.iterable = take_expr(work, s->kind.for_in.iterable);
         s->kind.for_in.body = take_stmt(work, s->kind.for_in.body);
     }
+    if (s->kind == .for_index) {
+        s->kind.for_index.names = take_identifiers(s->kind.for_index.names);
+        s->kind.for_index.body = take_stmt(work, s->kind.for_index.body);
+    }
 }
 
 static void visit_stmt(Work *work, ast::Stmt *s) {
