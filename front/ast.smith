@@ -1573,7 +1573,9 @@ static void other_children_more(Items *items, Node node) {
             add(items, {.pattern = &node.arm->patterns[i]});
         add_expr(items, node.arm->value, false);
     }
-    if (node == .pattern) add_expr(items, node.pattern->constant, false);
+    if (node == .pattern) {
+        if (node.pattern->constant != nullptr) add_expr(items, node.pattern->constant, false);
+    }
     if (node == .decl_group) add_decls(items, node.decl_group.decls);
     if (node == .typed) add_type(items, node.typed.type, false);
 }
@@ -1611,8 +1613,8 @@ static void other_children(Items *items, Node node) {
         add_type(items, node.param->type, false);
         break;
     case .field:
-        add_type(items, node.field->type, false);
-        add_expr(items, node.field->bit_width, false);
+        if (node.field->type != nullptr) add_type(items, node.field->type, false);
+        if (node.field->bit_width != nullptr) add_expr(items, node.field->bit_width, false);
         break;
     case .enumerator:
         add_expr(items, node.enumerator->value, false);
@@ -2258,7 +2260,9 @@ static void push_step(Step stack[:], Usize *top, Step step) {
 constexpr Usize flat_size_max = 16;
 
 static Bool is_flat(Item item) {
-    if (item.node == .decl && (item.node.decl->kind == .record || item.node.decl->kind == .enumeration)) return false;
+    if (item.node == .decl) {
+        if (item.node.decl->kind == .record || item.node.decl->kind == .enumeration) return false;
+    }
     return !item.nested && item.size <= flat_size_max;
 }
 
@@ -2487,8 +2491,9 @@ static void note_import(Symbols *list, Usize *used, const Decl *d, Span everywhe
         Usize count = countof(d->kind.import_module.path.segments);
         if (countof(name) == 0 && count > 0) name = d->kind.import_module.path.segments[count - 1].text;
         note(list, used, symbol_of(name, sym_module, true, d->span, everywhere));
-    } else if (d->kind == .import_c && countof(d->kind.import_c.alias) > 0) {
-        note(list, used, symbol_of(d->kind.import_c.alias, sym_module, true, d->span, everywhere));
+    } else if (d->kind == .import_c) {
+        if (countof(d->kind.import_c.alias) > 0)
+            note(list, used, symbol_of(d->kind.import_c.alias, sym_module, true, d->span, everywhere));
     }
 }
 
