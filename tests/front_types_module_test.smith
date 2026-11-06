@@ -61,6 +61,7 @@ static Str math_source() {
            "pub struct Point:\n    pub x: f64\n    pub y: f64\n\n"
            "pub struct Handle:\n    pub len: i32\n    items: i32\n\n"
            "pub fn handle() -> Handle:\n    return Handle(len = 1, items = 2)\n\n"
+           "pub struct Opts:\n    pub n: i32\n    seen: i32 = 0\n\n"
            "pub fn origin() -> Point:\n    return Point(x = 0.0, y = 0.0)\n";
 }
 
@@ -320,6 +321,20 @@ export void test_front_types_module_defaults_fill_what_a_construction_or_a_call_
 export void test_front_types_module_a_missing_field_without_a_default_is_an_error() {
     fails("struct Config:\n    host: i32\n    port: i32 = 80\n\nfn run() -> Config:\n    return Config()\n",
           "the field `host` of `Config` is left out and has no default", "");
+}
+
+// #2530: a private field with a default is filled by it, so another module builds the struct leaving it out; it
+// cannot give the private field a value.
+export void test_front_types_module_a_private_field_left_out_takes_its_default() {
+    clean("import lib.math as m\n\nfn run() -> m.Opts:\n    return m.Opts(n = 1)\n");
+    fails("import lib.math as m\n\nfn run() -> m.Opts:\n    return m.Opts(n = 1, seen = 2)\n", "has private fields",
+          "");
+}
+
+// #2530: a default of an affine type is built for each construction that leaves the field out, not shared.
+export void test_front_types_module_an_affine_default_is_built_per_construction() {
+    clean("@affine\nstruct Token:\n    id: i32 = 0\n\nstruct Holder:\n    t: Token = Token()\n    n: i32\n\n"
+          "fn run() -> i32:\n    a := Holder(n = 1)\n    b := Holder(n = 2)\n    a.n + b.n\n");
 }
 
 export void test_front_types_module_a_default_must_be_a_constant_in_order() {

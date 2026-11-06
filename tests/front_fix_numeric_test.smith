@@ -70,8 +70,8 @@ export void test_front_fix_numeric_a_left_out_enum_field_is_the_variant_of_value
     expect_fixed_settled(
         "module m;\ntypedef enum {\n    Empty,\n    Invalid,\n} Error;\ntypedef struct {\n    int v;\n"
         "    Error e;\n} S;\nS f(int x) { return (S){.v = x}; }\n",
-        "enum Error:\n    Empty\n    Invalid\nstruct S:\n    v: i32\n    e: Error\nfn f(x: i32) -> S:\n"
-        "    return S(v = x, e = .Empty)\n");
+        "enum Error:\n    Empty\n    Invalid\nstruct S:\n    v: i32\n    e: Error = .Empty\nfn f(x: i32) -> S:\n"
+        "    return S(v = x)\n");
 }
 
 // ---------------------------------------------------------------------------------------------------------------

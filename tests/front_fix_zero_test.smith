@@ -4,6 +4,7 @@ module front_fix_zero_test;
 
 import front::fix;
 import front::parser;
+import std::files;
 import std::arena;
 import std::mem;
 import std::test;
@@ -54,8 +55,8 @@ export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() 
     expect_fixed(
         "module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n    char *p;\n};\n"
         "E make(int k) {\n    return (E){.k = k};\n}\n",
-        "struct S:\n    a: i32\n    b: i32\nstruct E:\n    k: i32\n    s: S\n    p: *char\n"
-        "fn make(k: i32) -> E:\n    return E(k = k, s = S(a = 0, b = 0), p = nullptr)\n");
+        "struct S:\n    a: i32 = 0\n    b: i32 = 0\nstruct E:\n    k: i32\n    s: S = S()\n    p: *char\n"
+        "fn make(k: i32) -> E:\n    return E(k = k)\n");
 }
 
 // Slice 6 of #2224 (`std::arena` parses): an opaque type that ends the file keeps its `struct`, and a function's result
@@ -164,4 +165,41 @@ export void test_front_fix_zero_fills_a_two_dimension_static_array() {
 export void test_front_fix_a_local_static_const_table_loses_its_static() {
     expect_fixed("module m;\nvoid f(void) {\n    static const double t[2] = {1.0, 2.0};\n    g(&t[0]);\n}\n",
                  "fn f():\n    t: [2]f64 = [1.0, 2.0]\n    g(&t[0])\n");
+}
+
+// #2530 (the owner, 2026-11-06): a field that a construction leaves out gets C's zero written as its default in the
+// struct, and the construction stays as written. A number is `0` or `0.0`, a `bool` `false`, a `str` `""`, a slice
+// `[]`, an option `.none`, an enumeration its variant of value 0, a fixed array `array.filled`, a struct of the module
+// `S()` (its own fields get defaults too). A pointer gets none: it is left to become `?*T`.
+export void test_front_fix_zero_left_out_fields_get_defaults_in_the_struct() {
+    expect_fixed(
+        "enum Mode:\n    off\n    on\nstruct In:\n    n: i32\nstruct W:\n    a: i32\n    f: f64\n    ok: bool\n"
+        "    name: str\n    xs: []i32\n    maybe: ?i32\n    mode: Mode\n    grid: [3]i32\n    inner: In\n"
+        "    p: *i32\nfn make() -> W:\n    return W(a = 1)\n",
+        "import std.array\nenum Mode:\n    off\n    on\nstruct In:\n    n: i32 = 0\nstruct W:\n    a: i32\n"
+        "    f: f64 = 0.0\n    ok: bool = false\n    name: str = \"\"\n    xs: []i32 = []\n    maybe: ?i32 = .none\n"
+        "    mode: Mode = .off\n    grid: [3]i32 = array.filled(i32, 3, 0)\n    inner: In = In()\n    p: *i32\n"
+        "fn make() -> W:\n    return W(a = 1)\n");
+}
+
+// Only the fields some construction leaves out get a default; a field every construction gives keeps none.
+export void test_front_fix_zero_a_field_every_construction_gives_gets_no_default() {
+    Str source = "struct P:\n    x: i32\n    y: i32\nfn make() -> P:\n    return P(x = 1, y = 2)\n";
+    expect_fixed(source, source);
+}
+
+// A construction in another file of the folder (`a.P(x = 1)` after `import fixdef.a`) gives the struct its defaults.
+export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_default() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str folder = "/tmp/front_fix_zero_test_neighbour";
+    (void)files::make_folder(folder);
+    Str user = "import fixdef.a\nfn f() -> a.P:\n    return a.P(x = 1)\n";
+    test::check(fix::store("/tmp/front_fix_zero_test_neighbour/b.smith", user));
+    fix::Fixed fixed =
+        fix::fix_text("/tmp/front_fix_zero_test_neighbour/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    test::check_equal(fixed.text, want);
 }
