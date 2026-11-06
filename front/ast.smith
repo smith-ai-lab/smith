@@ -280,6 +280,7 @@ export struct Pattern {
     Expr *constant;
     Bool wildcard;
     Bool refutable; // the head of `.v(x) := value else: ...`: the rest of the block is the then branch (#2494)
+    Bool is_mut;    // `.v(mut x)`: the name can change (#2503)
     Span span;
 };
 
