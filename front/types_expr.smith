@@ -668,7 +668,7 @@ static Bool writable(types::Checked *c, const ast::Expr *e, Str verb) {
 // Conformance to the expected type
 
 static Bool is_null_target(types::TypeRef to) {
-    return to->kind == .pointer || to->kind == .fn_value;
+    return to->kind == .pointer || to->kind == .fn_value || to->kind == .function;
 }
 
 // The default of the convert hook: exact equality, `null` for a pointer, a function for its `Fn`.

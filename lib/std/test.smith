@@ -11,6 +11,7 @@ import std::contract;
 import std::clock;
 import std::console;
 import std::env;
+import std::failing;
 import std::files;
 import std::math;
 import std::mem;
@@ -27,8 +28,6 @@ if constexpr (target::os == target::macos) {
 import <poll.h>;
 import <setjmp.h>;
 import <signal.h>;
-import <smith/failing.h>; // NOLINT(smith-module-library): the failing allocator, by its C names (issue #405)
-import <smith/mem.h>;     // NOLINT(smith-module-library): the checked allocator, by its C names (issue #405)
 import <smith/trace.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -1687,13 +1686,16 @@ void catch_signals() {
     static U8 stack[alternate_stack];
     c::stack_t alternate = {.ss_sp = stack, .ss_size = alternate_stack};
     c::sigaltstack(&alternate, nullptr);
-    struct c::sigaction action = {.sa_flags = on_stack + with_info}; // two distinct bits; the mask starts empty
+    struct c::sigaction action;
+    __builtin_memset(&action, 0, sizeof action); // the mask starts empty
+    action.sa_flags = on_stack + with_info;      // two distinct bits
     if constexpr (target::os == target::macos) {
         action.__sigaction_u.__sa_sigaction = on_signal; // macOS's spelling of sa_sigaction, which is a macro
     } else {
         // glibc's sa_sigaction is a macro for a member of the union __sigaction_handler, which this names instead
         // (the union's members begin at its address).
-        *(typeof(&on_signal) *)&action.__sigaction_handler = on_signal;
+        void *handler = (void *)on_signal;
+        __builtin_memcpy(&action.__sigaction_handler, &handler, sizeof handler);
     }
     constexpr Usize signals_count = 6;
     const I32 signals[signals_count] = {sig_trap, sig_abrt, sig_ill, sig_segv, sig_bus, sig_fpe};
@@ -1791,8 +1793,8 @@ U64 tap_word(const random::Tap *tap, U64 key, U64 n, U64 bits) {
 // Starts the clocks of a test or a key: the CPU time limit (SIGPROF, the process's user and system time) and the
 // wall-clock backstop (SIGALRM). Either is off when its seconds are 0.
 void arm(const Options *options) {
-    struct c::itimerval cpu = {.it_value = {.tv_sec = options->timeout}};
-    struct c::itimerval wall = {.it_value = {.tv_sec = options->wall_timeout}};
+    struct c::itimerval cpu = {.it_value = {.tv_sec = options->timeout, .tv_usec = 0}};
+    struct c::itimerval wall = {.it_value = {.tv_sec = options->wall_timeout, .tv_usec = 0}};
     c::setitimer(timer_cpu, &cpu, nullptr);
     c::setitimer(timer_real, &wall, nullptr);
     shared->began = true;
@@ -1813,14 +1815,14 @@ void disarm() {
 // and the next test needs the allocator in a known state.
 // --unchecked turns it off. It wraps the test function alone, not the runner's own setup (an io test's setenv stays
 // outside), so only what the test allocates is checked.
-c::SmithChecked checked_state;
-c::SmithAllocator *checked_outside;
+mem::Checked checked_state;
+mem::Allocator *checked_outside;
 Bool checked_active;
 
 void checked_begin(const Options *options) {
     if (options->unchecked) return;
-    checked_state = c::smith_mem_checked(nullptr);
-    checked_outside = c::smith_mem_set_allocator(&checked_state.base);
+    checked_state = mem::checked(nullptr);
+    checked_outside = mem::set_allocator(&checked_state.base);
     checked_active = true;
 }
 
@@ -1828,30 +1830,30 @@ void checked_begin(const Options *options) {
 void checked_end() {
     if (!checked_active) return;
     checked_active = false;
-    c::smith_mem_set_allocator(checked_outside);
-    c::smith_mem_checked_release(&checked_state);
+    mem::set_allocator(checked_outside);
+    mem::checked_release(&checked_state);
 }
 
 // A property test that takes a failing::Failing: the allocator that refuses by the decisions of the key's second half,
 // installed over the checked allocator (its parent, so the blocks it did not refuse are still checked) for the call of
 // the test alone.
-c::SmithFailing failing_state;
-c::SmithAllocator *failing_outside;
+failing::Failing failing_state;
+mem::Allocator *failing_outside;
 Bool failing_active;
 
 // The test returned or unwound: the allocator it found back.
 void failing_end() {
     if (!failing_active) return;
     failing_active = false;
-    c::smith_mem_set_allocator(failing_outside);
+    mem::set_allocator(failing_outside);
 }
 
 // The test returned: a block it allocated and did not free fails it, with the stack of the allocation as the failure's.
 // A block the C library keeps for itself (the cache of its number printing) is not a leak.
 void checked_finish() {
     if (!checked_active) return;
-    c::smith_mem_set_allocator(checked_outside);
-    c::SmithCheckedLeaks leaks = c::smith_mem_checked_leaks(&checked_state);
+    mem::set_allocator(checked_outside);
+    mem::CheckedLeaks leaks = mem::checked_leaks(&checked_state);
     if (leaks.count == 0) {
         checked_end();
         return;
@@ -1890,8 +1892,8 @@ void run_key(const Test *test, const Options *options, U64 seed) {
         random::Key halves[2];
         random::split(key, halves);
         // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
-        failing_state = c::smith_failing_make(checked_active ? &checked_state.base : nullptr, halves[1]);
-        failing_outside = c::smith_mem_set_allocator(&failing_state.base);
+        failing_state = failing::make(checked_active ? &checked_state.base : nullptr, halves[1]);
+        failing_outside = mem::set_allocator(&failing_state.base);
         // NOLINTEND(smith-module-library)
         failing_active = true;
         test->with_failing(halves[0], &failing_state);
