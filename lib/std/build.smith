@@ -30,7 +30,7 @@ module std::build;
 // The step's command carries everything the function gets: `.smith/program --run <function> --input <path>... --output
 // <path>... --arg <word>...`, where <function> is the function's address minus the address of a fixed function in the
 // program, in hex (the program is each .run edge's implicit input, so the offset is valid for the run that uses it).
-// With --run the program does not call build() or any build::defer callback: it makes a build::Build (os, arch, root,
+// With --run the program does not call build() or any build::once_built callback: it makes a build::Build (os, arch, root,
 // cpus, a fresh arena) and a build::Run from those words, calls the function and exits with its result. So a function
 // sees no state build() set, no -D option and no earlier capture: its data is its step's .inputs, .outputs and
 // .args, and nothing else. Pass an option's value in .args. The offset is checked to land in this executable.
@@ -95,7 +95,7 @@ module std::build;
 [[std::c_name("smith_pool")]] export void pool(Build *b, const char *name, I32 depth);
 
 // -Dname. An option can be read again: the same name and kind returns the same value and the description may then be
-// nullptr, so a build::defer callback can read what build() read. The other kind is an error
+// nullptr, so a build::once_built callback can read what build() read. The other kind is an error
 [[std::c_name("smith_option")]] export Bool option(Build *b, const char *name, const char *description);
 // -Dname=value; fallback may be nullptr
 [[std::c_name("smith_option_value")]] export const char *option_value(Build *b, const char *name, const char *fallback,
@@ -194,11 +194,11 @@ export typedef Result(const char *, PackageError) PackageResult; // NOLINT(reada
 
 // Steps that exist only once a generated file is read.
 // `needs` are paths: outputs of steps already declared, or source files. Once they all exist, `more` is called, and it
-// may call any function here, build::defer included. The program calls `more` itself while it runs, for each call whose
+// may call any function here, build::once_built included. The program calls `more` itself while it runs, for each call whose
 // needs exist, in order (limit 256 calls). A call whose needs do not exist yet is pending: the manifest gets a
 // regeneration edge on every call's needs, so the executor builds the needs, runs the program again with them in place,
 // and reloads. A pending `more` may be the one that calls build::default_targets.
-[[std::c_name("smith_defer")]] export void defer(Build *b, const char *const *needs, void (*more)(Build *b));
+[[std::c_name("smith_defer")]] export void once_built(Build *b, const char *const *needs, void (*more)(Build *b));
 // Why a file could not be read as lines.
 // NOLINTBEGIN(readability-identifier-naming)
 // An enum's constants are written short in a module (build::Missing, C's SmithLinesError_Missing), and the check wants
@@ -213,7 +213,7 @@ export typedef Result(const char *, PackageError) PackageResult; // NOLINT(reada
 export typedef Result(const char *const *, LinesError) Lines; // NOLINT(readability-identifier-naming)
 
 // One entry per line of the file, without the newline, as `.ok`; a final newline adds no entry and an empty line is "".
-// The file is read on every `smith build`. A file that a step makes is read inside build::defer's `more`, never in
+// The file is read on every `smith build`. A file that a step makes is read inside build::once_built's `more`, never in
 // build(). A missing file is `.error` Missing; one over 16 MiB fails the build.
 [[std::c_name("smith_lines")]] export Lines lines(Build *b, const char *path);
 
