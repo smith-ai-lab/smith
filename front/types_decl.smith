@@ -252,6 +252,19 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (drops_const && source->kind == .unary && source->kind.unary.op == .address_of && to->kind == .pointer &&
         to->element->kind == .pointer && to->element->pointee_const)
         fix = types_expr::address_binding_fix(c, source->kind.unary.operand);
+    // `&p.f` handed where a `*mut` is wanted is as writable as `p`: the fix is the one for `p` (`&simulation.waiting`).
+    if (drops_const && countof(fix) == 0 && source->kind == .unary && source->kind.unary.op == .address_of) {
+        const ast::Expr *place = source->kind.unary.operand;
+        while (place->kind == .member && place->kind.member.base != nullptr) {
+            const ast::Expr *base = place->kind.member.base;
+            types::TypeRef owner = types::type_of(c, base);
+            if (owner != nullptr && owner->kind == .pointer) {
+                fix = types_expr::pointer_fix(c, base);
+                break;
+            }
+            place = base;
+        }
+    }
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
