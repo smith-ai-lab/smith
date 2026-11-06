@@ -1318,12 +1318,49 @@ static Spelled spell(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
 // `length_text`); C has no array of a size it cannot read, and no array behind a pointer here.
 static Str length_text(const ast::Expr *e, Str *binding);
 
+// The sizes of the block type `t` as C array suffixes, added to `suffix` (and the bindings they name to `bindings`);
+// false when one has no C spelling.
+static Bool block_sizes(const ast::TypeExpr *t, Str *suffix, Str *bindings) {
+    if (t->kind != .block_type) return false;
+    ast::ExprRef dims[:] = t->kind.block_type.dims;
+    for (Usize i = 0; i < countof(dims); i++) {
+        Str binding = "";
+        Str text = length_text(dims[i], &binding);
+        if (countof(text) == 0) return false;
+        if (countof(binding) > 0) *bindings = as_str(format::push(*bindings, binding, "\n"));
+        *suffix = as_str(format::push(*suffix, "[", text, "]"));
+    }
+    return true;
+}
+
+static const ast::TypeExpr *block_element(const ast::TypeExpr *t) {
+    if (t->kind != .block_type) return t;
+    return t->kind.block_type.element;
+}
+
+// Whether the block type `[5, 64]T` has every size written, so it is a plain array of arrays in C.
+static Bool block_is_sized(const ast::TypeExpr *t) {
+    if (t->kind != .block_type) return false;
+    ast::ExprRef dims[:] = t->kind.block_type.dims;
+    for (Usize i = 0; i < countof(dims); i++) {
+        if (dims[i] == nullptr) return false;
+    }
+    return countof(dims) > 0;
+}
+
 static Spelled spell_declarator(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
     Str suffix = "";
     Str bindings = "";
     Usize depth = 0;
     const ast::TypeExpr *at = t;
-    while (at->kind == .array && depth < pointer_depth_max) {
+    while ((at->kind == .array || block_is_sized(at)) && depth < pointer_depth_max) {
+        if (block_is_sized(at)) { // `[5, 64]T` is `[5][64]T` (#2496)
+            if (!block_sizes(at, &suffix, &bindings)) return (Spelled){.text = "", .by_value = false, .suffix = ""};
+            depth += 1;
+            at = block_element(at);
+            continue;
+        }
+        if (!(at->kind == .array)) break;
         const ast::Expr *count = at->kind.array.count;
         Str binding = "";
         Str text = length_text(count, &binding);

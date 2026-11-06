@@ -152,3 +152,9 @@ export void test_front_fix_zero_fills_a_long_global_array() {
     expect_fixed("module m;\nstatic int table[1000];\n",
                  "import std.array\nstatic mut table: [1000]i32 = array.filled(i32, 1000, 0)\n");
 }
+
+// #2496: C zeroes `static char names[5][8];`, which is the shape `array.filled(char, [5, 8], 0)`.
+export void test_front_fix_zero_fills_a_two_dimension_static_array() {
+    expect_fixed("module m;\nstatic char names[5][8];\n",
+                 "import std.array\nstatic mut names: [5][8]char = array.filled(char, [5, 8], 0)\n");
+}
