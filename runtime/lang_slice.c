@@ -3107,39 +3107,19 @@ static bool smith_lang_slice_replay_subscript(SmithLang *lang, const SmithHost *
     return smith_lang_slice_replay_cut(host, replay, place, &type, (uint32_t[4]){at, open, colon, close}, counter);
 }
 
-// `p[a:b]` where `p` is a parameter `T *p` of the generic (T its type parameter): a slice of `b - a` elements, both
-// bounds written and `a <= b` checked, as the lowering writes it for a pointer outside a generic. The slice is the
-// struct of T's slice in this instance. False when the token is not one (the subscript is then another's).
-static bool smith_lang_slice_replay_pointer(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                            uint32_t place, SmithLangFrame *frame) {
-    uint32_t at = frame->pos;
-    uint32_t open = at + 1;
-    uint32_t colon = UINT32_MAX;
-    if (open + 2 >= frame->end || !smith_lang_gt_punct(&smith_lang_gt.tokens[open], "[") ||
-        smith_lang_gt_punct(&smith_lang_gt.tokens[open + 1], "[")) {
-        return false;
-    }
-    uint32_t close = smith_lang_slice_replay_close(open, frame->end, &colon);
-    if (close == UINT32_MAX || colon == UINT32_MAX) return false;
-    const SmithLangGenToken *name = &smith_lang_gt.tokens[at];
-    SmithLangParam params[smith_lang_call_params_max];
-    size_t count = smith_lang_generic_params(replay->generic, params, smith_lang_call_params_max);
-    int element = -1; // the type parameter of `T *name`
-    for (size_t i = 0; i < count && count != SIZE_MAX && element < 0; i++) {
-        const SmithLangGenToken *first = &smith_lang_gt.tokens[params[i].start];
-        if (params[i].end - params[i].start != 3 || first->param == 0 || !smith_lang_gt_punct(first + 1, "*")) continue;
-        if (first[2].length == name->length &&
-            memcmp(smith_lang_gt_str(&first[2]), smith_lang_gt_str(name), name->length) == 0) {
-            element = (int)first->param - 1;
-        }
-    }
-    if (element < 0) return false;
+// The cut `E[a:b]` of a pointer `E`, tokens bounds = {first of E, `[`, `:`, `]`}, as a slice of struct `tag`: both
+// bounds written and `a <= b` checked, as the lowering writes it for a pointer outside a generic.
+static bool smith_lang_slice_replay_pointer_cut(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                                uint32_t place, SmithLangFrame *frame, const uint32_t bounds[4],
+                                                const char *tag) {
+    uint32_t at = bounds[0];
+    uint32_t open = bounds[1];
+    uint32_t colon = bounds[2];
+    uint32_t close = bounds[3];
     if (colon + 1 == close || colon == open + 1) {
         smith_lang_error(lang, host, place, "slicing a pointer or an array needs both bounds: `p[a:b]`");
         return false;
     }
-    char tag[smith_lang_tuple_name_max];
-    smith_lang_gen_slice_tag_text(lang, host, replay->instance, (unsigned)element, place, tag, sizeof tag);
     frame->pos = close + 1;
     if (replay->typing) { // only the type is asked of it: a value of the slice's struct
         char typed[smith_lang_tuple_name_max + 40];
@@ -3169,6 +3149,74 @@ static bool smith_lang_slice_replay_pointer(SmithLang *lang, const SmithHost *ho
         {third, 0, 0}, {nullptr, colon + 1, close}, {last, 0, 0}};
     smith_lang_slice_parts(replay, place, parts, sizeof parts / sizeof parts[0]);
     return true;
+}
+
+// `p[a:b]` where `p` is a parameter `T *p` of the generic (T its type parameter): a slice of `b - a` elements, both
+// bounds written and `a <= b` checked, as the lowering writes it for a pointer outside a generic. The slice is the
+// struct of T's slice in this instance. False when the token is not one (the subscript is then another's).
+static bool smith_lang_slice_replay_pointer(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                            uint32_t place, SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    uint32_t open = at + 1;
+    uint32_t colon = UINT32_MAX;
+    if (open + 2 >= frame->end || !smith_lang_gt_punct(&smith_lang_gt.tokens[open], "[") ||
+        smith_lang_gt_punct(&smith_lang_gt.tokens[open + 1], "[")) {
+        return false;
+    }
+    uint32_t close = smith_lang_slice_replay_close(open, frame->end, &colon);
+    if (close == UINT32_MAX || colon == UINT32_MAX) return false;
+    const SmithLangGenToken *name = &smith_lang_gt.tokens[at];
+    SmithLangParam params[smith_lang_call_params_max];
+    size_t count = smith_lang_generic_params(replay->generic, params, smith_lang_call_params_max);
+    int element = -1; // the type parameter of `T *name`
+    for (size_t i = 0; i < count && count != SIZE_MAX && element < 0; i++) {
+        const SmithLangGenToken *first = &smith_lang_gt.tokens[params[i].start];
+        if (params[i].end - params[i].start != 3 || first->param == 0 || !smith_lang_gt_punct(first + 1, "*")) continue;
+        if (first[2].length == name->length &&
+            memcmp(smith_lang_gt_str(&first[2]), smith_lang_gt_str(name), name->length) == 0) {
+            element = (int)first->param - 1;
+        }
+    }
+    if (element < 0) return false;
+    char tag[smith_lang_tuple_name_max];
+    smith_lang_gen_slice_tag_text(lang, host, replay->instance, (unsigned)element, place, tag, sizeof tag);
+    return smith_lang_slice_replay_pointer_cut(lang, host, replay, place, frame, (uint32_t[4]){at, open, colon, close},
+                                               tag);
+}
+
+// `((typeof(xs.data))e)[a:b]` where `xs` is a slice parameter or local of the instance: the pointer `e` is cast to
+// the type of `xs`'s elements' pointer, so the cut is a slice of the same struct as `xs`, whatever `xs`'s element is
+// (a generic over `auto xs` has no type parameter for it). False when the tokens are not that.
+static bool smith_lang_slice_replay_typeof_cut(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                                               uint32_t place, SmithLangFrame *frame) {
+    uint32_t at = frame->pos;
+    const SmithLangGenToken *t = &smith_lang_gt.tokens[at];
+    if (at + 12 >= frame->end || !smith_lang_gt_punct(t, "(") || !smith_lang_gt_punct(t + 1, "(") ||
+        t[2].kind != SmithTokenKind_Identifier || t[3].kind != SmithTokenKind_Punctuator ||
+        !smith_lang_gt_punct(t + 3, "(") || t[4].kind != SmithTokenKind_Identifier ||
+        t[4].special != SmithLangGen_Plain || !smith_lang_gt_punct(t + 5, ".") ||
+        !smith_lang_gt_is(t + 6, SmithTokenKind_Identifier, "data") || !smith_lang_gt_punct(t + 7, ")") ||
+        !smith_lang_gt_punct(t + 8, ")")) {
+        return false;
+    }
+    if (!smith_lang_gt_is(t + 2, SmithTokenKind_Identifier, "typeof") &&
+        !smith_lang_gt_is(t + 2, SmithTokenKind_Identifier, "__typeof__")) {
+        return false;
+    }
+    uint32_t open = smith_lang_cx_skip_group(at, frame->end);
+    if (open == UINT32_MAX || open + 2 >= frame->end || !smith_lang_gt_punct(&smith_lang_gt.tokens[open], "[") ||
+        smith_lang_gt_punct(&smith_lang_gt.tokens[open + 1], "[")) {
+        return false;
+    }
+    uint32_t colon = UINT32_MAX;
+    uint32_t close = smith_lang_slice_replay_close(open, frame->end, &colon);
+    SmithLangSliceType type = {};
+    if (close == UINT32_MAX || colon == UINT32_MAX || !smith_lang_slice_replay_named(replay, at + 4, &type)) {
+        return false;
+    }
+    if (type.dims.count != 1) return false;
+    return smith_lang_slice_replay_pointer_cut(lang, host, replay, place, frame, (uint32_t[4]){at, open, colon, close},
+                                               type.tag);
 }
 
 // The size of dimension `at` of a slice named `smith_s<counter>`, as an expression.
@@ -3521,6 +3569,11 @@ static bool smith_lang_slice_replay_call(SmithLang *lang, const SmithHost *host,
 static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangFrame *frame) {
     const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
+    if (replay->instance != nullptr && replay->generic != nullptr && smith_lang_gt_punct(token, "(") &&
+        token->special == SmithLangGen_Plain && replay->count + 24 < smith_lang_replay_depth_max) {
+        uint32_t place = smith_lang_gen_place(host, replay->generic, (SmithLangGenToken *)token, replay->location);
+        if (smith_lang_slice_replay_typeof_cut(lang, host, replay, place, frame)) return true;
+    }
     // `(*xs)[i]`, `(*xs)[a:b]` of a pointer to a slice: the slice is the parenthesis
     if (replay->instance != nullptr && replay->generic != nullptr && smith_lang_gt_punct(token, "(") &&
         token->special == SmithLangGen_Plain && frame->pos + 5 < frame->end && smith_lang_gt_punct(token + 1, "*") &&
