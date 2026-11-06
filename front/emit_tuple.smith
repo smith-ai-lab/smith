@@ -74,11 +74,10 @@ static state::TyResult build(state::Emitter *e, const state::Ty items[:], ast::S
         block[i + 2] = items[i];
         fields[i] = items[i].llvm;
     }
-    state::Ty ty = {.kind = .tuple,
+    state::Ty ty = {.kind = {.tuple = {.parts = &block[2], .part_count = countof(items)}},
                     .llvm = c::LLVMStructTypeInContext(e->context, fields, (U32)countof(items), false),
-                    .name = name_of(items),
-                    .parts = &block[2],
-                    .part_count = countof(items)};
+                    .name = name_of(items)};
+
     return ty;
 }
 
@@ -202,14 +201,16 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
 
 // The items are on the value stack, the first deepest: convert each to its element and build the tuple.
 static state::Status literal_finish(state::Emitter *e, const state::ThenGeneral *w) {
-    Usize count = w->ty.part_count;
+    if (w->ty.kind != .tuple) return state::failf(w->span, "a tuple literal of ", w->ty.name);
+    state::PartsTy tuple = w->ty.kind.tuple;
+    Usize count = tuple.part_count;
     state::Value items[max_parts];
     for (Usize i = count; i > 0; i--) {
         items[i - 1] = state::pop_value(e);
     }
     c::LLVMValueRef built = c::LLVMConstNull(w->ty.llvm);
     for (Usize i = 0; i < count; i++) {
-        try state::convert(e, items[i], w->ty.parts[i], w->span, .initialize);
+        try state::convert(e, items[i], tuple.parts[i], w->span, .initialize);
         state::Value converted = state::pop_value(e);
         built = c::LLVMBuildInsertValue(e->builder, built, converted.llvm, (U32)i, "item");
     }
@@ -288,23 +289,22 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
         return state::success();
     }
     state::Ty ty = {};
-    if (hint.present && hint.ty.kind == .tuple && hint.ty.part_count == count) {
+    if (hint.present && hint.ty.kind == .tuple && hint.ty.kind.tuple.part_count == count) {
         ty = hint.ty;
     } else {
         state::TyResult checked = state::type_of_node(e, x);
         if (checked == .error) {
             return {.error = checked.error};
         }
-        if (checked.ok.kind != .tuple || checked.ok.part_count != count) {
-            return state::failf(x->span, "the tuple ", checked.ok.name, " does not have ", count, " elements");
-        }
         ty = checked.ok;
     }
+    if (ty.kind != .tuple || ty.kind.tuple.part_count != count)
+        return state::failf(x->span, "the tuple ", ty.name, " does not have ", count, " elements");
     state::push_then_general(e, (state::ThenGeneral){.run = literal_finish, .ty = ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         const ast::Expr *item = items[i - 1];
         if (item->kind == .named_arg) item = item->kind.named_arg.value;
-        state::push_eval(e, item, state::hint_of(ty.parts[i - 1]));
+        state::push_eval(e, item, state::hint_of(ty.kind.tuple.parts[i - 1]));
     }
     return state::success();
 }
@@ -332,21 +332,25 @@ static Usize index_of(state::Emitter *e, Str name, const ast::Expr *base_node) {
     return 1000001;
 }
 
-// The element `index` of `base`, or the Error: `base` is a tuple and the index is inside it.
-static state::Status check_member(state::Ty base, Usize index, ast::Span span) {
+// The element `index` of `base` in `element`, or the Error: `base` is a tuple and the index is inside it.
+static state::Status check_member(state::Ty base, Usize index, ast::Span span, state::Ty *element) {
     if (base.kind != .tuple) return state::failf(span, ".", index, " needs a tuple, found ", base.name);
-    if (index >= base.part_count) {
-        return state::failf(span, "the tuple ", base.name, " has ", base.part_count, " elements; there is no .", index);
+    state::PartsTy tuple = base.kind.tuple;
+    if (index >= tuple.part_count) {
+        return state::failf(span, "the tuple ", base.name, " has ", tuple.part_count, " elements; there is no .",
+                            index);
     }
+    *element = tuple.parts[index];
     return state::success();
 }
 
 static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
-    try check_member(base.ty, index, w->span);
+    state::Ty element = {};
+    try check_member(base.ty, index, w->span, &element);
     c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, base.llvm, (U32)index, "item");
-    state::push_value(e, (state::Value){.llvm = got, .ty = base.ty.parts[index]});
+    state::push_value(e, (state::Value){.llvm = got, .ty = element});
     return state::success();
 }
 
@@ -365,9 +369,10 @@ export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _
 static state::Status place_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
-    try check_member(base.ty, index, w->span);
+    state::Ty element = {};
+    try check_member(base.ty, index, w->span, &element);
     c::LLVMValueRef slot = c::LLVMBuildStructGEP2(e->builder, base.ty.llvm, base.llvm, (U32)index, "item");
-    state::push_value(e, (state::Value){.llvm = slot, .ty = base.ty.parts[index]});
+    state::push_value(e, (state::Value){.llvm = slot, .ty = element});
     return state::success();
 }
 
@@ -396,7 +401,8 @@ static state::Status destructure_finish(state::Emitter *e, const state::ThenGene
         return state::failf(w->span, "destructuring needs a tuple, found ", value.ty.name);
     }
     ast::Identifier names[:] = s->kind.destructure.names;
-    if (countof(names) != value.ty.part_count) {
+    state::PartsTy tuple = value.ty.kind.tuple;
+    if (countof(names) != tuple.part_count) {
         return state::failf(w->span, "destructuring ", countof(names), " names from ", value.ty.name);
     }
     for (Usize i = 0; i < countof(names); i++) {
@@ -406,7 +412,8 @@ static state::Status destructure_finish(state::Emitter *e, const state::ThenGene
             if (state::same_text(e->locals[k].name, name))
                 return state::failf(names[i].span, name, " is declared twice in one scope");
         }
-        state::Ty ty = value.ty.parts[i];
+        state::Ty ty = tuple.parts[i];
+
         c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, value.llvm, (U32)i, "item");
         c::LLVMValueRef slot = state::new_alloca(e, ty, name);
         c::LLVMBuildStore(e->builder, got, slot);

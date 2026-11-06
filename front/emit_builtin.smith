@@ -50,8 +50,8 @@ static c::LLVMValueRef named_intrinsic(state::Emitter *e, Str prefix, Str base, 
 // `__builtin_add_overflow(a, b, &r)`: stores the wrapped result in `r` and says whether it overflowed.
 static c::LLVMValueRef overflow(state::Emitter *e, table::Entry entry, state::Value *v) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
-    c::LLVMValueRef pair =
-        named_intrinsic(e, v[0].ty.is_signed ? "s" : "u", entry.intrinsic, ".with.overflow", v[0].ty.llvm, args, 2);
+    c::LLVMValueRef pair = named_intrinsic(e, state::is_signed(v[0].ty) ? "s" : "u", entry.intrinsic, ".with.overflow",
+                                           v[0].ty.llvm, args, 2);
     c::LLVMBuildStore(e->builder, c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped"), v[2].llvm);
     return c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
 }
@@ -75,7 +75,7 @@ static c::LLVMValueRef absolute(state::Emitter *e, state::Value x) {
 static c::LLVMValueRef smallest(state::Emitter *e, state::Value a, state::Value b) {
     c::LLVMValueRef args[2] = {a.llvm, b.llvm};
     if (a.ty.kind == .floating) return named_intrinsic(e, "", "minnum", "", a.ty.llvm, args, 2);
-    return named_intrinsic(e, "", a.ty.is_signed ? "smin" : "umin", "", a.ty.llvm, args, 2);
+    return named_intrinsic(e, "", state::is_signed(a.ty) ? "smin" : "umin", "", a.ty.llvm, args, 2);
 }
 
 // `isnan`: unordered with itself. `isfinite`: `x - x` is zero, and is not for an infinity or a NaN.
@@ -92,11 +92,11 @@ constexpr Usize max_values = 8;
 // float; a pointer is as it is.
 static c::LLVMValueRef coerced(state::Emitter *e, state::Value v, U8 letter) {
     if (letter == 'z')
-        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt64TypeInContext(e->context), v.ty.is_signed ? 1 : 0,
-                                    "");
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt64TypeInContext(e->context),
+                                    state::is_signed(v.ty) ? 1 : 0, "");
     if (letter == 'i')
-        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context), v.ty.is_signed ? 1 : 0,
-                                    "");
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context),
+                                    state::is_signed(v.ty) ? 1 : 0, "");
     return v.llvm;
 }
 
@@ -126,8 +126,8 @@ static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state:
     for (Usize i = 0; i < count; i++) {
         args[i] = v[i].llvm;
         if (i == 1) args[i] = coerced(e, v[i], 'z');
-        if (i > 2 && v[i].ty.kind == .integer && v[i].ty.bits < 32) args[i] = coerced(e, v[i], 'i');
-        if (i > 2 && v[i].ty.kind == .floating && v[i].ty.bits < 64)
+        if (i > 2 && v[i].ty.kind == .integer && state::width(v[i].ty) < 32) args[i] = coerced(e, v[i], 'i');
+        if (i > 2 && v[i].ty.kind == .floating && state::width(v[i].ty) < 64)
             args[i] = c::LLVMBuildFPExt(e->builder, v[i].llvm, c::LLVMDoubleTypeInContext(e->context), "promoted");
         argument_types[i] = c::LLVMTypeOf(args[i]);
     }
@@ -177,7 +177,7 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
     case .atomic_add:
         return c::LLVMBuildAtomicRMW(
             e->builder, c::LLVMAtomicRMWBinOpAdd, v[0].llvm,
-            c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, v[1].ty.is_signed ? 1 : 0, ""),
+            c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, state::is_signed(v[1].ty) ? 1 : 0, ""),
             c::LLVMAtomicOrderingMonotonic, 0);
     case .filled:
     case .alloc:
@@ -227,10 +227,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     for (Usize i = countof(args); i > 0; i--) {
         state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
         if (entry.shape == .format && i == 3) {
-            state::Ty pointer = {};
-            pointer.kind = .pointer;
-            pointer.llvm = state::pointer_type(e, 0);
-            pointer.name = "Char *";
+            state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "Char *"};
             hint = state::hint_of(pointer);
         }
         if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], hint);
@@ -268,7 +265,10 @@ static state::Status alloc_finish(state::Emitter *e, const state::ThenGeneral *w
     state::TyResult typed = state::type_of_node(e, w->expr);
     if (typed == .error) return {.error = typed.error};
     state::Ty result = typed.ok;
-    if ((result.kind != .slice && result.kind != .block) || result.element == nullptr || e->target_data == nullptr)
+    state::Ty *element = nullptr;
+    if (result.kind == .slice) element = result.kind.slice.element;
+    if (result.kind == .block) element = result.kind.block.element;
+    if (element == nullptr || e->target_data == nullptr)
         return state::fail("mem.alloc makes a slice or a block", w->span);
     c::LLVMTypeRef counts = c::LLVMStructGetTypeAtIndex(result.llvm, 1);
     c::LLVMTypeRef word = result.kind == .slice ? counts : c::LLVMGetElementType(counts);
@@ -277,14 +277,15 @@ static state::Status alloc_finish(state::Emitter *e, const state::ThenGeneral *w
     if (rank == 0 || rank > 16) return state::fail("mem.alloc takes one to 16 sizes", w->span);
     for (Usize i = rank; i > 0; i--) {
         state::Value size = state::pop_value(e);
-        sizes[i - 1] = c::LLVMBuildIntCast2(e->builder, size.llvm, word, size.ty.is_signed ? 1 : 0, "");
+        sizes[i - 1] = c::LLVMBuildIntCast2(e->builder, size.llvm, word, state::is_signed(size.ty) ? 1 : 0, "");
     }
     Bool with_arena = w->expr->kind == .call && countof(w->expr->kind.call.args) == 3; // `arena.push_slice(&a, T, n)`
     c::LLVMValueRef in = with_arena ? state::pop_value(e).llvm : nullptr;
     c::LLVMValueRef total = sizes[0];
     for (Usize i = 1; i < rank; i++)
         total = times_or_largest(e, total, sizes[i]);
-    c::LLVMTypeRef cell = result.element->llvm;
+    c::LLVMTypeRef cell = element->llvm;
+
     c::LLVMValueRef all[4] = {in, c::LLVMConstInt(word, c::LLVMABISizeOfType(e->target_data, cell), 0), total,
                               c::LLVMConstInt(word, c::LLVMABIAlignmentOfType(e->target_data, cell), 0)};
     c::LLVMTypeRef params[4] = {state::pointer_type(e, 0), word, word, word};
@@ -343,21 +344,22 @@ export struct Cells {
 
 // The array types `array.filled` fills, outermost first: `[5, 64]char` is `[5][64]char`, two entries, the last one
 // whose element is the type of the value (`char`). The nested form `array.filled([64]char, 5, ...)` has one.
-export Usize filled_chain(state::Emitter *e, const ast::Expr *x, state::Ty array, state::Ty *chain) {
+export Usize filled_chain(state::Emitter *e, const ast::Expr *x, state::SizedTy array, state::SizedTy *chain) {
     state::TyResult typed = state::type_of_node(e, filled_value(x));
     Usize n = 0;
-    state::Ty at = array;
+    state::SizedTy at = array;
     while (n < 16) {
         chain[n] = at;
         n += 1;
-        if (typed == .error || at.element->kind != .array || state::same_type(*at.element, typed.ok)) break;
-        at = *at.element;
+        state::Ty inner = *at.element;
+        if (typed == .error || inner.kind != .array || state::same_type(inner, typed.ok)) break;
+        at = inner.kind.array;
     }
     return n;
 }
 
 // The constant array of the chain with `item` in every cell of the last dimension.
-export c::LLVMValueRef filled_nest(const state::Ty *chain, Usize n, c::LLVMValueRef item) {
+export c::LLVMValueRef filled_nest(const state::SizedTy *chain, Usize n, c::LLVMValueRef item) {
     c::LLVMValueRef made = item;
     for (Usize d = n; d > 0; d--) {
         Cells cells[:] = mem::alloc_slice(Cells, chain[d - 1].count);
@@ -373,8 +375,9 @@ export c::LLVMValueRef filled_nest(const state::Ty *chain, Usize n, c::LLVMValue
 // stores the value into every cell of a slot, read back as the array.
 static state::Status filled_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty array = w->ty;
-    state::Ty chain[16];
-    Usize n = filled_chain(e, w->expr, array, chain);
+    if (array.kind != .array) return state::fail("array.filled is not an array", w->span);
+    state::SizedTy chain[16];
+    Usize n = filled_chain(e, w->expr, array.kind.array, chain);
     state::Ty leaf = *chain[n - 1].element;
     Usize total = 1;
     for (Usize d = 0; d < n; d++)
@@ -394,11 +397,7 @@ static state::Status filled_finish(state::Emitter *e, const state::ThenGeneral *
     }
     c::LLVMValueRef slot = state::new_alloca(e, array, "filled");
     c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
-    state::Ty counter = {};
-    counter.kind = .integer;
-    counter.llvm = word;
-    counter.bits = 64;
-    counter.name = "U64";
+    state::Ty counter = {.kind = {.integer = {.bits = 64}}, .llvm = word, .name = "U64"};
     c::LLVMValueRef at = state::new_alloca(e, counter, "at");
     c::LLVMBuildStore(e->builder, c::LLVMConstInt(word, 0, 0), at);
     c::LLVMBasicBlockRef test = c::LLVMAppendBasicBlockInContext(e->context, e->function, "fill.test");
@@ -426,8 +425,9 @@ export state::Status filled(state::Emitter *e, const ast::Expr *x) {
     state::Ty array = typed.ok;
     if (array.kind != .array) return state::fail("array.filled is not an array", x->span);
     state::push_then_general(e, (state::ThenGeneral){.run = filled_finish, .expr = x, .ty = array, .span = x->span});
-    state::Ty chain[16];
-    Usize n = filled_chain(e, x, array, chain);
+    state::SizedTy chain[16];
+    Usize n = filled_chain(e, x, array.kind.array, chain);
+
     state::push_eval(e, filled_value(x), state::hint_of(*chain[n - 1].element));
     return state::success();
 }
