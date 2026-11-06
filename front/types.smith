@@ -2832,6 +2832,14 @@ static TypeRef literal_type(Checked *r, const ast::Expr *init) {
         return builtin(&r->table, "F64");
     }
     if (negated) return nullptr;
+    if (init->kind == .call && init->kind.call.callee->kind == .name) {
+        // `const f = Format(24, -149)`: a record built by its name has that record's type, and the global's uses
+        // are checked before its initializer is
+        ast::Path path = init->kind.call.callee->kind.name.path;
+        const Symbol *named = lookup_path(&r->scopes, path);
+        if (named != nullptr && named->kind == .type_name && named->type->kind == .record) return named->type;
+        return nullptr;
+    }
     if (init->kind == .boolean) return r->table.bool_type;
     if (init->kind == .string) return r->table.text;
     return nullptr;
