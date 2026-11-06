@@ -191,7 +191,7 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
 }
 
 // The arguments' values are on the value stack, the first deepest.
-static state::Status finish(state::Emitter *e, const state::Work *w) {
+static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *x = w->expr;
     table::Entry entry = {};
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
@@ -223,7 +223,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     }
     if (values > max_values)
         return state::failf(x->span, entry.name, " takes at most 8 arguments, the call has ", (U64)values);
-    state::push_then(e, (state::Work){.then = finish, .expr = x, .number = values, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = finish, .expr = x, .number = values, .span = x->span});
     for (Usize i = countof(args); i > 0; i--) {
         state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
         if (entry.shape == .format && i == 3) {
@@ -264,7 +264,7 @@ static c::LLVMValueRef times_or_largest(state::Emitter *e, c::LLVMValueRef a, c:
 // The sizes are on the value stack, the first deepest (under them the arena of `arena.push_slice`): one call of
 // std.mem's `smith_mem_alloc_array` or std.arena's `smith_arena_push_array` (zeroed, never null) for their product,
 // and the slice or block over it.
-static state::Status alloc_finish(state::Emitter *e, const state::Work *w) {
+static state::Status alloc_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::TyResult typed = state::type_of_node(e, w->expr);
     if (typed == .error) return {.error = typed.error};
     state::Ty result = typed.ok;
@@ -313,7 +313,7 @@ export state::Status shaped_alloc(state::Emitter *e, const ast::Expr *x) {
     ast::ExprRef args[:] = x->kind.call.args;
     const ast::Expr *shape = args[countof(args) - 1];
     Usize rank = shape->kind == .array_lit ? countof(shape->kind.array_lit.items) : 1;
-    state::push_then(e, (state::Work){.then = alloc_finish, .expr = x, .number = rank, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = alloc_finish, .expr = x, .number = rank, .span = x->span});
     for (Usize i = rank; i > 0; i--)
         state::push_eval(e, shape->kind == .array_lit ? shape->kind.array_lit.items[i - 1] : shape, state::no_hint());
     if (countof(args) == 3) state::push_eval(e, args[0], state::no_hint());
@@ -371,7 +371,7 @@ export c::LLVMValueRef filled_nest(const state::Ty *chain, Usize n, c::LLVMValue
 
 // The array: a constant when the value is one (all zero is the null constant, any other a repeat), else a loop that
 // stores the value into every cell of a slot, read back as the array.
-static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
+static state::Status filled_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty array = w->ty;
     state::Ty chain[16];
     Usize n = filled_chain(e, w->expr, array, chain);
@@ -425,7 +425,7 @@ export state::Status filled(state::Emitter *e, const ast::Expr *x) {
     if (typed == .error) return {.error = typed.error};
     state::Ty array = typed.ok;
     if (array.kind != .array) return state::fail("array.filled is not an array", x->span);
-    state::push_then(e, (state::Work){.then = filled_finish, .expr = x, .ty = array, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = filled_finish, .expr = x, .ty = array, .span = x->span});
     state::Ty chain[16];
     Usize n = filled_chain(e, x, array, chain);
     state::push_eval(e, filled_value(x), state::hint_of(*chain[n - 1].element));

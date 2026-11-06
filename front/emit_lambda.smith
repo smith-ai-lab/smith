@@ -206,30 +206,30 @@ export state::TyResult pointer_from_checked(state::Emitter *e, types::TypeRef t)
 // ---------------------------------------------------------------------------------------------------------------
 // A lambda
 
-static state::Status ret_value(state::Emitter *e, const state::Work *w) {
+static state::Status ret_value(state::Emitter *e, const state::ThenGeneral *w) {
     c::LLVMBuildRet(e->builder, w->value);
     return state::success();
 }
 
-static state::Status ret_void(state::Emitter *e, const state::Work *_) {
+static state::Status ret_void(state::Emitter *e, const state::ThenNone *_) {
     c::LLVMBuildRetVoid(e->builder);
     return state::success();
 }
 
 // The value of the body's last line is on the value stack: return it.
-static state::Status body_return(state::Emitter *e, const state::Work *w) {
+static state::Status body_return(state::Emitter *e, const state::ThenNone *w) {
     state::Value value = state::pop_value(e);
     if (!state::same_type(value.ty, e->result)) {
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
-    state::push_then(e, (state::Work){.then = ret_value, .value = value.llvm, .span = w->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .span = w->span});
     try control::before_return(e, w->span);
     return state::success();
 }
 
 // A last line that is a `match`, a block or an `if` with an `else` gives the body's value through `value_of`.
-static state::Status value_start(state::Emitter *e, const state::Work *w) {
+static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind == .match_stmt) return matching::value_of(e, s, w->hint);
     return blockval::value_of(e, s, w->hint);
@@ -253,12 +253,13 @@ static void push_body(state::Emitter *e, const ast::Stmt *body) {
         state::push_statement(e, body);
         return;
     }
-    state::push_then(e, (state::Work){.then = body_return, .span = last->span});
+    state::push_then_none(e, (state::ThenNone){.run = body_return, .span = last->span});
     state::Hint hint = state::hint_of(e->result);
     if (last->kind == .expression)
         state::push_eval(e, last->kind.expression.value, hint);
     else
-        state::push_then(e, (state::Work){.then = value_start, .stmt = last, .hint = hint, .span = last->span});
+        state::push_then_general(
+            e, (state::ThenGeneral){.run = value_start, .stmt = last, .hint = hint, .span = last->span});
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
 }
@@ -347,7 +348,7 @@ static void declare_parameters(state::Emitter *e, c::LLVMValueRef function, stat
     }
 }
 
-static state::Status lambda_end(state::Emitter *e, const state::Work *w);
+static state::Status lambda_end(state::Emitter *e, const state::ThenNone *w);
 
 // A lambda: its function is emitted now, and the Value `{ code, context }` is pushed when it is done.
 static state::Status make(state::Emitter *e, const ast::Expr *x, state::Hint hint, Bool argument) {
@@ -397,20 +398,20 @@ static state::Status make(state::Emitter *e, const ast::Expr *x, state::Hint hin
     declare_captures(e, &saved, function, saved.loads);
     declare_parameters(e, function, func_ty, params);
     push_frame(e, saved);
-    state::push_then(e, (state::Work){.then = lambda_end, .span = x->span});
+    state::push_then_none(e, (state::ThenNone){.run = lambda_end, .span = x->span});
     push_body(e, body);
     return state::success();
 }
 
 // The body is emitted: end the function (a `Void` one returns after its defers, any other traps), then restore.
-static state::Status lambda_finish(state::Emitter *e, const state::Work *w);
+static state::Status lambda_finish(state::Emitter *e, const state::ThenNone *w);
 
-static state::Status lambda_end(state::Emitter *e, const state::Work *w) {
-    state::push_then(e, (state::Work){.then = lambda_finish, .span = w->span});
+static state::Status lambda_end(state::Emitter *e, const state::ThenNone *w) {
+    state::push_then_none(e, (state::ThenNone){.run = lambda_finish, .span = w->span});
     c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
     if (c::LLVMGetBasicBlockTerminator(last) != nullptr) return state::success();
     if (is_void(e->result)) {
-        state::push_then(e, (state::Work){.then = ret_void, .span = w->span});
+        state::push_then_none(e, (state::ThenNone){.run = ret_void, .span = w->span});
         try control::before_return(e, w->span);
     } else {
         arith::trap_here(e);
@@ -463,7 +464,7 @@ static c::LLVMValueRef make_context(state::Emitter *e, const state::SavedFunctio
     return context;
 }
 
-static state::Status lambda_finish(state::Emitter *e, const state::Work *w) {
+static state::Status lambda_finish(state::Emitter *e, const state::ThenNone *w) {
     e->lambda_frame_count -= 1;
     state::SavedFunction saved = e->lambda_frames[e->lambda_frame_count];
     if (e->lambda_frame_count == 0) {
@@ -507,7 +508,7 @@ export state::Status argument(state::Emitter *e, const ast::Expr *x, state::Hint
 // Calling a `fn` value
 
 // The callee and the arguments are on the value stack, the callee deepest.
-static state::Status call_finish(state::Emitter *e, const state::Work *w) {
+static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty func_ty = w->ty;
     Usize count = (Usize)w->number;
     const ast::Expr *x = w->expr;
@@ -564,7 +565,8 @@ export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty
             return state::fail("a `fn` value takes its arguments by position", arg->span);
         }
     }
-    state::push_then(e, (state::Work){.then = call_finish, .expr = x, .number = count, .ty = func_ty, .span = x->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = call_finish, .expr = x, .number = count, .ty = func_ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         state::push_eval(e, args[i - 1], state::hint_of(part(func_ty, i - 1)));
     }

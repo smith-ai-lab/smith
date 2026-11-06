@@ -221,7 +221,6 @@ export struct SavedFunction {
 // The walk's work
 
 export struct Emitter;
-export struct Work;
 
 // Where a conversion happens: it names the Error when there is none.
 export typedef enum {
@@ -230,31 +229,76 @@ export typedef enum {
     assign;       // "assigning Y to X"
 } ConvertSite;
 
-// What a `then` item runs: the state and the item itself, which carries the data its pusher stored in it.
-export typedef Status (*Continuation)(Emitter *e, const Work *w);
+// A `then` item: a continuation and the data its pusher stored for it, in the shape that continuation reads. Each shape
+// carries its own kind of continuation, so a continuation's parameter holds exactly the fields it uses.
+export struct ThenNone;
+export struct ThenExpr;
+export struct ThenBlocks;
+export struct ThenGeneral;
 
-export typedef enum {
-    eval;      // evaluate `expr` (with `hint`): the handler of its kind pushes one Value
-    place;     // evaluate `expr` as an address: pushes one Value whose `llvm` is the address
-    statement; // emit `stmt`
-    then;      // call `then(e, &item)`: a continuation, which pops what the work before it pushed
-} WorkKind;
+export typedef Status (*NoneRun)(Emitter *e, const ThenNone *w);
+export typedef Status (*ExprRun)(Emitter *e, const ThenExpr *w);
+export typedef Status (*BlocksRun)(Emitter *e, const ThenBlocks *w);
+export typedef Status (*Continuation)(Emitter *e, const ThenGeneral *w);
 
-// One unit of work. Only the fields of its kind mean anything; the rest stay zero.
-export struct Work {
-    WorkKind kind;
+// A continuation that reads only what the work before it pushed.
+export struct ThenNone {
+    NoneRun run;
+    ast::Span span;
+};
+
+// A continuation of an expression: an operator's finish, which reads its node.
+export struct ThenExpr {
+    ExprRun run;
+    const ast::Expr *expr;
+    ast::Span span;
+};
+
+// A continuation that closes a branch or a loop: it jumps to or positions at its blocks.
+export struct ThenBlocks {
+    BlocksRun run;
+    c::LLVMBasicBlockRef blocks[3];
+    ast::Span span;
+};
+
+// Temporary: every continuation not yet given a shape of its own. Only the fields its continuation reads mean anything.
+// #2584 (statements), #2589 (expressions) and #2590 (match, option, iter, stream, lambda) move them off, and #2590
+// deletes this.
+export struct ThenGeneral {
+    Continuation run;
     const ast::Expr *expr;
     const ast::Stmt *stmt;
     const ast::Decl *decl;
     Hint hint;
     Ty ty;
-    Continuation then;
     U64 number; // a continuation's own datum: an operator, a count
     Bool flag;
     c::LLVMBasicBlockRef blocks[3];
     c::LLVMValueRef value;
     ast::Span span;
 };
+
+export typedef enum {
+    ThenNone none;
+    ThenExpr expr;
+    ThenBlocks blocks;
+    ThenGeneral general;
+} Then;
+
+// One unit of work.
+export typedef enum {
+    struct {
+        const ast::Expr *expr;
+        Hint hint;
+    } eval; // evaluate `expr` (with `hint`): the handler of its kind pushes one Value
+    struct {
+        const ast::Expr *expr;
+    } place; // evaluate `expr` as an address: pushes one Value whose `llvm` is the address
+    struct {
+        const ast::Stmt *stmt;
+    } statement; // emit `stmt`
+    Then then;   // call the continuation with its data: it pops what the work before it pushed
+} Work;
 
 // ---------------------------------------------------------------------------------------------------------------
 // The emitter
@@ -352,21 +396,43 @@ export void push_work(Emitter *e, Work item) {
 
 // Evaluate `x` next (before the work already on the stack). `has_hint` says whether `hint` is meant.
 export void push_eval(Emitter *e, const ast::Expr *x, Hint hint) {
-    push_work(e, (Work){.kind = .eval, .expr = x, .hint = hint, .span = x->span});
+    Work item = {.eval = {.expr = x, .hint = hint}};
+    push_work(e, item);
 }
 
 export void push_place(Emitter *e, const ast::Expr *x) {
-    push_work(e, (Work){.kind = .place, .expr = x, .span = x->span});
+    Work item = {.place = {.expr = x}};
+    push_work(e, item);
 }
 
 export void push_statement(Emitter *e, const ast::Stmt *s) {
-    push_work(e, (Work){.kind = .statement, .stmt = s, .span = s->span});
+    Work item = {.statement = {.stmt = s}};
+    push_work(e, item);
 }
 
-// Run `then(e, &item)` once everything pushed after it has run. `item.kind` is set here.
-export void push_then(Emitter *e, Work item) {
-    item.kind = .then;
-    push_work(e, item);
+// Run `item.run(e, &item)` once everything pushed after it has run: one function for each shape of `Then`.
+export void push_then_none(Emitter *e, ThenNone item) {
+    Then then = {.none = item};
+    Work work = {.then = then};
+    push_work(e, work);
+}
+
+export void push_then_expr(Emitter *e, ThenExpr item) {
+    Then then = {.expr = item};
+    Work work = {.then = then};
+    push_work(e, work);
+}
+
+export void push_then_blocks(Emitter *e, ThenBlocks item) {
+    Then then = {.blocks = item};
+    Work work = {.then = then};
+    push_work(e, work);
+}
+
+export void push_then_general(Emitter *e, ThenGeneral item) {
+    Then then = {.general = item};
+    Work work = {.then = then};
+    push_work(e, work);
 }
 
 export void push_value(Emitter *e, Value value) {
