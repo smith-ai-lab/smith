@@ -58,20 +58,20 @@ import std::mem;
 // What an open construct waits for.
 // NOLINTBEGIN(readability-identifier-naming)
 enum FrameKind {
-    block_frame,   // statements up to `}`
-    if_then,       // the then branch
-    if_else,       // the else branch
-    while_body,    // the body of a while
-    do_body,       // the body of a do, then `while (c);`
-    for_body,      // the body of a for
-    switch_frame,  // labels and statements up to `}`
-    label_body,    // the statement after `l:`
-    defer_body,    // the statement after `defer`
-    errdefer_body, // the statement after `errdefer`
-    for_in_body,   // the body of a `for x in xs`
+    block_frame,    // statements up to `}`
+    if_then,        // the then branch
+    if_else,        // the else branch
+    while_body,     // the body of a while
+    do_body,        // the body of a do, then `while (c);`
+    for_body,       // the body of a for
+    switch_frame,   // labels and statements up to `}`
+    label_body,     // the statement after `l:`
+    defer_body,     // the statement after `defer`
+    errdefer_body,  // the statement after `errdefer`
+    for_in_body,    // the body of a `for x in xs`
     for_index_body, // the body of a `for i, j:`
-    bind_else,     // the `else:` of a refutable binding `.v(x) := value else:` (#2494)
-    bind_rest,     // and the rest of the block it is in, which is its then branch: ends where that block ends
+    bind_else,      // the `else:` of a refutable binding `.v(x) := value else:` (#2494)
+    bind_rest,      // and the rest of the block it is in, which is its then branch: ends where that block ends
 };
 // NOLINTEND(readability-identifier-naming)
 
