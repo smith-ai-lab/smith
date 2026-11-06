@@ -1248,6 +1248,9 @@ static void cast_warning(Stack *st, const Pending *op, const ast::Expr *operand)
     parse::Edits edits = {};
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
     Str tail = as_str(format::push(plain ? "" : ")", ".", name, "(", type_text, ")"));
+    // `(void *)-1` (MAP_FAILED): an integer literal is a pointer through a `usize`, which wraps the -1 (#2611)
+    if (op->type->kind == .pointer && same_text(name, "cast") && is_negative_literal(operand))
+        tail = as_str(format::push(plain ? "" : ")", ".wrap(usize).cast(", type_text, ")"));
     Str message = as_str(format::push("a cast is `x.", name, "(T)`: write `x.", name, "(", type_text, ")`"));
     tail_warning(st, from_to(op->head.start, operand->span.end), message, edits, operand->span.end, tail);
 }
