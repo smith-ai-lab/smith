@@ -648,8 +648,8 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
 
 constexpr Usize cache_text_max = 256;
 
-// What the files beside a module leave out, kept for the file the fixer works on: its passes run many times, and the
-// files beside it do not change meanwhile. The names are copied, so no pointer outlives the memory of a run.
+// What the files that import a module leave out, kept for the file the fixer works on: its passes run many times,
+// and the files that import it do not change meanwhile. The names are copied, so no pointer outlives the memory of a run.
 struct SiblingCache {
     char file[cache_text_max];
     Usize file_length;
@@ -691,10 +691,8 @@ static Str base_of(Str file) {
     return file[start:end];
 }
 
-// The constructions in the other `.smith` files of the module's folder (the files that can reach a record a module
-// exports are its neighbours in the tree; a file elsewhere is not read).
-static void scan_siblings(Wanted *w, const ast::Module *module) {
-    Str folder = folder_of(module->file);
+// The constructions in the other `.smith` files of `folder` that import the module.
+static void scan_folder(Wanted *w, const ast::Module *module, Str folder) {
     files::EntriesResult listed = files::list(folder);
     if (listed == .error) return;
     for (Usize i = 0; i < countof(listed.ok); i++) {
@@ -707,6 +705,51 @@ static void scan_siblings(Wanted *w, const ast::Module *module) {
         if (loaded == .error) continue;
         format::Chars chars = mem::view(loaded.ok, char);
         scan_file(w, chars, base_of(module->file), false);
+    }
+}
+
+constexpr Usize folders_max = 4096;
+
+// Whether the walk of the tree skips the folder `name`: a hidden one (`.git`, `.smith`) or a build's output.
+static Bool skipped_folder(Str name) {
+    return countof(name) == 0 || name[0] == '.' || same(name, "build");
+}
+
+// Whether `file` is in the tree under the working folder: a relative path, or an absolute one whose end names a file
+// there (the coverage tool fixes a copy by its absolute path from the pristine tree, #2521).
+static Bool in_working_tree(Str file) {
+    if (countof(file) == 0 || file[0] != '/') return true;
+    for (Usize i = 1; i + 1 < countof(file); i++)
+        if (file[i] == '/' && files::exists(file[i + 1:countof(file)])) return true;
+    return false;
+}
+
+// The constructions in every file of the tree under the working folder that imports the module, wherever it is
+// (#2543: `tests/front_format_space_test.smith` builds `front.format_space.SpaceContext`). The module's own folder is
+// read first; the walk is a stack of folders, as no recursion is allowed. Only for a module whose file is in the tree:
+// a bare `t.smith` (a test's) has only its neighbours.
+static void scan_siblings(Wanted *w, const ast::Module *module) {
+    Str own = folder_of(module->file);
+    scan_folder(w, module, own);
+    if (same(own, ".") || !in_working_tree(module->file)) return;
+    Str stack[folders_max];
+    Usize top = 1;
+    stack[0] = ".";
+    Usize visited = 0;
+    while (top > 0 && visited < folders_max) {
+        top -= 1;
+        Str folder = stack[top];
+        visited += 1;
+        if (!same(folder, own)) scan_folder(w, module, folder);
+        files::EntriesResult listed = files::list(folder);
+        if (listed == .error) continue;
+        for (Usize i = 0; i < countof(listed.ok) && top < folders_max; i++) {
+            files::Entry entry = listed.ok[i];
+            if (!entry.folder || skipped_folder(entry.name)) continue;
+            stack[top] = same(folder, ".") ? types::message_of(format::push(entry.name))
+                                           : types::message_of(format::push(folder, "/", entry.name));
+            top += 1;
+        }
     }
 }
 
@@ -760,8 +803,10 @@ static void nest(Wanted *w, types::Checked *c) {
     }
 }
 
-// The zero of the field `f` written as its default; empty when smith has none to write: a pointer (it becomes `?*T`,
-// a later step), a function, a type with no zero spelling (#2530 points 3 and 4).
+// The zero of the field `f` written as its default; empty when smith has none to write: a pointer, a function, a type
+// with no zero spelling (#2530 points 3 and 4). A pointer stays an error: `front.emit_state.Work`, whose pointers are
+// null for some kinds and read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with
+// the same pattern goes there too rather than unwrapping each read.
 static Str default_of(Str source, types::Checked *c, const ast::FieldDecl *f, const Wanted *w, Bool *filled) {
     types::TypeRef t = field_type(c, f);
     if (t == nullptr) return "";

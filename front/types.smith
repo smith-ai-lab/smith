@@ -2538,7 +2538,8 @@ static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
         entry = (ast_clone::Entry){.name = slot->name,
                                    .type_name = written_name(slot->type),
                                    .doc = slot->doc,
-                                   .attributes = slot->attributes};
+                                   .attributes = slot->attributes,
+                                   .default_value = slot->default_value};
         return entry;
     }
     const Symbol *s = reflected_symbol(subject, false);

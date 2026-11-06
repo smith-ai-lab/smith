@@ -602,7 +602,7 @@ static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
         value = state::pop_value(e);
     }
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
-    c::LLVMBuildStore(e->builder, value.llvm, slot);
+    state::store(e, value.llvm, slot);
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
     try debug::declare_local(e, name, ty, slot, w->span);
     return state::success();

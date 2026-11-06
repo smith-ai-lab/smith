@@ -506,3 +506,12 @@ export void test_parse_expr_layout_lambdas_do_and_trailing_blocks() {
         all = format::push(all, dump_layout(layout_source(i)), "\n");
     test::golden("tests/front/parse_expr/layout_forms.txt", all);
 }
+
+// After `.` a keyword is a member name (#2550): `f.default` of a reflected field, `x.match` of a field so named.
+export void test_parse_expr_a_keyword_is_a_member_name() {
+    Str dumped = dump_one("x.match + f.default", true);
+    test::check_condition(!contains(dumped, "error "));
+    test::check_condition(!contains(dumped, "left over"));
+    test::check_condition(contains(dumped, "match"));
+    test::check_condition(contains(dumped, "default"));
+}

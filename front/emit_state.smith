@@ -508,6 +508,21 @@ export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
     return slot;
 }
 
+// Stores `value` at `slot`. A struct or an array whose value is all zeros (`Work()` with every field defaulted to its
+// zero) is one clear, a `memset`, as C's `{0}` is (#2543): stored as an aggregate it is one store per field, since
+// the new front end runs no optimizer.
+export void store(Emitter *e, c::LLVMValueRef value, c::LLVMValueRef slot) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(value);
+    c::LLVMTypeKind kind = c::LLVMGetTypeKind(type);
+    Bool aggregate = kind == c::LLVMStructTypeKind || kind == c::LLVMArrayTypeKind;
+    if (aggregate && c::LLVMIsConstant(value) != 0 && c::LLVMIsNull(value) != 0) {
+        c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
+        c::LLVMBuildMemSet(e->builder, slot, c::LLVMConstInt(byte, 0, 0), c::LLVMSizeOf(type), 1);
+        return;
+    }
+    c::LLVMBuildStore(e->builder, value, slot);
+}
+
 export void add_local(Emitter *e, Local local) {
     if (e->local_count == countof(e->locals)) {
         Usize capacity = countof(e->locals) * 2;
