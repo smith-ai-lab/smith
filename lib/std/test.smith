@@ -465,10 +465,10 @@ void format_value(Value value, char *text, Usize capacity) {
     contract::assert(text != nullptr && capacity == text_capacity);
     switch (value.kind) {
     case kind_unsigned:
-        __builtin_snprintf(text, capacity, "%ju", (c::uintmax_t)value.unsigned_value);
+        __builtin_snprintf(text, capacity, "%ju", (U64)value.unsigned_value);
         return;
     case kind_signed:
-        __builtin_snprintf(text, capacity, "%jd", (c::intmax_t)value.signed_value);
+        __builtin_snprintf(text, capacity, "%jd", (I64)value.signed_value);
         return;
     case kind_f32:
         format_real((F64)value.f32_value, true, text, capacity);
@@ -635,7 +635,7 @@ void write_values(Line *lines, Usize count) {
             Usize length = c::strlen(lines[i].formatted);
             I32 digits = lines[i].value.kind == kind_f32 ? 8 : 16;
             __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*jx]", digits,
-                               (c::uintmax_t)raw_bits(lines[i].value));
+                               (U64)raw_bits(lines[i].value));
         }
         Usize formatted_length = c::strlen(lines[i].formatted);
         if (formatted_length > value_width) value_width = formatted_length;
@@ -771,10 +771,10 @@ void explain_join(const char *text, Usize used, U64 ended, I32 status) {
     Usize at = c::strlen(shared->detail);
     if (ended == explain_read_cpu) {
         detail_add(&at, "@! values not shown: the debugger spent more than %ju s of CPU time\n",
-                   (c::uintmax_t)explain_seconds);
+                   (U64)explain_seconds);
     } else if (ended == explain_read_hung) {
         detail_add(&at, "@! values not shown: the debugger hung (%ju s of wall time, no answer)\n",
-                   (c::uintmax_t)explain_hang_seconds);
+                   (U64)explain_hang_seconds);
     } else if (used == 0) {
         detail_add(&at, "@! values not shown: the debugger gave no answer (status %d)\n", status_code(status));
     }
@@ -2308,7 +2308,7 @@ Bool explain_wanted(const Options *options, const Test *test) {
 
 // Starts the test in the slot: a command to its worker (forked first if it has none), or its own child with --isolate.
 void dispatch(const Options *options, Usize slot, const Test *test, Run *run) {
-    shared_slots[slot] = (Shared){};
+    __builtin_memset(&shared_slots[slot], 0, sizeof(Shared));
     Command command = {.test = (U32)(test - table),
                        .seed_given = options->seed_given,
                        .seed = options->seed,
@@ -2576,8 +2576,8 @@ void print_detail(const Run *run) {
 // The failure's stack as a trace block, for smith to turn into the failing line and the call chain (smith symbolize).
 // The block is written to the descriptor, so what the console holds is already out.
 void print_trace(const Run *run, Bool with_detail) {
-    const char *recorded = run->heading;
-    const char *heading = recorded != nullptr ? recorded : "check failed";
+    const char *saved_heading = run->heading;
+    const char *heading = saved_heading != nullptr ? saved_heading : "check failed";
     c::smith_trace_write(stdout_fd, "  ", heading, nullptr, with_detail ? run->detail : nullptr, run->frames,
                          run->frame_count, run->frames_exact, true);
 }
@@ -2601,7 +2601,7 @@ Bool takes_seed(const Test *test) {
 
 void print_failure(const Test *test, const Options *options, const Run *run) {
     say("%sFAIL%s %s", paint(options, "\033[31m"), paint(options, "\033[0m"), test->name);
-    if (takes_seed(test)) say(" with seed %ju", (c::uintmax_t)run->seed);
+    if (takes_seed(test)) say(" with seed %ju", (U64)run->seed);
     if (run->shrink_changed) say(", shrunk in %u runs", run->shrink_runs);
     if (run->shrink_runs > 0 && !run->shrink_changed) say(", no smaller case in %u runs", run->shrink_runs);
     print_reason(options, run);
@@ -2618,7 +2618,7 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
     }
     print_indented(run->output.text, run->output.kept, "    ");
     if (run->output.total > run->output.kept) say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
-    if (takes_seed(test)) say("    rerun: smith test --test %s --seed %ju\n", test->name, (c::uintmax_t)run->seed);
+    if (takes_seed(test)) say("    rerun: smith test --test %s --seed %ju\n", test->name, (U64)run->seed);
 }
 
 void report(const Test *test, const Options *options, const Run *run) {
@@ -2631,9 +2631,9 @@ void report(const Test *test, const Options *options, const Run *run) {
             say("%sPASS%s %s\n", green, reset_color, test->name);
         else if (options->seed_given)
             say("%sPASS%s %s (seed %ju)\n", green, reset_color, test->name,
-                (c::uintmax_t)(options->seed_given ? options->seed : run->seed));
+                (U64)(options->seed_given ? options->seed : run->seed));
         else
-            say("%sPASS%s %s (%ju seeds)\n", green, reset_color, test->name, (c::uintmax_t)options->seed_count);
+            say("%sPASS%s %s (%ju seeds)\n", green, reset_color, test->name, (U64)options->seed_count);
         print_indented(run->output.text, run->output.kept, "    ");
         if (run->output.total > run->output.kept)
             say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
@@ -2690,7 +2690,7 @@ Bool in_budget(const Shrink *shrink) {
 // in shrink->candidate, with its output.
 void try_run(Shrink *shrink) {
     draws_clear(recorded);
-    *shrink->candidate = (Run){};
+    __builtin_memset(shrink->candidate, 0, sizeof(Run));
     shrink->attempt(shrink);
     shrink->runs += 1;
 }
@@ -2903,7 +2903,7 @@ void explain_rerun(const Test *test, const Options *options, Run *run) {
     if (!run->shrink_changed) draws_clear(overrides);
     discard(&processes[shrink_slot]);
     Run *rerun = &tries[0];
-    *rerun = (Run){};
+    __builtin_memset(rerun, 0, sizeof(Run));
     dispatch(&replay, shrink_slot, test, rerun);
     wait_for(shrink_slot, rerun);
     if (same_failure(run, rerun)) {
@@ -3295,7 +3295,9 @@ void pump(Plan *plan) {
         if (!service(job, &plan->runs[chosen], output_events, control_events)) continue;
         Run *run = &plan->runs[chosen];
         if (run->lost && run->lost_count < lost_retries) { // the same test again, in a fresh worker
-            *run = (Run){.lost_count = run->lost_count + 1};
+            U32 retries = run->lost_count + 1;
+            __builtin_memset(run, 0, sizeof(Run));
+            run->lost_count = retries;
             dispatch(plan->options, job, plan->tests[chosen], run);
             continue;
         }
@@ -3398,7 +3400,7 @@ void run_in_process(Plan *plan) {
     for (Usize i = 0; i < plan->count; i++) {
         Run *run = &plan->runs[plan->order[i]];
         const Test *test = plan->tests[plan->order[i]];
-        *block = (Shared){};
+        __builtin_memset(block, 0, sizeof(Shared));
         Command command = {.test = (U32)(test - table),
                            .seed_given = options->seed_given,
                            .seed = options->seed,
@@ -4129,10 +4131,10 @@ void raise_files(Usize jobs) {
 void say_explained(const Options *options) {
     U64 skipped = explained[explain_stat_skipped];
     if (skipped > 0)
-        say("%ju more failures were not read in the debugger (--explain-max %ju)\n", (c::uintmax_t)skipped,
-            (c::uintmax_t)options->explain_max);
+        say("%ju more failures were not read in the debugger (--explain-max %ju)\n", (U64)skipped,
+            (U64)options->explain_max);
     if (options->stats && options->explain != nullptr)
-        say("explained: %ju failures in %.3f s\n", (c::uintmax_t)(explained[explain_stat_explained] - skipped),
+        say("explained: %ju failures in %.3f s\n", (U64)(explained[explain_stat_explained] - skipped),
             (F64)explained[explain_stat_nanoseconds] * 1e-9);
 }
 
@@ -4198,7 +4200,7 @@ static void say_usage(const Runner *runner, Bool help) {
         "a bare name or path (smith test x_test) is --test; --test takes a test file's path, a name (x_test, "
         "x_test::name) or a * pattern (x*), not a "
         "prefix; --update writes the files of the selected tests (every test without --test)\n",
-        runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+        runner->argv[0], (U64)seeds_max, jobs_max);
     if (help) {
         say("%s", text);
     } else {
@@ -4244,7 +4246,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     say("\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed, seconds() - start);
     if (skipped > 0) say("%zu not run (--fail-fast)\n", skipped);
     say_explained(options);
-    if (options->stats) say("forks: %ju\n", (c::uintmax_t)*forks);
+    if (options->stats) say("forks: %ju\n", (U64)*forks);
     if (options->stats) print_cpu(plan);
     return failed;
 }
