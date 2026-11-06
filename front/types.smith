@@ -743,6 +743,7 @@ export struct Symbol {
     Bool generic; // a function with compile-time parameters (`T: type`, `const n: usize`): a template, no body checked
     Bool has_value; // a compile-time parameter bound in an instance (`n`): `value` is what the call passed
     U64 value;
+    Bool narrowed; // a `?T` name known not to be `.none` here, typed `T` (#2481): `x.some` is `x`
 };
 
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
@@ -790,6 +791,19 @@ export Bool declare(Scopes *s, Symbol symbol) {
     s->symbols[s->count] = symbol;
     s->count += 1;
     return true;
+}
+
+// Adds `symbol` to the innermost scope over a name that is declared already: a `?T` name that is known not to be
+// `.none` from here to the end of the scope has the type `T` (#2481). `lookup` finds the newest, so the narrowed one
+// wins.
+export void narrow(Scopes *s, Symbol symbol) {
+    if (s->count == countof(s->symbols)) {
+        Usize capacity = countof(s->symbols) * 2;
+        if (capacity < 64) capacity = 64;
+        s->symbols = mem::realloc(s->symbols, capacity);
+    }
+    s->symbols[s->count] = symbol;
+    s->count += 1;
 }
 
 // The innermost symbol called `name`, or null. In the body of a generic instance from another module the body's own

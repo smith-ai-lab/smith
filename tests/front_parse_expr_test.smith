@@ -249,7 +249,7 @@ export void test_parse_expr_a_hook_that_is_not_set_is_reported() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     parse::Parser p = parser_of("(I32)x");
-    p.hooks.type = nullptr;
+    p.hooks.type = parse::no_type;
     ast::Expr *e = parse::expression(&p);
     test::check_condition(e == nullptr);
     same(p.errors[0].message, "no parser for a type is installed");

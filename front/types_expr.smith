@@ -121,6 +121,10 @@ struct Frame {
     const ast::Expr *twin;
 };
 
+constexpr U32 stage_narrow =
+    4; // `a && b`: the left side is typed; opens the scope in which `b` sees the narrowed names
+constexpr U32 stage_unnarrow = 5; // `a && b`: the right side is typed; closes that scope
+
 struct Work {
     Frame items[:];
     Usize count;
@@ -1641,6 +1645,113 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     return c->table.bool_type;
 }
 
+// `x == .none`, `x != .none`, `x == .some` or `x != .some` over a `?T`: the tag of the option is tested, so both sides
+// are the option and the one written with a leading dot has no payload (#2481).
+static Bool is_option_test(ast::BinaryOp op, const ast::Expr *left, const ast::Expr *right, types::TypeRef l,
+                           types::TypeRef r) {
+    if (!is_equality(op) || l->kind != .option || r->kind != .option) {
+        return false;
+    }
+    if (right->kind == .variant && left->kind != .variant) {
+        return right->kind.variant.payload == nullptr;
+    }
+    return left->kind == .variant && right->kind != .variant && left->kind.variant.payload == nullptr;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Narrowing (#2481): where a `?T` name is known not to be `.none`, it names a `T`.
+
+// The name `x` of `x == .none`, `x != .none`, `x == .some` or `x != .some` (either order), or null. `not_none` says
+// whether the test is true exactly when `x` is not `.none` (`x != .none`, `x == .some`), and `some` whether `.some`
+// was written.
+static const ast::Expr *option_test_name(const ast::Expr *e, Bool *not_none, Bool *some) {
+    if (e->kind != .binary || !is_equality(e->kind.binary.op)) return nullptr;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    const ast::Expr *dotted = right->kind == .variant ? right : left;
+    const ast::Expr *named = right->kind == .variant ? left : right;
+    if (dotted->kind != .variant || named->kind != .name || dotted->kind.variant.payload != nullptr) return nullptr;
+    Bool is_some = same_text(dotted->kind.variant.name, "some");
+    if (!is_some && !same_text(dotted->kind.variant.name, "none")) return nullptr;
+    if (countof(named->kind.name.path.segments) != 1) return nullptr;
+    *some = is_some;
+    *not_none = (e->kind.binary.op == .equal) == is_some;
+    return named;
+}
+
+// What `test` proves about options when it is true (`when_true`) or false: the `?T` names it says are not `.none`, as
+// symbols of the same name with the type `T`. Only names that cannot change narrow: a parameter or a local without
+// `mut`, never a field or a `mut` name (they can change through a pointer). `x != .none && y != .none` narrows both
+// when true; `x == .none` alone narrows when false. Returns how many symbols were written to `out`.
+export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true, types::Symbol out[:]) {
+    Usize count = 0;
+    const ast::Expr *rest = test;
+    while (rest != nullptr && count < countof(out)) {
+        const ast::Expr *item = rest;
+        rest = nullptr;
+        if (when_true && item->kind == .binary && item->kind.binary.op == .logical_and) {
+            rest = item->kind.binary.left;
+            item = item->kind.binary.right;
+        }
+        Bool not_none = false;
+        Bool some = false;
+        const ast::Expr *named = option_test_name(item, &not_none, &some);
+        if (named == nullptr || not_none != when_true || !(named->kind == .name)) {
+            continue;
+        }
+        const types::Symbol *s = types::lookup(&c->scopes, named->kind.name.path.segments[0].text);
+        if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) {
+            continue;
+        }
+        if (s->type->kind != .option || s->type->element == nullptr) {
+            continue;
+        }
+        out[count] = *s;
+        out[count].type = s->type->element;
+        out[count].narrowed = true;
+        count += 1;
+    }
+    return count;
+}
+
+// Narrows what `test` proves (see `narrowing`) in the innermost scope.
+export void narrow_scope(types::Checked *c, const ast::Expr *test, Bool when_true) {
+    types::Symbol found[8] = {};
+    Usize count = narrowing(c, test, when_true, found[0:8]);
+    for (Usize i = 0; i < count; i++) {
+        types::narrow(&c->scopes, found[i]);
+    }
+}
+
+// `x == .some` and `x != .some` over a name that cannot change are written `x != .none` and `x == .none`, which also
+// narrow `x` to a `T` (#2481): the fix rewrites the operator and the variant. Other sites (a `mut` name, a field) stay.
+static void some_test_fix(types::Checked *c, const ast::Expr *e) {
+    if (!(e->kind == .binary)) {
+        return;
+    }
+    ast::BinaryOp op = e->kind.binary.op;
+    const ast::Expr *right = e->kind.binary.right;
+    Bool not_none = false;
+    Bool some = false;
+    const ast::Expr *named = option_test_name(e, &not_none, &some);
+    if (named == nullptr || !some || right->kind != .variant) {
+        return;
+    }
+    types::Symbol found[2] = {};
+    if (narrowing(c, e, true, found[0:2]) + narrowing(c, e, false, found[0:2]) == 0) {
+        return;
+    }
+    Str flipped_equal = " != .none";
+    Str flipped_not_equal = " == .none";
+    Str written = op == .equal ? flipped_equal : flipped_not_equal;
+    syntax::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = {.start = named->span.end, .end = e->span.end}, .text = written};
+    types::fail_fix(c, e->span,
+                    msg(format::push("test an option with `.none`: write `", binary_text(op), "` as ", written)),
+                    edits);
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -1806,6 +1917,11 @@ static void binary_after(types::Checked *c, Frame f) {
     }
     if (widen_operand(c, e, op, left, right)) {
         poison(c, e);
+        return;
+    }
+    if (is_option_test(op, left, right, typ(c, left), typ(c, right))) {
+        some_test_fix(c, e);
+        finish(c, e, c->table.bool_type, f.expected);
         return;
     }
     types::TypeRef t = binary_type(c, e->span, op, typ(c, left), typ(c, right));
@@ -2975,6 +3091,27 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     return nullptr;
 }
 
+// `x.some` where `x` was narrowed to a `T`: `x` is the payload already; the fix deletes `.some` (#2481).
+static Bool narrowed_payload(types::Checked *c, Frame f) {
+    const ast::Expr *e = f.node;
+    if (!(e->kind == .member)) return false;
+    const ast::Expr *base = e->kind.member.base;
+    if (e->kind.member.arrow || !same_text(e->kind.member.name, "some") || !(base->kind == .name)) return false;
+    const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.name.path);
+    if (s == nullptr || !s->narrowed || typ(c, base) != s->type || !(base->kind == .name)) return false;
+    Str nothing = "";
+    syntax::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = {.start = base->span.end, .end = base->span.end + 5}, .text = nothing};
+    Str shown = path_str(base->kind.name.path);
+    types::fail_fix(c, e->span,
+                    msg(format::push("`", shown, "` is not `.none` here, so it is the value already; write `", shown,
+                                     "`, not `.some`")),
+                    edits);
+    finish(c, e, s->type, f.expected);
+    return true;
+}
+
 static void member_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) {
@@ -2984,6 +3121,9 @@ static void member_after(types::Checked *c, Frame f) {
     types::TypeRef base = typ(c, e->kind.member.base);
     if (base == invalid(c)) {
         poison(c, e);
+        return;
+    }
+    if (narrowed_payload(c, f)) {
         return;
     }
     if (base->kind == .tuple && !e->kind.member.arrow) {
@@ -3512,19 +3652,22 @@ static void lambda_expr(types::Checked *c, Frame f) {
 
 // The pseudo-frames of a value statement, in the `stage` of a frame whose node is the statement's expression. Stage 1
 // is the last frame, which joins the branches' types.
-constexpr U32 stage_enter = 100;     // a block opens its scope
-constexpr U32 stage_leave = 101;     // a block, an arm or an `if let` closes its scope
-constexpr U32 stage_bind = 102;      // `if let`: the scrutinee is an optional; opens a scope with the name it binds
-constexpr U32 stage_arm = 103;       // `match`: checks the patterns of an arm; opens a scope with its binding
-constexpr U32 stage_coverage = 104;  // `match`: every case is named once
-constexpr U32 stage_statement = 105; // a statement of a block that is not an expression: J1d's hook
-constexpr U32 stage_not_yet = 106;   // `message` is not typed yet
+constexpr U32 stage_enter = 100;        // a block opens its scope
+constexpr U32 stage_leave = 101;        // a block, an arm or an `if let` closes its scope
+constexpr U32 stage_bind = 102;         // `if let`: the scrutinee is an optional; opens a scope with the name it binds
+constexpr U32 stage_arm = 103;          // `match`: checks the patterns of an arm; opens a scope with its binding
+constexpr U32 stage_coverage = 104;     // `match`: every case is named once
+constexpr U32 stage_statement = 105;    // a statement of a block that is not an expression: J1d's hook
+constexpr U32 stage_not_yet = 106;      // `message` is not typed yet
+constexpr U32 stage_narrow_true = 107;  // `if x != .none:` as a value: opens the `then` scope with `x` narrowed (#2481)
+constexpr U32 stage_narrow_false = 108; // the same for the `else` of `if x == .none:`
 
 // NOLINTBEGIN(readability-identifier-naming)
 enum Act {
     visit,       // read the statement: its leaves are values
     plain,       // a statement of a block that is not its value
     leave_scope, // the scope of a block or of an `if let`'s `then` ends
+    open_else,   // the `else` of an `if` used as a value: a scope with the names its condition narrows
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -3646,12 +3789,20 @@ static void read_if(Plan *p, const ast::Stmt *s) {
         emit_not_yet(p, s, "`if constexpr` used as a value");
         return;
     }
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
     emit_expr(p, s->kind.if_stmt.condition, p->bool_type);
-    if (s->kind.if_stmt.else_branch == nullptr) {
+    if (else_branch == nullptr) {
         p->no_value = true;
     }
-    push_step(p, s->kind.if_stmt.else_branch, visit);
-    push_step(p, s->kind.if_stmt.then_branch, visit);
+    emit_pseudo(p, stage_narrow_true, s, 0); // the `then` sees the names the condition proves are not `.none` (#2481)
+    if (else_branch != nullptr) {
+        push_step(p, nullptr, leave_scope);
+        push_step(p, else_branch, visit);
+        push_step(p, s, open_else);
+    }
+    push_step(p, nullptr, leave_scope);
+    push_step(p, then_branch, visit);
 }
 
 static void read_if_let(Plan *p, const ast::Stmt *s) {
@@ -3746,6 +3897,8 @@ static Plan read_value(const types::Checked *c, const ast::Expr *e, types::TypeR
             read_stmt(&p, step.stmt);
         } else if (step.act == plain) {
             read_plain(&p, step.stmt);
+        } else if (step.act == open_else) {
+            emit_pseudo(&p, stage_narrow_false, step.stmt, 0);
         } else {
             emit_pseudo(&p, stage_leave, nullptr, 0);
         }
@@ -4137,6 +4290,11 @@ static void value_stage(types::Checked *c, Frame f) {
         types::push_scope(&c->scopes);
     } else if (f.stage == stage_leave) {
         types::pop_scope(&c->scopes);
+    } else if (f.stage == stage_narrow_true || f.stage == stage_narrow_false) {
+        types::push_scope(&c->scopes);
+        if (f.source->kind == .if_stmt) {
+            narrow_scope(c, f.source->kind.if_stmt.condition, f.stage == stage_narrow_true);
+        }
     } else if (f.stage == stage_bind) {
         bind_stage(c, f);
     } else if (f.stage == stage_arm) {
@@ -5265,6 +5423,7 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
     if (!(e->kind == .binary)) {
         return;
     }
+    ast::BinaryOp op = e->kind.binary.op;
     Bool dotted_right = f.stage == 2;
     const ast::Expr *typed = dotted_right ? e->kind.binary.left : e->kind.binary.right;
     const ast::Expr *dotted = dotted_right ? e->kind.binary.right : e->kind.binary.left;
@@ -5274,6 +5433,13 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
         return;
     }
     push(w, e, f.expected, 1);
+    // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
+    // carries.
+    if (is_equality(op) && want->kind == .enumeration && want->has_payload && dotted->kind == .variant &&
+        types::member(want, dotted->kind.variant.name) != nullptr) {
+        types::set_type(c, dotted, want);
+        return;
+    }
     push(w, dotted, want, 0);
 }
 
@@ -5286,7 +5452,14 @@ static void binary_before(Work *w, Frame f) {
     const ast::Expr *right = e->kind.binary.right;
     const ast::Expr *left = e->kind.binary.left;
     Bool compares = is_ordering(e->kind.binary.op) || is_equality(e->kind.binary.op);
-    if (compares && right->kind == .variant && left->kind != .variant) {
+    if (e->kind.binary.op == .logical_and && right->kind != .variant) {
+        // `x != .none && use(x)`: the right side sees `x` as a `T`, in a scope of its own (#2481).
+        push(w, e, f.expected, 1);
+        push_frame(w, (Frame){.node = e, .stage = stage_unnarrow});
+        push(w, right, nullptr, 0);
+        push_frame(w, (Frame){.node = e, .stage = stage_narrow});
+        push(w, left, nullptr, 0);
+    } else if (compares && right->kind == .variant && left->kind != .variant) {
         // `c == .green`: the side with a leading dot is the type of the other (#2460).
         push(w, e, f.expected, 2);
         push(w, left, nullptr, 0);
@@ -5302,7 +5475,12 @@ static void binary_before(Work *w, Frame f) {
 
 // A binary operator once its operands are typed (stage 1), or one side of a comparison with a leading dot (2, 3).
 static void binary_stage(types::Checked *c, Work *w, Frame f) {
-    if (f.stage >= 2) {
+    if (f.stage == stage_narrow && f.node->kind == .binary) {
+        types::push_scope(&c->scopes);
+        narrow_scope(c, f.node->kind.binary.left, true);
+    } else if (f.stage == stage_unnarrow) {
+        types::pop_scope(&c->scopes);
+    } else if (f.stage >= 2) {
         binary_variant_side(c, w, f);
     } else {
         binary_after(c, f);
