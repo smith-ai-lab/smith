@@ -1451,7 +1451,7 @@ static types::TypeRef result_hook() {
 export void install() {
     types_expr::set_hooks((types_expr::Hooks){.function_result = result_hook,
                                               .convert = convert_hook,
-                                              .cast = cast_hook,
+                                              .cast_rule = cast_hook,
                                               .lambda_body = lambda_hook,
                                               .statement = value_block_statement});
 }
