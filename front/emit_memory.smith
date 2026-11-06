@@ -1637,21 +1637,20 @@ static state::Status construction_constant(state::Emitter *e, state::Ty ty, cons
 // constant when the value is zero, so the object holds zero or constant data and runs no code.
 static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (ty.kind != .array) return state::failf(x->span, "array.filled where ", ty.name, " is expected");
+    state::Ty chain[16];
+    Usize n = builtin::filled_chain(e, x, ty, chain);
+    state::Ty leaf = *chain[n - 1].element;
     c::LLVMValueRef item = nullptr;
     const ast::Expr *value = builtin::filled_value(x);
-    if (ty.element->kind == .record && value->kind == .call)
-        try construction_constant(e, *ty.element, value, &item);
+    if (leaf.kind == .record && value->kind == .call)
+        try construction_constant(e, leaf, value, &item);
     else
-        try scalar_constant(e, *ty.element, value, &item);
+        try scalar_constant(e, leaf, value, &item);
     if (c::LLVMIsNull(item) != 0) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
     }
-    builtin::Cells cells[:] = mem::alloc_slice(builtin::Cells, ty.count);
-    for (Usize i = 0; i < ty.count; i++)
-        cells[i].item = item;
-    *out = c::LLVMConstArray2(ty.element->llvm, (c::LLVMValueRef *)cells.data, ty.count);
-    mem::free(cells.data);
+    *out = builtin::filled_nest(chain, n, item);
     return state::success();
 }
 

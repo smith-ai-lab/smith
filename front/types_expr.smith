@@ -5520,6 +5520,9 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
     for (Usize i = countof(args); i > 0; i--) {
         if (builtins::is_type_argument(builtin, i - 1)) continue;
         types::TypeRef expected = nullptr;
+        // the shape `[a, b]` of `array.filled` is read by the builtin, not typed as an array (#2496)
+        const ast::Expr *shape = args[i - 1];
+        if (builtin.shape == .filled && i == 2 && shape->kind == .array_lit) continue;
         if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);

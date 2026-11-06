@@ -53,6 +53,21 @@ import <stdlib.h>; // aligned_alloc and free: the current allocator, a growing a
 // A chunk of a growing arena: a header (its body is private, below) followed by the memory a push lands in.
 [[std::c_name("SmithArenaChunk")]] export typedef struct SmithArenaChunk Chunk;
 
+// A chunk's header, a multiple of align_max so the memory after it is aligned as an arena's must be. A chunk is one
+// piece from the backing (an allocation); the chunks of an arena are a list: `previous` leads back to the
+// first, `next` to the ones kept for reuse. A chunk holds what the arena's block was before it, so that ending a scope
+// (or a reset) puts it back.
+struct Chunk {
+    Chunk *previous;
+    Chunk *next;
+    Usize size;    // bytes of the piece, this header included
+    Usize touched; // the poison mark of its memory while it is not the arena's block
+    U8 *memory_before;
+    Usize capacity_before;
+    Usize used_before;
+    Usize touched_before;
+};
+
 // A block of memory and a cursor. A growing arena's block is its current chunk.
 [[std::c_name("SmithArena")]] export typedef struct {
     U8 *memory;
@@ -156,21 +171,6 @@ Bool measure(const Arena *arena, Usize size, Usize align, Usize *padding) {
     return (Arena){
         .memory = (U8 *)memory, .capacity = capacity, .fixed = true}; // nothing is poisoned until the first push
 }
-
-// A chunk's header, a multiple of align_max so the memory after it is aligned as an arena's must be. A chunk is one
-// piece from the backing (an allocation); the chunks of an arena are a list: `previous` leads back to the
-// first, `next` to the ones kept for reuse. A chunk holds what the arena's block was before it, so that ending a scope
-// (or a reset) puts it back.
-struct Chunk {
-    Chunk *previous;
-    Chunk *next;
-    Usize size;    // bytes of the piece, this header included
-    Usize touched; // the poison mark of its memory while it is not the arena's block
-    U8 *memory_before;
-    Usize capacity_before;
-    Usize used_before;
-    Usize touched_before;
-};
 
 constexpr Usize chunk_header = sizeof(struct Chunk);
 constexpr Usize chunk_round = 16 << 10; // a chunk is a whole number of pages
