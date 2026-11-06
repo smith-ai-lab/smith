@@ -1104,6 +1104,12 @@ static types::TypeRef carried_type(Frame f) {
     if (expected->kind == .option) {
         return same_text(name, "some") ? expected->element : nullptr;
     }
+    if (expected->kind == .result_type) {
+        if (same_text(name, "ok")) {
+            return expected->element;
+        }
+        return same_text(name, "error") ? expected->error : nullptr;
+    }
     if (expected->kind == .enumeration && expected->has_payload) {
         const types::Slot *slot = types::member(expected, name);
         if (slot != nullptr && carries_value(slot->type)) {
@@ -1151,14 +1157,30 @@ static void try_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (operand->kind != .option) {
-        types::failf(c, e->span, "`try` needs a `?T`, found `", types::show(operand),
-                     "`; write `try` before an option, or use `if x := value:` for any other value");
+    if (operand->kind != .option && operand->kind != .result_type) {
+        types::failf(c, e->span, "`try` needs a `?T` or a `Result`, found `", types::show(operand),
+                     "`; write `try` before an option or a result, or use `if x := value:` for any other value");
         poison(c, e);
         return;
     }
     types::TypeRef want = nullptr;
     if (hooks.function_result != nullptr) want = hooks.function_result();
+    if (operand->kind == .result_type) {
+        if (want == nullptr || want->kind != .result_type) {
+            types::failf(c, e->span, "`try` on a `Result` returns its `.error` from the function, so the function ",
+                         "must return a `Result` too; change its result type or handle `.error` here");
+            poison(c, e);
+            return;
+        }
+        if (want->error != operand->error) {
+            types::failf(c, e->span, "`try` returns `", types::show(operand->error), "` but the function's error is `",
+                         types::show(want->error), "`; make them the same type, or handle `.error` here");
+            poison(c, e);
+            return;
+        }
+        finish(c, e, operand->element, f.expected);
+        return;
+    }
     if (want == nullptr || want->kind != .option) {
         types::failf(c, e->span, "`try` on a `?T` returns `.none` from the function, so the function must return a ",
                      "`?U`; change its result type or handle `.none` here");
@@ -1186,6 +1208,11 @@ static void variant_expr(types::Checked *c, Frame f) {
     if (expected->kind == .option &&
         (same_text(name, "none") || (same_text(name, "some") && e->kind.variant.payload == nullptr))) {
         types::set_type(c, e, expected);
+        return;
+    }
+    if (expected->kind == .result_type && (same_text(name, "ok") || same_text(name, "error"))) {
+        types::failf(c, e->span, "`.", name, "` carries a value; write `.", name, "(value)`");
+        poison(c, e);
         return;
     }
     const types::Slot *slot = nullptr;
@@ -4031,6 +4058,17 @@ static void bind_stage(types::Checked *c, Frame f) {
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
     if (t == invalid(c)) {
+        bind_name(c, binding, element);
+        return;
+    }
+    if (t->kind == .result_type) {
+        if (same_text(name, "ok")) {
+            element = t->element;
+        } else if (same_text(name, "error")) {
+            element = t->error;
+        } else {
+            types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name, "`; write one of those");
+        }
         bind_name(c, binding, element);
         return;
     }

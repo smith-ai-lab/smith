@@ -353,12 +353,12 @@ static Bool is_tuple_member(const state::Emitter *e, const ast::Expr *x) {
 static Bool checked_option(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return false;
     types::TypeRef t = types::type_of(e->options.checked, x);
-    return t != nullptr && t->kind == .option;
+    return t != nullptr && (t->kind == .option || t->kind == .result_type);
 }
 
 // `.some(x)` and `.none` when an option is expected, `.red` otherwise.
 static state::Status dispatch_variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    if ((hint.present && hint.ty.kind == .option) || checked_option(e, x)) return optional::variant(e, x, hint);
+    if ((hint.present && (hint.ty.kind == .option || hint.ty.kind == .result)) || checked_option(e, x)) return optional::variant(e, x, hint);
     return matching::variant(e, x, hint);
 }
 
@@ -1387,6 +1387,13 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
             if (scalar_of_checked(e, base->element, &lane)) return vectors::make(e, lane, base->count);
         }
         if (base->kind == .option) return optional::from_checked(e, base);
+        if (base->kind == .result_type) {
+            state::TyResult ok = optional::payload_of_checked(e, base->element);
+            if (ok == .error) return {.error = ok.error};
+            state::TyResult bad = optional::payload_of_checked(e, base->error);
+            if (bad == .error) return {.error = bad.error};
+            return optional::build_result(e, ok.ok, bad.ok);
+        }
         if (base->kind == .tuple) return tupled::from_checked(e, base);
         if (base->kind == .fn_value) return lambdas::from_checked(e, base);
         Str shown = types::show(base);
@@ -1505,6 +1512,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         return state::success();
     }
     if (to.kind == .option) return optional::wrap(e, value, to, span);
+    if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, span);
     if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
         return memory::array_value_as_slice(e, value, to);
     state::Ty from = value.ty;
