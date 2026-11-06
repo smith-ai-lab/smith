@@ -451,7 +451,7 @@ static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry 
         if (is_open(t)) continue;
         Bool pointer = t->kind == .pointer;
         Bool integer = t->kind == .integer;
-        if (t->kind == .array && (i == 0 || i == 2)) {
+        if (t->kind == .array && i != 1) { // a `%s` argument too: the array decays in C (#2611)
             types::fail_fix(c, args[i]->span,
                             "a fixed array never converts to a bare pointer; write the address of an element: &xs[0]",
                             element_address_fix(args[i]));
