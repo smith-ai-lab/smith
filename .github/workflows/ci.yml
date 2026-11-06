@@ -520,7 +520,7 @@ jobs:
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
     # do not count against it. It runs when a job failed too, after every job has ended (no job cancels the run).
-    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint]
+    needs: [changes, pack, macos, build-linux, test-linux, check-fmt-prove, check-lint, frontend-coverage]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -534,6 +534,7 @@ jobs:
           TEST_LINUX: ${{ needs.test-linux.result }}
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
+          FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           case " $RESULTS " in
@@ -552,6 +553,8 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
+          # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
+          if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
@@ -679,13 +682,18 @@ jobs:
     # not a developer's Mac) in the merge-queue run, on the smith `build-linux` built for that very commit: the commit the
     # queue fast-forwards main to, so every merge is counted and a drop is pinned on one group. No second build: it
     # restores the `build-linux` artifact like the test shards do, so it runs wherever `build-linux` does (scope full).
-    # It gates nothing: it is not in `ci`'s needs nor the ruleset's required checks, so the queue never waits for it, and a
-    # failure to measure is reported (`unmeasured`), never a red run. A group the queue cancels cancels it too; the next
-    # group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count takes about 9 minutes on 4 cores (#2426).
+    # It gates the merge (owner, 2026-11-06, after it went unmeasured for five hours while PRs kept merging): it is in
+    # `ci`'s needs and owed by a full merge group, a count that could not be made fails it, and so does a count below
+    # main's last one, unless the PR's body has a line `Count drop: <why>`. A group the queue cancels cancels it too; the
+    # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count takes about 9 minutes on 4 cores (#2426).
     needs: [changes, build-linux]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
@@ -750,6 +758,38 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
+      - name: Gate
+        # the merge needs its count, and the count may not fall below main's last one (owner, 2026-11-06)
+        if: always()
+        shell: bash
+        env:
+          BASE: ${{ github.event.merge_group.base_sha }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          pass='s/^frontend-coverage: \([0-9][0-9]*\) of [0-9][0-9]* files pass$/\1/p'
+          now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
+          if [ -z "$now" ]; then
+            echo "::error::the count was not measured, and a merge needs its count: see the Count step's output above (the tail is in the job summary)"
+            exit 1
+          fi
+          # main's last count: the artifact of the newest commit on main's first-parent line that has one (a merge of
+          # documents only runs no count)
+          before=
+          for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
+            id=$(gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+            [ -n "$id" ] || continue
+            dir="$RUNNER_TEMP/before-$sha"; mkdir -p "$dir"
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
+            before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
+            [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
+          done
+          if [ -z "$before" ]; then echo "no count on main's last 20 commits: nothing to compare with"; exit 0; fi
+          if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
+          pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
+          why=$([ -n "$pr" ] && gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
+          if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
+          echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
+          exit 1
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
