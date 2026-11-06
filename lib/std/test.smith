@@ -618,12 +618,9 @@ void reset() {
 // Failures.
 
 // Appends to the shared detail, silently dropping what does not fit.
-[[gnu::format(__printf__, 2, 3)]] void detail_add(Usize *used, const char *format, ...) {
+void detail_add(Usize *used, const char *format, auto... rest) {
     if (*used >= detail_capacity - 1) return;
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    I32 written = __builtin_vsnprintf(shared->detail + *used, detail_capacity - *used, format, arguments);
-    __builtin_va_end(arguments);
+    I32 written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, format, rest...);
     if (written > 0) *used += (Usize)written;
     if (*used > detail_capacity - 1) *used = detail_capacity - 1;
 }
@@ -1648,21 +1645,15 @@ void *map_bytes(Usize bytes, I32 flags) {
 }
 
 // Printing goes through the console.
-[[gnu::format(__printf__, 1, 2)]] void say(const char *format, ...) {
+void say(const char *format, auto... rest) {
     char buffer[8192];
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    (void)__builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
-    __builtin_va_end(arguments);
+    (void)__builtin_snprintf(buffer, sizeof buffer, format, rest...);
     (void)console::print(buffer);
 }
 
-[[gnu::format(__printf__, 1, 2)]] void complain(const char *format, ...) {
+void complain(const char *format, auto... rest) {
     char buffer[8192];
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    (void)__builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
-    __builtin_va_end(arguments);
+    (void)__builtin_snprintf(buffer, sizeof buffer, format, rest...);
     (void)console::print_error(buffer);
 }
 

@@ -17,6 +17,9 @@
 //   predicate        (float x)                               Bool        isnan: an unordered compare; isfinite: x - x
 //   libc             (see libc_name)                         see libc_name  a call of the libc function
 //   format           (*char out, n, *char format, rest...)   I32         a variadic call of snprintf
+//   va_start         (__builtin_va_list list, last)          Void        llvm.va_start on the list's address
+//   va_end           (__builtin_va_list list)                Void        llvm.va_end on the list's address
+//   va_format        (*char out, n, *char format, list)      I32         a call of vsnprintf, the list by address
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
 //   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
 //   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
@@ -54,6 +57,9 @@ export typedef enum {
     filled;
     alloc;
     type_query;
+    va_start;
+    va_end;
+    va_format;
 } Shape;
 
 export struct Entry {
@@ -106,6 +112,12 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .libc, "nextafterf ff f");
     } else if (same(name, "__builtin_snprintf")) {
         *found = made(name, .format, "snprintf");
+    } else if (same(name, "__builtin_va_start")) {
+        *found = made(name, .va_start, "va_start");
+    } else if (same(name, "__builtin_va_end")) {
+        *found = made(name, .va_end, "va_end");
+    } else if (same(name, "__builtin_vsnprintf")) {
+        *found = made(name, .va_format, "vsnprintf");
     } else if (same(name, "__atomic_fetch_add")) {
         *found = made(name, .atomic_add, "add");
     } else if (same(name, "__builtin_clzll")) {
@@ -465,6 +477,40 @@ static types::TypeRef check_format(types::Checked *c, const ast::Expr *e, Entry 
     return named(c, "I32");
 }
 
+// Whether `t` is the type of `__builtin_va_list`.
+static Bool is_va_list(const types::Checked *c, types::TypeRef t) {
+    return t == types::builtin(&c->table, "__builtin_va_list");
+}
+
+// `__builtin_va_start(list, last)`, `__builtin_va_end(list)` and `__builtin_vsnprintf(out, n, format, list)`: the list
+// is a `__builtin_va_list` variable, passed by its address.
+static types::TypeRef check_va(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Bool format = entry.shape == .va_format;
+    Usize count = format ? 4 : entry.shape == .va_start ? 2 : 1;
+    Str wanted = format ? "a pointer, a size, a format and a `__builtin_va_list`"
+                        : "a `__builtin_va_list` variable (and, for va_start, the last named parameter)";
+    if (countof(args) != count) return wrong(c, e->span, entry, wanted);
+    types::TypeRef list = value_type(c, args[count == 4 ? 3 : 0]);
+    if (list == c->table.invalid) return c->table.invalid;
+    if (is_open(list)) return c->table.invalid;
+    if (!is_va_list(c, list)) return wrong(c, e->span, entry, wanted);
+    if (!format) return c->table.void_type;
+    types::TypeRef out = value_type(c, args[0]);
+    types::TypeRef size = value_type(c, args[1]);
+    types::TypeRef text = value_type(c, args[2]);
+    for (Usize i = 0; i < 3; i += 2) { // an array argument decays in C: write the address of an element
+        types::TypeRef t = i == 0 ? out : text;
+        if (t->kind != .array) continue;
+        types::fail_fix(c, args[i]->span,
+                        "a fixed array never converts to a bare pointer; write the address of an element: &xs[0]",
+                        element_address_fix(args[i]));
+        return c->table.invalid;
+    }
+    if (out->kind != .pointer || size->kind != .integer || text->kind != .pointer)
+        return wrong(c, e->span, entry, wanted);
+    return named(c, "I32");
+}
+
 // `__atomic_fetch_add(p, n, order)`: adds the integer `n` to what the pointer `p` points to and gives the old value.
 // The memory order is the macro `__ATOMIC_RELAXED`, the only one the emitter lowers (a monotonic `atomicrmw`).
 static types::TypeRef check_atomic_add(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
@@ -616,6 +662,10 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return c->table.bool_type;
     case .atomic_add:
         return check_atomic_add(c, e, entry, args);
+    case .va_start:
+    case .va_end:
+    case .va_format:
+        return check_va(c, e, entry, args);
     case .count_zeros:
         if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
         return named(c, "I32");

@@ -308,6 +308,8 @@ static void add_number(Table *t, Str name, Kind kind, U32 bits, Bool is_signed) 
     add_builtin(t, name, type);
 }
 
+static void add_va_list(Table *t);
+
 // A table with every builtin type made, for `target`.
 export Table start(Target target) {
     Table t = {.target = target};
@@ -341,6 +343,9 @@ export Table start(Target target) {
     add_number(&t, "F32", .floating, 32, true);
     add_number(&t, "F64", .floating, 64, true);
     add_number(&t, "Char", .integer, 8, false); // the 8-bit character type, a type of its own (not an alias of `U8`)
+    // C's `__builtin_va_list` for std's variadic definitions (#2611): storage of 32 bytes, as large as the list of any
+    // 64-bit target; `__builtin_va_start`, `__builtin_va_end` and `__builtin_vsnprintf` take its address.
+    add_va_list(&t);
     return t;
 }
 
@@ -384,6 +389,10 @@ export TypeRef pointer_to(Table *t, TypeRef pointee, Bool pointee_const) {
 
 export TypeRef array_of(Table *t, TypeRef element, U64 count, Bool element_const) {
     return intern(t, (Ty){.kind = .array, .element = element, .count = count, .pointee_const = element_const});
+}
+
+static void add_va_list(Table *t) {
+    add_builtin(t, "__builtin_va_list", array_of(t, builtin(t, "U64"), 4, false));
 }
 
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {

@@ -915,7 +915,6 @@ static state::Status check_function(const ast::Decl *d) {
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
     }
-    Bool variadic = d->kind.function.variadic;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(d->attributes); i++) {
         if (!state::is_c_name(d->attributes[i])) continue;
@@ -923,8 +922,6 @@ static state::Status check_function(const ast::Decl *d) {
         if (countof(attribute.args) != 1 || !is_string(attribute.args[0]))
             return state::fail("`@c_name` takes one string", attribute.span);
     }
-    if (variadic && d->kind.function.body != nullptr)
-        return state::not_emitted("variadic function with a body", d->span);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_constexpr || params[i].is_rest)
             return state::not_emitted("constexpr or rest parameter", params[i].span);

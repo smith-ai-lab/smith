@@ -139,6 +139,26 @@ static c::LLVMValueRef format_call(state::Emitter *e, table::Entry entry, state:
     return c::LLVMBuildCall2(e->builder, type, function, args, (U32)count, "");
 }
 
+// `__builtin_va_start(list, last)`, `__builtin_va_end(list)`: `llvm.va_start` and `llvm.va_end` on the list's address.
+static c::LLVMValueRef va_lifetime(state::Emitter *e, table::Entry entry, state::Value list) {
+    c::LLVMValueRef args[1] = {list.llvm};
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    if (entry.shape == .va_start) return intrinsic(e, "llvm.va_start", pointer, args, 1);
+    return intrinsic(e, "llvm.va_end", pointer, args, 1);
+}
+
+// `__builtin_vsnprintf(out, n, format, list)`: a call of libc's `vsnprintf`, the list passed by its address (the
+// 64-bit targets pass a `va_list` that way).
+static c::LLVMValueRef va_format_call(state::Emitter *e, state::Value *v, state::Ty result) {
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef params[4] = {pointer, c::LLVMInt64TypeInContext(e->context), pointer, pointer};
+    c::LLVMValueRef args[4] = {v[0].llvm, coerced(e, v[1], 'z'), v[2].llvm, v[3].llvm};
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, params, 4, 0);
+    c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, "vsnprintf");
+    if (function == nullptr) function = c::LLVMAddFunction(e->module, "vsnprintf", type);
+    return c::LLVMBuildCall2(e->builder, type, function, args, 4, "");
+}
+
 // `__builtin_clzll(x)`: `llvm.ctlz` (an undefined result for zero, as C), truncated to an int.
 static c::LLVMValueRef count_zeros(state::Emitter *e, state::Value x, state::Ty result) {
     c::LLVMValueRef args[2] = {x.llvm, c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 1, 0)};
@@ -172,6 +192,11 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return libc_call(e, entry, v, result);
     case .format:
         return format_call(e, entry, v, count, result);
+    case .va_start:
+    case .va_end:
+        return va_lifetime(e, entry, v[0]);
+    case .va_format:
+        return va_format_call(e, v, result);
     case .count_zeros:
         return count_zeros(e, v[0], result);
     case .atomic_add:
@@ -197,7 +222,7 @@ static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
     state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     Bool no_value =
-        entry.shape == .assume || entry.shape == .trap || (entry.shape == .libc && table::libc_result(entry) == 'v');
+        entry.shape == .assume || entry.shape == .trap || entry.shape == .va_start || entry.shape == .va_end || (entry.shape == .libc && table::libc_result(entry) == 'v');
     if (!no_value) {
         state::TyResult typed = state::type_of_node(e, x);
         if (typed == .error) return {.error = typed.error};
@@ -230,7 +255,12 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
             state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "Char *"};
             hint = state::hint_of(pointer);
         }
-        if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], hint);
+        Bool list = entry.shape == .va_format ? i == 4 : (entry.shape == .va_start || entry.shape == .va_end) && i == 1;
+        if (list) {
+            state::push_place(e, args[i - 1]); // the list is passed by its address
+        } else if (!table::is_type_argument(entry, i - 1)) {
+            state::push_eval(e, args[i - 1], hint);
+        }
     }
     return state::success();
 }
