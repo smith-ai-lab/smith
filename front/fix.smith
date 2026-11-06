@@ -613,7 +613,8 @@ static void mend_passes(Str file, Fixed *total, Bool with_checker) {
         // `Result(T, E) r = f();` is `r: Result(T, E) = f()` first, so the `try` rewrite (#2506) sees a new
         // declaration and not the `if .error(error) := r` guard that would take its place in the same pass (#2648).
         // Only these files wait: the guards of one test are edits at several places, so a pass cannot drop some.
-        Bool held = pass == 0 && countof(parsed.warnings) > 0 && contains_text(total->text, "Result(") &&
+        Bool held = pass == 0 && countof(parsed.warnings) > 0 &&
+                    (contains_text(total->text, "Result(") || contains_text(total->text, ".ok")) &&
                     contains_text(total->text, ".error");
         if (with_checker && countof(parsed.errors) == 0 && !held) {
             core::Errors more = checker_fixes(total->text, &parsed.module);
