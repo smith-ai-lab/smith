@@ -784,12 +784,17 @@ static Bool is_plain_name(Str s, Usize start, Usize end, Str word) {
     return value_before && after != 0 && (after == '\n' || strchr_in(",).;[]=!<>&|+-*/%?}:", after));
 }
 
+// The position of a keyword kind among the kinds.
+static Usize kind_index(TokenKind kind) {
+    return (Usize)kind;
+}
+
 // The kind of the identifier or keyword in s[start:end].
 static TokenKind identifier_kind(Str s, Usize start, Usize end, Bool new_syntax) {
     Str word = s[start:end];
     if ((same(word, "module") || same(word, "type")) && is_plain_name(s, start, end, word)) return name;
-    Usize last_keyword = new_syntax ? (Usize)kw_yield : (Usize)kw_countof;
-    for (Usize k = (Usize)kw_alignas; k <= last_keyword; k++) {
+    Usize last_keyword = new_syntax ? kind_index(kw_yield) : kind_index(kw_countof);
+    for (Usize k = kind_index(kw_alignas); k <= last_keyword; k++) {
         if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;
     }
     return word[0] >= 'A' && word[0] <= 'Z' ? type_name : name;
@@ -822,7 +827,7 @@ static Result(Scanned, LexError) scan_punctuator(Str s, Usize i) {
     for (Usize length = 3; length >= 1; length--) {
         if (i + length > n) continue;
         Str candidate = s[i:i + length];
-        for (Usize k = (Usize)left_paren; k <= (Usize)dot_star; k++) {
+        for (Usize k = kind_index(left_paren); k <= kind_index(dot_star); k++) {
             if (same(kind_text((TokenKind)k), candidate)) {
                 Scanned found = {.end = i + length, .kind = (TokenKind)k};
                 return found;
