@@ -3854,6 +3854,16 @@ static Bool refuse_variant_list(types::Checked *c, types::TypeRef t, const ast::
     if (t->kind != .option && t->kind != .result_type) return false;
     syntax::Edits fix = variant_list_fix(t, e, items);
     if (countof(fix) == 0) return false;
+    // The item is not checked once the list is refused: a read `k.v` in it that a test guards is mended here
+    const ast::Expr *inner = items[0].value;
+    if (inner != nullptr && inner->kind == .member) {
+        syntax::Edits more = guarded_read(c, inner, false);
+        if (countof(more) == 0) more = guarded_read(c, inner, true);
+        for (Usize k = 0; k < countof(more); k++) {
+            fix = mem::realloc(fix, countof(fix) + 1);
+            fix[countof(fix) - 1] = more[k];
+        }
+    }
     Str name = field_name(&items[0]);
     types::fail_fix(
         c, e->span,

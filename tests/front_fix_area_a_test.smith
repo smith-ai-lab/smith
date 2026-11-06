@@ -1,0 +1,58 @@
+// Fix-its that `lib/std` needs (#2611, area A): a `mut` for `&r.word[0]` of a local record, `[]mut` for the slice a
+// sub-slice comes from, and `.to(T)` on a binary operand. A second run applies nothing and the checker reports nothing.
+module front_fix_area_a_test;
+
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str fixed(Str source, Usize *count) {
+    fix::Fixed result = fix::fix_text("t.smith", source);
+    *count = result.applied;
+    return result.text;
+}
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    if (countof(parsed.errors) != 0) return 1000;
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    return checked.error_count;
+}
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed(before, &count);
+    test::check_equal(got, after);
+    Usize again = 0;
+    Str twice = fixed(got, &again);
+    test::check_equal(twice, after);
+    test::check_equal(again, (Usize)0);
+    test::check_equal(errors_in(after), (Usize)0);
+}
+
+export void test_front_fix_area_a_the_address_of_an_array_in_a_local_record_makes_it_mut() {
+    expect(
+        "struct R:\n    word: [4]u32\n\nfn g(p: *mut u32):\n    p.* = 1\n\nfn f():\n    r: R = R(word = [0, 0, 0, 0])\n"
+        "    g(&r.word[0])\n",
+        "struct R:\n    word: [4]u32\n\nfn g(p: *mut u32):\n    p.* = 1\n\nfn f():\n    mut r: R = R(word = [0, 0, 0, "
+        "0])\n"
+        "    g(&r.word[0])\n");
+}
+
+export void test_front_fix_area_a_a_sub_slice_is_as_writable_as_its_slice() {
+    expect("fn g(xs: []mut u8):\n    xs[0] = 1\n\nfn f(buffer: []u8):\n    g(buffer[1:])\n",
+           "fn g(xs: []mut u8):\n    xs[0] = 1\n\nfn f(buffer: []mut u8):\n    g(buffer[1:])\n");
+}
+
+export void test_front_fix_area_a_a_binary_operand_gets_to_in_parentheses() {
+    expect("fn g(n: u64):\n    _ := n\n\nfn f(i: usize):\n    g(i - 1)\n",
+           "fn g(n: u64):\n    _ := n\n\nfn f(i: usize):\n    g((i - 1).to(u64))\n");
+}

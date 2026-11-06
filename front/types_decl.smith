@@ -227,6 +227,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     const ast::Expr *source = e;
     while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
         source = source->kind.binary.left;
+    if (source->kind == .slice_of) source = source->kind.slice_of.base; // `buffer[filled:]` is as writable as `buffer`
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
