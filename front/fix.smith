@@ -31,6 +31,7 @@ import front::fix_method;
 import front::fix_opaque;
 import front::fix_payload;
 import front::fix_array;
+import front::fix_bool;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
@@ -464,6 +465,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(arrays); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = arrays[i];
+    }
+    // A Bool given where a C function wants an integer (#2648): `true` is `1`, an expression `.to(i32)`.
+    core::Errors bools = fix_bool::edits(source, &checked);
+    for (Usize i = 0; i < countof(bools); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = bools[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
