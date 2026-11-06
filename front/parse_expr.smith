@@ -396,7 +396,7 @@ static ast::Expr *string_literal(parse::Parser *p) {
 // Takes a token of the kind, or records the error and says false.
 static Bool expect_ok(parse::Parser *p, lex::TokenKind kind, Str what) {
     Usize before = countof(p->errors);
-    _ = parse::expect(p, kind, what);
+    parse::expect(p, kind, what);
     return countof(p->errors) == before;
 }
 
@@ -517,7 +517,11 @@ static ast::Expr *expansion(parse::Parser *p, ast::Expr *value) {
 // A designated item whose value is itself a list with no type, `.it_value = {.tv_sec = 1}`, has no type to write in
 // front of the nested list: its warning gets the fix that writes the named tuple `(tv_sec = 1)`, which parses (#2335).
 static void tuple_for_nested(parse::Parser *p, const ast::Expr *value) {
-    if (value == nullptr || value->kind != .compound || value->kind.compound.type != nullptr) return;
+    if (value == nullptr) return;
+    if (value->kind == .compound) {
+        if (value->kind.compound.type != nullptr) return;
+    }
+    if (value->kind != .compound) return;
     for (Usize i = 0; i < countof(p->listed); i += 1) {
         parse::NamedList list = p->listed[i];
         if (list.open.start != value->span.start) continue;
@@ -547,10 +551,12 @@ static ast::Initializer item(parse::Parser *p, ListFix *fix) {
     }
     ast::Designator only = found[0];
     if (count > 1 || only != .field) fix->complex = true;
-    if (count == 1 && only == .field && !parse::at(p, lex::equal)) {
-        fix->complex = true;
-        result.value = make(parse::span_from(p, first), {.variant = {.name = only.field.name}});
-        return result;
+    if (count == 1 && !parse::at(p, lex::equal)) {
+        if (only == .field) {
+            fix->complex = true;
+            result.value = make(parse::span_from(p, first), {.variant = {.name = only.field.name}});
+            return result;
+        }
     }
     parse::expect(p, lex::equal, "`=` after the designator");
     fix->designated += 1;
@@ -564,9 +570,12 @@ static ast::Initializer item(parse::Parser *p, ListFix *fix) {
 // nothing, and `[a, b]` says the same.
 static Bool length_fits(const ast::Expr *count, Usize items) {
     if (count == nullptr) return false;
-    if (count->kind == .integer) return count->kind.integer.value == items;
-    if (count->kind != .name || countof(count->kind.name.path.segments) != 1) return false;
-    return text::is(count->kind.name.path.segments[0].text, "_");
+    if (count->kind == .integer) return count->kind.integer.value == (U64)items;
+    if (count->kind == .name) {
+        if (countof(count->kind.name.path.segments) != 1) return false;
+        return text::is(count->kind.name.path.segments[0].text, "_");
+    }
+    return false;
 }
 
 // The warning of a braced list. A typed one `(P){.x = 1}` is `P(x = 1)` when every item has a field designator and the
@@ -582,8 +591,9 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
         Bool empty = !fix->complex && countof(fix->edits) + fix->positional + fix->designated == 0;
         // Every item named, or none named: `(P){a, b}` is `P(a, b)` (#1958). A mix has no fix.
         Bool unmixed = fix->positional == 0 || fix->designated == 0;
-        if (plain && fix->designated == 0 && type->kind == .array &&
-            length_fits(type->kind.array.count, fix->positional)) {
+        Bool array_fits = false;
+        if (type->kind == .array) array_fits = length_fits(type->kind.array.count, fix->positional);
+        if (plain && fix->designated == 0 && array_fits) {
             // `([_]F64){3.5}` and `([3]I32){1, 2, 3}` are the array values `[3.5]` and `[1, 2, 3]` (#2105).
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, open.span.end), "[");
@@ -642,7 +652,8 @@ static Bool is_lone_zero(ast::Initializer items[:]) {
     if (countof(items) != 1) return false;
     ast::Initializer only = items[0];
     if (countof(only.designators) > 0 || only.value == nullptr) return false;
-    return only.value->kind == .integer && only.value->kind.integer.value == 0;
+    if (only.value->kind == .integer) return only.value->kind.integer.value == 0;
+    return false;
 }
 
 // `{ items }`: the position is at the brace. `type` is null for a list alone; `rparen` is where the `)` of a typed
@@ -804,7 +815,8 @@ static ast::Stmt *layout_body(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     ast::Expr *value = parse::expression(p);
     if (value == nullptr) return nullptr;
-    ast::Stmt *line = ast::new_stmt((ast::Stmt){.kind = {.expression = {.value = value}}});
+    ast::StmtKind kind = {.expression = {.value = value}};
+    ast::Stmt *line = ast::new_stmt((ast::Stmt){.kind = kind});
     line->span = parse::span_from(p, start);
     ast::StmtRef list[:] = {};
     list = mem::realloc(list, 1);
@@ -1159,17 +1171,24 @@ static void tail_warning(Stack *st, ast::Span span, Str message, parse::Edits ed
 static Bool is_postfix_level(Str source, const ast::Expr *e) {
     if (source[e->span.start] == '(') return true;
     if (e->kind == .unary) return e->kind.unary.op == .dereference;
-    return e->kind != .query && e->kind != .try_expr;
+    if (e->kind == .query) return false;
+    return e->kind != .try_expr;
 }
 
 static Bool same_text(Str a, Str b) {
-    return countof(a) == countof(b) && (countof(a) == 0 || mem::equal(a, b));
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i += 1) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
 }
 
 // Whether `operand` is a negated integer literal: `-1`.
 static Bool is_negative_literal(const ast::Expr *operand) {
-    return operand->kind == .unary && operand->kind.unary.op == .negate &&
-           operand->kind.unary.operand->kind == .integer;
+    if (operand->kind == .unary) {
+        if (operand->kind.unary.op == .negate) return operand->kind.unary.operand->kind == .integer;
+    }
+    return false;
 }
 
 // Whether a type written as `text` (new spelling) holds every negative literal or has no wrapping: a signed fixed-width
@@ -1260,15 +1279,33 @@ static void note_bump(Stack *st, ast::Expr *expr, ast::Span token) {
     st->bumps[countof(st->bumps) - 1] = bump;
 }
 
+// The operator and the operand of a unary expression that `e->kind == .unary` held for.
+static ast::UnaryOp unary_op(const ast::Expr *e) {
+    ast::UnaryOp op = .plus;
+    if (e->kind == .unary) op = e->kind.unary.op;
+    return op;
+}
+
+static const ast::Expr *unary_operand(const ast::Expr *e) {
+    const ast::Expr *operand = nullptr;
+    if (e->kind == .unary) operand = e->kind.unary.operand;
+    return operand;
+}
+
 // The fix of `x = y++;`, `x = ++y;` as the whole statement of a line: the step is a statement of its own, after the
 // assignment (`y++`) or before it (`++y`). Nothing when the statement shares its line with anything else (an unbraced
 // `if (c) x = y++;` would take only the first).
 static parse::Edits bump_in_assignment(const parse::Parser *p, Bump bump, const ast::Expr *whole, Bool is_post,
                                        Str step) {
     parse::Edits none = {};
-    if (whole == nullptr || whole->kind != .assign || whole->kind.assign.op != .plain) return none;
-    if (whole->kind.assign.value != bump.expr || bump.expr->kind != .unary) return none;
-    const ast::Expr *operand = bump.expr->kind.unary.operand;
+    if (whole == nullptr) return none;
+    if (whole->kind == .assign) {
+        if (whole->kind.assign.op != .plain) return none;
+        if (whole->kind.assign.value != bump.expr) return none;
+    }
+    if (whole->kind != .assign) return none;
+    if (bump.expr->kind != .unary) return none;
+    const ast::Expr *operand = unary_operand(bump.expr);
     if (operand->kind != .name) return none;
     lex::Token after = parse::peek(p);
     if (after.kind != lex::semicolon) return none;
@@ -1299,7 +1336,7 @@ static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *wh
     for (Usize i = 0; i < countof(st->bumps); i += 1) {
         Bump bump = st->bumps[i];
         if (bump.expr->kind != .unary) continue;
-        ast::UnaryOp op = bump.expr->kind.unary.op;
+        ast::UnaryOp op = unary_op(bump.expr);
         Bool is_up = op == .pre_increment || op == .post_increment;
         Bool is_post = op == .post_increment || op == .post_decrement;
         Str step = is_up ? " += 1" : " -= 1";
@@ -1313,7 +1350,7 @@ static void bump_warnings(parse::Parser *p, const Stack *st, const ast::Expr *wh
         if (is_post) {
             edits = with_edit(edits, bump.token, step);
         } else {
-            edits = with_edit(edits, from_to(bump.token.start, bump.expr->kind.unary.operand->span.start), "");
+            edits = with_edit(edits, from_to(bump.token.start, unary_operand(bump.expr)->span.start), "");
             edits = with_edit(edits, at_offset(bump.expr->span.end), step);
         }
         parse::warning_fix(p, bump.expr->span, message, edits);
@@ -1329,8 +1366,12 @@ static Bool is_adapter(Str name) {
 // `xs.iter()` and `xs.iter().map(f)`: a method chain has no form in Smith.
 static void chain_warning(parse::Parser *p, const ast::Expr *callee) {
     if (callee->kind != .member) return;
-    Str name = callee->kind.member.name;
-    Bool chained = callee->kind.member.base->kind == .call;
+    Str name = "";
+    Bool chained = false;
+    if (callee->kind == .member) {
+        name = callee->kind.member.name;
+        chained = callee->kind.member.base->kind == .call;
+    }
     if (!text::is(name, "iter") && !text::is(name, "into_iter") && !(chained && is_adapter(name))) return;
     parse::warning_fix(
         p, callee->span,
@@ -1661,7 +1702,9 @@ static ast::Expr *call(parse::Parser *p, ast::Expr *callee, Bool head) {
         }
         ast::Expr *arg = argument(p);
         if (arg == nullptr) return nullptr;
-        if (after_semicolon && arg->kind == .expand) arg->kind.expand.named = true;
+        if (after_semicolon) {
+            if (arg->kind == .expand) arg->kind = {.expand = {.pattern = arg->kind.expand.pattern, .named = true}};
+        }
         args = parse_type::with_expr(args, arg);
         if (parse::at(p, lex::semicolon) && p->new_syntax) continue;
         if (!parse::accept(p, lex::comma)) break;
@@ -1778,9 +1821,11 @@ static ast::Expr *as_cast(parse::Parser *p, Stack *st) {
 static Bool conversion_ahead(const parse::Parser *p, const ast::Expr *base) {
     if (parse::peek(p).kind != lex::dot) return false;
     // `format.to(out, n, x)`: `format` is a module bound by an import, so this is that module's function (#2104).
-    if (base->kind == .name && countof(base->kind.name.path.segments) == 1 &&
-        parse::is_module(p, base->kind.name.path.segments[0].text))
-        return false;
+    if (base->kind == .name) {
+        if (countof(base->kind.name.path.segments) == 1 &&
+            parse::is_module(p, base->kind.name.path.segments[0].text))
+            return false;
+    }
     lex::Token name = parse::peek_at(p, 1);
     if (name.kind != lex::name || parse::peek_at(p, 2).kind != lex::left_paren) return false;
     Str word = parse::text(p, name);
@@ -2048,8 +2093,7 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
     if (is_tuple) {
         push_value(st, make(span, {.tuple_lit = {.items = items}}));
     } else {
-        items[0]->span = span;
-        push_value(st, items[0]);
+        push_value(st, make(span, items[0]->kind));
     }
     return .value;
 }
