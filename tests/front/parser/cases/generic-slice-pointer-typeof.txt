@@ -1,0 +1,2 @@
+generic-slice-pointer-typeof/main.smith: ok
+generic-slice-pointer-typeof/regrow.smith: ok
