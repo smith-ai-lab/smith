@@ -723,6 +723,12 @@ export Written write(char *buffer, Usize capacity, auto... args) {
     return finish(&writer);
 }
 
+// The old name of write, kept until a release has write: code compiled into smith by the released smith (std.console)
+// still calls it (the lag rule). Remove it, and the reserved-name error it raises, once that release is out (#2526).
+export Written to(char *buffer, Usize capacity, auto... args) {
+    return write(buffer, capacity, args...);
+}
+
 // How many characters the arguments make, without the terminator.
 export Usize length(auto... args) {
     return write(nullptr, 0, args...).length;
