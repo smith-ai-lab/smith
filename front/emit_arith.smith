@@ -608,7 +608,7 @@ static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
         try apply_binary(e, binary_of(op), (state::Value){.llvm = current, .ty = place.ty}, value, w->span);
         value = state::pop_value(e);
     }
-    c::LLVMBuildStore(e->builder, value.llvm, place.llvm);
+    state::store(e, value.llvm, place.llvm);
     state::push_value(e, value);
     return state::success();
 }

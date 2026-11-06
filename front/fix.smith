@@ -24,6 +24,7 @@ import front::cimport;
 import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
+import front::fix_equal;
 import front::fix_generic_c;
 import front::fix_method;
 import front::fix_opaque;
@@ -225,6 +226,13 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(typed); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = typed[i];
+    }
+    // `mem::equal(a, b)` (#2540): `==` compares slices and `str` by contents. The call is found by its name, so it is
+    // rewritten whatever else the file still gets wrong.
+    core::Errors equal = fix_equal::edits(source, &checked);
+    for (Usize i = 0; i < countof(equal); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = equal[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
@@ -670,7 +678,11 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
 // standard output for each file (the renamed file counts one more), 0 when every file could be read and written.
 [[std::c_name("front_parser_fix_run")]] export I32 fix_run(const char *const *paths, Usize count) {
     I32 status = 0;
+    // The loader is the fixer's for this run only (#2560): left set, it made every later `fix_text` in the process
+    // (the next test in the same worker) parse the real modules of smith's library folder, and overflow its arena.
+    types::ModuleLoader outside = loader;
     loader = load_from_folders;
+    defer loader = outside;
     fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
     I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {
