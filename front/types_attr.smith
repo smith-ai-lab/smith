@@ -204,10 +204,11 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || symbol->kind != .type_name) {
         if (is_built_in(name)) return;
-        types::failf(r, a->span, "unknown attribute `", name,
-                     "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
-                     "`@attribute`, `@effects(...)`, `@when(...)`, `@returns_owned(...)`, `@returns_borrowed(...)` and ",
-                     "`@returns_internal`, and your own are structs marked `@attribute`");
+        types::failf(
+            r, a->span, "unknown attribute `", name,
+            "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
+            "`@attribute`, `@effects(...)`, `@when(...)`, `@returns_owned(...)`, `@returns_borrowed(...)` and ",
+            "`@returns_internal`, and your own are structs marked `@attribute`");
         return;
     }
     if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
