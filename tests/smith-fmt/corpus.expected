@@ -9096,6 +9096,32 @@ export I32[:] plain(I32 *p, Usize a, Usize b) {
 export T[:] window(constexpr Type T, T *p, Usize a, Usize b) {
     return p[a:b];
 }
+==> generic-slice-pointer-typeof/src/main.smith <==
+module main;
+
+import regrow;
+import <stdio.h>;
+
+I32 main() {
+    I32 items[4] = {7, 8, 9, 10};
+    I32 none[:] = {};
+    I32 rows[:] = regrow::view(none, items, 3);
+    c::printf("%zu %d %d\n", countof(rows), rows[0], rows[2]);
+    char letters[3] = {'a', 'b', 'c'};
+    char text[:] = {};
+    char word[:] = regrow::view(text, letters, 2);
+    c::printf("%zu %c\n", countof(word), word[1]);
+    return 0;
+}
+==> generic-slice-pointer-typeof/src/regrow.smith <==
+module regrow;
+
+// A pointer cast to the type of a slice's `.data` and cut: `((typeof(xs.data))p)[a:b]` is a slice of `xs`'s own struct,
+// whatever its element is, so a generic over `auto xs` can build the slice it returns from the memory it made.
+
+export typeof(xs) view(auto xs, void *memory, Usize n) {
+    return ((typeof(xs.data))memory)[0:n];
+}
 ==> generic-slice-qualifiers-auto/src/copy.smith <==
 module copy;
 
