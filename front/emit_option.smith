@@ -19,7 +19,8 @@
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
 // Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
-// as a value, `try` on a `Result`, and `==` between options.
+// as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are emitted (#2128,
+// #2141).
 module front::emit_option;
 
 import front::ast;
@@ -87,7 +88,7 @@ typedef state::Ty TyList[:];
 
 // `Result(ok, error)`: `{ i8 tag, ok, error }`, tag 0 is ok. One block whose first two slots are the header of its
 // link in the chain (as a tuple's), then `ok` and `error`, so `memory::release` frees it.
-static state::TyResult build_result(state::Emitter *e, state::Ty ok, state::Ty error) {
+export state::TyResult build_result(state::Emitter *e, state::Ty ok, state::Ty error) {
     TyList block = {};
     block = mem::realloc(block, 4);
     state::OwnedTy *head = (state::OwnedTy *)(Usize)block.data;
@@ -126,7 +127,7 @@ export state::TyResult type_applied(state::Emitter *e, const ast::TypeExpr *t) {
 
 // The payload the checker names, as a `Ty`: a `bool`, an integer, or a record of the module (an option is walked by
 // `from_checked`'s loop).
-static state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
+export state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
     state::Ty ty = {};
     if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
     if (t->kind == .integer) {
@@ -190,6 +191,29 @@ export state::Value payload(state::Emitter *e, state::Value o) {
     return (state::Value){.llvm = got, .ty = *o.ty.element};
 }
 
+// `r`'s tag is `.error` (or `.ok`): an `i1`.
+export c::LLVMValueRef is_variant(state::Emitter *e, state::Value r, Bool error) {
+    c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, r.llvm, 0, "tag");
+    c::LLVMValueRef want = c::LLVMConstInt(c::LLVMInt8TypeInContext(e->context), error ? 1 : 0, false);
+    return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, tag, want, "is_variant");
+}
+
+// The `ok` or the `error` of `r` (undefined when the tag is the other one).
+export state::Value result_payload(state::Emitter *e, state::Value r, Bool error) {
+    Usize at = error ? 2 : 1;
+    c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, r.llvm, (U32)at, "payload");
+    return (state::Value){.llvm = got, .ty = r.ty.parts[at - 1]};
+}
+
+// The `Result` holding `inner` as its `ok` (or its `error`).
+export state::Value result_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef inner, Bool error) {
+    c::LLVMValueRef zero = c::LLVMConstNull(ty.llvm);
+    c::LLVMValueRef tag = c::LLVMConstInt(c::LLVMInt8TypeInContext(e->context), error ? 1 : 0, false);
+    c::LLVMValueRef tagged = c::LLVMBuildInsertValue(e->builder, zero, tag, 0, "result");
+    U32 at = error ? 2 : 1;
+    return (state::Value){.llvm = c::LLVMBuildInsertValue(e->builder, tagged, inner, at, "result"), .ty = ty};
+}
+
 // The `?T` holding the payload `inner`.
 static state::Value some_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef inner) {
     c::LLVMValueRef zero = c::LLVMConstNull(ty.llvm);
@@ -224,6 +248,50 @@ static state::Status option_of_node(state::Emitter *e, const ast::Expr *x, state
     return state::failf(x->span, ".", name, " needs the ?T it builds; write the type");
 }
 
+// Whether a `.ok(x)` or `.error(e)` builds a `Result`: the hint or the checker says so.
+static Bool is_result_node(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (hint.present && hint.ty.kind == .result) return true;
+    state::TyResult checked = state::type_of_node(e, x);
+    Bool yes = checked == .ok && checked.ok.kind == .result;
+    if (checked == .error) state::free_text(checked.error.message);
+    return yes;
+}
+
+// The payload is on the value stack: convert it to the `ok` or the `error` and build the `Result`.
+static state::Status result_finish(state::Emitter *e, const state::Work *w) {
+    state::Value value = state::pop_value(e);
+    Bool error = w->flag;
+    try state::convert(e, value, w->ty.parts[error ? 1 : 0], w->span, .initialize);
+    state::Value converted = state::pop_value(e);
+    state::push_value(e, result_of(e, w->ty, converted.llvm, error));
+    return state::success();
+}
+
+// `.ok(x)` and `.error(e)`.
+static state::Status result_variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .variant) {
+        return state::fail("not a variant", x->span);
+    }
+    Str name = x->kind.variant.name;
+    const ast::Expr *inner = x->kind.variant.payload;
+    Bool error = state::same_text(name, "error");
+    if (!error && !state::same_text(name, "ok")) {
+        return state::failf(x->span, "a Result has .ok and .error, not .", name);
+    }
+    if (inner == nullptr) return state::failf(x->span, ".", name, " needs a value");
+    state::Ty ty = {};
+    if (hint.present && hint.ty.kind == .result) {
+        ty = hint.ty;
+    } else {
+        state::TyResult checked = state::type_of_node(e, x);
+        if (checked == .error) return state::fail("a Result's variant needs its type; write the type", x->span);
+        ty = checked.ok;
+    }
+    state::push_then(e, (state::Work){.then = result_finish, .ty = ty, .flag = error, .span = x->span});
+    state::push_eval(e, inner, state::hint_of(ty.parts[error ? 1 : 0]));
+    return state::success();
+}
+
 // `.some(x)` and `.none`.
 export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .variant) {
@@ -231,6 +299,7 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
     }
     Str name = x->kind.variant.name;
     const ast::Expr *inner = x->kind.variant.payload;
+    if (is_result_node(e, x, hint)) return result_variant(e, x, hint);
     Bool is_none = state::same_text(name, "none");
     if (!is_none && !state::same_text(name, "some")) {
         return state::failf(x->span, "an option has .some and .none, not .", name);
@@ -281,12 +350,18 @@ export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
         return state::fail("not an if let", s->span);
     }
     state::Value o = state::pop_value(e);
-    if (o.ty.kind != .option) {
-        return state::failf(s->span, "if let needs an option, not ", o.ty.name);
+    Bool is_result = o.ty.kind == .result;
+    if (o.ty.kind != .option && !is_result) {
+        return state::failf(s->span, "if let needs an option or a Result, not ", o.ty.name);
     }
     ast::Pattern pattern = s->kind.if_let.pattern;
-    Bool wants_some = state::same_text(pattern.name, "some");
-    if (!wants_some && !state::same_text(pattern.name, "none")) {
+    Bool wants_error = is_result && state::same_text(pattern.name, "error");
+    Bool wants_some =
+        is_result ? (wants_error || state::same_text(pattern.name, "ok")) : state::same_text(pattern.name, "some");
+    if (is_result && !wants_some) {
+        return state::failf(pattern.span, "a Result has .ok and .error, not .", pattern.name);
+    }
+    if (!is_result && !wants_some && !state::same_text(pattern.name, "none")) {
         return state::failf(pattern.span, "an option has .some and .none, not .", pattern.name);
     }
     if (!wants_some && countof(pattern.binding) > 0) {
@@ -299,7 +374,7 @@ export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
     if (has_else) else_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_else");
     c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "let_end");
     if (!has_else) else_block = end_block;
-    c::LLVMValueRef some = is_some(e, o);
+    c::LLVMValueRef some = is_result ? is_variant(e, o, wants_error) : is_some(e, o);
     if (wants_some)
         c::LLVMBuildCondBr(e->builder, some, then_block, else_block);
     else
@@ -308,7 +383,7 @@ export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
     state::begin_scope(e);
     Str binding = pattern.binding;
     if (wants_some && countof(binding) > 0 && !state::same_text(binding, "_")) {
-        state::Value inner = payload(e, o);
+        state::Value inner = is_result ? result_payload(e, o, wants_error) : payload(e, o);
         c::LLVMValueRef slot = state::new_alloca(e, inner.ty, binding);
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
@@ -351,11 +426,36 @@ static state::Status try_continue(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// After the early return of a `Result`: the code goes on in the block of `.ok`, with the `ok` as the value.
+static state::Status try_result_continue(state::Emitter *e, const state::Work *w) {
+    c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
+    state::push_value(e, result_payload(e, (state::Value){.llvm = w->value, .ty = w->ty}, false));
+    return state::success();
+}
+
+// `try r` on a `Result`: `.error(x)` runs every `defer` and `errdefer` and returns `.error(x)`; `.ok(x)` is `x`.
+static state::Status try_result(state::Emitter *e, const state::Work *w, state::Value r) {
+    c::LLVMBasicBlockRef ok_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_ok");
+    c::LLVMBasicBlockRef error_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_error");
+    c::LLVMBuildCondBr(e->builder, is_variant(e, r, false), ok_block, error_block);
+    c::LLVMPositionBuilderAtEnd(e->builder, error_block);
+    state::Value failure = result_of(e, e->result, result_payload(e, r, true).llvm, true);
+    state::Work next = {.then = try_result_continue, .value = r.llvm, .ty = r.ty, .span = w->span};
+    next.blocks[0] = ok_block;
+    state::push_then(e, next);
+    state::push_then(e, (state::Work){.then = ret_none, .value = failure.llvm, .span = w->span});
+    try control::before_error_return(e, w->span);
+    return state::success();
+}
+
 // The operand is on the value stack: on `.none` every `defer` and `errdefer` runs and the function returns `.none`.
 static state::Status try_branch(state::Emitter *e, const state::Work *w) {
     state::Value o = state::pop_value(e);
+    if (o.ty.kind == .result && e->result.kind == .result) return try_result(e, w, o);
     if (o.ty.kind != .option || e->result.kind != .option) {
-        return state::fail("`try` needs a `?T` operand in a function that returns a `?U`", w->span);
+        return state::fail("`try` needs a `?T` operand in a function that returns a `?U`, or a `Result` in one that "
+                           "returns a `Result`",
+                           w->span);
     }
     c::LLVMBasicBlockRef some_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_some");
     c::LLVMBasicBlockRef none_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_none");
@@ -376,6 +476,14 @@ export state::Status try_expr(state::Emitter *e, const ast::Expr *x) {
     }
     state::push_then(e, (state::Work){.then = try_branch, .span = x->span});
     state::push_eval(e, x->kind.try_expr.operand, state::no_hint());
+    return state::success();
+}
+
+// Pushes the `Result` holding `value` as its `ok`.
+export state::Status wrap_ok(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
+    try state::convert(e, value, to.parts[0], span, .initialize);
+    state::Value converted = state::pop_value(e);
+    state::push_value(e, result_of(e, to, converted.llvm, false));
     return state::success();
 }
 

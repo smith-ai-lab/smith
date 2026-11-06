@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-loops
-description: "New syntax (#1428): `for x in xs:`, `while`, `while item := it.next():`, `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, `peekable`), generators with `yield` returning `iter(T)` (no user-written `next`), containers looped through their `items`, `mut` on a loop name, `for` as an expression that builds an array, `continue` as a filter, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop or an iterator in the new syntax."
+description: "New syntax (#1428): `for x in xs:`, `while`, `while item := it.next():`, `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, `peekable`), generators with `yield` returning `iter(T)` (no user-written `next`), containers looped through their `items`, `mut` on a loop name, `for` as an expression that builds an array, `for i, j:` index form (see smith-dev-syntax-arrays), `continue` as a filter, fused reductions like `sum(for x in xs: x * x)`. Load when writing a loop or an iterator in the new syntax."
 ---
 
 # Loops and iterators
@@ -53,8 +53,7 @@ grid := for i in range(0, n):                   # nested fors build a contiguous
 energy := sum(for x in xs: x * x)               # fused into one loop: no temporary array
 ```
 
-Over a fixed array the result is a fixed array on the stack; over a slice or an iterator it is a slice in the current allocator. `break` stops early. A body with no value builds nothing.
+`for i, j:` with no `in` is an index over array shapes: [smith-dev-syntax-arrays](../smith-dev-syntax-arrays/SKILL.md). Over a fixed array the result is a fixed array on the stack; over a slice or an iterator it is a slice in the current allocator. `break` stops early. A body with no value builds nothing.
 
 ## Not settled yet
-
 `zip` over slices of different lengths (the lead recommends a checked failure); what looping over a `str` yields (the lead recommends bytes, with `utf8.chars(s)` for code points); boxing an iterator to store different ones in one variable.

@@ -896,8 +896,10 @@ export struct Guard {
     const ast::Expr *base; // `k`
     Str variant;           // `v`, which is also the name the fix binds
     ast::Span reads;       // the reads inside this span are the test's
+    ast::Span skip;        // except those in this one: the `else` of `k != .v: return`, which runs without `v`
     syntax::Edits head;    // the edits that write the test itself
     Bool head_sent;        // the first read carries them
+    Bool spoiled;          // a write through `k.v`, a change of `k` or a local named `v` leaves the site (#2503)
 };
 
 export struct Checked;
