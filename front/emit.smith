@@ -161,6 +161,28 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
     return state::type_of(e, init->kind.type_value.type); // the hook, so the alias of an alias is no recursion here
 }
 
+// An enumeration of an imported module (`ast.ExprKind`, or `ExprKind` inside a record of front::ast), declared when the
+// first use needs it, its payload types read in that module's scope. False for any other symbol.
+static Bool is_enum_symbol(const types::Symbol *target) {
+    return target != nullptr && target->kind == .type_name && target->decl != nullptr &&
+           target->decl->kind == .enumeration;
+}
+
+static state::TyResult imported_enum(state::Emitter *e, const types::Symbol *target) {
+    if (target->decl->kind != .enumeration) return state::ty_fail("unknown type", target->decl->span);
+    Str bare = target->decl->kind.enumeration.name;
+    state::Ty ty = {};
+    if (!matching::type_enum(e, bare, &ty)) {
+        Str outer = e->import_scope;
+        e->import_scope = emit_memory::record_module_prefix(target->type->name);
+        state::Status declared = matching::enum_decl(e, target->decl);
+        e->import_scope = outer;
+        if (declared == .error) return {.error = declared.error};
+        matching::type_enum(e, bare, &ty);
+    }
+    return ty;
+}
+
 // `v.Vec`, a record of an imported module: `v` is the module's alias, and the checker declared the record under the
 // module's path (`geom::vec::Vec`).
 static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *t) {
@@ -181,6 +203,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     const types::Symbol *target = types::lookup(scopes, full);
     state::free_text(full);
     if (is_alias_symbol(target)) return type_of_alias(e, target);
+    if (is_enum_symbol(target)) return imported_enum(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
     return emit_memory::imported_record(e, target->decl, target->type->name);
@@ -194,6 +217,10 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     state::free_text(full);
     if (is_alias_symbol(target)) {
         *made = type_of_alias(e, target);
+        return true;
+    }
+    if (is_enum_symbol(target)) {
+        *made = imported_enum(e, target);
         return true;
     }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)

@@ -1,0 +1,10 @@
+pub fn check() -> i32:
+    let mut backing: [4]i32 = [1, 2, 3, 4]
+    let mut xs: []mut i32 = backing[0:4]
+    xs.count[0] = 3
+    if countof(xs) != 3 || xs.count[0] != 3:
+        return 1
+    xs.count[0] = xs.count[0] - 1
+    if countof(xs) != 2 || xs[1] != 2:
+        return 2
+    0
