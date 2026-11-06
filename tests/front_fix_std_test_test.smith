@@ -112,7 +112,7 @@ export void test_front_fix_std_increment_in_an_assignment() {
 
 export void test_front_fix_std_function_pointer_parameter_with_named_parameters() {
     expect_fixed("module m;\nexport I32 search(U32 (*verdict)(void *context), void *context) {\n    return 1;\n}\n",
-                 "pub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    return 1\n");
+                 "pub fn search(verdict: fn(*mut void) -> u32, context: *void) -> i32:\n    return 1\n");
 }
 
 export void test_front_fix_std_conditional_across_lines() {
@@ -151,7 +151,7 @@ export void test_front_fix_std_an_old_if_after_a_function_pointer_signature_and_
         "export I32 search(U32 (*verdict)(void *context), void *context) {\n    // Tables.\n    *s = (S){.a = 1,\n"
         "              .b = 2};\n    if (s->n != 0) r.c = k(s);\n    return 1;\n}\n",
         "fn f(a: i32) -> i32:\n    if a < 0:\n        return if g().* == 1 || g().* == 2: 3 else: 4\n"
-        "    return 0\npub fn search(verdict: fn(*void) -> u32, context: *void) -> i32:\n    # Tables.\n"
+        "    return 0\npub fn search(verdict: fn(*mut void) -> u32, context: *void) -> i32:\n    # Tables.\n"
         "    s.* = S(a = 1,\n              b = 2)\n    if s.n != 0:\n        r.c = k(s)\n    return 1\n");
 }
 

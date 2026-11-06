@@ -10,34 +10,46 @@ warning 0-14: write the type `struct { I32 }` as `(I32,)` in smith's own syntax
 fixed: (i32,) (2 passes, 0 left)
 
 Fn(Bool (I32, I32))
+warning 3-7: write the type `Bool` as `bool` in smith's own syntax
 warning 9-12: write the type `I32` as `i32` in smith's own syntax
 warning 14-17: write the type `I32` as `i32` in smith's own syntax
-warning 0-19: write the type `Fn(Bool (I32, I32))` as `fn(i32, i32) -> Bool` in smith's own syntax
-fixed: fn(i32, i32) -> bool (2 passes, 0 left)
+warning 0-19: write the type `Fn(Bool (I32, I32))` as `fn(i32, i32) -> bool` in smith's own syntax
+fixed: fn(i32, i32) -> bool (1 passes, 0 left)
 
 Fn(void (U8 *, Usize))
-warning 9-13: write the type `U8 *` as `*u8` in smith's own syntax
+warning 9-13: write the type `U8 *` as `*mut u8` in smith's own syntax
 warning 15-20: write the type `Usize` as `usize` in smith's own syntax
-warning 0-22: write the type `Fn(void (U8 *, Usize))` as `fn(*u8, usize)` in smith's own syntax
-fixed: fn(*u8, usize) (1 passes, 0 left)
+warning 0-22: write the type `Fn(void (U8 *, Usize))` as `fn(*mut u8, usize)` in smith's own syntax
+fixed: fn(*mut u8, usize) (1 passes, 1 left)
 
 Fn(I32 ())
-warning 0-10: write the type `Fn(I32 ())` as `fn() -> I32` in smith's own syntax
-fixed: fn() -> i32 (2 passes, 0 left)
+warning 3-6: write the type `I32` as `i32` in smith's own syntax
+warning 0-10: write the type `Fn(I32 ())` as `fn() -> i32` in smith's own syntax
+fixed: fn() -> i32 (1 passes, 0 left)
 
 Fn(I32 (I32, ...))
+warning 3-6: write the type `I32` as `i32` in smith's own syntax
 warning 8-11: write the type `I32` as `i32` in smith's own syntax
 warning 0-18: a variadic function type has no spelling in smith's own syntax yet: write the function by hand (no fix)
-fixed: Fn(I32 (i32, ...)) (1 passes, 1 left)
+fixed: Fn(i32 (i32, ...)) (1 passes, 1 left)
 
 Fn(Bool (Fn(I32 (I32)), I32))
+warning 3-7: write the type `Bool` as `bool` in smith's own syntax
+warning 12-15: write the type `I32` as `i32` in smith's own syntax
 warning 17-20: write the type `I32` as `i32` in smith's own syntax
-warning 9-22: write the type `Fn(I32 (I32))` as `fn(i32) -> I32` in smith's own syntax
+warning 9-22: write the type `Fn(I32 (I32))` as `fn(i32) -> i32` in smith's own syntax
 warning 24-27: write the type `I32` as `i32` in smith's own syntax
-warning 0-29: write the type `Fn(Bool (Fn(I32 (I32)), I32))` as `fn(fn(i32) -> I32, i32) -> Bool` in smith's own syntax
-fixed: fn(fn(i32) -> i32, i32) -> bool (2 passes, 0 left)
+warning 0-29: write the type `Fn(Bool (Fn(I32 (I32)), I32))` as `fn(fn(i32) -> i32, i32) -> bool` in smith's own syntax
+fixed: fn(fn(i32) -> i32, i32) -> bool (1 passes, 0 left)
 
 Option(I32 *)
 warning 7-12: write the type `I32 *` as `*i32` in smith's own syntax
 fixed: Option(*i32) (1 passes, 0 left)
+
+Fn(Point * (Parser *, const char *))
+warning 3-10: write the type `Point *` as `*mut Point` in smith's own syntax
+warning 12-20: write the type `Parser *` as `*mut Parser` in smith's own syntax
+warning 22-34: write the type `const char *` as `*char` in smith's own syntax
+warning 0-36: write the type `Fn(Point * (Parser *, const char *))` as `fn(*mut Parser, *char) -> *mut Point` in smith's own syntax
+fixed: fn(*mut Parser, *char) -> *mut Point (1 passes, 1 left)
 
