@@ -155,8 +155,15 @@ static Bool assigned_later(Str source, Usize from, Usize end, Str name, Bool pla
 static core::ParseError fix_at(Usize at) {
     core::Edits fix = {};
     fix = mem::realloc(fix, 1);
-    fix[0] = (core::Edit){.span = {.start = (U32)at, .end = (U32)at}, .text = "mut "};
-    return (core::ParseError){.span = fix[0].span, .message = "the local is assigned: declare it `mut`", .fix = fix};
+    fix[0] = (core::Edit){};
+    fix[0].span.start = (U32)at;
+    fix[0].span.end = (U32)at;
+    fix[0].text = "mut ";
+    core::ParseError error = {};
+    error.span = fix[0].span;
+    error.message = "the local is assigned: declare it `mut`";
+    error.fix = fix;
+    return error;
 }
 
 static core::Errors scan(Str source, Usize start, Usize end, core::Errors out) {
@@ -179,7 +186,8 @@ export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
-        if (d->kind != .function || d->kind.function.body == nullptr || !is_generic(d)) continue;
+        if (d->kind != .function) continue;
+        if (d->kind.function.body == nullptr || !is_generic(d)) continue;
         Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
         Usize body = d->kind.function.body->span.start;
         if (body >= end) continue;
