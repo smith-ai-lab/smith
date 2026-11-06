@@ -1660,6 +1660,16 @@ static parse::Edits drop_local_static(const Prefixes *pre, const ast::TypeExpr *
     return with_edit(edits, edit(pre->static_start, pre->static_after, ""));
 }
 
+// What follows `mut x: T` for a variable with no initializer: C's zero for a static or a global, else `undefined`.
+static Str uninitialized_tail(const Prefixes *pre, Str written, Bool suffixed) {
+    Bool zeroed = (pre->is_static || pre->top) && !suffixed;
+    if (zeroed && is_number_type(written)) return " = 0";
+    if (!zeroed) return " = undefined";
+    Str zero = zero_of_static(written);
+    if (countof(zero) == 0) return " = undefined";
+    return as_str(format::push(" = ", zero));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1717,13 +1727,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
     } else if (!has_init) {
-        Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
-        Str zero = "";
-        if ((pre->is_static || pre->top) && !suffixed) zero = zero_of_static(written);
-        Str tail = " = undefined";
-        if (zeroed) tail = " = 0";
-        else if (countof(zero) > 0) tail = as_str(format::push(" = ", zero));
-        text = as_str(format::push("mut ", name, ": ", written, tail));
+        text = as_str(format::push("mut ", name, ": ", written, uninitialized_tail(pre, written, suffixed)));
         to = suffixed ? dims.end : head.name.span.end;
     }
     if (countof(zeros) > 0) {
