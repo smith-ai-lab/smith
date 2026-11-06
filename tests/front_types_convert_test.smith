@@ -58,6 +58,15 @@ export void test_front_types_convert_integers_widen_never_narrow() {
     test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "I64")), types_convert::widening));
     refused(conv(&t, named(&t, "U64"), named(&t, "Usize")), "expected Usize", "found U64",
             "write a conversion: x.to(Usize)"); // Usize is 32 bits on some targets (#2531)
+    // D8 (#2625): usize is at least 32 bits everywhere, so these lose nothing.
+    test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "Usize")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "Usize")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "Isize")), types_convert::widening));
+    test::check_condition(is(conv(&t, named(&t, "U16"), named(&t, "Isize")), types_convert::widening));
+    refused(conv(&t, named(&t, "U32"), named(&t, "Isize")), "expected Isize", "found U32",
+            "write a conversion: x.to(Isize)");
+    refused(conv(&t, named(&t, "I32"), named(&t, "Usize")), "expected Usize", "found I32",
+            "write a conversion: x.to(Usize)");
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I32")), types_convert::identity));
     refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "expected I32", "found I64", "write a conversion: x.to(I32)");
     refused(conv(&t, named(&t, "I32"), named(&t, "U32")), "expected U32", "found I32", "write a conversion: x.to(U32)");
