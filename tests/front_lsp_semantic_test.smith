@@ -159,6 +159,19 @@ export void test_semantic_tokens_of_a_file_that_does_not_parse_still_come() {
     test::check(comment.there && comment.type == 9);
 }
 
+export void test_semantic_tokens_of_a_chain_with_two_patterns() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/chain.smith", "fn f(k: K):\\n    if .a(x) := k && .b(y) := x:\\n        g(y)\\n");
+    Str out = tokens("file:///t/chain.smith");
+    Found keyword = token_at(out, 1, 4);
+    test::check(keyword.there && keyword.type == 8);
+    Found use = token_at(out, 2, 10);
+    test::check(use.there && use.length == 1);
+}
+
 export void test_semantic_tokens_range_and_unknown_documents() {
     arena::Arena memory = test::memory(1U << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

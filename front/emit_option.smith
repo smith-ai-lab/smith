@@ -146,7 +146,7 @@ export state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
             }
         }
     }
-    if (t->kind == .pointer) return state::type_of_checked(e, t, (ast::Span){});
+    if (t->kind == .pointer || t->kind == .enumeration) return state::type_of_checked(e, t, (ast::Span){});
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: an option of ", shown));
     state::free_text(shown);

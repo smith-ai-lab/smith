@@ -76,3 +76,11 @@ int c_static_analyzer(void) {
     return 0;
 #endif
 }
+
+int c_fast_math(void) {
+#if __FINITE_MATH_ONLY__
+    return 1;
+#else
+    return 0;
+#endif
+}

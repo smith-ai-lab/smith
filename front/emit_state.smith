@@ -181,6 +181,7 @@ export struct FunctionInfo {
     c::LLVMValueRef llvm;
     c::LLVMTypeRef llvm_type;
     Ty result;
+    Bool variadic; // defined with `...`: a call may pass more arguments than params
     Ty params[:];
 };
 

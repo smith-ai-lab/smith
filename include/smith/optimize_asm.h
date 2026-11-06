@@ -7,6 +7,13 @@
 
 #include <stdint.h>
 
+// std::random's numbers must not change with the flags: -ffast-math reorders and fuses what the barrier keeps apart.
+// std::random imports this header, so compiling it with -ffast-math or -Ofast stops here.
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error \
+    "smith/random: -ffast-math changes floating-point results, so a key would stop giving the same numbers; compile lib/std/random.smith without it"
+#endif
+
 // A float goes through the register class that keeps it out of memory on aarch64 ("w"), and "X" (any operand)
 // elsewhere.
 double smith_opaque_f64(double x);

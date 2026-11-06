@@ -9,7 +9,7 @@ tags: [preprocessor, target]
 **A `.smith` file has no preprocessor, and the facts of the target are `target::`** (issue #46; `runtime/lang_target.c`,
 [the language](smith-language.md)). `import target;` is a module that is no file: `target::arch` (`aarch64`,
 `x86_64`), `os` (`macos`, `linux`), `address_sanitizer`, `undefined_sanitizer`, `thread_sanitizer`, `assertions`,
-`float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer`. A compile asks clang's preprocessor from
+`float_radix`, `f32_mantissa_bits`, `f64_mantissa_bits`, `float_eval_method`, `static_analyzer`, `fast_math`. A compile asks clang's preprocessor from
 the token hook (`SmithHost.target_fact`, no patch) and writes literals, so they work in `static_assert`, array sizes
 and `constexpr` initializers; the raw lowering (`--smith-lower`, `--smith-header`, which are the header pass and what `smith cc --smith-lower` writes) has no preprocessor and writes the equivalent macro (defined at the top by an `#if` chain) and
 `#if`/`#else`/`#endif`. **`if constexpr` works in any function body** (blocks; the condition is `target::` facts,
@@ -35,6 +35,7 @@ is compiled for.
 | `target::assertions` | `true` unless `NDEBUG` is defined |
 | `target::float_radix`, `target::f32_mantissa_bits`, `target::f64_mantissa_bits`, `target::float_eval_method` | `__FLT_RADIX__`, `__FLT_MANT_DIG__`, `__DBL_MANT_DIG__`, `__FLT_EVAL_METHOD__` |
 | `target::static_analyzer` | `true` only while clang-tidy's analyzer runs (`__clang_analyzer__`); `std::contract` takes a contract as an assumption there |
+| `target::fast_math` | `true` when the compile has `-ffast-math` or `-ffinite-math-only` (`__FINITE_MATH_ONLY__`); `std::random` refuses it (D14) |
 
 - **A compile asks the preprocessor** (`SmithHost.target_fact`, `shim/hook.cpp`: `defined(__aarch64__)`, the language
   options' sanitizers, `NDEBUG`, the predefined float macros), and `target::arch` is then the literal `1` (`true` or `false`

@@ -42,12 +42,14 @@ static const SmithLangTargetEntry smith_lang_target_table[] = {
     {"f64_mantissa_bits", SmithTarget_F64MantissaBits, 0, "SMITH_TARGET_F64_MANTISSA_BITS"},
     {"float_eval_method", SmithTarget_FloatEvalMethod, 0, "SMITH_TARGET_FLOAT_EVAL_METHOD"},
     {"static_analyzer", SmithTarget_StaticAnalyzer, 0, "SMITH_TARGET_STATIC_ANALYZER"},
+    {"fast_math", SmithTarget_FastMath, 0, "SMITH_TARGET_FAST_MATH"},
 };
 
 // The facts that are true or false, written `true` and `false` in compiled code.
 static bool smith_lang_target_boolean(int fact) {
     return fact == SmithTarget_AddressSanitizer || fact == SmithTarget_UndefinedSanitizer ||
-           fact == SmithTarget_ThreadSanitizer || fact == SmithTarget_Assertions || fact == SmithTarget_StaticAnalyzer;
+           fact == SmithTarget_ThreadSanitizer || fact == SmithTarget_Assertions ||
+           fact == SmithTarget_StaticAnalyzer || fact == SmithTarget_FastMath;
 }
 
 // What the raw lowering defines for each fact at the top of its output: the preprocessor's own question.
@@ -85,6 +87,9 @@ static const char *const smith_lang_target_prelude_text[] = {
     [SmithTarget_StaticAnalyzer] = ("#ifndef SMITH_TARGET_STATIC_ANALYZER\n"
                                     "#ifdef __clang_analyzer__\n#define SMITH_TARGET_STATIC_ANALYZER 1\n"
                                     "#else\n#define SMITH_TARGET_STATIC_ANALYZER 0\n#endif\n#endif\n"),
+    [SmithTarget_FastMath] = ("#ifndef SMITH_TARGET_FAST_MATH\n"
+                              "#ifdef __FINITE_MATH_ONLY__\n#define SMITH_TARGET_FAST_MATH __FINITE_MATH_ONLY__\n"
+                              "#else\n#define SMITH_TARGET_FAST_MATH 0\n#endif\n#endif\n"),
 };
 
 // The definitions a header needs, for the facts the `if constexpr` of its inline functions use (the header is
@@ -115,7 +120,7 @@ static void smith_lang_target_prelude(const SmithLang *lang, FILE *out) {
 }
 
 static const SmithLangTargetEntry *smith_lang_target_find(const char *name, size_t length) {
-    for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) { // 14 facts
+    for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) { // 16 facts
         if (smith_lang_equals(name, length, smith_lang_target_table[i].name)) return &smith_lang_target_table[i];
     }
     return nullptr;
@@ -126,7 +131,7 @@ static void smith_lang_target_unknown(SmithLang *lang, const SmithHost *host, co
     smith_lang_error(lang, host, location,
                      "`target::%.*s` is not a fact of the target; they are arch (aarch64, x86_64), os (macos, linux), "
                      "address_sanitizer, undefined_sanitizer, thread_sanitizer, assertions, float_radix, "
-                     "f32_mantissa_bits, f64_mantissa_bits, float_eval_method and static_analyzer",
+                     "f32_mantissa_bits, f64_mantissa_bits, float_eval_method, static_analyzer and fast_math",
                      (int)length, name);
 }
 

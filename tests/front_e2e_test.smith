@@ -177,6 +177,22 @@ export void test_front_e2e_a_narrowing_cast_calls_the_check() {
     remove_all(folder);
 }
 
+// A function defined with `...` is a C variadic: C calls it with extra arguments (and a .smith caller does, in the
+// corpus case variadic_definition).
+export void test_front_e2e_a_variadic_definition_is_called_from_c() {
+    Str folder = folder_for("variadics");
+    Str source = text_of("tests/front/e2e/variadic_definition.smith");
+    compile::Report report = compile_module(folder, "variadics", source);
+    test::check_equal(report.ok, true);
+    if (report.ok) {
+        Str main_c = as_str(format::push(
+            "int total(int, ...) __asm__(\"", prefix(), "variadics::total\");\n", stand_ins("__builtin_trap();"),
+            "int main(void) { return total(2, 7, 9) == 3 && total(2, 100, 20) == 6 ? 0 : 1; }\n"));
+        test::check_equal(link_and_run(folder, "variadics", main_c), 0);
+    }
+    remove_all(folder);
+}
+
 // The run path: today's std::ascii fixture (as tests/front_join_test.smith has it) through the same helper.
 export void test_front_e2e_the_run_path_links_and_runs() {
     Str folder = folder_for("ascii");

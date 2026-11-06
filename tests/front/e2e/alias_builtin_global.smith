@@ -1,0 +1,11 @@
+@c_name("SmithAliasKind") pub Kind := u8
+pub const kind_one: Kind = 1
+pub const kind_two: Kind = 2
+
+pub fn check() -> i32:
+    if kind_two != 2:
+        return 1
+    k: Kind = kind_one
+    if k != 1:
+        return 2
+    0
