@@ -84,13 +84,17 @@ import std::mem;
 // What a frame of the work stack means for its statement or expression.
 // NOLINTBEGIN(readability-identifier-naming)
 enum Step {
-    enter,     // read the statement
-    leave,     // leave the scope entered for a block or a `for`
-    condition, // the expression must be a Bool
-    advance,   // the expression is a statement of its own (a `for`'s step)
-    arm,       // a `match` arm `index` starts: its patterns, and a scope with what it binds (#2336)
-    cover,     // after a `match`'s arms: every case is named once
-    tail_arm,  // the expression is the function's result: an arm of a `match` that is the last line
+    enter,       // read the statement
+    leave,       // leave the scope entered for a block or a `for`
+    condition,   // the expression must be a Bool
+    advance,     // the expression is a statement of its own (a `for`'s step)
+    arm,         // a `match` arm `index` starts: its patterns, and a scope with what it binds (#2336)
+    cover,       // after a `match`'s arms: every case is named once
+    tail_arm,    // the expression is the function's result: an arm of a `match` that is the last line
+    open_true,   // the condition `expr` is true: a scope in which the names it proves are not `.none` are narrowed
+                 // (#2481)
+    open_false,  // the condition `expr` is false: the same for the `else` branch
+    narrow_rest, // the condition `expr` is false from here to the end of the scope: after an `if` that always leaves
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -588,6 +592,15 @@ static void block_statement(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// Whether the statement always ends by leaving its block: it is a `return`, `break` or `continue`, or a block whose
+// last statement is one.
+static Bool leaves(const ast::Stmt *s) {
+    while (s->kind == .block && countof(s->kind.block.items) > 0) {
+        s = s->kind.block.items[countof(s->kind.block.items) - 1];
+    }
+    return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
+}
+
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .if_stmt)) {
         return;
@@ -615,10 +628,18 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types_expr::check(r, test, r->table.bool_type);
+    // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
+    // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
+        push(nullptr, nullptr, leave);
         push(else_branch, nullptr, enter);
+        push(nullptr, test, open_false);
+    } else if (leaves(then_branch)) {
+        push(nullptr, test, narrow_rest);
     }
+    push(nullptr, nullptr, leave);
     push(then_branch, nullptr, enter);
+    push(nullptr, test, open_true);
 }
 
 // `if let .some(x) = o`: the value is typed (a call of a generic function there makes its instance), `x` has the
@@ -956,6 +977,11 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
         Frame f = state.work[state.top];
         if (f.step == leave) {
             types::pop_scope(&r->scopes);
+        } else if (f.step == open_true || f.step == open_false) {
+            types::push_scope(&r->scopes);
+            types_expr::narrow_scope(r, f.expr, f.step == open_true);
+        } else if (f.step == narrow_rest) {
+            types_expr::narrow_scope(r, f.expr, false);
         } else if (f.step == condition) {
             types_expr::check(r, f.expr, r->table.bool_type);
         } else if (f.step == advance) {
