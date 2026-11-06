@@ -114,7 +114,7 @@ static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .floating) return "0.0";
     if (t->kind == .bool_type) return "false";
     if (t->kind == .pointer) return "nullptr";
-    if (t->kind == .slice) return "[]"; // the empty slice literal, typed by the field (owner, 2026-11-05, #2460)
+    if (t->kind == .slice) return "[]";  // the empty slice literal, typed by the field (owner, 2026-11-05, #2460)
     if (t->kind == .text) return "\"\""; // a smith struct from another module holds `str` (`ast.Place`, #2648)
     return enum_zero(t);
 }

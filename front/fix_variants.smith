@@ -103,7 +103,8 @@ static Usize body_start(lex::Tokens tokens, Usize at, Bool *braced) {
     for (Usize i = at + 1; i < countof(tokens) && i < limit; i++) {
         // `enum End : u8:` has two colons (or a colon and a brace): the first ends the name and gives the
         // representation.
-        // A representation follows the colon on its line: `enum:` with a payload variant `some: T` below it has two colons too
+        // A representation follows the colon on its line: `enum:` with a payload variant `some: T` below it has two
+        // colons too
         // (#2648: `T` was taken for a variant and written `.t`).
         if (tokens[i].kind == lex::colon && i + 2 < countof(tokens) && !tokens[i].line_break &&
             (tokens[i + 2].kind == lex::colon || tokens[i + 2].kind == lex::left_brace))
