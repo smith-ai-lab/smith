@@ -44,7 +44,6 @@ count += 1                      # assignment: only to a mut name, and a statemen
 `==` compares values and operators are never user-defined: [smith-dev-syntax-arrays](../smith-dev-syntax-arrays/SKILL.md).
 
 ## Pointers and conversions
-
 ```smith
 mut p := Point(1, 2)
 q := &p                         # *mut Point, because p is mut; &x of a constant is *T

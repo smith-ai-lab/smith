@@ -183,7 +183,8 @@ export void test_front_widening_a_literal_keeps_its_rule() {
     types::Table t = types::start(types::lp64());
     types::TypeRef plain = types::builtin(&t, "I32");
     test::check_condition(types_convert::convert(&t, plain, types::builtin(&t, "U8"), types_convert::constant(200)).ok);
-    test::check_condition(!types_convert::convert(&t, plain, types::builtin(&t, "U8"), types_convert::constant(300)).ok);
+    test::check_condition(
+        !types_convert::convert(&t, plain, types::builtin(&t, "U8"), types_convert::constant(300)).ok);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -204,7 +205,8 @@ export void test_front_widening_in_arithmetic_the_narrower_operand_widens() {
 
 export void test_front_widening_the_sites_of_the_ticket_ask_for_to() {
     // front/ast_clone.smith:702: `at >= count` with `at: u64` and `count: usize`
-    fails("fn f(at: u64, count: usize) -> bool:\n    return at >= count\n", "the operands of `>=` have different types");
+    fails("fn f(at: u64, count: usize) -> bool:\n    return at >= count\n",
+          "the operands of `>=` have different types");
     fails("fn g(a: i32, b: u32) -> bool:\n    return a == b\n", "make both `U32`");
 }
 
