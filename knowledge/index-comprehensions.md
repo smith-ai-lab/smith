@@ -1,7 +1,7 @@
 ---
 type: design
-title: Index comprehensions, field-by-field equality and no user-defined operators
-description: How smith does array math without operator overloading or traits (for i, j: over array shapes, sizes as bracket parameters, run-time results in the current allocator), why == is field-by-field for plain values, and what stays a library function over fields(T).
+title: Index comprehensions, == on values and no user-defined operators
+description: How smith does array math without operator overloading or traits (for i, j: over array shapes, sizes as bracket parameters, run-time results in the current allocator), why == compares values, and what stays a library function over fields(T).
 tags: [syntax, arrays, linear-algebra, operators, design]
 ---
 # Index comprehensions
@@ -35,6 +35,7 @@ w := matmul(u, v)   # u, v: [,]f64: n, m, p read from the shapes at run time, w 
 - `n: usize` in brackets is constant when the shapes are and a run-time value otherwise; `const n: usize` requires compile time (a GPU kernel).
 - A sized array passes where `[,]T` is expected, as `[4]T` passes for `[]T`.
 - A size shared across parameters (`m`) is a compile-time check for constant shapes and a precondition for run-time ones: `smith prove` shows it, or the function checks it at entry.
+- A run-time mismatch is a checked failure the compiler writes from the signature: it traps like an out-of-range index, with a message naming the size and both values (`matmul: m: a has 4, b has 5`). `smith prove` reports it as a precondition and removes the check where it proves the sizes equal. There is no `contract.requires` to write and no `Result` (owner, 2026-11-06, on question 2's addition: "Yeah I think that sounds right"; the lead chose this reading for question 3).
 - Shapes go no further than values: index sets (Dex) are neither designed nor promised (#2505).
 
 ## Where a run-time result lives
@@ -48,9 +49,9 @@ An index comprehension with a run-time size builds its result in the current all
 ## Operators and equality
 
 - No user-defined operators and no traits. Operators stay language-defined: numbers, `vec(T, N)` (element-wise), pointers, and `<`, `<=`, `>`, `>=` on payload-free enums in declaration order. Element-wise array math is an index comprehension. Bigint and rational use named functions (`a.add(b)`). Whether complex numbers become built-in is decided separately. Owner: "Then we don't need operator overloading!"
-- `==` is field-by-field for every plain-value type, with no user code: numbers (IEEE for floats), bool, enums (tag, then payload), pointers (address), fixed arrays, tuples, and structs whose fields all have `==`. Slices have no `==` (memory or contents is ambiguous), so neither does a struct holding one; the error names `slice.equal`.
+- `==` compares **values** for every type, with no user code: numbers (IEEE for floats), bool, enums (tag, then payload), fixed arrays, tuples, structs (field by field), and slices, which compare their length and then each element, so `name == "smith"` compares text. A pointer's value is its address, so `==` never follows a pointer. Owner, 2026-11-06: "Yeah == should be the way to compare things. Then we don't need these special equal functions". "Same memory" is written out: `a.data == b.data and countof(a) == countof(b)`. There is no `slice.equal`, `mem.equal` or `eq.equal`.
 - No struct ordering and no field-by-field `+`. Sorting takes the order at the call: `sort(people) fn(a, b): a.age < b.age`.
-- Everything else is a library function over `fields(T)`, written once: hashing, serialization (`@serial.rename`, `@serial.skip`), printing, cloning, deep equality. A container that needs another rule takes it as a parameter with the reflection version as default: `map.init(K, V; eq = my_eq)`.
+- Everything else is a library function over `fields(T)`, written once: hashing, serialization (`@serial.rename`, `@serial.skip`), printing, cloning. A container that needs another rule takes it as a parameter with the reflection version as default: `map.init(K, V; eq = my_eq)`.
 - Uniform call syntax and the lookup in the type's module stay as they are.
 
 ## Interactions
