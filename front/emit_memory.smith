@@ -413,6 +413,10 @@ static state::TyResult global_type(state::Emitter *e, const ast::Decl *d) {
     const ast::TypeExpr *type = d->kind.variable.type;
     if (type->kind != .auto_type) return resolve(e, type);
     const ast::Expr *init = d->kind.variable.init;
+    if (init != nullptr && e->options.checked != nullptr) { // `const f = Format(24, -149)`: the checker's type
+        state::TyResult typed = state::type_of_node(e, init);
+        if (typed != .error) return typed;
+    }
     state::Ty ty = {};
     Str spelling = "i32";
     if (init != nullptr && init->kind == .boolean) spelling = "bool";
@@ -462,6 +466,15 @@ export Bool is_global_name(state::Emitter *e, const ast::Expr *x) {
 static state::Status global_read(state::Emitter *e, const state::Work *w) {
     try global_place(e, w);
     state::Value place = state::pop_value(e);
+    // A `const` integer global is its initializer, so `static_assert(n == 64)` and array sizes fold (#2510).
+    if (e->folding && place.ty.kind == .integer && c::LLVMIsAGlobalVariable(place.llvm) != nullptr &&
+        c::LLVMIsGlobalConstant(place.llvm) != 0) {
+        c::LLVMValueRef initial = c::LLVMGetInitializer(place.llvm);
+        if (initial != nullptr && c::LLVMIsAConstantInt(initial) != nullptr) {
+            state::push_value(e, (state::Value){.llvm = initial, .ty = place.ty});
+            return state::success();
+        }
+    }
     c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
     state::push_value(e, (state::Value){.llvm = loaded, .ty = place.ty});
     return state::success();
@@ -1548,6 +1561,12 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     if (ty.kind == .integer && x->kind == .integer)
         return integer_constant(ty, x->kind.integer.value, false, x->span, out);
     if (ty.kind == .integer && integer_operation(ty, x, out)) return state::success();
+    if (ty.kind == .integer && x->kind == .query && x->kind.query.op != .count_of) { // `sizeof(T)`, `alignof(T)`
+        try query(e, x, state::no_hint());
+        state::Value size = state::pop_value(e);
+        *out = c::LLVMConstInt(ty.llvm, c::LLVMConstIntGetZExtValue(size.llvm), 0);
+        return state::success();
+    }
     if (ty.kind == .integer && x->kind == .unary && x->kind.unary.op == .negate) {
         const ast::Expr *inner = x->kind.unary.operand;
         if (inner->kind == .integer) return integer_constant(ty, inner->kind.integer.value, true, x->span, out);
@@ -1570,6 +1589,7 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         *out = c::LLVMConstReal(ty.llvm, real);
         return state::success();
     }
+    if (ty.kind == .integer) return state::fold(e, x, ty, out); // `~0.to(u64)`, `(a >> 1).to(i64)`: built and folded
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
