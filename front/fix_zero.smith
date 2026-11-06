@@ -29,6 +29,7 @@ import std::arena;
 import std::files;
 import std::format;
 import std::mem;
+import <stdlib.h>;
 
 constexpr Usize array_limit = 64;
 
@@ -1020,6 +1021,45 @@ static U64 hash_of(Str text) {
     return h;
 }
 
+// The file of SMITH_FIX_IMPORT_CACHE that keeps the masks of the module `file` whose text hashes to `h`, or an empty
+// text when the variable is not set. Each mask costs a walk of the whole tree, once in every fixer that imports the
+// module: the count of `frontend-coverage`, a fixer for each of its 1500 files, no longer fitted in its 20 minutes
+// (#2586). The coverage empties the folder at the start of a run, so the tree the masks were read from is this run's.
+static Str masks_file(Str file, U64 h) {
+    const char *folder = c::getenv("SMITH_FIX_IMPORT_CACHE");
+    if (folder == nullptr) return "";
+    U64 key = hash_of(file) ^ (h * 1099511628211U);
+    return types::message_of(format::push(folder, "/", format::hex(key, 16), ".masks"));
+}
+
+// Reads the `count` masks kept for the module, false when none are.
+static Bool kept_masks(Str file, U64 h, Usize count, U64 masks[records_max]) {
+    Str path = masks_file(file, h);
+    if (countof(path) == 0 || !files::exists(path)) return false;
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return false;
+    if (countof(loaded.ok) != count * 8) return false;
+    for (Usize r = 0; r < count; r++) {
+        U64 m = 0;
+        for (Usize b = 0; b < 8; b++)
+            m |= (U64)loaded.ok[r * 8 + b] << (8 * b);
+        masks[r] = m;
+    }
+    return true;
+}
+
+// Keeps the `count` masks of the module for the next fixer, when SMITH_FIX_IMPORT_CACHE is set.
+static void keep_masks(Str file, U64 h, Usize count, const U64 masks[records_max]) {
+    Str path = masks_file(file, h);
+    if (countof(path) == 0) return;
+    U8 bytes[:] = mem::alloc_slice(U8, count * 8);
+    for (Usize r = 0; r < count; r++) {
+        for (Usize b = 0; b < 8; b++)
+            bytes[r * 8 + b] = (U8)(masks[r] >> (8 * b));
+    }
+    (void)files::write_file(path, bytes, files::Atomic);
+}
+
 // The nullable fields of each record of `module` (its text is `source`), from the cache or worked out once.
 static void loaded_masks(const ast::Module *module, Str source, Wanted *w, U64 masks[records_max]) {
     LoadedCache *cache = &loaded_cache;
@@ -1030,10 +1070,13 @@ static void loaded_masks(const ast::Module *module, Str source, Wanted *w, U64 m
             masks[r] = cache->masks[i][r];
         return;
     }
-    scan_file(w, source, "", true);
-    scan_siblings(w, module);
-    for (Usize r = 0; r < w->count; r++)
-        masks[r] = nullable(module, w, r);
+    if (!kept_masks(module->file, h, w->count, masks)) {
+        scan_file(w, source, "", true);
+        scan_siblings(w, module);
+        for (Usize r = 0; r < w->count; r++)
+            masks[r] = nullable(module, w, r);
+        keep_masks(module->file, h, w->count, masks);
+    }
     if (cache->count == loaded_max || countof(module->file) >= cache_text_max) return;
     Usize at = cache->count;
     cache->lengths[at] = copy_into(cache->files[at][0:cache_text_max], module->file);
