@@ -1660,8 +1660,7 @@ static types::TypeRef slice_compare(types::Checked *c, ast::Span span, ast::Bina
         return invalid(c);
     }
     Bool plain_enum = l->element->kind == .enumeration && !l->element->has_payload;
-    if (!is_scalar(l->element) || (l->element->kind == .enumeration && !plain_enum) ||
-        l->element->kind == .fn_value) {
+    if (!is_scalar(l->element) || (l->element->kind == .enumeration && !plain_enum) || l->element->kind == .fn_value) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l), "`: its element `",
                      types::show(l->element), "` has no `==` yet; compare the elements one by one");
         return invalid(c);

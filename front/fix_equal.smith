@@ -32,8 +32,8 @@ static Bool is_equal_call(const ast::Expr *e) {
 }
 
 static Bool is_simple(const ast::Expr *e) {
-    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call ||
-           e->kind == .slice_of || e->kind == .string;
+    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call || e->kind == .slice_of ||
+           e->kind == .string;
 }
 
 // The text of an operand, in parentheses when it is not simple.

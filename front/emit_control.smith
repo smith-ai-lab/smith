@@ -358,7 +358,8 @@ static c::LLVMValueRef memcmp_equal(state::Emitter *e, state::Ty element, c::LLV
     c::LLVMValueRef size = c::LLVMBuildIntCast2(e->builder, c::LLVMSizeOf(element.llvm), word, 0, "");
     c::LLVMValueRef args[3] = {a, b, c::LLVMBuildMul(e->builder, count, size, "bytes")};
     c::LLVMValueRef order = c::LLVMBuildCall2(e->builder, type, function, args, 3, "");
-    return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, order, c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), 0, 0), "");
+    return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, order,
+                            c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), 0, 0), "");
 }
 
 // Element by element, for floats (`NaN != NaN`) and the like: a loop over the common count.
@@ -382,7 +383,7 @@ static c::LLVMValueRef loop_equal(state::Emitter *e, state::Ty element, c::LLVMV
     c::LLVMValueRef x = c::LLVMBuildLoad2(e->builder, element.llvm, left_at, "");
     c::LLVMValueRef y = c::LLVMBuildLoad2(e->builder, element.llvm, right_at, "");
     c::LLVMValueRef same = element.kind == .floating ? c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, x, y, "")
-                                                      : c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, x, y, "");
+                                                     : c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, x, y, "");
     c::LLVMBuildCondBr(e->builder, same, step, leave);
     position(e, step);
     c::LLVMValueRef next = c::LLVMBuildAdd(e->builder, at, c::LLVMConstInt(word, 1, 0), "");
