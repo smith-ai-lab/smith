@@ -18,7 +18,7 @@
 //
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
-// Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
+// `?*T` is the pointer itself (null is `.none`), the layout C has for a nullable pointer. Left: `match` over `?T` (#1585), `if let`
 // as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are emitted (#2128,
 // #2141).
 module front::emit_option;
@@ -40,9 +40,13 @@ static state::Ty *own(state::Emitter *e, state::Ty element) {
 }
 
 // `?payload`.
-static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span span) {
-    if (payload.kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", span);
+static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span _) {
     state::Ty *inner = own(e, payload);
+    if (payload.kind == .pointer) { // `?*T` is the pointer itself, null for `.none`: the layout C has for a nullable pointer
+        state::Ty bare = {.kind = {.option = {.element = inner}}, .llvm = payload.llvm,
+                          .name = state::msg(format::push("?", payload.name))};
+        return bare;
+    }
     c::LLVMTypeRef fields[2];
     fields[0] = c::LLVMInt8TypeInContext(e->context);
     fields[1] = payload.llvm;
@@ -56,7 +60,6 @@ static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span spa
 export state::TyResult type_option(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind != .option) return state::ty_fail("not an option type", t->span);
     const ast::TypeExpr *inner = t->kind.option.inner;
-    if (inner->kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", t->span);
     state::TyResult made = state::type_of(e, inner);
     if (made == .error) {
         return {.error = made.error};
@@ -144,7 +147,7 @@ export state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
             }
         }
     }
-    if (t->kind == .pointer) return state::ty_fail("not emitted yet: an option of a pointer", (ast::Span){});
+    if (t->kind == .pointer) return state::type_of_checked(e, t, (ast::Span){});
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: an option of ", shown));
     state::free_text(shown);
@@ -177,6 +180,8 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
 
 // `o`'s tag is `.some`: an `i1`.
 export c::LLVMValueRef is_some(state::Emitter *e, state::Value o) {
+    if (o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer) // `?*T`: not null
+        return c::LLVMBuildIsNotNull(e->builder, o.llvm, "is_some");
     c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
     c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMInt8TypeInContext(e->context));
     return c::LLVMBuildICmp(e->builder, c::LLVMIntNE, tag, zero, "is_some");
@@ -184,6 +189,7 @@ export c::LLVMValueRef is_some(state::Emitter *e, state::Value o) {
 
 // `o`'s payload (undefined when it is `.none`); `option` is the kind of `o`'s type.
 export state::Value payload(state::Emitter *e, state::Value o, state::ElementTy option) {
+    if (option.element->kind == .pointer) return (state::Value){.llvm = o.llvm, .ty = *option.element};
     c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, o.llvm, 1, "payload");
     return (state::Value){.llvm = got, .ty = *option.element};
 }
@@ -213,6 +219,7 @@ export state::Value result_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef i
 
 // The `?T` holding the payload `inner`.
 static state::Value some_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef inner) {
+    if (ty.kind == .option && ty.kind.option.element->kind == .pointer) return (state::Value){.llvm = inner, .ty = ty};
     c::LLVMValueRef zero = c::LLVMConstNull(ty.llvm);
     c::LLVMValueRef one = c::LLVMConstInt(c::LLVMInt8TypeInContext(e->context), 1, false);
     c::LLVMValueRef tagged = c::LLVMBuildInsertValue(e->builder, zero, one, 0, "some");

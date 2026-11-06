@@ -332,6 +332,12 @@ static state::Status arm_start(state::Emitter *e, const state::ThenGeneral *w) {
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = first.binding, .ty = inner.ty, .address = slot});
     }
+    if (o.ty.kind == .result && countof(first.binding) > 0 && !state::same_text(first.binding, "_")) {
+        state::Value inner = optional::result_payload(e, o, o.ty.kind.result, state::same_text(first.name, "error"));
+        c::LLVMValueRef slot = state::new_alloca(e, inner.ty, first.binding);
+        c::LLVMBuildStore(e->builder, inner.llvm, slot);
+        state::add_local(e, (state::Local){.name = first.binding, .ty = inner.ty, .address = slot});
+    }
     if (o.ty.kind == .variant_enum) bind_variant(e, o, first.name, first.binding);
     state::ThenGeneral finish = *w;
     const ast::Expr *value = arm->value;
@@ -443,6 +449,17 @@ static state::Status branch_option(state::Emitter *e, const ast::Stmt *s, state:
     if (some == nullptr) some = unreachable_block(e, "match_no_some");
     if (none == nullptr) none = unreachable_block(e, "match_no_none");
     c::LLVMBuildCondBr(e->builder, optional::is_some(e, o), some, none);
+    return state::success();
+}
+
+// The branch on a Result's tag: `.ok` is tag 0.
+static state::Status branch_result(state::Emitter *e, const ast::Stmt *s, state::Value o,
+                                   c::LLVMBasicBlockRef blocks[64]) {
+    c::LLVMBasicBlockRef ok = arm_for(s, blocks, "ok");
+    c::LLVMBasicBlockRef failed = arm_for(s, blocks, "error");
+    if (ok == nullptr) ok = unreachable_block(e, "match_no_ok");
+    if (failed == nullptr) failed = unreachable_block(e, "match_no_error");
+    c::LLVMBuildCondBr(e->builder, optional::is_variant(e, o, false), ok, failed);
     return state::success();
 }
 
@@ -574,6 +591,8 @@ static state::Status dispatch_arms(state::Emitter *e, const state::ThenGeneral *
         state::Value o = state::peek_value(e);
         if (o.ty.kind == .option)
             try branch_option(e, s, o, blocks);
+        else if (o.ty.kind == .result)
+            try branch_result(e, s, o, blocks);
         else if ((o.ty.kind == .integer || o.ty.kind == .variant_enum) && find_enum(e, o.ty.name, &at))
             try switch_enum(e, s, o, at, blocks);
         else

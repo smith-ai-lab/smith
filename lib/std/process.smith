@@ -662,36 +662,46 @@ void drain_real(Grow *output, I32 out_fd, Grow *errors, I32 err_fd) {
 // blocks, so it may use up to twice its size. An error is that the program could not start (or the wait failed); one
 // that started and failed is success with its Exit.
 [[std::c_name("smith_process_run")]] export [[nodiscard]] OutputResult run(const char *const argv[:]) {
-    Child child = try start_child(argv, mode_captured, false);
-    Grow output = {};
-    Grow errors = {};
-    if (child.handled) {
-        c::SmithProcessHandler *handler = c::smith_handlers_process();
-        for (I32 stream = 1; stream <= 2; stream++) {
-            Grow *into = stream == 1 ? &output : &errors;
-            for (Usize rounds = 0; rounds < ~(Usize)0; rounds++) { // each round reads a byte or ends
-                grow_room(into);
-                U8 room[:] = into->data[into->size:];
-                Isize count = handler->read(handler, child.id, stream, room.data, chunk);
-                if (count < 0) {
-                    return {.error = error_from(errno_now())};
+    ChildResult started = start_child(argv, mode_captured, false);
+    switch (started) {
+    case .error:
+        return {.error = started.error};
+    case .ok:
+        Child child = started.ok;
+        Grow output = {};
+        Grow errors = {};
+        if (child.handled) {
+            c::SmithProcessHandler *handler = c::smith_handlers_process();
+            for (I32 stream = 1; stream <= 2; stream++) {
+                Grow *into = stream == 1 ? &output : &errors;
+                for (Usize rounds = 0; rounds < ~(Usize)0; rounds++) { // each round reads a byte or ends
+                    grow_room(into);
+                    U8 room[:] = into->data[into->size:];
+                    Isize count = handler->read(handler, child.id, stream, room.data, chunk);
+                    if (count < 0) {
+                        return {.error = error_from(errno_now())};
+                    }
+                    if (count == 0) break;
+                    into->size += (Usize)count;
                 }
-                if (count == 0) break;
-                into->size += (Usize)count;
             }
+        } else {
+            drain_real(&output, child.output, &errors, child.errors);
+            c::close(child.output);
+            c::close(child.errors);
+            child.output = child.errors = -1;
         }
-    } else {
-        drain_real(&output, child.output, &errors, child.errors);
-        c::close(child.output);
-        c::close(child.errors);
-        child.output = child.errors = -1;
+        ExitResult ended = wait(&child);
+        close(&child);
+        switch (ended) {
+        case .error:
+            return {.error = ended.error};
+        case .ok:
+            Bytes seen = output.data[0:output.size];
+            Bytes failed = errors.data[0:errors.size];
+            return (Output){.exit = ended.ok, .output = seen, .errors = failed};
+        }
     }
-    ExitResult ended = wait(&child);
-    close(&child);
-    Exit exit = try ended;
-    Bytes seen = output.data[0:output.size];
-    Bytes failed = errors.data[0:errors.size];
-    return (Output){.exit = exit, .output = seen, .errors = failed};
 }
 
 // ---------------------------------------------------------------- the fake, for tests

@@ -4527,6 +4527,18 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
         }
         return 2;
     }
+    if (t->kind == .result_type) { // `.ok(x)` is case 0 and `.error(e)` case 1
+        if (same_text(name, "ok")) {
+            return 0;
+        }
+        if (same_text(name, "error")) {
+            return 1;
+        }
+        if (report) {
+            types::failf(c, span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name, "`; write one of those");
+        }
+        return 2;
+    }
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) {
             Bool carries = t->has_payload && carries_value(t->slots[i].type);
@@ -4558,7 +4570,7 @@ static Bool scalar_match(types::TypeRef t) {
 }
 
 static Bool matchable(types::TypeRef t) {
-    return t->kind == .enumeration || t->kind == .option || scalar_match(t);
+    return t->kind == .enumeration || t->kind == .option || t->kind == .result_type || scalar_match(t);
 }
 
 // Whether a pattern has the form of a constant: a literal, its negation, a name or a header's `k.NAME`.
@@ -4642,7 +4654,7 @@ static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern p
 }
 
 static Usize case_count(types::TypeRef t) {
-    if (t->kind == .option) {
+    if (t->kind == .option || t->kind == .result_type) {
         return 2;
     }
     return countof(t->slots);
@@ -4674,8 +4686,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
         }
         if (known) {
             Usize at = case_of(c, s->span, t, pats[k], true);
-            if (t->kind == .option && at == 0) {
+            if ((t->kind == .option || t->kind == .result_type) && at == 0) {
                 element = t->element;
+            } else if (t->kind == .result_type && at == 1) {
+                element = t->error;
             } else if (t->kind == .enumeration && at < countof(t->slots) && t->has_payload) {
                 element = t->slots[at].type;
             }
@@ -4698,6 +4712,8 @@ static Str missing_list(types::TypeRef t, Bool seen[:]) {
         Str name = "none";
         if (t->kind == .enumeration) {
             name = t->slots[i].name;
+        } else if (t->kind == .result_type) {
+            name = i == 0 ? "ok(x)" : "error(e)";
         } else if (i == 0) {
             name = "some(x)";
         }
