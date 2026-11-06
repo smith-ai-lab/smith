@@ -498,6 +498,8 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member,
             edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
             continue;
         }
+        // A `?*T` field is read through its pointer: `mut` goes after the `*` of the option's type (#2643).
+        if (written->kind == .option && written->kind.option.inner != nullptr) written = written->kind.option.inner;
         // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
         if (!(written->kind == .pointer)) continue;
         Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
@@ -609,6 +611,8 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
             edits[countof(edits) - 1] = more[0];
         }
     }
+    // A name bound from a field (`region := task.region else: return`) is as writable as the field (#2643).
+    if (countof(edits) == 0 && init != nullptr && init->kind == .member) return field_fix(c, init, false);
     return edits;
 }
 

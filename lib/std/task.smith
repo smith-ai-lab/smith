@@ -443,10 +443,11 @@ void unpoison(void *region, Usize size) {
 // An ended task of the inline scheduler: its mapping, which holds the record, is unmapped.
 void release_inline(Task *task) {
     contract::trusted(); // the mapping is the task's own, and no one holds the task any more
-    void *region = task->region;
+    if (task->region == nullptr) return; // a thread's first task has no mapping of its own
+    void *mapping = task->region;
     Usize size = task->region_size;
-    unpoison(region, size);
-    c::munmap(region, size); // NOLINT(smith-effects)
+    unpoison(mapping, size);
+    c::munmap(mapping, size); // NOLINT(smith-effects)
 }
 
 // The calling task gives the worker back to the one that resumed it, and returns when it is resumed.
