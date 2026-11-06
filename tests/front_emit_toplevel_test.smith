@@ -1,0 +1,147 @@
+module front_emit_toplevel_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+typedef I32 (*Narrow)(I32);
+typedef U32 (*Byte)(U8);
+typedef I64 (*Unsigned)(U32);
+typedef I64 (*Wide)(I32);
+
+typedef U64 (*Mask)();
+typedef Usize (*Count)(Usize);
+typedef I64 (*Gap)(const U32 *, const U32 *);
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+// Emits `source` and JITs it into `host`; on an error its message must contain `want`.
+static Bool emits(Str source, emit_jit::Jit *host, Scenario *s, Str want) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    Bool ok = emitted == .ok;
+    if (emitted == .ok) {
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        test::check_equal(has(emitted.error.message, want), true);
+        emit::free_error(emitted.error);
+        c::LLVMContextDispose(context);
+    }
+    return ok;
+}
+
+// #2510: a module-level `static_assert` folds over `const` names and `sizeof`; a global's initializer may be built
+// from them (`~0.to(u64)`); `++`/`--` and the difference of two pointers emit.
+export void test_front_emit_toplevel_static_assert_consts_increments_and_pointer_difference() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Bool ok = emits("struct Pair:\n"
+                    "    low: u32\n"
+                    "    high: u32\n"
+                    "const word: usize = 8\n"
+                    "const mask: u64 = ~0.to(u64)\n"
+                    "static_assert(word == sizeof(Pair), \"a word\");\n"
+                    "static_assert((word & (word - 1)) == 0);\n"
+                    "pub fn mask_low() -> u64:\n"
+                    "    mask >> 56\n"
+                    "pub fn countdown(n: usize) -> usize:\n"
+                    "    mut left: usize = n\n"
+                    "    mut steps: usize = 0\n"
+                    "    while left-- > 0:\n"
+                    "        steps += 1\n"
+                    "    steps\n"
+                    "pub fn gap(a: *u32, b: *u32) -> isize:\n"
+                    "    a - b\n",
+                    &host, &s, "");
+    test::check_equal(ok, true);
+    if (ok) {
+        U32 words[4] = {};
+        test::check_equal(((Mask)symbol_of(&host, "mask_low"))(), (U64)255);
+        test::check_equal(((Count)symbol_of(&host, "countdown"))(5), (Usize)5);
+        test::check_equal(((Gap)symbol_of(&host, "gap"))(&words[3], &words[1]), (I64)2);
+    }
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_toplevel_a_false_static_assert_stops_with_its_message() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Bool ok = emits("const n: usize = 3\n"
+                    "static_assert(n == 4, \"n is four\");\n",
+                    &host, &s, "n is four");
+    test::check_equal(ok, false);
+    emit_jit::stop(&host);
+}
