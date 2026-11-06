@@ -201,7 +201,7 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
 // `(a, b)`
 
 // The items are on the value stack, the first deepest: convert each to its element and build the tuple.
-static state::Status literal_finish(state::Emitter *e, const state::Work *w) {
+static state::Status literal_finish(state::Emitter *e, const state::ThenGeneral *w) {
     Usize count = w->ty.part_count;
     state::Value items[max_parts];
     for (Usize i = count; i > 0; i--) {
@@ -219,7 +219,7 @@ static state::Status literal_finish(state::Emitter *e, const state::Work *w) {
 
 // `(a = 1, b = 2)` where a record is expected (the fixer's spelling of a braced value of a field of record type): the
 // values are on the stack, the first deepest; each goes into the field of its name.
-static state::Status record_finish(state::Emitter *e, const state::Work *w) {
+static state::Status record_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *literal_node = w->expr;
     if (!(literal_node->kind == .tuple_lit)) return state::fail("not a tuple", w->span);
     ast::ExprRef items[:] = literal_node->kind.tuple_lit.items;
@@ -273,7 +273,8 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
     Usize count = countof(items);
     Usize record_at = 0;
     if (record_hint(e, x, hint, &record_at)) {
-        state::push_then(e, (state::Work){.then = record_finish, .expr = x, .number = (U64)record_at, .span = x->span});
+        state::push_then_general(
+            e, (state::ThenGeneral){.run = record_finish, .expr = x, .number = (U64)record_at, .span = x->span});
         for (Usize i = count; i > 0; i--) {
             const ast::Expr *item = items[i - 1];
             if (!(item->kind == .named_arg)) continue;
@@ -299,7 +300,7 @@ export state::Status literal(state::Emitter *e, const ast::Expr *x, state::Hint 
         }
         ty = checked.ok;
     }
-    state::push_then(e, (state::Work){.then = literal_finish, .ty = ty, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = literal_finish, .ty = ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         const ast::Expr *item = items[i - 1];
         if (item->kind == .named_arg) item = item->kind.named_arg.value;
@@ -340,7 +341,7 @@ static state::Status check_member(state::Ty base, Usize index, ast::Span span) {
     return state::success();
 }
 
-static state::Status member_finish(state::Emitter *e, const state::Work *w) {
+static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
     try check_member(base.ty, index, w->span);
@@ -356,12 +357,12 @@ export state::Status member(state::Emitter *e, const ast::Expr *x, state::Hint _
     }
     const ast::Expr *base_node = x->kind.member.base;
     Usize index = index_of(e, x->kind.member.name, base_node);
-    state::push_then(e, (state::Work){.then = member_finish, .number = index, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = member_finish, .number = index, .span = x->span});
     state::push_eval(e, base_node, state::no_hint());
     return state::success();
 }
 
-static state::Status place_finish(state::Emitter *e, const state::Work *w) {
+static state::Status place_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value base = state::pop_value(e);
     Usize index = (Usize)w->number;
     try check_member(base.ty, index, w->span);
@@ -377,7 +378,7 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
     }
     const ast::Expr *base_node = x->kind.member.base;
     Usize index = index_of(e, x->kind.member.name, base_node);
-    state::push_then(e, (state::Work){.then = place_finish, .number = index, .span = x->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = place_finish, .number = index, .span = x->span});
     state::push_place(e, base_node);
     return state::success();
 }
@@ -385,7 +386,7 @@ export state::Status place_member(state::Emitter *e, const ast::Expr *x) {
 // ---------------------------------------------------------------------------------------------------------------
 // `let (q, r) = f()`
 
-static state::Status destructure_finish(state::Emitter *e, const state::Work *w) {
+static state::Status destructure_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .destructure) {
         return state::fail("not a destructuring declaration", w->span);
@@ -418,7 +419,7 @@ export state::Status destructure(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .destructure) {
         return state::fail("not a destructuring declaration", s->span);
     }
-    state::push_then(e, (state::Work){.then = destructure_finish, .stmt = s, .span = s->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = destructure_finish, .stmt = s, .span = s->span});
     state::push_eval(e, s->kind.destructure.init, state::no_hint());
     return state::success();
 }

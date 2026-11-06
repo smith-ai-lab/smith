@@ -26,7 +26,7 @@ export const char *plain_pipe() {
 const char *own(auto... args) {
     Usize characters = format::length(args...);
     char *memory = (char *)mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char));
-    (void)format::to(memory, characters + 1, args...);
+    (void)format::write(memory, characters + 1, args...);
     return memory;
 }
 

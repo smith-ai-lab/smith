@@ -506,8 +506,11 @@ static Usize record_index(const Wanted *w, Str name) {
     return w->count;
 }
 
+// The index of the field `name` of `d`. The records are read after the file's renames (`type` is `ty`), while a file
+// that imports the module is read as it is on disk, so a field called `type` there is the declared `ty` (#2458).
 static Usize field_index(const Record *d, Str name) {
     ast::FieldDecl fields[:] = d->fields;
+    if (same(name, "type")) name = "ty";
     for (Usize k = 0; k < countof(fields); k++)
         if (same(fields[k].name, name)) return k;
     return countof(fields);
@@ -635,7 +638,7 @@ static Bool null_word(Str source, lex::Tokens t, Usize i) {
 }
 
 static Bool is_word(lex::TokenKind k) {
-    return k == lex::name || k == lex::type_name;
+    return k == lex::name || k == lex::type_name || k == lex::kw_type; // `type` is a field of old text (#2458)
 }
 
 // Whether the field read that ends at `t[i]` (`x.f`, `x->f`, `a.b.f`) is tested against null: `x.f != nullptr`,

@@ -11,7 +11,7 @@ import scratch;
 
 static const char *sha(const scratch::Project *p, const char *file) {
     char command[256];
-    (void)format::to(command, sizeof command, "smith --smith-sha256 ", file);
+    (void)format::write(command, sizeof command, "smith --smith-sha256 ", file);
     return scratch::capture(p, command);
 }
 
@@ -42,7 +42,7 @@ export void test_build_packages_sha256_matches_the_nist_vectors() {
 
 static void equals_shasum(const scratch::Project *p, const char *name, const char *bytes) {
     char command[256];
-    (void)format::to(command, sizeof command, "head -c ", bytes, " /dev/urandom >random");
+    (void)format::write(command, sizeof command, "head -c ", bytes, " /dev/urandom >random");
     (void)scratch::sh(p, command);
     scratch::expect_text(name, scratch::capture(p, "shasum -a 256 random | cut -d' ' -f1"), sha(p, "random"));
 }
@@ -58,7 +58,7 @@ export void test_build_packages_sha256_equals_shasum_on_random_bytes() {
     const char *sizes[9] = {"55", "56", "57", "63", "64", "65", "119", "120", "128"}; // around the padding boundaries
     for (Usize i = 0; i < 9; i++) {
         char name[64];
-        (void)format::to(name, sizeof name, "sha256: ", sizes[i], " bytes equal shasum");
+        (void)format::write(name, sizeof name, "sha256: ", sizes[i], " bytes equal shasum");
         equals_shasum(&p, name, sizes[i]);
     }
 }

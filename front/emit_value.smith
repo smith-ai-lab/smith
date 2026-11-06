@@ -116,16 +116,16 @@ static void jump_unless_ended(state::Emitter *e, c::LLVMBasicBlockRef target) {
     if (!ended(e)) c::LLVMBuildBr(e->builder, target);
 }
 
-// What the last line of a branch stores into: the slot and its type, carried in a Work.
-static state::Work into_work(state::Continuation then, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
-    state::Work item = {.then = then, .stmt = s, .value = slot, .ty = ty, .span = s->span};
+// What the last line of a branch stores into: the slot and its type, carried in a `Then`.
+static state::ThenGeneral into_work(state::Continuation then, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty) {
+    state::ThenGeneral item = {.run = then, .stmt = s, .value = slot, .ty = ty, .span = s->span};
     return item;
 }
 
-static state::Status into_start(state::Emitter *e, const state::Work *w);
+static state::Status into_start(state::Emitter *e, const state::ThenGeneral *w);
 
 // The value of the last line is on the stack: converted to the slot's type and stored, unless the branch ended.
-static state::Status store_value(state::Emitter *e, const state::Work *w) {
+static state::Status store_value(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value value = state::pop_value(e);
     if (!state::same_type(value.ty, w->ty)) {
         try state::convert(e, value, w->ty, w->span, .initialize);
@@ -136,13 +136,13 @@ static state::Status store_value(state::Emitter *e, const state::Work *w) {
 }
 
 // A block's end, as `emit.smith`'s `block_finish`: the scope closes after whatever `end_of_block` pushed.
-static state::Status scope_close(state::Emitter *e, const state::Work *_) {
+static state::Status scope_close(state::Emitter *e, const state::ThenNone *_) {
     state::end_scope(e);
     return state::success();
 }
 
-static state::Status block_end(state::Emitter *e, const state::Work *w) {
-    state::push_then(e, (state::Work){.then = scope_close, .span = w->span});
+static state::Status block_end(state::Emitter *e, const state::ThenNone *w) {
+    state::push_then_none(e, (state::ThenNone){.run = scope_close, .span = w->span});
     try control::end_of_block(e, w->span);
     return state::success();
 }
@@ -151,16 +151,16 @@ static state::Status block_end(state::Emitter *e, const state::Work *w) {
 static state::Status last_line_into(state::Emitter *e, const ast::Stmt *last, c::LLVMValueRef slot, state::Ty ty) {
     if (last->kind == .expression) {
         const ast::Expr *value = last->kind.expression.value;
-        state::push_then(e, into_work(store_value, last, slot, ty));
+        state::push_then_general(e, into_work(store_value, last, slot, ty));
         state::push_eval(e, value, state::hint_of(ty));
         return state::success();
     }
     if (last->kind == .if_stmt || last->kind == .block) {
-        state::push_then(e, into_work(into_start, last, slot, ty));
+        state::push_then_general(e, into_work(into_start, last, slot, ty));
         return state::success();
     }
     if (last->kind == .match_stmt) {
-        state::push_then(e, into_work(store_value, last, slot, ty));
+        state::push_then_general(e, into_work(store_value, last, slot, ty));
         return matching::value_of(e, last, state::hint_of(ty));
     }
     state::push_statement(e, last); // `return`, `break`, `continue`: nothing is stored
@@ -173,7 +173,7 @@ static state::Status block_into(state::Emitter *e, const ast::Stmt *s, c::LLVMVa
     }
     ast::StmtRef items[:] = s->kind.block.items;
     state::begin_scope(e);
-    state::push_then(e, (state::Work){.then = block_end, .span = s->span});
+    state::push_then_none(e, (state::ThenNone){.run = block_end, .span = s->span});
     if (countof(items) == 0) return state::success();
     try last_line_into(e, items[countof(items) - 1], slot, ty);
     for (Usize i = countof(items) - 1; i > 0; i--)
@@ -181,7 +181,7 @@ static state::Status block_into(state::Emitter *e, const ast::Stmt *s, c::LLVMVa
     return state::success();
 }
 
-static state::Status branch_on_condition(state::Emitter *e, const state::Work *w) {
+static state::Status branch_on_condition(state::Emitter *e, const state::ThenBlocks *w) {
     state::Value condition = state::pop_value(e);
     if (condition.ty.kind != .boolean) return state::fail("a condition is a Bool; write `x != 0`", w->span);
     c::LLVMBuildCondBr(e->builder, condition.llvm, w->blocks[0], w->blocks[1]);
@@ -190,14 +190,14 @@ static state::Status branch_on_condition(state::Emitter *e, const state::Work *w
 }
 
 // The `then` branch is done: leave for `end`, and go on in the `else` block.
-static state::Status after_then(state::Emitter *e, const state::Work *w) {
+static state::Status after_then(state::Emitter *e, const state::ThenBlocks *w) {
     jump_unless_ended(e, w->blocks[1]);
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
     return state::success();
 }
 
 // Both branches are done: `end` is where the code goes on, and when nothing jumps to it, it is `unreachable`.
-static state::Status if_end(state::Emitter *e, const state::Work *w) {
+static state::Status if_end(state::Emitter *e, const state::ThenBlocks *w) {
     jump_unless_ended(e, w->blocks[0]);
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
     if (c::LLVMGetFirstUse(c::LLVMBasicBlockAsValue(w->blocks[0])) == nullptr) c::LLVMBuildUnreachable(e->builder);
@@ -216,25 +216,25 @@ static state::Status if_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValue
     c::LLVMBasicBlockRef then_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "then");
     c::LLVMBasicBlockRef else_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "else");
     c::LLVMBasicBlockRef end_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "endif");
-    state::Work end = {.then = if_end, .span = s->span};
+    state::ThenBlocks end = {.run = if_end, .span = s->span};
     end.blocks[0] = end_block;
-    state::push_then(e, end);
-    state::push_then(e, into_work(into_start, else_branch, slot, ty));
-    state::Work after = {.then = after_then, .span = s->span};
+    state::push_then_blocks(e, end);
+    state::push_then_general(e, into_work(into_start, else_branch, slot, ty));
+    state::ThenBlocks after = {.run = after_then, .span = s->span};
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
-    state::push_then(e, after);
-    state::push_then(e, into_work(into_start, then_branch, slot, ty));
-    state::Work branch = {.then = branch_on_condition, .span = condition->span};
+    state::push_then_blocks(e, after);
+    state::push_then_general(e, into_work(into_start, then_branch, slot, ty));
+    state::ThenBlocks branch = {.run = branch_on_condition, .span = condition->span};
     branch.blocks[0] = then_block;
     branch.blocks[1] = else_block;
-    state::push_then(e, branch);
+    state::push_then_blocks(e, branch);
     state::push_eval(e, condition, state::no_hint());
     return state::success();
 }
 
 // `if` and block branches store into the slot, and so does any other statement as the last line of a branch.
-static state::Status into_start(state::Emitter *e, const state::Work *w) {
+static state::Status into_start(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind == .block) return block_into(e, s, w->value, w->ty);
     if (s->kind == .if_stmt) return if_into(e, s, w->value, w->ty);
@@ -246,7 +246,7 @@ static state::Status into_start(state::Emitter *e, const state::Work *w) {
 // The entry
 
 // Everything has run: the slot is loaded (and `undef` when no branch reached the end, in a block of its own).
-static state::Status finish(state::Emitter *e, const state::Work *w) {
+static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     c::LLVMValueRef out = nullptr;
     if (ended(e)) {
         // No branch reached the end: what follows (the store into a local) goes in a block nothing jumps to.
@@ -277,8 +277,8 @@ export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint
         if (!found) state::scalar_type(e, "i32", &ty); // every branch ends: the value is never read
     }
     c::LLVMValueRef slot = state::new_alloca(e, ty, "value");
-    state::Work done = {.then = finish, .value = slot, .ty = ty, .span = s->span};
-    state::push_then(e, done);
-    state::push_then(e, into_work(into_start, s, slot, ty));
+    state::ThenGeneral done = {.run = finish, .value = slot, .ty = ty, .span = s->span};
+    state::push_then_general(e, done);
+    state::push_then_general(e, into_work(into_start, s, slot, ty));
     return state::success();
 }

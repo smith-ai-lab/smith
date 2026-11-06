@@ -13,13 +13,13 @@ static I32 negate(I32 x) {
 }
 
 // A lambda in a generic calls the generic's `constexpr auto handler`: it is not a capture.
-Call wrap(constexpr auto handler) {
+Call wrap_handler(constexpr auto handler) {
     return [](I32 x) -> I32 { return handler(x) + 1; };
 }
 
 I32 main() {
-    Call a = wrap(twice);
-    Call b = wrap(negate);
+    Call a = wrap_handler(twice);
+    Call b = wrap_handler(negate);
     c::printf("%d %d\n", a(10), b(10));
     return 0;
 }

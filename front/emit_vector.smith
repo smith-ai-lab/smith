@@ -55,7 +55,7 @@ export state::TyResult type_vector(state::Emitter *e, const ast::TypeExpr *t) {
 // ---------------------------------------------------------------------------------------------------------------
 // Building a vector from its lanes
 
-static state::Status build_finish(state::Emitter *e, const state::Work *w) {
+static state::Status build_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty vector = w->ty;
     c::LLVMValueRef built = c::LLVMGetPoison(vector.llvm);
     c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
@@ -73,7 +73,8 @@ static state::Status build_finish(state::Emitter *e, const state::Work *w) {
 
 static state::Status build_from(state::Emitter *e, ast::ExprRef items[:], state::Ty vector, ast::Span span) {
     if (countof(items) != vector.count) return state::failf(span, vector.name, " lanes: found ", countof(items));
-    state::push_then(e, (state::Work){.then = build_finish, .ty = vector, .number = countof(items), .span = span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = build_finish, .ty = vector, .number = countof(items), .span = span});
     for (Usize i = countof(items); i > 0; i--)
         state::push_eval(e, items[i - 1], state::hint_of(*vector.element));
     return state::success();
@@ -152,7 +153,7 @@ static c::LLVMValueRef integer_lanes(state::Emitter *e, ast::BinaryOp op, c::LLV
     return nullptr;
 }
 
-static state::Status binary_finish(state::Emitter *e, const state::Work *w) {
+static state::Status binary_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a binary expression", w->span);
     }
@@ -202,7 +203,7 @@ export state::Status binary(state::Emitter *e, const ast::Expr *x) {
     const ast::Expr *right = x->kind.binary.right;
     state::Hint right_hint = operand_hint(e, right);
     state::Hint left_hint = operand_hint(e, left);
-    state::push_then(e, (state::Work){.then = binary_finish, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = binary_finish, .expr = x, .span = x->span});
     state::push_eval(e, right, right_hint);
     state::push_eval(e, left, left_hint);
     return state::success();

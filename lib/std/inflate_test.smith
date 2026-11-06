@@ -45,7 +45,7 @@ static random::Key take(random::Key *stream) {
 // reads, so the bytes are given back with the arena and the test frees nothing.
 static const U8 *load(arena::Arena *store, const char *name, const char *extension, Usize *size) {
     char path[128];
-    format::Written written = format::to(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
+    format::Written written = format::write(path, sizeof path, "tests/fixtures/inflate/", name, ".", extension);
     test::check_condition(written.fits);
     arena::ArenaAllocator allocator = arena::allocator(store);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);

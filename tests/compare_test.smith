@@ -180,10 +180,10 @@ static void compared(const char *arguments) {
         return;
     }
     char command[8192];
-    (void)format::to(command, sizeof command, "line='", arguments, "'; real='", real, "'; ", compare_case);
+    (void)format::write(command, sizeof command, "line='", arguments, "'; real='", real, "'; ", compare_case);
     scratch::Run run = scratch::sh(&p, command);
     char name[512];
-    (void)format::to(name, sizeof name, "compare: ", arguments);
+    (void)format::write(name, sizeof name, "compare: ", arguments);
     scratch::expect_text(name, "ok", run.out);
 }
 

@@ -106,11 +106,20 @@ export void test_front_fix_zero_array_fill_keeps_an_existing_import_of_std_array
                  "    xs[0].a = 1\n");
 }
 
-// A C parameter named `fn` (a function pointer, called or passed on) is written `fn_`: `fn` is a keyword of smith's own
-// syntax (#2412). A lambda's `fn` stays.
-export void test_front_fix_a_parameter_named_fn_is_renamed() {
-    expect_fixed("module m;\nint apply(int (*fn)(int), int x) {\n    return fn(x);\n}\n",
-                 "fn apply(fn_: fn(i32) -> i32, x: i32) -> i32:\n    return fn_(x)\n");
+// A C name spelled like a keyword of smith's own syntax is an error at that identifier, and the text is left alone
+// (#2455): the fixer never invents a name such as `fn_`.
+static void expect_clash(Str before, Str message) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", before);
+    test::check_equal(fixed.clash, message);
+}
+
+export void test_front_fix_a_parameter_named_fn_is_an_error() {
+    expect_clash("module m;\nint apply(int (*fn)(int), int x) {\n    return fn(x);\n}\n",
+                 "2:17: `fn` is a keyword: rename it");
 }
 
 export void test_front_fix_a_lambda_keeps_its_fn() {
@@ -118,16 +127,15 @@ export void test_front_fix_a_lambda_keeps_its_fn() {
                  "fn f():\n    g(fn(a: i32) -> i32: a)\n");
 }
 
-// A C function named `yield` is written `yield_` at its declaration and at a call through its module (#2403): `yield`
-// is a keyword of smith's own syntax. Its `@c_name` keeps the C symbol.
-export void test_front_fix_a_function_named_yield_is_renamed() {
-    expect_fixed("module m;\n[[std::c_name(\"m_yield\")]] export bool yield(int x) {\n    return x > 0;\n}\n",
-                 "@c_name(\"m_yield\") pub fn yield_(x: i32) -> bool:\n    return x > 0\n");
+// A C function named `yield` is an error too, at its declaration (#2455).
+export void test_front_fix_a_function_named_yield_is_an_error() {
+    expect_clash("module m;\nexport bool yield(int x) {\n    return x > 0;\n}\n",
+                 "2:13: `yield` is a keyword: rename it");
 }
 
-export void test_front_fix_a_call_of_a_module_yield_is_renamed() {
-    expect_fixed("module m;\nimport std::stream;\nbool f(Stream *s) {\n    return stream::yield(s);\n}\n",
-                 "import std.stream\nfn f(s: *Stream) -> bool:\n    return stream.yield_(s)\n");
+export void test_front_fix_a_call_of_stream_suspend_is_not_a_clash() {
+    expect_fixed("module m;\nimport std::stream;\nbool f(Stream *s) {\n    return stream::suspend(s);\n}\n",
+                 "import std.stream\nfn f(s: *Stream) -> bool:\n    return stream.suspend(s)\n");
 }
 
 // A function type after a `:` keeps its `fn`, and so does the `fn` before a name that is a keyword (#2442).
@@ -305,5 +313,38 @@ export void test_front_fix_zero_an_importer_binds_the_reads_of_an_option_field()
     Str got = chars;
     Str want = "import front_fix_zero_list\nfn second(n: *front_fix_zero_list.Node) -> i32:\n"
                "    next := n.next else:\n        return 0\n    return next.value\n";
+    test::check_equal(got, want);
+}
+
+// A field the old text calls `type` is `ty` once the file is renamed (#2458): the importer, read as it is on disk,
+// still finds it in the module, so its `== nullptr` test is `.none`.
+export void test_front_fix_zero_an_importer_finds_a_field_renamed_from_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_zero_kind.smith";
+    Str user_path = "/tmp/front_fix_zero_kind_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_zero_kind;\nexport struct Sym {\n    I32 kind;\n"
+                                              "    Sym *type;\n};\nexport Sym make(I32 k) {\n"
+                                              "    return (Sym){.kind = k};\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_zero_kind_user;\nimport front_fix_zero_kind;\n"
+                                            "I32 first(const front_fix_zero_kind::Sym *s) {\n"
+                                            "    if (s->type == nullptr) return 0;\n    return 1;\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    (void)c::unlink(module_path.data);
+    (void)c::unlink(user_path.data);
+    if (back == .error) {
+        test::check(false);
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    Str want = "import front_fix_zero_kind\nfn first(s: *front_fix_zero_kind.Sym) -> i32:\n"
+               "    if s.ty == .none:\n        return 0\n    return 1\n";
     test::check_equal(got, want);
 }

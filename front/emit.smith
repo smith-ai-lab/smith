@@ -49,11 +49,10 @@
 // `Emitter` (emit_state.smith, with every field the later tickets need; one that is missing is an escalation, not an
 // edit). The protocol, which B2, B3a and B3b build on:
 //
-//  1. A `Work` item is one of four kinds. `eval` (an `Expr` and a `Hint`): its handler pushes exactly ONE `Value` on
-//  the
-//     value stack. `place` (an `Expr`): its handler pushes ONE `Value` whose `llvm` is the ADDRESS and `ty` the type
-//     stored there. `statement` (a `Stmt`): its handler pushes nothing. `then` (a function and the data the pusher
-//     stored in the item): a continuation, called as `then(e, &item)`.
+//  1. A `Work` item is one of four kinds, a payload enum. `eval` (an `Expr` and a `Hint`): its handler pushes exactly
+//     ONE `Value` on the value stack. `place` (an `Expr`): its handler pushes ONE `Value` whose `llvm` is the ADDRESS
+//     and `ty` the type stored there. `statement` (a `Stmt`): its handler pushes nothing. `then` (a `Then`: a function
+//     and the data the pusher stored in it): a continuation, called as `item.run(e, &item)`.
 //  2. The stack runs LIFO. A handler does its work now, or pushes more work: to evaluate `a` then `b` and then combine
 //     them it pushes the continuation `combine` first, then `eval b`, then `eval a`. The continuation finds `b`'s value
 //     on top of the value stack, then `a`'s (`state::pop_value`), and pushes its own. A handler that needs `a`'s value
@@ -64,7 +63,7 @@
 //     result). `state::no_hint()` when there is none; an integer literal then is an `I32`.
 //  4. Handlers: `Status f(Emitter *e, const ast::Expr *x, Hint hint)` for an expression, `Status f(Emitter *e, const
 //     ast::Stmt *s)` for a statement, `Status f(Emitter *e, const ast::Expr *x)` for a place, `Status f(Emitter *e,
-//     const Work *w)` for a continuation. Status is a Result: `try` passes a failure up, `state::success()` is success,
+//     const Then *w)` for a continuation. Status is a Result: `try` passes a failure up, `state::success()` is success,
 //     `state::fail(message, span)` and `state::not_emitted(kind, span)` fail. A failure ends the walk at once; the
 //     work and value stacks are dropped, so a handler needs no cleanup of them.
 //  5. Code goes through `e->builder`. A handler that makes blocks leaves the builder positioned in the block where the
@@ -521,7 +520,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .cast) {
         const ast::Expr *operand = x->kind.cast.operand;
         if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
-        return emit_memory::cast(e, x, hint);
+        return emit_memory::cast_expr(e, x, hint);
     }
     if (x->kind == .try_expr) return optional::try_expr(e, x);
     if (x->kind == .query) return emit_memory::query(e, x, hint);
@@ -550,7 +549,7 @@ static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
 // ---------------------------------------------------------------------------------------------------------------
 // Statements B1 emits
 
-static state::Status drop_value(state::Emitter *e, const state::Work *_) {
+static state::Status drop_value(state::Emitter *e, const state::ThenNone *_) {
     _ = state::pop_value(e);
     return state::success();
 }
@@ -559,19 +558,19 @@ static state::Status expression_statement(state::Emitter *e, const ast::Stmt *s)
     if (s->kind != .expression) {
         return state::fail("not an expression statement", s->span);
     }
-    state::push_then(e, (state::Work){.then = drop_value, .span = s->span});
+    state::push_then_none(e, (state::ThenNone){.run = drop_value, .span = s->span});
     state::push_eval(e, s->kind.expression.value, state::no_hint());
     return state::success();
 }
 
-static state::Status block_close(state::Emitter *e, const state::Work *_) {
+static state::Status block_close(state::Emitter *e, const state::ThenNone *_) {
     state::end_scope(e);
     return state::success();
 }
 
 // The block's end: the scope closes after whatever work `end_of_block` pushed (a deferred statement sees the locals).
-static state::Status block_finish(state::Emitter *e, const state::Work *w) {
-    state::push_then(e, (state::Work){.then = block_close, .span = w->span});
+static state::Status block_finish(state::Emitter *e, const state::ThenNone *w) {
+    state::push_then_none(e, (state::ThenNone){.run = block_close, .span = w->span});
     try control::end_of_block(e, w->span);
     return state::success();
 }
@@ -581,14 +580,14 @@ static state::Status block_statement(state::Emitter *e, const ast::Stmt *s) {
         return state::fail("not a block", s->span);
     }
     state::begin_scope(e);
-    state::push_then(e, (state::Work){.then = block_finish, .span = s->span});
+    state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = s->span});
     for (Usize i = countof(s->kind.block.items); i > 0; i--)
         state::push_statement(e, s->kind.block.items[i - 1]);
     return state::success();
 }
 
 // The value of the initializer is on the stack: the slot is made, the value stored, the name visible from here on.
-static state::Status declare_finish(state::Emitter *e, const state::Work *w) {
+static state::Status declare_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Decl *d = w->decl;
     if (d->kind != .variable) {
         return state::fail("not a variable", w->span);
@@ -654,7 +653,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
             }
             dropped = state::hint_of(made.ok);
         }
-        state::push_then(e, (state::Work){.then = drop_value, .span = span});
+        state::push_then_none(e, (state::ThenNone){.run = drop_value, .span = span});
         state::push_eval(e, d->kind.variable.init, dropped);
         return state::success();
     }
@@ -683,7 +682,8 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
         ty = made.ok;
         hint = state::hint_of(ty);
     }
-    state::push_then(e, (state::Work){.then = declare_finish, .decl = d, .ty = ty, .flag = is_auto, .span = span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = declare_finish, .decl = d, .ty = ty, .flag = is_auto, .span = span});
     state::push_eval(e, d->kind.variable.init, hint);
     return state::success();
 }
@@ -698,23 +698,24 @@ static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s
     return state::not_emitted("this kind of declaration in a block", s->span);
 }
 
-static state::Status ret_value(state::Emitter *e, const state::Work *w) {
+static state::Status ret_value(state::Emitter *e, const state::ThenGeneral *w) {
     c::LLVMBuildRet(e->builder, w->value);
     return state::success();
 }
 
-static state::Status ret_void(state::Emitter *e, const state::Work *_) {
+static state::Status ret_void(state::Emitter *e, const state::ThenNone *_) {
     c::LLVMBuildRetVoid(e->builder);
     return state::success();
 }
 
-static state::Status return_finish(state::Emitter *e, const state::Work *w) {
+static state::Status return_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value value = state::pop_value(e);
     if (!state::same_type(value.ty, e->result)) {
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
-    state::push_then(e, (state::Work){.then = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);
     return state::success();
 }
@@ -725,14 +726,14 @@ static state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
     }
     if (streams::in_body(e)) return streams::return_statement(e, s);
     if (s->kind.return_stmt.value == nullptr) return call::return_void(e, s);
-    state::push_then(e, (state::Work){.then = return_finish, .span = s->span});
+    state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = s->span});
     state::push_eval(e, s->kind.return_stmt.value, state::hint_of(e->result));
     return state::success();
 }
 
 // `static_assert(c, "m")` in a body: the condition is built and must fold to a constant; false stops the compile with
 // the message.
-static state::Status static_assert_finish(state::Emitter *e, const state::Work *w) {
+static state::Status static_assert_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value condition = state::pop_value(e);
     Str message = "";
     if (w->stmt == nullptr && w->decl->kind == .static_assert_decl)
@@ -755,7 +756,7 @@ static state::Status static_assert_statement(state::Emitter *e, const ast::Stmt 
     if (s->kind != .static_assert_stmt) {
         return state::fail("not a static_assert", s->span);
     }
-    state::push_then(e, (state::Work){.then = static_assert_finish, .stmt = s, .span = s->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = static_assert_finish, .stmt = s, .span = s->span});
     state::push_eval(e, s->kind.static_assert_stmt.condition, state::no_hint());
     return state::success();
 }
@@ -796,24 +797,41 @@ static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     return state::not_emitted("this kind of statement", s->span);
 }
 
+// Call a `then` item's continuation with its data, at the location of the node that pushed it.
+static state::Status run_then(state::Emitter *e, state::Then then) {
+    switch (then) {
+    case .none:
+        try debug::then_location(e, then.none.span);
+        return then.none.run(e, &then.none);
+    case .expr:
+        try debug::then_location(e, then.expr.span);
+        return then.expr.run(e, &then.expr);
+    case .blocks:
+        try debug::then_location(e, then.blocks.span);
+        return then.blocks.run(e, &then.blocks);
+    case .general:
+        try debug::then_location(e, then.general.span);
+        return then.general.run(e, &then.general);
+    }
+}
+
 // Run the work stack until it is empty or a handler fails.
 static state::Status run(state::Emitter *e) {
     while (e->work_count > 0) {
         e->work_count -= 1;
         state::Work item = e->work[e->work_count];
-        switch (item.kind) {
+        switch (item) {
         case .eval:
-            try dispatch_expr(e, item.expr, item.hint);
+            try dispatch_expr(e, item.eval.expr, item.eval.hint);
             break;
         case .place:
-            try dispatch_place(e, item.expr);
+            try dispatch_place(e, item.place.expr);
             break;
         case .statement:
-            try dispatch_statement(e, item.stmt);
+            try dispatch_statement(e, item.statement.stmt);
             break;
         case .then:
-            try debug::then_location(e, &item);
-            try item.then(e, &item);
+            try run_then(e, item.then);
             break;
         }
     }
@@ -1138,7 +1156,7 @@ static Bool ends_in_noreturn_call(const state::Emitter *e, const ast::Stmt *body
 
 // The last line's value after a line that returned (`return 1` then `2`, or a compile-time `if` that kept a `return`,
 // #2277) goes into a block nothing jumps to, as a statement does.
-static state::Status value_after_end(state::Emitter *e, const state::Work *w) {
+static state::Status value_after_end(state::Emitter *e, const state::ThenGeneral *w) {
     (void)w;
     start_block_if_ended(e);
     return state::success();
@@ -1157,10 +1175,10 @@ static state::Status value_block(state::Emitter *e, const ast::Stmt *body) {
     }
     ast::Expr *value = last->kind.expression.value;
     state::begin_scope(e);
-    state::push_then(e, (state::Work){.then = block_finish, .span = body->span});
-    state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
+    state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
+    state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = last->span});
     state::push_eval(e, value, state::hint_of(e->result));
-    state::push_then(e, (state::Work){.then = value_after_end, .span = last->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = value_after_end, .span = last->span});
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
     return state::success();
@@ -1208,7 +1226,7 @@ static Bool ends_in_value_statement(const ast::Stmt *body) {
 }
 
 // Runs after the statements before the last line: its handler pushes the one Value `return_finish` takes.
-static state::Status value_start(state::Emitter *e, const state::Work *w) {
+static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind == .match_stmt) return matching::value_of(e, s, w->hint);
     return blockval::value_of(e, s, w->hint);
@@ -1223,11 +1241,12 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     ast::StmtRef items[:] = body->kind.block.items;
     const ast::Stmt *last = items[countof(items) - 1];
     state::begin_scope(e);
-    state::push_then(e, (state::Work){.then = block_finish, .span = body->span});
-    state::push_then(e, (state::Work){.then = return_finish, .span = last->span});
-    state::push_then(
-        e, (state::Work){.then = value_start, .stmt = last, .hint = state::hint_of(e->result), .span = last->span});
-    state::push_then(e, (state::Work){.then = value_after_end, .span = last->span});
+    state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
+    state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = last->span});
+    state::push_then_general(
+        e,
+        (state::ThenGeneral){.run = value_start, .stmt = last, .hint = state::hint_of(e->result), .span = last->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = value_after_end, .span = last->span});
     for (Usize i = countof(items) - 1; i > 0; i--)
         state::push_statement(e, items[i - 1]);
     return state::success();
@@ -1300,7 +1319,7 @@ static state::Status emit_function(state::Emitter *e, const ast::Decl *d, state:
     c::LLVMBasicBlockRef last = c::LLVMGetInsertBlock(e->builder);
     if (c::LLVMGetBasicBlockTerminator(last) == nullptr) {
         if (is_void_result) {
-            state::push_then(e, (state::Work){.then = ret_void, .span = d->span});
+            state::push_then_none(e, (state::ThenNone){.run = ret_void, .span = d->span});
             try control::before_return(e, d->span);
             try run(e);
         } else {
@@ -1542,14 +1561,14 @@ static state::Status convert_failure(state::Value value, state::Ty to, ast::Span
 }
 
 // `value` as a `to`: as it is, a wider integer (the checker's widening rules: the same signedness, or unsigned to a
-// strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap`).
+// strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap_some`).
 static state::Status convert_value(state::Emitter *e, state::Value value, state::Ty to, ast::Span span,
                                    state::ConvertSite site) {
     if (state::same_type(value.ty, to)) {
         state::push_value(e, value);
         return state::success();
     }
-    if (to.kind == .option) return optional::wrap(e, value, to, span);
+    if (to.kind == .option) return optional::wrap_some(e, value, to, span);
     if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, span);
     if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
         return emit_memory::array_value_as_slice(e, value, to);
@@ -1675,7 +1694,7 @@ static state::Status check_static_asserts(state::Emitter *e) {
         state::Ty none = {.llvm = c::LLVMVoidTypeInContext(e->context)};
         start_function(e, (state::FunctionInfo){.llvm = scratch, .llvm_type = type, .result = none});
         state::begin_scope(e);
-        state::push_then(e, (state::Work){.then = static_assert_finish, .decl = d, .span = d->span});
+        state::push_then_general(e, (state::ThenGeneral){.run = static_assert_finish, .decl = d, .span = d->span});
         state::push_eval(e, d->kind.static_assert_decl.condition, state::no_hint());
         e->folding = true;
         state::Status ran = run(e);

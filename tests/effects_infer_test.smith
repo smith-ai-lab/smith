@@ -285,8 +285,8 @@ static void stack_project(const scratch::Project *p, const char *source) {
 static I64 frame(const scratch::Project *p, const char *reference, const char *name) {
     char command[512];
     format::Written written =
-        format::to(command, sizeof command, "awk -F'\\t' -v n=", name,
-                   " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su");
+        format::write(command, sizeof command, "awk -F'\\t' -v n=", name,
+                      " '{ split($1, p, \":\"); if (p[length(p)] == n) print $2 }' ", reference, ".su");
     test::check_condition(written.fits);
     const char *text = scratch::sh(p, command).out;
     return text[0] == '\0' ? -1 : (I64)c::strtol(text, nullptr, 10);
@@ -295,8 +295,8 @@ static I64 frame(const scratch::Project *p, const char *reference, const char *n
 // A column of a function's row in <program>.stack: 2 is its worst case, 3 the deepest call.
 static const char *row(const scratch::Project *p, const char *program, const char *name, const char *column) {
     char command[512];
-    format::Written written = format::to(command, sizeof command, "awk -F'\\t' -v n=", name, " '$1 == n { print $",
-                                         column, " }' ", program, ".stack");
+    format::Written written = format::write(command, sizeof command, "awk -F'\\t' -v n=", name, " '$1 == n { print $",
+                                            column, " }' ", program, ".stack");
     test::check_condition(written.fits);
     return scratch::sh(p, command).out;
 }

@@ -26,7 +26,7 @@ constexpr Usize depth_max = 64;
 [[nodiscard]] Str join(Str base, Str name) {
     Usize size = countof(base) + countof(name) + 2;
     char path[:] = mem::alloc_slice(char, size);
-    format::Written written = format::to(path.data, size, base, "/", name);
+    format::Written written = format::write(path.data, size, base, "/", name);
     return path[0:written.length];
 }
 

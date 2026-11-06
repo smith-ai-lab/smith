@@ -21,7 +21,7 @@ static void screen_equals_golden(const char *arguments, const char *golden) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char command[256];
-    (void)format::to(command, sizeof command, "smith ", arguments);
+    (void)format::write(command, sizeof command, "smith ", arguments);
     scratch::Run run = scratch::sh(&p, command);
     defer scratch::release(run.out);
     defer scratch::release(run.err);
