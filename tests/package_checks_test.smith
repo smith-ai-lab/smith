@@ -43,17 +43,17 @@ static scratch::Run compile_and_run(const scratch::Project *p, const char *flags
     // The handlers runtime (the libraries call its getters and setters) is the library's own C: built with the flags
     // it is built with everywhere, not this test's warnings.
     format::Written written =
-        format::to(command, sizeof command, "smith cc -std=gnu23 -O2 -fPIC -I \"$SMITH_REPO/.smith/include\" ",
-                   "-c lib/handlers.c -o bin/handlers.o");
+        format::write(command, sizeof command, "smith cc -std=gnu23 -O2 -fPIC -I \"$SMITH_REPO/.smith/include\" ",
+                      "-c lib/handlers.c -o bin/handlers.o");
     test::check_condition(written.fits);
     scratch::Run runtime = scratch::sh(p, command);
     scratch::expect_status("lib/handlers.c compiles", 0, &runtime);
     written =
-        format::to(command, sizeof command, compile_prefix, flags, " tests/package.c", libraries, " -o ", program);
+        format::write(command, sizeof command, compile_prefix, flags, " tests/package.c", libraries, " -o ", program);
     test::check_condition(written.fits);
     scratch::Run compiled = scratch::sh(p, command);
     scratch::expect_status("tests/package.c compiles", 0, &compiled);
-    written = format::to(command, sizeof command, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"");
+    written = format::write(command, sizeof command, "cd scratch && ../", program, " \"$PWD/../pkg.tar.gz\" \"$PWD\"");
     test::check_condition(written.fits);
     return scratch::sh(p, command);
 }

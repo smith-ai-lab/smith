@@ -10,9 +10,9 @@ import <smith/trace.h>; // smith_failure_format: the stop of a wrong call
 
 // <smith/format.h>: a type-checked formatter. There is no format string: the arguments are the pieces of the text, in
 // order, and the type of each one picks how it is written, when the call is compiled. A type it has no rule for is a
-// compile-time error at the call (the note names the instance, `format::to(char *, Usize, Point)`).
+// compile-time error at the call (the note names the instance, `format::write(char *, Usize, Point)`).
 //
-//   format::Written written = format::to(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
+//   format::Written written = format::write(buffer, sizeof buffer, "count: ", n, " of ", total, "\n");
 //   if (!written.fits) ...                                   // the text was cut; written.length is what it needed
 //   char path[:] = format::push(folder, "/", name, ".smith");       // path.data is terminated too
 //
@@ -94,7 +94,7 @@ import <smith/trace.h>; // smith_failure_format: the stop of a wrong call
 } Writer;
 
 // A writer over buffer, which has room for capacity characters (0 and a null buffer measure only). The Writer is what
-// `to` is made of, and C can use it: each put below is a piece of the text, and finish ends it.
+// `write` is made of, and C can use it: each put below is a piece of the text, and finish ends it.
 [[std::c_name("smith_format_make")]] export [[nodiscard]] Writer make(char *buffer, Usize capacity) {
     return (Writer){buffer, capacity, 0};
 }
@@ -526,10 +526,10 @@ Bool prepare_digits(Writer *writer, F64 value, U32 want, char *digits, I32 *expo
     }
 }
 
-// One piece by the rule of its type. `to` is this for each of its arguments; a type with no rule is an error here, and
-// at the position of the piece in `to`. A struct is `{m = 1, b = 2}`: each field by the rule of its type (a nested
-// struct the same way, a fixed array as `[1, 2, 3]`: a field that is an array arrives as the pointer it decays to, with
-// its count), the fields being the compile-time list `fields(typeof(piece))`.
+// One piece by the rule of its type. `write` is this for each of its arguments; a type with no rule is an error here,
+// and at the position of the piece in `write`. A struct is `{m = 1, b = 2}`: each field by the rule of its type (a
+// nested struct the same way, a fixed array as `[1, 2, 3]`: a field that is an array arrives as the pointer it decays
+// to, with its count), the fields being the compile-time list `fields(typeof(piece))`.
 void put(Writer *writer, auto piece, Usize count) {
     (void)count;
     if constexpr (is_bool(typeof(piece))) {
@@ -620,7 +620,7 @@ Padded make_padded(auto piece, U32 width, Bool left) {
 
 // The piece in a column of width characters, spaces on its left: pad(n, 5) is printf's %5d, pad(name, 12) is %12s, and
 // pad(format::fixed(x, 1), 6) is %6.1f. A piece wider than the column is written whole. The piece is any of the types
-// `to` has a rule for except a Padded; a string or a text is read when the Padded is written, not when it is made.
+// `write` has a rule for except a Padded; a string or a text is read when the Padded is written, not when it is made.
 export [[nodiscard]] Padded pad(auto piece, U32 width) {
     return make_padded(piece, width, false);
 }
@@ -630,8 +630,8 @@ export [[nodiscard]] Padded left(auto piece, U32 width) {
     return make_padded(piece, width, true);
 }
 
-// The error for a piece `to` has no rule for: Slot is char[n] for the n-th piece, counting from 1, so the message can
-// name it (a static_assert message is a literal, and a number cannot be a compile-time parameter).
+// The error for a piece `write` has no rule for: Slot is char[n] for the n-th piece, counting from 1, so the message
+// can name it (a static_assert message is a literal, and a number cannot be a compile-time parameter).
 void no_rule(constexpr Type Slot) {
     if constexpr (sizeof(Slot) == 1) {
         static_assert(false, "format: no rule for the type of piece 1; the note lists the types in order");
@@ -701,7 +701,7 @@ void no_rule(constexpr Type Slot) {
 // The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
 // be null) and only measures. See the rules at the top of this file. A piece with no rule is an error that says which
 // one it is (piece 3 is the third piece after buffer and capacity, counting from 1).
-export Written to(char *buffer, Usize capacity, auto... args) {
+export Written write(char *buffer, Usize capacity, auto... args) {
     Writer writer = {buffer, capacity, 0};
     for constexpr (Usize i = 0; i < countof(args); i++) {
         if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
@@ -723,9 +723,15 @@ export Written to(char *buffer, Usize capacity, auto... args) {
     return finish(&writer);
 }
 
+// The old name of write, kept until a release has write: code compiled into smith by the released smith (std.console)
+// still calls it (the lag rule). Remove it, and the reserved-name error it raises, once that release is out (#2526).
+export Written to(char *buffer, Usize capacity, auto... args) {
+    return write(buffer, capacity, args...);
+}
+
 // How many characters the arguments make, without the terminator.
 export Usize length(auto... args) {
-    return to(nullptr, 0, args...).length;
+    return write(nullptr, 0, args...).length;
 }
 
 // What push returns: a `char[:]`. (The header pass cannot yet write a generic whose result is spelled
@@ -744,7 +750,7 @@ export Chars push(auto... args) {
     Usize characters = length(args...);
     char *memory =
         mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
-    Written written = to(memory, characters + 1, args...);
+    Written written = write(memory, characters + 1, args...);
     return cut(memory, written.length);
 }
 

@@ -161,7 +161,7 @@ static F64 read_test_log(const char path[:]) {
 
 // `a/b/c` as text in `buffer`.
 static typeof(const char[:]) join(char buffer[:], const char a[:], const char b[:], const char c[:]) {
-    format::Written made = format::to(buffer.data, countof(buffer), a, "/", b, "/", c);
+    format::Written made = format::write(buffer.data, countof(buffer), a, "/", b, "/", c);
     return buffer[0:made.length];
 }
 
@@ -169,7 +169,7 @@ static typeof(const char[:]) join(char buffer[:], const char a[:], const char b[
 static void read_run(const char folder[:], const char id[:]) {
     char path[path_size];
     read_steps(join(path[0:path_size], folder, id, "steps.tsv"));
-    format::Written made = format::to(path, sizeof path, folder, "/", id);
+    format::Written made = format::write(path, sizeof path, folder, "/", id);
     files::EntriesResult listed = files::list(path[0:made.length]);
     Bool found = false;
     if (listed == .ok) {
@@ -177,7 +177,7 @@ static void read_run(const char folder[:], const char id[:]) {
             if (!slice::starts_with(entry.name, text::make("test-log-"))) continue;
             char inner[path_size];
             char log[path_size];
-            made = format::to(inner, sizeof inner, id, "/", entry.name);
+            made = format::write(inner, sizeof inner, id, "/", entry.name);
             F64 total = read_test_log(join(log[0:path_size], folder, inner[0:made.length], "test.log"));
             if (total < 0) continue;
             add(&parts, entry.name, total, total);

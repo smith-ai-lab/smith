@@ -47,7 +47,7 @@ static void prepare(const scratch::Project *p, Bool full) {
 static const char *join(const char *a, const char *b, const char *c) {
     Usize length = format::length(a, b, c);
     char *out = mem::alloc_slice(char, length + 1).data;
-    (void)format::to(out, length + 1, a, b, c);
+    (void)format::write(out, length + 1, a, b, c);
     return out;
 }
 

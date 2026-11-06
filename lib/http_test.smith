@@ -49,8 +49,8 @@ static Bool is(const char *text, const char *expected) {
 static void client_make(Client *client, net::Fake *fake_net, files::Fake *fake_files) {
     client->net = fake_net;
     client->files = fake_files;
-    (void)format::to(client->path, sizeof client->path, "download.bin");
-    (void)format::to(client->source, sizeof client->source, "source.bin");
+    (void)format::write(client->path, sizeof client->path, "download.bin");
+    (void)format::write(client->source, sizeof client->source, "source.bin");
 }
 
 static void serve(Client *client, const char *host, const char *response) {
@@ -195,7 +195,7 @@ static void check_redirects_refused(Client *client) {
     const char *schemes[3] = {"http://s.example/x", "file:///etc/passwd", "ftp://s.example/x"};
     for (Usize i = 0; i < 3; i++) {
         char response[256];
-        (void)format::to(response, sizeof response, "HTTP/1.1 302 Found\r\nLocation: ", schemes[i], "\r\n\r\n");
+        (void)format::write(response, sizeof response, "HTTP/1.1 302 Found\r\nLocation: ", schemes[i], "\r\n\r\n");
         serve(client, "t.example", response);
         c::SmithHttpResult result = get(client, "https://t.example/t");
         test::check_equal(result.error.code, eprotonosupport);
@@ -285,12 +285,12 @@ static void check_local(Client *client) {
         files::write_file(client->source[0:__builtin_strlen(client->source)], bytes, files::Replace);
     test::check_condition(written == .ok);
     char url[300];
-    (void)format::to(url, sizeof url, "file://", client->source);
+    (void)format::write(url, sizeof url, "file://", client->source);
     c::SmithHttpResult result = get(client, url);
     test::check_equal(result.error.code, 0);
     test::check_equal(result.size, 11);
     test::check(is(body_of(client), "local bytes"));
-    (void)format::to(url, sizeof url, "file://", client->source, ".missing");
+    (void)format::write(url, sizeof url, "file://", client->source, ".missing");
     result = get(client, url);
     test::check_equal(result.error.code, enoent);
     // The error message is a fixed buffer, and a message shows only the first 100 characters of a url
@@ -306,7 +306,7 @@ static void check_local(Client *client) {
 static void check_large(Client *client) {
     static U8 response[large_size];
     Usize body = sizeof response - 128;
-    Usize head = format::to((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
+    Usize head = format::write((char *)response, 128, "HTTP/1.1 200 OK\r\nContent-Length: ", body, "\r\n\r\n").length;
     for (Usize i = 0; i < body; i++) {
         response[head + i] = (U8)(i * 31 + i / 251);
     }
@@ -337,12 +337,12 @@ static void check_stall_after(Client *client, Usize which, const char *answer, U
         client->net,
         (net::Server){.host = hosts[which], .port = 443, .response = answer, .response_size = size, .stalls = true});
     char url[64];
-    (void)format::to(url, sizeof url, "https://", hosts[which], "/slow");
+    (void)format::write(url, sizeof url, "https://", hosts[which], "/slow");
     c::SmithHttpResult result = get(client, url);
     test::check_equal(result.error.code, etimedout);
     test::check(contains(result.error.message, url));
     char shown[32];
-    (void)format::to(shown, sizeof shown, "after ", size, " bytes");
+    (void)format::write(shown, sizeof shown, "after ", size, " bytes");
     test::check(contains(result.error.message, shown));
     test::check(contains(result.error.message, "nothing received for 60 s"));
 }

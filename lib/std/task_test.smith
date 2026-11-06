@@ -497,7 +497,7 @@ if constexpr (target::os != target::macos) {
         for (struct c::dirent *entry = c::readdir(folder); entry != nullptr; entry = c::readdir(folder)) {
             if (entry->d_name[0] == '.') continue;
             char path[64] = {};
-            format::to(path, sizeof(path), "/proc/self/task/", (const char *)entry->d_name, "/stat");
+            format::write(path, sizeof(path), "/proc/self/task/", (const char *)entry->d_name, "/stat");
             c::FILE *file = c::fopen(path, "r");
             if (file == nullptr) continue; // gone already
             char line[512] = {};

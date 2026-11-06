@@ -119,7 +119,7 @@ static void ensure_folder(const char *path, Usize length) {
 const char *joined(auto... pieces) {
     Usize length = format::length(pieces...);
     char *text = mem::alloc_slice(char, length + 1).data;
-    (void)format::to(text, length + 1, pieces...);
+    (void)format::write(text, length + 1, pieces...);
     return text;
 }
 
@@ -127,7 +127,7 @@ const char *joined(auto... pieces) {
 static void git_isolate(const scratch::Project *p, Bool identity, Saved *saved) {
     const char *folder = joined(p->root, "/.home");
     ensure_folder(folder, c::strlen(folder));
-    (void)format::to(saved->home, sizeof saved->home, "HOME=", folder);
+    (void)format::write(saved->home, sizeof saved->home, "HOME=", folder);
     Usize n = 0;
     saved->entries[n++] = saved->home;
     saved->entries[n++] = "GIT_CONFIG_NOSYSTEM=1";
