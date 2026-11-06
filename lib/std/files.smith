@@ -454,7 +454,10 @@ void reads_log(const char *path) {
     contract::trusted(); // the edge: it asks the handler of the thread and the environment
     if (c::smith_handlers_files() != nullptr) return;
     env::Value named = env::get("SMITH_READS_LOG");
-    if (named == .some) reads_log_append(named.some.data, path); // the environment's text ends with a NUL
+    if (named == .some) {
+        env::Text text = named.some;
+        reads_log_append(text.data, path); // the environment's text ends with a NUL
+    }
 }
 
 // Opens the file. A mode the call does not take is a checked failure.
@@ -587,9 +590,13 @@ BytesResult read_open(File file, Usize hint) {
     case .ok:
         BytesResult whole = read_open(opened.ok, hint);
         CloseResult closed = close(opened.ok);
-        if (whole == .ok && closed == .some) {
-            return {.error = closed.some};
+        switch (whole) {
+        case .error:
+            return whole;
+        case .ok:
+            break;
         }
+        if (closed == .some) return {.error = closed.some};
         return whole;
     }
 }
@@ -603,9 +610,13 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
     case .ok:
         CountResult written = write(opened.ok, data);
         CloseResult closed = close(opened.ok);
-        if (written == .ok && closed == .some) {
-            return {.error = closed.some};
+        switch (written) {
+        case .error:
+            return written;
+        case .ok:
+            break;
         }
+        if (closed == .some) return {.error = closed.some};
         return written;
     }
 }
