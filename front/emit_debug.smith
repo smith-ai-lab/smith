@@ -236,9 +236,9 @@ export state::Status expr_location(state::Emitter *e, const ast::Expr *x) {
 // Before a continuation runs: a `then` item carries the span of the node that pushed it, so what it builds (the add of
 // `a + b`, after both operands were visited) gets that node's location. An item with no span (both ends 0) changes
 // nothing.
-export state::Status then_location(state::Emitter *e, const state::Work *w) {
-    if (e->debug_builder == nullptr || (w->span.start == 0 && w->span.end == 0)) return state::success();
-    c::LLVMSetCurrentDebugLocation2(e->builder, location_at(e, w->span));
+export state::Status then_location(state::Emitter *e, ast::Span span) {
+    if (e->debug_builder == nullptr || (span.start == 0 && span.end == 0)) return state::success();
+    c::LLVMSetCurrentDebugLocation2(e->builder, location_at(e, span));
     return state::success();
 }
 

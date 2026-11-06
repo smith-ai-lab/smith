@@ -203,7 +203,7 @@ static c::LLVMValueRef tag_constant(state::Emitter *e, U64 value) {
 }
 
 // The payload is on the value stack: convert it, store the tag and the payload in a slot, load the enumeration.
-static state::Status variant_finish(state::Emitter *e, const state::Work *w) {
+static state::Status variant_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value value = state::pop_value(e);
     Usize at = 0;
     if (!find_enum(e, w->ty.name, &at)) return state::fail("not an enumeration", w->span);
@@ -245,7 +245,8 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
             state::push_value(e, (state::Value){.llvm = tagged, .ty = ty});
             return state::success();
         }
-        state::push_then(e, (state::Work){.then = variant_finish, .ty = ty, .number = position, .span = x->span});
+        state::push_then_general(
+            e, (state::ThenGeneral){.run = variant_finish, .ty = ty, .number = position, .span = x->span});
         state::push_eval(e, inner, state::hint_of(item.payload));
         return state::success();
     }
@@ -268,7 +269,7 @@ static state::Value scrutinee(state::Emitter *e, Bool is_value) {
 }
 
 // The arm's value is on the stack: store it in the slot (a value) or drop it (a statement), leave for the end.
-static state::Status arm_finish(state::Emitter *e, const state::Work *w) {
+static state::Status arm_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value value = state::pop_value(e);
     if (w->flag) {
         try state::convert(e, value, w->ty, w->span, .initialize);
@@ -282,7 +283,7 @@ static state::Status arm_finish(state::Emitter *e, const state::Work *w) {
 }
 
 // An arm that ran as a statement is done: its scope ends, and it goes on at the end unless it left (`return`).
-static state::Status arm_done(state::Emitter *e, const state::Work *w) {
+static state::Status arm_done(state::Emitter *e, const state::ThenGeneral *w) {
     state::end_scope(e);
     jump(e, w->blocks[1]);
     return state::success();
@@ -314,7 +315,7 @@ static void bind_variant(state::Emitter *e, state::Value o, Str name, Str bindin
 }
 
 // An arm starts: its block, a scope, the payload bound, then its value.
-static state::Status arm_start(state::Emitter *e, const state::Work *w) {
+static state::Status arm_start(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
@@ -331,23 +332,23 @@ static state::Status arm_start(state::Emitter *e, const state::Work *w) {
     }
     if (scrutinee(e, w->flag).ty.kind == .variant_enum)
         bind_variant(e, scrutinee(e, w->flag), first.name, first.binding);
-    state::Work finish = *w;
+    state::ThenGeneral finish = *w;
     const ast::Expr *value = arm->value;
     if (value->kind == .stmt_expr && (!w->flag || leaves(value->kind.stmt_expr.stmt))) {
-        finish.then = arm_done; // `return c`, a block of statements: run as a statement, no value
-        state::push_then(e, finish);
+        finish.run = arm_done; // `return c`, a block of statements: run as a statement, no value
+        state::push_then_general(e, finish);
         state::push_statement(e, value->kind.stmt_expr.stmt);
         return state::success();
     }
-    finish.then = arm_finish;
-    state::push_then(e, finish);
+    finish.run = arm_finish;
+    state::push_then_general(e, finish);
     state::Hint hint = w->flag ? state::hint_of(w->ty) : state::no_hint();
     state::push_eval(e, arm->value, hint);
     return state::success();
 }
 
 // All arms are done: go on in the end block; a value is loaded from its slot.
-static state::Status match_end(state::Emitter *e, const state::Work *w) {
+static state::Status match_end(state::Emitter *e, const state::ThenGeneral *w) {
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[1]);
     if (!w->flag) {
         _ = state::pop_value(e);
@@ -522,11 +523,11 @@ static state::Status branch_constants(state::Emitter *e, const ast::Stmt *s, c::
     return state::success();
 }
 
-static state::Status dispatch_arms(state::Emitter *e, const state::Work *w);
+static state::Status dispatch_arms(state::Emitter *e, const state::ThenGeneral *w);
 
 // The scrutinee is on the value stack: a match over a number, a `char` or a `bool` evaluates its constant patterns
 // first, with the scrutinee's type as their hint; the arms are dispatched once they are on the stack.
-static state::Status dispatch(state::Emitter *e, const state::Work *w) {
+static state::Status dispatch(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
@@ -534,11 +535,11 @@ static state::Status dispatch(state::Emitter *e, const state::Work *w) {
     state::Value o = state::peek_value(e);
     Usize at = 0;
     Bool scalar = o.ty.kind == .boolean || (o.ty.kind == .integer && !find_enum(e, o.ty.name, &at));
-    state::Work next = *w;
-    next.then = dispatch_arms;
+    state::ThenGeneral next = *w;
+    next.run = dispatch_arms;
     next.flag = w->flag;
     next.number = scalar ? 1 : 0;
-    state::push_then(e, next);
+    state::push_then_general(e, next);
     if (!scalar) return state::success();
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     for (Usize i = countof(arms); i > 0; i--) {
@@ -552,7 +553,7 @@ static state::Status dispatch(state::Emitter *e, const state::Work *w) {
 }
 
 // Dispatches to the arm blocks and queues the arms.
-static state::Status dispatch_arms(state::Emitter *e, const state::Work *w) {
+static state::Status dispatch_arms(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
@@ -581,15 +582,15 @@ static state::Status dispatch_arms(state::Emitter *e, const state::Work *w) {
         c::LLVMValueRef slot = state::new_alloca(e, result, "match");
         state::push_value(e, (state::Value){.llvm = slot, .ty = result});
     }
-    state::Work end = {.then = match_end, .flag = w->flag, .ty = result, .span = s->span};
+    state::ThenGeneral end = {.run = match_end, .flag = w->flag, .ty = result, .span = s->span};
     end.blocks[1] = end_block;
-    state::push_then(e, end);
+    state::push_then_general(e, end);
     for (Usize i = countof(arms); i > 0; i--) {
-        state::Work arm = {
-            .then = arm_start, .stmt = s, .number = i - 1, .flag = w->flag, .ty = result, .span = arms[i - 1].span};
+        state::ThenGeneral arm = {
+            .run = arm_start, .stmt = s, .number = i - 1, .flag = w->flag, .ty = result, .span = arms[i - 1].span};
         arm.blocks[0] = blocks[i - 1];
         arm.blocks[1] = end_block;
-        state::push_then(e, arm);
+        state::push_then_general(e, arm);
     }
     return state::success();
 }
@@ -598,7 +599,8 @@ static state::Status begin(state::Emitter *e, const ast::Stmt *s, state::Hint hi
     if (s->kind != .match_stmt) {
         return state::fail("not a match", s->span);
     }
-    state::push_then(e, (state::Work){.then = dispatch, .stmt = s, .hint = hint, .flag = is_value, .span = s->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = dispatch, .stmt = s, .hint = hint, .flag = is_value, .span = s->span});
     state::push_eval(e, s->kind.match_stmt.value, state::no_hint());
     return state::success();
 }
@@ -619,21 +621,21 @@ static void jump_to(state::Emitter *e, c::LLVMBasicBlockRef block) {
     jump(e, block);
 }
 
-static state::Status let_after_then(state::Emitter *e, const state::Work *w) {
+static state::Status let_after_then(state::Emitter *e, const state::ThenGeneral *w) {
     state::end_scope(e);
     jump_to(e, w->blocks[1]);
     c::LLVMPositionBuilderAtEnd(e->builder, w->flag ? w->blocks[0] : w->blocks[1]);
     return state::success();
 }
 
-static state::Status let_branch_end(state::Emitter *e, const state::Work *w) {
+static state::Status let_branch_end(state::Emitter *e, const state::ThenBlocks *w) {
     jump_to(e, w->blocks[0]);
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
     return state::success();
 }
 
 // The scrutinee is on the value stack: compare its tag with the pattern's variant, bind the payload, run the branches.
-static state::Status let_branch(state::Emitter *e, const state::Work *w) {
+static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
     if (s->kind != .if_let) {
         return state::fail("not an if let", s->span);
@@ -670,15 +672,15 @@ static state::Status let_branch(state::Emitter *e, const state::Work *w) {
     state::begin_scope(e);
     if (o.ty.kind == .variant_enum) bind_variant(e, o, pattern.name, pattern.binding);
     if (has_else) {
-        state::Work end = {.then = let_branch_end, .span = s->span};
+        state::ThenBlocks end = {.run = let_branch_end, .span = s->span};
         end.blocks[0] = end_block;
-        state::push_then(e, end);
+        state::push_then_blocks(e, end);
         state::push_statement(e, else_branch);
     }
-    state::Work after = {.then = let_after_then, .flag = has_else, .span = s->span};
+    state::ThenGeneral after = {.run = let_after_then, .flag = has_else, .span = s->span};
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
-    state::push_then(e, after);
+    state::push_then_general(e, after);
     state::push_statement(e, s->kind.if_let.then_branch);
     return state::success();
 }
@@ -688,7 +690,7 @@ export state::Status if_let(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .if_let) {
         return state::fail("not an if let", s->span);
     }
-    state::push_then(e, (state::Work){.then = let_branch, .stmt = s, .span = s->span});
+    state::push_then_general(e, (state::ThenGeneral){.run = let_branch, .stmt = s, .span = s->span});
     state::push_eval(e, s->kind.if_let.value, state::no_hint());
     return state::success();
 }

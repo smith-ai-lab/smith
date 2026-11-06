@@ -479,7 +479,7 @@ static Bool folds_negated(c::LLVMValueRef x) {
     return (c::LLVMConstIntGetZExtValue(x) & mask) != sign;
 }
 
-static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
+static state::Status unary_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .unary) {
         return state::fail("not a unary expression", w->span);
     }
@@ -537,7 +537,7 @@ export state::Status unary_op(state::Emitter *e, const ast::Expr *x, state::Hint
             return state::success();
         }
     }
-    state::push_then(e, (state::Work){.then = unary_finish, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = unary_finish, .expr = x, .span = x->span});
     state::push_eval(e, operand, hint);
     return state::success();
 }
@@ -554,7 +554,7 @@ static state::Hint hint_from_name(state::Emitter *e, const ast::Expr *x) {
     return state::no_hint();
 }
 
-static state::Status binary_finish(state::Emitter *e, const state::Work *w) {
+static state::Status binary_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a binary expression", w->span);
     }
@@ -564,12 +564,12 @@ static state::Status binary_finish(state::Emitter *e, const state::Work *w) {
 }
 
 // The left operand is on the stack: the right one is evaluated as its type.
-static state::Status binary_middle(state::Emitter *e, const state::Work *w) {
+static state::Status binary_middle(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a binary expression", w->span);
     }
     state::Value left = state::peek_value(e);
-    state::push_then(e, (state::Work){.then = binary_finish, .expr = w->expr, .span = w->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = binary_finish, .expr = w->expr, .span = w->span});
     state::Ty wanted = left.ty;
     if (left.ty.kind == .pointer) state::scalar_type(e, "Usize", &wanted); // `p + 1`: the offset is a count
     state::push_eval(e, w->expr->kind.binary.right, state::hint_of(wanted));
@@ -584,7 +584,7 @@ export state::Status binary_op(state::Emitter *e, const ast::Expr *x, state::Hin
     state::Hint left_hint = hint;
     if (!left_hint.present && (x->kind.binary.left->kind == .integer || x->kind.binary.left->kind == .floating))
         left_hint = hint_from_name(e, x->kind.binary.right);
-    state::push_then(e, (state::Work){.then = binary_middle, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = binary_middle, .expr = x, .span = x->span});
     state::push_eval(e, x->kind.binary.left, left_hint);
     return state::success();
 }
@@ -592,7 +592,7 @@ export state::Status binary_op(state::Emitter *e, const ast::Expr *x, state::Hin
 // ---------------------------------------------------------------------------------------------------------------
 // Assignment
 
-static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
+static state::Status assign_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .assign) {
         return state::fail("not an assignment", w->span);
     }
@@ -614,12 +614,12 @@ static state::Status assign_finish(state::Emitter *e, const state::Work *w) {
 }
 
 // The target's address is on the stack: the value is evaluated as its type.
-static state::Status assign_middle(state::Emitter *e, const state::Work *w) {
+static state::Status assign_middle(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .assign) {
         return state::fail("not an assignment", w->span);
     }
     state::Value place = state::peek_value(e);
-    state::push_then(e, (state::Work){.then = assign_finish, .expr = w->expr, .span = w->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = assign_finish, .expr = w->expr, .span = w->span});
     state::push_eval(e, w->expr->kind.assign.value, state::hint_of(place.ty));
     return state::success();
 }
@@ -629,14 +629,14 @@ export state::Status assign_op(state::Emitter *e, const ast::Expr *x, state::Hin
     if (x->kind != .assign) {
         return state::fail("not an assignment", x->span);
     }
-    state::push_then(e, (state::Work){.then = assign_middle, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = assign_middle, .expr = x, .span = x->span});
     state::push_place(e, x->kind.assign.target);
     return state::success();
 }
 
 // `++x`, `--x`, `x++` and `x--` (#2510): the place is loaded, moved by one with the checked add or subtract, stored,
 // and the old value (postfix) or the new one (prefix) is the result.
-static state::Status increment_finish(state::Emitter *e, const state::Work *w) {
+static state::Status increment_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .unary) return state::fail("not an increment", w->span);
     state::Value place = state::pop_value(e);
     ast::UnaryOp which = w->expr->kind.unary.op;
@@ -666,7 +666,7 @@ static state::Status increment_finish(state::Emitter *e, const state::Work *w) {
 
 export state::Status increment(state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .unary) return state::fail("not an increment", x->span);
-    state::push_then(e, (state::Work){.then = increment_finish, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = increment_finish, .expr = x, .span = x->span});
     state::push_place(e, x->kind.unary.operand);
     return state::success();
 }
@@ -737,7 +737,7 @@ static c::LLVMRealPredicate real_predicate(ast::BinaryOp op) {
     return c::LLVMRealUNE; // `!=` is true when either side is NaN, as in C
 }
 
-static state::Status float_compare_finish(state::Emitter *e, const state::Work *w) {
+static state::Status float_compare_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a comparison", w->span);
     }
@@ -754,12 +754,12 @@ static state::Status float_compare_finish(state::Emitter *e, const state::Work *
     return state::success();
 }
 
-static state::Status float_compare_middle(state::Emitter *e, const state::Work *w) {
+static state::Status float_compare_middle(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a comparison", w->span);
     }
     state::Value left = state::peek_value(e);
-    state::push_then(e, (state::Work){.then = float_compare_finish, .expr = w->expr, .span = w->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = float_compare_finish, .expr = w->expr, .span = w->span});
     state::push_eval(e, w->expr->kind.binary.right, state::hint_of(left.ty));
     return state::success();
 }
@@ -772,7 +772,7 @@ export state::Status float_comparison(state::Emitter *e, const ast::Expr *x, sta
     const ast::Expr *left = x->kind.binary.left;
     state::Hint left_hint = state::no_hint();
     if (left->kind == .integer || left->kind == .floating) left_hint = hint_from_name(e, x->kind.binary.right);
-    state::push_then(e, (state::Work){.then = float_compare_middle, .expr = x, .span = x->span});
+    state::push_then_expr(e, (state::ThenExpr){.run = float_compare_middle, .expr = x, .span = x->span});
     state::push_eval(e, left, left_hint);
     return state::success();
 }
@@ -813,7 +813,7 @@ static void float_report(state::Emitter *e, c::LLVMValueRef lost, state::Value f
     report_if(e, lost, "smith_contract_fail_cast", args, 3);
 }
 
-static state::Status float_cast_finish(state::Emitter *e, const state::Work *w) {
+static state::Status float_cast_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value from = state::pop_value(e);
     state::Ty to = w->ty;
     c::LLVMValueRef out = nullptr;
@@ -857,7 +857,8 @@ export state::Status float_cast(state::Emitter *e, const ast::Expr *x, state::Hi
         return {.error = made.error};
     }
     Bool checked = e->options.checked != nullptr && types::cast_checked(e->options.checked, x).needed;
-    state::push_then(e, (state::Work){.then = float_cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = float_cast_finish, .ty = made.ok, .flag = checked, .span = x->span});
     state::push_eval(e, operand, state::no_hint());
     return state::success();
 }

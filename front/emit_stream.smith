@@ -248,7 +248,7 @@ static c::LLVMValueRef handle_of(state::Emitter *e) {
     return c::LLVMBuildLoad2(e->builder, cell.ty.llvm, cell.address, "stream");
 }
 
-static state::Status finish_then(state::Emitter *e, const state::Work *_) {
+static state::Status finish_then(state::Emitter *e, const state::ThenNone *_) {
     c::LLVMValueRef argv[3] = {handle_of(e), nullptr, nullptr};
     call_runtime(e, "finish", argv, 1);
     c::LLVMBuildUnreachable(e->builder);
@@ -257,7 +257,7 @@ static state::Status finish_then(state::Emitter *e, const state::Work *_) {
 
 // End the stream here: the pending `defer`s run, then `finish`.
 export state::Status end_body(state::Emitter *e, ast::Span span) {
-    state::push_then(e, (state::Work){.then = finish_then, .span = span});
+    state::push_then_none(e, (state::ThenNone){.run = finish_then, .span = span});
     return control::before_return(e, span);
 }
 
@@ -272,12 +272,12 @@ export state::Status return_statement(state::Emitter *e, const ast::Stmt *s) {
 // ---------------------------------------------------------------------------------------------------------------
 // `yield x`
 
-static state::Status position_then(state::Emitter *e, const state::Work *w) {
+static state::Status position_then(state::Emitter *e, const state::ThenBlocks *w) {
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
     return state::success();
 }
 
-static state::Status yield_finish(state::Emitter *e, const state::Work *w) {
+static state::Status yield_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value value = state::pop_value(e);
     state::Local cell = {};
     state::find_local(e, "$stream", &cell);
@@ -296,9 +296,9 @@ static state::Status yield_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMBasicBlockRef closed = c::LLVMAppendBasicBlockInContext(e->context, e->function, "yield.closed");
     c::LLVMBuildCondBr(e->builder, again, go_on, closed);
     c::LLVMPositionBuilderAtEnd(e->builder, closed);
-    state::Work resume = {.then = position_then, .span = w->span};
+    state::ThenBlocks resume = {.run = position_then, .span = w->span};
     resume.blocks[0] = go_on;
-    state::push_then(e, resume);
+    state::push_then_blocks(e, resume);
     return end_body(e, w->span);
 }
 
@@ -309,7 +309,7 @@ export state::Status yield_statement(state::Emitter *e, const ast::Stmt *s) {
     state::Local cell = {};
     state::find_local(e, "$stream", &cell);
     state::Ty element = *cell.ty.element;
-    state::push_then(e, (state::Work){.then = yield_finish, .span = s->span});
+    state::push_then_none(e, (state::ThenNone){.run = yield_finish, .span = s->span});
     state::push_eval(e, s->kind.yield_stmt.value, state::hint_of(element));
     return state::success();
 }
@@ -327,13 +327,13 @@ export Bool is_call(const ast::Expr *x) {
     return state::same_text(path.segments[1].text, "next") || state::same_text(path.segments[1].text, "close");
 }
 
-static state::Status argument_of(const state::Work *w, state::Value value, Str what) {
+static state::Status argument_of(const state::ThenGeneral *w, state::Value value, Str what) {
     if (value.ty.kind == .pointer && value.ty.element != nullptr && is_stream(*value.ty.element))
         return state::success();
     return state::failf(w->span, what, " takes the address of a stream: `", what, "(&s)`");
 }
 
-static state::Status next_finish(state::Emitter *e, const state::Work *w) {
+static state::Status next_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value address = state::pop_value(e);
     try argument_of(w, address, "stream::next");
     state::Ty payload = *address.ty.element->element;
@@ -353,7 +353,7 @@ static state::Status next_finish(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
-static state::Status close_finish(state::Emitter *e, const state::Work *w) {
+static state::Status close_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value address = state::pop_value(e);
     try argument_of(w, address, "stream::close");
     c::LLVMValueRef argv[3] = {address.llvm, nullptr, nullptr};
@@ -374,9 +374,9 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
         return state::failf(x->span, "stream::", path.segments[1].text, " takes one argument, the call has ",
                             (U64)countof(args));
     if (is_next)
-        state::push_then(e, (state::Work){.then = next_finish, .span = x->span});
+        state::push_then_general(e, (state::ThenGeneral){.run = next_finish, .span = x->span});
     else
-        state::push_then(e, (state::Work){.then = close_finish, .span = x->span});
+        state::push_then_general(e, (state::ThenGeneral){.run = close_finish, .span = x->span});
     state::push_eval(e, args[0], state::no_hint());
     return state::success();
 }

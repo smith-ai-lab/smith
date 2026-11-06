@@ -637,7 +637,7 @@ static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
 }
 
 // The field values are on the value stack, the first deepest: start from zero and insert each.
-static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
+static state::Status construct_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *x = w->expr;
     if (x->kind != .call) {
         return state::fail("not a call", w->span);
@@ -699,7 +699,8 @@ static state::Status construct(state::Emitter *e, const ast::Expr *x, Usize at) 
                                 " is given twice");
         seen[field] = true;
     }
-    state::push_then(e, (state::Work){.then = construct_finish, .expr = x, .number = count, .span = x->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = construct_finish, .expr = x, .number = count, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         Usize field = 0;
         field_for(record, args, i - 1, &field);
@@ -732,7 +733,7 @@ static c::LLVMValueRef passed(state::Emitter *e, state::Value value, state::Ty p
 }
 
 // The arguments' values are on the value stack, the first deepest: check them and call.
-static state::Status call_finish(state::Emitter *e, const state::Work *w) {
+static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *written = w->expr;
     if (written->kind != .call) {
         return state::fail("not a call", w->span);
@@ -805,14 +806,15 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
 
 // A lambda written as an argument is made by `emit_lambda::argument` (it may capture by reference); any other argument
 // is evaluated.
-static state::Status lambda_argument(state::Emitter *e, const state::Work *w) {
+static state::Status lambda_argument(state::Emitter *e, const state::ThenGeneral *w) {
     return lambdas::argument(e, w->expr, w->hint);
 }
 
 static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint hint) {
     const ast::Expr *value = value_of(arg);
     if (value->kind == .lambda)
-        state::push_then(e, (state::Work){.then = lambda_argument, .expr = value, .hint = hint, .span = value->span});
+        state::push_then_general(
+            e, (state::ThenGeneral){.run = lambda_argument, .expr = value, .hint = hint, .span = value->span});
     else
         state::push_eval(e, value, hint);
 }
@@ -877,7 +879,8 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
         release(sig);
         return slotted;
     }
-    state::push_then(e, (state::Work){.then = call_finish, .expr = written, .number = count, .span = x->span});
+    state::push_then_general(
+        e, (state::ThenGeneral){.run = call_finish, .expr = written, .number = count, .span = x->span});
     // The first argument runs first: it is pushed last.
     for (Usize i = count; i > 0; i--) {
         Bool extra = i - 1 >= countof(sig.params); // a variadic argument has no parameter to give it a type
