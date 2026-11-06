@@ -35,7 +35,7 @@ static types_convert::Verdict conv(types::Table *t, types::TypeRef from, types::
     return types_convert::convert(t, from, to, types_convert::no_literal());
 }
 
-static types_convert::Verdict cast(types::Table *t, types::TypeRef from, types::TypeRef to) {
+static types_convert::Verdict cast_verdict(types::Table *t, types::TypeRef from, types::TypeRef to) {
     return types_convert::cast_ok(t, from, to, types_convert::no_literal());
 }
 
@@ -224,13 +224,13 @@ export void test_front_types_convert_bytes_cast_to_text_for_free() {
     types::TypeRef forms[_] = {types::slice_of(&t, named(&t, "U8"), false), types::slice_of(&t, named(&t, "U8"), true),
                                types::slice_of(&t, named(&t, "I8"), false), types::slice_of(&t, named(&t, "I8"), true)};
     for (Usize i = 0; i < countof(forms); i++) {
-        types_convert::Verdict v = cast(&t, forms[i], t.text);
+        types_convert::Verdict v = cast_verdict(&t, forms[i], t.text);
         test::check_condition(is(v, types_convert::cast));
         test::check_condition(!v.checked);
         test::check_condition(!conv(&t, forms[i], t.text).ok);
     }
-    test::check_condition(cast(&t, types::slice_of(&t, named(&t, "I32"), false), t.text).ok == false);
-    refused(cast(&t, types::slice_of(&t, named(&t, "I32"), false), t.text), "expected Str", "found I32[:]",
+    test::check_condition(cast_verdict(&t, types::slice_of(&t, named(&t, "I32"), false), t.text).ok == false);
+    refused(cast_verdict(&t, types::slice_of(&t, named(&t, "I32"), false), t.text), "expected Str", "found I32[:]",
             "convert the parts one at a time");
 }
 
@@ -280,34 +280,34 @@ export void test_front_types_convert_casts() {
     types::Table t = types::start(types::lp64());
     types::TypeRef int32 = named(&t, "I32");
     types::TypeRef byte = named(&t, "U8");
-    test::check_condition(is(cast(&t, named(&t, "I64"), int32), types_convert::cast));
-    test::check_condition(cast(&t, int32, byte).ok);
-    test::check_condition(cast(&t, int32, named(&t, "F64")).ok);
-    test::check_condition(cast(&t, named(&t, "F64"), int32).ok);
-    test::check_condition(cast(&t, int32, named(&t, "Bool")).ok);
-    test::check_condition(cast(&t, named(&t, "Bool"), int32).ok);
+    test::check_condition(is(cast_verdict(&t, named(&t, "I64"), int32), types_convert::cast));
+    test::check_condition(cast_verdict(&t, int32, byte).ok);
+    test::check_condition(cast_verdict(&t, int32, named(&t, "F64")).ok);
+    test::check_condition(cast_verdict(&t, named(&t, "F64"), int32).ok);
+    test::check_condition(cast_verdict(&t, int32, named(&t, "Bool")).ok);
+    test::check_condition(cast_verdict(&t, named(&t, "Bool"), int32).ok);
     types::TypeRef color = types::new_enumeration(&t, "Color", int32);
-    test::check_condition(cast(&t, color, int32).ok);
-    test::check_condition(cast(&t, int32, color).ok);
+    test::check_condition(cast_verdict(&t, color, int32).ok);
+    test::check_condition(cast_verdict(&t, int32, color).ok);
     types::TypeRef nothing = types::pointer_to(&t, named(&t, "Void"), false);
     types::TypeRef plain = types::pointer_to(&t, int32, false);
     types::TypeRef readonly = types::pointer_to(&t, int32, true);
-    test::check_condition(cast(&t, nothing, plain).ok);
+    test::check_condition(cast_verdict(&t, nothing, plain).ok);
     // A cast out of a read-only void pointer to a writable one is the C cast `(T *)p` (#2361).
-    test::check_condition(cast(&t, types::pointer_to(&t, named(&t, "Void"), true), plain).ok);
-    test::check_condition(cast(&t, plain, types::pointer_to(&t, byte, false)).ok);
-    test::check_condition(cast(&t, plain, named(&t, "Usize")).ok);
-    test::check_condition(cast(&t, named(&t, "U64"), plain).ok);
-    test::check_condition(is(cast(&t, int32, types::option_of(&t, int32)), types_convert::to_some));
-    refused(cast(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
-    refused(cast(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *", "found const I32 *",
+    test::check_condition(cast_verdict(&t, types::pointer_to(&t, named(&t, "Void"), true), plain).ok);
+    test::check_condition(cast_verdict(&t, plain, types::pointer_to(&t, byte, false)).ok);
+    test::check_condition(cast_verdict(&t, plain, named(&t, "Usize")).ok);
+    test::check_condition(cast_verdict(&t, named(&t, "U64"), plain).ok);
+    test::check_condition(is(cast_verdict(&t, int32, types::option_of(&t, int32)), types_convert::to_some));
+    refused(cast_verdict(&t, readonly, plain), "expected I32 *", "found const I32 *", "drops const");
+    refused(cast_verdict(&t, readonly, types::pointer_to(&t, byte, false)), "expected U8 *", "found const I32 *",
             "drops const");
-    refused(cast(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
-    refused(cast(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
-    refused(cast(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
+    refused(cast_verdict(&t, plain, int32), "expected I32", "found I32 *", "cast through Usize");
+    refused(cast_verdict(&t, int32, t.void_type), "expected Void", "found I32", "_ := x");
+    refused(cast_verdict(&t, color, types::new_enumeration(&t, "Shape", int32)), "expected Shape", "found Color",
             "convert the parts one at a time");
-    refused(cast(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");
-    refused(cast(&t, types::option_of(&t, int32), int32), "expected I32", "found Option(I32)",
+    refused(cast_verdict(&t, t.text, int32), "expected I32", "found Str", "convert the parts one at a time");
+    refused(cast_verdict(&t, types::option_of(&t, int32), int32), "expected I32", "found Option(I32)",
             "test whether it holds a value first");
 }
 
@@ -317,17 +317,17 @@ export void test_front_types_convert_float_casts_round_and_are_not_checked() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Table t = types::start(types::lp64());
-    types_convert::Verdict a = cast(&t, named(&t, "I32"), named(&t, "F32"));
+    types_convert::Verdict a = cast_verdict(&t, named(&t, "I32"), named(&t, "F32"));
     test::check_condition(is(a, types_convert::cast));
     test::check_condition(!a.checked);
-    test::check_condition(cast(&t, named(&t, "I64"), named(&t, "F64")).ok);
-    test::check_condition(!cast(&t, named(&t, "I64"), named(&t, "F64")).checked);
-    test::check_condition(cast(&t, named(&t, "F64"), named(&t, "F32")).ok);
-    test::check_condition(!cast(&t, named(&t, "F64"), named(&t, "F32")).checked);
-    test::check_condition(cast(&t, named(&t, "U64"), named(&t, "F32")).ok);
-    test::check_condition(!cast(&t, named(&t, "U64"), named(&t, "F32")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "I64"), named(&t, "F64")).ok);
+    test::check_condition(!cast_verdict(&t, named(&t, "I64"), named(&t, "F64")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "F64"), named(&t, "F32")).ok);
+    test::check_condition(!cast_verdict(&t, named(&t, "F64"), named(&t, "F32")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "U64"), named(&t, "F32")).ok);
+    test::check_condition(!cast_verdict(&t, named(&t, "U64"), named(&t, "F32")).checked);
     // Float to integer stays checked.
-    test::check_condition(cast(&t, named(&t, "F32"), named(&t, "I64")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "F32"), named(&t, "I64")).checked);
 }
 
 export void test_front_types_convert_lossy_casts_are_checked() {
@@ -338,28 +338,28 @@ export void test_front_types_convert_lossy_casts_are_checked() {
     types::Table t = types::start(types::lp64());
     types::TypeRef int32 = named(&t, "I32");
     // Narrowing, signed to unsigned and unsigned to signed of the same width, float to integer: asserted to fit.
-    test::check_condition(cast(&t, named(&t, "I64"), int32).checked);
-    test::check_condition(cast(&t, int32, named(&t, "U8")).checked);
-    test::check_condition(cast(&t, int32, named(&t, "U32")).checked);
-    test::check_condition(cast(&t, int32, named(&t, "U64")).checked);
-    test::check_condition(cast(&t, named(&t, "U32"), int32).checked);
-    test::check_condition(cast(&t, named(&t, "U64"), named(&t, "I64")).checked);
-    test::check_condition(cast(&t, named(&t, "F64"), int32).checked);
-    test::check_condition(cast(&t, named(&t, "F32"), named(&t, "U8")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "I64"), int32).checked);
+    test::check_condition(cast_verdict(&t, int32, named(&t, "U8")).checked);
+    test::check_condition(cast_verdict(&t, int32, named(&t, "U32")).checked);
+    test::check_condition(cast_verdict(&t, int32, named(&t, "U64")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "U32"), int32).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "U64"), named(&t, "I64")).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "F64"), int32).checked);
+    test::check_condition(cast_verdict(&t, named(&t, "F32"), named(&t, "U8")).checked);
     // Nothing to lose: widening, the same width and sign, a number to a float, enumerations, Bool, pointers.
-    test::check_condition(!cast(&t, int32, named(&t, "I64")).checked);
-    test::check_condition(!cast(&t, named(&t, "U8"), named(&t, "I32")).checked);
-    test::check_condition(!cast(&t, named(&t, "Char"), named(&t, "U8")).checked);
-    test::check_condition(!cast(&t, int32, named(&t, "F64")).checked);
-    test::check_condition(!cast(&t, named(&t, "F64"), named(&t, "F32")).checked);
-    test::check_condition(!cast(&t, named(&t, "Bool"), int32).checked);
-    test::check_condition(!cast(&t, int32, named(&t, "Bool")).checked);
+    test::check_condition(!cast_verdict(&t, int32, named(&t, "I64")).checked);
+    test::check_condition(!cast_verdict(&t, named(&t, "U8"), named(&t, "I32")).checked);
+    test::check_condition(!cast_verdict(&t, named(&t, "Char"), named(&t, "U8")).checked);
+    test::check_condition(!cast_verdict(&t, int32, named(&t, "F64")).checked);
+    test::check_condition(!cast_verdict(&t, named(&t, "F64"), named(&t, "F32")).checked);
+    test::check_condition(!cast_verdict(&t, named(&t, "Bool"), int32).checked);
+    test::check_condition(!cast_verdict(&t, int32, named(&t, "Bool")).checked);
     types::TypeRef color = types::new_enumeration(&t, "Color", int32);
-    test::check_condition(!cast(&t, color, int32).checked);
-    test::check_condition(!cast(&t, int32, color).checked);
+    test::check_condition(!cast_verdict(&t, color, int32).checked);
+    test::check_condition(!cast_verdict(&t, int32, color).checked);
     types::TypeRef plain = types::pointer_to(&t, int32, false);
-    test::check_condition(!cast(&t, plain, named(&t, "Usize")).checked);
-    test::check_condition(!cast(&t, named(&t, "U64"), plain).checked);
+    test::check_condition(!cast_verdict(&t, plain, named(&t, "Usize")).checked);
+    test::check_condition(!cast_verdict(&t, named(&t, "U64"), plain).checked);
     // A constant that fits has no check.
     test::check_condition(!types_convert::cast_ok(&t, int32, named(&t, "U8"), types_convert::constant(200)).checked);
     test::check_condition(!types_convert::cast_ok(&t, int32, named(&t, "U64"), types_convert::constant(5)).checked);
@@ -369,8 +369,8 @@ export void test_front_types_convert_lossy_casts_are_checked() {
     test::check_condition(
         types_convert::cast_ok(&t, named(&t, "F64"), named(&t, "U8"), types_convert::constant_float(255.9)).ok);
     // A cast that is refused is not checked, it is an error.
-    test::check_condition(!cast(&t, plain, int32).ok);
-    test::check_condition(!cast(&t, plain, int32).checked);
+    test::check_condition(!cast_verdict(&t, plain, int32).ok);
+    test::check_condition(!cast_verdict(&t, plain, int32).checked);
 }
 
 export void test_front_types_convert_a_constant_cast_that_never_fits_is_an_error() {
@@ -425,9 +425,9 @@ export void test_front_types_convert_usize_follows_the_target() {
             "write a conversion: x.to(Usize)");
     refused(conv(&narrow, named(&narrow, "Usize"), named(&narrow, "U64")), "expected U64", "found Usize",
             "write a conversion: x.to(U64)");
-    test::check_condition(cast(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")).checked);
+    test::check_condition(cast_verdict(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")).checked);
     // A pointer is 32 bits there, so it casts to a U32 and not to a U64.
     types::TypeRef plain = types::pointer_to(&narrow, named(&narrow, "I32"), false);
-    test::check_condition(cast(&narrow, plain, named(&narrow, "U32")).ok);
-    test::check_condition(!cast(&narrow, plain, named(&narrow, "U64")).ok);
+    test::check_condition(cast_verdict(&narrow, plain, named(&narrow, "U32")).ok);
+    test::check_condition(!cast_verdict(&narrow, plain, named(&narrow, "U64")).ok);
 }

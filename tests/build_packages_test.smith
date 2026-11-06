@@ -35,7 +35,7 @@ constexpr char make_archives[_] =
 static const char *cache_in(const scratch::Project *p, const char *name) {
     Usize length = format::length(p->root, "/", name) + 1;
     char *path = mem::alloc_slice(char, length).data;
-    (void)format::to(path, length, p->root, "/", name);
+    (void)format::write(path, length, p->root, "/", name);
     return path;
 }
 

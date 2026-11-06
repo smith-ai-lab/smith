@@ -521,7 +521,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .cast) {
         const ast::Expr *operand = x->kind.cast.operand;
         if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
-        return memory::cast(e, x, hint);
+        return memory::cast_expr(e, x, hint);
     }
     if (x->kind == .try_expr) return optional::try_expr(e, x);
     if (x->kind == .query) return memory::query(e, x, hint);
@@ -1541,14 +1541,14 @@ static state::Status convert_failure(state::Value value, state::Ty to, ast::Span
 }
 
 // `value` as a `to`: as it is, a wider integer (the checker's widening rules: the same signedness, or unsigned to a
-// strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap`).
+// strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap_some`).
 static state::Status convert_value(state::Emitter *e, state::Value value, state::Ty to, ast::Span span,
                                    state::ConvertSite site) {
     if (state::same_type(value.ty, to)) {
         state::push_value(e, value);
         return state::success();
     }
-    if (to.kind == .option) return optional::wrap(e, value, to, span);
+    if (to.kind == .option) return optional::wrap_some(e, value, to, span);
     if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, span);
     if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
         return memory::array_value_as_slice(e, value, to);

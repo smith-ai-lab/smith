@@ -195,8 +195,8 @@ export void test_resource_the_first_compile_writes_the_folders() {
 static void holds(const scratch::Project *p, const char *file) {
     char name[256];
     char command[256];
-    (void)format::to(name, sizeof name, "resource: the folder holds ", file);
-    (void)format::to(command, sizeof command, "yn \"$folder/lib/clang/$major/", file, "\"");
+    (void)format::write(name, sizeof name, "resource: the folder holds ", file);
+    (void)format::write(command, sizeof command, "yn \"$folder/lib/clang/$major/", file, "\"");
     scratch::expect_text(name, "yes", text_after(p, command));
 }
 
@@ -235,9 +235,9 @@ export void test_resource_the_runtime_folder_holds_the_files() {
 static void is_a_copy(const scratch::Project *p, const char *program) {
     char name[256];
     char command[256];
-    (void)format::to(name, sizeof name, "resource: bin/", program,
+    (void)format::write(name, sizeof name, "resource: bin/", program,
                      " is a copy of the smith that ran, with a file of its own");
-    (void)format::to(command, sizeof command, "is_copy \"$programs/bin/", program,
+    (void)format::write(command, sizeof command, "is_copy \"$programs/bin/", program,
                      "\" \"$smith\" && echo yes || echo no");
     scratch::expect_text(name, "yes", text_after(p, command));
 }

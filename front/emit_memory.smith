@@ -915,7 +915,7 @@ static state::Status cast_finish(state::Emitter *e, const state::Work *w) {
     return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name);
 }
 
-export state::Status cast(state::Emitter *e, const ast::Expr *x, state::Hint _) {
+export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hint _) {
     if (x->kind != .cast) {
         return state::fail("not a cast", x->span);
     }

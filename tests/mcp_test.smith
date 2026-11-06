@@ -26,7 +26,7 @@ import scratch;
 const char *concatenated(auto... pieces) {
     Usize length = format::length(pieces...);
     char *text = mem::alloc_slice(char, length + 1).data;
-    (void)format::to(text, length + 1, pieces...);
+    (void)format::write(text, length + 1, pieces...);
     return text;
 }
 

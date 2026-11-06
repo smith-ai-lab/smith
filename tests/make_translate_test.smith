@@ -32,7 +32,7 @@ typedef struct {
 const char *concatenated(auto... pieces) {
     Usize length = format::length(pieces...);
     char *joined = mem::alloc_slice(char, length + 1).data;
-    (void)format::to(joined, length + 1, pieces...);
+    (void)format::write(joined, length + 1, pieces...);
     return joined;
 }
 

@@ -6,7 +6,7 @@ tags: [libraries, format, generics]
 ---
 # std::format
 
-`format::to(buffer, capacity, pieces...)` and `format::push(pieces...)` replace `snprintf` in `.smith` (issue #35). Smith is C plus compile time, so the formatter is an ordinary library generic on `auto... args` with a `for constexpr` over them (knowledge/smith-generics.md "Lists and for constexpr"): no format string to mismatch, no `[[gnu::format]]`, and no user-defined dispatch — the choice is `if constexpr` on `typeof(args[i])`, the same chain C programmers write by hand.
+`format::write(buffer, capacity, pieces...)` and `format::push(pieces...)` replace `snprintf` in `.smith` (issue #35). Smith is C plus compile time, so the formatter is an ordinary library generic on `auto... args` with a `for constexpr` over them (knowledge/smith-generics.md "Lists and for constexpr"): no format string to mismatch, no `[[gnu::format]]`, and no user-defined dispatch — the choice is `if constexpr` on `typeof(args[i])`, the same chain C programmers write by hand.
 
 **Decisions.**
 - *Its own module, not part of `std::text`.* `text` is the pure, C-callable parse and write of numbers and lines (its header is C's); the formatter imports `mem` and is generic, so it has no C spelling. Putting it in `text` would make every user of `text` link `arena` and move `text`'s contracts under a second author. `format` imports both.

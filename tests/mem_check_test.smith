@@ -19,7 +19,7 @@ constexpr char prelude[_] = "flags=\"-std=gnu2y -I. -I.smith/include -I$SMITH_RE
 
 static scratch::Run lint(const scratch::Project *p, const char *body) {
     char command[1024];
-    format::Written written = format::to(command, sizeof command, prelude, body);
+    format::Written written = format::write(command, sizeof command, prelude, body);
     test::check_condition(written.fits);
     return scratch::sh(p, command);
 }

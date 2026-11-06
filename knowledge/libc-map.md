@@ -20,7 +20,7 @@ tags: [libc, lint, idiom, libraries]
 |---|---|
 | `printf`, `puts`, `putchar`, `fputs(s, stdout)`, `vprintf` | `console::print(pieces...)`: typed pieces, no format string ([direct-call-modules](direct-call-modules.md)) |
 | `fprintf(stderr, ...)`, `fputs(s, stderr)`, `dprintf`, `perror` | `console::print_error(pieces...)` |
-| `snprintf` | `format::to(buffer, capacity, pieces...)` ([format-library](format-library.md)); `format::hex`, `fixed`, `general`, `scientific`, `pad` for the conversions |
+| `snprintf` | `format::write(buffer, capacity, pieces...)` ([format-library](format-library.md)); `format::hex`, `fixed`, `general`, `scientific`, `pad` for the conversions |
 | `fopen`, `fclose`, `FILE` | `files::open(path, mode)` returning `Result(File, files::Error)`, `files::close` ([files](files.md)) |
 | `fgets`, `getline` | `files::read_line(file, buffer)` returning `Result(Option(Usize), files::Error)`: the line's length without its newline, `none` at the end, `LineTooLong` when it does not fit ([files](files.md)) |
 | `fflush`, `setvbuf`, `_IONBF`, `_IOFBF` | not needed: the console writes each call unbuffered |
@@ -94,7 +94,7 @@ tags: [libc, lint, idiom, libraries]
 |---|---|
 | `assert` | `contract::assert(cond)`; a precondition is `contract::requires` |
 | `errno`, `E*` (`ENOENT`, `EINTR`, `EPIPE`, ...), `__error`, `__errno_location` | a call returns `Result(T, Error)` and the module's error enum names the cause (`files::Error`, `process::Error`, `net::Error`); the raw `errno` is read inside the library (platform) |
-| `va_list`, `va_start`, `va_end` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924); a `.smith` function takes `auto...` pieces, as `format::to` does |
+| `va_list`, `va_start`, `va_end` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924); a `.smith` function takes `auto...` pieces, as `format::write` does |
 | `setjmp`, `longjmp`, `sigsetjmp`, `siglongjmp`, `jmp_buf` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
 | `signal`, `sigaction`, `sigaltstack`, `raise`, `sigwait`, `sigpending`, `sigemptyset`, `sigaddset`, `sigismember`, `pthread_sigmask`, `SIG*` | gap (design): [#924](https://github.com/smith-ai-lab/smith/issues/924) |
 

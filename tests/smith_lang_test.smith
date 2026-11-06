@@ -471,7 +471,7 @@ static void check_asked_and_symbols(const Case *kase, const Built *built) {
 static void corpus_case(const char *name) {
     // The folder is cases/<name>, as in the corpus, so that a case names a sibling as ../../<other>/src/main.smith.
     char folder_name[256];
-    (void)format::to(folder_name, sizeof folder_name, "cases/", name);
+    (void)format::write(folder_name, sizeof folder_name, "cases/", name);
     scratch::Project p = scratch::make(folder_name, nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 24);

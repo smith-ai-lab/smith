@@ -39,7 +39,7 @@ static scratch::Project make_project() {
 const char *joined(auto... pieces) {
     Usize length = format::length(pieces...);
     char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
-    (void)format::to(text, length + 1, pieces...);
+    (void)format::write(text, length + 1, pieces...);
     return text;
 }
 

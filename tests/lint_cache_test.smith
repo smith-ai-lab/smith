@@ -32,7 +32,7 @@ typedef struct {
 
 static void put(const char *folder, const char *name, const char *text) {
     char path[512];
-    (void)format::to(path, sizeof path, folder, "/", name);
+    (void)format::write(path, sizeof path, folder, "/", name);
     const U8 *bytes = (const U8 *)text;
     files::CountResult written = files::write_file(path[0:c::strlen(path)], bytes[0:c::strlen(text)], files::Replace);
     test::check_condition(written == .ok);
@@ -41,7 +41,7 @@ static void put(const char *folder, const char *name, const char *text) {
 // A source appended with a comment, as `printf '// edited\n' >> file` does.
 static void edit(const char *folder, const char *name, const char *original) {
     char text[256];
-    (void)format::to(text, sizeof text, original, "// edited\n");
+    (void)format::write(text, sizeof text, original, "// edited\n");
     put(folder, name, text);
 }
 
@@ -76,9 +76,9 @@ static Bool run_module(const char *folder, const char *cache) {
 
 static void make_header(const char *folder, const char *text) {
     char path[512];
-    (void)format::to(path, sizeof path, folder, "/.smith");
+    (void)format::write(path, sizeof path, folder, "/.smith");
     (void)files::make_folder(path[0:c::strlen(path)]);
-    (void)format::to(path, sizeof path, folder, "/.smith/include");
+    (void)format::write(path, sizeof path, folder, "/.smith/include");
     (void)files::make_folder(path[0:c::strlen(path)]);
     put(folder, ".smith/include/dep.h", text);
 }
@@ -122,7 +122,7 @@ static const char *counts(const scratch::Project *p) {
 // The cache folder of the lint results, which a run with the cache off must not make.
 static Bool has_results(const scratch::Project *p) {
     char path[512];
-    (void)format::to(path, sizeof path, p->cache, "/smith/lint/r");
+    (void)format::write(path, sizeof path, p->cache, "/smith/lint/r");
     files::InfoResult found = files::info(path[0:c::strlen(path)]);
     return found == .ok;
 }

@@ -11,7 +11,7 @@ import scratch;
 // of its own, so a test with an io and one without can both call it.
 export scratch::Run prove(const scratch::Project *p, const char *args) {
     char command[4096];
-    format::Written written = format::to(command, sizeof command, "c=cases; smith prove ", args,
+    format::Written written = format::write(command, sizeof command, "c=cases; smith prove ", args,
                                          " -- -I \"$SMITH_REPO/.smith/include\" 2>&1");
     test::check_condition(written.fits);
     return scratch::sh(p, command);
@@ -31,7 +31,7 @@ static Bool word(const char *text, Usize index, char out[:]) {
         }
         if (n == index) {
             test::check_condition(at - start < countof(out));
-            (void)format::to(out.data, countof(out), format::bytes(text + start, at - start));
+            (void)format::write(out.data, countof(out), format::bytes(text + start, at - start));
             return true;
         }
     }
@@ -40,7 +40,7 @@ static Bool word(const char *text, Usize index, char out[:]) {
 
 static scratch::Run function(const scratch::Project *p, const char *file, const char *prefix, const char *name) {
     char args[1024];
-    format::Written written = format::to(args, sizeof args, "--function=", prefix, name, " ", file);
+    format::Written written = format::write(args, sizeof args, "--function=", prefix, name, " ", file);
     test::check_condition(written.fits);
     return prove(p, args);
 }

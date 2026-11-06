@@ -1489,7 +1489,7 @@ static void test_json_count_case(TestJsonConformance *totals, const char *name, 
         const TestJsonImplementationDefined *listed = test_json_find_listed(name);
         totals->i_total += 1;
         if (listing)
-            *reported += format::to(report + *reported, test_json_listing_capacity - *reported,
+            *reported += format::write(report + *reported, test_json_listing_capacity - *reported,
                                     format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
                              .length;
         test::check(listed != nullptr); // a new case must be listed
@@ -1500,7 +1500,7 @@ static void test_json_count_case(TestJsonConformance *totals, const char *name, 
 
 static void test_json_write_listing(const char path[:], const TestJsonConformance *totals, char *report,
                                     Usize reported) {
-    reported += format::to(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
+    reported += format::write(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
                            totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
                            " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
                     .length;
@@ -1532,7 +1532,7 @@ export void test_json_conformance_with_jsontestsuite() {
         Usize name_length = c::strlen(name);
         if (name_length < 7 || c::strcmp(name + name_length - 5, ".json") != 0 || name[1] != '_') continue;
         char path[1024];
-        (void)format::to(path, sizeof path, folder, "/", name);
+        (void)format::write(path, sizeof path, folder, "/", name);
         test::note("file %s", name);
         Bool accepted = test_json_file_accepted(&memory, path[0:c::strlen(path)]);
         test_json_count_case(&totals, name, accepted, report, &reported, listing);
