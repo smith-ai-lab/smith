@@ -24,13 +24,13 @@ void drop(console::LineResult next) {
 }
 
 export I32 main() {
-    if (failed(console::print("hello, ", 42, "\n"))) return 1; // typed pieces, as format::to; a closed pipe is a value
+    if (failed(console::print("hello, ", 42, "\n"))) return 1; // typed pieces, as format::write; a closed pipe is a value
     drop(console::read_line());                                 // the next line of stdin
     return 0;
 }
 ```
 
-- **`print(pieces...)`** and **`print_error(pieces...)`** write the pieces to stdout or stderr. Each piece is typed as in `format::to` (numbers, `bool`, `char[:]`, strings, structs, `format::hex(...)`): no format string and **no length limit** (a long text is formatted in memory of the allocator in force and given back). They return `console::Written`, a `Result(Usize, console::Error)`; they are not `[[nodiscard]]`.
+- **`print(pieces...)`** and **`print_error(pieces...)`** write the pieces to stdout or stderr. Each piece is typed as in `format::write` (numbers, `bool`, `char[:]`, strings, structs, `format::hex(...)`): no format string and **no length limit** (a long text is formatted in memory of the allocator in force and given back). They return `console::Written`, a `Result(Usize, console::Error)`; they are not `[[nodiscard]]`.
 - **`write(bytes)`** and **`write_error(bytes)`** take a `const U8 bytes[:]` and write all of it or fail. **`read(buffer)`** fills a `U8 buffer[:]` with what is available (the count, `0` at the end of the input).
 - **`read_line()`** returns a `console::LineResult`: a `console::Line` with `text` (no newline, a terminator after it that the count does not count) and `end` (the input was over before any character). The text is the caller's, from the allocator in force. It reads a byte at a time and holds nothing, so `read` and `read_line` mix freely; use `read` for bulk input.
 - **`is_terminal(stream)`** (`console::Input`, `Output`, `Fault` for stdin, stdout, stderr) says whether the stream is a terminal, to choose colour or progress output. The handler's `isatty` member answers it (null: libc's `isatty`), so a fake sets what it likes.

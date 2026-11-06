@@ -106,15 +106,15 @@ export void test_build_isolation_smith_modules_after_smith_object_is_an_error() 
 static void refuses_the_folders(scratch::Project *p, const char *folders) {
     char text[512];
     char name[256];
-    (void)format::to(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    smith_modules(b, &(SmithModules){.folders = (const char *[]){",
-                     folders, ", nullptr}});\n    smith_default(b, smith_list(b, nullptr));\n}\n");
+    (void)format::write(text, sizeof text,
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    smith_modules(b, &(SmithModules){.folders = (const char *[]){",
+                        folders, ", nullptr}});\n    smith_default(b, smith_list(b, nullptr));\n}\n");
     scratch::write(p, "build.c", text);
     scratch::Run run = scratch::build(p, "");
-    (void)format::to(name, sizeof name, "modules: the folders ", folders, " are refused");
+    (void)format::write(name, sizeof name, "modules: the folders ", folders, " are refused");
     scratch::expect_failure(name, &run);
-    (void)format::to(name, sizeof name, "modules: ", folders, ": the message starts smith: build.c: smith_modules");
+    (void)format::write(name, sizeof name, "modules: ", folders, ": the message starts smith: build.c: smith_modules");
     scratch::expect_contains(name, run.err, "smith: build.c: smith_modules");
 }
 

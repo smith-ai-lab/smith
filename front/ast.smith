@@ -1086,13 +1086,13 @@ static void put_char(Output *text, char c) {
 
 static void put_u64(Output *text, U64 number) {
     char digits[40];
-    Usize written = format::to(digits, sizeof digits, number).length;
+    Usize written = format::write(digits, sizeof digits, number).length;
     put(text, digits[0:written]);
 }
 
 static void put_f64(Output *text, F64 number) {
     char digits[40];
-    Usize written = format::to(digits, sizeof digits, number).length;
+    Usize written = format::write(digits, sizeof digits, number).length;
     put(text, digits[0:written]);
 }
 

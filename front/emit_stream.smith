@@ -15,7 +15,7 @@
 //              stack. Its first lines load the parameters out of `args` into ordinary locals, and keep `s` in the local
 //              `$stream` (a name no program can write). Then the written body is emitted the usual way.
 // In the body, `yield x` stores `x`, converted to `T`, where `smith_stream_slot(s)` points, then calls
-// `smith_stream_yield(s)`: true goes on, false (the stream was closed) runs the pending `defer`s and ends the body.
+// `smith_stream_suspend(s)`: true goes on, false (the stream was closed) runs the pending `defer`s and ends the body.
 // Every `return`, and the reachable end of the body, does the same: the `defer`s, then `smith_stream_finish(s)` and
 // `unreachable`. `e->result` of a body is the type named `stream::body`, which is how a `return` knows where it is.
 //
@@ -120,7 +120,7 @@ static c::LLVMValueRef runtime(state::Emitter *e, Str which) {
     Bool extended = false;
     if (state::same_text(which, "slot")) {
         type = c::LLVMFunctionType(ptr, one, 1, 0);
-    } else if (state::same_text(which, "yield")) {
+    } else if (state::same_text(which, "suspend")) {
         type = c::LLVMFunctionType(bit, one, 1, 0);
         extended = true;
     } else if (state::same_text(which, "finish") || state::same_text(which, "close")) {
@@ -289,7 +289,7 @@ static state::Status yield_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef argv[3] = {handle_of(e), nullptr, nullptr};
     c::LLVMValueRef where = call_runtime(e, "slot", argv, 1);
     c::LLVMBuildStore(e->builder, value.llvm, where);
-    c::LLVMValueRef again = call_runtime(e, "yield", argv, 1);
+    c::LLVMValueRef again = call_runtime(e, "suspend", argv, 1);
     U32 id = c::LLVMGetEnumAttributeKindForName("zeroext", 7);
     c::LLVMAddCallSiteAttribute(again, 0, c::LLVMCreateEnumAttribute(e->context, id, 0));
     c::LLVMBasicBlockRef go_on = c::LLVMAppendBasicBlockInContext(e->context, e->function, "yield.go");

@@ -604,7 +604,7 @@ static void put(Output *text, Str piece) {
 
 static void put_number(Output *text, U64 number) {
     char digits[40];
-    Usize written = format::to(digits, sizeof digits, number).length;
+    Usize written = format::write(digits, sizeof digits, number).length;
     put(text, digits[0:written]);
 }
 

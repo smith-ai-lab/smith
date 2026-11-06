@@ -6,7 +6,7 @@ return x * 2;
 }
 static __INT32_TYPE__ main_negate(__INT32_TYPE__ x) {
 return -x;
-} [ [ clang :: unavailable ( "main::wrap is a generic function: call it from a .smith module" ) ] ] void main_wrap ( void ) ;
+} [ [ clang :: unavailable ( "main::wrap_handler is a generic function: call it from a .smith module" ) ] ] void main_wrap_handler ( void ) ;
 __INT32_TYPE__ main(void) {
 main_Call a =smith_call_failed;
 main_Call b =smith_call_failed;

@@ -34,7 +34,7 @@ typedef struct {
 // The manifest of a project, as the head, `steps` and the tail make it.
 static void manifest(const char *dir, const char *steps) {
     char text[2048];
-    (void)format::to(text, sizeof text, manifest_head, steps, manifest_tail);
+    (void)format::write(text, sizeof text, manifest_head, steps, manifest_tail);
     test::check_condition(c::smith_core_plan_write(dir, ".smith/build.ninja", text, 1));
 }
 

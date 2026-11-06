@@ -53,6 +53,7 @@ export struct Fixed {
     Str text;
     Usize applied;
     Usize skipped;
+    Str clash; // `line:column: `yield` is a keyword: rename it`, or empty
 };
 
 static Bool is_insert(core::Edit e) {
@@ -534,7 +535,7 @@ static Str rename_in_names(Str source) {
     return as_str(format::push(out, source[at:countof(source)]));
 }
 
-// `fn` is a keyword of smith's own syntax: a C name `fn` (a parameter holding a function, a local) is written `fn_`,
+// `fn` is a keyword of smith's own syntax: a C name `fn` (a parameter holding a function, a local) is an error (#2455),
 // in the declaration and every use. The keyword stays: `fn` before a name (`fn area(...)`), or before a lambda's
 // parameters (`fn(x): ...`, `fn(x) -> T: ...`), where the `)` that closes them is followed by `:` or `->`, or a
 // function type after a `:` or `->` (`body: fn()`).
@@ -566,35 +567,37 @@ static Bool is_yield_keyword(lex::Tokens tokens, Usize i) {
            next == lex::character || next == lex::string;
 }
 
-// `yield` is a keyword of smith's own syntax too (#2403): a C function or variable named `yield` is written `yield_`,
-// at its declaration and every use, in this file and, as `stream.yield_`, in the files that call it. A function that
-// exports a C symbol keeps it through `@c_name`.
-static Str rename_fn_names(Str source) {
+// `yield` is a keyword of smith's own syntax too: only the statement `yield x` is one, any other `yield` is a C name.
+// The fixer never invents a name (#2455; owner, 2026-11-05): a C identifier spelled `fn` or `yield` that is not the
+// keyword is an error at that identifier, `` `yield` is a keyword: rename it ``, and the text is left alone.
+static Str keyword_clash(Str source) {
     lex::Lexed lexed = lex::tokenize(source);
-    if (lexed == .error) return source;
+    if (lexed == .error) return "";
     lex::Tokens tokens = lexed.ok;
     Str fn_word = "fn";
     Str yield_word = "yield";
-    Str out = "";
-    Usize at = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
         if (tokens[i].kind != lex::name) continue;
         Str word = lex::text(source, tokens[i]);
         Bool is_fn = mem::equal(word, fn_word);
         if (!is_fn && !mem::equal(word, yield_word)) continue;
         if (is_fn ? is_fn_keyword(tokens, i) : is_yield_keyword(tokens, i)) continue;
-        out = as_str(format::push(out, source[at:tokens[i].span.start], is_fn ? "fn_" : "yield_"));
-        at = tokens[i].span.end;
+        Usize line = 1;
+        Usize column = 1;
+        for (Usize k = 0; k < tokens[i].span.start; k++) {
+            column = source[k] == '\n' ? 1 : column + 1;
+            if (source[k] == '\n') line += 1;
+        }
+        return as_str(format::push(line, ":", column, ": `", word, "` is a keyword: rename it"));
     }
-    if (at == 0) return source;
-    return as_str(format::push(out, source[at:countof(source)]));
+    return "";
 }
 
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_fn_names(rename_in_names(rename_type_names(rename_target_systems(source))));
-    Fixed total = {.text = renamed};
+    Str renamed = rename_in_names(rename_type_names(rename_target_systems(source)));
+    Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
     for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
@@ -691,7 +694,7 @@ static const ast::Module *read_import(Str path) {
     format::Chars chars = mem::view(loaded.ok, char);
     // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
     // reads as the fixed module does (#2561).
-    Str source = read_c_types(rename_fn_names(rename_in_names(rename_type_names(rename_target_systems(chars)))));
+    Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
     parser::Parsed parsed = parse_for_fix(path, source);
     if (countof(parsed.errors) > 0) {
         // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
@@ -788,6 +791,10 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
         Fixed fixed = {};
         applied[i] = fix_to_text(path, &fixed) ? (I64)fixed.applied : -1;
         texts[i].text = fixed.text;
+        if (countof(fixed.clash) == 0) continue;
+        Str problem = as_str(format::push(path, ":", fixed.clash, "\n"));
+        (void)c::write(2, problem.data, countof(problem));
+        status = 1;
     }
     fix_variants::Words renamed = fix_variants::rename_all(texts);
     for (Usize i = 0; i < count; i++) {

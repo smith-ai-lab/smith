@@ -10,7 +10,7 @@
 //   `.some(x)`   `x` is evaluated with the payload's type as its hint and converted to it with `state::convert`, so
 //                `.some(n)` with `n: i32` into a `?i64` widens. The `?T` comes from the hint, else from the checker.
 //   `.none`      the zero struct, with the same two sources of its type.
-//   `wrap`       called by `state::convert` when the target is a `?T` and the value is not one: the value is
+//   `wrap_some` called by `state::convert` when the target is a `?T` and the value is not one: the value is
 //                converted to the payload type, then built as `.some`. This is `return n` in a function that returns
 //                `?i32`, `x: ?i32 = 5`, an assignment and a call argument.
 //   `if let .some(x) = o { .. } else { .. }`  branches on the tag; `x` is a constant local holding the payload in the
@@ -488,7 +488,7 @@ export state::Status wrap_ok(state::Emitter *e, state::Value value, state::Ty to
 }
 
 // Pushes the `?T` holding `value`.
-export state::Status wrap(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
+export state::Status wrap_some(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
     try state::convert(e, value, *to.element, span, .initialize);
     state::Value converted = state::pop_value(e);
     state::push_value(e, some_of(e, to, converted.llvm));

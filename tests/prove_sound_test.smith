@@ -171,11 +171,12 @@ static void sound(const char *name) {
     scratch::Run proved = scratch::sh(
         &p, format::push("smith prove -v", arguments, " -- -I \"$SMITH_REPO/.smith/include\" -I lowered 2>&1").data);
     for (Usize i = 0; word(memory, proves, i) != nullptr; i++) {
-        const char *fn = word(memory, proves, i);
-        if (!scratch::contains(proved.out, format::push("ok    ", fn, "  (").data)) {
-            test::note("the prover does not prove %s any more (a harness tests what was proved):\n%s", fn, proved.out);
+        const char *proved_name = word(memory, proves, i);
+        if (!scratch::contains(proved.out, format::push("ok    ", proved_name, "  (").data)) {
+            test::note("the prover does not prove %s any more (a harness tests what was proved):\n%s", proved_name,
+                       proved.out);
         }
-        test::check_condition(scratch::contains(proved.out, format::push("ok    ", fn, "  (").data));
+        test::check_condition(scratch::contains(proved.out, format::push("ok    ", proved_name, "  (").data));
     }
     const char *sources = link_sources(memory, &p, name, links);
     scratch::Run built = scratch::sh(&p, format::push("mkdir -p ", name, " && smith cc ", cc_flags, " ", source,

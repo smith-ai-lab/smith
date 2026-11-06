@@ -23,7 +23,7 @@ static const char *flat(arena::Arena *memory, const char *text) {
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
     char command[1024];
-    (void)format::to(command, sizeof command, "smith --smith-exec build.ninja ", arguments);
+    (void)format::write(command, sizeof command, "smith --smith-exec build.ninja ", arguments);
     return scratch::sh(p, command);
 }
 
@@ -50,7 +50,7 @@ export void test_build_executor_a_failed_job_says_why_and_stops_the_build() {
     scratch::expect_contains("failure: a recap of the failed step comes before the last line", run.err,
                              "smith: 1 failed:\n  step 1 ");
     char state[16];
-    (void)format::to(state, sizeof state, yes_no(&p, "good"), " ", yes_no(&p, "after"));
+    (void)format::write(state, sizeof state, yes_no(&p, "good"), " ", yes_no(&p, "after"));
     scratch::expect_text("failure: the first failure stops the others", "no no", state);
 }
 
@@ -164,8 +164,8 @@ export void test_build_executor_a_depfile_that_names_another_output_fails_the_st
 
 static void counts(const scratch::Project *p, const char *name, const char *expected) {
     char actual[32];
-    (void)format::to(actual, sizeof actual, scratch::lines(p, "gen.log"), " ", scratch::lines(p, "use.log"), " ",
-                     scratch::lines(p, "last.log"));
+    (void)format::write(actual, sizeof actual, scratch::lines(p, "gen.log"), " ", scratch::lines(p, "use.log"), " ",
+                        scratch::lines(p, "last.log"));
     scratch::expect_text(name, expected, actual);
 }
 

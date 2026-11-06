@@ -31,7 +31,7 @@ extern uint64_t (*hook_table_hook)(uint64_t bits);
 
 hook_table_Plain hook_table_plain() __asm__("_hook::table::plain");
 
-uint64_t hook_table_call(HookFn fn, uint64_t bits) __asm__("_hook::table::call");
+uint64_t hook_table_call(HookFn callback, uint64_t bits) __asm__("_hook::table::call");
 
 uint64_t hook_table_chosen_value(uint64_t bits) __asm__("_hook::table::chosen_value");
 #ifdef __cplusplus

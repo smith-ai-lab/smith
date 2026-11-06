@@ -27,7 +27,7 @@ export I32 total(I32 xs[:]) {
     return sum;
 }
 
-// console::print takes typed pieces, as format::to does. It is called directly: what a function touches is inferred
+// console::print takes typed pieces, as format::write does. It is called directly: what a function touches is inferred
 // from what it calls, and a test stands in for the console with a handler (console::set_handler).
 export void report(I32 sum) {
     (void)console::print("the first 5 primes add up to ", sum, "\n");

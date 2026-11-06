@@ -34,7 +34,7 @@ static const char *variable(const char *name) {
 // $HOME/<path>, in a buffer of its own.
 static const char *in_home(const char *path) {
     static char joined[4096];
-    (void)format::to(joined, sizeof joined, variable("HOME"), path);
+    (void)format::write(joined, sizeof joined, variable("HOME"), path);
     return joined;
 }
 

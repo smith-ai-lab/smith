@@ -37,7 +37,7 @@ static const Library inflate = {"lib/std/inflate_test.smith", "std/inflate_test.
 const char *joined(auto... pieces) {
     Usize length = format::length(pieces...);
     char *memory = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
-    (void)format::to(memory, length + 1, pieces...);
+    (void)format::write(memory, length + 1, pieces...);
     return memory;
 }
 

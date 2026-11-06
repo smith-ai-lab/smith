@@ -30,8 +30,8 @@ export void test_build_verbs_the_seven_verbs_are_refused_as_task_and_alias_names
             char message[512];
             bool refused = c::smith_core_verb_name_refused(kinds[k], names[n], message, sizeof message);
             Usize used = c::strlen(actual);
-            (void)format::to(actual + used, sizeof actual - used, kinds[k], " ", names[n],
-                             refused ? ": refused: " : ": allowed", message, "\n");
+            (void)format::write(actual + used, sizeof actual - used, kinds[k], " ", names[n],
+                                refused ? ": refused: " : ": allowed", message, "\n");
         }
     }
     corpus::golden(&memory, &differing, "tests/build-verbs/refusals.txt", actual);
@@ -60,30 +60,30 @@ static void refuses_a_task_and_an_alias_named(const char *verb) {
     defer mem::set_allocator(outside);
     char text[1024];
     char name[256];
-    (void)format::to(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                     "    smith_task(b, \"",
-                     verb, "\", &step);\n    smith_default(b, step.outputs);\n}\n");
+    (void)format::write(text, sizeof text,
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                        "    smith_task(b, \"",
+                        verb, "\", &step);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run task = scratch::build(&p, "");
-    (void)format::to(name, sizeof name, "verbs: a task named ", verb, " is refused");
+    (void)format::write(name, sizeof name, "verbs: a task named ", verb, " is refused");
     scratch::expect_status(name, 2, &task);
-    (void)format::to(name, sizeof name, "verbs: ... ", verb, " names the verb");
-    (void)format::to(text, sizeof text, "task '", verb, "' is named after a verb; `smith ", verb,
-                     "` does the same thing in every project");
+    (void)format::write(name, sizeof name, "verbs: ... ", verb, " names the verb");
+    (void)format::write(text, sizeof text, "task '", verb, "' is named after a verb; `smith ", verb,
+                        "` does the same thing in every project");
     scratch::expect_contains(name, task.err, text);
-    (void)format::to(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                     "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"",
-                     verb, "\", step.outputs);\n    smith_default(b, step.outputs);\n}\n");
+    (void)format::write(text, sizeof text,
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                        "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"",
+                        verb, "\", step.outputs);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run alias = scratch::build(&p, "");
-    (void)format::to(name, sizeof name, "verbs: an alias named ", verb, " is refused");
+    (void)format::write(name, sizeof name, "verbs: an alias named ", verb, " is refused");
     scratch::expect_status(name, 2, &alias);
-    (void)format::to(name, sizeof name, "verbs: ... and says alias (", verb, ")");
-    (void)format::to(text, sizeof text, "alias '", verb, "' is named after a verb");
+    (void)format::write(name, sizeof name, "verbs: ... and says alias (", verb, ")");
+    (void)format::write(text, sizeof text, "alias '", verb, "' is named after a verb");
     scratch::expect_contains(name, alias.err, text);
 }
 
@@ -118,7 +118,7 @@ export void test_build_verbs_a_test_step_is_built_incrementally_by_smith_tests()
 // How many lines of a file match a pattern, as grep -c counts them ("0" when none).
 static const char *matches(const scratch::Project *p, const char *file, const char *pattern) {
     char command[1024];
-    (void)format::to(command, sizeof command, "grep -c ", pattern, " ", file);
+    (void)format::write(command, sizeof command, "grep -c ", pattern, " ", file);
     return scratch::capture(p, command);
 }
 
@@ -238,7 +238,7 @@ static void prints_its_page_and_runs_nothing(const char *verb) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char command[128];
-    (void)format::to(command, sizeof command, "smith ", verb, " --help");
+    (void)format::write(command, sizeof command, "smith ", verb, " --help");
     scratch::Run flag = scratch::sh(&p, command);
     scratch::expect_status("verbs: smith <verb> --help exits 0", 0, &flag);
     scratch::expect_contains("verbs: ... prints the page", flag.out, "usage: smith ");
