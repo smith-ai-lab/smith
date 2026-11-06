@@ -2452,6 +2452,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     pop_scope(&r->scopes);
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
+    // C keeps struct tags apart from functions (`struct sigaction`, `sigaction()`): the function of a header takes
+    // `name()` where a struct already has the plain name (#2611).
+    const Symbol *tagged = r->in_header ? lookup(&r->scopes, name) : nullptr;
+    if (tagged != nullptr && tagged->kind == .type_name) symbol.name = msg(format::push(name, "()"));
     declare_in_module(r, symbol, d->span);
 }
 
@@ -2911,8 +2915,15 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
         if (taken != nullptr) type = taken;
     }
     Bool is_const = constexpr_variable || written->qualifiers.is_const;
-    Symbol symbol = {
-        .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .exported = d->exported};
+    Symbol symbol = {.name = name,
+                     .kind = .variable,
+                     .type = type,
+                     .decl = d,
+                     .is_const = is_const,
+                     .is_new = is_new,
+                     .exported = d->exported};
+    // The type as written, for the fix that makes a pointer global `*mut` where it is written through (#2611).
+    if (is_new) symbol.written = written;
     declare_in_module(r, symbol, d->span);
 }
 
@@ -3049,6 +3060,14 @@ static Bool header_has(const ast::Module *header, Str name) {
     return false;
 }
 
+// Whether a header bound as `base` declares `name`. Two headers can share a binding name (`<time.h>` and
+// `<sys/time.h>` are both `time`): the name is declared when either has it (#2611).
+static Bool binding_declares(const Checked *r, Str base, Str name) {
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (same_text(r->bindings[i].name, base) && header_has(r->bindings[i].header, name)) return true;
+    return false;
+}
+
 // The binding a name of a header is read through, or null: `stdio.printf` has the base `stdio`. The text of the base
 // is empty when `e` is not `name.member`.
 export Str c_member_base(const ast::Expr *e) {
@@ -3066,7 +3085,7 @@ export Str c_member_name(const Checked *r, const ast::Expr *e) {
     Str base = c_member_base(e);
     if (countof(base) == 0 || e->kind != .member) return "";
     const HeaderBinding *binding = header_binding(r, base);
-    if (binding == nullptr || !header_has(binding->header, e->kind.member.name)) return "";
+    if (binding == nullptr || !binding_declares(r, base, e->kind.member.name)) return "";
     return e->kind.member.name;
 }
 
@@ -3077,6 +3096,13 @@ export const Symbol *c_member(const Checked *r, const ast::Expr *e) {
     return lookup(&r->scopes, msg(format::push("c::", name)));
 }
 
+// The function `stat.sigaction` stands for when a struct of the header has the same name (`struct sigaction`), or null.
+export const Symbol *c_member_function(const Checked *r, const ast::Expr *e) {
+    Str name = c_member_name(r, e);
+    if (countof(name) == 0 || scoped(r, c_member_base(e)) != nullptr) return nullptr;
+    return lookup(&r->scopes, msg(format::push("c::", name, "()")));
+}
+
 // The text of the error for `base.name` when `base` is a header binding that lacks `name`, or `c.name` with no `c`
 // bound: empty when `e` is neither.
 export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *fix) {
@@ -3085,7 +3111,7 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
     Str name = e->kind.member.name;
     const HeaderBinding *binding = header_binding(r, base);
     if (binding != nullptr) {
-        if (header_has(binding->header, name)) return "";
+        if (binding_declares(r, base, name)) return "";
         return msg(format::push("`", base, ".", name,
                                 "` is not declared by that header; check its spelling, or import ",
                                 "the header that declares it"));
@@ -3144,8 +3170,7 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     }
     if (count == 2 && header_binding(r, path.segments[0].text) != nullptr &&
         scoped(r, path.segments[0].text) == nullptr) {
-        const HeaderBinding *binding = header_binding(r, path.segments[0].text);
-        if (!header_has(binding->header, path.segments[1].text)) return nullptr;
+        if (!binding_declares(r, path.segments[0].text, path.segments[1].text)) return nullptr;
         return lookup(&r->scopes, msg(format::push("c::", path.segments[1].text))); // `stdio.size_t` is `c::size_t`
     }
     const Symbol *found = nullptr;

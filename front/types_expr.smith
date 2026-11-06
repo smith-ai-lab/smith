@@ -1846,6 +1846,26 @@ static Bool null_option_test(types::Checked *c, const ast::Expr *e, ast::BinaryO
     return true;
 }
 
+// `xs + n` where `xs` is an array: C's array decays to a pointer there, and smith has no decay. The fix writes the
+// address of the element, `&xs[n]` (#2611).
+static Bool array_sum(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                      const ast::Expr *right) {
+    if (op != .add || typ(c, left)->kind != .array || !is_integer(typ(c, right))) return false;
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, 3);
+    Str address = "&";
+    Str open = "[";
+    Str close = "]";
+    fix[0] = (syntax::Edit){.span = {.start = left->span.start, .end = left->span.start}, .text = address};
+    fix[1] = (syntax::Edit){.span = {.start = left->span.end, .end = right->span.start}, .text = open};
+    fix[2] = (syntax::Edit){.span = {.start = right->span.end, .end = right->span.end}, .text = close};
+    types::fail_fix(c, e->span,
+                    msg(format::push("`+` needs a number, found `", types::show(typ(c, left)),
+                                     "`: an array does not decay to a pointer; write the element's address, `&xs[n]`")),
+                    fix);
+    return true;
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -2097,6 +2117,10 @@ static void binary_after(types::Checked *c, Frame f) {
     if (is_option_test(op, left, right, typ(c, left), typ(c, right))) {
         some_test_fix(c, e);
         finish(c, e, c->table.bool_type, f.expected);
+        return;
+    }
+    if (array_sum(c, e, op, left, right)) {
+        poison(c, e);
         return;
     }
     types::TypeRef t = binary_type(c, e->span, op, typ(c, left), typ(c, right));
@@ -2911,10 +2935,26 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     return s->type;
 }
 
+// Whether a call of `h.name(...)` is of the header's function, not a construction of its struct of the same name:
+// the struct is built with named arguments (`signal.sigaction(sa_flags = 0)`), the function called with values.
+static Bool calls_header_function(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (callee->kind != .member || types::c_member_function(c, callee) == nullptr) return false;
+    if (countof(args) == 0) return true;
+    const ast::Expr *first = args[0];
+    if (first->kind == .named_arg) return false;
+    return true;
+}
+
 // The record a call constructs when its callee names a struct (or an alias of one), else null.
 static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
     types::TypeRef t = named_type(c, callee);
     return t != nullptr && t->kind == .record ? t : nullptr;
+}
+
+// The record a call constructs: none when the call is of a header's function of the same name (#2611).
+static types::TypeRef constructed_call(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (calls_header_function(c, callee, args)) return nullptr;
+    return constructed_record(c, callee);
 }
 
 // `ExprKind(name = (path = p))`: a payload enumeration named as the callee with one argument `variant = payload` builds
@@ -4900,12 +4940,15 @@ static Bool leaf(types::Checked *c, Frame f) {
         literal_character(c, f);
     } else if (e->kind == .string) {
         // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
-        Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
-                          f.expected->element->kind == .integer && f.expected->element->bits == 8;
-        // A literal given to `[N]char`: the bytes and the zero byte fill the array, so N is the length plus one.
+        types::TypeRef wanted = f.expected;
+        // `?*char` (a C pointer that may be null) takes a literal too: it is never null (#2611)
+        if (wanted != nullptr && wanted->kind == .option && wanted->element->kind == .pointer) wanted = wanted->element;
+        Bool as_pointer = wanted != nullptr && wanted->kind == .pointer && wanted->element->kind == .integer &&
+                          wanted->element->bits == 8;
+        // A literal given to `[N]char`: the bytes and the zero byte start the array and the rest is zero (#2611).
         Bool as_array = f.expected != nullptr && f.expected->kind == .array && f.expected->element->kind == .integer &&
-                        f.expected->element->bits == 8 && f.expected->count == countof(e->kind.string.bytes) + 1;
-        finish(c, e, (as_pointer || as_array) ? f.expected : c->table.text, f.expected);
+                        f.expected->element->bits == 8 && f.expected->count >= countof(e->kind.string.bytes) + 1;
+        finish(c, e, as_pointer ? wanted : (as_array ? f.expected : c->table.text), f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {
@@ -5830,7 +5873,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record = constructed_record(c, callee);
+    types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
@@ -5999,7 +6042,8 @@ static void before(types::Checked *c, Work *w, Frame f) {
         const ast::Expr *base = e->kind.member.base;
         const types::Symbol *header = types::c_member(c, e);
         if (header != nullptr) { // `stdio.name` after `import c <stdio.h>`: the header's declaration
-            finish(c, e, header->type, f.expected);
+            const types::Symbol *function = header->kind == .type_name ? types::c_member_function(c, e) : nullptr;
+            finish(c, e, function != nullptr ? function->type : header->type, f.expected);
             return;
         }
         syntax::Edits fix = {};
@@ -6077,7 +6121,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {
-            construct_after(c, f, constructed_record(c, e->kind.call.callee));
+            construct_after(c, f, constructed_call(c, e->kind.call.callee, e->kind.call.args));
         } else {
             call_after(c, f);
         }
