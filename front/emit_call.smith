@@ -405,8 +405,11 @@ static SignatureResult find(state::Emitter *e, Str key, ast::Span span, const as
     for (Usize i = 0; i < e->function_count; i++) {
         if (state::same_text(e->functions[i].name, key)) {
             state::FunctionInfo info = e->functions[i];
-            Signature sig = {
-                .function = info.llvm, .type = info.llvm_type, .result = info.result, .params = info.params};
+            Signature sig = {.function = info.llvm,
+                             .type = info.llvm_type,
+                             .result = info.result,
+                             .params = info.params,
+                             .variadic = info.variadic};
             return sig;
         }
     }
@@ -762,9 +765,9 @@ static void mark_returns_twice(c::LLVMValueRef function, c::LLVMValueRef call) {
     const char *text = c::LLVMGetValueName2(function, &length);
     if (text == nullptr) return;
     Str name = text[0:length];
-    if (!(state::same_text(name, "setjmp") || state::same_text(name, "_setjmp") || state::same_text(name, "sigsetjmp") ||
-          state::same_text(name, "__sigsetjmp") || state::same_text(name, "savectx") ||
-          state::same_text(name, "vfork") || state::same_text(name, "getcontext")))
+    if (!(state::same_text(name, "setjmp") || state::same_text(name, "_setjmp") ||
+          state::same_text(name, "sigsetjmp") || state::same_text(name, "__sigsetjmp") ||
+          state::same_text(name, "savectx") || state::same_text(name, "vfork") || state::same_text(name, "getcontext")))
         return;
     U32 kind = c::LLVMGetEnumAttributeKindForName("returns_twice", 13);
     c::LLVMContextRef context = c::LLVMGetTypeContext(c::LLVMTypeOf(function));

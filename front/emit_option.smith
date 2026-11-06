@@ -18,9 +18,9 @@
 //
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
-// `?*T` is the pointer itself (null is `.none`), the layout C has for a nullable pointer. Left: `match` over `?T` (#1585), `if let`
-// as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are emitted (#2128,
-// #2141).
+// `?*T` is the pointer itself (null is `.none`), the layout C has for a nullable pointer. Left: `match` over `?T`
+// (#1585), `if let` as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are
+// emitted (#2128, #2141).
 module front::emit_option;
 
 import front::ast;
@@ -42,8 +42,10 @@ static state::Ty *own(state::Emitter *e, state::Ty element) {
 // `?payload`.
 static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span _) {
     state::Ty *inner = own(e, payload);
-    if (payload.kind == .pointer) { // `?*T` is the pointer itself, null for `.none`: the layout C has for a nullable pointer
-        state::Ty bare = {.kind = {.option = {.element = inner}}, .llvm = payload.llvm,
+    if (payload.kind ==
+            .pointer) { // `?*T` is the pointer itself, null for `.none`: the layout C has for a nullable pointer
+        state::Ty bare = {.kind = {.option = {.element = inner}},
+                          .llvm = payload.llvm,
                           .name = state::msg(format::push("?", payload.name))};
         return bare;
     }
@@ -147,7 +149,7 @@ export state::TyResult payload_of_checked(state::Emitter *e, types::TypeRef t) {
             }
         }
     }
-    if (t->kind == .pointer) return state::type_of_checked(e, t, (ast::Span){});
+    if (t->kind == .pointer || t->kind == .enumeration) return state::type_of_checked(e, t, (ast::Span){});
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: an option of ", shown));
     state::free_text(shown);

@@ -510,7 +510,7 @@ static types::TypeRef check_va(types::Checked *c, const ast::Expr *e, Entry entr
                         element_address_fix(args[i]));
         return c->table.invalid;
     }
-    if (out->kind != .pointer || size->kind != .integer || text->kind != .pointer)
+    if (out->kind != .pointer || size->kind != .integer || !(text->kind == .pointer || text->kind == .text))
         return wrong(c, e->span, entry, wanted);
     return named(c, "I32");
 }

@@ -203,7 +203,13 @@ constexpr I32 write_only = c::O_WRONLY;                           // NOLINT(smit
 constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;      // NOLINT(smith-preprocessor)
 
 // __builtin_trap's signal: brk raises SIGTRAP on aarch64, ud2 SIGILL on x86_64.
-constexpr I32 sig_builtin_trap = target::arch == target::x86_64 ? sig_ill : sig_trap;
+I32 builtin_trap_signal() {
+    if constexpr (target::arch == target::x86_64) {
+        return sig_ill;
+    } else {
+        return sig_trap;
+    }
+}
 
 // A status from waitpid, as the signal that ended the process (or 0) and its exit status (or 0). The low seven bits
 // are the signal, 0 for an exit and 0x7f for a stop; an exit's status is the next byte.
@@ -249,15 +255,14 @@ export constexpr Kind kind_pointer = 6;
 [[std::c_name("SmithTestValue")]] export typedef struct {
     Kind kind;
     const char *type; // "I32", "U64", "F64", "bool", "char", "ptr"
-    union {
-        U64 unsigned_value;
-        I64 signed_value;
-        F32 f32_value;
-        F64 f64_value;
-        Bool bool_value;
-        char char_value;
-        Usize pointer_value;
-    };
+    // Only the field of kind is set: separate fields, as the new front end emits no union of a .smith struct yet.
+    U64 unsigned_value;
+    I64 signed_value;
+    F32 f32_value;
+    F64 f64_value;
+    Bool bool_value;
+    char char_value;
+    Usize pointer_value;
 } Value;
 
 // The comparisons of the checks.
@@ -528,8 +533,11 @@ typedef struct {
     F64 cpu;           // the CPU seconds the test took, with the processes it waited for (--stats)
 } Shared;
 
-Shared fallback;
-Shared *shared = &fallback;
+// The storage a process uses until the runner maps its shared block: zeroed bytes, as C's static struct was.
+constexpr Usize fallback_words = 2048;
+U64 fallback[fallback_words];
+static_assert(sizeof(Shared) <= sizeof fallback);
+Shared *shared = (Shared *)&fallback[0];
 Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 U32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
@@ -619,7 +627,13 @@ void reset() {
 // Appends to the shared detail, silently dropping what does not fit.
 void detail_add(Usize *used, const char *format, auto... rest) {
     if (*used >= detail_capacity - 1) return;
-    I32 written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, format, rest...);
+    I32 written = 0;
+    if constexpr (countof(rest) == 0)
+        written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, "%s", format);
+    else {
+        const char *pattern = format;
+        written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, pattern, rest...);
+    }
     if (written > 0) *used += (Usize)written;
     if (*used > detail_capacity - 1) *used = detail_capacity - 1;
 }
@@ -644,8 +658,8 @@ void write_values(Line *lines, Usize count) {
     Usize used = 0;
     shared->detail[0] = '\0';
     for (Usize i = 0; i < count; i++) {
-        detail_add(&used, "%-*s = %-*s   (%s)\n", (I32)text_width, lines[i].text, (I32)value_width, lines[i].formatted,
-                   lines[i].value.type);
+        detail_add(&used, "%-*s = %-*s   (%s)\n", (I32)text_width, lines[i].text, (I32)value_width,
+                   &lines[i].formatted[0], lines[i].value.type);
     }
 }
 
@@ -770,8 +784,7 @@ U64 explain_read(I32 from, char *text, Usize *used, U64 began, c::pid_t child) {
 void explain_join(const char *text, Usize used, U64 ended, I32 status) {
     Usize at = c::strlen(shared->detail);
     if (ended == explain_read_cpu) {
-        detail_add(&at, "@! values not shown: the debugger spent more than %ju s of CPU time\n",
-                   (U64)explain_seconds);
+        detail_add(&at, "@! values not shown: the debugger spent more than %ju s of CPU time\n", (U64)explain_seconds);
     } else if (ended == explain_read_hung) {
         detail_add(&at, "@! values not shown: the debugger hung (%ju s of wall time, no answer)\n",
                    (U64)explain_hang_seconds);
@@ -1341,7 +1354,7 @@ Bool golden_write(const char *path, const char *text, Usize size) {
     __builtin_snprintf(folder, sizeof folder, "%s", path);
     for (char *slash = c::strchr(folder + 1, '/'); slash != nullptr; slash = c::strchr(slash + 1, '/')) {
         *slash = '\0';
-        c::mkdir(folder, 493); // 0755; one that is there already is fine
+        c::mkdir(&folder[0], 493); // 0755; one that is there already is fine
         *slash = '/';
     }
     I32 descriptor = c::open(path, c::O_WRONLY | c::O_CREAT | c::O_TRUNC, 420); // NOLINT(smith-preprocessor)
@@ -1483,7 +1496,7 @@ void golden_check(const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
         golden_fail("the golden path is empty or too long", "", "");
-    __builtin_memcpy(file, path.data, countof(path));
+    __builtin_memcpy(&file[0], path.data, countof(path));
     file[countof(path)] = '\0';
     Usize size = 0;
     const char *expected = golden_read(file, &size);
@@ -1494,12 +1507,12 @@ void golden_check(const char path[:], const char actual[:]) {
     if (update_run) {
         char summary[64];
         if (expected != nullptr) golden_summary(summary, sizeof summary, expected, size, actual_text, actual_size);
-        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
-        golden_note(file, expected != nullptr ? summary : nullptr);
+        if (!golden_write(&file[0], actual_text, actual_size)) golden_fail("cannot write ", &file[0], "");
+        golden_note(&file[0], expected != nullptr ? summary : nullptr);
         return;
     }
-    if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
-    golden_differ(file, expected, size, actual_text, actual_size);
+    if (expected == nullptr) golden_fail("no file ", &file[0], "; run smith test --update to write it");
+    golden_differ(&file[0], expected, size, actual_text, actual_size);
 }
 
 export void golden(const char path[:], const char actual[:]) { // NOLINT(smith-effects): a test's files
@@ -1646,19 +1659,31 @@ void *map_bytes(Usize bytes, I32 flags) {
 // Printing goes through the console.
 void say(const char *format, auto... rest) {
     char buffer[8192];
-    (void)__builtin_snprintf(buffer, sizeof buffer, format, rest...);
-    (void)console::print(buffer);
+    if constexpr (countof(rest) == 0)
+        (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
+    else {
+        const char *pattern = format;
+        (void)__builtin_snprintf(buffer, sizeof buffer, pattern, rest...);
+    }
+    const char *shown = &buffer[0];
+    (void)console::print(shown);
 }
 
 void complain(const char *format, auto... rest) {
     char buffer[8192];
-    (void)__builtin_snprintf(buffer, sizeof buffer, format, rest...);
-    (void)console::print_error(buffer);
+    if constexpr (countof(rest) == 0)
+        (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
+    else {
+        const char *pattern = format;
+        (void)__builtin_snprintf(buffer, sizeof buffer, pattern, rest...);
+    }
+    const char *shown = &buffer[0];
+    (void)console::print_error(shown);
 }
 
 // A stop on purpose: SIGABRT, SIGTRAP or the signal of __builtin_trap.
 Bool is_stop(I32 signal_number) {
-    return signal_number == sig_abrt || signal_number == sig_trap || signal_number == sig_builtin_trap;
+    return signal_number == sig_abrt || signal_number == sig_trap || signal_number == builtin_trap_signal();
 }
 
 // A process that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for an expected
@@ -1682,34 +1707,21 @@ void on_signal(I32 signal_number, c::siginfo_t *info, void *context) {
     c::_exit(signal_status + signal_number);
 }
 
-// SIG_DFL and SIG_IGN are the handler values 0 and 1, macros no header binding has.
+// SIG_DFL and SIG_IGN are macros no header binding has: lib/trace.c calls signal with them.
 void signal_default(I32 signal_number) {
-    void (*handler)(I32) = nullptr;
-    c::signal(signal_number, handler);
+    c::smith_signal_default(signal_number); // NOLINT(bugprone-signal-handler): it calls signal, which is safe
 }
 
 void signal_ignore(I32 signal_number) {
-    Usize one = 1;
-    void (*handler)(I32) = nullptr;
-    __builtin_memcpy(&handler, &one, sizeof handler);
-    c::signal(signal_number, handler);
+    c::smith_signal_ignore(signal_number);
 }
 
+U8 alternate_bytes[alternate_stack]; // the stack the signal handlers run on (a function's own static is not emitted
+                                     // yet)
+
 void catch_signals() {
-    static U8 stack[alternate_stack];
-    c::stack_t alternate = {.ss_sp = stack, .ss_size = alternate_stack};
+    c::stack_t alternate = {.ss_sp = &alternate_bytes[0], .ss_size = alternate_stack};
     c::sigaltstack(&alternate, nullptr);
-    struct c::sigaction action;
-    __builtin_memset(&action, 0, sizeof action); // the mask starts empty
-    action.sa_flags = on_stack + with_info;      // two distinct bits
-    if constexpr (target::os == target::macos) {
-        action.__sigaction_u.__sa_sigaction = on_signal; // macOS's spelling of sa_sigaction, which is a macro
-    } else {
-        // glibc's sa_sigaction is a macro for a member of the union __sigaction_handler, which this names instead
-        // (the union's members begin at its address).
-        void *handler = (void *)on_signal;
-        __builtin_memcpy(&action.__sigaction_handler, &handler, sizeof handler);
-    }
     constexpr Usize signals_count = 6;
     const I32 signals[signals_count] = {sig_trap, sig_abrt, sig_ill, sig_segv, sig_bus, sig_fpe};
     // AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers.
@@ -1718,7 +1730,7 @@ void catch_signals() {
         caught = 3;
     }
     for (Usize i = 0; i < caught; i++)
-        c::sigaction(signals[i], &action, nullptr);
+        c::smith_signal_catch(signals[i], (void *)on_signal, on_stack + with_info);
 }
 
 // The words a property test draws, recorded and replaced (shrinking, below), and the runner's tap that does it.
@@ -1828,14 +1840,17 @@ void disarm() {
 // and the next test needs the allocator in a known state.
 // --unchecked turns it off. It wraps the test function alone, not the runner's own setup (an io test's setenv stays
 // outside), so only what the test allocates is checked.
-mem::Checked checked_state;
+// the bytes of the worker's mem::Checked (it holds an allocator, which no zero spells), viewed as one
+U64 checked_bytes[16];
+static_assert(sizeof(mem::Checked) <= sizeof checked_bytes);
+mem::Checked *checked_state = (mem::Checked *)&checked_bytes[0];
 mem::Allocator *checked_outside;
 Bool checked_active;
 
 void checked_begin(const Options *options) {
     if (options->unchecked) return;
-    checked_state = mem::checked(nullptr);
-    checked_outside = mem::set_allocator(&checked_state.base);
+    *checked_state = mem::checked(nullptr);
+    checked_outside = mem::set_allocator(&checked_state->base);
     checked_active = true;
 }
 
@@ -1844,13 +1859,15 @@ void checked_end() {
     if (!checked_active) return;
     checked_active = false;
     mem::set_allocator(checked_outside);
-    mem::checked_release(&checked_state);
+    mem::checked_release(checked_state);
 }
 
 // A property test that takes a failing::Failing: the allocator that refuses by the decisions of the key's second half,
 // installed over the checked allocator (its parent, so the blocks it did not refuse are still checked) for the call of
 // the test alone.
-failing::Failing failing_state;
+U64 failing_bytes[16];
+static_assert(sizeof(failing::Failing) <= sizeof failing_bytes);
+failing::Failing *failing_state = (failing::Failing *)&failing_bytes[0];
 mem::Allocator *failing_outside;
 Bool failing_active;
 
@@ -1866,7 +1883,7 @@ void failing_end() {
 void checked_finish() {
     if (!checked_active) return;
     mem::set_allocator(checked_outside);
-    mem::CheckedLeaks leaks = mem::checked_leaks(&checked_state);
+    mem::CheckedLeaks leaks = mem::checked_leaks(checked_state);
     if (leaks.count == 0) {
         checked_end();
         return;
@@ -1885,7 +1902,9 @@ void checked_finish() {
 
 // NOLINTEND(smith-module-library)
 
-random::Tap hooking_tap; // its word is set in setup(), in the process that draws through it
+U64 hooking_bytes[4]; // a random::Tap, whose word is set in setup(), in the process that draws through it
+static_assert(sizeof(random::Tap) <= sizeof hooking_bytes);
+random::Tap *hooking_tap = (random::Tap *)&hooking_bytes[0];
 
 // A test that draws from a key: a property test, or one that also takes a failing::Failing.
 Bool keyed(const Test *test) {
@@ -1905,11 +1924,11 @@ void run_key(const Test *test, const Options *options, U64 seed) {
         random::Key halves[2];
         random::split(key, halves);
         // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
-        failing_state = failing::make(checked_active ? &checked_state.base : nullptr, halves[1]);
-        failing_outside = mem::set_allocator(&failing_state.base);
+        *failing_state = failing::make(checked_active ? &checked_state->base : nullptr, halves[1]);
+        failing_outside = mem::set_allocator(&failing_state->base);
         // NOLINTEND(smith-module-library)
         failing_active = true;
-        test->with_failing(halves[0], &failing_state);
+        test->with_failing(halves[0], failing_state);
         failing_end();
     } else {
         test->property(key);
@@ -1949,14 +1968,14 @@ void coverage_begin(const Test *test) {
     if (dir == nullptr || dir[0] == '\0') return;
     char clean[256];
     char path[path_capacity];
-    coverage_name(test->name, clean, sizeof clean);
+    coverage_name(test->name, &clean[0], sizeof clean);
     c::mkdir(dir, 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw", dir);
-    c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
+    c::mkdir(&path[0], 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s", dir, clean);
-    c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
+    c::mkdir(&path[0], 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
-    c::setenv("LLVM_PROFILE_FILE", path, 1);
+    c::setenv("LLVM_PROFILE_FILE", &path[0], 1);
     // What the test reads (a scratch project's repository paths): one path a line, for its record (#739).
     __builtin_snprintf(path, sizeof path, "%s/reads", dir);
     c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
@@ -2034,8 +2053,8 @@ void setup(Shared *block, I32 output) {
     signal_default(sig_term);
     catch_signals();
     c::smith_failure_set_hook((void *)on_failure);
-    hooking_tap.word = tap_word;
-    active_tap = hooking ? &hooking_tap : nullptr;
+    hooking_tap->word = tap_word;
+    active_tap = hooking ? hooking_tap : nullptr;
     if (c::dup2(output, stdout_fd) < 0 || c::dup2(output, stderr_fd) < 0) c::_exit(usage_status);
     c::close(output);
     c::smith_stdout_unbuffered();
@@ -2070,7 +2089,7 @@ End serve(const Options *options, const Command *command) {
     F64 cpu_before = process_cpu();
     I32 jumped = 0;
     if constexpr (target::os == target::macos) {
-        jumped = c::sigsetjmp(loop_jump, 1);
+        jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor)
     } else {
         jumped = c::__sigsetjmp(loop_jump, 1); // glibc's sigsetjmp is a macro of it
     }
@@ -2091,7 +2110,7 @@ End serve(const Options *options, const Command *command) {
 [[noreturn]] void worker_main(const Options *options, Shared *block, I32 control, I32 output) {
     worker = true;
     signal_default(sig_pipe); // SIG_DFL
-    signal_ignore(sig_xfsz); // SIG_IGN
+    signal_ignore(sig_xfsz);  // SIG_IGN
     setup(block, output);
     for (Usize served = 0; served < commands_max; served++) {
         Command command;
@@ -2851,8 +2870,8 @@ export U64 shrink_draw(U64 key, U64 n, U64 bits) {
 
 // A key for a predicate that draws through a distribution: its words go through shrink_draw's tap.
 export [[nodiscard]] random::Key shrink_key(U64 bits) {
-    hooking_tap.word = tap_word;
-    return (random::Key){.bits = bits, .tap = &hooking_tap};
+    hooking_tap->word = tap_word;
+    return (random::Key){.bits = bits, .tap = hooking_tap};
 }
 
 void restore_tables(Draws *outer_recorded, Draws *outer_overrides) {
@@ -3079,7 +3098,7 @@ typedef struct {
     F64 progress_at; // the time of the last look at which the tree had used CPU time
     F64 looked_at;
     Usize count;
-    c::pid_t pid[idle_seen_max];
+    I32 pid[idle_seen_max]; // pid_t, spelled int
     F64 cpu[idle_seen_max];
 } Idle;
 
@@ -3132,9 +3151,9 @@ void list_processes() {
         return;
     }
     char text[512];
-    while (ps_count < ps_rows_max && c::fgets(text, (I32)sizeof text, listing) != nullptr) {
+    while (ps_count < ps_rows_max && c::fgets(&text[0], (I32)sizeof text, listing) != nullptr) {
         char *rest = nullptr;
-        I64 pid = c::strtol(text, &rest, 10);
+        I64 pid = c::strtol(&text[0], &rest, 10);
         I64 parent = c::strtol(rest, &rest, 10);
         while (*rest == ' ')
             rest++;
@@ -3189,7 +3208,7 @@ F64 tree_progress(Idle *state, char *waited) {
     F64 grown = 0;
     Usize deepest = ps_count;
     Usize kept = 0;
-    c::pid_t pid[idle_seen_max];
+    I32 pid[idle_seen_max]; // pid_t, spelled int
     F64 cpu[idle_seen_max];
     for (Usize i = 0; i < ps_count; i++) {
         if (!ps_rows[i].below) continue;
@@ -3492,7 +3511,7 @@ void parse_filter(Options *options, const char *value) {
     Bool written_name = last != nullptr || is_test_name(tail + 5);
     if (c::strncmp(tail, "test_", 5) == 0 && tail[5] != '\0' && written_name && c::strlen(value) < sizeof written) {
         __builtin_snprintf(written, sizeof written, "%.*s%s", (I32)(tail - value), value, tail + 5);
-        value = written;
+        value = &written[0];
     }
     const char *earlier = options->filter;
     if (earlier == nullptr) {
@@ -3961,8 +3980,8 @@ Bool other_runner_matches(const Options *options) {
         // the pointers are copied bit for bit: execv takes a non-const argv, and a null filter ends the list
         const char *program = options->others;
         const char *wanted = options->filter;
-        __builtin_memcpy(&arguments[0], &program, sizeof program);
-        __builtin_memcpy(&arguments[3], &wanted, sizeof wanted);
+        __builtin_memcpy((void *)&arguments[0], (void *)&program, sizeof program);
+        __builtin_memcpy((void *)&arguments[3], (void *)&wanted, sizeof wanted);
         if (options->macos != 0) arguments[4] = options->macos == 1 ? &macos_flag[0] : &skip_flag[0];
         c::execv(arguments[0], arguments);
         c::_exit(127);
@@ -4000,8 +4019,8 @@ F64 *read_costs(const Plan *plan, const char *path) {
     c::FILE *file = path != nullptr ? c::fopen(path, "r") : nullptr;
     if (file == nullptr) return cost;
     char line[512];
-    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(line, (I32)sizeof line, file) != nullptr; guard++) {
-        char *seconds_text = c::strchr(line, '\t');
+    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(&line[0], (I32)sizeof line, file) != nullptr; guard++) {
+        char *seconds_text = c::strchr(&line[0], '\t');
         char *name = seconds_text != nullptr ? c::strchr(seconds_text + 1, '\t') : nullptr;
         if (name == nullptr) continue;
         name += 1;

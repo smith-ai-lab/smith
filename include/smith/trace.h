@@ -109,3 +109,13 @@ void smith_failure_set_hook(const void *hook);
 // Makes stdout unbuffered: the test runner's workers, so a crash loses none of what a test printed. For .smith, which
 // does not read a header variable (stdout) yet.
 void smith_stdout_unbuffered(void);
+
+// signal(number, SIG_DFL) and signal(number, SIG_IGN): the test runner's. For .smith, which does not read the macros
+// SIG_DFL and SIG_IGN of a header yet.
+void smith_signal_default(int number);
+void smith_signal_ignore(int number);
+
+// sigaction(number, ...) with an empty mask, `flags` and the handler whose address is `handler` (a SA_SIGINFO one): the
+// test runner's. For .smith, which does not read a struct that shares its name with a function (sigaction), nor a
+// function pointer, of a header yet.
+void smith_signal_catch(int number, const void *handler, int flags);

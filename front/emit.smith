@@ -1043,7 +1043,9 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         }
         result = made_result.ok;
     }
-    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, parameter_types, (U32)count, 0);
+    I32 variadic = 0; // a body that reads `...` with va_start
+    if (d->kind == .function && d->kind.function.variadic) variadic = 1;
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, parameter_types, (U32)count, variadic);
     Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
     Str symbol = function_symbol(e->tree, d, name);
     if (takes_args) symbol = state::msg(format::push("main.args"));
@@ -1062,6 +1064,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
                                           .llvm = function,
                                           .llvm_type = type,
                                           .result = result,
+                                          .variadic = variadic != 0,
                                           .params = params[0:count]});
     if (takes_args) {
         state::Ty args = params[0];
@@ -1110,7 +1113,9 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
         }
         result = made_result.ok;
     }
-    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, llvm_types, (U32)count, 0);
+    I32 variadic = 0;
+    if (d->kind == .function && d->kind.function.variadic) variadic = 1;
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, llvm_types, (U32)count, variadic);
     Str symbol = function_symbol(e->tree, d, name);
     char *label = state::cstr(symbol);
     c::LLVMValueRef function = c::LLVMAddFunction(e->module, label, type);
@@ -1121,6 +1126,7 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
                                           .llvm = function,
                                           .llvm_type = type,
                                           .result = result,
+                                          .variadic = variadic != 0,
                                           .params = params[0:count]});
     return state::success();
 }
@@ -1459,6 +1465,23 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     return true;
 }
 
+// The enumeration of another module that a payload names (`Result(usize, console.Error)`), declared when the type that
+// holds it is first needed. Nothing for any other type, or an enumeration already declared.
+static Str bare_name(Str name) {
+    Usize start = 0;
+    for (Usize i = 0; i + 1 < countof(name); i++)
+        if (name[i] == ':' && name[i + 1] == ':') start = i + 2;
+    return name[start:countof(name)];
+}
+
+static void ensure_enum(state::Emitter *e, types::TypeRef t) {
+    if (t == nullptr || t->kind != .enumeration || e->options.checked == nullptr) return;
+    state::Ty known = {};
+    if (matching::type_enum(e, t->name, &known) || matching::type_enum(e, bare_name(t->name), &known)) return;
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, t->name);
+    if (is_enum_symbol(target)) imported_enum(e, target);
+}
+
 // The checker's type `t` as a `Ty`, with `span` for an error. A chain of pointers and arrays is walked with a loop,
 // then built from inside. `Void` (a function's result, what a pointer points at) is an LLVM `void`.
 static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
@@ -1476,6 +1499,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     Bool known = scalar_of_checked(e, base, &ty);
     known = known || (base->kind == .record && find_record_by_name(e, base->name, &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
+    known = known || (base->kind == .enumeration && matching::type_enum(e, bare_name(base->name), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
     known =
         known || (base->kind == .enumeration && from_header(base->name) && scalar_of_checked(e, base->element, &ty));
@@ -1489,8 +1513,13 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
             state::Ty lane = {};
             if (scalar_of_checked(e, base->element, &lane)) return vectors::make(e, lane, base->count);
         }
-        if (base->kind == .option) return optional::from_checked(e, base);
+        if (base->kind == .option) {
+            ensure_enum(e, base->element);
+            return optional::from_checked(e, base);
+        }
         if (base->kind == .result_type) {
+            ensure_enum(e, base->element);
+            ensure_enum(e, base->error);
             state::TyResult ok = optional::payload_of_checked(e, base->element);
             if (ok == .error) return {.error = ok.error};
             state::TyResult bad = optional::payload_of_checked(e, base->error);

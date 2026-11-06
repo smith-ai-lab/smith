@@ -225,8 +225,8 @@ static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     table::Entry entry = {};
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
     state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
-    Bool no_value =
-        entry.shape == .assume || entry.shape == .trap || entry.shape == .va_start || entry.shape == .va_end || (entry.shape == .libc && table::libc_result(entry) == 'v');
+    Bool no_value = entry.shape == .assume || entry.shape == .trap || entry.shape == .va_start ||
+                    entry.shape == .va_end || (entry.shape == .libc && table::libc_result(entry) == 'v');
     if (!no_value) {
         state::TyResult typed = state::type_of_node(e, x);
         if (typed == .error) return {.error = typed.error};
@@ -255,7 +255,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
     state::push_then_general(e, (state::ThenGeneral){.run = finish, .expr = x, .number = values, .span = x->span});
     for (Usize i = countof(args); i > 0; i--) {
         state::Hint hint = state::no_hint(); // the format of `__builtin_snprintf` is a C string, not a `str`
-        if (entry.shape == .format && i == 3) {
+        if ((entry.shape == .format || entry.shape == .va_format) && i == 3) {
             state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "Char *"};
             hint = state::hint_of(pointer);
         }
