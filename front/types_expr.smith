@@ -2774,9 +2774,12 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
         push_arguments(w, args, nullptr);
         return;
     }
-    Bool fits = method_fn != nullptr && (has_generics(method_fn) ? generic_first_fits(method_fn, self_type)
-                                                                 : first_parameter(method_fn) != nullptr &&
-                                                                       first_parameter(method_fn) == self_type);
+    Bool fits = false;
+    if (method_fn != nullptr && has_generics(method_fn)) {
+        fits = generic_first_fits(method_fn, self_type);
+    } else if (method_fn != nullptr) {
+        fits = first_parameter(method_fn) != nullptr && first_parameter(method_fn) == self_type;
+    }
     if (!fits) {
         method_missing(c, e, method_fn, bt);
         push_arguments(w, args, nullptr);
