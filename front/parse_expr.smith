@@ -2168,6 +2168,7 @@ static Bool old_literal_ahead(const parse::Parser *p) {
         at += 2;
     if (parse::peek_at(p, at + 1).kind != lex::right_paren || parse::peek_at(p, at + 2).kind != lex::left_brace)
         return false;
+    if (parse::peek_at(p, at + 3).kind == lex::right_brace) return true; // `(Task){}`
     return parse::peek_at(p, at + 3).kind == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
 }
 
