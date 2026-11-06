@@ -404,7 +404,7 @@ typedef struct {
         reader->count += take * 8U;
         return;
     }
-    for (; reader->count < 56; reader->count += 8, reader->at++) {
+    for (; reader->count < 56; reader->count += 8) {
         U64 byte = 0;
         if (reader->at < reader->size) {
             byte = reader->in[reader->at];
@@ -412,6 +412,7 @@ typedef struct {
             reader->fake += 8;
         }
         reader->bits |= byte << reader->count;
+        reader->at++;
     }
 }
 
@@ -474,7 +475,7 @@ Bool huffman_build(Huffman *huffman, const U8 *lengths, Usize n) {
     U32 code = 0;
     Usize index = 0;
     for (U32 length = 1; length <= fast_bits; length++) {
-        for (U16 k = 0; k < huffman->count[length]; k++, code++, index++) {
+        for (U16 k = 0; k < huffman->count[length]; k++) {
             U32 reversed = 0;
             for (U32 bit = 0; bit < length; bit++) {
                 reversed |= ((code >> bit) & 1U) << (length - 1U - bit);
@@ -482,6 +483,8 @@ Bool huffman_build(Huffman *huffman, const U8 *lengths, Usize n) {
             for (U32 fill = reversed; fill < (1U << fast_bits); fill += 1U << length) {
                 huffman->fast[fill] = (U16)(((U32)huffman->symbol[index] << 4) | length);
             }
+            code++;
+            index++;
         }
         code <<= 1;
     }
@@ -540,7 +543,8 @@ void sum(State *s) {
 // Hands the window to the sink and starts it again (the old bytes stay where they are, for matches to reach).
 Status flush(State *s) {
     sum(s);
-    Bool ok = s->position == 0 || s->sink(s->context, s->out, s->position);
+    auto sink = s->sink; // a local, so the null test below narrows it (a field does not)
+    Bool ok = s->position == 0 || (sink != nullptr && sink(s->context, s->out, s->position));
     s->position = 0;
     s->summed = 0;
     return ok ? Ok : Stopped;
@@ -576,7 +580,7 @@ Status stored(State *s) {
         Usize n = remaining < room ? remaining : room;
         __builtin_memcpy(s->out + s->position, from, n);
         s->position += n;
-        s->total += n;
+        s->total += (U64)n;
         from += n;
         remaining -= n;
         if (s->sink != nullptr && s->position == s->capacity) {
@@ -612,7 +616,7 @@ Status copy(State *s, U32 length, U32 distance) {
             }
         }
         s->position += length;
-        s->total += length;
+        s->total += (U64)length;
         return Ok;
     }
     if (s->position >= distance && s->position + length < s->capacity) { // the common case: no wrap, no flush
@@ -626,7 +630,7 @@ Status copy(State *s, U32 length, U32 distance) {
             }
         }
         s->position += length;
-        s->total += length;
+        s->total += (U64)length;
         return Ok;
     }
     for (U32 i = 0; i < length; i++) {
@@ -853,7 +857,10 @@ decode(Format format, const U8 *input, Usize input_size, U8 *output, Usize capac
     if (!(input != nullptr || input_size == 0)) refuse("input != nullptr || input_size == 0");
     if (!(output != nullptr || capacity == 0)) refuse("output != nullptr || capacity == 0");
     if (!(used != nullptr && size != nullptr)) refuse("used != nullptr && size != nullptr");
-    State state = {.out = output, .capacity = capacity, .format = format};
+    State state = {};
+    state.out = output;
+    state.capacity = capacity;
+    state.format = format;
     U64 produced = 0;
     Status status = run(&state, input, input_size, used, &produced);
     *size = state.position;
@@ -869,7 +876,12 @@ stream(Format format, const U8 *input, Usize input_size, U8 *buffer, Sink sink, 
     if (!(buffer != nullptr)) refuse("buffer != nullptr");
     if (!(sink != nullptr)) refuse("sink != nullptr");
     if (!(used != nullptr && size != nullptr)) refuse("used != nullptr && size != nullptr");
-    State state = {.out = buffer, .capacity = window, .sink = sink, .context = context, .format = format};
+    State state = {};
+    state.out = buffer;
+    state.capacity = window;
+    state.sink = sink;
+    state.context = context;
+    state.format = format;
     return run(&state, input, input_size, used, size);
 }
 // NOLINTEND(smith-mem)
