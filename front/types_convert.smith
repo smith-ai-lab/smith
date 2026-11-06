@@ -198,6 +198,12 @@ static Verdict integer_to_integer(const Ctx *c) {
     types::TypeRef from = c->from;
     types::TypeRef to = c->target_type;
     Bool word = is_word_size(from) || is_word_size(to);
+    // D8 (owner, 2026-11-06): `usize` and `isize` are at least 32 bits on every target, so a narrower or 32-bit integer
+    // of the same signedness goes in without a conversion, and an unsigned one narrower than 32 bits goes into `isize`.
+    if (is_word_size(to) && !is_word_size(from) && from->bits <= 32) {
+        if (from->is_signed == to->is_signed) return accept(widening);
+        if (!from->is_signed && to->is_signed && from->bits < 32) return accept(widening);
+    }
     if (!word && from->is_signed == to->is_signed && to->bits >= from->bits) return accept(widening);
     if (!word && !from->is_signed && to->is_signed && to->bits > from->bits) return accept(widening);
     if (c->lit.is_constant) {
