@@ -1,0 +1,36 @@
+// Tests of the fix-it for `mem::equal` (#2540): `smith lint --fix` writes `mem::equal(a, b)` as `a == b` and
+// `!mem::equal(a, b)` as `a != b`.
+module front_fix_equal_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after, Usize applied) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    test::check_equal(first.applied, applied);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, first.text);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_equal_a_call_is_written_as_equality() {
+    expect("import std.mem\n\nfn same(a: []u8, b: []u8) -> bool:\n    return mem.equal(a, b)\n",
+           "import std.mem\n\nfn same(a: []u8, b: []u8) -> bool:\n    return a == b\n", 1);
+}
+
+export void test_front_fix_equal_a_negated_call_is_written_as_inequality() {
+    expect("import std.mem\n\nfn differ(a: []u8, b: []u8) -> bool:\n    return !mem.equal(a, b)\n",
+           "import std.mem\n\nfn differ(a: []u8, b: []u8) -> bool:\n    return a != b\n", 1);
+}
+
+export void test_front_fix_equal_a_slice_argument_is_kept() {
+    expect("import std.mem\n\nfn head(a: []u8, b: []u8) -> bool:\n    return mem.equal(a[0:2], b)\n",
+           "import std.mem\n\nfn head(a: []u8, b: []u8) -> bool:\n    return a[0:2] == b\n", 1);
+}

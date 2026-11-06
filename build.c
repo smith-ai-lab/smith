@@ -888,7 +888,7 @@ static const char *const build_front_modules[] = {
     "emit_debug",   "emit_object",     "roots",         "fix",          "cimport",
     "compile",      "emit_option",     "emit_match",    "emit_value",   "emit_iter",
     "emit_tuple",   "emit_lambda",     "emit_vector",   "emit_stream",  "fix_directive",
-    "fix_blocks",   "fix_generic_c",   "fix_method",    "fix_zero",     "fix_opaque",
+    "fix_blocks",   "fix_equal",       "fix_generic_c",   "fix_method",    "fix_zero",     "fix_opaque",
     "fix_typeof",   "lsp_server",      "lsp_hover",     "lsp_semantic", "lsp_definition",
     "lsp_symbols",  "lsp_completion",  "format_space",  "format",       "effects_table",
     "fix_variants", "fix_alloc",

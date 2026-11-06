@@ -1,0 +1,107 @@
+// front::fix_equal, the fix-it for `mem::equal` (#2540): `==` compares slices and `str` by contents.
+//
+//   mem::equal(a, b)                a == b
+//   !mem::equal(a, b)               a != b
+//
+// An argument that is not a name, member, index, call or slice is put in parentheses; the rewritten call is put in
+// parentheses when it is the operand of an operator that binds tighter than `==`, or the base of a member or index.
+//
+//   fix_equal::edits(source, checked)   one fix for each call of `mem::equal` with two arguments
+module front::fix_equal;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool is_equal_call(const ast::Expr *e) {
+    if (e == nullptr || e->kind != .call || countof(e->kind.call.args) != 2) return false;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .member || callee->kind.member.arrow) return false;
+    types::Names names = types::member_names(callee);
+    return names.count == 2 && same(names.items[0], "mem") && same(names.items[1], "equal");
+}
+
+static Bool is_simple(const ast::Expr *e) {
+    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call ||
+           e->kind == .slice_of || e->kind == .string;
+}
+
+// The text of an operand, in parentheses when it is not simple.
+static Str operand(Str source, const ast::Expr *e) {
+    Str text = source[e->span.start:e->span.end];
+    if (is_simple(e)) return text;
+    return types::message_of(format::push("(", text, ")"));
+}
+
+// Whether `e`, written as `a == b`, needs parentheses where it stands: it is an operand of an arithmetic, bitwise or
+// comparison operator, of a unary operator other than `!`, or the base of a member or an index.
+static Bool needs_parens(const types::Checked *c, const ast::Expr *e) {
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *p = c->nodes[i].node;
+        if (p == nullptr) continue;
+        if (p->kind == .binary && p->kind.binary.op != .logical_and && p->kind.binary.op != .logical_or) {
+            if (p->kind.binary.left == e || p->kind.binary.right == e) return true;
+        } else if (p->kind == .unary && p->kind.unary.op != .logical_not) {
+            if (p->kind.unary.operand == e) return true;
+        } else if (p->kind == .member && p->kind.member.base == e) {
+            return true;
+        } else if (p->kind == .index && p->kind.index.base == e) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The `!` expression that holds the call `e` as its operand, or null.
+static const ast::Expr *negation_of(const types::Checked *c, const ast::Expr *e) {
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *p = c->nodes[i].node;
+        if (p != nullptr && p->kind == .unary && p->kind.unary.op == .logical_not && p->kind.unary.operand == e)
+            return p;
+    }
+    return nullptr;
+}
+
+static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *e) {
+    core::Edits out = {};
+    if (e->kind == .call) {
+        ast::ExprRef args[:] = e->kind.call.args;
+        const ast::Expr *whole = negation_of(c, e);
+        Str op = " != ";
+        if (whole == nullptr) {
+            whole = e;
+            op = " == ";
+        }
+        Str text = types::message_of(format::push(operand(source, args[0]), op, operand(source, args[1])));
+        if (needs_parens(c, whole)) text = types::message_of(format::push("(", text, ")"));
+        out = mem::realloc(out, 1);
+        out[0] = (core::Edit){.span = whole->span, .text = text};
+    }
+    return out;
+}
+
+// The fixes of `module`'s calls of `mem::equal`, as errors that carry them (the driver applies them with the rest).
+export core::Errors edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (!is_equal_call(e)) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError found = {};
+        found.span = e->span;
+        found.message = "write `a == b`: `==` compares slices and `str` by contents";
+        found.fix = fix_of(source, c, e);
+        out[countof(out) - 1] = found;
+    }
+    return out;
+}

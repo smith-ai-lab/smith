@@ -340,6 +340,90 @@ static c::LLVMIntPredicate predicate(ast::BinaryOp op, Bool is_signed) {
     return c::LLVMIntNE;
 }
 
+// ---- slices and `str` (#2540): equal when the counts are equal and each element is.
+
+// An element whose bytes are its value: one `memcmp` compares the whole run.
+static Bool bytes_are_value(state::Ty t) {
+    return (t.kind == .integer && t.bits % 8 == 0) || t.kind == .pointer;
+}
+
+static c::LLVMValueRef memcmp_equal(state::Emitter *e, state::Ty element, c::LLVMValueRef a, c::LLVMValueRef b,
+                                    c::LLVMValueRef count) {
+    c::LLVMTypeRef word = c::LLVMTypeOf(count);
+    c::LLVMTypeRef pointer = state::pointer_type(e, 0);
+    c::LLVMTypeRef params[3] = {pointer, pointer, word};
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMInt32TypeInContext(e->context), params, 3, 0);
+    c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, "memcmp");
+    if (function == nullptr) function = c::LLVMAddFunction(e->module, "memcmp", type);
+    c::LLVMValueRef size = c::LLVMBuildIntCast2(e->builder, c::LLVMSizeOf(element.llvm), word, 0, "");
+    c::LLVMValueRef args[3] = {a, b, c::LLVMBuildMul(e->builder, count, size, "bytes")};
+    c::LLVMValueRef order = c::LLVMBuildCall2(e->builder, type, function, args, 3, "");
+    return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, order, c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), 0, 0), "");
+}
+
+// Element by element, for floats (`NaN != NaN`) and the like: a loop over the common count.
+static c::LLVMValueRef loop_equal(state::Emitter *e, state::Ty element, c::LLVMValueRef a, c::LLVMValueRef b,
+                                  c::LLVMValueRef count) {
+    c::LLVMTypeRef word = c::LLVMTypeOf(count);
+    c::LLVMTypeRef flag = c::LLVMInt1TypeInContext(e->context);
+    c::LLVMBasicBlockRef before = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBasicBlockRef head = new_block(e, "slice_head");
+    c::LLVMBasicBlockRef check = new_block(e, "slice_check");
+    c::LLVMBasicBlockRef step = new_block(e, "slice_step");
+    c::LLVMBasicBlockRef leave = new_block(e, "slice_exit");
+    c::LLVMBuildBr(e->builder, head);
+    position(e, head);
+    c::LLVMValueRef at = c::LLVMBuildPhi(e->builder, word, "at");
+    c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, c::LLVMIntULT, at, count, "");
+    c::LLVMBuildCondBr(e->builder, more, check, leave);
+    position(e, check);
+    c::LLVMValueRef left_at = c::LLVMBuildInBoundsGEP2(e->builder, element.llvm, a, &at, 1, "");
+    c::LLVMValueRef right_at = c::LLVMBuildInBoundsGEP2(e->builder, element.llvm, b, &at, 1, "");
+    c::LLVMValueRef x = c::LLVMBuildLoad2(e->builder, element.llvm, left_at, "");
+    c::LLVMValueRef y = c::LLVMBuildLoad2(e->builder, element.llvm, right_at, "");
+    c::LLVMValueRef same = element.kind == .floating ? c::LLVMBuildFCmp(e->builder, c::LLVMRealOEQ, x, y, "")
+                                                      : c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, x, y, "");
+    c::LLVMBuildCondBr(e->builder, same, step, leave);
+    position(e, step);
+    c::LLVMValueRef next = c::LLVMBuildAdd(e->builder, at, c::LLVMConstInt(word, 1, 0), "");
+    c::LLVMBuildBr(e->builder, head);
+    c::LLVMValueRef from_at[2] = {c::LLVMConstInt(word, 0, 0), next};
+    c::LLVMBasicBlockRef from_block[2] = {before, step};
+    c::LLVMAddIncoming(at, from_at, from_block, 2);
+    position(e, leave);
+    c::LLVMValueRef result = c::LLVMBuildPhi(e->builder, flag, "");
+    c::LLVMValueRef values[2] = {c::LLVMConstInt(flag, 1, 0), c::LLVMConstInt(flag, 0, 0)};
+    c::LLVMBasicBlockRef blocks[2] = {head, check};
+    c::LLVMAddIncoming(result, values, blocks, 2);
+    return result;
+}
+
+// The two slices (or `str`) as an `i1`: true when they have the same contents.
+static c::LLVMValueRef slice_equal(state::Emitter *e, state::Value left, state::Value right) {
+    state::Ty element = *left.ty.element;
+    c::LLVMValueRef a = c::LLVMBuildExtractValue(e->builder, left.llvm, 0, "data");
+    c::LLVMValueRef na = c::LLVMBuildExtractValue(e->builder, left.llvm, 1, "count");
+    c::LLVMValueRef b = c::LLVMBuildExtractValue(e->builder, right.llvm, 0, "data");
+    c::LLVMValueRef nb = c::LLVMBuildExtractValue(e->builder, right.llvm, 1, "count");
+    c::LLVMTypeRef flag = c::LLVMInt1TypeInContext(e->context);
+    c::LLVMBasicBlockRef start = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBasicBlockRef body = new_block(e, "slice_eq");
+    c::LLVMBasicBlockRef done = new_block(e, "slice_eq_end");
+    c::LLVMValueRef counts = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, na, nb, "same_count");
+    c::LLVMBuildCondBr(e->builder, counts, body, done);
+    position(e, body);
+    c::LLVMValueRef contents =
+        bytes_are_value(element) ? memcmp_equal(e, element, a, b, na) : loop_equal(e, element, a, b, na);
+    c::LLVMBasicBlockRef body_end = c::LLVMGetInsertBlock(e->builder);
+    c::LLVMBuildBr(e->builder, done);
+    position(e, done);
+    c::LLVMValueRef result = c::LLVMBuildPhi(e->builder, flag, "");
+    c::LLVMValueRef values[2] = {c::LLVMConstInt(flag, 0, 0), contents};
+    c::LLVMBasicBlockRef blocks[2] = {start, body_end};
+    c::LLVMAddIncoming(result, values, blocks, 2);
+    return result;
+}
+
 static state::Status compare_finish(state::Emitter *e, const state::Work *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a comparison", w->span);
@@ -350,6 +434,12 @@ static state::Status compare_finish(state::Emitter *e, const state::Work *w) {
     try state::unify_operands(e, &left, &right, w->span);
     if (!state::same_type(left.ty, right.ty))
         return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
+    if (left.ty.kind == .slice && left.ty.element != nullptr && (op == .equal || op == .not_equal)) {
+        c::LLVMValueRef same = slice_equal(e, left, right);
+        if (op == .not_equal) same = c::LLVMBuildNot(e->builder, same, "");
+        state::push_value(e, (state::Value){.llvm = same, .ty = bool_type(e)});
+        return state::success();
+    }
     if (left.ty.kind != .integer && left.ty.kind != .boolean && left.ty.kind != .pointer && left.ty.kind != .fn_pointer)
         return state::failf(w->span, "comparison of ", left.ty.name);
     c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate(op, left.ty.is_signed), left.llvm, right.llvm, "");
