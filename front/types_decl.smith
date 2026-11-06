@@ -769,7 +769,8 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
         head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, bound, " else", after)));
     }
     ast::Span reads = {.start = parts[at]->span.end, .end = end};
-    add_guard(r, (types::Guard){.base = left, .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
+    add_guard(
+        r, (types::Guard){.base = left, .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
 }
 
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
@@ -871,8 +872,7 @@ static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
 // The checks of `.v(x) := value else: ...` (#2494): the pattern can fail, the `else` leaves, the name is new.
 static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef t, ast::Pattern pattern,
                               const ast::Stmt *else_branch) {
-    Bool can_fail = t != nullptr && (t->kind == .option || t->kind == .result_type ||
-                                     (t->kind == .enumeration && t->has_payload));
+    Bool can_fail = t != nullptr && (t->kind == .option || (t->kind == .enumeration && t->has_payload));
     if (t != nullptr && t != r->table.invalid && !can_fail) {
         types::failf(r, span, "this pattern always matches: remove `else`");
     }
@@ -908,7 +908,7 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
     Str binding = pattern.binding;
     types::TypeRef element = r->table.invalid;
-    if (t != nullptr && ((t->kind == .enumeration && t->has_payload) || t->kind == .result_type)) {
+    if (t != nullptr && t->kind == .enumeration && t->has_payload) {
         element = types_expr::pattern_payload(r, s->span, t, pattern);
     }
     if (countof(binding) == 0 || is_discard(binding)) {
@@ -917,7 +917,8 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     if (t != nullptr && t->kind == .option && t->element != nullptr) {
         element = t->element;
     }
-    types::Symbol symbol = {.name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
+    types::Symbol symbol = {
+        .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     types::declare(&r->scopes, symbol);
     note_local(binding, element);
 }
@@ -1256,7 +1257,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
-    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
+    affine::check_body(r, root);                 // after the walk: it reads the types the walk recorded
     for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
         for (Usize k = first_local; k < state.local_count; k++) {
             if (types::same_text(state.locals[k].name, r->guards[i].variant)) r->guards[i].spoiled = true;
