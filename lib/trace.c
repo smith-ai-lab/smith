@@ -50,6 +50,47 @@ int dladdr(const void *address, Dl_info *info);
 void (*smith_failure_hook)(SmithFailureKind kind, const uintptr_t *frames, size_t count);
 uintptr_t smith_trace_stop;
 
+void smith_failure_set_hook(const void *hook) {
+    static_assert(sizeof smith_failure_hook == sizeof hook);
+    memcpy((void *)&smith_failure_hook, (const void *)&hook, sizeof hook);
+}
+
+int smith_format_text(char *buffer, size_t capacity, const char *pattern, ...) {
+    va_list values;
+    va_start(values, pattern);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+    int written = vsnprintf(buffer, capacity, pattern, values);
+#pragma clang diagnostic pop
+    va_end(values);
+    return written;
+}
+
+void smith_stdout_unbuffered(void) {
+    setvbuf(stdout, nullptr, _IONBF, 0);
+}
+
+void smith_signal_default(int number) {
+    signal(number, SIG_DFL);
+}
+
+void smith_signal_ignore(int number) {
+    signal(number, SIG_IGN);
+}
+
+void smith_signal_catch(int number, const void *handler, int flags) {
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = flags;
+    memcpy((void *)&action.sa_sigaction, (const void *)&handler, sizeof handler);
+    sigaction(number, &action, nullptr);
+}
+
+void smith_trace_set_stop(size_t frame) {
+    smith_trace_stop = (uintptr_t)frame;
+}
+
 constexpr uintptr_t smith_trace_address_mask = 0x0000'7fff'ffff'ffffU; // user space; drops pointer authentication bits
 constexpr size_t smith_trace_line_capacity = 1280;
 constexpr size_t smith_trace_images_max = 32;

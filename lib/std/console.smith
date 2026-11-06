@@ -2,7 +2,7 @@
 // of the thread (include/smith/handlers.h), so a test can stand in for them: a fake console captures what a function
 // prints and answers what it reads. Called directly, with no capability value to pass:
 //
-//   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::to; no length limit
+//   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::write; no length limit
 //   console::print_error("cannot open ", path, "\n");
 //   console::Line line = try console::read_line();      // the next line of stdin
 //
@@ -168,7 +168,9 @@ constexpr Usize line_first = 128; // the first room of a line; it doubles
             mem::free(line.data);
             return {.error = got.error};
         }
-        if (got == .ok && got.ok == 0) break;
+        if (got == .ok) {
+            if (got.ok == 0) break;
+        }
         any = true;
         if (byte[0] == '\n') {
             newline = true;
@@ -200,25 +202,25 @@ Written emit_long(Bool errors, char *memory, Usize characters) {
     return written;
 }
 
-// The pieces as text on stdout, as format::to writes them: `print("x = ", x, "\n")`, each piece typed (see
+// The pieces as text on stdout, as format::write writes them: `print("x = ", x, "\n")`, each piece typed (see
 // smith-format). There is no limit on the text: a long one is formatted in memory of the allocator in force and given
 // back. A piece with no rule is a compile error. Not [[nodiscard]]: a program that prints a report has nowhere else to
 // say that stdout is closed.
 [[std::c_name("smith_console_print_pieces")]] export Written print(auto... pieces) {
     char stack[512];
-    format::Written measured = format::write(stack, sizeof stack, pieces...);
-    if (measured.fits) return emit(false, stack, measured.length);
-    char *long_buffer = (char *)mem::alloc_raw(measured.length + 1, alignof(char));
-    format::Written whole = format::write(long_buffer, measured.length + 1, pieces...);
-    return emit_long(false, long_buffer, whole.length);
+    format::Written measured = format::write(&stack[0], sizeof stack, pieces...);
+    if (measured.fits) return emit(false, &stack[0], measured.length);
+    void *long_room = mem::alloc_raw(measured.length + 1, alignof(char));
+    format::Written whole = format::write((char *)long_room, measured.length + 1, pieces...);
+    return emit_long(false, (char *)long_room, whole.length);
 }
 
 // As print, on stderr.
 [[std::c_name("smith_console_eprint_pieces")]] export Written print_error(auto... pieces) {
     char stack[512];
-    format::Written measured = format::write(stack, sizeof stack, pieces...);
-    if (measured.fits) return emit(true, stack, measured.length);
-    char *long_buffer = (char *)mem::alloc_raw(measured.length + 1, alignof(char));
-    format::Written whole = format::write(long_buffer, measured.length + 1, pieces...);
-    return emit_long(true, long_buffer, whole.length);
+    format::Written measured = format::write(&stack[0], sizeof stack, pieces...);
+    if (measured.fits) return emit(true, &stack[0], measured.length);
+    void *long_room = mem::alloc_raw(measured.length + 1, alignof(char));
+    format::Written whole = format::write((char *)long_room, measured.length + 1, pieces...);
+    return emit_long(true, (char *)long_room, whole.length);
 }

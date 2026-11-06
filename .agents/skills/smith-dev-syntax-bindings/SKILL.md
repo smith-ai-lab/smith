@@ -34,5 +34,5 @@ started := process.start(cmd)
   - A test that starts an `&&` chain, in an `if` or a `while` (D12, owner 2026-11-06: "We want to be able to do the and chain"): `if k == .v && k.v.f == x:` → `if .v(v) := k && v.f == x:`; `while k == .v && k.v.n < 3:` → `while .v(v) := k && v.n < 3:`. The pattern is only the first conjunct, and the value of the pattern ends at the `&&`. The name is in scope in the rest of the chain and the body, not in the `else` (there it is an unknown name). The checker and the emitter see `if .v(v) := k: if rest: X else: E else: E`, so `E` runs once by either path.
   - Left as it is: a write through `k.v` (`k.v.f = x`, `&k.v.f`, `k.v.n += 1`), a write to `k`, a local named `v` anywhere in the function, and a variant test that does not start its chain (`ok && k == .v`: the conjuncts before it may be what makes `k` safe to read).
 - `mut` before a bound name lets it change: `.circle(mut circle) := shape else: return`. Without it the name is constant.
-- Not built yet: a `match` on a Result and `.ok(ok) := r else:`, which wait for Result values in the new front end (#2128).
+- A `match` on a Result binds its payload in the arm (`.ok(n):`, `.error(e):`) and must cover both.
 

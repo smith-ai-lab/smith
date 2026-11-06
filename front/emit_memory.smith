@@ -300,7 +300,13 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         return byte;
     }
     if (state::scalar_type(e, name, &ty) || arith::type_float(e, name, &ty) || matching::type_enum(e, name, &ty))
-        return ty; // a pointer or array of floats too (`*f64`)
+        return ty;                                     // a pointer or array of floats too (`*f64`)
+    if (state::same_text(name, "__builtin_va_list")) { // the checker's four words (add_va_list)
+        state::Ty word = {};
+        state::scalar_type(e, "u64", &word);
+        ty = array_of(e, word, 4);
+        return ty;
+    }
     if (find_record_named(e, name, &index)) {
         ty = e->records[index].ty;
         return ty;
@@ -422,7 +428,7 @@ static const ast::Decl *find_global(state::Emitter *e, Str name) {
 static state::TyResult global_type(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .variable) return state::ty_fail("not a variable", d->span);
     const ast::TypeExpr *type = d->kind.variable.type;
-    if (type->kind != .auto_type) return resolve(e, type);
+    if (type->kind != .auto_type) return state::type_of(e, type); // the hook: a global of an alias type (`Kind := u8`)
     const ast::Expr *init = d->kind.variable.init;
     if (init != nullptr && e->options.checked != nullptr) { // `const f = Format(24, -149)`: the checker's type
         state::TyResult typed = state::type_of_node(e, init);
@@ -933,7 +939,16 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
             out = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, from.llvm, zero, "");
         } else {
             out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, state::is_signed(from.ty), "");
-            if (w->flag && from.ty.kind == .integer) check_fits(e, from, to, out);
+            // A constant that survives the cast needs no check, so `static_assert(a >= (1 + 2).to(usize))` folds.
+            Bool kept = false;
+            if (c::LLVMIsAConstantInt(from.llvm) != nullptr && c::LLVMIsAConstantInt(out) != nullptr) {
+                U64 value = c::LLVMConstIntGetZExtValue(from.llvm);
+                Bool negative = state::is_signed(from.ty) && c::LLVMConstIntGetSExtValue(from.llvm) < 0;
+                U32 bits = c::LLVMGetIntTypeWidth(to.llvm);
+                U32 room = state::is_signed(to) ? bits - 1 : bits;
+                kept = !negative && (room >= 64 || value < ((U64)1 << room));
+            }
+            if (w->flag && from.ty.kind == .integer && !kept) check_fits(e, from, to, out);
         }
         state::push_value(e, (state::Value){.llvm = out, .ty = to});
         return state::success();
@@ -955,7 +970,7 @@ export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hin
     }
     const ast::TypeExpr *type = x->kind.cast.type;
     const ast::Expr *operand = x->kind.cast.operand;
-    state::TyResult made = resolve(e, type);
+    state::TyResult made = state::type_of(e, type); // the hook reads an alias (`1.to(Wide)` with `Wide := u128`)
     if (made == .error) {
         return {.error = made.error};
     }
@@ -1616,6 +1631,31 @@ static Bool integer_operation(state::Ty ty, const ast::Expr *x, c::LLVMValueRef 
     return true;
 }
 
+// `&name` or `&name[0]` of a global declared before (under a cast of pointers): the global itself, an address that is a
+// constant. False for anything else.
+static Bool global_address(state::Emitter *e, const ast::Expr *x, c::LLVMValueRef *out) {
+    while (x->kind == .cast)
+        x = x->kind.cast.operand;
+    if (x->kind != .unary || x->kind.unary.op != .address_of) return false;
+    const ast::Expr *place = x->kind.unary.operand;
+    if (place->kind == .index) {
+        const ast::Expr *at = place->kind.index.index;
+        if (at->kind != .integer || at->kind.integer.value != 0) return false;
+        place = place->kind.index.base;
+    }
+    if (place->kind != .name || countof(place->kind.name.path.segments) != 1) return false;
+    Str name = place->kind.name.path.segments[0].text;
+    const ast::Decl *d = find_global(e, name);
+    if (d == nullptr || d->kind != .variable) return false;
+    Str own = state::c_name_of(d);
+    Str symbol = countof(own) > 0 ? state::msg(format::push(own)) : qualified(e->tree, name);
+    c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, symbol.data);
+    state::free_text(symbol);
+    if (global == nullptr) return false;
+    *out = global;
+    return true;
+}
+
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .null_pointer && ty.kind == .pointer) {
@@ -1657,6 +1697,7 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         *out = c::LLVMConstReal(ty.llvm, real);
         return state::success();
     }
+    if (ty.kind == .pointer && global_address(e, x, out)) return state::success();
     if (ty.kind == .integer) return state::fold(e, x, ty, out); // `~0.to(u64)`, `(a >> 1).to(i64)`: built and folded
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
@@ -1796,7 +1837,9 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     }
     state::Ty ty = made.ok;
     c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
-    if (init != nullptr && !d->is_extern) try compound_constant(e, ty, init, &initial);
+    Bool undefined = init != nullptr && init->kind == .name && countof(init->kind.name.path.segments) == 1 &&
+                     state::same_text(init->kind.name.path.segments[0].text, "undefined");
+    if (init != nullptr && !undefined && !d->is_extern) try compound_constant(e, ty, init, &initial);
     Str own = state::c_name_of(d); // `@c_name("enzyme_out")` on an extern marker: the symbol is the C name
     Str symbol = countof(own) > 0 ? state::msg(format::push(own)) : qualified(e->tree, name);
     const char *label = symbol.data; // the text of `qualified` ends with a terminator

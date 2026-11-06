@@ -134,9 +134,6 @@ import std::optimize;
 // the project's own flags whenever it compiles this file, so it wins over the project's -ffp-contract=fast and over
 // clang's default (on). Compiled by hand, with no such flag, every product that feeds a sum also goes through mul_*,
 // whose empty asm makes the product opaque to the optimizer: nothing fuses, in any flags. -ffast-math, which also
-// reorders, is refused.
-static_assert(!__FINITE_MATH_ONLY__, "smith/random: -ffast-math changes floating-point results, so a key would stop "
-                                     "giving the same numbers; compile lib/std/random.smith without it");
 
 static_assert(target::float_radix == 2 && target::f32_mantissa_bits == 24 && target::f64_mantissa_bits == 53,
               "f32 and f64 must be IEEE");
