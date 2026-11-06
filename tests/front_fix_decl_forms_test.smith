@@ -150,3 +150,15 @@ export void test_front_fix_private_prototype_with_an_ownership_attribute() {
     expect_fixed("module m;\n[[std::returns_internal]] const char *message(I32 code);\n",
                  "@returns_internal extern fn message(code: i32) -> *char\n");
 }
+
+// #2648: a `Result` declared in today's form and tested at once is `ok := try ...`, not the guard `if .error(error)
+// := e:` the checker wrote in the same pass, which left `ok` unreachable in big files (lex.smith's `exponent`).
+export void test_front_fix_old_result_declaration_is_a_try() {
+    expect_fixed("module m;\nstatic Result(Usize, Usize) f(Usize a) {\n    return {.ok = a};\n}\n"
+                 "static Result(Usize, Usize) g(Usize a) {\n    Result(Usize, Usize) e = f(a);\n"
+                 "    if (e == .error) return {.error = e.error};\n    Usize after = e.ok;\n"
+                 "    return {.ok = after + 1};\n}\n",
+                 "static fn f(a: usize) -> Result(usize, usize):\n    return .ok(a)\n"
+                 "static fn g(a: usize) -> Result(usize, usize):\n    ok := try f(a)\n"
+                 "    after: usize = ok\n    return .ok(after + 1)\n");
+}
