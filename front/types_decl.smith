@@ -737,6 +737,31 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
               (types::Guard){.base = guard_base(left), .variant = variant, .reads = then_branch->span, .head = head});
 }
 
+// `if k == .v && rest: X` and `while k == .v && rest: X` (D12): a variant test that starts an `&&` chain binds the
+// payload for the rest of the chain and the body, `if .v(v) := k && rest:`. Only the first conjunct can: the ones before
+// a test may be what makes `k` safe to read. The reads in the chain's other conjuncts and in `body` are the test's;
+// the `else` is not.
+static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast::Stmt *body) {
+    if (!(test->kind == .binary) || test->kind.binary.op != .logical_and) return;
+    const ast::Expr *first = test;
+    while (first->kind == .binary && first->kind.binary.op == .logical_and)
+        first = first->kind.binary.left;
+    const ast::Expr *tested = plain_variant_test(first, true);
+    if (tested == nullptr || !(tested->kind == .binary)) return;
+    const ast::Expr *left = tested->kind.binary.left;
+    const ast::Expr *right = tested->kind.binary.right;
+    if (!(right->kind == .variant)) return;
+    Str variant = right->kind.variant.name;
+    if (name_taken(r, variant)) return;
+    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(left->span.start, left->span.start, pattern);
+    head[1] = edit_of(left->span.end, right->span.end, "");
+    ast::Span reads = {.start = tested->span.end, .end = body->span.end};
+    add_guard(r, (types::Guard){.base = guard_base(left), .variant = variant, .reads = reads, .head = head});
+}
+
 // The operands of a chain `a || b || c`, at most `countof(out)`; 0 when there are more.
 static Usize or_operands(const ast::Expr *test, const ast::Expr *out[8]) {
     Usize count = 0;
@@ -1028,13 +1053,22 @@ static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
 // `if k == .v:` guards its `then` whether or not an `else` follows (an `else if` chain of tests is one guard each);
 // `if k != .v: return` guards the rest of the block only with no `else`.
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
-    if (note_option_guard(r, s) || !(s->kind == .if_stmt)) {
+    if (note_option_guard(r, s)) {
+        return;
+    }
+    if (s->kind == .while_stmt) {
+        note_chain_guard(r, s->kind.while_stmt.condition, s->kind.while_stmt.body);
+        return;
+    }
+    if (!(s->kind == .if_stmt)) {
         return;
     }
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Expr *equal = variant_test(test, true);
     if (equal != nullptr) {
         if (s->kind.if_stmt.else_branch != nullptr || !note_try_guard(r, s, equal)) note_then_guard(r, s, equal);
+    } else if (test->kind == .binary && test->kind.binary.op == .logical_and) {
+        note_chain_guard(r, test, s->kind.if_stmt.then_branch);
     } else if (s->kind.if_stmt.else_branch == nullptr && leaves(s->kind.if_stmt.then_branch)) {
         note_rest_guard(r, s);
     }
@@ -1429,8 +1463,11 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .if_stmt) {
         if_statement(r, s);
     } else if (s->kind == .while_stmt) {
-        types_expr::check(r, s->kind.while_stmt.condition, r->table.bool_type);
-        push(s->kind.while_stmt.body, nullptr, enter);
+        const ast::Expr *condition = s->kind.while_stmt.condition;
+        const ast::Stmt *body = s->kind.while_stmt.body;
+        note_guard(r, s); // `while k == .v && k.v.n < 3:` (D12)
+        types_expr::check(r, condition, r->table.bool_type);
+        push(body, nullptr, enter);
     } else if (s->kind == .do_while) {
         push(nullptr, s->kind.do_while.condition, condition);
         push(s->kind.do_while.body, nullptr, enter);

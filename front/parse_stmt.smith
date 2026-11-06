@@ -103,6 +103,7 @@ struct Frame {
     Bool is_let;          // `if let pattern = value`: `condition` is the value
     Bool value_tail;      // a refutable binding at the end of a function body: the last line of the rest is the value
     ast::Pattern pattern; // and its pattern
+    ast::Expr *chain;     // `if .v(x) := value && chain:`: the rest of the `&&` chain, read with `x` in scope (D12)
     // An old header and the fix that writes it as smith's own, recorded once the body is known (old_header_fix).
     Bool old;
     Bool has_close;   // the `)` of the header is an edit of its own (`if` and `while`)
@@ -958,7 +959,11 @@ static Frame open_bare(parse::Parser *p, FrameKind kind) {
     Usize before = countof(p->errors);
     if (binding_head(p) || old_let_head(p)) open_binding_head(p, &frame);
     p->head = true;
+    p->stop_and = frame.is_let; // the value of a pattern ends at `&&`, the rest of the chain is read after it (D12)
     if (countof(p->errors) == before) frame.condition = expression(p);
+    p->stop_and = false;
+    if (frame.is_let && countof(p->errors) == before && parse::accept(p, lex::ampersand_ampersand))
+        frame.chain = expression(p);
     p->head = false;
     frame.no_body = !require_body(p, before);
     return frame;
@@ -2025,8 +2030,22 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
     ast::Expr *always = ast::expr({.boolean = {.value = true}});
     always->span = frame.pattern.span;
     ast::Stmt *stop = spanned(p, frame.start, new_stmt(break_kind()));
+    if (frame.chain != nullptr) { // `while .v(x) := value && rest:` stops when the rest fails too (D12)
+        ast::Stmt *again = spanned(p, frame.start, new_stmt(break_kind()));
+        done = spanned(p, frame.start, new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = done, .else_branch = again}}));
+    }
     ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
     return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
+}
+
+// `if .v(x) := value && rest: then else: otherwise` (D12) is `if .v(x) := value: (if rest: then else: otherwise) else:
+// otherwise`: the checker and the emitter see the `if` with a pattern and the `if` they already know. `x` is in scope in
+// `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
+static ast::Stmt *pattern_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
+    if (frame.chain != nullptr) {
+        then = spanned(p, frame.start, new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = then, .else_branch = otherwise}}));
+    }
+    return ast::if_let(frame.pattern, frame.condition, then, otherwise);
 }
 
 // A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)
@@ -2037,7 +2056,7 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
     switch (frame.kind) {
     case if_then:
         if (frame.is_let) {
-            built = ast::if_let(frame.pattern, frame.condition, done, nullptr);
+            built = pattern_if(p, frame, done, nullptr);
             break;
         }
         built = new_stmt(
@@ -2045,7 +2064,7 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
         break;
     case if_else:
         if (frame.is_let) {
-            built = ast::if_let(frame.pattern, frame.condition, frame.first, done);
+            built = pattern_if(p, frame, frame.first, done);
             break;
         }
         built = new_stmt({.if_stmt = {.condition = frame.condition,
