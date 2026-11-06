@@ -56,3 +56,16 @@ export void test_front_fix_index_by_an_if_value() {
     expect_fixed("module m;\nF64 pick(const F64 t[:], I32 e) {\n    return t[e < 0 ? -e : e];\n}\n",
                  "fn pick(t: []f64, e: i32) -> f64:\n    return t[if e < 0: -e else: e]\n");
 }
+
+export void test_front_fix_slice_bound_by_an_if_value_is_parenthesized() {
+    expect_fixed("module m;\nStr tail(Str xs, Usize n) {\n    return xs[n < countof(xs) ? n + 1 : n:];\n}\n",
+                 "fn tail(xs: str, n: usize) -> str:\n    return xs[(if n < countof(xs): n + 1 else: n):]\n");
+}
+
+export void test_front_fix_multi_line_conditional_is_an_indented_if_value() {
+    expect_fixed("module m;\nStr pick(Bool by_value, Str a, Str b) {\n    Str message = by_value\n        ? join(a,\n"
+                 "               b)\n        : join(b,\n               a);\n    return message;\n}\n",
+                 "fn pick(by_value: bool, a: str, b: str) -> str:\n    message: str = if by_value:\n        join(a,\n  "
+                 "             b)\n"
+                 "    else:\n        join(b,\n               a)\n    return message\n");
+}
