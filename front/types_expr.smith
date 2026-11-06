@@ -4923,12 +4923,15 @@ static Bool leaf(types::Checked *c, Frame f) {
         literal_character(c, f);
     } else if (e->kind == .string) {
         // A literal where a C function wants `const char *`: its bytes, with the zero byte after them (#1762).
-        Bool as_pointer = f.expected != nullptr && f.expected->kind == .pointer &&
-                          f.expected->element->kind == .integer && f.expected->element->bits == 8;
+        types::TypeRef wanted = f.expected;
+        // `?*char` (a C pointer that may be null) takes a literal too: it is never null (#2611)
+        if (wanted != nullptr && wanted->kind == .option && wanted->element->kind == .pointer) wanted = wanted->element;
+        Bool as_pointer = wanted != nullptr && wanted->kind == .pointer && wanted->element->kind == .integer &&
+                          wanted->element->bits == 8;
         // A literal given to `[N]char`: the bytes and the zero byte fill the array, so N is the length plus one.
         Bool as_array = f.expected != nullptr && f.expected->kind == .array && f.expected->element->kind == .integer &&
                         f.expected->element->bits == 8 && f.expected->count == countof(e->kind.string.bytes) + 1;
-        finish(c, e, (as_pointer || as_array) ? f.expected : c->table.text, f.expected);
+        finish(c, e, as_pointer ? wanted : (as_array ? f.expected : c->table.text), f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
     } else if (e->kind == .null_pointer) {
