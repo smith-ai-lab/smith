@@ -348,3 +348,14 @@ export void test_front_fix_zero_an_importer_finds_a_field_renamed_from_type() {
                "    if s.ty == .none:\n        return 0\n    return 1\n";
     test::check_equal(got, want);
 }
+
+// A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
+// `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
+export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
+    expect_fixed("module m;\nstruct Step {\n    const char *name;\n    int (*run)(int);\n    int n;\n};\n"
+                 "struct Owner {\n    int id;\n    Step step;\n};\n"
+                 "void f(Owner *o) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
+                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32 = 0\n"
+                 "struct Owner:\n    id: i32\n    step: Step = undefined\n"
+                 "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
+}

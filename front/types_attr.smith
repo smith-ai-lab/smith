@@ -260,6 +260,8 @@ static void check_all(types::Checked *r, ast::Attribute list[:]) {
 // A default (`x: T = 3`, a field's or a parameter's): known at compile time, and of the type it fills.
 static void check_default(types::Checked *r, const ast::Expr *value, types::TypeRef wanted) {
     if (value == nullptr) return;
+    // `step: Step = undefined`: C zeroes the member and fills its pointers before use (lead on #2613, as D2 option B)
+    if (types_expr::is_undefined(value)) return;
     if (!is_constant(r, value)) {
         types::fail(r, value->span, "a default must be a compile-time constant");
         return;
