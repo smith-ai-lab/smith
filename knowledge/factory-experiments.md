@@ -35,6 +35,12 @@ Why: under the label order, 28 tickets sat at `p1`, so runners took the oldest. 
 
 Measure: files passing per hour of runner time, and whether every top-5 cause has a claimed ticket at each count.
 
+## Where a runner's time goes (2026-11-06)
+
+Measured from the events of four runner sessions (#2567, #2552, #2566, #2486), 245 minutes in all: long checks 33% (the local `-Dall=1` count, `smith check`, wait loops cut off by the 10-minute Bash timeout), waiting on CI and the queue 30%, quick checks 18% (mostly 1–2 minute rebuilds after each edit), model thinking 13%, setup 5%, reading and editing 1%. The merged PRs were small: 7 to 100 lines, except #2614 at about 1000. Owner: "We need the agent to be working for longer then ci works."
+
+Changed: no local `-Dall=1` (the queue counts and gates since #2615), no line cap, push to the branch while working and open the PR once the module passes, `smith fmt` and `smith lint` on the changed files before the PR, long commands in the background. Measure next: the same split on four new sessions, and files gained per runner hour.
+
 ## Alternatives considered
 
 - **GitHub Projects ordering (GraphQL):** a board could hold the order, but agents' tools cannot reach it (GraphQL returns HTTP 403 in cloud sessions). Labels and `gh api` REST work everywhere.
