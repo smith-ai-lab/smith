@@ -194,12 +194,23 @@ static Str written_zero(Str element) {
 // type as the file writes it; empty for any other array, or a struct that cannot be filled.
 static Str construct_array(Str element, types::TypeRef t) {
     if (t->kind != .array || t->count == 0) return "";
+    // `T xs[a][b]` is `[a][b]T`: the shape `[a, b]` names every dimension (#2496).
+    Str shape = types::message_of(format::push(t->count));
+    types::TypeRef leaf = t->element;
+    Usize rank = 1;
+    while (leaf->kind == .array && rank < 16) {
+        if (leaf->count == 0) return "";
+        shape = types::message_of(format::push(shape, ", ", leaf->count));
+        leaf = leaf->element;
+        rank += 1;
+    }
     // a number, `Bool` or pointer element is its own zero: `static char buf[named_length]` (#1901)
-    Str one = scalar_zero(t->element);
+    Str one = scalar_zero(leaf);
     if (countof(one) == 0) one = written_zero(element);
-    if (countof(one) == 0) one = construct_three(element, t->element);
+    if (countof(one) == 0) one = construct_three(element, leaf);
     if (countof(one) == 0) return "";
-    return types::message_of(format::push("array.filled(", element, ", ", t->count, ", ", one, ")"));
+    if (rank > 1) shape = types::message_of(format::push("[", shape, "]"));
+    return types::message_of(format::push("array.filled(", element, ", ", shape, ", ", one, ")"));
 }
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
@@ -326,8 +337,9 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     if (t->kind == .array) {
         Str written_text = source[written->span.start:written->span.end];
         Usize close = 0;
-        while (close < countof(written_text) && written_text[close] != ']')
-            close += 1;
+        for (Usize k = 0; k < countof(written_text); k += 1) {
+            if (written_text[k] == ']') close = k;
+        }
         if (close + 1 < countof(written_text)) text = construct_array(written_text[close + 1:countof(written_text)], t);
         if (countof(text) > 0) *filled = true;
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&

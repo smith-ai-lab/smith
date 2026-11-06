@@ -458,17 +458,35 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
     return t;
 }
 
-// `array.filled(T, n, value)`: `[n]T`. `n` folds to a constant; `value` has the type `T`.
+// The constant `node` of one dimension of `array.filled`; false, with the error reported, when it is not one.
+static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
+    if (types::fold_length(c, node, count)) return true;
+    types::fail(c, node->span,
+                "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
+    return false;
+}
+
+// `array.filled(T, n, value)`: `[n]T`; `array.filled(T, [a, b], value)`: `[a, b]T`, the same type as `[a][b]T`, with
+// `value` of type `T`. Each dimension folds to a constant; `value` has the type `T`. The length recorded on the call is
+// the outermost dimension.
 static types::TypeRef check_filled(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
-    Str wanted = "a type, a constant length and a value; write `(u32, 256, 0)`";
+    Str wanted = "a type, a constant length or shape and a value; write `(u32, 256, 0)` or `(u32, [4, 8], 0)`";
     if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
     types::TypeRef element = type_argument(c, args[0], entry.name);
     if (element == nullptr) return c->table.invalid;
-    U64 count = 0;
-    if (!types::fold_length(c, args[1], &count)) {
-        types::fail(c, args[1]->span,
-                    "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
-        return c->table.invalid;
+    U64 dims[16];
+    Usize rank = 0;
+    const ast::Expr *length = args[1];
+    if (length->kind == .array_lit) {
+        ast::ExprRef items[:] = length->kind.array_lit.items;
+        if (countof(items) == 0 || countof(items) > 16) return wrong(c, e->span, entry, wanted);
+        for (Usize i = 0; i < countof(items); i++) {
+            if (!filled_dimension(c, items[i], &dims[i])) return c->table.invalid;
+        }
+        rank = countof(items);
+    } else {
+        if (!filled_dimension(c, args[1], &dims[0])) return c->table.invalid;
+        rank = 1;
     }
     types::TypeRef value = value_type(c, args[2]);
     if (value == c->table.invalid) return c->table.invalid;
@@ -477,8 +495,10 @@ static types::TypeRef check_filled(types::Checked *c, const ast::Expr *e, Entry 
                      types::show(value));
         return c->table.invalid;
     }
-    types::TypeRef made_type = types::array_of(&c->table, element, count, false);
-    types::set_length(c, e, count);
+    types::TypeRef made_type = element;
+    for (Usize i = rank; i > 0; i--)
+        made_type = types::array_of(&c->table, made_type, dims[i - 1], false);
+    types::set_length(c, e, dims[0]);
     return made_type;
 }
 

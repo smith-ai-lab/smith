@@ -358,3 +358,16 @@ export void test_front_header_a_filled_global_is_an_extern_array() {
         contains(got, "extern const uint32_t geometry_shapes_table[4] __asm__(\"geometry::shapes::table\");\n"));
     remove_all(folder);
 }
+
+// A `pub` two-dimension global built by the shape form is an `extern T name[a][b]` in the header (#2496).
+export void test_front_header_a_shape_filled_global_is_a_two_dimension_extern_array() {
+    Str folder = folder_for("shape");
+    write_text(shapes_path(folder), "import std.array\n\npub mut names: [5, 64]u8 = array.filled(u8, [5, 64], 0)\n");
+    compile::Report done =
+        compile::header(shapes_path(folder), header_path(folder), "x86_64-unknown-linux-gnu", roots_of(folder));
+    test::check_equal(done.ok, true);
+    Str got = text_of(header_path(folder));
+    test::check_condition(
+        contains(got, "extern uint8_t geometry_shapes_names[5][64] __asm__(\"geometry::shapes::names\");\n"));
+    remove_all(folder);
+}

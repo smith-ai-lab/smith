@@ -1579,8 +1579,14 @@ static Bool single_dimension(Str text) {
 
 // The zero list of a static or file-level array with no value, or of `= {}`, which C zeroes; empty for any other.
 static Str zero_fill(const Prefixes *pre, Dims dims, Str type, Bool has_init, Str value) {
-    if (countof(dims.text) == 0 || !single_dimension(dims.text)) return "";
+    if (countof(dims.text) == 0) return "";
     if (has_init ? !same_text(value, "{}") : !(pre->is_static || pre->top)) return "";
+    // `static T xs[a][b];` is zeroed by C: it keeps `= {}` for fix_zero, which writes `array.filled(T, [a, b], 0)` once
+    // the checker knows the lengths (#2496).
+    if (!single_dimension(dims.text)) {
+        if (countof(zero_element(type)) > 0) return "{}";
+        return "";
+    }
     Str zeros = zero_array(dims.text, type);
     // A static or file-level array of numbers longer than `zero_limit`, or with a named length, keeps `= {}` for
     // fix_zero, which writes `array.filled(T, n, 0)` once the checker knows the length (#1901).
