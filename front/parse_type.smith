@@ -583,8 +583,8 @@ static void function_pointer(parse::Parser *p, U32 start) {
     parse::Edits edits = mem::alloc_slice(parse::Edit, 1);
     ast::Span span = {.start = start, .end = end};
     char built[:] = format::push("Fn(", type, " (", params, "))", gap, name);
-    Str text = built;
-    parse::Edit edit = {.span = span, .text = text};
+    Str fn_text = built;
+    parse::Edit edit = {.span = span, .text = fn_text};
     edits[0] = edit;
     ast::Span at = {.start = open, .end = open_end};
     parse::error_fix(p, at, message, edits);
@@ -774,21 +774,48 @@ static Bool applied_result(const parse::Parser *p) {
     return parse::peek_at(p, at).kind == lex::left_paren;
 }
 
+// The tokens of an old type: the first (qualifiers included), the base's first, the one after the base, the one after
+// the whole type.
+struct OldType {
+    Usize first;
+    Usize base;
+    Usize after;
+    Usize end;
+};
+
+static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExpr *base);
+static Bool failed_since(const parse::Parser *p, Usize since);
+
 // The argument of `Fn(...)`: a function type `R (P1, P2)` when a parenthesis group follows the result.
 static ast::TypeExpr *function_argument(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
     ast::TypeExpr *result = nullptr;
+    // A function type's pointers are writable unless `const` says otherwise: `Parser *` is `*mut Parser` there, as in a
+    // cast, since the function a value of the type holds takes `*mut` (#2486).
+    Bool was_cast = p->in_cast;
+    Usize errors_before = countof(p->errors);
+    p->in_cast = true;
     if (applied_result(p)) {
         result = parse::type(p);
     } else {
+        OldType old = {.first = p->position};
         ast::Qualifiers q = {};
         take_qualifiers(p, &q);
+        old.base = p->position;
         ast::TypeExpr *base = plain(p, start, q);
+        old.after = p->position;
         result = base == nullptr ? nullptr : suffixes(p, start, base);
+        old.end = p->position;
+        // The result is mended like any type: `Expr *` is `*mut Expr` here.
+        if (result != nullptr && !failed_since(p, errors_before)) warn_old_type(p, &old, base);
     }
-    if (result == nullptr || !parse::at(p, lex::left_paren)) return result;
+    if (result == nullptr || !parse::at(p, lex::left_paren)) {
+        p->in_cast = was_cast;
+        return result;
+    }
     parse::advance(p);
     ast::TypeKind kind = function_rest(p, result);
+    p->in_cast = was_cast;
     ast::Qualifiers plain_q = {};
     return node(start, p, plain_q, kind);
 }
@@ -975,15 +1002,6 @@ static Bool c_declarator_ahead(const parse::Parser *p) {
 // `fn(A) -> R`. `const` is dropped (constant is the default). A type with no smith spelling (`volatile`, `restrict`,
 // `long double`, a variadic function type) is a warning with no edit that says what to do. A type inside another is
 // read first, so its warning comes first and wins an overlap; the next pass of `smith lint --fix` mends the outer one.
-
-// The tokens of an old type: the first (qualifiers included), the base's first, the one after the base, the one after
-// the whole type.
-struct OldType {
-    Usize first;
-    Usize base;
-    Usize after;
-    Usize end;
-};
 
 // The type being written in smith's own syntax: what goes before the base, the brackets of the run being read (`dims`
 // of them), and what is wrong with the type when it has no spelling.
@@ -1300,7 +1318,8 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
         p->tokens[t->end].kind == lex::colon) {
         return;
     }
-    Rewrite r = {.casting = p->in_cast};
+    char none[:] = format::push("");
+    Rewrite r = {.prefix = none, .run = none, .dims = 0, .problem = "", .pointee_const = false, .casting = p->in_cast};
     for (Usize i = t->first; i < t->base; i += 1) {
         if (p->tokens[i].kind == lex::kw_const) r.pointee_const = true;
         note_qualifier(p->tokens[i].kind, &r);
