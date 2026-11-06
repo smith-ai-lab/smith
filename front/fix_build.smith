@@ -1,0 +1,270 @@
+// front::fix_build, the fix-it for a build file (D6, #2631, part of #1428): a `build.smith` is
+//
+//   from std.build import Build, App
+//
+//   pub fn build(b: *Build):
+//       b.app(App(entry = "main.smith"))
+//
+// The file defines a function `build`, so it cannot also import the module `build` (a name means one thing in a file,
+// owner, 2026-11-06). The old `import std::build;` and its uses are mended before the other fixes read the text:
+//
+//   import std::build;              from std.build import Build, App   (the capitalised names the file writes)
+//   build::App                      App
+//   build::task(b, "x", &s)         b.task("x", &s)                    (the first argument becomes the receiver)
+//   build::cat(run->b, "x")         run->b.cat("x")
+//
+// The fixer invents no name: every name in the `from` line is one the file wrote as `build::Name` (or `build.Name`).
+// A use it cannot write as a method (a function named but not called) stays as it is, and the checker reports it.
+//
+//   fix_build::mend(file, source)   the mended text, or `source` when `file` is not a `build.smith`
+module front::fix_build;
+
+import front::ast;
+import front::lex;
+import std::format;
+import std::mem;
+
+typedef typeof(Str[:]) Texts;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// The replacements of a pass in source order: the span [from, to) of the text becomes texts.
+struct Found {
+    Usize from[:];
+    Usize to[:];
+    Texts texts;
+};
+
+static void add(Found *found, Usize from, Usize to, Str text) {
+    found->from = mem::realloc(found->from, countof(found->from) + 1);
+    found->to = mem::realloc(found->to, countof(found->to) + 1);
+    found->texts = mem::realloc(found->texts, countof(found->texts) + 1);
+    found->from[countof(found->from) - 1] = from;
+    found->to[countof(found->to) - 1] = to;
+    found->texts[countof(found->texts) - 1] = text;
+}
+
+static Bool is_build_file(Str file) {
+    Str base = "build.smith";
+    if (countof(file) < countof(base)) return false;
+    if (!mem::equal(file[countof(file) - countof(base):countof(file)], base)) return false;
+    return countof(file) == countof(base) || file[countof(file) - countof(base) - 1] == '/';
+}
+
+static Bool is_name(Str source, lex::Token token, Str word) {
+    return token.kind == lex::name && mem::equal(lex::text(source, token), word);
+}
+
+static Bool is_capital(Str source, lex::Token token) {
+    Str text = lex::text(source, token);
+    return countof(text) > 0 && text[0] >= 'A' && text[0] <= 'Z';
+}
+
+static Bool is_word(lex::Token token) {
+    return token.kind == lex::name || token.kind == lex::type_name;
+}
+
+// Whether `build` at tokens[i] starts a use of the module: `build::x` or `build.x`, not after `.`, `::` or `->`
+// (`module build;` and the function `build(` do not match).
+static Bool is_use(Str source, lex::Tokens tokens, Usize i) {
+    if (!is_name(source, tokens[i], "build") || i + 2 >= countof(tokens)) return false;
+    if (tokens[i + 1].kind != lex::colon_colon && tokens[i + 1].kind != lex::dot) return false;
+    if (!is_word(tokens[i + 2])) return false;
+    if (i == 0) return true;
+    lex::TokenKind before = tokens[i - 1].kind;
+    return before != lex::dot && before != lex::colon_colon && before != lex::arrow;
+}
+
+// The text is `import std::build;` or `import std.build` at tokens[i] (the `import`): the index of its last token.
+static Bool is_import(Str source, lex::Tokens tokens, Usize i, Usize *last) {
+    if (i + 3 >= countof(tokens) || tokens[i].kind != lex::kw_import) return false;
+    if (!is_name(source, tokens[i + 1], "std")) return false;
+    if (tokens[i + 2].kind != lex::colon_colon && tokens[i + 2].kind != lex::dot) return false;
+    if (!is_name(source, tokens[i + 3], "build")) return false;
+    *last = i + 3;
+    if (i + 4 < countof(tokens) && tokens[i + 4].kind == lex::semicolon) *last = i + 4;
+    return true;
+}
+
+static Bool has_name(Texts names, Str name) {
+    for (Usize i = 0; i < countof(names); i++) {
+        if (mem::equal(names[i], name)) return true;
+    }
+    return false;
+}
+
+// The first argument of the call whose `(` is tokens[open]: the index of the token after it (a `,` or the `)`), and
+// whether the argument is a plain path (`b`, `run->b`, `run.b`), which needs no parentheses as a receiver.
+static Bool first_argument(lex::Tokens tokens, Usize open, Usize *end, Bool *plain) {
+    Usize depth = 0;
+    *plain = true;
+    for (Usize i = open + 1; i < countof(tokens); i++) {
+        lex::TokenKind kind = tokens[i].kind;
+        if (depth == 0 && (kind == lex::comma || kind == lex::right_paren)) {
+            *end = i;
+            return i > open + 1;
+        }
+        if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) depth += 1;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) depth -= 1;
+        if (!is_word(tokens[i]) && kind != lex::dot && kind != lex::arrow) *plain = false;
+    }
+    return false;
+}
+
+
+// The `(` at tokens[i] starts `(const build::Object *const[]){`: a pointer type with an unsized array suffix and a
+// brace after the `)`. The index of the `{`, or false. Its value is the array `[a, b]` (the tour's array value).
+static Bool pointer_array_literal(lex::Tokens tokens, Usize i, Usize *open) {
+    if (tokens[i].kind != lex::left_paren) return false;
+    Bool star = false;
+    for (Usize k = i + 1; k + 3 < countof(tokens); k++) {
+        lex::TokenKind kind = tokens[k].kind;
+        if (kind == lex::star) star = true;
+        if (kind == lex::left_bracket) {
+            if (!star || tokens[k + 1].kind != lex::right_bracket || tokens[k + 2].kind != lex::right_paren) return false;
+            if (tokens[k + 3].kind != lex::left_brace) return false;
+            *open = k + 3;
+            return true;
+        }
+        if (!is_word(tokens[k]) && kind != lex::star && kind != lex::colon_colon && kind != lex::dot &&
+            kind != lex::kw_const) {
+            return false;
+        }
+    }
+    return false;
+}
+
+// The `}` that closes the `{` at tokens[open].
+static Usize matching_brace(lex::Tokens tokens, Usize open) {
+    Usize depth = 0;
+    for (Usize k = open; k < countof(tokens); k++) {
+        if (tokens[k].kind == lex::left_brace) depth += 1;
+        if (tokens[k].kind != lex::right_brace) continue;
+        depth -= 1;
+        if (depth == 0) return k;
+    }
+    return open;
+}
+
+// The function `build` declared at tokens[i] without `export` (old form) or `pub` (new form): the offset where the
+// keyword goes. `void build(`, `fn build(`.
+static Bool unexported_entry(Str source, lex::Tokens tokens, Usize i, Usize *at, Str *keyword) {
+    if (i == 0 || i + 1 >= countof(tokens) || !is_name(source, tokens[i], "build")) return false;
+    if (tokens[i + 1].kind != lex::left_paren) return false;
+    lex::Token before = tokens[i - 1];
+    Str word = lex::text(source, before);
+    Str void_word = "void";
+    Str fn_word = "fn";
+    Bool old = mem::equal(word, void_word);
+    if (!old && !mem::equal(word, fn_word)) return false;
+    Str earlier = lex::text(source, tokens[i >= 2 ? i - 2 : 0]);
+    Str export_name = "export";
+    Str pub_name = "pub";
+    if (i >= 2 && (mem::equal(earlier, export_name) || mem::equal(earlier, pub_name))) return false;
+    *at = before.span.start;
+    Str export_word = "export ";
+    Str pub_word = "pub ";
+    *keyword = old ? export_word : pub_word;
+    return true;
+}
+
+// One pass over the text: the names of the module the file writes, the import line (when `with_import`) and every use.
+static Str pass(Str source, Bool with_import, Bool *changed) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Texts names = {};
+    names = mem::realloc(names, 1);
+    names[0] = "Build";
+    Str out = "";
+    Usize at = 0;
+    Usize import_first = 0;
+    Usize import_last = 0;
+    Bool imported = false;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (is_use(source, tokens, i) && is_capital(source, tokens[i + 2]) && !has_name(names, lex::text(source, tokens[i + 2]))) {
+            names = mem::realloc(names, countof(names) + 1);
+            names[countof(names) - 1] = lex::text(source, tokens[i + 2]);
+        }
+        if (with_import && !imported && is_import(source, tokens, i, &import_last)) {
+            imported = true;
+            import_first = i;
+        }
+    }
+    if (with_import && !imported) return source;
+    // The replacements in source order: (from, to, text) triples kept in three lists.
+    Found found = {};
+    Usize closings[:] = {};
+    for (Usize i = 0; i < countof(tokens); i++) {
+        for (Usize c = 0; c < countof(closings); c++) {
+            if (closings[c] != i) continue;
+            add(&found, tokens[i].span.start, tokens[i].span.end, "]");
+        }
+        if (with_import && imported && i == import_first) {
+            Str line = "from std.build import ";
+            for (Usize k = 0; k < countof(names); k++) {
+                line = as_str(format::push(line, k > 0 ? ", " : "", names[k]));
+            }
+            add(&found, tokens[i].span.start, tokens[import_last].span.end, line);
+            i = import_last;
+            continue;
+        }
+        Usize entry_at = 0;
+        Str entry_keyword = "";
+        if (unexported_entry(source, tokens, i, &entry_at, &entry_keyword)) {
+            add(&found, entry_at, entry_at, entry_keyword);
+            continue;
+        }
+        Usize literal = 0;
+        if (pointer_array_literal(tokens, i, &literal)) {
+            Usize close = matching_brace(tokens, literal);
+            add(&found, tokens[i].span.start, tokens[literal].span.end, "[");
+            closings = mem::realloc(closings, countof(closings) + 1);
+            closings[countof(closings) - 1] = close;
+            i = literal;
+            continue;
+        }
+        if (!is_use(source, tokens, i)) continue;
+        Usize start = tokens[i].span.start;
+        Usize stop = tokens[i + 2].span.start;
+        Str replacement = "";
+        if (!is_capital(source, tokens[i + 2])) {
+            // build::f(first, rest) is first.f(rest)
+            if (i + 3 >= countof(tokens) || tokens[i + 3].kind != lex::left_paren) continue;
+            Usize end = 0;
+            Bool plain = false;
+            if (!first_argument(tokens, i + 3, &end, &plain)) continue;
+            Str receiver = source[tokens[i + 4].span.start:tokens[end - 1].span.end];
+            if (!plain) receiver = as_str(format::push("(", receiver, ")"));
+            Str name = lex::text(source, tokens[i + 2]);
+            stop = tokens[end].span.start;
+            if (tokens[end].kind == lex::comma) stop = tokens[end + 1].span.start;
+            replacement = as_str(format::push(receiver, ".", name, "("));
+            // The first argument is copied as written: a use inside it is mended by the next pass.
+            i = end - 1;
+            add(&found, start, stop, replacement);
+            continue;
+        }
+        add(&found, start, stop, replacement);
+    }
+    for (Usize k = 0; k < countof(found.from); k++) {
+        out = as_str(format::push(out, source[at:found.from[k]], found.texts[k]));
+        at = found.to[k];
+    }
+    if (countof(found.from) == 0) return source;
+    *changed = true;
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
+export Str mend(Str file, Str source) {
+    if (!is_build_file(file)) return source;
+    Bool changed = false;
+    Str text = pass(source, true, &changed);
+    for (Usize round = 0; round < 4 && changed; round++) {
+        changed = false;
+        text = pass(text, false, &changed);
+    }
+    return text;
+}
