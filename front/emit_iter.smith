@@ -44,7 +44,7 @@ struct Plan {
     state::Value array; // the address and type of the array
     Bool is_slice;
     c::LLVMValueRef data; // a slice's data pointer
-    state::Ty element;    // a slice's element
+    state::Ty element;    // a slice's or an array's element
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -69,11 +69,7 @@ static state::Ty pointer_to(state::Emitter *e, state::Ty element) {
     block->ty = element;
     block->next = e->owned;
     e->owned = block;
-    state::Ty ty = {.kind = .pointer,
-                    .llvm = state::pointer_type(e, 0),
-                    .name = "pointer",
-                    .element = &block->ty,
-                    .address_space = 0};
+    state::Ty ty = {.kind = {.pointer = {.element = &block->ty}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
     return ty;
 }
 
@@ -126,7 +122,7 @@ static c::LLVMValueRef step_constant(const ast::Stmt *s, state::Ty counter) {
 
 // `a + b` through `llvm.sadd` or `llvm.uadd` with overflow: the pair (sum, overflowed).
 static c::LLVMValueRef add_with_overflow(state::Emitter *e, state::Ty ty, c::LLVMValueRef a, c::LLVMValueRef b) {
-    Str intrinsic = ty.is_signed ? "llvm.sadd.with.overflow" : "llvm.uadd.with.overflow";
+    Str intrinsic = state::is_signed(ty) ? "llvm.sadd.with.overflow" : "llvm.uadd.with.overflow";
     U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
     c::LLVMTypeRef types[1] = {ty.llvm};
     c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
@@ -206,7 +202,7 @@ static state::Ty turn_value(state::Emitter *e, Plan plan, c::LLVMValueRef counte
     c::LLVMValueRef zero = c::LLVMConstInt(plan.counter.llvm, 0, 0);
     c::LLVMValueRef indexes[2] = {zero, counter};
     c::LLVMValueRef address = c::LLVMBuildGEP2(e->builder, plan.array.ty.llvm, plan.array.llvm, indexes, 2, "element");
-    state::Ty element = *plan.array.ty.element;
+    state::Ty element = plan.element;
     if (plan.by_reference) {
         *out = address;
         return pointer_to(e, element);
@@ -231,7 +227,7 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
     position(e, cond);
     c::LLVMValueRef counter = c::LLVMBuildLoad2(e->builder, plan.counter.llvm, slot, "counter");
     c::LLVMIntPredicate below =
-        (plan.is_array || plan.is_slice || !plan.counter.is_signed) ? c::LLVMIntULT : c::LLVMIntSLT;
+        (plan.is_array || plan.is_slice || !state::is_signed(plan.counter)) ? c::LLVMIntULT : c::LLVMIntSLT;
     c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, below, counter, plan.bound, "more");
     c::LLVMBuildCondBr(e->builder, more, body, end);
     position(e, body);
@@ -256,11 +252,12 @@ static state::Status build_loop(state::Emitter *e, const ast::Stmt *s, Plan plan
 // The iterables
 
 // A loop over the slice stored at `place`: read once, its count is the bound, the elements come from its data.
-static state::Status slice_start(state::Emitter *e, const state::ThenGeneral *w, state::Value place) {
+static state::Status slice_start(state::Emitter *e, const state::ThenGeneral *w, state::Value place,
+                                 state::ElementTy slice) {
     c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "slice");
     state::Ty counter = {};
     state::scalar_type(e, "usize", &counter);
-    Plan plan = {.counter = counter, .is_slice = true, .by_reference = w->flag, .element = *place.ty.element};
+    Plan plan = {.counter = counter, .is_slice = true, .by_reference = w->flag, .element = *slice.element};
     plan.data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
     c::LLVMValueRef count = c::LLVMBuildExtractValue(e->builder, whole, 1, "count");
     plan.bound = c::LLVMBuildIntCast2(e->builder, count, counter.llvm, 0, "");
@@ -275,20 +272,25 @@ static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w)
         return state::not_emitted("a loop over an array value; store it in a local first", w->span);
     c::LLVMValueRef slot = state::new_alloca(e, value.ty, "iterable");
     c::LLVMBuildStore(e->builder, value.llvm, slot);
-    return slice_start(e, w, (state::Value){.llvm = slot, .ty = value.ty});
+    return slice_start(e, w, (state::Value){.llvm = slot, .ty = value.ty}, value.ty.kind.slice);
 }
 
 static state::Status array_start(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value place = state::pop_value(e);
-    if (place.ty.kind == .slice) return slice_start(e, w, place);
+    if (place.ty.kind == .slice) return slice_start(e, w, place, place.ty.kind.slice);
     if (place.ty.kind != .array)
         return state::not_emitted("a loop over a block or a stream; only arrays, slices, str and range for now",
                                   w->span);
     state::Ty counter = {};
     state::scalar_type(e, "usize", &counter);
-    Plan plan = {.counter = counter, .is_array = true, .by_reference = w->flag, .array = place};
+    Plan plan = {.counter = counter,
+                 .is_array = true,
+                 .by_reference = w->flag,
+                 .array = place,
+                 .element = *place.ty.kind.array.element};
     plan.start = c::LLVMConstInt(counter.llvm, 0, 0);
-    plan.bound = c::LLVMConstInt(counter.llvm, place.ty.count, 0);
+    plan.bound = c::LLVMConstInt(counter.llvm, place.ty.kind.array.count, 0);
+
     return build_loop(e, w->stmt, plan);
 }
 

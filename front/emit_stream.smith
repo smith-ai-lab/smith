@@ -47,7 +47,22 @@ static Bool starts_with(Str text, Str prefix) {
 
 // The `Ty` of a stream, as `type_stream` makes it.
 export Bool is_stream(state::Ty t) {
-    return t.kind == .pointer && t.element != nullptr && starts_with(t.name, "stream::Stream(");
+    return t.kind == .pointer && t.kind.pointer.element != nullptr && starts_with(t.name, "stream::Stream(");
+}
+
+// The type a stream yields: the pointee of its `Ty`; false when `t` is not a stream.
+static Bool yielded(state::Ty t, state::Ty *element) {
+    if (!is_stream(t) || t.kind != .pointer) return false;
+    *element = *t.kind.pointer.element;
+    return true;
+}
+
+// The type the stream being emitted yields, from its `$stream` local.
+static state::Status yield_type(state::Emitter *e, ast::Span span, state::Ty *element) {
+    state::Local cell = {};
+    if (!state::find_local(e, "$stream", &cell) || !yielded(cell.ty, element))
+        return state::fail("`yield` is valid only in a function that returns `stream::Stream(T)`", span);
+    return state::success();
 }
 
 // A type expression `stream::Stream(T)`.
@@ -73,10 +88,9 @@ export state::TyResult type_stream(state::Emitter *e, const ast::TypeExpr *t) {
     block->ty = made.ok;
     block->next = e->owned;
     e->owned = block;
-    state::Ty ty = {.kind = .pointer,
+    state::Ty ty = {.kind = {.pointer = {.element = &block->ty}},
                     .llvm = state::pointer_type(e, 0),
-                    .name = state::msg(format::push("stream::Stream(", made.ok.name, ")")),
-                    .element = &block->ty};
+                    .name = state::msg(format::push("stream::Stream(", made.ok.name, ")"))};
     return ty;
 }
 
@@ -89,10 +103,10 @@ static state::Ty option_of(state::Emitter *e, state::Ty payload) {
     c::LLVMTypeRef fields[2];
     fields[0] = c::LLVMInt8TypeInContext(e->context);
     fields[1] = payload.llvm;
-    state::Ty ty = {.kind = .option,
+    state::Ty ty = {.kind = {.option = {.element = &block->ty}},
                     .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false),
-                    .name = state::msg(format::push("?", payload.name)),
-                    .element = &block->ty};
+                    .name = state::msg(format::push("?", payload.name))};
+
     return ty;
 }
 
@@ -183,7 +197,7 @@ static c::LLVMTypeRef record_of(state::Emitter *e, state::FunctionInfo info) {
 // The info of the body of the generator `info`: no parameters (it reads them from `args`), the result `stream::body`.
 export state::FunctionInfo body_info(state::Emitter *e, state::FunctionInfo info) {
     c::LLVMValueRef function = body_function(e, info);
-    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "stream::body"};
+    state::Ty none = {.kind = {.integer = {}}, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "stream::body"};
     return (state::FunctionInfo){.name = info.name,
                                  .symbol = info.symbol,
                                  .llvm = function,
@@ -279,9 +293,8 @@ static state::Status position_then(state::Emitter *e, const state::ThenBlocks *w
 
 static state::Status yield_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value value = state::pop_value(e);
-    state::Local cell = {};
-    state::find_local(e, "$stream", &cell);
-    state::Ty element = *cell.ty.element;
+    state::Ty element = {};
+    try yield_type(e, w->span, &element);
     if (!state::same_type(value.ty, element)) {
         try state::convert(e, value, element, w->span, .initialize);
         value = state::pop_value(e);
@@ -306,9 +319,8 @@ export state::Status yield_statement(state::Emitter *e, const ast::Stmt *s) {
     if (s->kind != .yield_stmt) return state::fail("not a yield", s->span);
     if (!in_body(e))
         return state::fail("`yield` is valid only in a function that returns `stream::Stream(T)`", s->span);
-    state::Local cell = {};
-    state::find_local(e, "$stream", &cell);
-    state::Ty element = *cell.ty.element;
+    state::Ty element = {};
+    try yield_type(e, s->span, &element);
     state::push_then_none(e, (state::ThenNone){.run = yield_finish, .span = s->span});
     state::push_eval(e, s->kind.yield_stmt.value, state::hint_of(element));
     return state::success();
@@ -327,16 +339,18 @@ export Bool is_call(const ast::Expr *x) {
     return state::same_text(path.segments[1].text, "next") || state::same_text(path.segments[1].text, "close");
 }
 
-static state::Status argument_of(const state::ThenGeneral *w, state::Value value, Str what) {
-    if (value.ty.kind == .pointer && value.ty.element != nullptr && is_stream(*value.ty.element))
+// The argument of `stream::next` and `stream::close` is the address of a stream: `payload` is what it yields.
+static state::Status argument_of(const state::ThenGeneral *w, state::Value value, Str what, state::Ty *payload) {
+    if (value.ty.kind == .pointer && value.ty.kind.pointer.element != nullptr &&
+        yielded(*value.ty.kind.pointer.element, payload))
         return state::success();
     return state::failf(w->span, what, " takes the address of a stream: `", what, "(&s)`");
 }
 
 static state::Status next_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value address = state::pop_value(e);
-    try argument_of(w, address, "stream::next");
-    state::Ty payload = *address.ty.element->element;
+    state::Ty payload = {};
+    try argument_of(w, address, "stream::next", &payload);
     state::Ty option = option_of(e, payload);
     c::LLVMValueRef slot = state::new_alloca(e, payload, "slot");
     c::LLVMBuildStore(e->builder, c::LLVMConstNull(payload.llvm), slot);
@@ -355,10 +369,12 @@ static state::Status next_finish(state::Emitter *e, const state::ThenGeneral *w)
 
 static state::Status close_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value address = state::pop_value(e);
-    try argument_of(w, address, "stream::close");
+    state::Ty payload = {};
+    try argument_of(w, address, "stream::close", &payload);
+
     c::LLVMValueRef argv[3] = {address.llvm, nullptr, nullptr};
     c::LLVMValueRef made = call_runtime(e, "close", argv, 1);
-    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::Ty none = {.kind = {.integer = {}}, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     state::push_value(e, (state::Value){.llvm = made, .ty = none});
     return state::success();
 }
