@@ -1,6 +1,6 @@
 // Tests of std::stream, the runtime core of a generator: bodies written as functions that call the interface directly,
 // as the emitter will (#1546). A body gets its arguments by pointer, writes the value into `stream::slot`, and calls
-// `stream::yield`; it ends through `stream::finish`.
+// `stream::suspend`; it ends through `stream::finish`.
 module std::stream_test;
 
 import std::stream;
@@ -25,7 +25,7 @@ void counting_body(stream::Stream *s, void *raw) {
     for (I32 i = 1; i <= args->limit; i++) {
         args->probe->count += 1;
         *(I32 *)stream::slot(s) = i;
-        if (!stream::yield(s)) break;
+        if (!stream::suspend(s)) break;
     }
     args->probe->cleaned += 1;
     stream::finish(s);
@@ -67,7 +67,7 @@ export void test_stream_is_lazy() {
 // A body that returns after one value (no loop) ends the stream.
 void one_body(stream::Stream *s, void *raw) {
     *(I32 *)stream::slot(s) = *(I32 *)raw;
-    if (!stream::yield(s)) stream::finish(s);
+    if (!stream::suspend(s)) stream::finish(s);
     stream::finish(s);
 }
 

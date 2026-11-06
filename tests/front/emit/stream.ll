@@ -43,7 +43,7 @@ whilebody:                                        ; preds = %whilecond
   %stream = load ptr, ptr %"$stream", align 8
   %6 = call ptr @smith_stream_slot(ptr %stream)
   store i32 %5, ptr %6, align 4
-  %7 = call zeroext i1 @smith_stream_yield(ptr %stream)
+  %7 = call zeroext i1 @smith_stream_suspend(ptr %stream)
   br i1 %7, label %yield.go, label %yield.closed
 
 endwhile:                                         ; preds = %whilecond
@@ -81,7 +81,7 @@ declare ptr @smith_stream_start(ptr, ptr, i64)
 
 declare ptr @smith_stream_slot(ptr)
 
-declare zeroext i1 @smith_stream_yield(ptr)
+declare zeroext i1 @smith_stream_suspend(ptr)
 
 declare void @smith_stream_finish(ptr)
 

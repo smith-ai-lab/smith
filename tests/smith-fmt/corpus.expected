@@ -4997,8 +4997,8 @@ export Plain plain() {
     return private_twice;
 }
 
-export uint64_t call(Hook fn, uint64_t bits) {
-    return fn(bits);
+export uint64_t call(Hook callback, uint64_t bits) {
+    return callback(bits);
 }
 
 export uint64_t chosen_value(uint64_t bits) {

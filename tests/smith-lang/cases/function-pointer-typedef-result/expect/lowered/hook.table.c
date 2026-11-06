@@ -19,9 +19,9 @@ hook_table_Plain hook_table_plain() {
 hook_table_Private private_twice = hook_table_twice;
 return private_twice;
 }
-uint64_t hook_table_call(HookFn fn, uint64_t bits) __asm__("_hook::table::call");
-uint64_t hook_table_call(HookFn fn, uint64_t bits) {
-return fn(bits);
+uint64_t hook_table_call(HookFn callback, uint64_t bits) __asm__("_hook::table::call");
+uint64_t hook_table_call(HookFn callback, uint64_t bits) {
+return callback(bits);
 }
 uint64_t hook_table_chosen_value(uint64_t bits) __asm__("_hook::table::chosen_value");
 uint64_t hook_table_chosen_value(uint64_t bits) {
