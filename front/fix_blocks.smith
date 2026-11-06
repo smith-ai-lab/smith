@@ -825,6 +825,21 @@ static Bool arm_line(lex::Tokens tokens, Usize dot) {
     return false;
 }
 
+// The first token of the statement that ends just before token `at`: back to a token that starts a line outside every
+// bracket.
+static Usize statement_start(lex::Tokens tokens, Usize at) {
+    Usize nest = 0;
+    Usize t = at - 1;
+    while (t > 0) {
+        lex::TokenKind kind = tokens[t].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest += 1;
+        if ((kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) && nest > 0) nest -= 1;
+        if (nest == 0 && tokens[t - 1].line_break) break;
+        t -= 1;
+    }
+    return t;
+}
+
 // Whether the `.` starts a line that goes on the line before it: `.name` after a `)`, `]` or a name. The first token
 // of a `match` arm (`.b => x`) starts its own line.
 static Bool continues_line(lex::Tokens tokens, Usize dot) {
@@ -889,6 +904,10 @@ static Str plain_forms(Str source) {
     }
     for (Usize i = 1; i < countof(tokens); i++) {
         if (!continues_line(tokens, i)) continue;
+        // `.ok(n)` on a line less indented than the one before is a variant of its own, the value of the last line
+        // (#2575); a chain goes on the line before it only when it is indented under it.
+        if (indent_of(source, tokens[i].span.start) <= indent_of(source, tokens[statement_start(tokens, i)].span.start))
+            continue;
         add_cut(&cuts, tokens[i - 1].span.end, tokens[i].span.start, "");
     }
     lonely_continues(source, tokens, braces, &cuts);
