@@ -755,6 +755,24 @@ static c::LLVMValueRef passed(state::Emitter *e, state::Value value, state::Ty p
     return temporary;
 }
 
+// `setjmp` and its kin return twice; LLVM must know at the call (as clang, which tells them by name), or it keeps a
+// value in a register across the second return.
+static void mark_returns_twice(c::LLVMValueRef function, c::LLVMValueRef call) {
+    Usize length = 0;
+    const char *text = c::LLVMGetValueName2(function, &length);
+    if (text == nullptr) return;
+    Str name = text[0:length];
+    if (!(state::same_text(name, "setjmp") || state::same_text(name, "_setjmp") || state::same_text(name, "sigsetjmp") ||
+          state::same_text(name, "__sigsetjmp") || state::same_text(name, "savectx") ||
+          state::same_text(name, "vfork") || state::same_text(name, "getcontext")))
+        return;
+    U32 kind = c::LLVMGetEnumAttributeKindForName("returns_twice", 13);
+    c::LLVMContextRef context = c::LLVMGetTypeContext(c::LLVMTypeOf(function));
+    c::LLVMAttributeRef attribute = c::LLVMCreateEnumAttribute(context, kind, 0);
+    c::LLVMAddCallSiteAttribute(call, 0xFFFFFFFF, attribute);
+    c::LLVMAddAttributeAtIndex(function, 0xFFFFFFFF, attribute);
+}
+
 // The arguments' values are on the value stack, the first deepest: check them and call.
 static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Expr *written = w->expr;
@@ -821,6 +839,7 @@ static state::Status call_finish(state::Emitter *e, const state::ThenGeneral *w)
         made = c::LLVMBuildCall2(e->builder, sig.type, sig.function, argv, (U32)count, "");
     else
         made = c::LLVMBuildCall2(e->builder, sig.type, sig.function, argv, (U32)count, "call");
+    mark_returns_twice(sig.function, made);
     state::push_value(e, (state::Value){.llvm = made, .ty = sig.result});
     state::free_text(key);
     release(sig);

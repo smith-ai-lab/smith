@@ -50,6 +50,19 @@ int dladdr(const void *address, Dl_info *info);
 void (*smith_failure_hook)(SmithFailureKind kind, const uintptr_t *frames, size_t count);
 uintptr_t smith_trace_stop;
 
+void smith_failure_set_hook(const void *hook) {
+    static_assert(sizeof smith_failure_hook == sizeof hook);
+    memcpy(&smith_failure_hook, &hook, sizeof hook);
+}
+
+void smith_stdout_unbuffered(void) {
+    setvbuf(stdout, nullptr, _IONBF, 0);
+}
+
+void smith_trace_set_stop(size_t frame) {
+    smith_trace_stop = (uintptr_t)frame;
+}
+
 constexpr uintptr_t smith_trace_address_mask = 0x0000'7fff'ffff'ffffU; // user space; drops pointer authentication bits
 constexpr size_t smith_trace_line_capacity = 1280;
 constexpr size_t smith_trace_images_max = 32;

@@ -40,6 +40,9 @@ constexpr size_t smith_trace_frames_max = 64;
 // it to the frame of the function that calls a test, so a stack ends there, the same however the runner was reached.
 extern uintptr_t smith_trace_stop;
 
+// Sets smith_trace_stop; std::test calls it, as a header variable is not written from .smith yet.
+void smith_trace_set_stop(size_t frame);
+
 // Walks the stack of the caller by frame pointers: frames[0] is the address in the caller that smith_trace_capture
 // returns to, and the rest are its callers' return addresses. Returns the count, at most capacity. Safe to call from a
 // signal handler.
@@ -98,3 +101,11 @@ typedef enum : unsigned char {
 // What smith_failure does instead of writing and aborting; smith_tests installs it in the test runner. It must not
 // return. frames and count are the caller's stack, as smith_trace_capture gives it.
 extern void (*smith_failure_hook)(SmithFailureKind kind, const uintptr_t *frames, size_t count);
+
+// Sets smith_failure_hook to the function whose address is `hook` (a function of the hook's type, or null). For .smith,
+// which does not write a header variable or name a function pointer type of a header yet.
+void smith_failure_set_hook(const void *hook);
+
+// Makes stdout unbuffered: the test runner's workers, so a crash loses none of what a test printed. For .smith, which
+// does not read a header variable (stdout) yet.
+void smith_stdout_unbuffered(void);

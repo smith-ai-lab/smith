@@ -197,6 +197,10 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
         return va_lifetime(e, entry, v[0]);
     case .va_format:
         return va_format_call(e, v, result);
+    case .frame_address: {
+        c::LLVMValueRef depth[1] = {coerced(e, v[0], 'i')};
+        return intrinsic(e, "llvm.frameaddress", state::pointer_type(e, 0), depth, 1);
+    }
     case .count_zeros:
         return count_zeros(e, v[0], result);
     case .atomic_add:

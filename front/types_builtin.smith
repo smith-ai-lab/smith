@@ -20,6 +20,7 @@
 //   va_start         (__builtin_va_list list, last)          Void        llvm.va_start on the list's address
 //   va_end           (__builtin_va_list list)                Void        llvm.va_end on the list's address
 //   va_format        (*char out, n, *char format, list)      I32         a call of vsnprintf, the list by address
+//   frame_address    (0)                                     *Void       llvm.frameaddress of the current frame
 //   count_zeros      (U64 x)                                 I32         llvm.ctlz, truncated
 //   type_query       (type T)                                Bool        `is_slice(T)`, `is_record(T)`...: asks the
 //   type filled           (type T, n, value)                      [n]T        `array.filled(T, n, value)` of std.array
@@ -60,6 +61,7 @@ export typedef enum {
     va_start;
     va_end;
     va_format;
+    frame_address;
 } Shape;
 
 export struct Entry {
@@ -112,6 +114,8 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .libc, "nextafterf ff f");
     } else if (same(name, "__builtin_snprintf")) {
         *found = made(name, .format, "snprintf");
+    } else if (same(name, "__builtin_frame_address")) {
+        *found = made(name, .frame_address, "frameaddress");
     } else if (same(name, "__builtin_va_start")) {
         *found = made(name, .va_start, "va_start");
     } else if (same(name, "__builtin_va_end")) {
@@ -666,6 +670,11 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
     case .va_end:
     case .va_format:
         return check_va(c, e, entry, args);
+    case .frame_address:
+        if (countof(args) != 1) return wrong(c, e->span, entry, "one integer, the depth; write `(0)`");
+        types::TypeRef depth = value_type(c, args[0]);
+        if (depth->kind != .integer) return wrong(c, e->span, entry, "one integer, the depth; write `(0)`");
+        return types::pointer_to(&c->table, c->table.void_type, false);
     case .count_zeros:
         if (countof(args) != 1 || value_type(c, args[0]) != named(c, "U64")) return wrong(c, e->span, entry, "one U64");
         return named(c, "I32");

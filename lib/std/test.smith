@@ -1682,6 +1682,19 @@ void on_signal(I32 signal_number, c::siginfo_t *info, void *context) {
     c::_exit(signal_status + signal_number);
 }
 
+// SIG_DFL and SIG_IGN are the handler values 0 and 1, macros no header binding has.
+void signal_default(I32 signal_number) {
+    void (*handler)(I32) = nullptr;
+    c::signal(signal_number, handler);
+}
+
+void signal_ignore(I32 signal_number) {
+    Usize one = 1;
+    void (*handler)(I32) = nullptr;
+    __builtin_memcpy(&handler, &one, sizeof handler);
+    c::signal(signal_number, handler);
+}
+
 void catch_signals() {
     static U8 stack[alternate_stack];
     c::stack_t alternate = {.ss_sp = stack, .ss_size = alternate_stack};
@@ -1991,7 +2004,7 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
 // Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
 [[std::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
-    c::smith_trace_stop = (Usize)__builtin_frame_address(0);
+    c::smith_trace_set_stop((Usize)__builtin_frame_address(0));
     explaining = command->explain;
     if (test->plain != nullptr) {
         reset();
@@ -2010,22 +2023,22 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
             run_key(test, options, random::key_bits(next[1]));
         }
     }
-    c::smith_trace_stop = 0;
+    c::smith_trace_set_stop(0);
 }
 
 // In a forked process, before its first test: all output goes down the pipe.
 void setup(Shared *block, I32 output) {
     shared = block;
-    c::signal(sig_hup, (void (*)(I32))0); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
-    c::signal(sig_int, (void (*)(I32))0);
-    c::signal(sig_term, (void (*)(I32))0);
+    signal_default(sig_hup); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
+    signal_default(sig_int);
+    signal_default(sig_term);
     catch_signals();
-    c::smith_failure_hook = on_failure;
+    c::smith_failure_set_hook((void *)on_failure);
     hooking_tap.word = tap_word;
     active_tap = hooking ? &hooking_tap : nullptr;
     if (c::dup2(output, stdout_fd) < 0 || c::dup2(output, stderr_fd) < 0) c::_exit(usage_status);
     c::close(output);
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor)
+    c::smith_stdout_unbuffered();
 }
 
 // --isolate: the process runs its one test and exits 0 if it returns.
@@ -2055,7 +2068,12 @@ End serve(const Options *options, const Command *command) {
     contract::trusted(); // the runner jumps out of a failed check with siglongjmp, until #324 unwinds instead
     const Test *test = &table[command->test];
     F64 cpu_before = process_cpu();
-    I32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
+    I32 jumped = 0;
+    if constexpr (target::os == target::macos) {
+        jumped = c::sigsetjmp(loop_jump, 1);
+    } else {
+        jumped = c::__sigsetjmp(loop_jump, 1); // glibc's sigsetjmp is a macro of it
+    }
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
     coverage_end(test, jumped == 0, process_cpu() - cpu_before);
@@ -2064,7 +2082,7 @@ End serve(const Options *options, const Command *command) {
     disarm();
     shared->cpu = process_cpu() - cpu_before;
     console::flush();
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor): a test may have buffered stdout
+    c::smith_stdout_unbuffered();
     if (jumped == 0) return End_Passed;
     return jumped == 2 ? End_Signal : End_Check; // 2: --in-process, an expected abort
 }
@@ -2072,8 +2090,8 @@ End serve(const Options *options, const Command *command) {
 // A worker's life: it takes a command, runs the test, and answers, until the runner closes the socket.
 [[noreturn]] void worker_main(const Options *options, Shared *block, I32 control, I32 output) {
     worker = true;
-    c::signal(sig_pipe, (void (*)(I32))0); // SIG_DFL
-    c::signal(sig_xfsz, (void (*)(I32))1); // SIG_IGN
+    signal_default(sig_pipe); // SIG_DFL
+    signal_ignore(sig_xfsz); // SIG_IGN
     setup(block, output);
     for (Usize served = 0; served < commands_max; served++) {
         Command command;
@@ -2191,7 +2209,7 @@ void on_runner_signal(I32 signal_number) {
     for (Usize slot = 0; slot <= jobs_max; slot++) {
         if (processes[slot].pid > 0 && !processes[slot].reaped) kill_group(processes[slot].pid);
     }
-    c::signal(signal_number, (void (*)(I32))0); // SIG_DFL, then the signal again: the runner ends as it would have
+    signal_default(signal_number); // SIG_DFL, then the signal again: the runner ends as it would have
     c::raise(signal_number);
 }
 
@@ -2558,7 +2576,8 @@ void print_detail(const Run *run) {
 // The failure's stack as a trace block, for smith to turn into the failing line and the call chain (smith symbolize).
 // The block is written to the descriptor, so what the console holds is already out.
 void print_trace(const Run *run, Bool with_detail) {
-    const char *heading = run->heading != nullptr ? run->heading : "check failed";
+    const char *recorded = run->heading;
+    const char *heading = recorded != nullptr ? recorded : "check failed";
     c::smith_trace_write(stdout_fd, "  ", heading, nullptr, with_detail ? run->detail : nullptr, run->frames,
                          run->frame_count, run->frames_exact, true);
 }
@@ -3374,8 +3393,8 @@ void run_in_process(Plan *plan) {
     worker = true;
     in_process = true;
     catch_signals();
-    c::smith_failure_hook = on_failure;
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor)
+    c::smith_failure_set_hook((void *)on_failure);
+    c::smith_stdout_unbuffered();
     for (Usize i = 0; i < plan->count; i++) {
         Run *run = &plan->runs[plan->order[i]];
         const Test *test = plan->tests[plan->order[i]];
@@ -4199,7 +4218,7 @@ static void prepare_run(Options *options) {
     full_run = options->full;
     golden_begin(options);
     raise_files(options->jobs);
-    c::signal(sig_pipe, (void (*)(I32))1); // a worker that died while idle is a failed write, not the end of the runner
+    signal_ignore(sig_pipe); // a worker that died while idle is a failed write, not the end of the runner
     if (!options->in_process) {
         c::signal(sig_hup, on_runner_signal);
         c::signal(sig_int, on_runner_signal);
