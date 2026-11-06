@@ -1,0 +1,109 @@
+// Fix-its and emitted code for plain C numbers (#2488): an integer literal next to a float is written as a float, a
+// compound assignment widens a narrower right side, literals under `c ? 5 : 2` take the target's type, a left-out enum
+// field takes the variant of value 0, and the emitter reads a literal's type from the checker and folds an integer
+// operation in a global's initializer.
+module front_fix_numeric_test;
+
+import front::compile;
+import front::fix;
+import front::parser;
+import front::roots;
+import std::arena;
+import std::format;
+import std::mem;
+import std::process;
+import std::test;
+import <stdio.h>;
+import <sys/stat.h>;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+}
+
+// The variants are renamed by a later pass: the text is compared when no pass changes it.
+static void expect_fixed_settled(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed last = fix::fix_text("t.smith", before);
+    for (Usize pass = 0; pass < 6 && last.applied > 0; pass++)
+        last = fix::fix_text("t.smith", last.text);
+    test::check_equal(last.text, want);
+    test::check_equal(errors_in(last.text), (Usize)0);
+}
+
+export void test_front_fix_numeric_an_integer_literal_next_to_a_float_is_a_float() {
+    expect_fixed("module m;\nF64 f(F64 v) {\n    if (v < 0) return -v;\n    return v;\n}\n",
+                 "fn f(v: f64) -> f64:\n    if v < 0.0:\n        return -v\n    return v\n");
+}
+
+export void test_front_fix_numeric_a_compound_assignment_widens_a_narrower_right_side() {
+    expect_fixed("module m;\nvoid f(U64 *a, U32 b) {\n    *a /= b;\n}\n",
+                 "fn f(a: *mut u64, b: u32):\n    a.* /= b.to(u64)\n");
+}
+
+export void test_front_fix_numeric_literals_in_a_conditional_take_the_targets_type() {
+    expect_fixed("module m;\nU32 f(I32 e) {\n    U32 k = 1;\n    k *= e < 0 ? 5 : 2;\n    return k;\n}\n",
+                 "fn f(e: i32) -> u32:\n    mut k: u32 = 1\n    k *= if e < 0: 5 else: 2\n    return k\n");
+}
+
+export void test_front_fix_numeric_a_left_out_enum_field_is_the_variant_of_value_zero() {
+    expect_fixed_settled(
+        "module m;\ntypedef enum {\n    Empty,\n    Invalid,\n} Error;\ntypedef struct {\n    int v;\n"
+        "    Error e;\n} S;\nS f(int x) { return (S){.v = x}; }\n",
+        "enum Error:\n    Empty\n    Invalid\nstruct S:\n    v: i32\n    e: Error\nfn f(x: i32) -> S:\n"
+        "    return S(v = x, e = .Empty)\n");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The emitter
+
+static void write_text(Str path, Str text) {
+    c::FILE *file = c::fopen(path.data, "w");
+    test::check_equal(file != nullptr, true);
+    if (file == nullptr) return;
+    c::fwrite(text.data, 1, countof(text), file);
+    c::fclose(file);
+}
+
+static void remove_all(Str folder) {
+    const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
+    process::OutputResult done = process::run(argv[0:3]);
+    test::check_equal(done == .ok, true);
+}
+
+// A literal next to a `u32` in a comparison has no expected type: the checker's type is the `u32`. A global's
+// initializer may shift a converted literal.
+export void test_front_fix_numeric_emit_literal_types_and_a_global_shift() {
+    Str folder = as_str(format::push("/tmp/front_fix_numeric_", (I64)c::getpid()));
+    c::mkdir(folder.data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    write_text(as_str(format::push(folder, "/src/a.smith")), "const limit: u64 = 1.to(u64) << 63\n"
+                                                             "pub fn f(hx: u32) -> bool:\n"
+                                                             "    return (0x000fffff & (2 + hx)) < 3\n"
+                                                             "pub fn g() -> u64:\n"
+                                                             "    return limit\n");
+    roots::Roots where = {.source = as_str(format::push(folder, "/src")),
+                          .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report =
+        compile::file(as_str(format::push(folder, "/src/a.smith")), as_str(format::push(folder, "/a.o")), "", where);
+    test::check_equal(report.ok, true);
+    remove_all(folder);
+}

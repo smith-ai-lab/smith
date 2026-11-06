@@ -1804,6 +1804,44 @@ static Bool widen_operand(types::Checked *c, const ast::Expr *e, ast::BinaryOp o
     return true;
 }
 
+// How many decimal digits `value` takes written plainly.
+static Usize decimal_width(U64 value) {
+    Usize width = 1;
+    while (value >= 10) {
+        value /= 10;
+        width += 1;
+    }
+    return width;
+}
+
+// A decimal integer literal (`0`, `-1`) next to a float operand: a fix writes it as a float (`0.0`), as C converts it.
+// True when the error was recorded. A hex or suffixed literal has no such spelling here and is left to the plain error.
+static Bool float_literal_operand(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                                  const ast::Expr *right) {
+    types::TypeRef l = typ(c, left);
+    types::TypeRef r = typ(c, right);
+    Bool left_float = l->kind == .floating && plain_integer(right) && is_integer(r);
+    Bool right_float = r->kind == .floating && plain_integer(left) && is_integer(l);
+    if (is_shift(op) || is_logical(op) || (!left_float && !right_float)) {
+        return false;
+    }
+    const ast::Expr *literal = left_float ? right : left;
+    types::TypeRef to = left_float ? l : r;
+    Usize written = literal->span.end - literal->span.start;
+    if (!(literal->kind == .integer) || written != decimal_width(literal->kind.integer.value)) {
+        return false;
+    }
+    syntax::Edits edits = {};
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = {.start = literal->span.end, .end = literal->span.end}, .text = msg(".0")};
+    types::fail_fix(
+        c, e->span,
+        msg(format::push("the operands of `", binary_text(op), "` have different types, `", types::show(l), "` and `",
+                         types::show(r), "`; write the literal as `", types::show(to), "`, for example `0.0` for `0`")),
+        edits);
+    return true;
+}
+
 // Whether a literal of type `from` can take the type `to` of its neighbour.
 static Bool adaptable(types::TypeRef from, types::TypeRef to) {
     if (from == to) {
@@ -1915,7 +1953,7 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    if (widen_operand(c, e, op, left, right)) {
+    if (widen_operand(c, e, op, left, right) || float_literal_operand(c, e, op, left, right)) {
         poison(c, e);
         return;
     }
@@ -1966,6 +2004,8 @@ static ast::BinaryOp binary_of(ast::AssignOp op) {
     return .bit_or;
 }
 
+static Bool literal_branches(const types::Checked *c, const ast::Expr *e);
+
 // Stage 1: the target is typed; the value is wanted as the target's type.
 static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
@@ -1988,11 +2028,31 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
         return;
     }
     types::TypeRef hint = nullptr;
-    if (op == .plain || (literal_like(value) && op != .shift_left && op != .shift_right)) {
+    if (op == .plain || (literal_branches(c, value) && op != .shift_left && op != .shift_right)) {
         hint = tt;
     }
     push(w, e, f.expected, 2);
     push(w, value, hint, 0);
+}
+
+// `x op= y` with `y` an integer narrower than `x` and of the same signedness: C widens `y`, and a fix writes `y.to(T)`.
+// True when the error was recorded.
+static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, types::TypeRef tt,
+                           types::TypeRef vt) {
+    if (!(e->kind == .assign)) {
+        return false;
+    }
+    const ast::Expr *value = e->kind.assign.value;
+    if (is_shift(op) || !is_integer(tt) || !is_integer(vt) || tt->is_signed != vt->is_signed || vt->bits >= tt->bits ||
+        literal_like(value)) {
+        return false;
+    }
+    types::fail_fix(c, e->span,
+                    msg(format::push("the operands of `", binary_text(op), "` have different types, `", types::show(tt),
+                                     "` and `", types::show(vt), "`; make both `", types::show(tt),
+                                     "` with a conversion, for example `y.to(", types::show(tt), ")`")),
+                    to_fix(value, tt));
+    return true;
 }
 
 // Stage 2: a compound assignment `x op= v` is `x = x op v` for the operand rules.
@@ -2010,6 +2070,10 @@ static void assign_value_done(types::Checked *c, Frame f) {
     }
     if (op != .plain) {
         ast::BinaryOp as_binary = binary_of(op);
+        if (widen_assigned(c, e, as_binary, tt, vt)) {
+            poison(c, e);
+            return;
+        }
         if (binary_type(c, e->span, as_binary, tt, vt) == invalid(c)) {
             poison(c, e);
             return;
@@ -3906,6 +3970,23 @@ static void value_before(types::Checked *c, Work *w, Frame f) {
     for (Usize i = p.out_count; i > 0; i--) {
         push_frame(w, p.out[i - 1]);
     }
+}
+
+// A literal, or `if c: 5 else: 2` with a literal in each branch: it takes the type its place wants (`x *= c ? 5 : 2`).
+static Bool literal_branches(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .conditional) {
+        return literal_like(e->kind.conditional.then_value) && literal_like(e->kind.conditional.else_value);
+    }
+    if (e->kind == .stmt_expr) {
+        Plan p = read_value(c, e, nullptr);
+        for (Usize i = 0; i < p.leaf_count; i++) {
+            if (!literal_like(p.leaves[i])) {
+                return false;
+            }
+        }
+        return p.leaf_count > 0;
+    }
+    return literal_like(e);
 }
 
 static Str word(const ast::Stmt *s) {
