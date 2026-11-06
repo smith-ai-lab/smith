@@ -1846,6 +1846,26 @@ static Bool null_option_test(types::Checked *c, const ast::Expr *e, ast::BinaryO
     return true;
 }
 
+// `xs + n` where `xs` is an array: C's array decays to a pointer there, and smith has no decay. The fix writes the
+// address of the element, `&xs[n]` (#2611).
+static Bool array_sum(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                      const ast::Expr *right) {
+    if (op != .add || typ(c, left)->kind != .array || !is_integer(typ(c, right))) return false;
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, 3);
+    Str address = "&";
+    Str open = "[";
+    Str close = "]";
+    fix[0] = (syntax::Edit){.span = {.start = left->span.start, .end = left->span.start}, .text = address};
+    fix[1] = (syntax::Edit){.span = {.start = left->span.end, .end = right->span.start}, .text = open};
+    fix[2] = (syntax::Edit){.span = {.start = right->span.end, .end = right->span.end}, .text = close};
+    types::fail_fix(c, e->span,
+                    msg(format::push("`+` needs a number, found `", types::show(typ(c, left)),
+                                     "`: an array does not decay to a pointer; write the element's address, `&xs[n]`")),
+                    fix);
+    return true;
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -2097,6 +2117,10 @@ static void binary_after(types::Checked *c, Frame f) {
     if (is_option_test(op, left, right, typ(c, left), typ(c, right))) {
         some_test_fix(c, e);
         finish(c, e, c->table.bool_type, f.expected);
+        return;
+    }
+    if (array_sum(c, e, op, left, right)) {
+        poison(c, e);
         return;
     }
     types::TypeRef t = binary_type(c, e->span, op, typ(c, left), typ(c, right));
