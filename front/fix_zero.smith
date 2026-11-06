@@ -649,7 +649,8 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
 constexpr Usize cache_text_max = 256;
 
 // What the files that import a module leave out, kept for the file the fixer works on: its passes run many times,
-// and the files that import it do not change meanwhile. The names are copied, so no pointer outlives the memory of a run.
+// and the files that import it do not change meanwhile. The names are copied, so no pointer outlives the memory of a
+// run.
 struct SiblingCache {
     char file[cache_text_max];
     Usize file_length;
