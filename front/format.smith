@@ -340,7 +340,7 @@ static Bool has_new_line(Str text) {
 }
 
 // Whether the file at `path` is `front::format`'s. A file in today's syntax stays clang-format's until the switch-over
-// (#1631): a line starts with a form only today's syntax has, or today's parser (`parser::parse`) reads it with no
+// (#1631): a line starts with a form only today's syntax has, or today's parser (`parser::parse_file`) reads it with no
 // error, or its first error in the new syntax has a fix (`//` for `#`, a directive: the fixer knows the form) or is at
 // a
 // `/` (`/* */`). A file that reads in the new syntax is front::format's. One that does not, and has a line only the new
@@ -351,7 +351,7 @@ static Bool has_new_line(Str text) {
     Str text = "";
     if (!read_text(path_of(path), &text)) return 0;
     if (has_todays_line(text)) return 0;
-    parser::Parsed today = parser::parse(path_of(path), text);
+    parser::Parsed today = parser::parse_file(path_of(path), text);
     if (countof(today.errors) == 0) return 0;
     parser::Parsed fresh = parser::parse_new(path_of(path), text);
     if (countof(fresh.errors) == 0) return 1;

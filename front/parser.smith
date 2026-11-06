@@ -1,6 +1,6 @@
 // front::parser, the whole parser of smith's own front end (#1112, A6 of track A; internal, not wired into `smith cc`).
 //
-//   parser::parse(file, source)       a file's text as a `Parsed`: the `ast::Module` and the errors found
+//   parser::parse_file(file, source)       a file's text as a `Parsed`: the `ast::Module` and the errors found
 //   parser::parse_new(file, source)   the same for a file in smith's own syntax (lex::tokenize_new, Parser.new_syntax)
 //
 // It tokenizes (front::lex), makes a `parse::Parser`, installs the four real hooks (expressions and types from A3,
@@ -55,7 +55,7 @@ static parse::Edits lex_fix(Str source, lex::LexError failure) {
 }
 
 // Reads the text of the file called `file`. A file with errors still has the module of what could be read.
-export Parsed parse(Str file, Str source) {
+export Parsed parse_file(Str file, Str source) {
     Parsed result = {};
     result.module.file = file;
     lex::Lexed lexed = lex::tokenize(source);

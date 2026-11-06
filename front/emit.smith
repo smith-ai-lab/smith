@@ -93,7 +93,7 @@ import front::emit_debug as debug;
 import front::emit_iter as looping;
 import front::emit_lambda as lambdas;
 import front::emit_match as matching;
-import front::emit_memory as memory;
+import front::emit_memory;
 import front::emit_option as optional;
 import front::emit_state as state;
 import front::emit_stream as streams;
@@ -184,7 +184,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     if (is_alias_symbol(target)) return type_of_alias(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
-    return memory::imported_record(e, target->decl, target->type->name);
+    return emit_memory::imported_record(e, target->decl, target->type->name);
 }
 
 // A record named by its bare name inside an imported function's signature (`fn dot(a: Vec, ...)` of `geom::vec`): the
@@ -199,7 +199,7 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return false;
-    *made = memory::imported_record(e, target->decl, target->type->name);
+    *made = emit_memory::imported_record(e, target->decl, target->type->name);
     return true;
 }
 
@@ -224,7 +224,7 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
         if (countof(path.segments) == 1 && matching::type_enum(e, path.segments[0].text, &ty)) return ty;
         if (countof(path.segments) == 1 &&
             (state::same_text(path.segments[0].text, "str") || state::same_text(path.segments[0].text, "Str")))
-            return memory::type_slice(e, t);
+            return emit_memory::type_slice(e, t);
         state::TyResult scoped = {};
         if (countof(path.segments) == 1 && countof(e->import_scope) > 0 && type_in_import_scope(e, path, &scoped))
             return scoped;
@@ -232,10 +232,10 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
             const types::Symbol *alias = types::lookup(&e->options.checked->scopes, path.segments[0].text);
             if (is_alias_symbol(alias)) return type_of_alias(e, alias);
         }
-        return memory::type_record(e, t);
+        return emit_memory::type_record(e, t);
     }
-    if (t->kind == .slice) return memory::type_slice(e, t);
-    if (t->kind == .block_type) return memory::type_block(e, t);
+    if (t->kind == .slice) return emit_memory::type_slice(e, t);
+    if (t->kind == .block_type) return emit_memory::type_block(e, t);
     if (t->kind == .option) return optional::type_option(e, t);
     if (t->kind == .tuple) return tupled::type_tuple(e, t);
     if (t->kind == .function) return lambdas::type_function(e, t);
@@ -249,13 +249,13 @@ export state::TyResult type_of(state::Emitter *e, const ast::TypeExpr *t) {
             if (is_alias_symbol(alias)) {
                 state::TyResult inner = type_of_alias(e, alias);
                 if (inner == .error) return inner;
-                state::Ty made = memory::pointer_over(e, inner.ok);
+                state::Ty made = emit_memory::pointer_over(e, inner.ok);
                 return made;
             }
         }
-        return memory::type_pointer(e, t);
+        return emit_memory::type_pointer(e, t);
     }
-    if (t->kind == .array) return memory::type_array(e, t);
+    if (t->kind == .array) return emit_memory::type_array(e, t);
     if (streams::is_stream_type(t)) return streams::type_stream(e, t);
     if (optional::is_applied(t)) return optional::type_applied(e, t);
     if (t->kind == .applied) return vectors::type_vector(e, t);
@@ -275,9 +275,9 @@ static state::Status dispatch_unary(state::Emitter *e, const ast::Expr *x, ast::
     case .logical_not:
         return control::logical_not(e, x, hint);
     case .address_of:
-        return memory::address_of(e, x, hint);
+        return emit_memory::address_of(e, x, hint);
     case .dereference:
-        return memory::dereference(e, x, hint);
+        return emit_memory::dereference(e, x, hint);
     case .pre_increment:
     case .pre_decrement:
     case .post_increment:
@@ -472,7 +472,7 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
 static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     try debug::expr_location(e, x);
     if (hint.present && (hint.ty.kind == .slice || hint.ty.kind == .block) && is_array_place(e, x))
-        return memory::array_as_slice(e, x, hint);
+        return emit_memory::array_as_slice(e, x, hint);
     if (x->kind == .integer) return arith::integer_literal(e, x, hint);
     if (x->kind == .character) return character_literal(e, x);
     const ast::Decl *imported = nullptr;
@@ -491,7 +491,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
         return state::success();
     }
     if (x->kind == .name) {
-        if (memory::is_global_name(e, x)) return memory::name_ref(e, x);
+        if (emit_memory::is_global_name(e, x)) return emit_memory::name_ref(e, x);
         return arith::name_ref(e, x, hint);
     }
     if (x->kind == .unary) return dispatch_unary(e, x, x->kind.unary.op, hint);
@@ -505,13 +505,13 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     }
     if (x->kind == .array_lit) {
         if (hint.present && hint.ty.kind == .vector) return vectors::list(e, x, hint);
-        return memory::array_literal(e, x, hint);
+        return emit_memory::array_literal(e, x, hint);
     }
-    if (x->kind == .null_pointer) return memory::null_pointer(e, x, hint);
-    if (x->kind == .index) return memory::index(e, x, hint);
+    if (x->kind == .null_pointer) return emit_memory::null_pointer(e, x, hint);
+    if (x->kind == .index) return emit_memory::index(e, x, hint);
     if (x->kind == .member) {
         if (is_tuple_member(e, x)) return tupled::member(e, x, hint);
-        return memory::member(e, x, hint);
+        return emit_memory::member(e, x, hint);
     }
     if (x->kind == .variant) return dispatch_variant(e, x, hint);
     if (x->kind == .tuple_lit) return tupled::literal(e, x, hint);
@@ -521,13 +521,13 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .cast) {
         const ast::Expr *operand = x->kind.cast.operand;
         if (checked_floating(e, x) || checked_floating(e, operand)) return arith::float_cast(e, x, hint);
-        return memory::cast(e, x, hint);
+        return emit_memory::cast(e, x, hint);
     }
     if (x->kind == .try_expr) return optional::try_expr(e, x);
-    if (x->kind == .query) return memory::query(e, x, hint);
-    if (x->kind == .compound) return memory::compound(e, x, hint);
-    if (x->kind == .string) return memory::string_literal(e, x, hint);
-    if (x->kind == .slice_of) return memory::slice_of(e, x, hint);
+    if (x->kind == .query) return emit_memory::query(e, x, hint);
+    if (x->kind == .compound) return emit_memory::compound(e, x, hint);
+    if (x->kind == .string) return emit_memory::string_literal(e, x, hint);
+    if (x->kind == .slice_of) return emit_memory::slice_of(e, x, hint);
     // type_value
     return state::not_emitted("this kind of expression", x->span);
 }
@@ -535,14 +535,14 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
 // The handler that pushes the address of an lvalue.
 static state::Status dispatch_place(state::Emitter *e, const ast::Expr *x) {
     if (x->kind == .name) {
-        if (memory::is_global_name(e, x)) return memory::place_name(e, x);
+        if (emit_memory::is_global_name(e, x)) return emit_memory::place_name(e, x);
         return arith::place_name(e, x);
     }
-    if (x->kind == .unary && x->kind.unary.op == .dereference) return memory::place_dereference(e, x);
-    if (x->kind == .index) return memory::place_index(e, x);
+    if (x->kind == .unary && x->kind.unary.op == .dereference) return emit_memory::place_dereference(e, x);
+    if (x->kind == .index) return emit_memory::place_index(e, x);
     if (x->kind == .member) {
         if (is_tuple_member(e, x)) return tupled::place_member(e, x);
-        return memory::place_member(e, x);
+        return emit_memory::place_member(e, x);
     }
     return state::fail("this expression is not assignable", x->span);
 }
@@ -694,7 +694,7 @@ static state::Status declaration_statement(state::Emitter *e, const ast::Stmt *s
     }
     const ast::Decl *d = s->kind.declaration.decl;
     if (d->kind == .variable) return local_variable(e, d, s->span);
-    if (d->kind == .record) return memory::record_decl(e, d);
+    if (d->kind == .record) return emit_memory::record_decl(e, d);
     return state::not_emitted("this kind of declaration in a block", s->span);
 }
 
@@ -964,14 +964,14 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     Usize count = countof(source_params);
     state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
     if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
-    c::LLVMTypeRef types[64];
+    c::LLVMTypeRef parameter_types[64];
     for (Usize i = 0; i < count; i++) {
         state::TyResult made = type_of(e, source_params[i].type);
         if (made == .error) {
             return {.error = made.error};
         }
         params[i] = made.ok;
-        types[i] = state::abi_type(e, params[i]);
+        parameter_types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
     if (result_type != nullptr) {
@@ -981,7 +981,7 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
         }
         result = made_result.ok;
     }
-    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, types, (U32)count, 0);
+    c::LLVMTypeRef type = c::LLVMFunctionType(result.llvm, parameter_types, (U32)count, 0);
     Bool takes_args = state::same_text(name, "main") && count == 1 && is_slice(params[0]);
     Str symbol = function_symbol(e->tree, d, name);
     if (takes_args) symbol = state::msg(format::push("main.args"));
@@ -1376,7 +1376,7 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     state::Ty character = {};
     if (base->kind == .text) {
         state::scalar_type(e, "char", &character);
-        *ty = memory::slice_type(e, character, "str");
+        *ty = emit_memory::slice_type(e, character, "str");
         return true;
     }
     if (base->kind != .slice && base->kind != .block) return false;
@@ -1386,7 +1386,8 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     known = known || (element->kind == .record && find_record_by_name(e, element->name, &inner));
     known = known || (element->kind == .enumeration && matching::type_enum(e, element->name, &inner));
     if (!known) return false;
-    *ty = base->kind == .block ? memory::block_type(e, inner, base->count) : memory::slice_type(e, inner, "slice");
+    *ty = base->kind == .block ? emit_memory::block_type(e, inner, base->count)
+                               : emit_memory::slice_type(e, inner, "slice");
     return true;
 }
 
@@ -1459,7 +1460,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     mem::free(label);
     state::Ty ty = {.kind = .record, .llvm = named, .name = base->name};
     Usize at = e->record_count;
-    memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
+    emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
     Usize count = countof(base->slots);
     if (!base->complete || base->is_union || count == 0 || count > 64) {
         return;
@@ -1551,7 +1552,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
     if (to.kind == .option) return optional::wrap(e, value, to, span);
     if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, span);
     if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
-        return memory::array_value_as_slice(e, value, to);
+        return emit_memory::array_value_as_slice(e, value, to);
     state::Ty from = value.ty;
     if (is_plain_integer(from) && is_plain_integer(to) && to.bits > from.bits) {
         Bool same_sign = from.is_signed == to.is_signed;
@@ -1608,7 +1609,7 @@ static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
 static state::Status declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
-        if (d->kind == .record) try memory::record_decl(e, d);
+        if (d->kind == .record) try emit_memory::record_decl(e, d);
         if (d->kind == .enumeration) try matching::enum_decl(e, d);
     }
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
@@ -1619,7 +1620,7 @@ static state::Status declare_all(state::Emitter *e) {
             else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try memory::global_variable(e, d);
+            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try emit_memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from && d->kind != .static_assert_decl) {
             return state::not_emitted("this kind of declaration", d->span);
@@ -1745,7 +1746,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
     debug::release(&e);
-    memory::release(&e);
+    emit_memory::release(&e);
     matching::release(&e);
     c::LLVMDisposeBuilder(e.builder);
     c::LLVMDisposeBuilder(e.alloca_builder);

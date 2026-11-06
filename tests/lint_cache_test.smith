@@ -48,7 +48,7 @@ static void edit(const char *folder, const char *name, const char *original) {
 // One lint run of the project in `folder`, with the cache `cache`: a.c and b.c read common.h, c.c nothing else.
 // `third` is what the fake clang-tidy does for c.c (its status and output); `setting` is SMITH_LINT_CACHE.
 static Lint run(const char *folder, const char *cache, const char *setting, I32 status, const char *output) {
-    const c::SmithCoreLintFile files[_] = {
+    const c::SmithCoreLintFile planned[_] = {
         {"a.c", "clang\t-c\ta.c", "a.c\ncommon.h", 0, ""},
         {"b.c", "clang\t-c\tb.c", "b.c\ncommon.h", 0, ""},
         {"c.c", "clang\t-c\tc.c", "c.c", status, output},
@@ -57,7 +57,7 @@ static Lint run(const char *folder, const char *cache, const char *setting, I32 
     Lint lint = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
     Bool done =
-        c::smith_core_lint_plan(folder, cache, setting, files, countof(files), lint.file, text, output_capacity);
+        c::smith_core_lint_plan(folder, cache, setting, planned, countof(planned), lint.file, text, output_capacity);
     test::check_equal(done, true);
     lint.output = text;
     return lint;
@@ -66,10 +66,11 @@ static Lint run(const char *folder, const char *cache, const char *setting, I32 
 // One lint run of m.smith alone: the fake clang-tidy reads only m.smith, as it does of a module's imports, which come
 // through the generated headers under .smith/include and not the preprocessor.
 static Bool run_module(const char *folder, const char *cache) {
-    const c::SmithCoreLintFile files[_] = {{"m.smith", "clang\t-c\tm.smith", "m.smith", 0, ""}};
+    const c::SmithCoreLintFile planned[_] = {{"m.smith", "clang\t-c\tm.smith", "m.smith", 0, ""}};
     c::SmithCoreLintResult result[1] = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
-    Bool done = c::smith_core_lint_plan(folder, cache, nullptr, files, countof(files), result, text, output_capacity);
+    Bool done =
+        c::smith_core_lint_plan(folder, cache, nullptr, planned, countof(planned), result, text, output_capacity);
     test::check_equal(done, true);
     return result[0].ran;
 }

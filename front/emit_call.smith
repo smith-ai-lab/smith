@@ -26,7 +26,7 @@ import front::emit_builtin as builtin;
 import front::emit_control as control;
 import front::emit_lambda as lambdas;
 import front::emit_match as matching;
-import front::emit_memory as memory;
+import front::emit_memory;
 import front::emit_state as state;
 import front::emit_stream as streams;
 import front::types;
@@ -113,7 +113,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
             return signature_failed(state::not_emitted("constexpr or rest parameter", source[i].span));
     }
     state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
-    c::LLVMTypeRef types[64];
+    c::LLVMTypeRef parameter_types[64];
     for (Usize i = 0; i < count; i++) {
         state::TyResult made = type_for(e, source[i].type);
         if (made == .error) {
@@ -125,7 +125,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
             return signature_failed(state::fail("a parameter cannot be Void", source[i].span));
         }
         all[i] = made.ok;
-        types[i] = state::abi_type(e, made.ok);
+        parameter_types[i] = state::abi_type(e, made.ok);
     }
     state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     state::TyResult made_result = {.ok = none};
@@ -135,7 +135,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         return {.error = made_result.error};
     }
     Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = variadic};
-    sig.type = c::LLVMFunctionType(made_result.ok.llvm, types, (U32)count, variadic ? 1 : 0);
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, parameter_types, (U32)count, variadic ? 1 : 0);
     return sig;
 }
 

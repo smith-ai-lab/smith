@@ -315,7 +315,7 @@ static lex::Tokens tokens_of(Str source, Bool today) {
 static Found collect(Str path, Str source) {
     Bool today = compile::starts_with_module(source);
     lex::Tokens tokens = tokens_of(source, today);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     Names names = {.whole = {.start = 0, .end = (U32)countof(source)}};
     names.symbols = ast::symbols(&parsed.module, names.whole);
     mark_declarations(&names, source, tokens);

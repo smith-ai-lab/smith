@@ -54,9 +54,9 @@ static Bool names_shell(const char *line, Usize at) {
 static Bool shell_line(const char *line) {
     if (!starts_with(line, "#!")) return false;
     Usize at = skip_blanks(line, 2);
-    const char *env = "/usr/bin/env";
-    Usize env_length = c::strlen(env);
-    if (starts_with(line + at, env) && blank(line[at + env_length])) at = skip_blanks(line, at + env_length);
+    const char *interpreter = "/usr/bin/env";
+    Usize env_length = c::strlen(interpreter);
+    if (starts_with(line + at, interpreter) && blank(line[at + env_length])) at = skip_blanks(line, at + env_length);
     return names_shell(line, at);
 }
 

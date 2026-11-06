@@ -102,9 +102,9 @@ export void test_front_migrate_the_golden_compiles_links_and_runs() {
     sh(as_str(format::push("mkdir -p ", folder, "/lib/std")));
     Str path = as_str(format::push(folder, "/lib/std/ascii.smith"));
     write_text(path, read_text("tests/front/migrate/ascii.smith"));
-    roots::Roots roots = {.source = as_str(format::push(folder, "/src")),
-                          .library = as_str(format::push(folder, "/lib"))};
-    compile::Report report = compile::file(path, as_str(format::push(folder, "/ascii.o")), "", roots);
+    roots::Roots source_roots = {.source = as_str(format::push(folder, "/src")),
+                                 .library = as_str(format::push(folder, "/lib"))};
+    compile::Report report = compile::file(path, as_str(format::push(folder, "/ascii.o")), "", source_roots);
     test::check_equal(countof(report.text), (Usize)0);
     test::check_equal(report.ok, true);
     if (report.ok) {
