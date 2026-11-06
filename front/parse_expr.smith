@@ -1216,10 +1216,13 @@ static Str cast_name(const ast::TypeExpr *type, const ast::Expr *operand, Str ty
 // closing the one before), and a `;` after it.
 static Bool void_statement(Str source, U32 start, U32 end) {
     Usize i = start;
-    while (i > 0 && (source[i - 1] == ' ' || source[i - 1] == '\t')) i -= 1;
-    Bool begins = i == 0 || source[i - 1] == '\n' || source[i - 1] == ';' || source[i - 1] == '{' || source[i - 1] == '}';
+    while (i > 0 && (source[i - 1] == ' ' || source[i - 1] == '\t'))
+        i -= 1;
+    Bool begins =
+        i == 0 || source[i - 1] == '\n' || source[i - 1] == ';' || source[i - 1] == '{' || source[i - 1] == '}';
     Usize j = end;
-    while (j < countof(source) && (source[j] == ' ' || source[j] == '\t')) j += 1;
+    while (j < countof(source) && (source[j] == ' ' || source[j] == '\t'))
+        j += 1;
     return begins && j < countof(source) && source[j] == ';';
 }
 
