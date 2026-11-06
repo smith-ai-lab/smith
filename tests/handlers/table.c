@@ -72,7 +72,7 @@ static void say(const char *text) {
 static void test_swap(void) {
     SmithHandlers *own = smith_handlers_table();
     check("the current table is the thread's own at first", own != nullptr && own == smith_handlers_table());
-    FakeConsole console = {.console = {fake_write, fake_read, nullptr}};
+    FakeConsole console = {.console = {.write = fake_write, .read = fake_read}};
     FakeAllocator allocator = {.allocator = {fake_alloc, fake_realloc, fake_free, fake_owns, nullptr}};
     SmithHandlers second = {.allocator = &allocator.allocator, .console = &console.console};
 
