@@ -275,6 +275,25 @@ export void test_a_top_level_if_constexpr_becomes_when() {
                            "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
 }
 
+// Two `else if` branches with `&&` conditions: the second chain frame used to share the first one's list of earlier
+// conditions and grow it with realloc, which freed the block the first frame still read (a crash, #2565).
+export void test_a_chain_of_two_else_if_constexpr_with_and_becomes_when() {
+    // No arena: its realloc never frees the old block, which hides the use after free of #2565.
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith",
+        "import target;\n\nif constexpr (target::os == target::macos) {\n    int a = 1;\n"
+        "} else if constexpr (target::arch == target::aarch64 && target::os == target::linux) {\n"
+        "    int a = 2;\n} else if constexpr (target::arch == target::x86_64 && target::os == target::linux) {\n"
+        "    int a = 3;\n} else {\n    int a = 4;\n}\nint after = 5;\n");
+    check_text(fixed.text,
+               "\n@when(target.os == .macos)\nmut a: i32 = 1\n"
+               "@when(target.os != .macos && target.arch == .aarch64 && target.os == .linux)\nmut a: i32 = 2\n"
+               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
+               "target.arch == .x86_64 && target.os == .linux)\nmut a: i32 = 3\n"
+               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
+               "!(target.arch == .x86_64 && target.os == .linux))\nmut a: i32 = 4\nmut after: i32 = 5\n");
+}
+
 // `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
 export void test_a_top_level_if_constexpr_on_the_processor_becomes_when() {
     arena::Arena memory = test::memory(1U << 22);
