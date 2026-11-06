@@ -127,7 +127,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
         all[i] = made.ok;
         parameter_types[i] = state::abi_type(e, made.ok);
     }
-    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::Ty none = {.kind = {.integer = {}}, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     state::TyResult made_result = {.ok = none};
     if (result_type != nullptr) made_result = type_for(e, result_type);
     if (made_result == .error) {
@@ -720,11 +720,11 @@ static c::LLVMValueRef promoted(state::Emitter *e, state::Value value) {
     state::Ty ty = value.ty;
     c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
     if (ty.kind == .boolean) return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
-    if (ty.kind == .integer && ty.bits < 32) {
-        if (ty.is_signed) return c::LLVMBuildSExt(e->builder, value.llvm, word, "promote");
+    if (ty.kind == .integer && state::width(ty) < 32) {
+        if (state::is_signed(ty)) return c::LLVMBuildSExt(e->builder, value.llvm, word, "promote");
         return c::LLVMBuildZExt(e->builder, value.llvm, word, "promote");
     }
-    if (ty.kind == .floating && ty.bits < 64)
+    if (ty.kind == .floating && state::width(ty) < 64)
         return c::LLVMBuildFPExt(e->builder, value.llvm, c::LLVMDoubleTypeInContext(e->context), "promote");
     return value.llvm;
 }

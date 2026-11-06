@@ -46,10 +46,9 @@ static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span spa
     c::LLVMTypeRef fields[2];
     fields[0] = c::LLVMInt8TypeInContext(e->context);
     fields[1] = payload.llvm;
-    state::Ty ty = {.kind = .option,
+    state::Ty ty = {.kind = {.option = {.element = inner}},
                     .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false),
-                    .name = state::msg(format::push("?", payload.name)),
-                    .element = inner};
+                    .name = state::msg(format::push("?", payload.name))};
     return ty;
 }
 
@@ -100,11 +99,9 @@ export state::TyResult build_result(state::Emitter *e, state::Ty ok, state::Ty e
     fields[0] = c::LLVMInt8TypeInContext(e->context);
     fields[1] = ok.llvm;
     fields[2] = error.llvm;
-    state::Ty ty = {.kind = .result,
+    state::Ty ty = {.kind = {.result = {.parts = &block[2], .part_count = 2}},
                     .llvm = c::LLVMStructTypeInContext(e->context, fields, 3, false),
-                    .name = state::msg(format::push("Result(", ok.name, ", ", error.name, ")")),
-                    .parts = &block[2],
-                    .part_count = 2};
+                    .name = state::msg(format::push("Result(", ok.name, ", ", error.name, ")"))};
     return ty;
 }
 
@@ -185,10 +182,10 @@ export c::LLVMValueRef is_some(state::Emitter *e, state::Value o) {
     return c::LLVMBuildICmp(e->builder, c::LLVMIntNE, tag, zero, "is_some");
 }
 
-// `o`'s payload (undefined when it is `.none`).
-export state::Value payload(state::Emitter *e, state::Value o) {
+// `o`'s payload (undefined when it is `.none`); `option` is the kind of `o`'s type.
+export state::Value payload(state::Emitter *e, state::Value o, state::ElementTy option) {
     c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, o.llvm, 1, "payload");
-    return (state::Value){.llvm = got, .ty = *o.ty.element};
+    return (state::Value){.llvm = got, .ty = *option.element};
 }
 
 // `r`'s tag is `.error` (or `.ok`): an `i1`.
@@ -198,11 +195,11 @@ export c::LLVMValueRef is_variant(state::Emitter *e, state::Value r, Bool error)
     return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, tag, want, "is_variant");
 }
 
-// The `ok` or the `error` of `r` (undefined when the tag is the other one).
-export state::Value result_payload(state::Emitter *e, state::Value r, Bool error) {
+// The `ok` or the `error` of `r` (undefined when the tag is the other one); `result` is the kind of `r`'s type.
+export state::Value result_payload(state::Emitter *e, state::Value r, state::PartsTy result, Bool error) {
     Usize at = error ? 2 : 1;
     c::LLVMValueRef got = c::LLVMBuildExtractValue(e->builder, r.llvm, (U32)at, "payload");
-    return (state::Value){.llvm = got, .ty = r.ty.parts[at - 1]};
+    return (state::Value){.llvm = got, .ty = result.parts[at - 1]};
 }
 
 // The `Result` holding `inner` as its `ok` (or its `error`).
@@ -224,8 +221,9 @@ static state::Value some_of(state::Emitter *e, state::Ty ty, c::LLVMValueRef inn
 
 // The payload is on the value stack: convert it, build the option.
 static state::Status some_finish(state::Emitter *e, const state::ThenGeneral *w) {
+    if (w->ty.kind != .option) return state::failf(w->span, ".some of ", w->ty.name, ", which is not an option");
     state::Value value = state::pop_value(e);
-    try state::convert(e, value, *w->ty.element, w->span, .initialize);
+    try state::convert(e, value, *w->ty.kind.option.element, w->span, .initialize);
     state::Value converted = state::pop_value(e);
     state::push_value(e, some_of(e, w->ty, converted.llvm));
     return state::success();
@@ -259,9 +257,10 @@ static Bool is_result_node(state::Emitter *e, const ast::Expr *x, state::Hint hi
 
 // The payload is on the value stack: convert it to the `ok` or the `error` and build the `Result`.
 static state::Status result_finish(state::Emitter *e, const state::ThenGeneral *w) {
+    if (w->ty.kind != .result) return state::failf(w->span, "a variant of ", w->ty.name, ", which is not a Result");
     state::Value value = state::pop_value(e);
     Bool error = w->flag;
-    try state::convert(e, value, w->ty.parts[error ? 1 : 0], w->span, .initialize);
+    try state::convert(e, value, w->ty.kind.result.parts[error ? 1 : 0], w->span, .initialize);
     state::Value converted = state::pop_value(e);
     state::push_value(e, result_of(e, w->ty, converted.llvm, error));
     return state::success();
@@ -287,8 +286,9 @@ static state::Status result_variant(state::Emitter *e, const ast::Expr *x, state
         if (checked == .error) return state::fail("a Result's variant needs its type; write the type", x->span);
         ty = checked.ok;
     }
+    if (ty.kind != .result) return state::failf(x->span, ".", name, " builds ", ty.name, ", which is not a Result");
     state::push_then_general(e, (state::ThenGeneral){.run = result_finish, .ty = ty, .flag = error, .span = x->span});
-    state::push_eval(e, inner, state::hint_of(ty.parts[error ? 1 : 0]));
+    state::push_eval(e, inner, state::hint_of(ty.kind.result.parts[error ? 1 : 0]));
     return state::success();
 }
 
@@ -316,8 +316,9 @@ export state::Status variant(state::Emitter *e, const ast::Expr *x, state::Hint 
         state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
         return state::success();
     }
+    if (ty.kind != .option) return state::failf(x->span, ".some builds ", ty.name, ", which is not an option");
     state::push_then_general(e, (state::ThenGeneral){.run = some_finish, .ty = ty, .span = x->span});
-    state::push_eval(e, inner, state::hint_of(*ty.element));
+    state::push_eval(e, inner, state::hint_of(*ty.kind.option.element));
     return state::success();
 }
 
@@ -383,7 +384,10 @@ export state::Status if_let_branch(state::Emitter *e, const state::ThenGeneral *
     state::begin_scope(e);
     Str binding = pattern.binding;
     if (wants_some && countof(binding) > 0 && !state::same_text(binding, "_")) {
-        state::Value inner = is_result ? result_payload(e, o, wants_error) : payload(e, o);
+        state::Value inner = {};
+        if (o.ty.kind == .result) inner = result_payload(e, o, o.ty.kind.result, wants_error);
+        if (o.ty.kind == .option) inner = payload(e, o, o.ty.kind.option);
+
         c::LLVMValueRef slot = state::new_alloca(e, inner.ty, binding);
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
@@ -421,25 +425,27 @@ static state::Status ret_none(state::Emitter *e, const state::ThenGeneral *w) {
 
 // After the early return: the code goes on in the block of `.some`, with the payload as the value of the `try`.
 static state::Status try_continue(state::Emitter *e, const state::ThenGeneral *w) {
+    if (w->ty.kind != .option) return state::failf(w->span, "`try` on ", w->ty.name);
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
-    state::push_value(e, payload(e, (state::Value){.llvm = w->value, .ty = w->ty}));
+    state::push_value(e, payload(e, (state::Value){.llvm = w->value, .ty = w->ty}, w->ty.kind.option));
     return state::success();
 }
 
 // After the early return of a `Result`: the code goes on in the block of `.ok`, with the `ok` as the value.
 static state::Status try_result_continue(state::Emitter *e, const state::ThenGeneral *w) {
+    if (w->ty.kind != .result) return state::failf(w->span, "`try` on ", w->ty.name);
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
-    state::push_value(e, result_payload(e, (state::Value){.llvm = w->value, .ty = w->ty}, false));
+    state::push_value(e, result_payload(e, (state::Value){.llvm = w->value, .ty = w->ty}, w->ty.kind.result, false));
     return state::success();
 }
 
 // `try r` on a `Result`: `.error(x)` runs every `defer` and `errdefer` and returns `.error(x)`; `.ok(x)` is `x`.
-static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, state::Value r) {
+static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, state::Value r, state::PartsTy result) {
     c::LLVMBasicBlockRef ok_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_ok");
     c::LLVMBasicBlockRef error_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_error");
     c::LLVMBuildCondBr(e->builder, is_variant(e, r, false), ok_block, error_block);
     c::LLVMPositionBuilderAtEnd(e->builder, error_block);
-    state::Value failure = result_of(e, e->result, result_payload(e, r, true).llvm, true);
+    state::Value failure = result_of(e, e->result, result_payload(e, r, result, true).llvm, true);
     state::ThenGeneral next = {.run = try_result_continue, .value = r.llvm, .ty = r.ty, .span = w->span};
     next.blocks[0] = ok_block;
     state::push_then_general(e, next);
@@ -451,7 +457,7 @@ static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, 
 // The operand is on the value stack: on `.none` every `defer` and `errdefer` runs and the function returns `.none`.
 static state::Status try_branch(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value o = state::pop_value(e);
-    if (o.ty.kind == .result && e->result.kind == .result) return try_result(e, w, o);
+    if (o.ty.kind == .result && e->result.kind == .result) return try_result(e, w, o, o.ty.kind.result);
     if (o.ty.kind != .option || e->result.kind != .option) {
         return state::fail("`try` needs a `?T` operand in a function that returns a `?U`, or a `Result` in one that "
                            "returns a `Result`",
@@ -481,16 +487,19 @@ export state::Status try_expr(state::Emitter *e, const ast::Expr *x) {
 }
 
 // Pushes the `Result` holding `value` as its `ok`.
-export state::Status wrap_ok(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
-    try state::convert(e, value, to.parts[0], span, .initialize);
+export state::Status wrap_ok(state::Emitter *e, state::Value value, state::Ty to, state::PartsTy result,
+                             ast::Span span) {
+    try state::convert(e, value, result.parts[0], span, .initialize);
     state::Value converted = state::pop_value(e);
     state::push_value(e, result_of(e, to, converted.llvm, false));
     return state::success();
 }
 
 // Pushes the `?T` holding `value`.
-export state::Status wrap_some(state::Emitter *e, state::Value value, state::Ty to, ast::Span span) {
-    try state::convert(e, value, *to.element, span, .initialize);
+export state::Status wrap_some(state::Emitter *e, state::Value value, state::Ty to, state::ElementTy option,
+                               ast::Span span) {
+    try state::convert(e, value, *option.element, span, .initialize);
+
     state::Value converted = state::pop_value(e);
     state::push_value(e, some_of(e, to, converted.llvm));
     return state::success();
