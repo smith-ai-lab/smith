@@ -42,7 +42,15 @@ export void test_front_fix_for_that_reads_its_variable_is_a_range() {
 }
 
 export void test_front_fix_narrower_integer_is_widened() {
+    // C widened `b` here and smith does too: nothing to write.
     Str got = fixed("module m;\nU64 f(U64 a, U32 b) {\n    return a - b;\n}\n");
-    Str want = "fn f(a: u64, b: u32) -> u64:\n    return a - b.to(u64)\n";
+    Str want = "fn f(a: u64, b: u32) -> u64:\n    return a - b\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_a_conversion_that_can_lose_gets_to() {
+    // `u64` and `usize` (32 bits on some targets): C compared them, smith asks for the conversion (#2531).
+    Str got = fixed("module m;\nBool f(U64 at, Usize count) {\n    return at >= count;\n}\n");
+    Str want = "fn f(at: u64, count: usize) -> bool:\n    return at >= count.to(u64)\n";
     test::check_equal(got, want);
 }

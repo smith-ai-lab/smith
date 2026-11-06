@@ -44,7 +44,6 @@ count += 1                      # assignment: only to a mut name, and a statemen
 `==` compares values and operators are never user-defined: [smith-dev-syntax-arrays](../smith-dev-syntax-arrays/SKILL.md).
 
 ## Pointers and conversions
-
 ```smith
 mut p := Point(1, 2)
 q := &p                         # *mut Point, because p is mut; &x of a constant is *T
@@ -54,6 +53,7 @@ low := n.wrap(u8)               # keep the low bits, on purpose
 bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
 ```
 
+- A conversion that cannot lose information is implicit (owner, 2026-11-06, #2531), in assignments, arguments, returns, comparisons and arithmetic (the narrower operand widens): `u8` to `u16`/`u32`/`u64`/`i16`, `i8` to `i16`/`i32`/`i64`, `u16` to `i32`, `u32` to `i64`, `f32` to `f64`, and an integer of 8, 16 or 32 bits to a float that holds it exactly (`u8`/`i8`/`u16`/`i16` to `f32`, any of them and `u32`/`i32` to `f64`). Everything else is written: narrowing, a sign change (`i32` to `u32`), `usize`/`isize` to or from a fixed width (32 bits on some targets, so `u64` to `usize` too), `i64`/`u64` to `f64`, a float to an integer. A literal keeps its rule: it takes the expected type if its value fits. `smith lint --fix` writes `.to(T)` where C converted implicitly and smith does not.
 - `to`, `wrap` and `cast` are built-in functions, so also method calls on any value. `as`, prefix `*p` and `(T)x` are errors whose fixes write these. There is no `&mut` and no `->`.
 
 ## Not settled yet

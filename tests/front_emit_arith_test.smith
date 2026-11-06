@@ -372,7 +372,7 @@ export void test_front_emit_other_targets_are_a_parameter() {
 export void test_front_emit_different_operand_types_are_an_error_with_the_span() {
     TreeMemory trees = {};
     tree_begin(&trees);
-    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("I64"))};
+    ast::Param params[2] = {ast::param("a", ast::named("I32")), ast::param("b", ast::named("U32"))};
     ast::Expr *sum = binary(.add, name("a"), name("b"));
     sum->span = (ast::Span){.start = 10, .end = 15};
     ast::StmtRef items[1] = {give(sum)};
