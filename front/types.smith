@@ -2890,7 +2890,8 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
     }
     Bool is_const = constexpr_variable || written->qualifiers.is_const;
     Symbol symbol = {
-        .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .exported = d->exported};
+        .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new,
+        .exported = d->exported};
     declare_in_module(r, symbol, d->span);
 }
 
