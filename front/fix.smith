@@ -647,6 +647,8 @@ static const ast::Module *load_from_folders(const char *dotted) {
         if (countof(parsed.errors) > 0) return nullptr;
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
+        // a pointer field its own fix makes `?*T = .none` is one here too, so the reads of it are mended (#2557)
+        fix_zero::nullable_fields(copy, source);
         return copy;
     }
     return nullptr;
