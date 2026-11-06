@@ -95,8 +95,8 @@ static Bool starts_list(lex::TokenKind before) {
 
 // Whether the `{` at `open` follows a parenthesized type that is itself a value: `(Stream){}` and `(typeof(a)){0}` are
 // compound literals, never a block (#2520). The `(` is a value's when it follows `=`, `(`, `[`, `,`, `return`
-// or `try`, or starts a statement; after a name, a keyword or an operator (`if (c) {`, `f(x) {`, `fn(a) {`, `a && (b) {`)
-// the `{` is a block.
+// or `try`, or starts a statement; after a name, a keyword or an operator (`if (c) {`, `f(x) {`, `fn(a) {`, `a && (b)
+// {`) the `{` is a block.
 static Bool compound_literal(lex::Tokens tokens, Usize open) {
     if (open < 3 || tokens[open - 1].kind != lex::right_paren) return false;
     Usize nest = 0;

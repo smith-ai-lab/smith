@@ -102,8 +102,10 @@ static Bool in_literal(Str s, Usize i) {
     char quote = 0;
     for (Usize k = from; k < i; k++) {
         if (quote != 0) {
-            if (s[k] == '\\') k += 1;
-            else if (s[k] == quote) quote = 0;
+            if (s[k] == '\\')
+                k += 1;
+            else if (s[k] == quote)
+                quote = 0;
         } else if (s[k] == '"' || s[k] == '\'') {
             quote = s[k];
         } else if (s[k] == '#' || (s[k] == '/' && k + 1 < i && s[k + 1] == '/')) {
