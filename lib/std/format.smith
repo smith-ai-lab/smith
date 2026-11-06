@@ -748,8 +748,8 @@ Chars cut(char *memory, Usize characters) {
 // count. A refusal of the allocator is a checked failure (mem::alloc never returns null).
 export Chars push(auto... args) {
     Usize characters = length(args...);
-    char *memory =
-        mem::alloc_array_raw(sizeof(char), characters + 1, alignof(char)); // a generic's local has no type yet
+    char *memory = (char *)mem::alloc_array_raw(sizeof(char), characters + 1,
+                                                alignof(char)); // a generic's local has no type yet
     Written written = write(memory, characters + 1, args...);
     return cut(memory, written.length);
 }

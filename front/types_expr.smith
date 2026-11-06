@@ -3513,6 +3513,15 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
         return;
     }
+    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "count")) {
+        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
+        // hand with it, as `.data`).
+        types::TypeRef word = types::builtin(&c->table, "Usize");
+        if (word != nullptr) {
+            finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
+            return;
+        }
+    }
     types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
     if (record == nullptr) {
         poison(c, e);

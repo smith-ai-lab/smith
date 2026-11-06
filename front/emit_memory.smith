@@ -243,13 +243,25 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
     return state::success();
 }
 
+// `geom::vec::` for the name `geom::vec::Vec`: the text up to and including the last `::` (empty for a bare name).
+export Str record_module_prefix(Str name) {
+    for (Usize i = countof(name); i >= 2; i--) {
+        if (name[i - 1] == ':' && name[i - 2] == ':') return name[0:i];
+    }
+    return "";
+}
+
 // The record `decl` of an imported module (`v.Vec`), under the name the checker declared it by (`geom::vec::Vec`,
 // which names the type in the IR too), declared when the first use needs it. Its fields are read in this module's
-// scope, so a field that names another record of that module is not emitted yet.
+// scope: the module's path is the import scope while they are read, so a field that names another record of that
+// module (`span: Span` of front::ast) finds it.
 export state::TyResult imported_record(state::Emitter *e, const ast::Decl *decl, Str name) {
     Usize index = 0;
     if (!find_record_named(e, name, &index)) {
+        Str outer = e->import_scope;
+        e->import_scope = record_module_prefix(name);
         state::Status made = declare_record(e, decl, name, name);
+        e->import_scope = outer;
         if (made == .error) return {.error = made.error};
         find_record_named(e, name, &index);
     }
@@ -802,6 +814,14 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
         c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");
         state::push_value(e, (state::Value){.llvm = first, .ty = pointer_to(e, *record.element, 0)});
+        return state::success();
+    }
+    if (record.kind == .slice && !w->flag && state::same_text(name, "count")) {
+        // `xs.count`: the place of the slice's second word, read as an array of one `usize`.
+        c::LLVMValueRef second = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 1, "count");
+        state::Ty word = {};
+        state::scalar_type(e, "usize", &word);
+        state::push_value(e, (state::Value){.llvm = second, .ty = array_of(e, word, 1)});
         return state::success();
     }
     return push_field(e, record, base.llvm, name, w->span);
