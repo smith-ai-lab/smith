@@ -98,7 +98,7 @@ static c::LLVMTypeRef word_type(state::Emitter *e) {
 }
 
 static c::LLVMValueRef widened(state::Emitter *e, c::LLVMValueRef v, state::Ty ty) {
-    return c::LLVMBuildIntCast2(e->builder, v, word_type(e), ty.is_signed, "");
+    return c::LLVMBuildIntCast2(e->builder, v, word_type(e), state::is_signed(ty), "");
 }
 
 static c::LLVMValueRef text_arg(state::Emitter *e, Str text) {
@@ -177,12 +177,12 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
     if (remainder) op = "%";
     c::LLVMValueRef zero = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, zero_of(ty), "zero");
     c::LLVMBasicBlockRef next = open_failure(e, zero);
-    c::LLVMValueRef by_zero[4] = {text_arg(e, op), widened(e, a.llvm, ty), number_arg(e, ty.is_signed),
+    c::LLVMValueRef by_zero[4] = {text_arg(e, op), widened(e, a.llvm, ty), number_arg(e, state::is_signed(ty)),
                                   position_arg(e, span)};
     close_failure(e, next, "smith_contract_fail_divide", by_zero, 4);
-    if (ty.is_signed) {
+    if (state::is_signed(ty)) {
         c::LLVMValueRef least =
-            c::LLVMBuildShl(e->builder, c::LLVMConstInt(ty.llvm, 1, 0), c::LLVMConstInt(ty.llvm, ty.bits - 1, 0), "");
+            c::LLVMBuildShl(e->builder, c::LLVMConstInt(ty.llvm, 1, 0), c::LLVMConstInt(ty.llvm, state::width(ty) - 1, 0), "");
         c::LLVMValueRef is_least = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, a.llvm, least, "");
         c::LLVMValueRef is_minus_one =
             c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, c::LLVMConstAllOnes(ty.llvm), "");
@@ -201,28 +201,28 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
 // A shift reports when the amount, read as unsigned (a negative one is huge), is the width or more.
 static void check_shift(state::Emitter *e, Str op, state::Value a, state::Value amount, ast::Span span) {
     state::Ty ty = a.ty;
-    c::LLVMValueRef width = c::LLVMConstInt(ty.llvm, ty.bits, 0);
+    c::LLVMValueRef width = c::LLVMConstInt(ty.llvm, state::width(ty), 0);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide");
     c::LLVMBasicBlockRef next = open_failure(e, bad);
     c::LLVMValueRef report[7] = {
-        text_arg(e, op),        widened(e, a.llvm, ty), widened(e, amount.llvm, ty), number_arg(e, ty.is_signed),
-        number_arg(e, ty.bits), text_arg(e, ty.name),   position_arg(e, span)};
+        text_arg(e, op),        widened(e, a.llvm, ty), widened(e, amount.llvm, ty), number_arg(e, state::is_signed(ty)),
+        number_arg(e, state::width(ty)), text_arg(e, ty.name),   position_arg(e, span)};
     close_failure(e, next, "smith_contract_fail_shift", report, 7);
 }
 
 // `+`, `-` and `*`: wrapping for an unsigned type, an overflow check for a signed one.
 static c::LLVMValueRef add_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.sadd.with.overflow", "+", a, b, span);
+    if (state::is_signed(a.ty)) return overflow_op(e, "llvm.sadd.with.overflow", "+", a, b, span);
     return c::LLVMBuildAdd(e->builder, a.llvm, b.llvm, "");
 }
 
 static c::LLVMValueRef subtract_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.ssub.with.overflow", "-", a, b, span);
+    if (state::is_signed(a.ty)) return overflow_op(e, "llvm.ssub.with.overflow", "-", a, b, span);
     return c::LLVMBuildSub(e->builder, a.llvm, b.llvm, "");
 }
 
 static c::LLVMValueRef multiply_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
-    if (a.ty.is_signed) return overflow_op(e, "llvm.smul.with.overflow", "*", a, b, span);
+    if (state::is_signed(a.ty)) return overflow_op(e, "llvm.smul.with.overflow", "*", a, b, span);
     return c::LLVMBuildMul(e->builder, a.llvm, b.llvm, "");
 }
 
@@ -234,7 +234,7 @@ static c::LLVMValueRef shift_left_values(state::Emitter *e, state::Value a, stat
 // Arithmetic shift for a signed type, logical for an unsigned one.
 static c::LLVMValueRef shift_right_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
     check_shift(e, ">>", a, b, span);
-    if (a.ty.is_signed) return c::LLVMBuildAShr(e->builder, a.llvm, b.llvm, "");
+    if (state::is_signed(a.ty)) return c::LLVMBuildAShr(e->builder, a.llvm, b.llvm, "");
     return c::LLVMBuildLShr(e->builder, a.llvm, b.llvm, "");
 }
 
@@ -273,11 +273,18 @@ static state::Status float_arithmetic(state::Emitter *e, ast::BinaryOp op, state
     return state::success();
 }
 
+// The LLVM type of a pointer's element; null for a `void` or an untyped pointee.
+static c::LLVMTypeRef pointee(state::Ty pointer) {
+    if (pointer.kind != .pointer || pointer.kind.pointer.element == nullptr) return nullptr;
+    c::LLVMTypeRef element = pointer.kind.pointer.element->llvm;
+    if (c::LLVMGetTypeKind(element) == c::LLVMVoidTypeKind) return nullptr;
+    return element;
+}
+
 // `p + n` and `p - n`: the pointer moved by n elements (bytes for a `void` or an untyped pointee), as C does.
 static state::Status pointer_offset(state::Emitter *e, ast::BinaryOp op, state::Value left, state::Value right) {
     c::LLVMTypeRef unit = c::LLVMInt8TypeInContext(e->context);
-    if (left.ty.element != nullptr && c::LLVMGetTypeKind(left.ty.element->llvm) != c::LLVMVoidTypeKind)
-        unit = left.ty.element->llvm;
+    if (pointee(left.ty) != nullptr) unit = pointee(left.ty);
     c::LLVMValueRef steps = right.llvm;
     if (op == .subtract) steps = c::LLVMBuildNeg(e->builder, steps, "");
     c::LLVMValueRef out = c::LLVMBuildGEP2(e->builder, unit, left.llvm, &steps, 1, "offset");
@@ -293,8 +300,8 @@ static state::Status pointer_distance(state::Emitter *e, state::Value left, stat
     c::LLVMValueRef a = c::LLVMBuildPtrToInt(e->builder, left.llvm, ty.llvm, "");
     c::LLVMValueRef b = c::LLVMBuildPtrToInt(e->builder, right.llvm, ty.llvm, "");
     c::LLVMValueRef bytes = c::LLVMBuildSub(e->builder, a, b, "distance");
-    if (left.ty.element != nullptr && c::LLVMGetTypeKind(left.ty.element->llvm) != c::LLVMVoidTypeKind) {
-        c::LLVMValueRef size = c::LLVMSizeOf(left.ty.element->llvm);
+    if (pointee(left.ty) != nullptr) {
+        c::LLVMValueRef size = c::LLVMSizeOf(pointee(left.ty));
         size = c::LLVMBuildIntCast2(e->builder, size, ty.llvm, 0, "");
         bytes = c::LLVMBuildExactSDiv(e->builder, bytes, size, "elements");
     }
@@ -315,7 +322,7 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
     if (!state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&
         c::LLVMIsAConstantInt(left.llvm) != nullptr && c::LLVMIsAConstantInt(right.llvm) != nullptr) {
         U64 bits =
-            right.ty.is_signed ? (U64)c::LLVMConstIntGetSExtValue(right.llvm) : c::LLVMConstIntGetZExtValue(right.llvm);
+            state::is_signed(right.ty) ? (U64)c::LLVMConstIntGetSExtValue(right.llvm) : c::LLVMConstIntGetZExtValue(right.llvm);
         right = (state::Value){.llvm = c::LLVMConstInt(left.ty.llvm, bits, 0), .ty = left.ty};
     }
     if (!state::same_type(left.ty, right.ty))
@@ -333,10 +340,10 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
 
 // Does `value` fit the integer type?
 static Bool fits(state::Ty ty, U64 value) {
-    if (ty.bits >= 64 && !ty.is_signed) return true;
-    U32 usable = ty.bits;
+    if (state::width(ty) >= 64 && !state::is_signed(ty)) return true;
+    U32 usable = state::width(ty);
     if (usable > 64) usable = 64; // a literal is a 64-bit value: a signed 128-bit type holds all of them
-    if (ty.is_signed) usable -= 1;
+    if (state::is_signed(ty)) usable -= 1;
     return value < (1ULL << usable);
 }
 
@@ -386,7 +393,7 @@ export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, stat
     else if (!checked_integer(e, x, &ty))
         state::scalar_type(e, "I32", &ty);
     // A literal where `?i64` is expected is an `i64`, which the site then wraps.
-    if (ty.kind == .option && ty.element != nullptr) ty = *ty.element;
+    if (ty.kind == .option && ty.kind.option.element != nullptr) ty = *ty.kind.option.element;
     if (ty.kind == .floating) {
         state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, (F64)value), .ty = ty});
         return state::success();
@@ -415,7 +422,7 @@ static Bool function_address(state::Emitter *e, const ast::Expr *x) {
     Str name = x->kind.name.path.segments[0].text;
     for (Usize i = 0; i < e->function_count; i++) {
         if (!state::same_text(e->functions[i].name, name)) continue;
-        state::Ty pointer = {.kind = .pointer, .llvm = state::pointer_type(e, 0), .name = "pointer"};
+        state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
         state::push_value(e, (state::Value){.llvm = e->functions[i].llvm, .ty = pointer});
         return true;
     }
@@ -430,10 +437,11 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
     try lookup(e, x, &local);
     c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
     state::Value value = {.llvm = loaded, .ty = local.ty};
-    if (local.ty.kind == .option && local.ty.element != nullptr && e->options.checked != nullptr) {
+    if (local.ty.kind == .option && local.ty.kind.option.element != nullptr && e->options.checked != nullptr) {
         // A `?T` name the checker narrowed to `T` (`if x != .none:`) reads its payload (#2481).
         types::TypeRef seen = types::type_of(e->options.checked, x);
-        if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value);
+        if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value, local.ty.kind.option);
+
     }
     state::push_value(e, value);
     return state::success();
@@ -498,7 +506,7 @@ static state::Status unary_finish(state::Emitter *e, const state::ThenExpr *w) {
     c::LLVMValueRef out = operand.llvm;
     switch (op) {
     case .negate:
-        if (ty.is_signed && !folds_negated(operand.llvm))
+        if (state::is_signed(ty) && !folds_negated(operand.llvm))
             out = negate_checked(e, operand, w->span);
         else
             out = c::LLVMBuildNeg(e->builder, operand.llvm, "");
@@ -527,11 +535,11 @@ export state::Status unary_op(state::Emitter *e, const ast::Expr *x, state::Hint
         return state::fail("not a unary expression", x->span);
     }
     const ast::Expr *operand = x->kind.unary.operand;
-    if (x->kind.unary.op == .negate && operand->kind == .integer && hint.present && hint.ty.is_signed &&
+    if (x->kind.unary.op == .negate && operand->kind == .integer && hint.present && state::is_signed(hint.ty) &&
         hint.ty.kind == .integer && countof(operand->kind.integer.suffix) == 0) {
         // `-128` for an I8: the literal alone does not fit, its negation does.
         U64 value = operand->kind.integer.value;
-        if (hint.ty.bits <= 64 && value == (1ULL << (hint.ty.bits - 1))) {
+        if (state::width(hint.ty) <= 64 && value == (1ULL << (state::width(hint.ty) - 1))) {
             c::LLVMValueRef least = c::LLVMConstInt(hint.ty.llvm, value, 0);
             state::push_value(e, (state::Value){.llvm = least, .ty = hint.ty});
             return state::success();
@@ -686,7 +694,7 @@ export Bool type_float(state::Emitter *e, Str name, state::Ty *ty) {
         bits = 64;
     else
         return false;
-    state::Ty made = {.kind = .floating, .bits = bits, .is_signed = true, .name = name};
+    state::Ty made = {.kind = {.floating = {.bits = bits}}, .name = name};
     if (brain)
         made.llvm = c::LLVMBFloatTypeInContext(e->context);
     else if (bits == 16)
@@ -706,7 +714,9 @@ export state::Status float_literal(state::Emitter *e, const ast::Expr *x, state:
     }
     F64 value = x->kind.floating.value;
     state::Ty ty = {};
-    if (hint.present && hint.ty.kind == .option && hint.ty.element != nullptr) hint.ty = *hint.ty.element;
+    if (hint.present && hint.ty.kind == .option && hint.ty.kind.option.element != nullptr)
+        hint.ty = *hint.ty.kind.option.element;
+
     if (hint.present && hint.ty.kind == .floating) {
         ty = hint.ty;
     } else {
@@ -782,11 +792,11 @@ export state::Status float_comparison(state::Emitter *e, const ast::Expr *x, sta
 // A float in `from` that `to` can hold: not NaN, `>= MIN` and `< MAX + 1`, compared as floats.
 static c::LLVMValueRef float_lost(state::Emitter *e, state::Value from, state::Ty to) {
     F64 span = 1.0;
-    for (U32 i = 0; i < to.bits; i++)
+    for (U32 i = 0; i < state::width(to); i++)
         span *= 2.0;
     F64 least = 0.0;
     F64 beyond = span;
-    if (to.is_signed) {
+    if (state::is_signed(to)) {
         least = -span / 2.0;
         beyond = span / 2.0;
     }
@@ -818,24 +828,24 @@ static state::Status float_cast_finish(state::Emitter *e, const state::ThenGener
     state::Ty to = w->ty;
     c::LLVMValueRef out = nullptr;
     if (from.ty.kind == .floating && to.kind == .floating) {
-        if (to.bits == 16 && from.ty.bits == 16 && to.llvm != from.ty.llvm) {
+        if (state::width(to) == 16 && state::width(from.ty) == 16 && to.llvm != from.ty.llvm) {
             // `f16` and `bf16` hold different values: through `f32`, which holds both
             c::LLVMValueRef wide = c::LLVMBuildFPExt(e->builder, from.llvm, c::LLVMFloatTypeInContext(e->context), "");
             out = c::LLVMBuildFPTrunc(e->builder, wide, to.llvm, "");
-        } else if (to.bits > from.ty.bits)
+        } else if (state::width(to) > state::width(from.ty))
             out = c::LLVMBuildFPExt(e->builder, from.llvm, to.llvm, "");
-        else if (to.bits < from.ty.bits)
+        else if (state::width(to) < state::width(from.ty))
             out = c::LLVMBuildFPTrunc(e->builder, from.llvm, to.llvm, "");
         else
             out = from.llvm;
     } else if (from.ty.kind == .integer && to.kind == .floating) {
-        if (from.ty.is_signed)
+        if (state::is_signed(from.ty))
             out = c::LLVMBuildSIToFP(e->builder, from.llvm, to.llvm, "");
         else
             out = c::LLVMBuildUIToFP(e->builder, from.llvm, to.llvm, "");
     } else if (from.ty.kind == .floating && to.kind == .integer) {
         if (w->flag) float_report(e, float_lost(e, from, to), from, to);
-        if (to.is_signed)
+        if (state::is_signed(to))
             out = c::LLVMBuildFPToSI(e->builder, from.llvm, to.llvm, "");
         else
             out = c::LLVMBuildFPToUI(e->builder, from.llvm, to.llvm, "");

@@ -82,40 +82,74 @@ export char *cstr(Str text) {
 // ---------------------------------------------------------------------------------------------------------------
 // Types and values
 
-export typedef enum {
-    integer;
-    boolean;
-    pointer;
-    array;
-    record;
-    option;       // `?T`: `element` is the payload
-    tuple;        // `parts` are the elements
-    fn_value;     // `parts` are the parameters, `element` the result
-    fn_pointer;   // a C function pointer (a field of a header's struct): the bare `ptr`, `parts` and `element` as
-                  // `fn_value`
-    slice;        // next batch
-    floating;     // next batch
-    block;        // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
-    vector;       // `vec(T, N)`: `element` is the lane type, `count` the lanes (#1630)
-    result;       // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
-    variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
-} TyKind;
-
 export struct Ty;
 
-// A type as the emitter knows it: the LLVM type and what LLVM's does not say (signedness, the name as written).
-// `element` is the pointee or element type (B3b); `count` the length of an array; `address_space` of a pointer.
+// An integer: its width and signedness. `Bool` is the kind `boolean` (1 bit, unsigned); `Void` is an integer of no bits.
+export struct IntegerTy {
+    U32 bits;
+    Bool is_signed;
+};
+
+// A floating-point number: its width.
+export struct FloatTy {
+    U32 bits;
+};
+
+// A pointer: the type it points to (null for a pointer to an unknown type, `null`'s) and its address space.
+export struct PointerTy {
+    Ty *element;
+    U32 address_space;
+};
+
+// `?T` (the payload) and `[]T` (the element).
+export struct ElementTy {
+    Ty *element;
+};
+
+// An array (`count` its length), a block `[,]T` (`count` its dimensions, `element` the cell, #1710) and a vector
+// `vec(T, N)` (`count` its lanes, #1630).
+export struct SizedTy {
+    Ty *element;
+    U64 count;
+};
+
+// A tuple's elements, a `Result(T, E)`'s `ok` and `error`; owned like `element`, chained through `Emitter.owned`.
+export struct PartsTy {
+    Ty *parts;
+    Usize part_count;
+};
+
+// A `fn` value or a C function pointer: `parts` are the parameters, `element` the result.
+export struct FnTy {
+    Ty *parts;
+    Usize part_count;
+    Ty *element;
+};
+
+// What a type is, with exactly the fields its kind has (#2600).
+export typedef enum {
+    IntegerTy integer;
+    boolean;
+    PointerTy pointer;
+    SizedTy array;
+    record;
+    ElementTy option; // `?T`: `element` is the payload
+    PartsTy tuple;    // `parts` are the elements
+    FnTy fn_value;    // `parts` are the parameters, `element` the result
+    FnTy fn_pointer;  // a C function pointer (a field of a header's struct): the bare `ptr`
+    ElementTy slice;
+    FloatTy floating;
+    SizedTy block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`
+    SizedTy vector;   // `vec(T, N)`
+    PartsTy result;   // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
+    variant_enum;     // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
+} TyKind;
+
+// A type as the emitter knows it: the LLVM type, the name as written and what LLVM's does not say, by kind.
 export struct Ty {
     TyKind kind;
     c::LLVMTypeRef llvm;
-    U32 bits; // integers and Bool
-    Bool is_signed;
     Str name;
-    Ty *element;
-    U64 count;
-    U32 address_space;
-    Ty *parts; // a tuple's elements, a `fn` value's parameters; owned like `element`, chained through `Emitter.owned`
-    Usize part_count;
 };
 
 // A type, or the reason there is none.
@@ -531,9 +565,23 @@ export Bool bound_type(const Emitter *e, Str name, types::TypeRef *found) {
     return false;
 }
 
+// Whether a number is signed: a signed integer or a floating-point number; false for any other type.
+export Bool is_signed(Ty ty) {
+    if (ty.kind == .integer) return ty.kind.integer.is_signed;
+    return ty.kind == .floating;
+}
+
+// The bits of a number: an integer's or a floating-point number's width, 1 for `Bool`; 0 for any other type.
+export U32 width(Ty ty) {
+    if (ty.kind == .integer) return ty.kind.integer.bits;
+    if (ty.kind == .floating) return ty.kind.floating.bits;
+    if (ty.kind == .boolean) return 1;
+    return 0;
+}
+
 // LLVM's types are unique in a context, so the same LLVM type and signedness is the same type.
 export Bool same_type(Ty a, Ty b) {
-    return a.llvm == b.llvm && a.is_signed == b.is_signed;
+    return a.llvm == b.llvm && is_signed(a) == is_signed(b);
 }
 
 // Two numbers of different types: the narrower one widens to the other's type (the checker has allowed only the
@@ -545,12 +593,12 @@ export Status unify_operands(Emitter *e, Value *left, Value *right, ast::Span sp
     if (!numbers || same_type(l, r)) return success();
     Bool right_wider = r.kind == .floating;
     if ((l.kind == .floating) == (r.kind == .floating)) {
-        right_wider = r.bits > l.bits;
-        if (l.is_signed != r.is_signed) right_wider = r.is_signed;
+        right_wider = width(r) > width(l);
+        if (is_signed(l) != is_signed(r)) right_wider = is_signed(r);
     }
     Ty from = right_wider ? l : r;
     Ty to = right_wider ? r : l;
-    Bool lossless = to.bits > from.bits && (from.is_signed == to.is_signed || !from.is_signed);
+    Bool lossless = width(to) > width(from) && (is_signed(from) == is_signed(to) || !is_signed(from));
     if (to.kind == .integer && from.kind == .integer && !lossless) return success(); // the caller reports the mismatch
     if (right_wider) {
         try convert(e, *left, r, span, .assign);
@@ -647,26 +695,26 @@ static U32 pointer_bits(Emitter *e) {
 // host's. `char` is the checker's character type: unsigned, 8 bits, the layout of `u8`.
 export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     U32 bits = 0;
-    Bool is_signed = false;
+    Bool signed_int = false;
     Bool is_bool = false;
     if (same_text(name, "I8") || same_text(name, "i8")) {
         bits = 8;
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "I16") || same_text(name, "i16")) {
         bits = 16;
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "I32") || same_text(name, "i32")) {
         bits = 32;
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "I64") || same_text(name, "i64")) {
         bits = 64;
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "I128") || same_text(name, "i128")) {
         bits = 128;
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "Isize") || same_text(name, "isize")) {
         bits = pointer_bits(e);
-        is_signed = true;
+        signed_int = true;
     } else if (same_text(name, "U8") || same_text(name, "u8") || same_text(name, "Char") || same_text(name, "char")) {
         bits = 8;
     } else if (same_text(name, "U16") || same_text(name, "u16")) {
@@ -685,7 +733,7 @@ export Bool scalar_type(Emitter *e, Str name, Ty *ty) {
     } else {
         return false;
     }
-    Ty t = {.kind = .integer, .bits = bits, .is_signed = is_signed, .name = name};
+    Ty t = {.kind = {.integer = {.bits = bits, .is_signed = signed_int}}, .name = name};
     if (is_bool) t.kind = .boolean;
     t.llvm = c::LLVMIntTypeInContext(e->context, bits);
     *ty = t;

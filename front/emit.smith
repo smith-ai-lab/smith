@@ -127,7 +127,7 @@ export void free_error(state::Error error) {
 
 // `Void`: an LLVM `void`, kind `integer`, zero bits, named `Void`. Only a function's result and a call's value have it.
 static state::Ty void_type(state::Emitter *e) {
-    state::Ty none = {.kind = .integer, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
+    state::Ty none = {.kind = {.integer = {}}, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
     return none;
 }
 
@@ -947,7 +947,8 @@ static Bool is_slice(state::Ty ty) {
 
 // `main(args: []str)` is C's `int main(int argc, char **argv)`: it builds argc slices on the stack, each pointing into
 // argv's own characters (not copied), and calls the body, which was declared as the internal `main.args`.
-static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, state::Ty args) {
+static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeRef body_type, c::LLVMTypeRef args,
+                           c::LLVMTypeRef cell_type) {
     c::LLVMTypeRef word = c::LLVMInt64TypeInContext(e->context);
     if (e->target_data != nullptr) word = c::LLVMIntPtrTypeInContext(e->context, e->target_data);
     c::LLVMTypeRef pointer = c::LLVMPointerTypeInContext(e->context, 0);
@@ -969,7 +970,7 @@ static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeR
     c::LLVMValueRef argv = c::LLVMGetParam(main_function, 1);
     c::LLVMPositionBuilderAtEnd(b, entry);
     c::LLVMValueRef count = c::LLVMBuildSExt(b, argc, word, "count");
-    c::LLVMValueRef cells = c::LLVMBuildArrayAlloca(b, args.element->llvm, count, "cells");
+    c::LLVMValueRef cells = c::LLVMBuildArrayAlloca(b, cell_type, count, "cells");
     c::LLVMValueRef index = c::LLVMBuildAlloca(b, word, "index");
     c::LLVMBuildStore(b, c::LLVMConstInt(word, 0, 0), index);
     c::LLVMBuildBr(b, test);
@@ -981,13 +982,13 @@ static void add_args_entry(state::Emitter *e, c::LLVMValueRef body, c::LLVMTypeR
     c::LLVMValueRef slot = c::LLVMBuildGEP2(b, pointer, argv, from, 1, "slot");
     c::LLVMValueRef text = c::LLVMBuildLoad2(b, pointer, slot, "text");
     c::LLVMValueRef size = c::LLVMBuildCall2(b, length_type, length, &text, 1, "size");
-    c::LLVMValueRef cell = c::LLVMBuildGEP2(b, args.element->llvm, cells, from, 1, "cell");
-    c::LLVMBuildStore(b, text, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 0, "data"));
-    c::LLVMBuildStore(b, size, c::LLVMBuildStructGEP2(b, args.element->llvm, cell, 1, "count"));
+    c::LLVMValueRef cell = c::LLVMBuildGEP2(b, cell_type, cells, from, 1, "cell");
+    c::LLVMBuildStore(b, text, c::LLVMBuildStructGEP2(b, cell_type, cell, 0, "data"));
+    c::LLVMBuildStore(b, size, c::LLVMBuildStructGEP2(b, cell_type, cell, 1, "count"));
     c::LLVMBuildStore(b, c::LLVMBuildAdd(b, at, c::LLVMConstInt(word, 1, 0), "next"), index);
     c::LLVMBuildBr(b, test);
     c::LLVMPositionBuilderAtEnd(b, done);
-    c::LLVMValueRef slice = c::LLVMGetUndef(args.llvm);
+    c::LLVMValueRef slice = c::LLVMGetUndef(args);
     slice = c::LLVMBuildInsertValue(b, slice, cells, 0, "data");
     slice = c::LLVMBuildInsertValue(b, slice, count, 1, "count");
     c::LLVMBuildRet(b, c::LLVMBuildCall2(b, body_type, body, &slice, 1, "result"));
@@ -1046,7 +1047,8 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
                                           .llvm_type = type,
                                           .result = result,
                                           .params = params[0:count]});
-    if (takes_args) add_args_entry(e, function, type, params[0]);
+    state::Ty args = takes_args ? params[0] : result;
+    if (takes_args && args.kind == .slice) add_args_entry(e, function, type, args.llvm, args.kind.slice.element->llvm);
     return state::success();
 }
 
@@ -1412,7 +1414,7 @@ static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty
 static state::Ty pointer_to(state::Emitter *e, state::Ty *inner) {
     U32 space = 0;
     c::LLVMTypeRef address = c::LLVMPointerTypeInContext(e->context, space);
-    state::Ty made = {.kind = .pointer, .llvm = address, .name = "pointer", .element = inner};
+    state::Ty made = {.kind = {.pointer = {.element = inner, .address_space = space}}, .llvm = address, .name = "pointer"};
     return made;
 }
 
@@ -1488,9 +1490,9 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         if (node->kind == .pointer) {
             ty = pointer_to(e, inner);
         } else {
-            state::Ty made = {
-                .kind = .array, .llvm = c::LLVMArrayType2(inner->llvm, node->count), .name = "array", .element = inner};
-            made.count = node->count;
+            state::Ty made = {.kind = {.array = {.element = inner, .count = node->count}},
+                              .llvm = c::LLVMArrayType2(inner->llvm, node->count),
+                              .name = "array"};
             ty = made;
         }
     }
@@ -1566,13 +1568,13 @@ static c::LLVMValueRef float_conversion(state::Emitter *e, state::Value value, s
     state::Ty from = value.ty;
     if (to.kind != .floating) return nullptr;
     if (from.kind == .floating) {
-        if (to.bits > from.bits) return c::LLVMBuildFPExt(e->builder, value.llvm, to.llvm, "widen");
+        if (state::width(to) > state::width(from)) return c::LLVMBuildFPExt(e->builder, value.llvm, to.llvm, "widen");
         return nullptr;
     }
     if (from.kind != .integer) return nullptr;
-    U32 holds = to.bits == 16 ? 8 : (to.bits == 32 ? 16 : 32);
-    if (from.bits > holds) return nullptr;
-    if (from.is_signed) return c::LLVMBuildSIToFP(e->builder, value.llvm, to.llvm, "convert");
+    U32 holds = state::width(to) == 16 ? 8 : (state::width(to) == 32 ? 16 : 32);
+    if (state::width(from) > holds) return nullptr;
+    if (state::is_signed(from)) return c::LLVMBuildSIToFP(e->builder, value.llvm, to.llvm, "convert");
     return c::LLVMBuildUIToFP(e->builder, value.llvm, to.llvm, "convert");
 }
 
@@ -1595,15 +1597,17 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         state::push_value(e, value);
         return state::success();
     }
-    if (to.kind == .option) return optional::wrap_some(e, value, to, span);
-    if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, span);
+    if (to.kind == .option) return optional::wrap_some(e, value, to, to.kind.option, span);
+    if (to.kind == .result && value.ty.kind != .result) return optional::wrap_ok(e, value, to, to.kind.result, span);
+
     if ((to.kind == .slice || to.kind == .block) && value.ty.kind == .array)
-        return emit_memory::array_value_as_slice(e, value, to);
+        return emit_memory::array_value_as_slice(e, value, value.ty.kind.array, to);
+
     state::Ty from = value.ty;
-    if (is_plain_integer(from) && is_plain_integer(to) && to.bits > from.bits) {
-        Bool same_sign = from.is_signed == to.is_signed;
-        if (same_sign || (!from.is_signed && to.is_signed)) {
-            c::LLVMValueRef wide = from.is_signed ? c::LLVMBuildSExt(e->builder, value.llvm, to.llvm, "widen")
+    if (is_plain_integer(from) && is_plain_integer(to) && state::width(to) > state::width(from)) {
+        Bool same_sign = state::is_signed(from) == state::is_signed(to);
+        if (same_sign || (!state::is_signed(from) && state::is_signed(to))) {
+            c::LLVMValueRef wide = state::is_signed(from) ? c::LLVMBuildSExt(e->builder, value.llvm, to.llvm, "widen")
                                                   : c::LLVMBuildZExt(e->builder, value.llvm, to.llvm, "widen");
             state::push_value(e, (state::Value){.llvm = wide, .ty = to});
             return state::success();
@@ -1700,7 +1704,7 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
         } else if (state::same_type(value.ty, to)) {
             *out = value.llvm;
         } else { // the checker has accepted the width: a literal is built as an `i32` before it meets its field
-            U64 bits = value.ty.is_signed ? (U64)c::LLVMConstIntGetSExtValue(value.llvm)
+            U64 bits = state::is_signed(value.ty) ? (U64)c::LLVMConstIntGetSExtValue(value.llvm)
                                           : c::LLVMConstIntGetZExtValue(value.llvm);
             *out = c::LLVMConstInt(to.llvm, bits, 0);
         }

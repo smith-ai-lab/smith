@@ -127,11 +127,11 @@ static U64 pointer_bits(state::Emitter *e) {
 static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
     if (ty.kind == .integer) {
         U32 encoding = ate_unsigned;
-        if (ty.is_signed) encoding = ate_signed;
-        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), ty.bits, encoding, 0);
+        if (state::is_signed(ty)) encoding = ate_signed;
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty), encoding, 0);
     }
     if (ty.kind == .floating) {
-        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), ty.bits, ate_float, 0);
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty), ate_float, 0);
     }
     if (ty.kind == .boolean) {
         return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), 8, ate_boolean, 0);
@@ -141,13 +141,13 @@ static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
 
 // The DI type of `ty`: basic types, and pointers to them (a chain of pointers is walked, not recursed into).
 static c::LLVMMetadataRef type_of(state::Emitter *e, state::Ty ty) {
-    state::Ty chain[8] = {};
+    state::PointerTy chain[8] = {};
     Usize depth = 0;
     state::Ty base = ty;
-    while (base.kind == .pointer && base.element != nullptr && depth < pointer_depth_max) {
-        chain[depth] = base;
+    while (base.kind == .pointer && base.kind.pointer.element != nullptr && depth < pointer_depth_max) {
+        chain[depth] = base.kind.pointer;
         depth += 1;
-        base = *base.element;
+        base = *base.kind.pointer.element;
     }
     c::LLVMMetadataRef result = nullptr;
     if (base.kind != .pointer) {
@@ -158,9 +158,10 @@ static c::LLVMMetadataRef type_of(state::Emitter *e, state::Ty ty) {
                                                    chain[i - 1].address_space, "", 0);
     }
     if (depth == 0 && base.kind == .pointer) {
-        result =
-            c::LLVMDIBuilderCreatePointerType(e->debug_builder, nullptr, pointer_bits(e), 0, base.address_space, "", 0);
+        result = c::LLVMDIBuilderCreatePointerType(e->debug_builder, nullptr, pointer_bits(e), 0,
+                                                   base.kind.pointer.address_space, "", 0);
     }
+
     return result;
 }
 

@@ -23,7 +23,7 @@ static state::Ty *own(state::Emitter *e, state::Ty element) {
 // The type `<count x element>`.
 export state::Ty make(state::Emitter *e, state::Ty element, U64 count) {
     c::LLVMTypeRef llvm = c::LLVMVectorType(element.llvm, (U32)count);
-    state::Ty made = {.kind = .vector, .llvm = llvm, .name = "vec", .element = own(e, element), .count = count};
+    state::Ty made = {.kind = {.vector = {.element = own(e, element), .count = count}}, .llvm = llvm, .name = "vec"};
     return made;
 }
 
@@ -57,12 +57,14 @@ export state::TyResult type_vector(state::Emitter *e, const ast::TypeExpr *t) {
 
 static state::Status build_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty vector = w->ty;
+    if (vector.kind != .vector) return state::failf(w->span, "a vector construction of ", vector.name);
+    state::Ty element = *vector.kind.vector.element;
     c::LLVMValueRef built = c::LLVMGetPoison(vector.llvm);
     c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
     for (Usize i = (Usize)w->number; i > 0; i--) {
         state::Value lane = state::pop_value(e);
-        if (!state::same_type(lane.ty, *vector.element)) {
-            try state::convert(e, lane, *vector.element, w->span, .initialize);
+        if (!state::same_type(lane.ty, element)) {
+            try state::convert(e, lane, element, w->span, .initialize);
             lane = state::pop_value(e);
         }
         built = c::LLVMBuildInsertElement(e->builder, built, lane.llvm, c::LLVMConstInt(word, i - 1, 0), "");
@@ -72,11 +74,13 @@ static state::Status build_finish(state::Emitter *e, const state::ThenGeneral *w
 }
 
 static state::Status build_from(state::Emitter *e, ast::ExprRef items[:], state::Ty vector, ast::Span span) {
-    if (countof(items) != vector.count) return state::failf(span, vector.name, " lanes: found ", countof(items));
+    if (vector.kind != .vector) return state::failf(span, "a vector construction of ", vector.name);
+    state::SizedTy shape = vector.kind.vector;
+    if (countof(items) != shape.count) return state::failf(span, vector.name, " lanes: found ", countof(items));
     state::push_then_general(
         e, (state::ThenGeneral){.run = build_finish, .ty = vector, .number = countof(items), .span = span});
     for (Usize i = countof(items); i > 0; i--)
-        state::push_eval(e, items[i - 1], state::hint_of(*vector.element));
+        state::push_eval(e, items[i - 1], state::hint_of(*shape.element));
     return state::success();
 }
 
@@ -106,12 +110,12 @@ export state::Status list(state::Emitter *e, const ast::Expr *x, state::Hint hin
 // ---------------------------------------------------------------------------------------------------------------
 // Operators
 
-// The scalar `lane` in every lane of `vector`.
-static c::LLVMValueRef splat(state::Emitter *e, state::Value lane, state::Ty vector) {
+// The scalar `lane` in every lane of `vector`, of `lanes` lanes.
+static c::LLVMValueRef splat(state::Emitter *e, state::Value lane, state::Ty vector, U64 lanes) {
     c::LLVMTypeRef word = c::LLVMInt32TypeInContext(e->context);
     c::LLVMValueRef empty = c::LLVMGetPoison(vector.llvm);
     c::LLVMValueRef first = c::LLVMBuildInsertElement(e->builder, empty, lane.llvm, c::LLVMConstInt(word, 0, 0), "");
-    c::LLVMValueRef mask = c::LLVMConstNull(c::LLVMVectorType(word, (U32)vector.count));
+    c::LLVMValueRef mask = c::LLVMConstNull(c::LLVMVectorType(word, (U32)lanes));
     return c::LLVMBuildShuffleVector(e->builder, first, empty, mask, "splat");
 }
 
@@ -162,23 +166,26 @@ static state::Status binary_finish(state::Emitter *e, const state::ThenExpr *w) 
     state::Value left = state::pop_value(e);
     state::Ty vector = left.ty;
     if (vector.kind != .vector) vector = right.ty;
-    state::Ty element = *vector.element;
-    if (left.ty.kind != .vector) left.llvm = splat(e, left, vector);
-    if (right.ty.kind != .vector) right.llvm = splat(e, right, vector);
+    if (vector.kind != .vector) return state::fail("a vector operator with no vector", w->span);
+    state::SizedTy shape = vector.kind.vector;
+    state::Ty element = *shape.element;
+    if (left.ty.kind != .vector) left.llvm = splat(e, left, vector, shape.count);
+    if (right.ty.kind != .vector) right.llvm = splat(e, right, vector, shape.count);
     if (is_comparison(op)) {
         c::LLVMValueRef flags = nullptr;
         if (element.kind == .floating)
             flags = c::LLVMBuildFCmp(e->builder, real_predicate(op), left.llvm, right.llvm, "");
         else
-            flags = c::LLVMBuildICmp(e->builder, int_predicate(op, element.is_signed), left.llvm, right.llvm, "");
+            flags = c::LLVMBuildICmp(e->builder, int_predicate(op, state::is_signed(element)), left.llvm, right.llvm, "");
         state::Ty flag = {};
         state::scalar_type(e, "bool", &flag);
-        state::push_value(e, (state::Value){.llvm = flags, .ty = make(e, flag, vector.count)});
+        state::push_value(e, (state::Value){.llvm = flags, .ty = make(e, flag, shape.count)});
+
         return state::success();
     }
     c::LLVMValueRef out = nullptr;
     if (element.kind == .floating) out = float_lanes(e, op, left.llvm, right.llvm);
-    if (element.kind == .integer && !element.is_signed) out = integer_lanes(e, op, left.llvm, right.llvm);
+    if (element.kind == .integer && !state::is_signed(element)) out = integer_lanes(e, op, left.llvm, right.llvm);
     if (out == nullptr) return state::not_emitted("this operator on a vector of this element type", w->span);
     state::push_value(e, (state::Value){.llvm = out, .ty = vector});
     return state::success();

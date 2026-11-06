@@ -36,8 +36,8 @@ import <llvm-c/Core.h>;
 // the same signedness, or unsigned to a strictly wider signed).
 static Bool converts_to(state::Ty from, state::Ty to) {
     if (state::same_type(from, to)) return true;
-    if (from.kind != .integer || to.kind != .integer || to.bits <= from.bits) return false;
-    return from.is_signed == to.is_signed || (!from.is_signed && to.is_signed);
+    if (from.kind != .integer || to.kind != .integer || state::width(to) <= state::width(from)) return false;
+    return state::is_signed(from) == state::is_signed(to) || (!state::is_signed(from) && state::is_signed(to));
 }
 
 // `found` joins the type chosen so far (`chosen`, when `have`): the wider of the two, or an Error.
