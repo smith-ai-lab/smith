@@ -156,6 +156,12 @@ static state::TyResult type_of_alias(state::Emitter *e, const types::Symbol *s) 
     // `const Pair = (i32, f32)`: a tuple of names has no written type; the checker made its type.
     if (init != nullptr && init->kind == .tuple_lit) return type_of_checked(e, s->type, s->decl->span);
     // `let Allocator = c.SmithAllocator`: a name for a type of a C header; the checker made its type.
+    if (init != nullptr && init->kind == .name && countof(init->kind.name.path.segments) == 1) {
+        // `Wide := u128`: a name for a built-in type, emitted as that type is written
+        ast::TypeExpr *written = ast::make_type({.named = {.path = init->kind.name.path}});
+        written->span = s->decl->span;
+        return state::type_of(e, written);
+    }
     if (init != nullptr && (init->kind == .member || init->kind == .name))
         return type_of_checked(e, s->type, s->decl->span);
     if (init == nullptr || init->kind != .type_value) return state::ty_fail("unknown type", s->decl->span);

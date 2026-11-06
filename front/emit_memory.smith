@@ -955,7 +955,7 @@ export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hin
     }
     const ast::TypeExpr *type = x->kind.cast.type;
     const ast::Expr *operand = x->kind.cast.operand;
-    state::TyResult made = resolve(e, type);
+    state::TyResult made = state::type_of(e, type); // the hook reads an alias (`1.to(Wide)` with `Wide := u128`)
     if (made == .error) {
         return {.error = made.error};
     }
