@@ -900,6 +900,12 @@ export struct Guard {
     syntax::Edits head;    // the edits that write the test itself
     Bool head_sent;        // the first read carries them
     Bool spoiled;          // a write through `k.v`, a change of `k` or a local named `v` leaves the site (#2503)
+    // A test of an option field, `if a.f != nullptr:` or `if a.f == nullptr: return` (#2557): `variant` is the field,
+    // the fix binds it, `if f := a.f:` or `f := a.f else: return`, and each read `a.f` is `f`.
+    Bool option;
+    const ast::Expr *test;  // the comparison `a.f != nullptr`
+    syntax::Edits null_fix; // the comparison's own fix, `nullptr` as `.none`, for when no read takes the head
+    Usize null_error;       // the comparison's error, plus one (0: none)
 };
 
 export struct Checked;

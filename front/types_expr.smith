@@ -1810,6 +1810,35 @@ static void some_test_fix(types::Checked *c, const ast::Expr *e) {
                     edits);
 }
 
+// `a.f == nullptr` where `a.f` is a `?T` (#2557): an option is tested with `.none`, and the fix writes it so. When the
+// test is one of an option field that guards reads, the fix of its first read writes the test as a binding instead,
+// so this fix waits for the end of the body (`types_decl::walk`), which gives it only if no read took the binding.
+static Bool null_option_test(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                             const ast::Expr *right) {
+    if (!is_equality(op)) return false;
+    types::TypeRef l = typ(c, left);
+    types::TypeRef r = typ(c, right);
+    const ast::Expr *null_side = nullptr;
+    if (l->kind == .option && r->kind == .null_type) null_side = right;
+    if (r->kind == .option && l->kind == .null_type) null_side = left;
+    if (null_side == nullptr) return false;
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    Str none = ".none";
+    fix[0] = (syntax::Edit){.span = null_side->span, .text = none};
+    Str message = "an option is tested with `.none`, not `nullptr`: write `.none`";
+    for (Usize i = 0; i < c->guard_count && countof(c->prefix) == 0; i++) {
+        types::Guard *g = &c->guards[i];
+        if (!g->option || g->test != e) continue;
+        types::fail(c, e->span, message);
+        g->null_error = c->error_count;
+        g->null_fix = fix;
+        return true;
+    }
+    types::fail_fix(c, e->span, message, fix);
+    return true;
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -2052,6 +2081,10 @@ static void binary_after(types::Checked *c, Frame f) {
     }
     if (widen_operand(c, e, op, left, right) || float_literal_operand(c, e, op, left, right)) {
         poison(c, e);
+        return;
+    }
+    if (null_option_test(c, e, op, left, right)) {
+        finish(c, e, c->table.bool_type, f.expected);
         return;
     }
     if (is_option_test(op, left, right, typ(c, left), typ(c, right))) {
@@ -2417,6 +2450,8 @@ static void check_keyword_only(types::Checked *c, const ast::Expr *e, ast::ExprR
     }
 }
 
+static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e, Bool option);
+
 static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -2429,6 +2464,17 @@ static void call_callee_done(types::Checked *c, Work *w, Frame f) {
     types_fn::note_arguments(args);
     push(w, e, f.expected, 2);
     if (ct == invalid(c)) {
+        push_arguments(w, args, nullptr);
+        return;
+    }
+    syntax::Edits bound = {};
+    if (signature == nullptr && ct->kind == .option) bound = guarded_read(c, callee, true);
+    if (countof(bound) > 0) { // `a.f(x)` where a test of the option field `a.f` guards the call: `f(x)` (#2557)
+        types::fail_fix(
+            c, callee->span,
+            msg(format::push("`", types::show(ct), "` may be `.none`: bind it where it is tested, with `if ",
+                             bound[0].text, " := ...:`")),
+            bound);
         push_arguments(w, args, nullptr);
         return;
     }
@@ -3263,6 +3309,7 @@ static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
     }
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
+        if (g->option && e->span.start >= g->test->span.start && e->span.end <= g->test->span.end) continue;
         Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
         Bool skipped = e->span.start >= g->skip.start && e->span.end <= g->skip.end && g->skip.end > g->skip.start;
         if (inside && !skipped && same_text(g->variant, e->kind.member.name) &&
@@ -3275,10 +3322,10 @@ static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
 
 // `k.v` where a test guards the read: the read is the binding `v`, and the first one of a test also writes the test as
 // `.v(v) := k`. No edits when no test guards it, or the site is spoiled.
-static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
+static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e, Bool option) {
     syntax::Edits none = {};
     types::Guard *g = guard_of(c, e);
-    if (g == nullptr || g->spoiled) {
+    if (g == nullptr || g->spoiled || g->option != option) {
         return none;
     }
     syntax::Edits fix = {};
@@ -3291,6 +3338,12 @@ static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
     }
     g->head_sent = true;
     return fix;
+}
+
+// The read `a.f` of an option field that a test of it guards, `if a.f != nullptr:` (#2557): the read is the binding
+// `f`, and the first one also writes the test as `if f := a.f:`. No edits when no test guards it.
+export syntax::Edits option_read_fix(types::Checked *c, const ast::Expr *e) {
+    return guarded_read(c, e, true);
 }
 
 // Whether `place` is `base` or a part of the chain that leads to it (`e` and `e.kind` for `e.kind`).
@@ -3361,11 +3414,22 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         base = base->element;
         found = types::show(base);
     }
+    if (base->kind == .option && e->kind == .member) {
+        // `a.f.x` where `a.f` is an option field a test guards: `f.x`, with the test written as a binding (#2557)
+        syntax::Edits fix = guarded_read(c, e->kind.member.base, true);
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span,
+                            msg(format::push("`", found, "` may be `.none`: bind it where it is tested, with `if ",
+                                             fix[0].text, " := ...:`")),
+                            fix);
+            return nullptr;
+        }
+    }
     if (base->kind == .enumeration && base->has_payload) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
                                      "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
-        syntax::Edits fix = guarded_read(c, e);
+        syntax::Edits fix = guarded_read(c, e, false);
         if (countof(fix) > 0) {
             types::fail_fix(c, e->span, shown, fix);
         } else {
@@ -3374,7 +3438,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
         Str shown =
             msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));
-        syntax::Edits fix = guarded_read(c, e);
+        syntax::Edits fix = guarded_read(c, e, false);
         if (countof(fix) > 0) {
             types::fail_fix(c, e->span, shown, fix);
         } else {
@@ -3669,12 +3733,45 @@ static types::TypeRef option_item(types::Checked *c, types::TypeRef t, const ast
     if (t->kind == .result_type && same_text(name, "error")) {
         return t->error;
     }
-    Str example = "{.some = value}";
+    Str example = ".some(value)";
     if (t->kind == .result_type) {
-        example = "{.ok = value} or {.error = value}";
+        example = ".ok(value) or .error(value)";
     }
     types::failf(c, span, "a `", types::show(t), "` is written ", example, ", not a list of other values");
     return nullptr;
+}
+
+// `{.some = v}` where an option is wanted, `{.ok = v}` and `{.error = e}` where a Result is (#2563): the value of #1428
+// is `.some(v)`, `.ok(v)`, `.error(e)`. The fix rewrites the braces and the designator; empty when the list is no such
+// form (a struct with a field `ok` is a construction and never reaches here), or is written with a type.
+static syntax::Edits variant_list_fix(types::TypeRef t, const ast::Expr *e, ast::Initializer items[:]) {
+    syntax::Edits edits = {};
+    if (!(e->kind == .compound) || e->kind.compound.type != nullptr || countof(items) != 1 ||
+        !field_designator(&items[0]))
+        return edits;
+    Str name = field_name(&items[0]);
+    Bool fits = (t->kind == .option && same_text(name, "some")) ||
+                (t->kind == .result_type && (same_text(name, "ok") || same_text(name, "error")));
+    if (!fits) return edits;
+    Str open = msg(format::push(".", name, "("));
+    edits = mem::realloc(edits, 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.start, .end = items[0].value->span.start}, .text = open};
+    Str close = ")";
+    edits[1] = (syntax::Edit){.span = {.start = items[0].value->span.end, .end = e->span.end}, .text = close};
+    return edits;
+}
+
+// True (and reported) when the list `e` of the option or Result `t` is written with braces: smith writes `.some(v)`.
+static Bool refuse_variant_list(types::Checked *c, types::TypeRef t, const ast::Expr *e, ast::Initializer items[:]) {
+    if (t->kind != .option && t->kind != .result_type) return false;
+    syntax::Edits fix = variant_list_fix(t, e, items);
+    if (countof(fix) == 0) return false;
+    Str name = field_name(&items[0]);
+    types::fail_fix(
+        c, e->span,
+        msg(format::push("a `", types::show(t), "` is written `.", name, "(value)`, not `{.", name, " = value}`")),
+        fix);
+    return true;
 }
 
 // The type wanted of the value of one item of a list of type `t`, or null (reported) when the item has no place.
@@ -3743,6 +3840,11 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     if (payload_list(w, f, t, e->kind.compound.items)) {
         return;
     }
+    ast::Initializer listed[:] = e->kind.compound.items;
+    if (refuse_variant_list(c, t, e, listed)) {
+        poison(c, e);
+        return;
+    }
     if (!listable(t)) {
         types::failf(c, e->span, "a `{...}` list makes a struct, an array, an Option or a Result, not a `",
                      types::show(t), "`; write a value of type `", types::show(t), "`");
@@ -3750,7 +3852,7 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
         return;
     }
     Cursor cursor = {};
-    ast::Initializer items[:] = e->kind.compound.items;
+    ast::Initializer items[:] = listed;
     for (Usize i = 0; i < countof(items); i++) {
         types::TypeRef wanted = item_type(c, t, &items[i], &cursor, e->span);
         push(w, items[i].value, wanted, 0);
