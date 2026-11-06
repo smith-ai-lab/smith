@@ -240,3 +240,9 @@ export void test_front_types_target_address_sanitizer_is_a_bool_constant() {
 export void test_front_types_target_fast_math_is_a_bool_constant() {
     clean("const fast: bool = target.fast_math\n\nfn run() -> bool:\n    fast\n");
 }
+
+// #2647: two `?*T` of one type compare with `==` and `!=` as the pointers they are (null for `.none`, #2205).
+export void test_front_types_two_option_pointers_compare_for_equality() {
+    clean("struct Node:\n    next: ?*Node\n\nfn same(a: *Node, b: *Node) -> bool:\n    a.next == b.next\n\nfn "
+          "differ(a: *Node, b: *Node) -> bool:\n    a.next != b.next\n");
+}
