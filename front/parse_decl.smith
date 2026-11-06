@@ -75,6 +75,8 @@ struct Prefixes {
     U32 constexpr_start; // the `constexpr` token, and where the token after it starts (a fix deletes the span)
     U32 constexpr_end;
     U32 constexpr_after;
+    U32 static_start; // a local's `static` token, and where the token after it starts (see `drop_static`)
+    U32 static_after;
     Bool unused; // a lone `[[maybe_unused]]` group: the fix of the declaration deletes it and prefixes `_`
     U32 unused_start;
     U32 unused_after;
@@ -821,6 +823,10 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             pre.constexpr_start = word.start;
             pre.constexpr_end = word.end;
             pre.constexpr_after = parse::peek_at(p, 1).span.start;
+        }
+        if (!top && kind == lex::kw_static) {
+            pre.static_start = parse::peek(p).span.start;
+            pre.static_after = parse::peek_at(p, 1).span.start;
         }
         if (!take_prefix_keyword(&pre, kind)) break;
         parse::advance(p);
@@ -1689,6 +1695,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     for (Usize i = 0; i < countof(list_edits); i += 1)
         edits = with_edit(edits, list_edits[i]);
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    // A function-local `static const` table has no form in smith's own syntax (it has no function-local `static`):
+    // the same read-only local, rebuilt on each call (the lead, #2489). A `static` that is written to has no form yet.
+    if (!pre->top && pre->is_static && type->qualifiers.is_const && has_init)
+        edits = with_edit(edits, edit(pre->static_start, pre->static_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a variable is written `", text, " ...`: the name comes first and the `;` goes");
     warn(p, head.type_start, last.span.end, message, edits);

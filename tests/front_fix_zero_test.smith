@@ -152,3 +152,10 @@ export void test_front_fix_zero_fills_a_long_global_array() {
     expect_fixed("module m;\nstatic int table[1000];\n",
                  "import std.array\nstatic mut table: [1000]i32 = array.filled(i32, 1000, 0)\n");
 }
+
+// #2489 (the lead): a function-local `static const` table has no `static` in smith's own syntax; it is an ordinary
+// local. A `static` that is written to keeps its word (it has no form yet).
+export void test_front_fix_a_local_static_const_table_loses_its_static() {
+    expect_fixed("module m;\nvoid f(void) {\n    static const double t[2] = {1.0, 2.0};\n    g(&t[0]);\n}\n",
+                 "fn f():\n    t: [2]f64 = [1.0, 2.0]\n    g(&t[0])\n");
+}
