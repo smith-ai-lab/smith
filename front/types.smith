@@ -372,6 +372,12 @@ export TypeRef floating(const Table *t, U32 bits) {
     return nullptr;
 }
 
+// `floating` under a name no enumerator has: `types::floating(...)` read from another module is taken for the
+// enumerator `.floating` by the fixer (#2612).
+export TypeRef float_of_width(const Table *t, U32 bits) {
+    return floating(t, bits);
+}
+
 export TypeRef pointer_to(Table *t, TypeRef pointee, Bool pointee_const) {
     return intern(t, (Ty){.kind = .pointer, .element = pointee, .pointee_const = pointee_const});
 }
