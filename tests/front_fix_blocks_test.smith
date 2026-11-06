@@ -22,6 +22,11 @@ export void test_front_fix_blocks_else_if_and_else() {
           "fn f(a: i32):\n    if a > 1:\n        g()\n    else if a > 0:\n        h()\n    else:\n        k()\n");
 }
 
+export void test_front_fix_blocks_else_after_a_condition_over_two_lines() {
+    check("fn f(a: i32) {\n    if a > 1 &&\n        a < 9 {\n        g() } else if a > 0 {\n        h() }\n}\n",
+          "fn f(a: i32):\n    if a > 1 &&\n        a < 9:\n        g()\n    else if a > 0:\n        h()\n");
+}
+
 export void test_front_fix_blocks_a_one_line_body_moves_down() {
     check("fn make() -> Node { return Node() }\n", "fn make() -> Node:\n    return Node()\n");
     check("fn f(a: i32) {\n    if a { g() } else { h() }\n}\n",
