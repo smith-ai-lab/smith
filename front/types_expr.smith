@@ -2888,7 +2888,8 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     if (callee->kind == .name) {
         path = callee->kind.name.path;
     } else if (callee->kind == .member && types::c_member(c, callee) != nullptr) {
-        // `spawn_h.posix_spawn_file_actions_t(...)`: a struct of a header the file imports (#2446).
+        // `spawn_h.posix_spawn_file_actions_t(...)`: a struct of a header the file imports (#2446). A tag with a function of
+        // its name (`fcntl.stat(path, &info)`) is the call: `c_member` prefers the function (#2610).
         const types::Symbol *header_type = types::c_member(c, callee);
         return header_type->kind == .type_name ? header_type->type : nullptr;
     } else if (callee->kind == .member && !callee->kind.member.arrow && callee->kind.member.base->kind == .name) {
@@ -2907,6 +2908,11 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     if (s == nullptr) s = types::lookup_path(&c->scopes, path); // a private type: the construction says why it fails
     if (s == nullptr || s->kind != .type_name) {
         return nullptr;
+    }
+    // A C struct tag and a function of one name (`struct stat`, `stat()`): as a callee it is the function (#2610).
+    if (s->decl != nullptr && s->decl->from_c) {
+        const types::Symbol *value = types::lookup_as(&c->scopes, s->name, false);
+        if (value != nullptr && value->kind != .type_name) return nullptr;
     }
     return s->type;
 }

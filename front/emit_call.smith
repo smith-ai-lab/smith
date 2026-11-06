@@ -144,7 +144,7 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
 static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) return signature_failed(state::fail("not a function", d->span));
     Str name = d->kind.function.name;
-    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, state::msg(format::push("c::", name)));
+    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, state::msg(format::push("c::", name)), false);
     if (symbol == nullptr || symbol->type->kind != .function) {
         return signature_failed(state::fail("not a C function", d->span));
     }
@@ -231,7 +231,7 @@ static Bool c_callee(state::Emitter *e, const ast::Expr *callee, const ast::Decl
     } else {
         return false;
     }
-    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    const types::Symbol *target = types::lookup_as(&e->options.checked->scopes, full, false);
     if (target == nullptr || target->kind != .function_symbol || target->decl->kind != .function) {
         state::free_text(full);
         return false;
@@ -552,7 +552,7 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
 static Bool c_record(state::Emitter *e, ast::Path path, Usize *at) {
     if (e->options.checked == nullptr) return false;
     Str full = join(path);
-    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, full, true); // the tag (#2610)
     Bool made = false;
     if (symbol != nullptr && symbol->kind == .type_name && symbol->type->kind == .record) {
         ast::Span nowhere = {};

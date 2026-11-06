@@ -138,7 +138,7 @@ static state::TyResult type_of_header(state::Emitter *e, const ast::TypeExpr *t)
     if (t->kind != .named || e->options.checked == nullptr) return state::ty_fail("not a C type", t->span);
     ast::Path path = t->kind.named.path;
     Str full = state::msg(format::push("c::", path.segments[1].text));
-    const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, full);
+    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, full, true); // a tag over a function (#2610)
     state::free_text(full);
     if (symbol == nullptr || symbol->kind != .type_name) return state::ty_fail("unknown C type", t->span);
     return type_of_checked(e, symbol->type, t->span);
@@ -1497,9 +1497,23 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     return ty;
 }
 
+// A C union has the size and alignment of its biggest and most aligned member and no fields to name: it is made a
+// struct of one array of integers as wide as the alignment (`struct sigaction` holds one, #2610), so a variable of it
+// or of a struct that holds it is sized right and a C function can fill it.
+static void make_c_union(c::LLVMTypeRef named, types::TypeRef base) {
+    types::Target target = types::lp64();
+    types::Layout size = types::layout(&target, base);
+    if (!size.known || size.size == 0 || size.align == 0) return;
+    U64 unit = size.align > 8 ? 8 : size.align;
+    c::LLVMTypeRef lanes[1] = {nullptr};
+    c::LLVMContextRef context = c::LLVMGetTypeContext(named);
+    lanes[0] = c::LLVMArrayType2(c::LLVMIntTypeInContext(context, (U32)(unit * 8)), size.size / unit);
+    c::LLVMStructSetBody(named, lanes, 1, 0);
+}
+
 // A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
 // first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
-// pointer, a struct that was not made yet) leaves the record opaque: a pointer to it is still a pointer.
+// pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer to it is still a pointer.
 static void make_c_record(state::Emitter *e, types::TypeRef base) {
     char *label = state::cstr(base->name);
     c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
@@ -1508,6 +1522,10 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     Usize at = e->record_count;
     emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
     Usize count = countof(base->slots);
+    if (base->complete && base->is_union && count > 0) {
+        make_c_union(named, base);
+        return;
+    }
     if (!base->complete || base->is_union || count == 0 || count > 64) {
         return;
     }
@@ -1532,16 +1550,49 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
 }
 
 // The record at the bottom of a chain of pointers and arrays, when it is a C one that is not made yet.
-static void ensure_c_record(state::Emitter *e, types::TypeRef t) {
+static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool through_pointers) {
     types::TypeRef base = t;
-    for (Usize guard = 0; guard < 16 && (base->kind == .pointer || base->kind == .array); guard++) {
+    for (Usize guard = 0; guard < 16 && (base->kind == .array || (through_pointers && base->kind == .pointer));
+         guard++) {
         types::TypeRef next = base->element;
         base = next;
     }
     state::Ty found = {};
     if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
         (from_header(base->name) || in_module(base->name))) {
-        make_c_record(e, base);
+        return base;
+    }
+    return nullptr;
+}
+
+// The first field held by value (a struct or an array of them) whose record is not made yet, else null.
+static types::TypeRef unmade_field(state::Emitter *e, types::TypeRef record) {
+    if (!record->complete || record->is_union) return nullptr;
+    for (Usize i = 0; i < countof(record->slots); i++) {
+        types::TypeRef inner = unmade_c_record(e, record->slots[i].type, false);
+        if (inner != nullptr && inner != record) return inner;
+    }
+    return nullptr;
+}
+
+// Makes the C record at the bottom of `t`, the structs it holds by value first (`struct stat` holds three
+// `struct timespec`, #2610): an explicit stack, since the emitter does not recurse.
+static void ensure_c_record(state::Emitter *e, types::TypeRef t) {
+    types::TypeRef pending[16];
+    Usize top = 0;
+    types::TypeRef first = unmade_c_record(e, t, true);
+    if (first == nullptr) return;
+    pending[0] = first;
+    top = 1;
+    while (top > 0) {
+        types::TypeRef inner = unmade_field(e, pending[top - 1]);
+        if (inner != nullptr && top < countof(pending)) {
+            pending[top] = inner;
+            top += 1;
+            continue;
+        }
+        top -= 1;
+        make_c_record(e, pending[top]);
     }
 }
 
