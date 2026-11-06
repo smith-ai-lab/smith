@@ -1,0 +1,16 @@
+module main;
+
+import regrow;
+import <stdio.h>;
+
+I32 main() {
+    I32 items[4] = {7, 8, 9, 10};
+    I32 none[:] = {};
+    I32 rows[:] = regrow::view(none, items, 3);
+    c::printf("%zu %d %d\n", countof(rows), rows[0], rows[2]);
+    char letters[3] = {'a', 'b', 'c'};
+    char text[:] = {};
+    char word[:] = regrow::view(text, letters, 2);
+    c::printf("%zu %c\n", countof(word), word[1]);
+    return 0;
+}

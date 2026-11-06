@@ -1,0 +1,8 @@
+module regrow;
+
+// A pointer cast to the type of a slice's `.data` and cut: `((typeof(xs.data))p)[a:b]` is a slice of `xs`'s own struct,
+// whatever its element is, so a generic over `auto xs` can build the slice it returns from the memory it made.
+
+export typeof(xs) view(auto xs, void *memory, Usize n) {
+    return ((typeof(xs.data))memory)[0:n];
+}
