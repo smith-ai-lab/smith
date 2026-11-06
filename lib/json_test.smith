@@ -1490,7 +1490,7 @@ static void test_json_count_case(TestJsonConformance *totals, const char *name, 
         totals->i_total += 1;
         if (listing)
             *reported += format::write(report + *reported, test_json_listing_capacity - *reported,
-                                    format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
+                                       format::left(accepted ? "accepted" : "refused", 9), " ", name, "\n")
                              .length;
         test::check(listed != nullptr); // a new case must be listed
         totals->i_as_listed += listed != nullptr && listed->accepted == accepted ? 1 : 0;
@@ -1500,9 +1500,9 @@ static void test_json_count_case(TestJsonConformance *totals, const char *name, 
 
 static void test_json_write_listing(const char path[:], const TestJsonConformance *totals, char *report,
                                     Usize reported) {
-    reported += format::write(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted, " of ",
-                           totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
-                           " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
+    reported += format::write(report + reported, test_json_listing_capacity - reported, "y_: ", totals->y_accepted,
+                              " of ", totals->y_total, " accepted; n_: ", totals->n_refused, " of ", totals->n_total,
+                              " refused; i_: ", totals->i_as_listed, " of ", totals->i_total, " as listed\n")
                     .length;
     files::CountResult written = files::write_file(path, test_file_bytes(report, reported), files::Replace);
     switch (written) {

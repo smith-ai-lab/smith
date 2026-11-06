@@ -31,7 +31,7 @@ export void test_build_verbs_the_seven_verbs_are_refused_as_task_and_alias_names
             bool refused = c::smith_core_verb_name_refused(kinds[k], names[n], message, sizeof message);
             Usize used = c::strlen(actual);
             (void)format::write(actual + used, sizeof actual - used, kinds[k], " ", names[n],
-                             refused ? ": refused: " : ": allowed", message, "\n");
+                                refused ? ": refused: " : ": allowed", message, "\n");
         }
     }
     corpus::golden(&memory, &differing, "tests/build-verbs/refusals.txt", actual);
@@ -61,23 +61,23 @@ static void refuses_a_task_and_an_alias_named(const char *verb) {
     char text[1024];
     char name[256];
     (void)format::write(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                     "    smith_task(b, \"",
-                     verb, "\", &step);\n    smith_default(b, step.outputs);\n}\n");
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                        "    smith_task(b, \"",
+                        verb, "\", &step);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run task = scratch::build(&p, "");
     (void)format::write(name, sizeof name, "verbs: a task named ", verb, " is refused");
     scratch::expect_status(name, 2, &task);
     (void)format::write(name, sizeof name, "verbs: ... ", verb, " names the verb");
     (void)format::write(text, sizeof text, "task '", verb, "' is named after a verb; `smith ", verb,
-                     "` does the same thing in every project");
+                        "` does the same thing in every project");
     scratch::expect_contains(name, task.err, text);
     (void)format::write(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
-                     "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"",
-                     verb, "\", step.outputs);\n    smith_default(b, step.outputs);\n}\n");
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    SmithStep step = {.command = (const char *[]){\"true\", nullptr}};\n"
+                        "    smith_task(b, \"other\", &step);\n    smith_alias(b, \"",
+                        verb, "\", step.outputs);\n    smith_default(b, step.outputs);\n}\n");
     scratch::write(&p, "build.c", text);
     scratch::Run alias = scratch::build(&p, "");
     (void)format::write(name, sizeof name, "verbs: an alias named ", verb, " is refused");

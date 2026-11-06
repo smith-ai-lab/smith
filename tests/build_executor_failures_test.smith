@@ -165,7 +165,7 @@ export void test_build_executor_a_depfile_that_names_another_output_fails_the_st
 static void counts(const scratch::Project *p, const char *name, const char *expected) {
     char actual[32];
     (void)format::write(actual, sizeof actual, scratch::lines(p, "gen.log"), " ", scratch::lines(p, "use.log"), " ",
-                     scratch::lines(p, "last.log"));
+                        scratch::lines(p, "last.log"));
     scratch::expect_text(name, expected, actual);
 }
 

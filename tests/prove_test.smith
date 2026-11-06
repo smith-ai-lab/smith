@@ -27,7 +27,7 @@ static scratch::Project fresh() {
 static scratch::Run prove(const scratch::Project *p, const char *args) {
     char command[1024];
     format::Written written = format::write(command, sizeof command, "c=cases; smith prove ", args,
-                                         " -- -I \"$SMITH_REPO/.smith/include\" 2>&1");
+                                            " -- -I \"$SMITH_REPO/.smith/include\" 2>&1");
     test::check_condition(written.fits);
     return scratch::sh(p, command);
 }

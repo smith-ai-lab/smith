@@ -82,7 +82,8 @@ export void test_build_tail_cc_set_to_the_smith_path_is_refused() {
     scratch::expect_failure("CC=<path>/smith in the environment is refused", &run);
     (void)format::write(text, sizeof text, "smith: build.c: smith_object: .compiler is \"", self, "\"");
     scratch::expect_contains("CC=<path>/smith: ... as a build.c error naming the value", run.err, text);
-    (void)format::write(text, sizeof text, "use \"", scratch::capture(&p, "dirname \"$SMITH_SELF\""), "/smith-cc\" for C");
+    (void)format::write(text, sizeof text, "use \"", scratch::capture(&p, "dirname \"$SMITH_SELF\""),
+                        "/smith-cc\" for C");
     scratch::expect_contains("CC=<path>/smith: ... with the hint for C", run.err, text);
     scratch::expect_contains("CC=<path>/smith: ... and for C++", run.err, "smith-c++\" for C++");
     scratch::expect_text("CC=<path>/smith: nothing ran", "",

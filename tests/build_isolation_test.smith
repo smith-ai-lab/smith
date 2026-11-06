@@ -107,9 +107,9 @@ static void refuses_the_folders(scratch::Project *p, const char *folders) {
     char text[512];
     char name[256];
     (void)format::write(text, sizeof text,
-                     "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
-                     "    smith_modules(b, &(SmithModules){.folders = (const char *[]){",
-                     folders, ", nullptr}});\n    smith_default(b, smith_list(b, nullptr));\n}\n");
+                        "#include <smith/build.h>\n\nvoid build(SmithBuild *b) {\n"
+                        "    smith_modules(b, &(SmithModules){.folders = (const char *[]){",
+                        folders, ", nullptr}});\n    smith_default(b, smith_list(b, nullptr));\n}\n");
     scratch::write(p, "build.c", text);
     scratch::Run run = scratch::build(p, "");
     (void)format::write(name, sizeof name, "modules: the folders ", folders, " are refused");

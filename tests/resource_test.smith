@@ -236,9 +236,9 @@ static void is_a_copy(const scratch::Project *p, const char *program) {
     char name[256];
     char command[256];
     (void)format::write(name, sizeof name, "resource: bin/", program,
-                     " is a copy of the smith that ran, with a file of its own");
+                        " is a copy of the smith that ran, with a file of its own");
     (void)format::write(command, sizeof command, "is_copy \"$programs/bin/", program,
-                     "\" \"$smith\" && echo yes || echo no");
+                        "\" \"$smith\" && echo yes || echo no");
     scratch::expect_text(name, "yes", text_after(p, command));
 }
 

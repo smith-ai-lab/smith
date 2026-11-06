@@ -44,7 +44,7 @@ static scratch::Run compile_and_run(const scratch::Project *p, const char *flags
     // it is built with everywhere, not this test's warnings.
     format::Written written =
         format::write(command, sizeof command, "smith cc -std=gnu23 -O2 -fPIC -I \"$SMITH_REPO/.smith/include\" ",
-                   "-c lib/handlers.c -o bin/handlers.o");
+                      "-c lib/handlers.c -o bin/handlers.o");
     test::check_condition(written.fits);
     scratch::Run runtime = scratch::sh(p, command);
     scratch::expect_status("lib/handlers.c compiles", 0, &runtime);

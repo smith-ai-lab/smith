@@ -175,8 +175,8 @@ export void test_format_fixed_past_20_stops() {
 
 export void test_format_hex_known() {
     char out[capacity];
-    (void)format::write(out, sizeof out, "0x", format::hex(255, 0), " ", format::hex(255, 4), " ", format::hex(0, 0), " ",
-                     format::hex(u64_max, 16), " ", format::hex(0xabc, 2));
+    (void)format::write(out, sizeof out, "0x", format::hex(255, 0), " ", format::hex(255, 4), " ", format::hex(0, 0),
+                        " ", format::hex(u64_max, 16), " ", format::hex(0xabc, 2));
     test::check(is(out, "0xff 00ff 0 ffffffffffffffff abc"));
 }
 
@@ -193,7 +193,7 @@ export void test_format_floats_known() {
     (void)format::write(out, sizeof out, tenth, " ", 16777216.0F, " ", 3.14159265F);
     test::check(is(out, "0.1 16777216 3.1415927")); // a f32's own shortest digits, not its f64 value's
     (void)format::write(out, sizeof out, math::infinity(F64), " ", -math::infinity(F64), " ", math::nan(F64), " ",
-                     math::infinity(F32));
+                        math::infinity(F32));
     test::check(is(out, "inf -inf nan inf"));
 }
 
@@ -222,9 +222,9 @@ static void check_fixed(F64 value, U32 places) {
 
 export void test_format_fixed_known() {
     char out[capacity];
-    (void)format::write(out, sizeof out, format::fixed(3.14159, 2), " ", format::fixed(2.5, 0), " ", format::fixed(3.5, 0),
-                     " ", format::fixed(0.125, 2), " ", format::fixed(-0.001, 2), " ", format::fixed(9.999, 2), " ",
-                     format::fixed(1.0, 3), " ", format::fixed(100, 1));
+    (void)format::write(out, sizeof out, format::fixed(3.14159, 2), " ", format::fixed(2.5, 0), " ",
+                        format::fixed(3.5, 0), " ", format::fixed(0.125, 2), " ", format::fixed(-0.001, 2), " ",
+                        format::fixed(9.999, 2), " ", format::fixed(1.0, 3), " ", format::fixed(100, 1));
     test::check(is(out, "3.14 2 4 0.12 -0.00 10.00 1.000 100.0"));
 }
 
@@ -271,8 +271,8 @@ export void test_format_fixed_special_values() {
     char out[capacity];
     F64 big = 1e30;
     (void)format::write(out, sizeof out, format::fixed(math::infinity(F64), 2), " ",
-                     format::fixed(-math::infinity(F64), 2), " ", format::fixed(math::nan(F64), 2), " ",
-                     format::fixed(big, 2), " ", format::fixed(-0.0, 1));
+                        format::fixed(-math::infinity(F64), 2), " ", format::fixed(math::nan(F64), 2), " ",
+                        format::fixed(big, 2), " ", format::fixed(-0.0, 1));
     test::check(is(out, "inf -inf nan 1e30 -0.0"));
     (void)format::write(out, sizeof out, format::fixed(1.5, 20)); // the most places there are
     test::check(is(out, "1.50000000000000000000"));
@@ -285,7 +285,7 @@ export void test_format_cut_at_the_capacity() {
     test::check(!written.fits);
     test::check_equal(written.length, 11); // what the whole text needs
     test::check(is(out, "hell"));
-    test::check_equal(out[5], 'x');        // nothing past the capacity is written
+    test::check_equal(out[5], 'x');           // nothing past the capacity is written
     written = format::write(out, 6, "hello"); // the characters and the terminator
     test::check(written.fits);
     test::check_equal(written.length, 5);
@@ -391,7 +391,7 @@ export void test_format_callers() {
     F64 ratio = 12.0 / 7.0;
     __builtin_snprintf(expected, sizeof expected, "%.1f (%.0f, %.0f)", ratio, ratio * 3, ratio * 5);
     (void)format::write(out, sizeof out, format::fixed(ratio, 1), " (", format::fixed(ratio * 3, 0), ", ",
-                     format::fixed(ratio * 5, 0), ")");
+                        format::fixed(ratio * 5, 0), ")");
     test::check(is(out, expected));
     U32 jobs = 8;
     __builtin_snprintf(expected, sizeof expected, "%u", jobs);
@@ -399,8 +399,8 @@ export void test_format_callers() {
     test::check(is(out, expected));
     __builtin_snprintf(expected, sizeof expected, "push of %zu bytes (align %zu) with %zu of %zu bytes used", (Usize)8,
                        (Usize)16, (Usize)100, (Usize)4096);
-    (void)format::write(out, sizeof out, "push of ", (Usize)8, " bytes (align ", (Usize)16, ") with ", (Usize)100, " of ",
-                     (Usize)4096, " bytes used");
+    (void)format::write(out, sizeof out, "push of ", (Usize)8, " bytes (align ", (Usize)16, ") with ", (Usize)100,
+                        " of ", (Usize)4096, " bytes used");
     test::check(is(out, expected));
 }
 
@@ -446,18 +446,18 @@ static void check_scientific(F64 value, U32 places) {
 export void test_format_general_known() {
     char out[capacity];
     (void)format::write(out, sizeof out, format::general(0.1, 6), " ", format::general(1e22, 6), " ",
-                     format::general(100000.0, 6), " ", format::general(1000000.0, 6), " ", format::general(0.0001, 6),
-                     " ", format::general(0.00001, 6), " ", format::general(-0.0, 6), " ",
-                     format::general(3.14159265358979, 9), " ", format::general(0.1, 17), " ",
-                     format::general(math::infinity(F64), 6), " ", format::general(2.5, 0));
+                        format::general(100000.0, 6), " ", format::general(1000000.0, 6), " ",
+                        format::general(0.0001, 6), " ", format::general(0.00001, 6), " ", format::general(-0.0, 6),
+                        " ", format::general(3.14159265358979, 9), " ", format::general(0.1, 17), " ",
+                        format::general(math::infinity(F64), 6), " ", format::general(2.5, 0));
     test::check(is(out, "0.1 1e+22 100000 1e+06 0.0001 1e-05 -0 3.14159265 0.10000000000000001 inf 2"));
 }
 
 export void test_format_scientific_known() {
     char out[capacity];
     (void)format::write(out, sizeof out, format::scientific(12345.678, 2), " ", format::scientific(0.0, 3), " ",
-                     format::scientific(1e300, 0), " ", format::scientific(5e-324, 5), " ",
-                     format::scientific(9.9995, 3), " ", format::scientific(-1.0, 1));
+                        format::scientific(1e300, 0), " ", format::scientific(5e-324, 5), " ",
+                        format::scientific(9.9995, 3), " ", format::scientific(-1.0, 1));
     test::check(is(out, "1.23e+04 0.000e+00 1e+300 4.94066e-324 9.999e+00 -1.0e+00"));
 }
 
@@ -559,9 +559,10 @@ export void test_format_padding_matches_libc(random::Key key) {
                        (c::intmax_t)number, (I32)width, (c::intmax_t)number, (I32)width, (c::uintmax_t)unsigned_number,
                        (I32)width, word, (I32)width, word, (I32)width, value, (I32)width, value, (I32)width, value);
     (void)format::write(out, sizeof out, "[", format::pad(number, width), "|", format::left(number, width), "|",
-                     format::pad(unsigned_number, width), "|", format::pad(word, width), "|", format::left(word, width),
-                     "|", format::pad(format::fixed(value, 2), width), "|", format::pad(format::fixed(value, 0), width),
-                     "|", format::pad(format::general(value, 6), width), "]");
+                        format::pad(unsigned_number, width), "|", format::pad(word, width), "|",
+                        format::left(word, width), "|", format::pad(format::fixed(value, 2), width), "|",
+                        format::pad(format::fixed(value, 0), width), "|", format::pad(format::general(value, 6), width),
+                        "]");
     test::check(is(out, expected));
 }
 
@@ -573,13 +574,13 @@ export void test_format_report_rows_match_libc() {
     U32 a = 12;
     U32 b = 7;
     __builtin_snprintf(expected, sizeof expected, "  %-34s %10u %10u\n", label, a, b);
-    (void)format::write(out, sizeof out, "  ", format::left(label, 34), " ", format::pad(a, 10), " ", format::pad(b, 10),
-                     "\n");
+    (void)format::write(out, sizeof out, "  ", format::left(label, 34), " ", format::pad(a, 10), " ",
+                        format::pad(b, 10), "\n");
     test::check(is(out, expected));
     F64 percent = 56.789;
     __builtin_snprintf(expected, sizeof expected, "    %-16s %5.1f%%  %s\n", "knight", percent, "ok");
     (void)format::write(out, sizeof out, "    ", format::left("knight", 16), " ",
-                     format::pad(format::fixed(percent, 1), 5), "%  ", "ok", "\n");
+                        format::pad(format::fixed(percent, 1), 5), "%  ", "ok", "\n");
     test::check(is(out, expected));
     __builtin_snprintf(expected, sizeof expected, "%.9g %g", 0.1F + 0.2F, 1e-7);
     (void)format::write(out, sizeof out, format::general((F64)(0.1F + 0.2F), 9), " ", format::general(1e-7, 6));

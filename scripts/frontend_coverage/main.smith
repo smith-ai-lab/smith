@@ -722,7 +722,7 @@ static Usize record_errors(const char *path, const char output[:], const char st
         char shown[message_size];
         // a compile that died (killed by the memory cap, a signal, no output) names its status as its cause (#2264)
         (void)format::write(shown, sizeof shown, "compile ended with status ", status, status > 128 ? " (signal)" : "",
-                         countof(output) > 0 ? ": " : "", output[0:countof(output) < 120 ? countof(output) : 120]);
+                            countof(output) > 0 ? ": " : "", output[0:countof(output) < 120 ? countof(output) : 120]);
         copy_text(message[0:message_size], text_of(shown[0:message_size]));
         add_entry(view_of(path), stage, message[0:message_size], "");
         made = 1;
@@ -985,7 +985,7 @@ static Usize resolve_import(Usize file, const char name[:]) {
         }
         char candidate[path_size * 2];
         format::Written w = format::write(candidate, sizeof candidate, folder, folder[0] != '\0' ? "/" : "", middles[r],
-                                       (const char *)inside, ".smith");
+                                          (const char *)inside, ".smith");
         Usize found = tree_find(candidate[0:w.length]);
         if (found != tree_count) return found;
     }
