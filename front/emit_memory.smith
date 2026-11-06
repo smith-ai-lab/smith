@@ -574,7 +574,7 @@ export state::Status address_of(state::Emitter *e, const ast::Expr *x, state::Hi
     }
     const ast::Expr *operand = x->kind.unary.operand;
     state::push_then_none(e, (state::ThenNone){.run = address_finish, .span = x->span});
-    push_place_of(e, operand);
+    push_address(e, operand); // `&Pair(a = 2)`: an rvalue is stored in a temporary and its address taken (D11)
     return state::success();
 }
 
@@ -1157,13 +1157,12 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
     if (hint.present && hint.ty.kind == .array && hint.ty.kind.array.count > countof(bytes) + 1) {
         // a literal given to a longer `[N]char`: the bytes, then zeros up to N (#2611)
         state::SizedTy shape = hint.ty.kind.array;
-        if (shape.count > 256)
-            return state::not_emitted("string literal in an array of more than 256 elements", x->span);
-        c::LLVMValueRef values[256];
+        c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, shape.count + 1);
         for (Usize i = 0; i < shape.count; i++)
             values[i] = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        state::push_value(
-            e, (state::Value){.llvm = c::LLVMConstArray2(shape.element->llvm, values, shape.count), .ty = hint.ty});
+        c::LLVMValueRef whole = c::LLVMConstArray2(shape.element->llvm, values.data, shape.count);
+        mem::free(values.data);
+        state::push_value(e, (state::Value){.llvm = whole, .ty = hint.ty});
         return state::success();
     }
     if (hint.present && hint.ty.kind == .array) { // a literal given to `[N]char`: the bytes and the zero byte
@@ -1702,17 +1701,20 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
-// An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
+static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
+
+// An array's constant from an array literal of constants (scalars, records, nested arrays) or a string literal;
+// elements left out are zero. Any length: the element values live in a buffer for the call.
 static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
                                     c::LLVMValueRef *out) {
     if (x->kind == .string && array.element->kind == .integer && state::width(*array.element) == 8) {
         Str bytes = x->kind.string.bytes;
         if (countof(bytes) + 1 > array.count) return state::failf(x->span, "the string does not fit ", ty.name);
-        if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
-        c::LLVMValueRef values[256]; // the bytes, then zeros up to the length
+        c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, array.count + 1); // the bytes, then zeros
         for (Usize i = 0; i < array.count; i++)
             values[i] = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
+        *out = c::LLVMConstArray2(array.element->llvm, values.data, array.count);
+        mem::free(values.data);
         return state::success();
     }
     if (x->kind != .array_lit)
@@ -1720,13 +1722,19 @@ static state::Status array_constant(state::Emitter *e, state::Ty ty, state::Size
     ast::ExprRef items[:] = x->kind.array_lit.items;
     if (countof(items) > array.count)
         return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
-    if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
-    c::LLVMValueRef values[256];
+    c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, array.count + 1);
     for (Usize i = 0; i < array.count; i++) {
         values[i] = c::LLVMConstNull(array.element->llvm);
-        if (i < countof(items)) try scalar_constant(e, *array.element, items[i], &values[i]);
+        if (i < countof(items)) {
+            state::Status made = compound_constant(e, *array.element, items[i], &values[i]);
+            if (made == .error) {
+                mem::free(values.data);
+                return made;
+            }
+        }
     }
-    *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
+    *out = c::LLVMConstArray2(array.element->llvm, values.data, array.count);
+    mem::free(values.data);
     return state::success();
 }
 
