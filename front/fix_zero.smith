@@ -26,6 +26,7 @@ import front::lex;
 import front::parse as core;
 import front::types;
 import std::arena;
+import std::files;
 import std::format;
 import std::mem;
 
@@ -229,7 +230,9 @@ static Str omitted(types::TypeRef record, U64 given) {
     return out;
 }
 
-// The fix of the construction `e` that leaves fields out: their zero values after the last argument.
+// The fix of the construction `e` that leaves fields out: their zero values after the last argument. Only for a
+// struct this module cannot give defaults, one a C header declares (#2530: a smith struct gets them in its
+// declaration).
 static core::ParseError left_out_fix(const ast::Expr *e, types::TypeRef record, U64 given) {
     core::ParseError none = {};
     Str text = omitted(record, given);
@@ -443,17 +446,398 @@ static void localize(const ast::Module *module, core::Errors errors) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Defaults in the declaration (#2530, decided by the owner on 2026-11-06): C zeroes the fields a construction leaves
+// out, smith has no zero values, so a field that some construction leaves out gets its zero written as its default in
+// the struct (`count: usize = 0`); the constructions stay as written. Only those fields get one.
+
+constexpr Usize records_max = 64;
+constexpr Usize fields_max = 64;
+
+// The records of the module and, for each, the fields (by index in the declaration) some construction leaves out.
+struct Record {
+    Str name;
+    ast::FieldDecl fields[:];
+    Bool exported;
+};
+
+struct Wanted {
+    Record records[records_max];
+    U64 left[records_max];
+    Usize count;
+};
+
+static U64 all_fields(const Record *d) {
+    Usize n = countof(d->fields);
+    if (n >= fields_max) return ~(U64)0;
+    return ((U64)1 << n) - 1;
+}
+
+static Wanted records_of(const ast::Module *module) {
+    Wanted w = {};
+    for (Usize i = 0; i < countof(module->decls) && w.count < records_max; i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .record) {
+            if (d->kind.record.is_union || d->kind.record.opaque) continue;
+            if (countof(d->kind.record.fields) == 0 || countof(d->kind.record.fields) > fields_max) continue;
+            w.records[w.count] = (Record){
+                .name = d->kind.record.name, .fields = d->kind.record.fields, .exported = d->exported || d->is_pub};
+            w.count += 1;
+        } else if (d->kind == .type_alias) {
+            // `typedef struct { ... } Node;`, today's spelling of a struct the fixer has not converted yet
+            const ast::TypeExpr *t = d->kind.type_alias.type;
+            if (t == nullptr || !(t->kind == .record)) continue;
+            if (t->kind.record.is_union || countof(t->kind.record.fields) == 0) continue;
+            if (countof(t->kind.record.fields) > fields_max) continue;
+            w.records[w.count] = (Record){
+                .name = d->kind.type_alias.name, .fields = t->kind.record.fields, .exported = d->exported || d->is_pub};
+            w.count += 1;
+        }
+    }
+    return w;
+}
+
+static Usize record_index(const Wanted *w, Str name) {
+    for (Usize i = 0; i < w->count; i++)
+        if (same(w->records[i].name, name)) return i;
+    return w->count;
+}
+
+static Usize field_index(const Record *d, Str name) {
+    ast::FieldDecl fields[:] = d->fields;
+    for (Usize k = 0; k < countof(fields); k++)
+        if (same(fields[k].name, name)) return k;
+    return countof(fields);
+}
+
+// What the checker found: a construction of a record of this module that leaves fields out (`Error.left_out_call`).
+static void from_checker(Wanted *w, const types::Checked *c) {
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error error = c->errors[i];
+        types::TypeRef record = error.left_out_record;
+        if (error.left_out_call == nullptr || record == nullptr || countof(record->owner) > 0) continue;
+        Usize r = record_index(w, record->name);
+        if (r == w->count) continue;
+        for (Usize k = 0; k < countof(record->slots) && k < fields_max; k++) {
+            if ((error.left_out_given & ((U64)1 << k)) != 0) continue;
+            Usize f = field_index(&w->records[r], record->slots[k].name);
+            if (f < fields_max) w->left[r] |= (U64)1 << f;
+        }
+    }
+}
+
+static Bool opens(lex::TokenKind k) {
+    return k == lex::left_paren || k == lex::left_bracket || k == lex::left_brace;
+}
+
+static Bool closes(lex::TokenKind k) {
+    return k == lex::right_paren || k == lex::right_bracket || k == lex::right_brace;
+}
+
+static Bool is_member(lex::TokenKind k) {
+    return k == lex::dot || k == lex::colon_colon || k == lex::arrow;
+}
+
+// The index of the token that closes the bracket `t[open]`, or the number of tokens.
+static Usize closing(lex::Tokens t, Usize open) {
+    Usize depth = 0;
+    for (Usize i = open; i < countof(t); i++) {
+        if (opens(t[i].kind)) depth += 1;
+        if (closes(t[i].kind)) {
+            if (depth <= 1) return i;
+            depth -= 1;
+        }
+    }
+    return countof(t);
+}
+
+// The fields of `d` that the list or the arguments between `t[open]` and `t[close]` give: by name (`.a = 1`, `a = 1`)
+// or by position. Every field when an item has a form not read here (`[0] = 1`).
+static U64 given_of(Str source, lex::Tokens t, Usize open, Usize close, const Record *d) {
+    U64 given = 0;
+    Usize positional = 0;
+    Usize depth = 0;
+    Bool item_start = true;
+    for (Usize i = open + 1; i < close; i++) {
+        lex::TokenKind k = t[i].kind;
+        if (depth == 0 && item_start) {
+            item_start = false;
+            Str name = "";
+            if (k == lex::dot && i + 2 < close && t[i + 1].kind == lex::name &&
+                (t[i + 2].kind == lex::equal || t[i + 2].kind == lex::dot)) {
+                name = lex::text(source, t[i + 1]);
+            } else if (k == lex::name && i + 1 < close && t[i + 1].kind == lex::equal) {
+                name = lex::text(source, t[i]);
+            } else if (k == lex::left_bracket) {
+                return all_fields(d);
+            }
+            Usize f = countof(name) > 0 ? field_index(d, name) : fields_max;
+            if (f < fields_max) given |= (U64)1 << f;
+            if (countof(name) == 0) positional += 1;
+        }
+        if (opens(k)) depth += 1;
+        if (closes(k) && depth > 0) depth -= 1;
+        if (depth == 0 && k == lex::comma) item_start = true;
+    }
+    for (Usize k = 0; k < positional && k < fields_max; k++)
+        given |= (U64)1 << k;
+    return given;
+}
+
+// Whether the name `t[i]` is reached as `prefix.R` or `prefix::R` (bare, with no member before it, when `prefix` is
+// empty: the module's own file).
+static Bool prefixed(Str source, lex::Tokens t, Usize i, Str prefix) {
+    Bool member = i > 0 && is_member(t[i - 1].kind);
+    if (countof(prefix) == 0) return !member;
+    if (!member || t[i - 1].kind == lex::arrow || i < 2 || !same(lex::text(source, t[i - 2]), prefix)) return false;
+    return i < 3 || !is_member(t[i - 3].kind);
+}
+
+// The bracket that opens the construction of the record named at `t[i]`: `R(...)`, `(R){...}`, `R x = {...}` (not
+// `R x = {}`, which the fix of `{}` writes out); the number of tokens when it is none.
+static Usize construction_at(lex::Tokens t, Usize i, Usize start) {
+    Usize n = countof(t);
+    if (i + 1 < n && t[i + 1].kind == lex::left_paren) return i + 1;
+    if (i + 2 < n && start > 0 && t[start - 1].kind == lex::left_paren && t[i + 1].kind == lex::right_paren &&
+        t[i + 2].kind == lex::left_brace)
+        return i + 2;
+    if (i + 4 < n && t[i + 1].kind == lex::name && t[i + 2].kind == lex::equal && t[i + 3].kind == lex::left_brace &&
+        t[i + 4].kind != lex::right_brace)
+        return i + 3;
+    return n;
+}
+
+// The name a text gives the module whose file is `base`.smith: `state` for `import front::emit_state as state;`,
+// `emit_state` for `import front.emit_state`; empty when it imports no module of that name. The name, not the whole
+// path: once the fixer has written a file in smith's own syntax it has no `module` line left.
+static Str local_name(Str source, lex::Tokens t, Str base) {
+    Usize n = countof(t);
+    for (Usize i = 0; i < n; i++) {
+        if (t[i].kind != lex::kw_import) continue;
+        Usize k = i + 1;
+        while (k + 2 < n && t[k].kind == lex::name && (t[k + 1].kind == lex::dot || t[k + 1].kind == lex::colon_colon))
+            k += 2;
+        if (k >= n || t[k].kind != lex::name || !same(lex::text(source, t[k]), base)) continue;
+        if (k + 2 < n && t[k + 1].kind == lex::kw_as) return lex::text(source, t[k + 2]);
+        return base;
+    }
+    return "";
+}
+
+// The fields left out by the constructions of the module's records in `source`: the module's own file (`own`), or a
+// file that imports it, where a record is reached through the name it gives the module.
+static void scan_file(Wanted *w, Str source, Str base, Bool own) {
+    if (!own && (countof(base) == 0 || !mentions(source, base))) return;
+    lex::Lexed lexed = lex::tokenize_new(source);
+    if (lexed == .error) lexed = lex::tokenize(source);
+    if (lexed == .error) return;
+    lex::Tokens t = lexed.ok;
+    Str prefix = "";
+    if (!own) prefix = local_name(source, t, base);
+    for (Usize i = 0; i + 1 < countof(t) && (own || countof(prefix) > 0); i++) {
+        if (t[i].kind != lex::type_name && t[i].kind != lex::name) continue;
+        Usize r = record_index(w, lex::text(source, t[i]));
+        if (r == w->count || !prefixed(source, t, i, prefix)) continue;
+        Usize open = construction_at(t, i, countof(prefix) == 0 ? i : i - 2);
+        Usize close = open < countof(t) ? closing(t, open) : countof(t);
+        if (close == countof(t)) continue;
+        w->left[r] |= all_fields(&w->records[r]) & ~given_of(source, t, open, close, &w->records[r]);
+    }
+    mem::free(t.data);
+}
+
+constexpr Usize cache_text_max = 256;
+
+// What the files beside a module leave out, kept for the file the fixer works on: its passes run many times, and the
+// files beside it do not change meanwhile. The names are copied, so no pointer outlives the memory of a run.
+struct SiblingCache {
+    char file[cache_text_max];
+    Usize file_length;
+    char names[records_max][cache_text_max];
+    Usize name_lengths[records_max];
+    U64 left[records_max];
+    Usize count;
+};
+
+static SiblingCache sibling_cache;
+
+static Usize copy_into(char to[:], Str from) {
+    Usize n = countof(from) < countof(to) ? countof(from) : countof(to);
+    for (Usize i = 0; i < n; i++)
+        to[i] = from[i];
+    return n;
+}
+
+static Bool exports_a_record(const Wanted *w) {
+    for (Usize r = 0; r < w->count; r++)
+        if (w->records[r].exported) return true;
+    return false;
+}
+
+// The folder of `file` (`.` when it has none).
+static Str folder_of(Str file) {
+    for (Usize i = countof(file); i > 0; i--)
+        if (file[i - 1] == '/') return i == 1 ? file[0:1] : file[0:i - 1];
+    return ".";
+}
+
+// The name of `file` without its folder and its `.smith`: the last name of its module.
+static Str base_of(Str file) {
+    Usize start = 0;
+    for (Usize i = countof(file); i > 0 && start == 0; i--)
+        if (file[i - 1] == '/') start = i;
+    Usize end = countof(file);
+    if (end >= start + 6 && same(file[end - 6:end], ".smith")) end -= 6;
+    return file[start:end];
+}
+
+// The constructions in the other `.smith` files of the module's folder (the files that can reach a record a module
+// exports are its neighbours in the tree; a file elsewhere is not read).
+static void scan_siblings(Wanted *w, const ast::Module *module) {
+    Str folder = folder_of(module->file);
+    files::EntriesResult listed = files::list(folder);
+    if (listed == .error) return;
+    for (Usize i = 0; i < countof(listed.ok); i++) {
+        files::Entry entry = listed.ok[i];
+        Usize n = countof(entry.name);
+        if (entry.folder || n < 7 || !same(entry.name[n - 6:n], ".smith")) continue;
+        Str path = types::message_of(format::push(folder, "/", entry.name));
+        if (same(path, module->file) || same(entry.name, module->file)) continue;
+        files::BytesResult loaded = files::read_file(path);
+        if (loaded == .error) continue;
+        format::Chars chars = mem::view(loaded.ok, char);
+        scan_file(w, chars, base_of(module->file), false);
+    }
+}
+
+static void from_siblings(Wanted *w, const ast::Module *module) {
+    if (!exports_a_record(w) || countof(base_of(module->file)) == 0 || countof(module->file) >= cache_text_max) return;
+    SiblingCache *cache = &sibling_cache;
+    if (!same(cache->file[0:cache->file_length], module->file)) {
+        Wanted found = *w;
+        for (Usize r = 0; r < found.count; r++)
+            found.left[r] = 0;
+        scan_siblings(&found, module);
+        cache->file_length = copy_into(cache->file[0:cache_text_max], module->file);
+        cache->count = found.count;
+        for (Usize r = 0; r < found.count; r++) {
+            cache->name_lengths[r] = copy_into(cache->names[r][0:cache_text_max], found.records[r].name);
+            cache->left[r] = found.left[r];
+        }
+    }
+    for (Usize r = 0; r < cache->count; r++) {
+        Usize at = record_index(w, cache->names[r][0:cache->name_lengths[r]]);
+        if (at < w->count) w->left[at] |= cache->left[r];
+    }
+}
+
+// The type of a field, resolved in the module as smith's own syntax; null when it does not resolve. Resolving it must
+// not leave an error behind.
+static types::TypeRef field_type(types::Checked *c, const ast::FieldDecl *f) {
+    Usize errors_before = c->error_count;
+    Bool was_new = c->new_syntax;
+    c->new_syntax = true;
+    types::TypeRef t = types::resolve(c, f->type);
+    c->new_syntax = was_new;
+    c->error_count = errors_before;
+    return t;
+}
+
+// A record of the module that a field left out holds is built with `R()`, so every field of it is left out too, a
+// few records deep.
+static void nest(Wanted *w, types::Checked *c) {
+    for (Usize pass = 0; pass < 4; pass++) {
+        for (Usize r = 0; r < w->count; r++) {
+            ast::FieldDecl fields[:] = w->records[r].fields;
+            for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+                if ((w->left[r] & ((U64)1 << k)) == 0 || fields[k].type == nullptr) continue;
+                types::TypeRef t = field_type(c, &fields[k]);
+                if (t == nullptr || t->kind != .record || countof(t->owner) > 0) continue;
+                Usize e = record_index(w, t->name);
+                if (e < w->count) w->left[e] = all_fields(&w->records[e]);
+            }
+        }
+    }
+}
+
+// The zero of the field `f` written as its default; empty when smith has none to write: a pointer (it becomes `?*T`,
+// a later step), a function, a type with no zero spelling (#2530 points 3 and 4).
+static Str default_of(Str source, types::Checked *c, const ast::FieldDecl *f, const Wanted *w, Bool *filled) {
+    types::TypeRef t = field_type(c, f);
+    if (t == nullptr) return "";
+    if (t->kind == .text) return "\"\"";
+    if (t->kind == .option) return ".none";
+    if (t->kind == .pointer) return "";
+    Str zero = "";
+    if (t->kind == .record && countof(t->owner) == 0 && record_index(w, t->name) < w->count) {
+        zero = types::message_of(format::push(t->name, "()"));
+    } else if (t->kind == .record) {
+        Bool defaulted = countof(t->slots) > 0;
+        for (Usize k = 0; k < countof(t->slots); k++)
+            if (t->slots[k].default_value == nullptr) defaulted = false;
+        zero = defaulted ? types::message_of(format::push(types::show(t), "()")) : construct(types::show(t), t);
+    } else if (t->kind == .array) {
+        Str written = source[f->type->span.start:f->type->span.end];
+        Usize close = 0;
+        for (Usize k = 0; k < countof(written); k++)
+            if (written[k] == ']') close = k;
+        if (close + 1 < countof(written)) zero = construct_array(written[close + 1:countof(written)], t);
+        if (countof(zero) > 0 && !mentions(zero, "nullptr")) *filled = true;
+    } else {
+        zero = scalar_zero(t);
+    }
+    if (mentions(zero, "nullptr")) return "";
+    return zero;
+}
+
+// The defaults of the fields of the module's records that some construction leaves out, one insertion after each
+// field's type: `count: usize = 0`.
+static core::Errors defaults(Str source, const ast::Module *module, types::Checked *c, core::Errors out, Bool *filled) {
+    Wanted w = records_of(module);
+    if (w.count == 0) return out;
+    from_checker(&w, c);
+    scan_file(&w, source, "", true);
+    from_siblings(&w, module);
+    nest(&w, c);
+    for (Usize r = 0; r < w.count; r++) {
+        ast::FieldDecl fields[:] = w.records[r].fields;
+        for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+            const ast::FieldDecl *f = &fields[k];
+            if ((w.left[r] & ((U64)1 << k)) == 0 || !f->is_new || f->default_value != nullptr) continue;
+            if (f->bit_width != nullptr || f->type == nullptr || !nameable(f->name)) continue;
+            Str zero = default_of(source, c, f, &w, filled);
+            if (countof(zero) == 0) continue;
+            core::Edits fix = {};
+            fix = mem::realloc(fix, 1);
+            U32 at = f->type->span.end;
+            fix[0] =
+                (core::Edit){.span = {.start = at, .end = at}, .text = types::message_of(format::push(" = ", zero))};
+            core::ParseError found = {};
+            found.span = f->span;
+            found.message = "a field that a construction leaves out gets its zero as its default";
+            found.fix = fix;
+            out = add(out, found);
+        }
+    }
+    return out;
+}
+
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
+    Bool filled = false;
+    out = defaults(source, module, c, out, &filled);
+    Wanted local = records_of(module);
     const ast::Expr *last = nullptr;
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error error = c->errors[i];
-        if (error.left_out_call == nullptr || error.left_out_call == last) continue;
+        types::TypeRef record = error.left_out_record;
+        if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
+        Bool from_header = same(record->owner, "c::");
+        if (!from_header && (countof(record->owner) > 0 || record_index(&local, record->name) < local.count)) continue;
         last = error.left_out_call;
-        out = add(out, left_out_fix(error.left_out_call, error.left_out_record, error.left_out_given));
+        out = add(out, left_out_fix(error.left_out_call, record, error.left_out_given));
     }
-    Bool filled = false;
     Work w = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];

@@ -2467,7 +2467,7 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
 static void builtin_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     builtins::Entry builtin = {};
-    if (e->kind != .call || !builtins::callee_entry(c, e->kind.call.callee, &builtin)) {
+    if (e->kind != .call || !builtins::call_entry(c, e, &builtin)) {
         poison(c, e);
         return;
     }
@@ -2884,9 +2884,25 @@ static void construct_before(Work *w, Frame f, types::TypeRef record) {
 // Outside the module that declares the record, a record with a private field is built only by a function of that
 // module, even when every private field has a default (#1813). A record whose fields are all `pub` is built anywhere.
 // False, after an error, when the record may not be built here.
-static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record) {
+// A private field with a default that the construction leaves out is filled by its default (#2530), so it does not
+// stop another module from building the struct; giving it a value does.
+static Bool gives_field(ast::ExprRef args[:], Usize index, Str name) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind != .named_arg) {
+            if (i == index) return true;
+        } else if (same_text(arg->kind.named_arg.name, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool private_construction(types::Checked *c, const ast::Expr *e, ast::ExprRef args[:], types::TypeRef record) {
     for (Usize i = 0; i < countof(record->slots); i++) {
-        if (!types::field_visible(record, &record->slots[i])) {
+        const types::Slot *slot = &record->slots[i];
+        if (slot->default_value != nullptr && !gives_field(args, i, slot->name)) continue;
+        if (!types::field_visible(record, slot)) {
             types::private_build(c, e->span, record);
             return false;
         }
@@ -2943,7 +2959,7 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     ast::ExprRef args[:] = e->kind.call.args;
     Str shown = types::show(record);
     Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
-    Bool ok = private_construction(c, e, record);
+    Bool ok = private_construction(c, e, args, record);
     Bool built_here = ok;
     Bool by_name = false;
     for (Usize i = 0; i < countof(args); i++) {
@@ -5605,6 +5621,12 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
         // the shape `[a, b]` of `array.filled` is read by the builtin, not typed as an array (#2496)
         const ast::Expr *shape = args[i - 1];
         if (builtin.shape == .filled && i == 2 && shape->kind == .array_lit) continue;
+        if (builtin.shape == .alloc && i == countof(args)) { // `mem.alloc(T, [a, b])`: each size a `usize`
+            for (Usize k = shape->kind == .array_lit ? countof(shape->kind.array_lit.items) : 1; k > 0; k--)
+                push(w, shape->kind == .array_lit ? shape->kind.array_lit.items[k - 1] : shape, builtins::size_type(c),
+                     0);
+            continue;
+        }
         if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);
@@ -5625,7 +5647,9 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     const ast::Expr *callee = e->kind.call.callee;
-    const types::Symbol *template = generic_callee(c, callee);
+    // `mem.alloc(T, n)` is the builtin, `mem.alloc(T)` the generic of std.mem (#2527)
+    const types::Symbol *template =
+        builtins::names_alloc(c, callee, countof(e->kind.call.args)) ? nullptr : generic_callee(c, callee);
     if (template != nullptr) {
         generic_before(c, w, f, template);
         return;
@@ -5666,7 +5690,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     }
     ast::ExprRef args[:] = e->kind.call.args;
     builtins::Entry builtin = {};
-    if (builtins::callee_entry(c, callee, &builtin)) {
+    if (builtins::call_entry(c, e, &builtin)) {
         push(w, e, f.expected, 10); // a clang builtin (#2286): the arguments, then `builtins::check`
         push_builtin_arguments(c, w, e, args, builtin);
         return;

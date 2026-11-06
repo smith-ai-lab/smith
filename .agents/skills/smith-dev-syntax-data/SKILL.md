@@ -54,6 +54,6 @@ r := (count = 3, ms = 1.5)
 ms := r.ms                          # fields(typeof(r)) reads it too
 ```
 
-- Every field is given, unless the struct declares a default for it. There is no zero value: `T()` builds only a struct whose fields all have defaults. A struct with private fields is built outside its module by a function of that module ([smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md)).
+- Every field is given, unless the struct declares a default for it. There is no zero value: `T()` builds only a struct whose fields all have defaults. Ported C writes C's zero as the default of each field a construction leaves out (`count: usize = 0`, `name: str = ""`, `parent: ?*Work = .none`, #2530, [smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md)). A struct with private fields is built outside its module by a function of that module ([smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md)).
 - The parser reads `Point(1, 2)` as a call; the checker sees that `Point` is a type. Braces are gone: `Point{x = 1}` is an error whose fix writes `Point(x = 1)`.
 - An array is filled with `array.filled(T, n, value)` (`import std.array`) or left `= undefined`.

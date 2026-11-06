@@ -294,6 +294,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
         ty = e->records[index].ty;
         return ty;
     }
+    types::TypeRef bound = nullptr;
+    if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
     return ty_failf(base->span, "unknown type ", name);
 }
 

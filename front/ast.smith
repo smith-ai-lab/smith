@@ -479,6 +479,10 @@ export typedef enum {
         Stmt *body;
     } for_in; // `for x in xs`, `for (i, x) in xs`
     struct {
+        Identifier names[:]; // the indices, new constant names of the body: `for i, j:`
+        Stmt *body;
+    } for_index; // `for i, j: body`, an index over an array's shape, no `in` (#2512)
+    struct {
         Identifier names[:];
         Bool is_mut;
         Expr *init;
@@ -1020,6 +1024,12 @@ export Stmt *for_in(Identifier names[:], Bool is_tuple, Expr *iterable, Stmt *bo
     return stmt(kind);
 }
 
+// `for i, j: body`: indices over an array's shape, no `in` (#2512).
+export Stmt *for_index(Identifier names[:], Stmt *body) {
+    StmtKind kind = {.for_index = {.names = copy_names(names), .body = body}};
+    return stmt(kind);
+}
+
 // `let (q, r) = f()`.
 export Stmt *destructure(Identifier names[:], Bool is_mut, Expr *init) {
     StmtKind kind = {.destructure = {.names = copy_names(names), .is_mut = is_mut, .init = init}};
@@ -1382,6 +1392,9 @@ static void stmt_children_more(Items *items, Stmt *s) {
         add_expr(items, s->kind.for_in.iterable, false);
         add_stmt(items, s->kind.for_in.body, false);
     }
+    if (s->kind == .for_index) {
+        add_stmt(items, s->kind.for_index.body, false);
+    }
     if (s->kind == .destructure) {
         add_expr(items, s->kind.destructure.init, false);
     }
@@ -1433,6 +1446,7 @@ static void stmt_children(Items *items, Stmt *s) {
         break;
     case .match_stmt:
     case .for_in:
+    case .for_index:
     case .destructure:
     case .if_let:
         stmt_children_more(items, s);
@@ -1899,6 +1913,10 @@ static void stmt_head_more(Output *text, Stmt *s) {
         put_flag(text, s->kind.for_in.is_tuple, "tuple");
         put_names(text, s->kind.for_in.names);
     }
+    if (s->kind == .for_index) {
+        put(text, "for_index");
+        put_names(text, s->kind.for_index.names);
+    }
     if (s->kind == .destructure) {
         put(text, "destructure");
         put_flag(text, s->kind.destructure.is_mut, "mut");
@@ -1969,6 +1987,7 @@ static void stmt_head(Output *text, Stmt *s) {
         break;
     case .match_stmt:
     case .for_in:
+    case .for_index:
     case .destructure:
     case .if_let:
         stmt_head_more(text, s);
@@ -2447,6 +2466,11 @@ static void note_stmt(Symbols *list, Usize *used, const Stmt *s, Span everywhere
         for (Usize i = 0; i < countof(s->kind.for_in.names); i++) {
             Identifier n = s->kind.for_in.names[i];
             note(list, used, symbol_of(n.text, sym_variable, !n.is_mut, n.span, s->span));
+        }
+    } else if (s->kind == .for_index) {
+        for (Usize i = 0; i < countof(s->kind.for_index.names); i++) {
+            Identifier n = s->kind.for_index.names[i];
+            note(list, used, symbol_of(n.text, sym_variable, true, n.span, s->span));
         }
     } else if (s->kind == .destructure) {
         for (Usize i = 0; i < countof(s->kind.destructure.names); i++) {

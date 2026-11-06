@@ -58,19 +58,20 @@ import std::mem;
 // What an open construct waits for.
 // NOLINTBEGIN(readability-identifier-naming)
 enum FrameKind {
-    block_frame,   // statements up to `}`
-    if_then,       // the then branch
-    if_else,       // the else branch
-    while_body,    // the body of a while
-    do_body,       // the body of a do, then `while (c);`
-    for_body,      // the body of a for
-    switch_frame,  // labels and statements up to `}`
-    label_body,    // the statement after `l:`
-    defer_body,    // the statement after `defer`
-    errdefer_body, // the statement after `errdefer`
-    for_in_body,   // the body of a `for x in xs`
-    bind_else,     // the `else:` of a refutable binding `.v(x) := value else:` (#2494)
-    bind_rest,     // and the rest of the block it is in, which is its then branch: ends where that block ends
+    block_frame,    // statements up to `}`
+    if_then,        // the then branch
+    if_else,        // the else branch
+    while_body,     // the body of a while
+    do_body,        // the body of a do, then `while (c);`
+    for_body,       // the body of a for
+    switch_frame,   // labels and statements up to `}`
+    label_body,     // the statement after `l:`
+    defer_body,     // the statement after `defer`
+    errdefer_body,  // the statement after `errdefer`
+    for_in_body,    // the body of a `for x in xs`
+    for_index_body, // the body of a `for i, j:`
+    bind_else,      // the `else:` of a refutable binding `.v(x) := value else:` (#2494)
+    bind_rest,      // and the rest of the block it is in, which is its then branch: ends where that block ends
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -1126,6 +1127,42 @@ static Frame open_for_in(parse::Parser *p) {
     return frame;
 }
 
+// Whether the `for` at the position is the index form, `for i:` or `for i, j:` (no `in`, #2512).
+static Bool index_for(const parse::Parser *p) {
+    if (!p->layout) return false;
+    Usize at = 1;
+    for (Usize i = 0; i < countof(p->tokens); i++) {
+        if (parse::peek_at(p, at).kind != lex::name) return false;
+        lex::TokenKind after = parse::peek_at(p, at + 1).kind;
+        if (after == lex::colon) return true;
+        if (after != lex::comma) return false;
+        at += 2;
+    }
+    return false;
+}
+
+// `for i, j:`. The names are new constants of the body: a repeated one, or an empty body, is an error. The node is
+// made here and its body set when the block is read (`frame.init` holds it).
+static Frame open_for_index(parse::Parser *p) {
+    Frame frame = {.kind = for_index_body, .start = parse::advance(p).span.start};
+    Usize before = countof(p->errors);
+    ast::Identifier names[:] = {};
+    Usize limit = countof(p->tokens);
+    for (Usize i = 0; i < limit && countof(p->errors) == before; i++) {
+        lex::Token token = parse::expect(p, lex::name, "an index name");
+        Str text = parse::text(p, token);
+        for (Usize k = 0; k < countof(names); k++) {
+            if (mem::equal(names[k].text, text)) parse::error(p, token.span, "the index name is repeated");
+        }
+        names = mem::realloc(names, countof(names) + 1);
+        names[countof(names) - 1] = (ast::Identifier){.text = text, .span = token.span};
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    frame.no_body = !require_body(p, before);
+    frame.init = ast::for_index(names, nullptr);
+    return frame;
+}
+
 // Skips the balanced `{ }` whose `{` is at `open`.
 static void skip_braces(parse::Parser *p, Usize open) {
     p->position = open;
@@ -1507,6 +1544,7 @@ static ast::Stmt *pointer_statement(parse::Parser *p) {
 
 // `for [constexpr] (init; cond; step)`. A broken header is skipped as a whole.
 static Frame open_for(parse::Parser *p) {
+    if (index_for(p)) return open_for_index(p);
     if (new_for(p)) return open_for_in(p);
     Frame frame = {.kind = for_body, .start = parse::advance(p).span.start};
     U32 cut_start = parse::peek(p).span.start;
@@ -2026,6 +2064,10 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
     case for_in_body:
         built = frame.init;
         if (built->kind == .for_in) built->kind.for_in.body = done;
+        break;
+    case for_index_body:
+        built = frame.init;
+        if (built->kind == .for_index) built->kind.for_index.body = done;
         break;
     case label_body:
         built = new_stmt({.labeled = {.label = frame.label, .body = done}});
