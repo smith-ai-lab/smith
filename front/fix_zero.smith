@@ -739,9 +739,9 @@ static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[re
     }
 }
 
-// Whether the file has `from <path>.<base> import ...` and, with a `name`, whether that line imports `name` (D6: a build
-// file writes `from std.build import Build, App` and builds `App(...)` with no module in front of it). An empty `name`
-// asks only for the line.
+// Whether the file has `from <path>.<base> import ...` and, with a `name`, whether that line imports `name` (D6: a
+// build file writes `from std.build import Build, App` and builds `App(...)` with no module in front of it). An empty
+// `name` asks only for the line.
 static Bool from_imported(Str source, lex::Tokens t, Str base, Str name) {
     Usize n = countof(t);
     for (Usize i = 0; i + 3 < n; i++) {
