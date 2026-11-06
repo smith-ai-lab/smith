@@ -260,3 +260,66 @@ export void test_front_emit_bind_a_name_in_scope_is_an_error() {
                 "    h\n",
                 "hides a variable");
 }
+
+// `.v(mut x)` binds a name that can change (#2503).
+export void test_front_emit_bind_a_mut_binding_can_change() {
+    char source[:] = format::push(shapes, "pub fn grown(n: i32) -> i32:\n"
+                                          "    .circle(mut circle) := make(n) else: return -1\n"
+                                          "    circle.radius += 5\n"
+                                          "    circle.radius\n");
+    runs(source, "grown", 0, 7, 2, -1);
+}
+
+export void test_front_emit_bind_a_binding_without_mut_cannot_change() {
+    char source[:] = format::push(shapes, "fn grown(n: i32) -> i32:\n"
+                                          "    .circle(circle) := make(n) else: return -1\n"
+                                          "    circle.radius += 5\n"
+                                          "    circle.radius\n");
+    is_rejected(source, "circle");
+}
+
+// A refutable binding on a `?T` in a generic function, `T` its parameter.
+export void test_front_emit_bind_an_option_of_a_type_parameter_binds_it() {
+    runs("fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "fn or_else[T](o: ?T, fallback: T) -> T:\n"
+         "    v := o else: return fallback\n"
+         "    v\n"
+         "pub fn halved(n: i32) -> i32:\n"
+         "    or_else(half(n), -1)\n",
+         "halved", 8, 4, 3, -1);
+}
+
+// Checked without errors.
+static void is_accepted(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    test::check_equal(checked.error_count, (Usize)0);
+    Str none = "";
+    if (checked.error_count > 0) test::check_equal(checked.errors[0].message, none);
+}
+
+// A result binds `.ok(ok)` or `.error(error)`, in a binding, in a generic function and in a `match` (#2503).
+export void test_front_emit_bind_a_result_binds_ok_and_error() {
+    is_accepted("fn value_or[T](r: Result(T, i32), fallback: T) -> T:\n"
+                "    .ok(ok) := r else: return fallback\n"
+                "    ok\n"
+                "fn code(r: Result(i32, i32)) -> i32:\n"
+                "    match r:\n"
+                "        .ok(ok): ok + value_or(r, 0)\n"
+                "        .error(error): error\n");
+}
+
+export void test_front_emit_bind_a_match_on_a_result_names_both() {
+    is_rejected("fn code(r: Result(i32, i32)) -> i32:\n"
+                "    match r:\n"
+                "        .ok(ok): ok\n",
+                "`.error(error)`");
+}

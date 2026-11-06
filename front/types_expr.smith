@@ -1312,8 +1312,14 @@ static types::TypeRef unary_step(types::Checked *c, const ast::Expr *e, const as
     return invalid(c);
 }
 
+static void spoil_written(types::Checked *c, const ast::Expr *place);
+
 static types::TypeRef unary_type(types::Checked *c, const ast::Expr *e, ast::UnaryOp op, const ast::Expr *operand,
                                  types::TypeRef t) {
+    if (op == .address_of || op == .pre_increment || op == .pre_decrement || op == .post_increment ||
+        op == .post_decrement) {
+        spoil_written(c, operand);
+    }
     if (op == .address_of) {
         return unary_address(c, e, operand, t);
     }
@@ -2022,6 +2028,7 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *target = e->kind.assign.target;
     const ast::Expr *value = e->kind.assign.value;
     types::TypeRef tt = typ(c, target);
+    spoil_written(c, target);
     if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
         typ(c, target->kind.index.base)->element->kind == .bool_type) {
         types::failf(c, target->span, "a lane of `", types::show(typ(c, target->kind.index.base)),
@@ -3148,31 +3155,84 @@ static Bool same_place(const ast::Expr *a, const ast::Expr *b) {
     return false;
 }
 
-// `k.v` where a test `k == .v` or `k != .v: return` guards the read (#2494): the read is the binding `v`, and the first
-// one of a test also writes the test as `.v(v) := k`. No edits when no test guards it.
-static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
-    syntax::Edits none = {};
+// The test that guards the read `k.v`, or null: one `k == .v` or `k != .v: return` whose reads hold it (#2494).
+static types::Guard *guard_of(types::Checked *c, const ast::Expr *e) {
     if (!(e->kind == .member)) {
-        return none;
+        return nullptr;
     }
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
-        if (!inside || !same_text(g->variant, e->kind.member.name) || !same_place(g->base, e->kind.member.base)) {
-            continue;
+        Bool skipped = e->span.start >= g->skip.start && e->span.end <= g->skip.end && g->skip.end > g->skip.start;
+        if (inside && !skipped && same_text(g->variant, e->kind.member.name) && same_place(g->base, e->kind.member.base)) {
+            return g;
         }
-        syntax::Edits fix = {};
-        fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
-        fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
-        if (!g->head_sent) {
-            for (Usize k = 0; k < countof(g->head); k++) {
-                fix[1 + k] = g->head[k];
+    }
+    return nullptr;
+}
+
+// `k.v` where a test guards the read: the read is the binding `v`, and the first one of a test also writes the test as
+// `.v(v) := k`. No edits when no test guards it, or the site is spoiled.
+static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
+    syntax::Edits none = {};
+    types::Guard *g = guard_of(c, e);
+    if (g == nullptr || g->spoiled) {
+        return none;
+    }
+    syntax::Edits fix = {};
+    fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
+    fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
+    if (!g->head_sent) {
+        for (Usize k = 0; k < countof(g->head); k++) {
+            fix[1 + k] = g->head[k];
+        }
+    }
+    g->head_sent = true;
+    return fix;
+}
+
+// Whether `place` is `base` or a part of the chain that leads to it (`e` and `e.kind` for `e.kind`).
+static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
+    while (true) {
+        if (same_place(place, base)) return true;
+        if (!(base->kind == .member)) return false;
+        base = base->kind.member.base;
+    }
+}
+
+// A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
+// so the test's site is left as it is (#2503).
+static void spoil_written(types::Checked *c, const ast::Expr *place) {
+    for (Usize i = 0; i < c->guard_count; i++) {
+        types::Guard *g = &c->guards[i];
+        Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
+        if (inside && leads_to(place, g->base)) g->spoiled = true;
+    }
+    while (place->kind == .member || place->kind == .index) {
+        types::Guard *g = guard_of(c, place);
+        if (g != nullptr) g->spoiled = true;
+        if (place->kind == .member) {
+            place = place->kind.member.base;
+        } else if (place->kind == .index) {
+            place = place->kind.index.base;
+        }
+    }
+}
+
+// The fixes of the reads of a spoiled test, from the error `from` on, are taken back: the site stays as it is.
+export void drop_spoiled(types::Checked *c, Usize from) {
+    for (Usize i = 0; i < c->guard_count; i++) {
+        types::Guard *g = &c->guards[i];
+        if (!g->spoiled || !g->head_sent) continue;
+        for (Usize k = from; k < c->error_count; k++) {
+            types::Error *e = &c->errors[k];
+            Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+            if (inside && countof(e->fix) > 0 && same_text(e->fix[0].text, g->variant)) {
+                syntax::Edits none = {};
+                e->fix = none;
             }
         }
-        g->head_sent = true;
-        return fix;
     }
-    return none;
 }
 
 // The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
@@ -3189,8 +3249,14 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         return base;
     }
     Str found = types::show(base);
-    if (base->kind == .enumeration && base->has_payload) {
-        Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `.",
+    syntax::Edits bound = base->kind == .result_type ? guarded_read(c, e) : (syntax::Edits){};
+    if (countof(bound) > 0) { // a result read after its test (#2503): `.ok(ok)` and `.error(error)` bind it
+        types::fail_fix(c, e->span,
+                        msg(format::push("`", found, "` is a result, so its value can't be read with `.`; test it ",
+                                         "first, with `.ok(ok) := r else:` or a `match`")),
+                        bound);
+    } else if (base->kind == .enumeration && base->has_payload) {
+        Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
                                      "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
         syntax::Edits fix = guarded_read(c, e);
@@ -4122,6 +4188,12 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
         }
         return 2;
     }
+    if (t->kind == .result_type) { // `.ok(x)` and `.error(e)` (#2503)
+        if (same_text(name, "ok")) return 0;
+        if (same_text(name, "error")) return 1;
+        if (report) types::failf(c, span, "a result is either `.ok(x)` or `.error(e)`, not `.", name, "`; write one of those");
+        return 2;
+    }
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) {
             Bool carries = t->has_payload && carries_value(t->slots[i].type);
@@ -4143,6 +4215,7 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
 // that says why, when it has none (#2494).
 export types::TypeRef pattern_payload(types::Checked *c, ast::Span span, types::TypeRef t, ast::Pattern pat) {
     Usize at = case_of(c, span, t, pat, true);
+    if (t->kind == .result_type) return at == 0 ? t->element : at == 1 ? t->error : invalid(c);
     if (at >= countof(t->slots)) return invalid(c);
     return t->slots[at].type;
 }
@@ -4153,7 +4226,7 @@ static Bool scalar_match(types::TypeRef t) {
 }
 
 static Bool matchable(types::TypeRef t) {
-    return t->kind == .enumeration || t->kind == .option || scalar_match(t);
+    return t->kind == .enumeration || t->kind == .option || t->kind == .result_type || scalar_match(t);
 }
 
 // Whether a pattern has the form of a constant: a literal, its negation, a name or a header's `k.NAME`.
@@ -4237,7 +4310,7 @@ static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern p
 }
 
 static Usize case_count(types::TypeRef t) {
-    if (t->kind == .option) {
+    if (t->kind == .option || t->kind == .result_type) {
         return 2;
     }
     return countof(t->slots);
@@ -4269,8 +4342,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
         }
         if (known) {
             Usize at = case_of(c, s->span, t, pats[k], true);
-            if (t->kind == .option && at == 0) {
+            if ((t->kind == .option || t->kind == .result_type) && at == 0) {
                 element = t->element;
+            } else if (t->kind == .result_type && at == 1) {
+                element = t->error;
             } else if (t->kind == .enumeration && at < countof(t->slots) && t->has_payload) {
                 element = t->slots[at].type;
             }
@@ -4293,6 +4368,8 @@ static Str missing_list(types::TypeRef t, Bool seen[:]) {
         Str name = "none";
         if (t->kind == .enumeration) {
             name = t->slots[i].name;
+        } else if (t->kind == .result_type) {
+            name = i == 0 ? "ok(ok)" : "error(error)";
         } else if (i == 0) {
             name = "some(x)";
         }
