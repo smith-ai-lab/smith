@@ -338,8 +338,7 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     if (s != nullptr) {
         return s->is_new;
     }
-    // no variable at the root: a call (`unerase(x).size`) or a cast (`p.cast(*T).size`) is in
-    // smith's own syntax when its body is (#2219)
+    // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
     const ast::Expr *at = e;
     while (at != nullptr && (at->kind == .member || at->kind == .index)) {
         if (at->kind == .member) {
@@ -1954,9 +1953,8 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
-    // A shift has the type of its left operand, so a literal there takes the type the context expects: `64 << 10`
-    // for a `usize` is a `usize`, as `64` alone is.
-    if (is_shift(op) && literal_like(left) && expected != nullptr && is_number(expected) &&
+    // `64 << 10` where a `usize` is expected: the shifted literal takes the expected type (the count is its own).
+    if (is_shift(op) && expected != nullptr && is_number(expected) && literal_like(left) &&
         adaptable(typ(c, left), expected) && !retype(c, left, expected)) {
         poison(c, e);
         return;
@@ -3122,8 +3120,8 @@ static void slice_after(types::Checked *c, Frame f) {
         // smith's own syntax a slice of a read-only pointer is a `[]T` too: its const would make it no `[]T` (#2386).
         Bool element_const = base->pointee_const && !(typed_pointer && c->new_body);
         result = types::slice_of(&c->table, base->element, element_const);
-    } else if (base->kind == .text || base->kind == .block) {
-        result = base;
+    } else if (base->kind == .text || base->kind == .block || base->kind == .type_type) {
+        result = base; // `t[:]` of a type value is a type value: the slice of that type, made where it is computed
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
                      "`; slice an array, a slice, a `Str` or a typed pointer");

@@ -349,7 +349,7 @@ static state::Status compare_finish(state::Emitter *e, const state::Work *w) {
     state::Value left = state::pop_value(e);
     if (!state::same_type(left.ty, right.ty))
         return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
-    if (left.ty.kind != .integer && left.ty.kind != .boolean && left.ty.kind != .pointer)
+    if (left.ty.kind != .integer && left.ty.kind != .boolean && left.ty.kind != .pointer && left.ty.kind != .fn_pointer)
         return state::failf(w->span, "comparison of ", left.ty.name);
     c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate(op, left.ty.is_signed), left.llvm, right.llvm, "");
     state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});

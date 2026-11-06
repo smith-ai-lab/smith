@@ -91,6 +91,8 @@ export typedef enum {
     option;       // `?T`: `element` is the payload
     tuple;        // `parts` are the elements
     fn_value;     // `parts` are the parameters, `element` the result
+    fn_pointer;   // a C function pointer (a field of a header's struct): the bare `ptr`, `parts` and `element` as
+                  // `fn_value`
     slice;        // next batch
     floating;     // next batch
     block;        // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`, `count` the dimensions, `element` the cell (#1710)
