@@ -2459,10 +2459,25 @@ static ast::Decl *parse_tag(parse::Parser *p, const Prefixes *pre, U32 start) {
     return make(p, start, pre, kind);
 }
 
-// `typedef T Name;` is `Name := T` (the type follows the name); an array suffix is a warning with no edits.
+static Bool contains(Str text, Str piece);
+
+// `typedef T Name;` is `Name := T` (the type follows the name); an array suffix is a warning with no edits. A pointer
+// to a non-const `T` is `*mut T` and a slice of one `[]mut T`, as a function's result is (#2508): no write through the
+// alias could be mended later, since the checker's `*mut` fix edits a declaration, not a typedef other files use.
 static void fix_typedef_alias(parse::Parser *p, U32 typedef_start, Head head, lex::Token semi, Dims dims) {
     Str name = parse::text(p, head.name);
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
+    Str raw = p->source[head.type_start:head.name.span.start];
+    if (!contains(raw, "const") && !starts_with(written, "*mut ") && !starts_with(written, "[]mut ")) {
+        if (starts_with(written, "*") && !starts_with(written, "*void")) {
+            written = as_str(format::push("*mut ", written[1:countof(written)]));
+        } else if (starts_with(written, "[]")) {
+            written = as_str(format::push("[]mut ", written[2:countof(written)]));
+        } else if (starts_with(written, "typeof([]")) {
+            // `typeof(T[:])` reads `typeof([]T)` here; the next round turns `typeof([]mut T)` into `[]mut T`.
+            written = as_str(format::push("typeof([]mut ", written[9:countof(written)]));
+        }
+    }
     parse::Edits edits = {};
     if (dims.blocked || semi.kind != lex::semicolon) {
         warn(p, typedef_start, semi.span.end,
