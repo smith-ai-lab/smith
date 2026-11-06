@@ -64,9 +64,9 @@ static Bool is_simple(const ast::Expr *e) {
 // The expression the method form takes as its receiver, or null when the call has no equivalent method form: `&x` for
 // a function that takes a pointer (the method form takes the address itself), a pointer passed on as it is, a value
 // passed to a function that takes the value.
-static const ast::Expr *receiver(const ast::Expr *first, types::TypeRef given, const types::Symbol *callee) {
+static const ast::Expr *receiver(const ast::Expr *first, types::TypeRef given, const types::Symbol *function_sym) {
     Bool takes_pointer = false;
-    types::TypeRef takes = callee->type->slots[0].type;
+    types::TypeRef takes = function_sym->type->slots[0].type;
     if (takes->kind == .pointer) takes_pointer = true;
     if (first->kind == .unary && first->kind.unary.op == .address_of) {
         if (!takes_pointer) return nullptr;
@@ -100,10 +100,10 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
     Str prefix = prefix_of(module);
     if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(self_type->name), prefix))
         return none;
-    const types::Symbol *callee = types::lookup(&c->scopes, types::message_of(format::push(prefix, names.items[1])));
-    if (callee == nullptr || callee->kind != .function_symbol || !types::is_public(callee)) return none;
-    if (first_parameter(callee) != self_type) return none;
-    const ast::Expr *self = receiver(args[0], given, callee);
+    const types::Symbol *function_sym = types::lookup(&c->scopes, types::message_of(format::push(prefix, names.items[1])));
+    if (function_sym == nullptr || function_sym->kind != .function_symbol || !types::is_public(function_sym)) return none;
+    if (first_parameter(function_sym) != self_type) return none;
+    const ast::Expr *self = receiver(args[0], given, function_sym);
     if (self == nullptr || !is_simple(self)) return none;
     // Fields of the type that carry the name would make `x.f()` a call of the field.
     if (types::member(self_type, names.items[1]) != nullptr) return none;
