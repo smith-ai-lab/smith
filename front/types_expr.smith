@@ -1758,10 +1758,9 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
             answer = "true";
         }
         fix[0] = (syntax::Edit){.span = span, .text = answer};
-        types::fail_fix(c, span,
-                        msg(format::push("a function value is never null, so this is always ", answer, ": write ",
-                                         answer)),
-                        fix);
+        types::fail_fix(
+            c, span,
+            msg(format::push("a function value is never null, so this is always ", answer, ": write ", answer)), fix);
         return invalid(c);
     }
     if (!is_scalar(l)) {
@@ -2636,12 +2635,14 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
         if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
         if (t->kind == .array) { // C's array decays to the address of its first element: `&names[0]`
             syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
-            fix[0] = (syntax::Edit){.span = {.start = args[i]->span.start, .end = args[i]->span.start}, .text = msg("&")};
+            fix[0] =
+                (syntax::Edit){.span = {.start = args[i]->span.start, .end = args[i]->span.start}, .text = msg("&")};
             fix[1] = (syntax::Edit){.span = {.start = args[i]->span.end, .end = args[i]->span.end}, .text = msg("[0]")};
-            types::fail_fix(c, args[i]->span,
-                            msg(format::push("`", types::show(t), "` cannot go through `...`: C receives the address of ",
-                                             "its first element, so write `&x[0]`")),
-                            fix);
+            types::fail_fix(
+                c, args[i]->span,
+                msg(format::push("`", types::show(t), "` cannot go through `...`: C receives the address of ",
+                                 "its first element, so write `&x[0]`")),
+                fix);
             continue;
         }
         types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);

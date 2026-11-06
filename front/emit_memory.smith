@@ -313,7 +313,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     }
     types::TypeRef bound = nullptr;
     if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
-    if (countof(e->import_scope) > 0) return state::type_of(e, base); // a record of the imported module (`*Tap`)
+    if (countof(e->import_scope) > 0) return state::type_of(e, base);       // a record of the imported module (`*Tap`)
     return ty_failf(base->span, "unknown type ", name);
 }
 
@@ -961,8 +961,10 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
         return state::success();
     }
     if (to.kind == .pointer && (from.ty.kind == .fn_pointer || from.ty.kind == .fn_value)) {
-        // A function's address as a plain pointer: a C function pointer is one already; a `fn` value's is its code word.
-        c::LLVMValueRef code = from.ty.kind == .fn_pointer ? from.llvm : c::LLVMBuildExtractValue(e->builder, from.llvm, 0, "code");
+        // A function's address as a plain pointer: a C function pointer is one already; a `fn` value's is its code
+        // word.
+        c::LLVMValueRef code =
+            from.ty.kind == .fn_pointer ? from.llvm : c::LLVMBuildExtractValue(e->builder, from.llvm, 0, "code");
         state::push_value(e, (state::Value){.llvm = code, .ty = to});
         return state::success();
     }
@@ -1697,7 +1699,8 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         *out = global;
         return state::success();
     }
-    if ((ty.kind == .fn_pointer || ty.kind == .pointer) && x->kind == .name && countof(x->kind.name.path.segments) == 1) {
+    if ((ty.kind == .fn_pointer || ty.kind == .pointer) && x->kind == .name &&
+        countof(x->kind.name.path.segments) == 1) {
         // A function's name in a table of callbacks (`Scheduler(spawn = inline_spawn, ...)`): its address (#2643).
         for (Usize i = 0; i < e->function_count; i++) {
             if (!state::same_text(e->functions[i].name, x->kind.name.path.segments[0].text)) continue;

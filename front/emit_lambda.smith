@@ -182,7 +182,8 @@ static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
     if (t->kind == .pointer) return state::type_of_checked(e, t, (ast::Span){});
     // A callback taken by a C callback (`entry` of `spawn`): the bare `ptr` of C's layout (#2643).
     if (t->kind == .fn_value || t->kind == .function) {
-        state::Ty bare = {.kind = {.pointer = {.element = nullptr}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
+        state::Ty bare = {
+            .kind = {.pointer = {.element = nullptr}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
         return {.ok = bare};
     }
     Str shown = types::show(t);

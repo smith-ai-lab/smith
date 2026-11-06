@@ -258,7 +258,8 @@ export Bool call_entry(const types::Checked *c, const ast::Expr *call, Entry *fo
 export Bool is_type_argument(Entry entry, Usize index) {
     if (entry.shape == .alloc) return index == (same(entry.name, "arena.push_slice") ? 1 : 0); // T after the arena
     if (entry.shape == .bit_cast || entry.shape == .filled || entry.shape == .type_query) return index == 0;
-    if (entry.shape == .atomic_add || entry.shape == .atomic_exchange || entry.shape == .atomic_store) return index == 2;
+    if (entry.shape == .atomic_add || entry.shape == .atomic_exchange || entry.shape == .atomic_store)
+        return index == 2;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
 }
 

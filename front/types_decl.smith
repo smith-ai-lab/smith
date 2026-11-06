@@ -333,8 +333,7 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
             !to->pointee_const) {
             // `(base + n).cast(*mut T)` points where `base` does: the fix is the one for `base` (#2643).
             const ast::Expr *source = e->kind.cast.operand;
-            while (source->kind == .binary &&
-                   (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
+            while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
                 source = source->kind.binary.left;
             fix = types_expr::pointer_fix(c, source);
         }
@@ -343,7 +342,9 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         if (e->kind == .cast && from->kind == .function && to->kind == .integer) {
             Str pointer = ".cast(*void)";
             fix = mem::realloc(fix, 1);
-            fix[0] = (syntax::Edit){.span = {.start = e->kind.cast.operand->span.end, .end = e->kind.cast.operand->span.end}, .text = pointer};
+            fix[0] =
+                (syntax::Edit){.span = {.start = e->kind.cast.operand->span.end, .end = e->kind.cast.operand->span.end},
+                               .text = pointer};
         }
         types::fail_fix(c, e->span, verdict.message, fix);
         return false;
@@ -1081,7 +1082,8 @@ static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const 
     Str read = fixed_source[left->span.start:left->span.end];
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
-    head[0] = edit_of(s->span.start, s->span.start, msg(format::push(field, " := ", read, "\n", indent_at(s->span.start))));
+    head[0] =
+        edit_of(s->span.start, s->span.start, msg(format::push(field, " := ", read, "\n", indent_at(s->span.start))));
     head[1] = edit_of(left->span.start, left->span.end, field);
     types::Guard guard = {.base = left->kind.member.base, .variant = field, .option = true, .test = first};
     guard.reads = (ast::Span){.start = first->span.end, .end = then_branch->span.end};

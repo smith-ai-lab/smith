@@ -1228,8 +1228,8 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
         Bool from_header = same(record->owner, "c::");
         Usize own = record_index(&local, record->name);
-        if (!from_header && countof(record->owner) == 0 && own < local.count && global_zero(module, error.left_out_call) &&
-            has_plain_pointer(module, c, &local, own)) {
+        if (!from_header && countof(record->owner) == 0 && own < local.count &&
+            global_zero(module, error.left_out_call) && has_plain_pointer(module, c, &local, own)) {
             // C zeroes a global and fills its pointers before use: `x: T = T()` has no value for them, `undefined` is
             // the storage C gave (#2643).
             last = error.left_out_call;

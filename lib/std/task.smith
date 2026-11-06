@@ -442,7 +442,7 @@ void unpoison(void *region, Usize size) {
 
 // An ended task of the inline scheduler: its mapping, which holds the record, is unmapped.
 void release_inline(Task *task) {
-    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    contract::trusted();                 // the mapping is the task's own, and no one holds the task any more
     if (task->region == nullptr) return; // a thread's first task has no mapping of its own
     void *mapping = task->region;
     Usize size = task->region_size;
@@ -525,7 +525,8 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
     }
 }
 
-// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is null: the real call.
+// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is null: the real
+// call.
 Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait, .io = nullptr};
 
 // The inline scheduler, to set with `use` or to wrap in a scheduler of your own, and for debugging: tasks run one at a
@@ -687,8 +688,8 @@ void simulation_wait(Scheduler *self, Group *group) {
 export Scheduler *simulation(random::Key key) {
     Simulation *simulation = mem::alloc(Simulation);
     // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
-    simulation->base = (Scheduler){
-        .spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait, .io = nullptr};
+    simulation->base =
+        (Scheduler){.spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait, .io = nullptr};
     simulation->seed = random::key_bits(key);
     simulation->decisions = 0;
     simulation->ready_first = nullptr;
@@ -748,9 +749,9 @@ thread_local Worker *home; // the worker whose thread this is
 // The file pool: threads that do the file calls of tasks, started at the first one. The lock is the scheduler's.
 c::pthread_t pool_threads[pool_max];
 Usize pool_stacks[pool_max]; // the addresses of the pool threads' stacks
-Usize pool_count;   // threads started (0: no pool)
-Bool pool_stopping; // they are to exit
-Task *pool_head;    // the calls waiting for a thread, in order
+Usize pool_count;            // threads started (0: no pool)
+Bool pool_stopping;          // they are to exit
+Task *pool_head;             // the calls waiting for a thread, in order
 Task *pool_tail;
 c::pthread_cond_t pool_wake;
 
@@ -1047,7 +1048,7 @@ void start_managed(Task *task, Worker *worker) {
 
 // An ended task gives its stack to its worker's cache, or back to the system, and its record to the pool.
 void release_managed(Task *task, Worker *worker) {
-    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
+    contract::trusted();                 // the mapping is the task's own, and no one holds the task any more
     if (task->region == nullptr) return; // a managed task always has its stack; the test is for the type
     void *mapping = task->region;
     U8 *stack = (U8 *)mapping;

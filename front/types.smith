@@ -154,7 +154,7 @@ export struct Ty {
     TypeRef error;
     U64 count;
     Str name;
-    Str owner; // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
+    Str owner;  // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
     Str c_name; // a record: the C struct it is (`@c_name("SmithTaskGroup")`, or a C header's own name), else empty
     Slot slots[:];
 };
@@ -2099,8 +2099,9 @@ static Str record_c_name(const ast::Decl *d) {
         ast::Attribute attribute = d->attributes[i];
         ast::Path name = attribute.name;
         Usize n = countof(name.segments);
-        Bool is_c_name = (n == 1 && same_text(name.segments[0].text, "c_name")) ||
-                         (n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name"));
+        Bool is_c_name =
+            (n == 1 && same_text(name.segments[0].text, "c_name")) ||
+            (n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name"));
         if (!is_c_name || countof(attribute.args) == 0) continue;
         const ast::Expr *argument = attribute.args[0];
         if (argument->kind == .string) return argument->kind.string.bytes;

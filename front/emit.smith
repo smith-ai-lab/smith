@@ -1735,7 +1735,8 @@ static c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target)
     if (count > 64) count = 64;
     c::LLVMGetParamTypes(inner, given);
     wrapped[0] = c::LLVMPointerTypeInContext(e->context, 0);
-    for (U32 i = 0; i < count; i++) wrapped[i + 1] = given[i];
+    for (U32 i = 0; i < count; i++)
+        wrapped[i + 1] = given[i];
     c::LLVMTypeRef result = c::LLVMGetReturnType(inner);
     c::LLVMTypeRef outer = c::LLVMFunctionType(result, wrapped, count + 1, 0);
     c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, outer);
@@ -1744,7 +1745,8 @@ static c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target)
     c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
     c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
     c::LLVMValueRef args[64];
-    for (U32 i = 0; i < count; i++) args[i] = c::LLVMGetParam(thunk, i + 1);
+    for (U32 i = 0; i < count; i++)
+        args[i] = c::LLVMGetParam(thunk, i + 1);
     c::LLVMValueRef called = c::LLVMBuildCall2(b, inner, target, args, count, "");
     if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
         c::LLVMBuildRetVoid(b);
@@ -1838,7 +1840,8 @@ static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
 
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
-    for (Usize i = 0; i < countof(e->tree->decls); i++) emit_memory::record_shell(e, e->tree->decls[i]);
+    for (Usize i = 0; i < countof(e->tree->decls); i++)
+        emit_memory::record_shell(e, e->tree->decls[i]);
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .record) try emit_memory::record_decl(e, d);

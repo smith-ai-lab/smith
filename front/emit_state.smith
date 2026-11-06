@@ -229,7 +229,7 @@ export struct RecordType {
     Ty ty;
     FieldInfo fields[:];
     Bool overlay; // a C union: every field is at offset 0 of the one array that sizes it (a field is read in place)
-    Bool shell; // named so a record above it can point to it; its fields come when its own declaration is reached
+    Bool shell;   // named so a record above it can point to it; its fields come when its own declaration is reached
 };
 
 // The state of a function whose lambda is being emitted in the middle of it (#1620, front/emit_lambda.smith):
