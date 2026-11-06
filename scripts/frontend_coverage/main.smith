@@ -863,7 +863,11 @@ static void fix(const char *smith, Usize i, const char cache[:]) {
     char target[path_size * 2];
     (void)format::write(target, sizeof target, scratch_root, "/", (const char *)tree[i]);
     const char *const fixer[_] = {smith, "lint", "--fix", target};
-    struct Job *job = job_start(true, i, "unlimited", pristine_root, fixer[0:4]);
+    // The fixer's address space is capped (8 GB; the compile's is 6 GB, `measure`): a fixer that re-read every import
+    // on each pass grew past 11 GB on front/compile.smith, and four at once killed the 16 GB runner before any count
+    // was printed (#2586). Over the cap, the file fails alone at `fixer`; the largest, front/types_expr.smith,
+    // takes 5.3 GB.
+    struct Job *job = job_start(true, i, "8388608", pristine_root, fixer[0:4]);
     copy_text(job->cache[0:path_size * 2], cache);
     job->cache_length = countof(cache);
 }
