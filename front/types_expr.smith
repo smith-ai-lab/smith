@@ -3605,6 +3605,14 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
         return;
     }
+    if (base->kind == .text && !e->kind.member.arrow && same_text(name, "data")) {
+        // `text.data` is the pointer to a `str`'s characters, read-only (the library hands it to C).
+        types::TypeRef character = types::builtin(&c->table, "Char");
+        if (character != nullptr) {
+            finish(c, e, types::pointer_to(&c->table, character, true), f.expected);
+            return;
+        }
+    }
     if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "count")) {
         // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
         // hand with it, as `.data`).
