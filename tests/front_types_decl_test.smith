@@ -50,7 +50,7 @@ static Str join(Str a, Str b) {
 static Bool reading_new = false;
 
 static types::Checked check_text(Str source) {
-    parser::Parsed p = reading_new ? parser::parse_new("t.smith", source) : parser::parse("t.smith", source);
+    parser::Parsed p = reading_new ? parser::parse_new("t.smith", source) : parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module(&p.module, types::lp64());
 }

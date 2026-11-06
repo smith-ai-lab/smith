@@ -19,8 +19,8 @@
 // was) are `file:line:column: warning: message`, one per line before any error; they do not stop the
 // compile and, when only warnings were found, are the `Report.text` of a report that is ok (`run` writes them to
 // stderr). Which parser reads a file (#1578): one whose first token (comments are not tokens) is the keyword `module`
-// is in today's syntax and goes through `parser::parse`; any other file is smith's own (no `module` line: a module is
-// named by its path) and goes through `parser::parse_new`. A cast that can lose a value is checked on this path too
+// is in today's syntax and goes through `parser::parse_file`; any other file is smith's own (no `module` line: a module
+// is named by its path) and goes through `parser::parse_new`. A cast that can lose a value is checked on this path too
 // (`Options.checked`). The
 // module's name is its path from a root (front::roots); a `module` line that disagrees is an error naming both. The
 // target comes from the caller: the triple is the driver's, the data layout is the machine's for it, and the checker's
@@ -260,7 +260,8 @@ static const ast::Module *load_embedded(Str dotted) {
     if (found == nullptr) return nullptr;
     Str path = as_str(format::push("lib/std/", name, ".smith"));
     Str source = found[0:size];
-    parser::Parsed parsed = starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed =
+        starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) {
         types::set_load_failure(as_str(
             format::push(path, ":", position(source, parsed.errors[0].span.start), ": ", parsed.errors[0].message)));
@@ -320,7 +321,7 @@ static const ast::Module *load_module(const char *dotted) {
         format::Chars chars = mem::view(loaded.ok, char);
         Str source = chars;
         parser::Parsed parsed =
-            starts_with_module(source) ? parser::parse(path, source) : parser::parse_new(path, source);
+            starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
         if (countof(parsed.errors) > 0) {
             types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
                                                         parsed.errors[0].message)));
@@ -426,7 +427,7 @@ static Problems problems_of(Problems list, parse::Errors found, Bool error) {
 export Problems diagnose(Str path, Str source, roots::Roots folders) {
     Problems list = {};
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (!today) list = problems_of(list, parsed.warnings, false);
     list = problems_of(list, parsed.errors, true);
     if (countof(parsed.errors) > 0) return list;
@@ -482,7 +483,7 @@ static const types::Symbol *header_symbol(const types::Checked *checked, const a
 // language server's hover, #1892). Nothing is read or written; the result is the current allocator's.
 export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Hover){};
     import_roots = folders;
     header_folder = folder_of(path);
@@ -645,7 +646,7 @@ export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 
     Bool dot = word > 0 && source[word - 1] == '.';
     Str edited = as_str(format::push(source[0:dot ? word - 1 : word], dot ? "" : "_", source[offset:countof(source)]));
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, edited) : parser::parse_new(path, edited);
+    parser::Parsed parsed = today ? parser::parse_file(path, edited) : parser::parse_new(path, edited);
     Candidates list = {};
     if (countof(parsed.errors) > 0) return list;
     if (!dot) return names_at(list, &parsed.module, edited, offset, prefix);
@@ -843,7 +844,7 @@ static const ast::Module *from_module(const ast::Module *m, Str name) {
 // name a `from ... import` brought in. Nothing is read but the imported files; the result is the current allocator's.
 export Location definition_at(Str path, Str source, roots::Roots folders, U32 offset) {
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Location){};
     import_roots = folders;
     header_folder = folder_of(path);
@@ -887,7 +888,7 @@ export typedef typeof(Symbol[:]) Symbols;
 // text does not parse. The result is the current allocator's.
 export Symbols symbols(Str path, Str source) {
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     Symbols list = {};
     if (countof(parsed.errors) > 0) return list;
     for (Usize i = 0; i < countof(parsed.module.decls); i++) {
@@ -963,7 +964,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
 
     U64 mark = clock::monotonic();
     Bool today = starts_with_module(source);
-    parser::Parsed parsed = today ? parser::parse(path, source) : parser::parse_new(path, source);
+    parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     times.parse = clock::monotonic() - mark;
     // Today's syntax is all warnings (every old form), so its report is what it was: only smith's own files show them.
     Str none = "";
@@ -1578,7 +1579,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
         scope.structs = mem::realloc(scope.structs, countof(scope.structs) + 1);
         scope.structs[countof(scope.structs) - 1] = (ast::Identifier){.text = d->kind.record.name};
     }
-    Str types = "";
+    Str type_declarations = "";
     Str used_bindings = "";
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
@@ -1602,7 +1603,7 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
             fields = as_str(format::push(fields, guarded(d->kind.record.fields[k].attributes, one, true)));
         }
         Str made = as_str(format::push("typedef struct { ", fields, "} ", prefix, d->kind.record.name, ";\n"));
-        types = as_str(format::push(types, needed, guarded(d->attributes, made, false)));
+        type_declarations = as_str(format::push(type_declarations, needed, guarded(d->attributes, made, false)));
     }
     Str body = "";
     Str label_start = label_prefix(triple);
@@ -1625,11 +1626,12 @@ static Str header_text(Str path, Str source, const ast::Module *m, Str triple, S
     }
     if (countof(*problems) > 0) return "";
     Str gap = "";
-    if (countof(types) > 0 && countof(body) > 0) gap = "\n";
-    return as_str(format::push(
-        "// clang-format off\n// Generated by smith from ", path, ". Do not edit.\n// clang-format on\n",
-        "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings), scope.includes,
-        "#ifdef __cplusplus\n", "extern \"C\" {\n#endif\n", types, gap, body, "#ifdef __cplusplus\n}\n#endif\n"));
+    if (countof(type_declarations) > 0 && countof(body) > 0) gap = "\n";
+    return as_str(
+        format::push("// clang-format off\n// Generated by smith from ", path, ". Do not edit.\n// clang-format on\n",
+                     "#pragma once\n#include <stddef.h>\n#include <stdint.h>\n", length_includes(m, used_bindings),
+                     scope.includes, "#ifdef __cplusplus\n", "extern \"C\" {\n#endif\n", type_declarations, gap, body,
+                     "#ifdef __cplusplus\n}\n#endif\n"));
 }
 
 // Writes `text` to `output` unless the file already holds those bytes. Returns an error text, empty when it worked.

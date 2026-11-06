@@ -10,7 +10,7 @@ import std::test;
 
 // The messages of reading a module whose function has `body` as its statements, joined by a newline.
 static Str errors_of(Str source) {
-    parser::Parsed parsed = parser::parse("m.smith", source);
+    parser::Parsed parsed = parser::parse_file("m.smith", source);
     format::Chars joined = {};
     for (Usize i = 0; i < countof(parsed.errors); i += 1) {
         joined = format::push(joined, parsed.errors[i].message, "\n");

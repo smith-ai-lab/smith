@@ -183,7 +183,7 @@ static Bool holds(state::Ty ty, c::LLVMTypeRef self) {
 
 // The fields of a record, resolved in order; the record itself is already in the table so a field can point to it.
 static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize at, state::FieldInfo infos[:],
-                                   c::LLVMTypeRef *types) {
+                                   c::LLVMTypeRef *field_types) {
     if (d->kind != .record) {
         return state::fail("not a record", d->span);
     }
@@ -205,7 +205,7 @@ static state::Status record_fields(state::Emitter *e, const ast::Decl *d, Usize 
             return state::failf(field.span, e->records[at].name, " contains itself; use a pointer");
         }
         infos[i] = (state::FieldInfo){.name = field.name, .ty = made.ok, .default_value = field.default_value};
-        types[i] = made.ok.llvm;
+        field_types[i] = made.ok.llvm;
     }
     return state::success();
 }
@@ -232,13 +232,13 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
         return state::not_emitted("record with more than 64 fields", d->span);
     }
     state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count + 1);
-    c::LLVMTypeRef types[64];
-    state::Status status = record_fields(e, d, at, infos, types);
+    c::LLVMTypeRef field_types[64];
+    state::Status status = record_fields(e, d, at, infos, field_types);
     if (status == .error) {
         mem::free(infos.data);
         return status;
     }
-    c::LLVMStructSetBody(named, types, (U32)count, 0);
+    c::LLVMStructSetBody(named, field_types, (U32)count, 0);
     e->records[at].fields = infos[0:count];
     return state::success();
 }

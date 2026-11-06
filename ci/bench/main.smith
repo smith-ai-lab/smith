@@ -46,9 +46,9 @@ static char absolute[path_size];
 static char module_text[text_size];
 
 // The characters as bytes to write, and a list of words as the argv a call wants (a cast, as the types do not say it).
-static typeof(const U8[:]) as_bytes(const char text[:]) {
-    const U8 *bytes = (const U8 *)text.data;
-    return bytes[0:countof(text)];
+static typeof(const U8[:]) as_bytes(const char contents[:]) {
+    const U8 *bytes = (const U8 *)contents.data;
+    return bytes[0:countof(contents)];
 }
 
 static typeof(const char *const[:]) argv_of(const char **words, Usize count) {

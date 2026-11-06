@@ -639,10 +639,10 @@ static Str example_of(const Library *lib) {
 // `check_equal_i32` is the named instance of the generic `check_equal` for one type: the call to write is the
 // generic's, which takes the type from its first argument.
 static Str generic_of(const Library *lib, Str name) {
-    Str types = "bool char i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 pointer ptr";
+    Str type_words = "bool char i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 pointer ptr";
     Usize from = 0;
-    while (from < countof(types)) {
-        Str type = word_at(types, &from);
+    while (from < countof(type_words)) {
+        Str type = word_at(type_words, &from);
         Usize size = countof(type) + 1;
         if (countof(name) <= size || name[countof(name) - size] != '_' ||
             !same(name[countof(name) - size + 1:], type)) {
