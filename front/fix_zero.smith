@@ -449,7 +449,8 @@ static void localize(const ast::Module *module, core::Errors errors) {
 // ---------------------------------------------------------------------------------------------------------------
 // Defaults in the declaration (#2530, decided by the owner on 2026-11-06): C zeroes the fields a construction leaves
 // out, smith has no zero values, so a field that some construction leaves out gets its zero written as its default in
-// the struct (`count: usize = 0`); the constructions stay as written. Only those fields get one.
+// the struct (`count: usize = 0`); the constructions stay as written. Only those fields get one. A pointer among them
+// that a read tests against null is `?*T = .none` (#2557); the checker writes its tested reads as bindings.
 
 constexpr Usize records_max = 64;
 constexpr Usize fields_max = 64;
@@ -464,6 +465,8 @@ struct Record {
 struct Wanted {
     Record records[records_max];
     U64 left[records_max];
+    U64 text_left[records_max]; // the fields left out by a construction the text shows (`left` has the checker's too)
+    U64 tested[records_max];    // the fields a read tests against null: `x.f != nullptr` (#2557)
     Usize count;
 };
 
@@ -624,8 +627,51 @@ static Str local_name(Str source, lex::Tokens t, Str base) {
     return "";
 }
 
+// Whether `t[i]` is `nullptr` or `.none`.
+static Bool null_word(Str source, lex::Tokens t, Usize i) {
+    if (i >= countof(t)) return false;
+    if (t[i].kind == lex::kw_nullptr) return true;
+    return t[i].kind == lex::dot && i + 1 < countof(t) && same(lex::text(source, t[i + 1]), "none");
+}
+
+static Bool is_word(lex::TokenKind k) {
+    return k == lex::name || k == lex::type_name;
+}
+
+// Whether the field read that ends at `t[i]` (`x.f`, `x->f`, `a.b.f`) is tested against null: `x.f != nullptr`,
+// `x->f == .none`, `!x->f`, or bound by its own name, `f := x.f else` (a test the fixer already wrote, #2557).
+static Bool null_tested_at(Str source, lex::Tokens t, Usize i) {
+    Usize n = countof(t);
+    lex::TokenKind after = i + 1 < n ? t[i + 1].kind : lex::semicolon;
+    if ((after == lex::equal_equal || after == lex::bang_equal) && null_word(source, t, i + 2)) return true;
+    Usize start = i - 1; // the member operator before the field; the chain before it back to its first name
+    while (start >= 2 && is_word(t[start - 1].kind) && is_member(t[start - 2].kind))
+        start -= 2;
+    if (start < 1 || !is_word(t[start - 1].kind)) return false;
+    Usize base = start - 1;
+    Bool continued = after == lex::left_paren || after == lex::left_bracket || is_member(after);
+    if (base >= 1 && t[base - 1].kind == lex::bang && !continued) return true;
+    return base >= 2 && t[base - 1].kind == lex::colon_equal && is_word(t[base - 2].kind) &&
+           same(lex::text(source, t[base - 2]), lex::text(source, t[i]));
+}
+
+// The fields of the module's records that `source` tests against null, by name: a read of a field of that name
+// anywhere in the text counts (#2557).
+static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[records_max]) {
+    for (Usize i = 2; i < countof(t); i++) {
+        if (!is_word(t[i].kind) || !(t[i - 1].kind == lex::dot || t[i - 1].kind == lex::arrow)) continue;
+        if (!null_tested_at(source, t, i)) continue;
+        Str field = lex::text(source, t[i]);
+        for (Usize r = 0; r < w->count; r++) {
+            Usize f = field_index(&w->records[r], field);
+            if (f < fields_max && named[r]) w->tested[r] |= (U64)1 << f;
+        }
+    }
+}
+
 // The fields left out by the constructions of the module's records in `source`: the module's own file (`own`), or a
-// file that imports it, where a record is reached through the name it gives the module.
+// file that imports it, where a record is reached through the name it gives the module. The fields it tests against
+// null too (#2557).
 static void scan_file(Wanted *w, Str source, Str base, Bool own) {
     if (!own && (countof(base) == 0 || !mentions(source, base))) return;
     lex::Lexed lexed = lex::tokenize_new(source);
@@ -634,15 +680,24 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
     lex::Tokens t = lexed.ok;
     Str prefix = "";
     if (!own) prefix = local_name(source, t, base);
+    Bool named[records_max] = {}; // the records the file names: only a test in such a file counts (#2557)
     for (Usize i = 0; i + 1 < countof(t) && (own || countof(prefix) > 0); i++) {
         if (t[i].kind != lex::type_name && t[i].kind != lex::name) continue;
         Usize r = record_index(w, lex::text(source, t[i]));
         if (r == w->count || !prefixed(source, t, i, prefix)) continue;
+        named[r] = true;
         Usize open = construction_at(t, i, countof(prefix) == 0 ? i : i - 2);
         Usize close = open < countof(t) ? closing(t, open) : countof(t);
         if (close == countof(t)) continue;
-        w->left[r] |= all_fields(&w->records[r]) & ~given_of(source, t, open, close, &w->records[r]);
+        U64 left = all_fields(&w->records[r]) & ~given_of(source, t, open, close, &w->records[r]);
+        w->left[r] |= left;
+        w->text_left[r] |= left;
     }
+    if (own) {
+        for (Usize r = 0; r < w->count; r++)
+            named[r] = true;
+    }
+    if (own || countof(prefix) > 0) scan_tests(w, source, t, named);
     mem::free(t.data);
 }
 
@@ -657,6 +712,7 @@ struct SiblingCache {
     char names[records_max][cache_text_max];
     Usize name_lengths[records_max];
     U64 left[records_max];
+    U64 tested[records_max];
     Usize count;
 };
 
@@ -759,19 +815,25 @@ static void from_siblings(Wanted *w, const ast::Module *module) {
     SiblingCache *cache = &sibling_cache;
     if (!same(cache->file[0:cache->file_length], module->file)) {
         Wanted found = *w;
-        for (Usize r = 0; r < found.count; r++)
+        for (Usize r = 0; r < found.count; r++) {
             found.left[r] = 0;
+            found.tested[r] = 0;
+        }
         scan_siblings(&found, module);
         cache->file_length = copy_into(cache->file[0:cache_text_max], module->file);
         cache->count = found.count;
         for (Usize r = 0; r < found.count; r++) {
             cache->name_lengths[r] = copy_into(cache->names[r][0:cache_text_max], found.records[r].name);
             cache->left[r] = found.left[r];
+            cache->tested[r] = found.tested[r];
         }
     }
     for (Usize r = 0; r < cache->count; r++) {
         Usize at = record_index(w, cache->names[r][0:cache->name_lengths[r]]);
-        if (at < w->count) w->left[at] |= cache->left[r];
+        if (at == w->count) continue;
+        w->left[at] |= cache->left[r];
+        w->text_left[at] |= cache->left[r];
+        w->tested[at] |= cache->tested[r];
     }
 }
 
@@ -805,9 +867,10 @@ static void nest(Wanted *w, types::Checked *c) {
 }
 
 // The zero of the field `f` written as its default; empty when smith has none to write: a pointer, a function, a type
-// with no zero spelling (#2530 points 3 and 4). A pointer stays an error: `front.emit_state.Work`, whose pointers are
-// null for some kinds and read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with
-// the same pattern goes there too rather than unwrapping each read.
+// with no zero spelling (#2530 points 3 and 4). A pointer that a read tests against null is an option instead
+// (`nullable`, #2557); any other stays an error: `front.emit_state.Work`, whose pointers are null for some kinds and
+// read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with the same pattern goes
+// there too rather than unwrapping each read.
 static Str default_of(Str source, types::Checked *c, const ast::FieldDecl *f, const Wanted *w, Bool *filled) {
     types::TypeRef t = field_type(c, f);
     if (t == nullptr) return "";
@@ -836,6 +899,60 @@ static Str default_of(Str source, types::Checked *c, const ast::FieldDecl *f, co
     return zero;
 }
 
+// Whether the written type is a pointer or a function, or a name the module declares as one (`TypeRef := *Ty`, C's
+// `typedef const Ty *TypeRef;`). From the declarations alone, so that the struct's file and its importers agree.
+static Bool pointer_like(const ast::Module *module, const ast::TypeExpr *t) {
+    if (t == nullptr) return false;
+    if (t->kind == .pointer || t->kind == .function) return true;
+    if (!(t->kind == .named) || countof(t->kind.named.path.segments) != 1) return false;
+    Str name = t->kind.named.path.segments[0].text;
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        const ast::TypeExpr *aliased = nullptr;
+        if (d->kind == .type_alias && same(d->kind.type_alias.name, name)) {
+            aliased = d->kind.type_alias.type;
+        } else if (d->kind == .variable && same(d->kind.variable.name, name)) {
+            const ast::Expr *init = d->kind.variable.init; // `TypeRef := *Ty`, a type as a value
+            if (init != nullptr && init->kind == .type_value) aliased = init->kind.type_value.type;
+        } else {
+            continue;
+        }
+        return aliased != nullptr && (aliased->kind == .pointer || aliased->kind == .function);
+    }
+    return false;
+}
+
+// The pointer fields of the record `r` that C leaves null where null is a real state (#2557, owner on #2530): a
+// construction the text shows leaves the field out, and a read tests it against null. Each becomes `?*T = .none`
+// (`?F = .none` for a function, lead on #2557). Only the text counts, not the checker, so that the struct's file and
+// each file that imports it, fixed one at a time, make the same decision.
+static U64 nullable(const ast::Module *module, const Wanted *w, Usize r) {
+    U64 out = 0;
+    ast::FieldDecl fields[:] = w->records[r].fields;
+    U64 both = w->text_left[r] & w->tested[r];
+    for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+        U64 bit = (U64)1 << k;
+        if ((both & bit) == 0 || fields[k].default_value != nullptr || fields[k].bit_width != nullptr) continue;
+        if (pointer_like(module, fields[k].type)) out |= bit;
+    }
+    return out;
+}
+
+// The fix that writes the pointer field `f` as an option with no value: `next: ?*Node = .none`.
+static core::ParseError nullable_fix(const ast::FieldDecl *f) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 2);
+    Str mark = "?";
+    Str none = " = .none";
+    fix[0] = (core::Edit){.span = {.start = f->type->span.start, .end = f->type->span.start}, .text = mark};
+    fix[1] = (core::Edit){.span = {.start = f->type->span.end, .end = f->type->span.end}, .text = none};
+    core::ParseError found = {};
+    found.span = f->span;
+    found.message = "a pointer that a construction leaves null and a read tests is an option: `?*T = .none`";
+    found.fix = fix;
+    return found;
+}
+
 // The defaults of the fields of the module's records that some construction leaves out, one insertion after each
 // field's type: `count: usize = 0`.
 static core::Errors defaults(Str source, const ast::Module *module, types::Checked *c, core::Errors out, Bool *filled) {
@@ -847,10 +964,15 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
     nest(&w, c);
     for (Usize r = 0; r < w.count; r++) {
         ast::FieldDecl fields[:] = w.records[r].fields;
+        U64 nulls = nullable(module, &w, r);
         for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
             const ast::FieldDecl *f = &fields[k];
             if ((w.left[r] & ((U64)1 << k)) == 0 || !f->is_new || f->default_value != nullptr) continue;
             if (f->bit_width != nullptr || f->type == nullptr || !nameable(f->name)) continue;
+            if ((nulls & ((U64)1 << k)) != 0) {
+                out = add(out, nullable_fix(f));
+                continue;
+            }
             Str zero = default_of(source, c, f, &w, filled);
             if (countof(zero) == 0) continue;
             core::Edits fix = {};
@@ -866,6 +988,80 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
         }
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A module that a file being fixed imports, as its own fix will write it (#2557): the reads of its option fields in the
+// importing file are mended against `?*T`, not the pristine `*T`.
+
+constexpr Usize loaded_max = 128;
+
+// The decisions for the modules read so far, by file and contents: each costs a walk of the tree, and the checker
+// reads a module again on every pass. A record is kept by its place among the module's records.
+struct LoadedCache {
+    char files[loaded_max][cache_text_max];
+    Usize lengths[loaded_max];
+    U64 hashes[loaded_max];
+    U64 masks[loaded_max][records_max];
+    Usize count;
+};
+
+static LoadedCache loaded_cache;
+
+static U64 hash_of(Str text) {
+    U64 h = 14695981039346656037U;
+    for (Usize i = 0; i < countof(text); i++) {
+        h ^= (U64)(U8)text[i];
+        h *= 1099511628211U;
+    }
+    return h;
+}
+
+// The nullable fields of each record of `module` (its text is `source`), from the cache or worked out once.
+static void loaded_masks(const ast::Module *module, Str source, Wanted *w, U64 masks[records_max]) {
+    LoadedCache *cache = &loaded_cache;
+    U64 h = hash_of(source);
+    for (Usize i = 0; i < cache->count; i++) {
+        if (cache->hashes[i] != h || !same(cache->files[i][0:cache->lengths[i]], module->file)) continue;
+        for (Usize r = 0; r < w->count; r++)
+            masks[r] = cache->masks[i][r];
+        return;
+    }
+    scan_file(w, source, "", true);
+    scan_siblings(w, module);
+    for (Usize r = 0; r < w->count; r++)
+        masks[r] = nullable(module, w, r);
+    if (cache->count == loaded_max || countof(module->file) >= cache_text_max) return;
+    Usize at = cache->count;
+    cache->lengths[at] = copy_into(cache->files[at][0:cache_text_max], module->file);
+    cache->hashes[at] = h;
+    for (Usize r = 0; r < w->count; r++)
+        cache->masks[at][r] = masks[r];
+    cache->count += 1;
+}
+
+// Writes each pointer field of `module` that its own file's fix makes an option as `?*T = .none` in the tree: the type
+// wrapped in an option, the default `.none`. `source` is the module's text.
+export void nullable_fields(ast::Module *module, Str source) {
+    Wanted w = records_of(module);
+    if (w.count == 0 || !exports_a_record(&w) || countof(base_of(module->file)) == 0) return;
+    U64 masks[records_max] = {};
+    loaded_masks(module, source, &w, masks);
+    for (Usize r = 0; r < w.count; r++) {
+        ast::FieldDecl fields[:] = w.records[r].fields;
+        for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
+            if ((masks[r] & ((U64)1 << k)) == 0) continue;
+            ast::TypeExpr *inner = fields[k].type;
+            ast::TypeExpr *wrapped = mem::alloc(ast::TypeExpr);
+            wrapped->span = inner->span;
+            ast::TypeKind kind = {.option = {.inner = inner}};
+            wrapped->kind = kind;
+            fields[k].type = wrapped;
+            Str none = "none";
+            ast::Expr value = {.span = inner->span, .kind = {.variant = {.name = none, .payload = nullptr}}};
+            fields[k].default_value = ast::new_expr(value);
+        }
+    }
 }
 
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
