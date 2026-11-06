@@ -25,19 +25,21 @@ static Str head_text() {
 }
 
 export void test_front_check_result_try_fix_the_propagate_idiom_is_try() {
-    char before[:] = format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
-                                               "    if r == .error:\n        return {.error = r.error}\n"
-                                               "    {.ok = r.ok * 2}\n");
+    char before[:] =
+        format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        return {.error = r.error}\n"
+                                  "    {.ok = r.ok * 2}\n");
     char after[:] = format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    ok := try step(n)\n"
                                               "    {.ok = ok * 2}\n");
     expect(before, after);
 }
 
 export void test_front_check_result_try_fix_a_cleanup_becomes_an_errdefer() {
-    char before[:] = format::push(head_text(), "fn twice(n: i32, log: *mut i32) -> Result(i32, i32):\n"
-                                               "    r: Result(i32, i32) = step(n)\n"
-                                               "    if r == .error:\n        log.* = 1\n        return {.error = r.error}\n"
-                                               "    {.ok = r.ok * 2}\n");
+    char before[:] =
+        format::push(head_text(), "fn twice(n: i32, log: *mut i32) -> Result(i32, i32):\n"
+                                  "    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        log.* = 1\n        return {.error = r.error}\n"
+                                  "    {.ok = r.ok * 2}\n");
     char after[:] = format::push(head_text(), "fn twice(n: i32, log: *mut i32) -> Result(i32, i32):\n"
                                               "    errdefer log.* = 1\n    ok := try step(n)\n"
                                               "    {.ok = ok * 2}\n");
@@ -45,8 +47,9 @@ export void test_front_check_result_try_fix_a_cleanup_becomes_an_errdefer() {
 }
 
 export void test_front_check_result_try_fix_an_error_changed_on_the_way_stays() {
-    char site[:] = format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
-                                             "    if r == .error:\n        return {.error = 0}\n"
-                                             "    {.ok = r.ok * 2}\n");
+    char site[:] =
+        format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        return {.error = 0}\n"
+                                  "    {.ok = r.ok * 2}\n");
     expect(site, site);
 }

@@ -823,14 +823,17 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     const ast::Decl *d = state.prev_decl;
     if (d == nullptr || countof(fixed_source) == 0 || !(d->kind == .variable) || !(s->kind == .if_stmt)) return false;
     const ast::Expr *init = d->kind.variable.init;
-    if (test == nullptr || !(test->kind == .binary) || init == nullptr || d->kind.variable.is_mut || !d->kind.variable.is_new) return false;
+    if (test == nullptr || !(test->kind == .binary) || init == nullptr || d->kind.variable.is_mut ||
+        !d->kind.variable.is_new)
+        return false;
     const ast::Expr *left = test->kind.binary.left;
     Str name = d->kind.variable.name;
     const ast::Expr *right = test->kind.binary.right;
     if (!(right->kind == .variant) || !types::same_text(right->kind.variant.name, "error") ||
         !types::same_text(fixed_source[left->span.start:left->span.end], name))
         return false;
-    // `if r == .error: cleanup; return {.error = r.error}`: the cleanup, one line, becomes an `errdefer` before the call.
+    // `if r == .error: cleanup; return {.error = r.error}`: the cleanup, one line, becomes an `errdefer` before the
+    // call.
     const ast::Stmt *body = s->kind.if_stmt.then_branch;
     const ast::Stmt *cleanup = nullptr;
     if (body->kind == .block && countof(body->kind.block.items) == 2) {

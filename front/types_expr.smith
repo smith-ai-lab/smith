@@ -3323,7 +3323,8 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
             types::fail(c, e->span, shown);
         }
     } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
-        Str shown = msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));
+        Str shown =
+            msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));
         syntax::Edits fix = guarded_read(c, e);
         if (countof(fix) > 0) {
             types::fail_fix(c, e->span, shown, fix);
