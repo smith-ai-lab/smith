@@ -18,9 +18,11 @@
 //
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
-// `?*T` is the pointer itself (null is `.none`), the layout C has for a nullable pointer. Left: `match` over `?T`
-// (#1585), `if let` as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are
-// emitted (#2128, #2141).
+// `?*T` is the pointer itself, null is `.none` (the layout of C's nullable pointer, #2643).
+//
+// Left: `match` over `?T` (#1585), `if let`
+// as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are emitted (#2128,
+// #2141).
 module front::emit_option;
 
 import front::ast;
@@ -40,21 +42,16 @@ static state::Ty *own(state::Emitter *e, state::Ty element) {
 }
 
 // `?payload`.
-static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span _) {
+static state::TyResult build(state::Emitter *e, state::Ty payload, ast::Span span) {
+    (void)span;
     state::Ty *inner = own(e, payload);
-    if (payload.kind ==
-            .pointer) { // `?*T` is the pointer itself, null for `.none`: the layout C has for a nullable pointer
-        state::Ty bare = {.kind = {.option = {.element = inner}},
-                          .llvm = payload.llvm,
-                          .name = state::msg(format::push("?", payload.name))};
-        return bare;
-    }
     c::LLVMTypeRef fields[2];
     fields[0] = c::LLVMInt8TypeInContext(e->context);
     fields[1] = payload.llvm;
     state::Ty ty = {.kind = {.option = {.element = inner}},
                     .llvm = c::LLVMStructTypeInContext(e->context, fields, 2, false),
                     .name = state::msg(format::push("?", payload.name))};
+    if (payload.kind == .pointer) ty.llvm = payload.llvm; // the niche: null is `.none`, as in C (#2643)
     return ty;
 }
 
@@ -182,7 +179,7 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
 
 // `o`'s tag is `.some`: an `i1`.
 export c::LLVMValueRef is_some(state::Emitter *e, state::Value o) {
-    if (o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer) // `?*T`: not null
+    if (o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer) // `?*T` is the pointer: null is `.none`
         return c::LLVMBuildIsNotNull(e->builder, o.llvm, "is_some");
     c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
     c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMInt8TypeInContext(e->context));
