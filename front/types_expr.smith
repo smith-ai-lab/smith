@@ -5165,6 +5165,13 @@ static void auto_resolved(types::Checked *c, Frame f) {
             poison(c, e);
             return;
         }
+        Str concept = types::written_concept(params[i].type);
+        if (params[i].is_new && !params[i].is_pack && countof(concept) > 0 && !types::concept_holds(concept, t)) {
+            types::failf(c, args[i]->span, "`", params[i].name, "` takes a `", concept, "`, but this argument is `",
+                         types::show(t), "`");
+            poison(c, e);
+            return;
+        }
         t = types::auto_binding(c, &params[i], t);
         if (t == nullptr) {
             types::failf(c, args[i]->span, "`", params[i].name,
