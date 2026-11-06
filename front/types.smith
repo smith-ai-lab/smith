@@ -2156,6 +2156,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
             }
         }
         Ty *made = new_enumeration(&r->table, name, underlying);
+        if (from_c) made->c_name = d->kind.enumeration.name; // a C enumerator is an integer, as in C (#2643)
         declare_in_module(r, type_symbol(name, made, d, exported), span);
     }
 }

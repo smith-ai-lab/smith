@@ -592,6 +592,15 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     if (base->kind == .member) {
         return field_fix(c, base, false);
     }
+    // `xs[i]` of an array of `*T` handed where a `*mut T` is wanted: the element is written `*mut T` (#2643).
+    if (base->kind == .index && base->kind.index.base->kind == .name) {
+        const types::Symbol *xs = types::lookup_path(&c->scopes, base->kind.index.base->kind.name.path);
+        const ast::TypeExpr *array = xs != nullptr && xs->kind == .variable && xs->is_new ? xs->written : nullptr;
+        const ast::TypeExpr *element = array != nullptr && array->kind == .array ? array->kind.array.element : nullptr;
+        if (element != nullptr && element->kind == .pointer && !element->kind.pointer.is_mut)
+            return mut_after(element->span.start + 1);
+        return edits;
+    }
     if (base->kind != .name) {
         return edits;
     }

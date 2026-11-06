@@ -1839,6 +1839,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
         return;
     }
+    if (types_expr::is_undefined(d->kind.variable.init) && types::lookup(&r->scopes, "undefined") == nullptr) {
+        return; // `mut first: Task = undefined`: the storage C zeroes, filled before use (#2643)
+    }
     if (d->kind.variable.init->kind == .type_value) {
         return; // `let Point = m.Point`: an alias of a type, resolved with the declarations
     }

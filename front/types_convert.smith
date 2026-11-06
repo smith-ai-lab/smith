@@ -536,11 +536,18 @@ export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, 
     return cast_by_kind(&c);
 }
 
+static Bool is_c_enumeration(types::TypeRef t) {
+    return t->kind == .enumeration && !t->has_payload && countof(t->c_name) > 0;
+}
+
 // The type both operands of an arithmetic, bitwise or comparison operator widen to (#2531): the same type, or the one
 // of the two that holds every value of the other (`u8` and `i32` are `i32`; `i32` and `f64` are `f64`). Null when
 // neither does (`i32` and `u32`, `u64` and `usize`, `i64` and `f64`): the operands then need a written conversion.
 export types::TypeRef operand_type(types::Table *t, types::TypeRef left, types::TypeRef right) {
     if (left == right) return left;
+    // An enumeration a C header declares is an integer next to one (`request->operation == c::SmithIoOperation_Read`).
+    if (is_c_enumeration(left) && right->kind == .integer) return right;
+    if (is_c_enumeration(right) && left->kind == .integer) return left;
     if (!is_number(left) || !is_number(right)) return nullptr;
     Bool right_wider = right->kind == .floating;
     if ((left->kind == .floating) == (right->kind == .floating)) {
