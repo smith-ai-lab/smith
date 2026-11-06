@@ -43,7 +43,7 @@ static Str errors_of(const types::Checked *r) {
 
 // The errors `source` gives, one per line.
 static Str check(Str source) {
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked r = types_decl::check_module(&p.module, types::lp64());
     return errors_of(&r);

@@ -71,15 +71,15 @@ static Str dump_one(Str source, Bool new_syntax) {
     ast::DeclRef decls[1] = {ast::function("f", params, ast::named("I32"), body)};
     ast::Module m = ast::new_module("m", decls);
     Str dumped = ast::dump(&m);
-    char text[:] = format::push(source, "\n", dumped);
+    char contents[:] = format::push(source, "\n", dumped);
     for (Usize i = 0; i < countof(p.errors); i += 1) {
-        text = format::push(text, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
-                            p.errors[i].message, "\n");
+        contents = format::push(contents, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
+                                p.errors[i].message, "\n");
     }
     if (parse::peek(&p).kind != lex::end_of_file) {
-        text = format::push(text, "left over: `", parse::text(&p, parse::peek(&p)), "`\n");
+        contents = format::push(contents, "left over: `", parse::text(&p, parse::peek(&p)), "`\n");
     }
-    return text;
+    return contents;
 }
 
 // Every line of `lines` is a source, dumped one after the other with a blank line between.
@@ -119,10 +119,10 @@ static Str first_error(Str source) {
     return p.errors[0].message;
 }
 
-static Bool contains(Str text, Str piece) {
-    if (countof(piece) > countof(text)) return false;
-    for (Usize i = 0; i + countof(piece) <= countof(text); i += 1) {
-        if (mem::equal(text[i:i + countof(piece)], piece)) return true;
+static Bool contains(Str contents, Str piece) {
+    if (countof(piece) > countof(contents)) return false;
+    for (Usize i = 0; i + countof(piece) <= countof(contents); i += 1) {
+        if (mem::equal(contents[i:i + countof(piece)], piece)) return true;
     }
     return false;
 }
@@ -306,7 +306,7 @@ export void test_parse_expr_new_malformed_forms() {
 // One source of the fix goldens (#1509): the warnings of its first reading, the text once `smith lint --fix` has run to
 // the end, and the warnings that text still has (the forms with no mechanical fix).
 static Str fix_one(Str source) {
-    char text[:] = format::push(source, "\n");
+    char contents[:] = format::push(source, "\n");
     Str current = source;
     Usize left = 0;
     for (Usize pass = 0; pass < 8; pass += 1) {
@@ -316,15 +316,15 @@ static Str fix_one(Str source) {
             parse::ParseError warning = p.warnings[i];
             Str note = "";
             if (countof(warning.fix) == 0) note = " (no fix)";
-            text = format::push(text, "  warning ", warning.span.start, "-", warning.span.end, ": ", warning.message,
-                                note, "\n");
+            contents = format::push(contents, "  warning ", warning.span.start, "-", warning.span.end, ": ",
+                                    warning.message, note, "\n");
         }
         left = countof(p.warnings);
         fix::Fixed fixed = fix::apply_fixes(current, p.errors, p.warnings);
         if (fixed.applied == 0) break;
         current = fixed.text;
     }
-    char done[:] = format::push(text, "  fixed: ", current, "\n  warnings left: ", left, "\n");
+    char done[:] = format::push(contents, "  fixed: ", current, "\n  warnings left: ", left, "\n");
     return done;
 }
 
@@ -457,12 +457,12 @@ static Str dump_layout(Str source) {
     ast::Param params[:] = {};
     ast::DeclRef decls[1] = {ast::function("f", params, ast::named("I32"), body)};
     ast::Module m = ast::new_module("m", decls);
-    char text[:] = format::push(source, "\n", ast::dump(&m));
+    char contents[:] = format::push(source, "\n", ast::dump(&m));
     for (Usize i = 0; i < countof(p.errors); i += 1) {
-        text = format::push(text, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
-                            p.errors[i].message, "\n");
+        contents = format::push(contents, "error ", p.errors[i].span.start, "-", p.errors[i].span.end, ": ",
+                                p.errors[i].message, "\n");
     }
-    return text;
+    return contents;
 }
 
 static Str layout_source(Usize which) {

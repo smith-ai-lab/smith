@@ -206,19 +206,19 @@ Written emit_long(Bool errors, char *memory, Usize characters) {
 // say that stdout is closed.
 [[std::c_name("smith_console_print_pieces")]] export Written print(auto... pieces) {
     char stack[512];
-    format::Written text = format::to(stack, sizeof stack, pieces...);
-    if (text.fits) return emit(false, stack, text.length);
-    char *memory = (char *)mem::alloc_raw(text.length + 1, alignof(char));
-    format::Written whole = format::to(memory, text.length + 1, pieces...);
-    return emit_long(false, memory, whole.length);
+    format::Written measured = format::to(stack, sizeof stack, pieces...);
+    if (measured.fits) return emit(false, stack, measured.length);
+    char *long_buffer = (char *)mem::alloc_raw(measured.length + 1, alignof(char));
+    format::Written whole = format::to(long_buffer, measured.length + 1, pieces...);
+    return emit_long(false, long_buffer, whole.length);
 }
 
 // As print, on stderr.
 [[std::c_name("smith_console_eprint_pieces")]] export Written print_error(auto... pieces) {
     char stack[512];
-    format::Written text = format::to(stack, sizeof stack, pieces...);
-    if (text.fits) return emit(true, stack, text.length);
-    char *memory = (char *)mem::alloc_raw(text.length + 1, alignof(char));
-    format::Written whole = format::to(memory, text.length + 1, pieces...);
-    return emit_long(true, memory, whole.length);
+    format::Written measured = format::to(stack, sizeof stack, pieces...);
+    if (measured.fits) return emit(true, stack, measured.length);
+    char *long_buffer = (char *)mem::alloc_raw(measured.length + 1, alignof(char));
+    format::Written whole = format::to(long_buffer, measured.length + 1, pieces...);
+    return emit_long(true, long_buffer, whole.length);
 }

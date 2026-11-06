@@ -15,7 +15,7 @@ import std::test;
 import <llvm-c/Core.h>;
 
 static parser::Parsed parse_old(Str source) {
-    return parser::parse("t.smith", source);
+    return parser::parse_file("t.smith", source);
 }
 
 typedef I32 (*Run)();

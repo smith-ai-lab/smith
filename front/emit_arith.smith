@@ -123,9 +123,9 @@ static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, Str op, sta
                                    ast::Span span) {
     state::Ty ty = a.ty;
     U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
-    c::LLVMTypeRef types[1] = {ty.llvm};
-    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
-    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
+    c::LLVMTypeRef overload_types[1] = {ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, overload_types, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, overload_types, 1);
     c::LLVMValueRef args[2] = {a.llvm, b.llvm};
     c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
     c::LLVMValueRef bad = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
@@ -455,9 +455,9 @@ export state::Status place_name(state::Emitter *e, const ast::Expr *x) {
 static c::LLVMValueRef negate_checked(state::Emitter *e, state::Value operand, ast::Span span) {
     state::Ty ty = operand.ty;
     U32 id = c::LLVMLookupIntrinsicID("llvm.ssub.with.overflow", 23);
-    c::LLVMTypeRef types[1] = {ty.llvm};
-    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 1);
-    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 1);
+    c::LLVMTypeRef overload_types[1] = {ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, overload_types, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, overload_types, 1);
     c::LLVMValueRef args[2] = {zero_of(ty), operand.llvm};
     c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
     c::LLVMValueRef bad = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
@@ -802,9 +802,9 @@ static c::LLVMValueRef float_lost(state::Emitter *e, state::Value from, state::T
 static void float_report(state::Emitter *e, c::LLVMValueRef lost, state::Value from, state::Ty to) {
     U32 id = c::LLVMLookupIntrinsicID("llvm.fptosi.sat", 15);
     c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
-    c::LLVMTypeRef types[2] = {wide, from.ty.llvm};
-    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, types, 2);
-    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, types, 2);
+    c::LLVMTypeRef overload_types[2] = {wide, from.ty.llvm};
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, overload_types, 2);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, overload_types, 2);
     c::LLVMValueRef operand[1] = {from.llvm};
     c::LLVMValueRef saturated = c::LLVMBuildCall2(e->builder, type, declaration, operand, 1, "");
     char *target = format::push(to.name).data;

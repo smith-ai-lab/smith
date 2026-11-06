@@ -94,7 +94,7 @@ export void test_error_without_a_fix_has_none() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse(file_name, "module a; int");
+    parser::Parsed parsed = parser::parse_file(file_name, "module a; int");
     check_flag(countof(parsed.errors) > 0, true);
     syntax::Edits none = parsed.errors[0].fix;
     check_count(countof(none), 0);
@@ -224,7 +224,7 @@ export void test_a_source_without_old_forms_has_no_warnings() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse(file_name, "a := 1\n");
+    parser::Parsed parsed = parser::parse_file(file_name, "a := 1\n");
     check_count(countof(parsed.errors), 0);
     check_count(countof(parsed.warnings), 0);
 }
@@ -337,14 +337,15 @@ export void test_an_if_that_is_not_about_the_system_has_no_fix() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed none = parser::parse(file_name, "#if defined(DEBUG)\nint f();\n#endif\n");
+    parser::Parsed none = parser::parse_file(file_name, "#if defined(DEBUG)\nint f();\n#endif\n");
     check_count(countof(none.errors), 1);
     syntax::Edits no_edits = none.errors[0].fix;
     check_count(countof(no_edits), 0);
-    parser::Parsed inside = parser::parse(file_name, "int f() {\n#if defined(__APPLE__)\n    return 1;\n#endif\n}\n");
+    parser::Parsed inside =
+        parser::parse_file(file_name, "int f() {\n#if defined(__APPLE__)\n    return 1;\n#endif\n}\n");
     syntax::Edits inside_edits = inside.errors[0].fix;
     check_count(countof(inside_edits), 0);
-    parser::Parsed other = parser::parse(file_name, "#if defined(__APPLE__)\n#define A 1\n#endif\n");
+    parser::Parsed other = parser::parse_file(file_name, "#if defined(__APPLE__)\n#define A 1\n#endif\n");
     syntax::Edits other_edits = other.errors[0].fix;
     check_count(countof(other_edits), 1);
 }
@@ -365,7 +366,7 @@ export void test_other_directives_stay_errors_without_a_fix() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse(file_name, "#if 1\n#define F(x) x\n#include \"h.h\"\n");
+    parser::Parsed parsed = parser::parse_file(file_name, "#if 1\n#define F(x) x\n#include \"h.h\"\n");
     check_count(countof(parsed.errors), 1);
     syntax::Edits none = parsed.errors[0].fix;
     check_count(countof(none), 0);

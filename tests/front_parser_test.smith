@@ -1,6 +1,7 @@
 // Tests of front::parser (#1219, A6 of track A of #1112): the whole parser on the language corpus. Every `.smith` file
-// of every case folder of tests/smith-lang/cases (the corpus is the specification) is read with `parser::parse`, and
-// each has one outcome. The golden is one file a case, tests/front/parser/cases/<case>.txt, holding that case's lines
+// of every case folder of tests/smith-lang/cases (the corpus is the specification) is read with `parser::parse_file`,
+// and each has one outcome. The golden is one file a case, tests/front/parser/cases/<case>.txt, holding that case's
+// lines
 // (`path: outcome`, the path relative to the case's `src`) and nothing else, so two changes to different cases never
 // touch the same file (#1352):
 //
@@ -172,13 +173,13 @@ static void read_file_in(Report *report, Tally *tally, Str name, Str path) {
         append(report, ": C, out of scope\n");
         return;
     }
-    parser::Parsed first = parser::parse(name, source);
+    parser::Parsed first = parser::parse_file(name, source);
     if (countof(first.errors) > 0) {
         error_line(report, tally, name, source, first.errors[0].message, first.errors[0].span.start);
         return;
     }
     Str one = ast::dump(&first.module);
-    parser::Parsed second = parser::parse(name, source);
+    parser::Parsed second = parser::parse_file(name, source);
     Str two = ast::dump(&second.module);
     if (countof(one) == 0 || !slice::equal(one, two) || countof(second.errors) > 0) tally->unstable += 1;
     tally->ok += 1;

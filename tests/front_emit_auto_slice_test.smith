@@ -21,7 +21,7 @@ static I32 run(Str source, Str symbol) {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    parser::Parsed parsed = parser::parse("t.smith", source);
+    parser::Parsed parsed = parser::parse_file("t.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
     ast::Module m = ast::new_module("front::test", parsed.module.decls);
     types::Checked checked = types_decl::check_module(&m, types::lp64());
@@ -90,7 +90,7 @@ static const ast::Module *load(const char *name) {
     } else {
         return nullptr;
     }
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = p.module;
@@ -102,7 +102,7 @@ static Usize errors_across_modules(Str source) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse("m.smith", source);
+    parser::Parsed parsed = parser::parse_file("m.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
     ast::Module m = ast::new_module("main", parsed.module.decls);
     types::Checked checked = types_decl::check_module_with(&m, types::lp64(), load);
