@@ -66,9 +66,9 @@ constexpr I32 sig_pipe = c::SIGPIPE;
 constexpr I32 sig_block = c::SIG_BLOCK;
 constexpr I32 sig_setmask = c::SIG_SETMASK;
 constexpr I16 poll_in = c::POLLIN;
-constexpr I32 mode_inherit = c::SmithProcessMode_Inherit;
-constexpr I32 mode_piped = c::SmithProcessMode_Piped;
-constexpr I32 mode_captured = c::SmithProcessMode_Captured;
+constexpr I32 mode_inherit = (I32)c::SmithProcessMode_Inherit;
+constexpr I32 mode_piped = (I32)c::SmithProcessMode_Piped;
+constexpr I32 mode_captured = (I32)c::SmithProcessMode_Captured;
 constexpr I32 rusage_self = c::RUSAGE_SELF;
 // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 constexpr Usize chunk = 4096;
@@ -277,7 +277,8 @@ I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
         pipe_close(err);
         return code;
     }
-    c::posix_spawn_file_actions_t actions = {};
+    c::posix_spawn_file_actions_t actions;
+    __builtin_memset(&actions, 0, sizeof actions);
     c::posix_spawn_file_actions_init(&actions);
     if (mode == mode_piped)
         c::posix_spawn_file_actions_adddup2(&actions, in[0], stdin_fd);
@@ -285,7 +286,8 @@ I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
         c::posix_spawn_file_actions_addopen(&actions, stdin_fd, "/dev/null", o_rdonly, 0);
     if (out[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, out[1], stdout_fd);
     if (err[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, err[1], stderr_fd);
-    c::posix_spawnattr_t attributes = {};
+    c::posix_spawnattr_t attributes;
+    __builtin_memset(&attributes, 0, sizeof attributes);
     c::posix_spawnattr_init(&attributes);
     if (leader) {
         c::posix_spawnattr_setflags(&attributes, (I16)spawn_set_group);
@@ -316,7 +318,8 @@ constexpr U64 nanoseconds_per_microsecond = 1'000;
 // Waits for the process `id` (0 and its wait status), or, when id is below 0, reads this process's own usage; `used`
 // is filled in the units of Usage (ru_maxrss is bytes on macOS and kilobytes elsewhere). 0, or the errno.
 I32 measure(I32 id, I32 *wait_status, Usage *used) {
-    struct c::rusage raw = {};
+    struct c::rusage raw;
+    __builtin_memset(&raw, 0, sizeof raw);
     Bool done = false;
     for (Usize tries = 0; tries < 64 && !done; tries++) { // a signal may interrupt the wait
         if (id < 0) {
@@ -329,7 +332,8 @@ I32 measure(I32 id, I32 *wait_status, Usage *used) {
         }
     }
     if (!done) return eintr;
-    U64 kilobyte = target::os == target::macos ? 1 : 1024;
+    U64 kilobyte = 1024;
+    if constexpr (target::os == target::macos) kilobyte = 1;
     used->user_ns =
         (U64)raw.ru_utime.tv_sec * nanoseconds_per_second + (U64)raw.ru_utime.tv_usec * nanoseconds_per_microsecond;
     used->system_ns =
@@ -358,12 +362,14 @@ Isize read_real(I32 descriptor, void *buffer, Usize size, I32 *code) {
 if constexpr (target::os == target::macos) {
     Isize write_pipe(I32 descriptor, const void *buffer, Usize size) {
         c::sigset_t pipe_signal = (c::sigset_t)1 << (U32)(sig_pipe - 1);
-        c::sigset_t before = {};
+        c::sigset_t before;
+        __builtin_memset(&before, 0, sizeof before);
         c::pthread_sigmask(sig_block, &pipe_signal, &before);
         Isize count = c::write(descriptor, buffer, size);
         I32 code = errno_now();
         if (count < 0 && code == epipe) {
-            c::sigset_t pending = {};
+            c::sigset_t pending;
+            __builtin_memset(&pending, 0, sizeof pending);
             I32 taken = 0;
             c::sigpending(&pending);
             if ((pending & pipe_signal) != 0) c::sigwait(&pipe_signal, &taken);
@@ -375,15 +381,18 @@ if constexpr (target::os == target::macos) {
 } else {
     // NOLINTBEGIN(smith-preprocessor)
     Isize write_pipe(I32 descriptor, const void *buffer, Usize size) {
-        c::sigset_t pipe_signal = {};
+        c::sigset_t pipe_signal;
+        __builtin_memset(&pipe_signal, 0, sizeof pipe_signal);
         c::sigemptyset(&pipe_signal);
         c::sigaddset(&pipe_signal, sig_pipe);
-        c::sigset_t before = {};
+        c::sigset_t before;
+        __builtin_memset(&before, 0, sizeof before);
         c::pthread_sigmask(sig_block, &pipe_signal, &before);
         Isize count = c::write(descriptor, buffer, size);
         I32 code = errno_now();
         if (count < 0 && code == epipe) {
-            c::sigset_t pending = {};
+            c::sigset_t pending;
+            __builtin_memset(&pending, 0, sizeof pending);
             I32 taken = 0;
             c::sigpending(&pending);
             if (c::sigismember(&pending, sig_pipe) == 1) c::sigwait(&pipe_signal, &taken);
@@ -760,9 +769,11 @@ FakeChild *fake_child(Fake *fake, I32 id) {
 
 // Whether the output the child's streams hold has all been read.
 Bool fake_drained(const Fake *fake, const FakeChild *child) {
-    const Script *script = &fake->scripts[(Usize)(child - fake->children)];
-    Usize output_left = c::strlen(script->output != nullptr ? script->output : "") - child->output_position;
-    Usize errors_left = c::strlen(script->errors != nullptr ? script->errors : "") - child->errors_position;
+    const Script *script = &fake->scripts[(Usize)(child - &fake->children[0])];
+    const char *output = script->output; // locals, so the null tests narrow them (a field is not narrowed)
+    const char *errors = script->errors;
+    Usize output_left = c::strlen(output != nullptr ? output : "") - child->output_position;
+    Usize errors_left = c::strlen(errors != nullptr ? errors : "") - child->errors_position;
     if (child->mode == mode_piped) return output_left == 0;
     if (child->mode == mode_captured) return output_left == 0 && errors_left == 0;
     return true;
@@ -770,23 +781,20 @@ Bool fake_drained(const Fake *fake, const FakeChild *child) {
 
 Bool fake_exited(const Fake *fake, const FakeChild *child) {
     if (child->killed) return true;
-    switch (fake->scripts[(Usize)(child - fake->children)].exit_on) {
-    case Start:
-        return true;
-    case InputClosed:
-        return child->input_closed;
-    case OutputRead:
-        return fake_drained(fake, child);
-    case Never:
-        return false;
-    }
+    auto exit_on = fake->scripts[(Usize)(child - &fake->children[0])].exit_on;
+    if (exit_on == Start) return true;
+    if (exit_on == InputClosed) return child->input_closed;
+    if (exit_on == OutputRead) return fake_drained(fake, child);
+    return false; // Never
 }
 
 I32 fake_start(c::SmithProcessHandler *self, const char *const *argv, I32 mode) {
     Fake *fake = (Fake *)self;
     for (Usize i = 0; i < fake->count; i++) {
         if (fake->children[i].used || c::strcmp(fake->scripts[i].program, argv[0]) != 0) continue;
-        fake->children[i] = (FakeChild){.used = true, .mode = mode};
+        __builtin_memset(&fake->children[i], 0, sizeof fake->children[i]);
+        fake->children[i].used = true;
+        fake->children[i].mode = mode;
         return (I32)i + 1;
     }
     fake_fail(enoent);
@@ -904,17 +912,16 @@ Usize fake_cores(c::SmithProcessHandler *self) {
 [[std::c_name("smith_process_fake")]] export [[nodiscard]] Fake fake() {
     Fake result = {};
     result.cores = 1;
-    result.base = (c::SmithProcessHandler){
-        .start = fake_start,
-        .read = fake_read,
-        .write = fake_write,
-        .close_input = fake_close_input,
-        .wait = fake_wait,
-        .kill = fake_kill,
-        .close = fake_close,
-        .cores = fake_cores,
-        .usage = fake_usage,
-    };
+    __builtin_memset(&result.base, 0, sizeof result.base); // the fields not set below are null: libc's own call
+    result.base.start = fake_start;
+    result.base.read = fake_read;
+    result.base.write = fake_write;
+    result.base.close_input = fake_close_input;
+    result.base.wait = fake_wait;
+    result.base.kill = fake_kill;
+    result.base.close = fake_close;
+    result.base.cores = fake_cores;
+    result.base.usage = fake_usage;
     return result;
 }
 
@@ -922,7 +929,7 @@ Usize fake_cores(c::SmithProcessHandler *self) {
 [[std::c_name("smith_process_fake_add")]] export void fake_add(Fake *fake, Script script) {
     if (fake->count == fake_scripts_max) misuse("process fake: more than 16 scripted programs");
     fake->scripts[fake->count] = script;
-    fake->children[fake->count] = (FakeChild){};
+    __builtin_memset(&fake->children[fake->count], 0, sizeof fake->children[fake->count]);
     fake->count++;
 }
 
@@ -932,7 +939,7 @@ Usize fake_cores(c::SmithProcessHandler *self) {
 }
 
 // What the program wrote to the stdin of the n-th scripted child (counting from 0), as bytes.
-[[std::c_name("smith_process_fake_input")]] export [[nodiscard]] Bytes fake_input(const Fake *fake, Usize n) {
+[[std::c_name("smith_process_fake_input")]] export [[nodiscard]] typeof(const U8[:]) fake_input(const Fake *fake, Usize n) {
     contract::requires(n < fake->count);
     return fake->children[n].input[0:fake->children[n].input_size];
 }
