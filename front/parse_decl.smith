@@ -3662,6 +3662,17 @@ static Str enclosing_condition(const parse::Parser *p, const Frame *parent) {
     return conjunction(parent->outer, branch_condition(parent, parent->in_else, own));
 }
 
+// Sets the condition a block opened inside `parent` carries from the branches around it (#2643). False when no fix
+// can be written for it: an `else if` that could not be mended, or a parent whose condition is not about the system.
+static Bool nested_fixable(const parse::Parser *p, const Frame *parent, Bool chain, Bool mended, Frame *opened) {
+    if (chain) {
+        opened->outer = parent->outer;
+        return mended;
+    }
+    opened->outer = enclosing_condition(p, parent);
+    return countof(opened->outer) > 0;
+}
+
 // The edits of one block's own pieces: its head, its `} else {`, its closing `}` and a `@when` before each declaration
 // of its branches. False when the condition is not about the system (the block gets no fix).
 static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits *edits) {
@@ -3672,7 +3683,8 @@ static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits
     for (Usize pass = 0; pass < 2; pass++) {
         Bool in_else = pass == 1;
         DeclRefList list = in_else ? frame->else_decls : frame->then_decls;
-        Str text = str_of(format::push("@when(", conjunction(frame->outer, branch_condition(frame, in_else, own)), ")\n"));
+        Str text =
+            str_of(format::push("@when(", conjunction(frame->outer, branch_condition(frame, in_else, own)), ")\n"));
         for (ast::Decl *item : list) {
             if (item->kind == .if_constexpr) continue; // an `else if`: its own frame did it
             U32 from = item->span.start;
@@ -3795,14 +3807,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
             Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
-            if (chain) opened.outer = stack[depth - 1].outer;
-            if (depth > 0 && !chain) {
-                // A block inside a branch of another: its `@when` holds the branch's condition too (#2643).
-                opened.outer = enclosing_condition(p, &stack[depth - 1]);
-                if (countof(opened.outer) == 0) fixable = false;
-            } else if (depth > 0 && !mended) {
-                fixable = false;
-            }
+            if (depth > 0 && !nested_fixable(p, &stack[depth - 1], chain, mended, &opened)) fixable = false;
             stack[depth] = opened;
             depth += 1;
             continue;
