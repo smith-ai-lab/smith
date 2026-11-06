@@ -291,3 +291,22 @@ export void test_front_emit_bind_an_option_of_a_type_parameter_binds_it() {
          "    or_else(half(n), -1)\n",
          "halved", 8, 4, 3, -1);
 }
+
+// The forms the fixer writes for a test through a pointer: `match p.*:` with `.v(v):`, and `if .v(v) := p.*:`.
+export void test_front_emit_bind_a_payload_through_a_pointer() {
+    char source[:] = format::push(shapes, "fn measure(p: *Shape) -> i32:\n"
+                                          "    match p.*:\n"
+                                          "        .circle(circle): circle.radius * 10\n"
+                                          "        .rect(rect): rect.w * rect.h\n"
+                                          "        .empty: 0\n"
+                                          "fn first(p: *Shape) -> i32:\n"
+                                          "    if .rect(rect) := p.*:\n"
+                                          "        return rect.w\n"
+                                          "    else if .circle(circle) := p.*:\n"
+                                          "        return circle.radius\n"
+                                          "    -1\n"
+                                          "pub fn area(n: i32) -> i32:\n"
+                                          "    shape := make(n)\n"
+                                          "    measure(&shape) + first(&shape)\n");
+    runs(source, "area", 0, 22, 1, 15);
+}

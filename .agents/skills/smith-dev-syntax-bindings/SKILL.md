@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-bindings
-description: "New syntax (#1428, #2494): `.tuple(tuple) := base.kind else: return .none`, `first := opt else: return`, the binding named after its variant, both errors, what the fixer rewrites (`if k == .v:`, `if k != .v: return`, chains `a || k != .v`, `match` arms that read `k.v`), `.v(mut x)`. Load when a payload is read after a variant test in the new syntax."
+description: "New syntax (#1428, #2494): `.tuple(tuple) := base.kind else: return .none`, `first := opt else: return`, the binding named after its variant, both errors, what the fixer rewrites (`if k == .v:` and `else if`, `p.*`, `if k != .v: return`, chains `a || k != .v`, `match` arms that read `k.v`), `.v(mut x)`. Load when a payload is read after a variant test in the new syntax."
 ---
 
 # Refutable bindings (owner, 2026-11-06; #2494)
@@ -26,7 +26,8 @@ started := process.start(cmd)
 - A pattern that can fail **must** have `else` and one that always matches (`(q, r) := divmod(a, b)`) **must not**: "this pattern always matches: remove `else`". The `else` is one line or indented and ends in `return`, `break`, `continue` or a call that never returns: "the `else` of a binding must leave: end it with `return`, ...". The names do not exist inside the `else`.
 - Passing an error up stays `try`: `child := try process.start(cmd)`.
 - Reading a payload with `.` is an error (`kind.tuple.elements`). The fixer rewrites, each read `k.v` becoming `v`:
-  - `if k == .v:` with reads in the `then` → `if .v(v) := k:`.
+  - `if k == .v:` with reads in the `then` → `if .v(v) := k:`, with or without an `else`: each test of an `else if` chain binds its own payload.
+  - Through a pointer: `if p.* == .v:` or `match p.*:` with reads `p.v` → `if .v(v) := p.*:` and `.v(v):` (#2494).
   - `if k != .v: return X` (or `break`, `continue`) with reads to the end of the block → `.v(v) := k else: return X` (#2503). Only once the text reads `if test:`: while it still has C's parentheses the statement's span does not start at its `if`.
   - A chain `if a || k != .v || b: X` → `if a: X`, `.v(v) := k else: X`, `if b: X` (`b` may read the payload).
   - A `match` arm `.v:` that reads `m.v` → `.v(v):`. A C `switch` becomes a `match` also when its last case ends without a `break` and when a case holds a loop's `break`; one whose cases are `.ok` and `.error` gets no `_` arm.

@@ -3270,6 +3270,9 @@ static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
 // A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
 // so the test's site is left as it is (#2503).
 static void spoil_written(types::Checked *c, const ast::Expr *place) {
+    if (place->kind == .unary && place->kind.unary.op == .dereference) {
+        place = place->kind.unary.operand; // `p.* = x` changes what a test of `p.*` read
+    }
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
@@ -3316,6 +3319,12 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         return base;
     }
     Str found = types::show(base);
+    // `p.v` through a pointer to a payload enumeration in smith's own syntax is a payload read like `k.v` (#2494)
+    Bool to_payloads = base->kind == .pointer && base->element->kind == .enumeration && base->element->has_payload;
+    if (!arrow && to_payloads && e->kind == .member && in_new_syntax(c, e->kind.member.base)) {
+        base = base->element;
+        found = types::show(base);
+    }
     if (base->kind == .enumeration && base->has_payload) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
