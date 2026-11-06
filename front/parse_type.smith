@@ -1188,8 +1188,8 @@ static ast::TypeExpr *fn_type_of(const ast::TypeExpr *base) {
 }
 
 // `Fn(R (A, B))` as `fn(A, B) -> R` from its function type: no `->` for a result of `void`.
-static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function, Rewrite *r) {
-    ast::TypeKind kind = function->kind;
+static Str fn_base(const parse::Parser *p, const ast::TypeExpr *function_type, Rewrite *r) {
+    ast::TypeKind kind = function_type->kind;
     if (kind != .function) {
         return "";
     }
@@ -1356,7 +1356,7 @@ static Bool qualified_type_function(parse::Parser *p, ast::TypeExpr *base) {
     ast::Identifier segment = {.text = parse::text(p, token), .span = token.span};
     named.segments[countof(named.segments) - 1] = segment;
     named.span = parse::span_from(p, named.span.start);
-    base->kind.named.path = named;
+    base->kind = (ast::TypeKind){.named = {.path = named}};
     return true;
 }
 

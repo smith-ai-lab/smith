@@ -41,6 +41,7 @@ count += 1                      # assignment: only to a mut name, and a statemen
 - Every declaration is `PATTERN := expr` or `NAME: T = expr`, with `mut` before a name for a variable; one with no value is an error. A read of an `undefined` name before a write is a compile error where the checker can see it; debug builds fill it with a pattern. The owner chose this on 2026-11-05 (#2316): "Okay yeah what if we did no shadowing and := and got rid of let"; for trailing blocks, "if for trailing lambda we required parenthesis even with no parameters"; and for `if let`, among the options, "if x := opt: (Recommended)".
 - `x = e` always assigns; `:=` always declares. Redeclaring a name in scope is the shadowing error ("assign with `=`, or choose another name"). A statement starting `name:` is a typed declaration, never a block call. Globals at the top level are written the same way (`x := v`, `mut x := v`, `x: T = v`); `const` is unchanged. A bare integer literal is `i32` and a float literal `f64`, unless a type is written or expected.
 - Until #2316 merges, the parser still takes `let` with a warning and a fix-it that writes these forms.
+`==` compares values and operators are never user-defined: [smith-dev-syntax-arrays](../smith-dev-syntax-arrays/SKILL.md).
 
 ## Pointers and conversions
 
@@ -57,5 +58,4 @@ bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
 - `to`, `wrap` and `cast` are built-in functions, so also method calls on any value. `as`, prefix `*p` and `(T)x` are errors whose fixes write these. There is no `&mut` and no `->`.
 
 ## Not settled yet
-
 `[_]` lengths.
