@@ -308,6 +308,54 @@ static Bool written_first(Str source, ast::StmtRef items[:], Usize at, Str name,
     return covered == total;
 }
 
+static Bool word_char(char c) {
+    return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// Whether `text[at]` is the `&` of an argument whose call names a C function (`c::stat(path, &info)`: a `::` in the
+// callee before its `(`; `c.stat(...)` once the file is converted).
+static Bool argument_of_c_call(Str text, Usize at) {
+    Usize depth = 0;
+    Usize j = at;
+    while (j > 0) {
+        j -= 1;
+        if (text[j] == ')') {
+            depth += 1;
+        } else if (text[j] == '(') {
+            if (depth == 0) break;
+            depth -= 1;
+        }
+    }
+    if (text[j] != '(') return false;
+    Usize b = j;
+    while (b > 0 && (word_char(text[b - 1]) || text[b - 1] == ':' || text[b - 1] == '.'))
+        b -= 1;
+    for (Usize m = b; m + 1 < j; m++) {
+        if ((text[m] == ':' && text[m + 1] == ':') || (text[m] == '.' && word_char(text[m + 1]))) return true;
+    }
+    return false;
+}
+
+// Whether the first statement after `items[at]` that mentions `name` hands `&name` to a call of a C function, with no
+// read of `name` before it: the call fills the struct (`struct stat info = {};` then `stat(path, &info)`, #2610), so
+// no zero is written.
+static Bool filled_by_call(Str source, ast::StmtRef items[:], Usize at, Str name) {
+    Usize n = countof(name);
+    for (Usize k = at + 1; k < countof(items); k++) {
+        Str text = source[items[k]->span.start:items[k]->span.end];
+        if (!mentions(text, name)) continue;
+        Usize i = 0;
+        for (; i + n <= countof(text); i++) {
+            if (!same(text[i:i + n], name)) continue;
+            Bool before = i > 0 && word_char(text[i - 1]);
+            Bool after = i + n < countof(text) && word_char(text[i + n]);
+            if (!before && !after) break;
+        }
+        return i > 0 && i + n <= countof(text) && text[i - 1] == '&' && argument_of_c_call(text, i - 1);
+    }
+    return false;
+}
+
 // Whether `e` is `{}`: an empty list with no type, or (in braces, new syntax) an empty block used as a value.
 static Bool is_empty_braces(const ast::Expr *e) {
     if (e->kind == .compound) return e->kind.compound.type == nullptr && countof(e->kind.compound.items) == 0;
@@ -347,7 +395,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
         if (close + 1 < countof(written_text)) text = construct_array(written_text[close + 1:countof(written_text)], t);
         if (countof(text) > 0) *filled = true;
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
-               written_first(source, items, at, name, t)) {
+               (written_first(source, items, at, name, t) || filled_by_call(source, items, at, name))) {
         text = "undefined";
     } else {
         text = construct(source[written->span.start:written->span.end], t);
