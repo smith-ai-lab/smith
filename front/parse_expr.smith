@@ -1220,6 +1220,9 @@ static Bool void_statement(Str source, U32 start, U32 end) {
         i -= 1;
     Bool begins =
         i == 0 || source[i - 1] == '\n' || source[i - 1] == ';' || source[i - 1] == '{' || source[i - 1] == '}';
+    // The body of a one-line `if (c) (void)f();` or `else (void)f();` is a statement too (#2611).
+    if (!begins && i < start && source[i - 1] == ')') begins = true;
+    if (!begins && i >= 4 && i < start && same_text(source[i - 4:i], "else")) begins = true;
     Usize j = end;
     while (j < countof(source) && (source[j] == ' ' || source[j] == '\t'))
         j += 1;
