@@ -3077,7 +3077,8 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
                              "` is left out and has no default; give it a value, or write a default in the struct (`",
                              record->slots[k].name, ": T = value`)")),
             e, record, given);
-        ok = false;
+        // the construction is still of that record: its error stays, its type does too, so what is done with the value
+        // (`result.segments = ...` wants `mut result`) is checked and mended in the same run (#2602)
     }
     if (!ok) {
         poison(c, e);

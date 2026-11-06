@@ -670,6 +670,13 @@ static Bool has_module_line(Str source) {
     return false;
 }
 
+// Whether a variable is the alias of a type, as a mended `typedef T Name;` is: a capitalized name bound to a name, a
+// member (`c.SmithAllocator`) or a type value, which the checker reads as an alias only in smith's own syntax (#2602).
+static Bool is_type_alias_form(Str name, const ast::Expr *init) {
+    if (countof(name) == 0 || name[0] < 'A' || name[0] > 'Z' || init == nullptr) return false;
+    return init->kind == .name || init->kind == .member || init->kind == .type_value;
+}
+
 // A module in today's syntax that the own-syntax parser took (it reads C-like declarations too) is marked as written in
 // today's syntax: `Parser *p` is then a writable pointer, as it is in the file, and the importer's `&x` and `p` need
 // `mut x` and `*mut Parser` to be passed (#2561). Left as the own parser marked them, they were read-only pointers and
@@ -691,7 +698,8 @@ static void as_todays_syntax(ast::Module *module) {
                 }
             }
         } else if (d->kind == .variable) {
-            d->kind.variable.is_new = false;
+            // `Allocator := c.SmithAllocator`, what a typedef alias is mended to, is still an alias of a type (#2602)
+            if (!is_type_alias_form(d->kind.variable.name, d->kind.variable.init)) d->kind.variable.is_new = false;
         }
     }
 }
