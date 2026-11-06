@@ -186,3 +186,23 @@ export void test_front_fix_blocks_a_match_arm_that_starts_with_a_dot_stays_on_it
     check("fn f(e: E) {\n    match e {\n        .a => g(1)\n        .b(v), .c => g(v)\n        _ => g(3)\n    }\n}\n",
           "fn f(e: E):\n    match e:\n        .a: g(1)\n        .b(v), .c: g(v)\n        _: g(3)\n");
 }
+
+// A struct body on one line has one field to a line, whatever separated them (#2520).
+export void test_front_fix_blocks_a_one_line_struct_body_has_one_field_to_a_line() {
+    check("pub struct Box { pub w: F32 pub h: F32 }\n", "pub struct Box:\n    pub w: F32\n    pub h: F32\n");
+    check("struct Box { w: F32 h: F32 }\n", "struct Box:\n    w: F32\n    h: F32\n");
+    check("pub struct Box { pub w: F32; pub h: F32; }\n", "pub struct Box:\n    pub w: F32\n    pub h: F32\n");
+}
+
+// The braces of a compound literal are a value, never a block (#2520).
+export void test_front_fix_blocks_a_compound_literal_keeps_its_braces() {
+    check("fn f(s: *Stream) {\n    s.* = (Stream){}\n    s.* = (Stream){0}\n}\n",
+          "fn f(s: *Stream):\n    s.* = (Stream){}\n    s.* = (Stream){0}\n");
+    check("fn f(a: i32) -> i32 {\n    return (typeof(a)){0}\n}\n", "fn f(a: i32) -> i32:\n    return (typeof(a)){0}\n");
+}
+
+// A `{` after a parenthesized operand of an operator is a block, not a compound literal (#2520).
+export void test_front_fix_blocks_a_parenthesized_condition_before_a_brace_is_a_block() {
+    check("fn f(i: usize) -> bool {\n    if i > 0 && (i == 1) { return false }\n    return true\n}\n",
+          "fn f(i: usize) -> bool:\n    if i > 0 && (i == 1):\n        return false\n    return true\n");
+}

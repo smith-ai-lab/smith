@@ -462,6 +462,32 @@ export Bool same_type(Ty a, Ty b) {
     return a.llvm == b.llvm && a.is_signed == b.is_signed;
 }
 
+// Two numbers of different types: the narrower one widens to the other's type (the checker has allowed only the
+// conversions that lose nothing, #2531: `u8` to `i32`, `i32` to `f64`). Pushes nothing; `left` and `right` are updated.
+export Status unify_operands(Emitter *e, Value *left, Value *right, ast::Span span) {
+    Ty l = left->ty;
+    Ty r = right->ty;
+    Bool numbers = (l.kind == .integer || l.kind == .floating) && (r.kind == .integer || r.kind == .floating);
+    if (!numbers || same_type(l, r)) return success();
+    Bool right_wider = r.kind == .floating;
+    if ((l.kind == .floating) == (r.kind == .floating)) {
+        right_wider = r.bits > l.bits;
+        if (l.is_signed != r.is_signed) right_wider = r.is_signed;
+    }
+    Ty from = right_wider ? l : r;
+    Ty to = right_wider ? r : l;
+    Bool lossless = to.bits > from.bits && (from.is_signed == to.is_signed || !from.is_signed);
+    if (to.kind == .integer && from.kind == .integer && !lossless) return success(); // the caller reports the mismatch
+    if (right_wider) {
+        try convert(e, *left, r, span, .assign);
+        *left = pop_value(e);
+    } else {
+        try convert(e, *right, l, span, .assign);
+        *right = pop_value(e);
+    }
+    return success();
+}
+
 // The one place a pointer type is made, so that B3b can give it an address space.
 export c::LLVMTypeRef pointer_type(Emitter *e, U32 address_space) {
     return c::LLVMPointerTypeInContext(e->context, address_space);

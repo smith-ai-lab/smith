@@ -290,6 +290,7 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
                                   ast::Span span) {
     if (left.ty.kind == .pointer && right.ty.kind == .integer && (op == .add || op == .subtract))
         return pointer_offset(e, op, left, right);
+    try state::unify_operands(e, &left, &right, span);
     if (!state::same_type(left.ty, right.ty))
         return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     if (left.ty.kind == .floating) return float_arithmetic(e, op, left, right, span);
@@ -678,6 +679,7 @@ static state::Status float_compare_finish(state::Emitter *e, const state::Work *
     }
     state::Value right = state::pop_value(e);
     state::Value left = state::pop_value(e);
+    try state::unify_operands(e, &left, &right, w->span);
     if (!state::same_type(left.ty, right.ty))
         return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     c::LLVMValueRef out =
