@@ -962,8 +962,10 @@ static Frame open_bare(parse::Parser *p, FrameKind kind) {
     p->stop_and = frame.is_let; // the value of a pattern ends at `&&`, the rest of the chain is read after it (D12)
     if (countof(p->errors) == before) frame.condition = expression(p);
     p->stop_and = false;
-    if (frame.is_let && countof(p->errors) == before && parse::accept(p, lex::ampersand_ampersand))
+    if (frame.is_let && countof(p->errors) == before && parse::accept(p, lex::ampersand_ampersand)) {
+        p->head = true; // the chain is a condition head too: a call at its end takes no trailing block
         frame.chain = expression(p);
+    }
     p->head = false;
     frame.no_body = !require_body(p, before);
     return frame;
@@ -2032,18 +2034,21 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
     ast::Stmt *stop = spanned(p, frame.start, new_stmt(break_kind()));
     if (frame.chain != nullptr) { // `while .v(x) := value && rest:` stops when the rest fails too (D12)
         ast::Stmt *again = spanned(p, frame.start, new_stmt(break_kind()));
-        done = spanned(p, frame.start, new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = done, .else_branch = again}}));
+        done = spanned(p, frame.start,
+                       new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = done, .else_branch = again}}));
     }
     ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
     return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
 }
 
 // `if .v(x) := value && rest: then else: otherwise` (D12) is `if .v(x) := value: (if rest: then else: otherwise) else:
-// otherwise`: the checker and the emitter see the `if` with a pattern and the `if` they already know. `x` is in scope in
-// `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
+// otherwise`: the checker and the emitter see the `if` with a pattern and the `if` they already know. `x` is in scope
+// in `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
 static ast::Stmt *pattern_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
     if (frame.chain != nullptr) {
-        then = spanned(p, frame.start, new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = then, .else_branch = otherwise}}));
+        then =
+            spanned(p, frame.start,
+                    new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = then, .else_branch = otherwise}}));
     }
     return ast::if_let(frame.pattern, frame.condition, then, otherwise);
 }

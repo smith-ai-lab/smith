@@ -1103,7 +1103,7 @@ struct Stack {
     Usize value_count;
     parse::Parser *parser;
     Bump bumps[:];
-    Bool head; // a condition head: a call here takes no trailing block (parentheses and arguments lift this)
+    Bool head;     // a condition head: a call here takes no trailing block (parentheses and arguments lift this)
     Bool stop_and; // a top-level `&&` ends the expression: the chain after a pattern's value (D12)
 };
 

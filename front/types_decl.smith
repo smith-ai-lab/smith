@@ -738,9 +738,9 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
 }
 
 // `if k == .v && rest: X` and `while k == .v && rest: X` (D12): a variant test that starts an `&&` chain binds the
-// payload for the rest of the chain and the body, `if .v(v) := k && rest:`. Only the first conjunct can: the ones before
-// a test may be what makes `k` safe to read. The reads in the chain's other conjuncts and in `body` are the test's;
-// the `else` is not.
+// payload for the rest of the chain and the body, `if .v(v) := k && rest:`. Only the first conjunct can: the ones
+// before a test may be what makes `k` safe to read. The reads in the chain's other conjuncts and in `body` are the
+// test's; the `else` is not.
 static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast::Stmt *body) {
     if (!(test->kind == .binary) || test->kind.binary.op != .logical_and) return;
     const ast::Expr *first = test;

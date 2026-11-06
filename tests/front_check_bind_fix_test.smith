@@ -214,18 +214,17 @@ export void test_front_check_bind_fix_a_test_that_starts_an_and_chain_binds_the_
 }
 
 export void test_front_check_bind_fix_a_test_that_starts_an_and_chain_binds_a_while() {
-    char before[:] = format::push(
-        shape_text(),
-        "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while s == .circle && n < s.circle:\n        n += 1\n    n\n");
-    char after[:] = format::push(
-        shape_text(),
-        "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while .circle(circle) := s && n < circle:\n        n += 1\n    n\n");
+    char before[:] = format::push(shape_text(), "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while s == "
+                                                ".circle && n < s.circle:\n        n += 1\n    n\n");
+    char after[:] = format::push(shape_text(), "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while "
+                                               ".circle(circle) := s && n < circle:\n        n += 1\n    n\n");
     expect(before, after);
 }
 
 // A test that does not start the chain stays: the conjuncts before it may be what makes the read safe.
 export void test_front_check_bind_fix_a_test_inside_an_and_chain_stays() {
     char site[:] = format::push(
-        shape_text(), "fn big(s: Shape, ok: bool) -> i32:\n    if ok && s == .circle && s.circle > 1:\n        return 1\n    0\n");
+        shape_text(),
+        "fn big(s: Shape, ok: bool) -> i32:\n    if ok && s == .circle && s.circle > 1:\n        return 1\n    0\n");
     expect(site, site);
 }

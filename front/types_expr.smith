@@ -3568,6 +3568,17 @@ static Bool narrowed_payload(types::Checked *c, Frame f) {
     return true;
 }
 
+// `text.data` is the pointer to a `str`'s characters, read-only (the library hands it to C). False when `e` is not
+// that.
+static Bool text_data_member(types::Checked *c, const ast::Expr *e, types::TypeRef base, Str name,
+                             types::TypeRef expected) {
+    if (!(e->kind == .member) || e->kind.member.arrow || base->kind != .text || !same_text(name, "data")) return false;
+    types::TypeRef character = types::builtin(&c->table, "Char");
+    if (character == nullptr) return false;
+    finish(c, e, types::pointer_to(&c->table, character, true), expected);
+    return true;
+}
+
 static void member_after(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .member)) {
@@ -3605,24 +3616,17 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
         return;
     }
-    if (base->kind == .text && !e->kind.member.arrow && same_text(name, "data")) {
-        // `text.data` is the pointer to a `str`'s characters, read-only (the library hands it to C).
-        types::TypeRef character = types::builtin(&c->table, "Char");
-        if (character != nullptr) {
-            finish(c, e, types::pointer_to(&c->table, character, true), f.expected);
-            return;
-        }
-    }
     if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "count")) {
-        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
-        // hand with it, as `.data`).
+        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (as `.data`, by hand).
         types::TypeRef word = types::builtin(&c->table, "Usize");
         if (word != nullptr) {
             finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
             return;
         }
     }
-    types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
+    Bool arrow = e->kind.member.arrow;
+    if (text_data_member(c, e, base, name, f.expected)) return;
+    types::TypeRef record = record_of(c, e, base, arrow);
     if (record == nullptr) {
         poison(c, e);
         return;
