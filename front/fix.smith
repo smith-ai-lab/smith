@@ -29,6 +29,7 @@ import front::fix_generic_c;
 import front::fix_generic_mut;
 import front::fix_method;
 import front::fix_opaque;
+import front::fix_payload;
 import front::fix_alloc;
 import front::fix_typeof;
 import front::fix_variants;
@@ -329,6 +330,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(equal); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = equal[i];
+    }
+    // `Ty(kind = (vector = (...)))` where `kind` is a payload enumeration (#2648): `.vector((...))`.
+    core::Errors payloads = fix_payload::edits(source, &checked);
+    for (Usize i = 0; i < countof(payloads); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = payloads[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
