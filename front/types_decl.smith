@@ -103,6 +103,7 @@ struct Frame {
     const ast::Expr *expr;
     Step step;
     Usize index;
+    U32 end; // a statement of a block: where the block ends (#2503)
 };
 
 // A local that a body declared, for the golden tests.
@@ -120,17 +121,11 @@ struct Pending {
     Str function;
 };
 
-// A statement of a block, and where the block ends: the reach of a binding the statement makes (#2503).
-struct Parent {
-    const ast::Stmt *stmt;
-    U32 end;
-};
-
 struct State {
     Frame work[:];
     Usize top;
-    Parent parents[:];
-    Usize parent_count;
+    U32 block_end; // where the block of the statement being entered ends, 0 when it is in none: the reach of a
+                   // binding the statement makes (#2503)
     Local locals[:];
     Usize local_count;
     Pending pending[:];
@@ -602,20 +597,8 @@ static void block_statement(types::Checked *r, const ast::Stmt *s) {
     push(nullptr, nullptr, leave);
     for (Usize i = countof(items); i > 0; i--) {
         push(items[i - 1], nullptr, enter);
-        if (state.parent_count == countof(state.parents)) {
-            state.parents = mem::realloc(state.parents, state.parent_count < 16 ? 16 : state.parent_count * 2);
-        }
-        state.parents[state.parent_count] = (Parent){.stmt = items[i - 1], .end = s->span.end};
-        state.parent_count += 1;
+        state.work[state.top - 1].end = s->span.end;
     }
-}
-
-// Where the block that holds `s` ends; 0 when `s` is in none.
-static U32 block_end(const ast::Stmt *s) {
-    for (Usize i = state.parent_count; i > 0; i--) {
-        if (state.parents[i - 1].stmt == s) return state.parents[i - 1].end;
-    }
-    return 0;
 }
 
 // The text that `smith lint --fix` mends, for the fixes that copy a part of it (`front::fix` sets it, #2503).
@@ -732,7 +715,7 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     for (Usize i = 0; i < count; i++) {
         if (at == count && variant_test(parts[i], false) != nullptr) at = i;
     }
-    U32 end = block_end(s);
+    U32 end = state.block_end;
     if (at == count || end == 0 || !indented_if(s->span, test->span)) return;
     const ast::Expr *tested = parts[at];
     if (!(tested->kind == .binary)) return;
@@ -1225,7 +1208,6 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     r->guard_count = 0;
-    state.parent_count = 0;
     Usize first_error = r->error_count;
     Usize first_local = state.local_count;
     find_tails(root);
@@ -1254,6 +1236,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
         } else if (f.step == cover) {
             types_expr::match_coverage(r, f.stmt);
         } else {
+            state.block_end = f.end;
             enter_statement(r, f.stmt);
         }
     }
