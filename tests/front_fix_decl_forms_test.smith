@@ -23,7 +23,7 @@ static void expect_fixed(Str before, Str want) {
 export void test_front_fix_struct_with_a_function_pointer_and_comments() {
     expect_fixed("module m;\nstruct Task {\n    Task *next; // the link\n    void (*entry)(void *context);\n"
                  "    Bool done; // set\n};\n",
-                 "struct Task:\n    next: *Task # the link\n    entry: fn(*void)\n    done: bool # set\n");
+                 "struct Task:\n    next: *Task # the link\n    entry: fn(*mut void)\n    done: bool # set\n");
 }
 
 export void test_front_fix_type_parameter_of_a_type_function() {

@@ -320,9 +320,10 @@ export void test_parse_type_old_suffixes_move_in_front() {
 }
 
 export void test_parse_type_old_tuples_and_function_types() {
-    check_fixing("tests/front/parse_type/old_functions.txt",
-                 "struct { I32, F32 }\nstruct { I32 }\nFn(Bool (I32, I32))\nFn(void (U8 *, Usize))\nFn(I32 ())\n"
-                 "Fn(I32 (I32, ...))\nFn(Bool (Fn(I32 (I32)), I32))\nOption(I32 *)");
+    check_fixing(
+        "tests/front/parse_type/old_functions.txt",
+        "struct { I32, F32 }\nstruct { I32 }\nFn(Bool (I32, I32))\nFn(void (U8 *, Usize))\nFn(I32 ())\n"
+        "Fn(I32 (I32, ...))\nFn(Bool (Fn(I32 (I32)), I32))\nOption(I32 *)\nFn(Point * (Parser *, const char *))");
 }
 
 // An old form is a warning, never an error: today's corpus still reads and compiles.

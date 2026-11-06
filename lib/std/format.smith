@@ -194,11 +194,15 @@ void put_unfinite(Writer *writer, F64 value) {
     char digits[16];
     Usize count = 0;
     U64 rest = hex.value;
-    do {
+    // At least one digit, and a 64-bit value has at most 16.
+    for (Usize place = 0; place < 16; place++) {
         U64 digit = rest & 0xf;
         digits[count++] = (char)(digit < 10 ? '0' + digit : 'a' + (digit - 10));
         rest >>= 4;
-    } while (rest != 0);
+        if (rest == 0) {
+            break;
+        }
+    }
     U32 width = hex.width;
     for (Usize pad = count; pad < width; pad++) {
         put_char(writer, '0');
@@ -382,8 +386,8 @@ Usize exact_digits(U64 m, I32 e, char *digits) {
     for (Usize i = big.count; i-- > 0;) {
         char chunk[9];
         U32 rest = big.limb[i];
-        for (Usize j = 9; j-- > 0;) {
-            chunk[j] = (char)('0' + rest % 10);
+        for (Usize place = 9; place-- > 0;) {
+            chunk[place] = (char)('0' + rest % 10);
             rest /= 10;
         }
         Usize from = 0;
@@ -412,7 +416,7 @@ void significant_digits(F64 value, U32 want, char *out, I32 *exponent) {
     }
     if (count <= want) return;
     Bool tail_zero = true;
-    for (Usize i = want + 1; i < count; i++) {
+    for (Usize i = (Usize)want + 1; i < count; i++) {
         tail_zero = tail_zero && exact[i] == '0';
     }
     char next = exact[want];
