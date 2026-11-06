@@ -35,7 +35,8 @@
 // files are never changed: only the copies are.
 //
 // The fixer's work is cached (#2309) in `SCRATCH/../fixed/<hash>`: the fixed text of a file, keyed by the file, every
-// module it imports transitively (the fixer checks against them), the tracked C headers and the smith that fixes. A
+// module it imports transitively (the fixer checks against them), the tracked C headers and the objects the fixer is
+// built from (#2632; the smith itself when its folder has none). A
 // file that fails to fix is never cached. A cache entry never changes a result.
 module main;
 
@@ -1156,14 +1157,110 @@ static void fix_cached(const char *smith, Usize i) {
     fix(smith, i, entry[0:e.length]);
 }
 
-// The hash of the smith that fixes: its file.
-static Bool hash_smith(const char *smith) {
+// The hash of the smith that fixes, when nothing narrower is known: its file.
+static Bool hash_smith_file(const char *smith) {
     files::BytesResult loaded = files::read_file(view_of(smith));
     if (loaded == .error) return false;
     defer mem::free(loaded.ok.data);
     typeof(char[:]) text = mem::view(loaded.ok, char);
     smith_hash = hash_bytes(hash_start(), text);
     return true;
+}
+
+static Bool ends_with(const char text[:], const char tail[:]) {
+    return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):countof(text)], tail);
+}
+
+static Bool starts_with(const char text[:], const char head[:]) {
+    return countof(text) >= countof(head) && same(text[0:countof(head)], head);
+}
+
+static Bool fixer_file[files_max];
+
+// Marks in `fixer_file` front/fix.smith (the fixer's entry) and everything it imports, transitively. Returns how many
+// are marked, 0 when front/fix.smith is not tracked.
+static Usize mark_fixer() {
+    Usize first = tree_find("front/fix.smith");
+    if (first == tree_count) return 0;
+    Usize list[files_max];
+    Usize count = 1;
+    list[0] = first;
+    fixer_file[first] = true;
+    for (Usize head = 0; head < count; head++) {
+        for (Usize k = 0; k < import_count[list[head]]; k++) {
+            Usize next = import_list[list[head]][k];
+            if (fixer_file[next]) continue;
+            fixer_file[next] = true;
+            list[count] = next;
+            count += 1;
+        }
+    }
+    return count;
+}
+
+// Whether the object `object` (`front_fix_blocks.o`) is the one of a front/ module the fixer imports.
+static Bool fixer_object(const char object[:]) {
+    for (Usize i = 0; i < tree_count; i++) {
+        if (!fixer_file[i] || !starts_with(text_of(tree[i][0:path_size]), "front/")) continue;
+        char name[path_size];
+        Usize n = 0;
+        for (Usize k = 0; tree[i][k] != '\0' && n + 4 < path_size; k++) {
+            if (k > 0 && tree[i][k] == '.' && same(text_of(tree[i][k:path_size]), ".smith")) break;
+            name[n] = tree[i][k] == '/' ? '_' : tree[i][k];
+            n += 1;
+        }
+        name[n] = '.';
+        name[n + 1] = 'o';
+        name[n + 2] = '\0';
+        if (same(text_of(name[0:path_size]), object)) return true;
+    }
+    return false;
+}
+
+// The hash of what the fixer is built from (#2632): the objects `smith build` made, which no hand-kept list of inputs
+// can miss. Every object and pack of the smith's folder except the front/ modules the fixer does not import (the
+// checker and the emitter: an edit to them leaves the fixer's objects as they were, so the cache of fixed files
+// holds); the objects are the same bytes when their source is. Returns false when the folder is not a build folder
+// with every object of the fixer, and the caller hashes the smith itself.
+static Bool hash_fixer_objects(const char *smith) {
+    Usize slash = length_of(view_of(smith));
+    while (slash > 0 && smith[slash - 1] != '/')
+        slash -= 1;
+    if (slash == 0 || mark_fixer() == 0) return false;
+    char folder[path_size * 2];
+    copy_text(folder[0:path_size * 2], view_of(smith)[0:slash - 1]);
+    files::EntriesResult listed = files::list(view_of(folder));
+    if (listed == .error) return false;
+    struct Hash h = hash_start();
+    Usize fixer_objects = 0;
+    for (Usize i = 0; i < countof(listed.ok); i++) {
+        if (listed.ok[i].folder) continue;
+        typeof(const char[:]) name = view_of((const char *)listed.ok[i].name.data);
+        if (!ends_with(name, ".o") && !ends_with(name, ".pack")) continue;
+        Bool front = starts_with(name, "front_");
+        if (front && !fixer_object(name)) continue;
+        if (front) fixer_objects += 1;
+        char path[path_size * 2];
+        Usize written =
+            format::write(path, sizeof path, (const char *)folder, "/", (const char *)listed.ok[i].name.data).length;
+        files::BytesResult loaded = files::read_file(path[0:written]);
+        if (loaded == .error) return false;
+        typeof(char[:]) bytes = mem::view(loaded.ok, char);
+        h = hash_bytes(hash_bytes(h, name), bytes);
+        mem::free(loaded.ok.data);
+    }
+    // every module of front/ the fixer imports must have been found as an object
+    Usize expected = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (fixer_file[i] && starts_with(text_of(tree[i][0:path_size]), "front/")) expected += 1;
+    }
+    if (fixer_objects != expected) return false;
+    smith_hash = h;
+    return true;
+}
+
+static Bool hash_smith(const char *smith) {
+    return hash_fixer_objects(smith) || hash_smith_file(smith);
 }
 
 // Marks the files named in `list` (separated by commas) and what they import. Returns how many are marked, or 0 when
@@ -1271,7 +1368,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     (void)format::write(folder, sizeof folder, scratch, "/../fixed");
     cache_folder = folder;
     (void)files::make_folder(view_of(folder));
-    if (!hash_smith(smith) || !index_tree(root)) {
+    if (!index_tree(root) || !hash_smith(smith)) {
         console::print_error("frontend_coverage: cannot read the smith or the files of ", root, "\n");
         return 1;
     }
