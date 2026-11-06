@@ -864,6 +864,14 @@ static void push_argument(state::Emitter *e, const ast::Expr *arg, state::Hint h
         state::push_eval(e, value, hint);
 }
 
+// A struct and a function of one name (`sigaction`): positional arguments call the function.
+static Bool function_twin(state::Emitter *e, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (e->options.checked == nullptr || (countof(args) > 0 && is_named(args[0]))) return false;
+    const ast::Decl *twin = nullptr;
+    Str twin_symbol = "";
+    return c_callee(e, callee, &twin, &twin_symbol);
+}
+
 // `Expr.call`.
 export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
     if (written->kind != .call) {
@@ -879,14 +887,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     Str key = "";
     Bool is_imported = false;
     Usize record = 0;
-    if (callee_record(e, callee, &record)) {
-        // a struct and a function of one name (`sigaction`): positional arguments call the function
-        const ast::Decl *twin = nullptr;
-        Str twin_symbol = "";
-        Bool named = countof(written_args) > 0 && is_named(written_args[0]);
-        if (named || e->options.checked == nullptr || !c_callee(e, callee, &twin, &twin_symbol))
-            return construct(e, x, record);
-    }
+    if (callee_record(e, callee, &record) && !function_twin(e, callee, written_args)) return construct(e, x, record);
     if (builtin::is_filled(e, x)) return builtin::filled(e, x);      // `array.filled` (#2339)
     if (builtin::is_alloc(e, x)) return builtin::shaped_alloc(e, x); // `mem.alloc(T, [a, b])` (#2527)
     if (builtin::is_call(x)) return builtin::call(e, x);             // a clang builtin (#2286)
