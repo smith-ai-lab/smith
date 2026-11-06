@@ -1481,6 +1481,24 @@ static Bool is_number_type(Str type) {
            same_text(type, "isize") || same_text(type, "usize") || same_text(type, "f32") || same_text(type, "f64");
 }
 
+// The zero C gives a static or a global with no initializer, when the written type has one: `false` for a bool, `T()`
+// for a named struct type (its left-out fields default, #2530); empty otherwise, so the old `= undefined` stays.
+static Str zero_of_static(Str type) {
+    if (same_text(type, "bool")) return "false";
+    if (countof(type) == 0) return "";
+    Bool dotted = false;
+    for (Usize i = 0; i < countof(type); i += 1) {
+        char c = type[i];
+        Bool word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+                    c == '.' || c == ':';
+        if (!word) return "";
+        if (c == '.' || c == ':') dotted = true;
+    }
+    Bool lower = type[0] >= 'a' && type[0] <= 'z';
+    if (lower && !dotted) return "";
+    return as_str(format::push(type, "()"));
+}
+
 // The zero value C gives an element of a static or a `= {}` array, written for the new syntax: `0`, `0.0`, `false` or
 // `nullptr`; empty for any other element type, which keeps its warning.
 static Str zero_element(Str type) {
@@ -1643,6 +1661,16 @@ static parse::Edits drop_local_static(const Prefixes *pre, const ast::TypeExpr *
     return with_edit(edits, edit(pre->static_start, pre->static_after, ""));
 }
 
+// What follows `mut x: T` for a variable with no initializer: C's zero for a static or a global, else `undefined`.
+static Str uninitialized_tail(const Prefixes *pre, Str written, Bool suffixed) {
+    Bool zeroed = (pre->is_static || pre->top) && !suffixed;
+    if (zeroed && is_number_type(written)) return " = 0";
+    if (!zeroed) return " = undefined";
+    Str zero = zero_of_static(written);
+    if (countof(zero) == 0) return " = undefined";
+    return as_str(format::push(" = ", zero));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1700,8 +1728,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
     } else if (!has_init) {
-        Bool zeroed = (pre->is_static || pre->top) && is_number_type(written);
-        text = as_str(format::push("mut ", name, ": ", written, zeroed ? " = 0" : " = undefined"));
+        text = as_str(format::push("mut ", name, ": ", written, uninitialized_tail(pre, written, suffixed)));
         to = suffixed ? dims.end : head.name.span.end;
     }
     if (countof(zeros) > 0) {
