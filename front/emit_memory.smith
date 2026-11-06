@@ -933,7 +933,16 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
             out = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, from.llvm, zero, "");
         } else {
             out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, state::is_signed(from.ty), "");
-            if (w->flag && from.ty.kind == .integer) check_fits(e, from, to, out);
+            // A constant that survives the cast needs no check, so `static_assert(a >= (1 + 2).to(usize))` folds.
+            Bool kept = false;
+            if (c::LLVMIsAConstantInt(from.llvm) != nullptr && c::LLVMIsAConstantInt(out) != nullptr) {
+                U64 value = c::LLVMConstIntGetZExtValue(from.llvm);
+                Bool negative = state::is_signed(from.ty) && c::LLVMConstIntGetSExtValue(from.llvm) < 0;
+                U32 bits = c::LLVMGetIntTypeWidth(to.llvm);
+                U32 room = state::is_signed(to) ? bits - 1 : bits;
+                kept = !negative && (room >= 64 || value < ((U64)1 << room));
+            }
+            if (w->flag && from.ty.kind == .integer && !kept) check_fits(e, from, to, out);
         }
         state::push_value(e, (state::Value){.llvm = out, .ty = to});
         return state::success();

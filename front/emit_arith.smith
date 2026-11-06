@@ -122,6 +122,16 @@ export void trap_here(state::Emitter *e) {
 static c::LLVMValueRef overflow_op(state::Emitter *e, Str intrinsic, Str op, state::Value a, state::Value b,
                                    ast::Span span) {
     state::Ty ty = a.ty;
+    if (c::LLVMIsAConstantInt(a.llvm) != nullptr && c::LLVMIsAConstantInt(b.llvm) != nullptr &&
+        c::LLVMGetIntTypeWidth(ty.llvm) <= 64) {
+        // Two constants whose result fits are folded, so `static_assert(a >= 1 + 2)` stays a constant.
+        __int128 left = c::LLVMConstIntGetSExtValue(a.llvm);
+        __int128 right = c::LLVMConstIntGetSExtValue(b.llvm);
+        __int128 exact = op[0] == '+' ? left + right : op[0] == '-' ? left - right : left * right;
+        U32 bits = c::LLVMGetIntTypeWidth(ty.llvm);
+        __int128 limit = (__int128)1 << (bits - 1);
+        if (exact >= -limit && exact < limit) return c::LLVMConstInt(ty.llvm, (U64)(I64)exact, 1);
+    }
     U32 id = c::LLVMLookupIntrinsicID(intrinsic.data, countof(intrinsic));
     c::LLVMTypeRef overload_types[1] = {ty.llvm};
     c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, overload_types, 1);
