@@ -1,0 +1,99 @@
+// Tests of the fix-it for C's designated literal of an option or a Result (#2563, part of #1631): `{.some = v}` is
+// `.some(v)`, `{.ok = v}` is `.ok(v)`, `{.error = e}` is `.error(e)`. A struct with a field named `ok` is a
+// construction and stays as it is. Each scenario is source text in smith's own syntax.
+module front_fix_option_literal_test;
+
+import front::parse;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// The text `source` becomes when the edits of its one error are applied (they are in order and do not overlap).
+static Str applied(Str source, const types::Checked *r) {
+    test::check_equal(r->error_count, (Usize)1);
+    parse::Edits fix = r->errors[0].fix;
+    test::check_equal(countof(fix), (Usize)2);
+    char out[:] = mem::alloc_slice(char, countof(source) + 64);
+    Usize n = 0;
+    Usize at = 0;
+    for (Usize e = 0; e < countof(fix); e++) {
+        for (; at < fix[e].span.start; at++)
+            out[n++] = source[at];
+        Str text = fix[e].text;
+        for (Usize k = 0; k < countof(text); k++)
+            out[n++] = text[k];
+        at = fix[e].span.end;
+    }
+    for (; at < countof(source); at++)
+        out[n++] = source[at];
+    return out[0:n];
+}
+
+static void expect_fixed(Str source, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    test::check_equal(applied(source, &r), want);
+}
+
+export void test_front_fix_option_literal_some() {
+    expect_fixed("fn f(x: i32) -> ?i32:\n    return {.some = x + 1}\n",
+                 "fn f(x: i32) -> ?i32:\n    return .some(x + 1)\n");
+}
+
+export void test_front_fix_option_literal_ok_and_error() {
+    expect_fixed("fn f(x: i32) -> Result(i32, i32):\n    return {.ok = x}\n",
+                 "fn f(x: i32) -> Result(i32, i32):\n    return .ok(x)\n");
+    expect_fixed("fn f(x: i32) -> Result(i32, i32):\n    return {.error = x}\n",
+                 "fn f(x: i32) -> Result(i32, i32):\n    return .error(x)\n");
+}
+
+// A generic body whose option depends on `T`.
+export void test_front_fix_option_literal_in_a_generic_body() {
+    expect_fixed("fn some[T](x: T) -> ?T:\n    return {.some = x}\n\nfn run() -> ?i32:\n    return some(3)\n",
+                 "fn some[T](x: T) -> ?T:\n    return .some(x)\n\nfn run() -> ?i32:\n    return some(3)\n");
+}
+
+// `.error(e)` returned from a function that `try` calls.
+export void test_front_fix_option_literal_error_under_try() {
+    expect_fixed("fn bad() -> Result(i32, i32):\n    return {.error = 3}\n\n"
+                 "fn run() -> Result(i32, i32):\n    x := try bad()\n    return .ok(x)\n",
+                 "fn bad() -> Result(i32, i32):\n    return .error(3)\n\n"
+                 "fn run() -> Result(i32, i32):\n    x := try bad()\n    return .ok(x)\n");
+}
+
+// A struct with a field named `ok` is a construction: the list is not refused.
+export void test_front_fix_option_literal_leaves_a_struct_with_a_field_ok() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text("struct Real:\n    ok: bool\n\nfn f() -> Real:\n    return {.ok = true}\n");
+    for (Usize i = 0; i < r.error_count; i++)
+        test::check(!has(r.errors[i].message, "is written `.ok"));
+}

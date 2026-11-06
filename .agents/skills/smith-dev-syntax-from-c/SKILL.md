@@ -28,6 +28,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `void *p`, `const void *p` | `p: *mut void`, `p: *void` (C interop only: pass on or `.cast(T)`) |
 | `(F64)x`, `(U8 *)p` | `x.to(f64)` (or `x.wrap(u8)` to keep the low bits), `p.cast(*u8)` |
 | `Point p = {.x = 1, .y = 2};` | `p := Point(x = 1, y = 2)`, or `Point(1, 2)` |
+| `return {.some = v};`, `{.ok = v}`, `{.error = e}` (an option or a Result) | `return .some(v)`, `.ok(v)`, `.error(e)`: the checker refuses the braces with this fix-it (#2563); a struct with a field `ok` is still `S(ok = true)` |
 | `Point p = {0};`, `I32 t[256] = {0};` | every field written, `Point(0, 0)`, or a default in the struct; `array.filled(i32, 256, 0)` |
 | `I32 xs[:]`, `I32 xs[5]`, `xs[:]` | `xs: []i32`, `xs: [5]i32`, `xs` |
 | `{ ... }` | `:` and an indented block; `do:` where a block is a value |

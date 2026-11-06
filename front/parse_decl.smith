@@ -3627,10 +3627,16 @@ static void open_else(parse::Parser *p, Frame *top, lex::Token brace) {
 // before it; the parent's own edits are made now. False when the parent's condition is not about the system.
 static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::Edits *fix) {
     opened->head.start = parent->else_head.start;
-    opened->before = parent->before;
     Str earlier = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
-    opened->before = mem::realloc(opened->before, countof(opened->before) + 1);
-    opened->before[countof(opened->before) - 1] = earlier;
+    // The opened frame owns a copy: sharing the parent's buffer and growing it with realloc frees or moves the block
+    // the parent still reads in frame_edits below (a chain of three branches or more crashed there, #2565).
+    StrList copy = {};
+    copy = mem::realloc(copy, countof(parent->before) + 1);
+    for (Usize i = 0; i < countof(parent->before); i++) {
+        copy[i] = parent->before[i];
+    }
+    copy[countof(parent->before)] = earlier;
+    opened->before = copy;
     return frame_edits(p, parent, fix);
 }
 
