@@ -93,6 +93,14 @@ const char *allocator_name(const Allocator *allocator);
     return (T *)alloc_raw(sizeof(T), alignof(T));
 }
 
+// A zeroed T by value, with no allocation: a C struct that must start zeroed is `info := mem.zeroed(fcntl.stat)` (D10;
+// a type argument is a type position, so the tag is meant even when the header also has a function of that name).
+export T zeroed(constexpr Type T) {
+    T value;
+    __builtin_memset(&value, 0, sizeof(T));
+    return value;
+}
+
 // A zeroed T, or `.none` when the allocator refuses: `if (auto p = mem::try_alloc(Big); p == .some) ...`. The form for
 // code that can do something about a refusal.
 [[std::c_name("smith_mem_try_alloc_type")]] export [[nodiscard]] Option(T *) try_alloc(constexpr Type T) {

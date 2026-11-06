@@ -152,14 +152,23 @@ export void test_front_explicit_sign_change() {
 export void test_front_explicit_usize_and_isize_to_and_from_a_fixed_width() {
     test::check_condition(!implicit("Usize", "U64"));
     test::check_condition(!implicit("U64", "Usize"));
-    test::check_condition(!implicit("U32", "Usize"));
     test::check_condition(!implicit("Usize", "U32"));
-    test::check_condition(!implicit("U8", "Usize"));
-    test::check_condition(!implicit("I32", "Isize"));
+    test::check_condition(!implicit("I32", "Usize"));
+    test::check_condition(!implicit("U32", "Isize"));
     test::check_condition(!implicit("Isize", "I64"));
     test::check_condition(!implicit("Usize", "Isize"));
     test::check_condition(!implicit("Usize", "F64"));
     test::check_condition(implicit("Usize", "Usize"));
+}
+
+// D8 (#2625): usize is at least 32 bits on every target, so these lose nothing.
+export void test_front_implicit_32_bit_and_narrower_integers_to_usize_and_isize() {
+    test::check_condition(implicit("U32", "Usize"));
+    test::check_condition(implicit("U16", "Usize"));
+    test::check_condition(implicit("U8", "Usize"));
+    test::check_condition(implicit("I32", "Isize"));
+    test::check_condition(implicit("I8", "Isize"));
+    test::check_condition(implicit("U16", "Isize"));
 }
 
 export void test_front_explicit_64_bit_integers_to_f64() {

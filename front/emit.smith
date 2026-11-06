@@ -1775,7 +1775,7 @@ static state::Status declare_all(state::Emitter *e) {
         } else if (d->kind == .variable) {
             if (!is_module_alias(e, d) && !is_type_alias(e, d)) try emit_memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
-                   d->kind != .import_from && d->kind != .static_assert_decl) {
+                   d->kind != .import_from && d->kind != .static_assert_decl && d->kind != .asm_decl) {
             return state::not_emitted("this kind of declaration", d->span);
         }
     }
@@ -1840,6 +1840,16 @@ static state::Status check_static_asserts(state::Emitter *e) {
     return state::success();
 }
 
+// The `asm` literals of the module (D7, #2636), in order: LLVM module asm, which the object file's assembler reads.
+static void append_module_asm(state::Emitter *e) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .asm_decl) continue;
+        Str text = d->kind.asm_decl.text;
+        c::LLVMAppendModuleInlineAsm(e->module, text.data, countof(text));
+    }
+}
+
 static state::Status emit_all(state::Emitter *e) {
     try debug::begin_module(e);
     try declare_all(e);
@@ -1862,6 +1872,7 @@ static state::Status emit_all(state::Emitter *e) {
         }
     }
     try check_static_asserts(e);
+    append_module_asm(e);
     try debug::finish(e);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {

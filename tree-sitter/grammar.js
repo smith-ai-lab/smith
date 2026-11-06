@@ -171,6 +171,11 @@ module.exports = grammar(C, {
     // @inline   @c_name("x")   @when(target.os == .macos)   @serial.rename(to = "id"): one line before a declaration
     layout_attribute: $ => seq('@', $.dotted_path, optional($.argument_list), $._newline),
 
+    // asm`...` (D7): a tag and a raw text that may span lines, nothing escaped, at the top level; `asm` is the only tag
+    // for now. `${` inside is reserved, so the lexer of the compiler refuses it.
+    tagged_literal: $ => token(prec(3, seq(/[A-Za-z_][A-Za-z0-9_]*/, '`', /[^`]*/, '`'))),
+    layout_tagged: $ => seq($.tagged_literal, $._newline),
+
     // let / const at the top level (a global)
     layout_global: $ => seq(optional('pub'), choice($.layout_let_declaration, $.layout_const_declaration), $._newline),
 
@@ -191,6 +196,7 @@ module.exports = grammar(C, {
       $.layout_import,
       $.layout_attribute,
       $.layout_global,
+      $.layout_tagged,
       $.module_declaration,
       $.import_declaration,
       $.export_declaration,

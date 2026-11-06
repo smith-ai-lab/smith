@@ -358,6 +358,17 @@ export void test_front_fix_zero_a_struct_a_c_call_fills_is_undefined() {
                  "    if stat.stat(path, &info) != 0:\n        return -1\n    return info.st_size.to(i32)\n");
 }
 
+// A struct read before the C call (D10, #2627): the zeroed construction `stat.stat(st_dev = 0, ...)` would read as the
+// call, so the fix writes `mem.zeroed(stat.stat)` and the module imports `std.mem`.
+export void test_front_fix_zero_a_tag_that_is_also_a_function_starts_with_mem_zeroed() {
+    expect_fixed("module m;\nimport <sys/stat.h>;\nint size_of(const char *path) {\n    struct c::stat info = {};\n"
+                 "    int before = (int)info.st_size;\n    if (c::stat(path, &info) != 0) return before;\n"
+                 "    return (int)info.st_size;\n}\n",
+                 "import std.mem\nimport c <sys/stat.h>\nfn size_of(path: *char) -> i32:\n"
+                 "    mut info: c.stat = mem.zeroed(stat.stat)\n    before: i32 = info.st_size.to(i32)\n"
+                 "    if stat.stat(path, &info) != 0:\n        return before\n    return info.st_size.to(i32)\n");
+}
+
 // A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
 // `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
 export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
