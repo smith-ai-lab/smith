@@ -687,9 +687,14 @@ void simulation_wait(Scheduler *self, Group *group) {
 // run. Its `io` is null, so a call reaches the real function.
 export Scheduler *simulation(random::Key key) {
     Simulation *simulation = mem::alloc(Simulation);
-    *simulation = (Simulation){};
+    // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
     simulation->base = (Scheduler){.spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait};
     simulation->seed = random::key_bits(key);
+    simulation->decisions = 0;
+    simulation->ready_first = nullptr;
+    simulation->ready_count = 0;
+    simulation->live = 0;
+    simulation->waiting = nullptr;
     return &simulation->base;
 }
 

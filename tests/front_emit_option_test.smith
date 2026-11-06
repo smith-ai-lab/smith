@@ -404,3 +404,21 @@ export void test_front_emit_option_x_equals_some_is_fixed_to_not_none() {
                               "    0\n");
     test::check_equal(has(message, "test an option with `.none`"), true);
 }
+
+// `Pair(a, b)` with names for arguments is read as a type first; the emitter builds the construction the checker kept
+// (#2643).
+export void test_front_emit_option_a_construction_with_names_for_arguments_is_emitted() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("struct Pair:\n"
+                     "    a: i32\n"
+                     "    b: i32\n"
+                     "pub fn both(n: i32) -> i32:\n"
+                     "    p := Pair(n, n)\n"
+                     "    p.a + p.b\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Take both = (Take)symbol_of(&host, "both");
+    test::check_equal(both(4), (I32)8);
+    emit_jit::stop(&host);
+}

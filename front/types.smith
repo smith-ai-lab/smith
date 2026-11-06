@@ -155,6 +155,7 @@ export struct Ty {
     U64 count;
     Str name;
     Str owner; // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
+    Str c_name; // a record: the C struct it is (`@c_name("SmithTaskGroup")`, or a C header's own name), else empty
     Slot slots[:];
 };
 
@@ -2092,15 +2093,40 @@ static Bool marks_affine(const ast::Decl *d) {
 }
 
 // Pass 1: the nominal types, so that any order of use works.
+// The C name `@c_name("...")` gives a record, or empty.
+static Str record_c_name(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        ast::Path name = attribute.name;
+        Usize n = countof(name.segments);
+        Bool is_c_name = (n == 1 && same_text(name.segments[0].text, "c_name")) ||
+                         (n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name"));
+        if (!is_c_name || countof(attribute.args) == 0) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .string) return argument->kind.string.bytes;
+    }
+    return "";
+}
+
+// Whether `a` and `b` are the same C struct: a record of the module tagged `@c_name("X")` and the header's `struct X`.
+export Bool same_c_record(TypeRef a, TypeRef b) {
+    if (a == b) return true;
+    if (a->kind != .record || b->kind != .record || countof(a->c_name) == 0) return false;
+    return same_text(a->c_name, b->c_name);
+}
+
 static void declare_nominal(Checked *r, const ast::Decl *d) {
     Bool from_c = d->from_c;
     Bool exported = d->exported;
     ast::Span span = d->span;
     if (d->kind == .record) {
         Bool forward = d->kind.record.opaque;
+        Str from_header = d->kind.record.name;
         Str name = qualified(r, from_c, d->kind.record.name);
         Ty *made = new_record(&r->table, name, d->kind.record.is_union);
         made->affine = marks_affine(d);
+        made->c_name = from_header;
+        if (!from_c) made->c_name = record_c_name(d);
         // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
         Symbol *earlier = nullptr;
         for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {

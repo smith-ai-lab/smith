@@ -556,6 +556,13 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .string) return emit_memory::string_literal(e, x, hint);
     if (x->kind == .slice_of) return emit_memory::slice_of(e, x, hint);
     // type_value
+    if (x->kind == .type_value && e->options.checked != nullptr) { // `Point(a, b)` was read as a type first
+        const ast::Expr *made = types::method_of(e->options.checked, x);
+        if (made != nullptr) {
+            state::push_eval(e, made, hint);
+            return state::success();
+        }
+    }
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -1483,7 +1490,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
             return optional::build_result(e, ok.ok, bad.ok);
         }
         if (base->kind == .tuple) return tupled::from_checked(e, base);
-        if (base->kind == .fn_value) return lambdas::from_checked(e, base);
+        if (base->kind == .fn_value || base->kind == .function) return lambdas::from_checked(e, base);
         Str shown = types::show(base);
         state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = span};
         state::free_text(shown);

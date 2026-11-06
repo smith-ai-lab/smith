@@ -956,6 +956,15 @@ export state::Status cast_expr(state::Emitter *e, const ast::Expr *x, state::Hin
     const ast::TypeExpr *type = x->kind.cast.type;
     const ast::Expr *operand = x->kind.cast.operand;
     state::TyResult made = resolve(e, type);
+    if (made == .error && type->kind == .named) { // a name for a type (`Wide := u128`): the hook knows aliases (#2643)
+        state::TyResult named = state::type_of(e, type);
+        if (named == .ok) {
+            state::free_text(made.error.message);
+            made = named;
+        } else {
+            state::free_text(named.error.message);
+        }
+    }
     if (made == .error) {
         return {.error = made.error};
     }
