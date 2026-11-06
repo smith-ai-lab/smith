@@ -72,11 +72,9 @@ static state::Ty *own(state::Emitter *e, state::Ty element) {
 
 static state::Ty pointer_to(state::Emitter *e, state::Ty element, U32 space) {
     state::Ty *inner = own(e, element);
-    state::Ty ty = {.kind = .pointer,
+    state::Ty ty = {.kind = {.pointer = {.element = inner, .address_space = space}},
                     .llvm = state::pointer_type(e, space),
-                    .name = "pointer",
-                    .element = inner,
-                    .address_space = space};
+                    .name = "pointer"};
     return ty;
 }
 
@@ -87,8 +85,9 @@ export state::Ty pointer_over(state::Emitter *e, state::Ty element) {
 
 static state::Ty array_of(state::Emitter *e, state::Ty element, U64 count) {
     state::Ty *inner = own(e, element);
-    state::Ty ty = {.kind = .array, .llvm = c::LLVMArrayType2(element.llvm, count), .name = "array", .element = inner};
-    ty.count = count;
+    state::Ty ty = {.kind = {.array = {.element = inner, .count = count}},
+                    .llvm = c::LLVMArrayType2(element.llvm, count),
+                    .name = "array"};
     return ty;
 }
 
@@ -143,8 +142,9 @@ static c::LLVMTypeRef index_word(state::Emitter *e) {
 export state::Ty slice_type(state::Emitter *e, state::Ty element, Str name) {
     c::LLVMTypeRef parts[2] = {state::pointer_type(e, 0), index_word(e)};
     state::Ty *inner = own(e, element);
-    state::Ty ty = {
-        .kind = .slice, .llvm = c::LLVMStructTypeInContext(e->context, parts, 2, 0), .name = name, .element = inner};
+    state::Ty ty = {.kind = {.slice = {.element = inner}},
+                    .llvm = c::LLVMStructTypeInContext(e->context, parts, 2, 0),
+                    .name = name};
     return ty;
 }
 
@@ -153,11 +153,9 @@ export state::Ty block_type(state::Emitter *e, state::Ty cell, U64 dimensions) {
     c::LLVMTypeRef counts = c::LLVMArrayType2(index_word(e), dimensions);
     c::LLVMTypeRef parts[2] = {state::pointer_type(e, 0), counts};
     state::Ty *inner = own(e, cell);
-    state::Ty ty = {.kind = .block,
+    state::Ty ty = {.kind = {.block = {.element = inner, .count = dimensions}},
                     .llvm = c::LLVMStructTypeInContext(e->context, parts, 2, 0),
-                    .name = "block",
-                    .element = inner,
-                    .count = dimensions};
+                    .name = "block"};
     return ty;
 }
 
@@ -177,7 +175,8 @@ export void add_record(state::Emitter *e, state::RecordType record) {
 static Bool holds(state::Ty ty, c::LLVMTypeRef self) {
     state::Ty inner = ty;
     while (inner.kind == .array)
-        inner = *inner.element;
+        inner = *inner.kind.array.element;
+
     return inner.kind == .record && inner.llvm == self;
 }
 
@@ -576,8 +575,9 @@ export state::Status address_of(state::Emitter *e, const ast::Expr *x, state::Hi
 static state::Status dereference_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value pointer = state::pop_value(e);
     if (pointer.ty.kind != .pointer) return state::failf(w->span, "dereferencing ", pointer.ty.name);
-    if (pointer.ty.element == nullptr) return state::fail("dereferencing a pointer to an unknown type", w->span);
-    state::push_value(e, (state::Value){.llvm = pointer.llvm, .ty = *pointer.ty.element});
+    state::Ty *element = pointer.ty.kind.pointer.element;
+    if (element == nullptr) return state::fail("dereferencing a pointer to an unknown type", w->span);
+    state::push_value(e, (state::Value){.llvm = pointer.llvm, .ty = *element});
     return state::success();
 }
 
@@ -599,33 +599,35 @@ export state::Status dereference(state::Emitter *e, const ast::Expr *x, state::H
 // Is the index a constant inside `count`?
 static Bool in_range_constant(state::Value at, U64 count) {
     if (c::LLVMIsAConstantInt(at.llvm) == nullptr) return false;
-    if (at.ty.is_signed) {
+    if (state::is_signed(at.ty)) {
         I64 value = c::LLVMConstIntGetSExtValue(at.llvm);
         return value >= 0 && (U64)value < count;
     }
     return c::LLVMConstIntGetZExtValue(at.llvm) < count;
 }
 
-// An index is checked against the count (a failed check calls `contract::fail_index`); a constant inside it is not.
-static void check_index(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+// An index is checked against `length`, an array's or a vector's (a failed check calls `contract::fail_index`); a
+// constant inside it is not.
+static void check_index(state::Emitter *e, U64 length, state::Value at, c::LLVMValueRef position) {
     c::LLVMTypeRef word = index_word(e);
-    if (in_range_constant(at, base.ty.count)) return;
-    c::LLVMValueRef count = c::LLVMConstInt(word, base.ty.count, 0);
+    if (in_range_constant(at, length)) return;
+    c::LLVMValueRef count = c::LLVMConstInt(word, length, 0);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
     c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
-    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at.llvm, wide, at.ty.is_signed, ""),
-                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), at.ty.is_signed, 0),
-                               c::LLVMConstInt(wide, base.ty.count, 0)};
+    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, at.llvm, wide, state::is_signed(at.ty), ""),
+                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), state::is_signed(at.ty), 0),
+                               c::LLVMConstInt(wide, length, 0)};
     arith::report_if(e, bad, "smith_contract_fail_index", args, 3);
 }
 
-// An array's element, or a vector's lane.
-static void array_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
-    check_index(e, base, at, position);
+// An array's element, or a vector's lane; `shape` is the array's or the vector's.
+static void array_element(state::Emitter *e, state::Value base, state::SizedTy shape, state::Value at,
+                          c::LLVMValueRef position) {
+    check_index(e, shape.count, at, position);
     c::LLVMTypeRef word = index_word(e);
     c::LLVMValueRef indices[2] = {c::LLVMConstInt(word, 0, 0), position};
     c::LLVMValueRef address = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.llvm, base.llvm, indices, 2, "element");
-    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+    state::push_value(e, (state::Value){.llvm = address, .ty = *shape.element});
 }
 
 // The data and the count of the slice stored at `address`.
@@ -654,15 +656,15 @@ static void report_index(state::Emitter *e, c::LLVMValueRef bad, c::LLVMValueRef
 }
 
 // A slice's element: the index is checked against the count in every build.
-static void slice_element(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+static void slice_element(state::Emitter *e, state::Value base, state::Ty element, state::Value at,
+                          c::LLVMValueRef position) {
     c::LLVMValueRef data = nullptr;
     c::LLVMValueRef count = nullptr;
     slice_parts(e, base, &data, &count);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, count, "outside");
-    report_index(e, bad, at.llvm, at.ty.is_signed, count);
-    c::LLVMValueRef address =
-        c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &position, 1, "element");
-    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+    report_index(e, bad, at.llvm, state::is_signed(at.ty), count);
+    c::LLVMValueRef address = c::LLVMBuildInBoundsGEP2(e->builder, element.llvm, data, &position, 1, "element");
+    state::push_value(e, (state::Value){.llvm = address, .ty = element});
 }
 
 // The counts of a block: its sizes as words, one per dimension.
@@ -672,11 +674,12 @@ static void block_counts(state::Emitter *e, c::LLVMValueRef whole, U64 dimension
         counts[i] = c::LLVMBuildExtractValue(e->builder, all, (U32)i, "count");
 }
 
-// The block `{ data, counts }` of type `ty`; `counts` has one word per dimension.
-static state::Value make_block(state::Emitter *e, state::Ty ty, c::LLVMValueRef data, c::LLVMValueRef counts[8]) {
-    c::LLVMTypeRef words = c::LLVMArrayType2(index_word(e), ty.count);
+// The block `{ data, counts }` of type `ty`, of `dimensions`; `counts` has one word per dimension.
+static state::Value make_block(state::Emitter *e, state::Ty ty, U64 dimensions, c::LLVMValueRef data,
+                               c::LLVMValueRef counts[8]) {
+    c::LLVMTypeRef words = c::LLVMArrayType2(index_word(e), dimensions);
     c::LLVMValueRef all = c::LLVMGetUndef(words);
-    for (U64 i = 0; i < ty.count; i++)
+    for (U64 i = 0; i < dimensions; i++)
         all = c::LLVMBuildInsertValue(e->builder, all, counts[i], (U32)i, "");
     c::LLVMValueRef with_data = c::LLVMBuildInsertValue(e->builder, c::LLVMGetUndef(ty.llvm), data, 0, "");
     c::LLVMValueRef whole = c::LLVMBuildInsertValue(e->builder, with_data, all, 1, "block");
@@ -685,26 +688,27 @@ static state::Value make_block(state::Emitter *e, state::Ty ty, c::LLVMValueRef 
 
 // A block's row `xs[i]`, checked against the first count: a block of one dimension fewer (a slice for the last two)
 // that shares the elements. The row is a value; it is spilled to a slot so that the next index finds a place.
-static void block_row(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
+static void block_row(state::Emitter *e, state::Value base, state::SizedTy block, state::Value at,
+                      c::LLVMValueRef position) {
     c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "block");
     c::LLVMValueRef data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
     c::LLVMValueRef counts[8] = {};
-    block_counts(e, whole, base.ty.count, counts);
+    block_counts(e, whole, block.count, counts);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, position, counts[0], "outside");
-    report_index(e, bad, at.llvm, at.ty.is_signed, counts[0]);
+    report_index(e, bad, at.llvm, state::is_signed(at.ty), counts[0]);
     c::LLVMValueRef stride = c::LLVMConstInt(index_word(e), 1, 0);
-    for (U64 i = 1; i < base.ty.count; i++)
+    for (U64 i = 1; i < block.count; i++)
         stride = c::LLVMBuildMul(e->builder, stride, counts[i], "stride");
     c::LLVMValueRef start = c::LLVMBuildMul(e->builder, position, stride, "start");
-    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "row");
+    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, block.element->llvm, data, &start, 1, "row");
     state::Value row = {};
-    if (base.ty.count == 2) {
-        row = make_slice(e, slice_type(e, *base.ty.element, "slice"), first, counts[1]);
+    if (block.count == 2) {
+        row = make_slice(e, slice_type(e, *block.element, "slice"), first, counts[1]);
     } else {
         c::LLVMValueRef inner[8] = {};
-        for (U64 i = 1; i < base.ty.count; i++)
+        for (U64 i = 1; i < block.count; i++)
             inner[i - 1] = counts[i];
-        row = make_block(e, block_type(e, *base.ty.element, base.ty.count - 1), first, inner);
+        row = make_block(e, block_type(e, *block.element, block.count - 1), block.count - 1, first, inner);
     }
     c::LLVMValueRef slot = state::new_alloca(e, row.ty, "row");
     c::LLVMBuildStore(e->builder, row.llvm, slot);
@@ -712,40 +716,47 @@ static void block_row(state::Emitter *e, state::Value base, state::Value at, c::
 }
 
 // A lane of a vector of Bools (a comparison's result) is one bit, with no address: it is read into a temporary.
-static void flag_lane(state::Emitter *e, state::Value base, state::Value at, c::LLVMValueRef position) {
-    check_index(e, base, at, position);
+static void flag_lane(state::Emitter *e, state::Value base, state::SizedTy vector, state::Value at,
+                      c::LLVMValueRef position) {
+    check_index(e, vector.count, at, position);
     c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "");
     c::LLVMValueRef lane = c::LLVMBuildExtractElement(e->builder, whole, position, "lane");
-    c::LLVMValueRef slot = state::new_alloca(e, *base.ty.element, "lane");
+    c::LLVMValueRef slot = state::new_alloca(e, *vector.element, "lane");
     c::LLVMBuildStore(e->builder, lane, slot);
-    state::push_value(e, (state::Value){.llvm = slot, .ty = *base.ty.element});
+    state::push_value(e, (state::Value){.llvm = slot, .ty = *vector.element});
 }
 
 static state::Status index_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value at = state::pop_value(e);
     state::Value base = state::pop_value(e);
     if (at.ty.kind != .integer) return state::failf(w->span, "an index is an integer, not ", at.ty.name);
-    c::LLVMValueRef position = c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
-    if (base.ty.kind == .vector && base.ty.element->kind == .boolean) {
-        flag_lane(e, base, at, position);
+    c::LLVMValueRef position = c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), state::is_signed(at.ty), "");
+    if (base.ty.kind == .vector && base.ty.kind.vector.element->kind == .boolean) {
+        flag_lane(e, base, base.ty.kind.vector, at, position);
         return state::success();
     }
-    if (base.ty.kind == .array || base.ty.kind == .vector) {
-        array_element(e, base, at, position);
+    if (base.ty.kind == .array) {
+        array_element(e, base, base.ty.kind.array, at, position);
+        return state::success();
+    }
+    if (base.ty.kind == .vector) {
+        array_element(e, base, base.ty.kind.vector, at, position);
         return state::success();
     }
     if (base.ty.kind == .slice) {
-        slice_element(e, base, at, position);
+        slice_element(e, base, *base.ty.kind.slice.element, at, position);
         return state::success();
     }
     if (base.ty.kind == .block) {
-        block_row(e, base, at, position);
+        block_row(e, base, base.ty.kind.block, at, position);
         return state::success();
     }
-    if (base.ty.kind != .pointer || base.ty.element == nullptr) return state::failf(w->span, "indexing ", base.ty.name);
+    if (base.ty.kind != .pointer || base.ty.kind.pointer.element == nullptr)
+        return state::failf(w->span, "indexing ", base.ty.name);
+    state::Ty element = *base.ty.kind.pointer.element;
     c::LLVMValueRef pointer = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "");
-    c::LLVMValueRef address = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, pointer, &position, 1, "element");
-    state::push_value(e, (state::Value){.llvm = address, .ty = *base.ty.element});
+    c::LLVMValueRef address = c::LLVMBuildGEP2(e->builder, element.llvm, pointer, &position, 1, "element");
+    state::push_value(e, (state::Value){.llvm = address, .ty = element});
     return state::success();
 }
 
@@ -800,20 +811,22 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
     state::Value base = state::pop_value(e);
     state::Ty record = base.ty;
     if (w->flag) {
-        if (base.ty.kind != .pointer || base.ty.element == nullptr)
+        if (base.ty.kind != .pointer || base.ty.kind.pointer.element == nullptr)
             return state::failf(w->span, "`->` on ", base.ty.name);
-        record = *base.ty.element;
+        record = *base.ty.kind.pointer.element;
     } else if (base.ty.kind == .pointer) {
         // `p.x` follows one pointer, as `p->x`: the base is the place of `p`, so load the pointer first.
-        if (base.ty.element == nullptr) return state::failf(w->span, "`.` on ", base.ty.name);
-        if (base.ty.element->kind == .pointer) return state::fail("`.` follows one pointer; write `pp.*.x`", w->span);
+        state::Ty *pointee = base.ty.kind.pointer.element;
+        if (pointee == nullptr) return state::failf(w->span, "`.` on ", base.ty.name);
+        if (pointee->kind == .pointer) return state::fail("`.` follows one pointer; write `pp.*.x`", w->span);
         base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
-        record = *base.ty.element;
+        record = *pointee;
     }
-    if (record.kind == .slice && !w->flag && state::same_text(name, "data") && record.element != nullptr) {
+    if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
         c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");
-        state::push_value(e, (state::Value){.llvm = first, .ty = pointer_to(e, *record.element, 0)});
+        state::push_value(e, (state::Value){.llvm = first, .ty = pointer_to(e, *record.kind.slice.element, 0)});
+
         return state::success();
     }
     if (record.kind == .slice && !w->flag && state::same_text(name, "count")) {
@@ -855,7 +868,7 @@ export state::Status null_pointer(state::Emitter *e, const ast::Expr *_, state::
         return state::success();
     }
     // No pointer is expected here: a pointer to nothing in particular, which any pointer type takes.
-    state::Ty ty = {.kind = .pointer, .llvm = state::pointer_type(e, 0), .name = "null"};
+    state::Ty ty = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "null"};
     state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
     return state::success();
 }
@@ -870,24 +883,24 @@ static Bool is_integer_like(state::Ty ty) {
 // reports and stops (K6, #1389).
 static void check_fits(state::Emitter *e, state::Value from, state::Ty to, c::LLVMValueRef converted) {
     c::LLVMValueRef lost = c::LLVMConstInt(c::LLVMInt1TypeInContext(e->context), 0, 0);
-    if (from.ty.bits != to.bits) {
-        c::LLVMValueRef back = c::LLVMBuildIntCast2(e->builder, converted, from.ty.llvm, to.is_signed, "");
+    if (state::width(from.ty) != state::width(to)) {
+        c::LLVMValueRef back = c::LLVMBuildIntCast2(e->builder, converted, from.ty.llvm, state::is_signed(to), "");
         lost = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, back, from.llvm, "lost");
     }
-    if (from.ty.is_signed && !to.is_signed) {
+    if (state::is_signed(from.ty) && !state::is_signed(to)) {
         c::LLVMValueRef zero = c::LLVMConstInt(from.ty.llvm, 0, 0);
         c::LLVMValueRef negative = c::LLVMBuildICmp(e->builder, c::LLVMIntSLT, from.llvm, zero, "negative");
         lost = c::LLVMBuildOr(e->builder, lost, negative, "lost");
     }
-    if (!from.ty.is_signed && to.is_signed) {
+    if (!state::is_signed(from.ty) && state::is_signed(to)) {
         c::LLVMValueRef zero = c::LLVMConstInt(to.llvm, 0, 0);
         c::LLVMValueRef negative = c::LLVMBuildICmp(e->builder, c::LLVMIntSLT, converted, zero, "negative");
         lost = c::LLVMBuildOr(e->builder, lost, negative, "lost");
     }
     c::LLVMTypeRef wide = c::LLVMInt64TypeInContext(e->context);
     char *target = format::push(to.name).data;
-    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, from.llvm, wide, from.ty.is_signed, ""),
-                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), from.ty.is_signed, 0),
+    c::LLVMValueRef args[3] = {c::LLVMBuildIntCast2(e->builder, from.llvm, wide, state::is_signed(from.ty), ""),
+                               c::LLVMConstInt(c::LLVMInt32TypeInContext(e->context), state::is_signed(from.ty), 0),
                                c::LLVMBuildGlobalStringPtr(e->builder, target, "type")};
     arith::report_if(e, lost, "smith_contract_fail_cast", args, 3);
 }
@@ -897,7 +910,7 @@ static state::Status pointer_integer_cast(state::Emitter *e, const state::ThenGe
                                           state::Ty to) {
     state::Ty integer = from.ty.kind == .integer ? from.ty : to;
     U64 width = e->target_data != nullptr ? (U64)c::LLVMPointerSize(e->target_data) * 8 : 64;
-    if (integer.bits != width) {
+    if (state::width(integer) != width) {
         return state::failf(w->span, "cannot cast ", from.ty.name, " to ", to.name,
                             ": a pointer casts only to an integer as wide as a pointer (`usize`, `isize`)");
     }
@@ -919,14 +932,14 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
             c::LLVMValueRef zero = c::LLVMConstInt(from.ty.llvm, 0, 0);
             out = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, from.llvm, zero, "");
         } else {
-            out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, from.ty.is_signed, "");
+            out = c::LLVMBuildIntCast2(e->builder, from.llvm, to.llvm, state::is_signed(from.ty), "");
             if (w->flag && from.ty.kind == .integer) check_fits(e, from, to, out);
         }
         state::push_value(e, (state::Value){.llvm = out, .ty = to});
         return state::success();
     }
     if (from.ty.kind == .pointer && to.kind == .pointer) {
-        if (from.ty.address_space != to.address_space)
+        if (from.ty.kind.pointer.address_space != to.kind.pointer.address_space)
             return state::not_emitted("cast between address spaces", w->span);
         state::push_value(e, (state::Value){.llvm = from.llvm, .ty = to});
         return state::success();
@@ -997,8 +1010,9 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
         Str name = node->kind.member.name;
         state::Ty record = *ty;
         if (node->kind.member.arrow) {
-            if (ty->kind != .pointer || ty->element == nullptr) return state::failf(node->span, "`->` on ", ty->name);
-            record = *ty->element;
+            if (ty->kind != .pointer || ty->kind.pointer.element == nullptr)
+                return state::failf(node->span, "`->` on ", ty->name);
+            record = *ty->kind.pointer.element;
         }
         Usize field = 0;
         Usize at = 0;
@@ -1008,13 +1022,18 @@ static state::Status step_type(state::Emitter *e, const ast::Expr *node, state::
         return state::success();
     }
     if (node->kind == .index || (node->kind == .unary && node->kind.unary.op == .dereference)) {
-        if (node->kind == .index && ty->kind == .block && ty->element != nullptr) {
-            *ty = ty->count == 2 ? slice_type(e, *ty->element, "slice") : block_type(e, *ty->element, ty->count - 1);
+        if (node->kind == .index && ty->kind == .block) {
+            state::SizedTy block = ty->kind.block;
+            *ty = block.count == 2 ? slice_type(e, *block.element, "slice")
+                                   : block_type(e, *block.element, block.count - 1);
             return state::success();
         }
-        if ((ty->kind != .pointer && ty->kind != .array && ty->kind != .slice) || ty->element == nullptr)
-            return state::failf(node->span, "indexing or dereferencing ", ty->name);
-        *ty = *ty->element;
+        state::Ty *element = nullptr;
+        if (ty->kind == .pointer) element = ty->kind.pointer.element;
+        if (ty->kind == .array) element = ty->kind.array.element;
+        if (ty->kind == .slice) element = ty->kind.slice.element;
+        if (element == nullptr) return state::failf(node->span, "indexing or dereferencing ", ty->name);
+        *ty = *element;
         return state::success();
     }
     *ty = pointer_to(e, *ty, 0); // `&`
@@ -1051,7 +1070,7 @@ static state::Status count_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value slice = state::pop_value(e);
     if (slice.ty.kind == .block) {
         c::LLVMValueRef counts[8] = {};
-        block_counts(e, slice.llvm, slice.ty.count, counts);
+        block_counts(e, slice.llvm, slice.ty.kind.block.count, counts);
         state::Ty first = {};
         state::scalar_type(e, "usize", &first);
         state::push_value(
@@ -1093,9 +1112,12 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
     state::Ty word = u64_type(e);
     U64 number = 0;
     if (op == .count_of) {
-        if (subject.kind != .array && subject.kind != .tuple)
+        if (subject.kind == .array)
+            number = subject.kind.array.count;
+        else if (subject.kind == .tuple)
+            number = subject.kind.tuple.part_count;
+        else
             return state::failf(x->span, "countof of ", subject.name, ", which is not an array or a tuple");
-        number = subject.kind == .tuple ? subject.part_count : subject.count;
     } else {
         if (e->target_data == nullptr) return state::fail("sizeof and alignof need the target's data layout", x->span);
         if (op == .size_of)
@@ -1142,24 +1164,25 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
 }
 
 // A fixed array of arrays as the block `to`: `{ address, sizes }`, the sizes the first dimensions of the array's type.
-static state::Value array_as_block(state::Emitter *e, state::Ty to, c::LLVMValueRef address, state::Ty array) {
+static state::Value array_as_block(state::Emitter *e, state::Ty to, U64 dimensions, c::LLVMValueRef address,
+                                   state::Ty array) {
     c::LLVMValueRef counts[8] = {};
     state::Ty inner = array;
-    for (U64 i = 0; i < to.count; i++) {
-        counts[i] = c::LLVMConstInt(index_word(e), inner.count, 0);
-        inner = *inner.element;
+    for (U64 i = 0; i < dimensions && inner.kind == .array; i++) {
+        counts[i] = c::LLVMConstInt(index_word(e), inner.kind.array.count, 0);
+        inner = *inner.kind.array.element;
     }
-    return make_block(e, to, address, counts);
+    return make_block(e, to, dimensions, address, counts);
 }
 
 static state::Status array_slice_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value place = state::pop_value(e);
     if (place.ty.kind != .array) return state::failf(w->span, "a slice of ", place.ty.name, ", which is not an array");
     if (w->ty.kind == .block) {
-        state::push_value(e, array_as_block(e, w->ty, place.llvm, place.ty));
+        state::push_value(e, array_as_block(e, w->ty, w->ty.kind.block.count, place.llvm, place.ty));
         return state::success();
     }
-    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), place.ty.count, 0);
+    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), place.ty.kind.array.count, 0);
     state::push_value(e, make_slice(e, w->ty, place.llvm, count));
     return state::success();
 }
@@ -1172,14 +1195,14 @@ export state::Status array_as_slice(state::Emitter *e, const ast::Expr *x, state
 }
 
 // An array value (a call's result) as a slice: stored in a fresh slot, which the slice points to.
-export state::Status array_value_as_slice(state::Emitter *e, state::Value value, state::Ty to) {
+export state::Status array_value_as_slice(state::Emitter *e, state::Value value, state::SizedTy array, state::Ty to) {
     c::LLVMValueRef slot = state::new_alloca(e, value.ty, "temporary");
     c::LLVMBuildStore(e->builder, value.llvm, slot);
     if (to.kind == .block) {
-        state::push_value(e, array_as_block(e, to, slot, value.ty));
+        state::push_value(e, array_as_block(e, to, to.kind.block.count, slot, value.ty));
         return state::success();
     }
-    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), value.ty.count, 0);
+    c::LLVMValueRef count = c::LLVMConstInt(index_word(e), array.count, 0);
     state::push_value(e, make_slice(e, to, slot, count));
     return state::success();
 }
@@ -1188,27 +1211,28 @@ export state::Status array_value_as_slice(state::Emitter *e, state::Value value,
 static c::LLVMValueRef slice_bound(state::Emitter *e, const ast::Expr *written, c::LLVMValueRef fallback) {
     if (written == nullptr) return fallback;
     state::Value at = state::pop_value(e);
-    return c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), at.ty.is_signed, "");
+    return c::LLVMBuildIntCast2(e->builder, at.llvm, index_word(e), state::is_signed(at.ty), "");
 }
 
 // `xs[a:b]` of a block: the same block with rows `a` to `b` of the first dimension, over the same elements.
-static state::Status block_slice(state::Emitter *e, state::Value base, c::LLVMValueRef start, c::LLVMValueRef end) {
+static state::Status block_slice(state::Emitter *e, state::Value base, state::SizedTy block, c::LLVMValueRef start,
+                                 c::LLVMValueRef end) {
     c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "block");
     c::LLVMValueRef data = c::LLVMBuildExtractValue(e->builder, whole, 0, "data");
     c::LLVMValueRef counts[8] = {};
-    block_counts(e, whole, base.ty.count, counts);
+    block_counts(e, whole, block.count, counts);
     if (end == nullptr) end = counts[0];
     c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");
     c::LLVMValueRef past = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, end, counts[0], "past");
     c::LLVMValueRef bad = c::LLVMBuildOr(e->builder, backwards, past, "outside");
     report_index(e, bad, end, 0, counts[0]);
     c::LLVMValueRef stride = c::LLVMConstInt(index_word(e), 1, 0);
-    for (U64 i = 1; i < base.ty.count; i++)
+    for (U64 i = 1; i < block.count; i++)
         stride = c::LLVMBuildMul(e->builder, stride, counts[i], "stride");
     c::LLVMValueRef offset = c::LLVMBuildMul(e->builder, start, stride, "offset");
-    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, base.ty.element->llvm, data, &offset, 1, "first");
+    c::LLVMValueRef first = c::LLVMBuildInBoundsGEP2(e->builder, block.element->llvm, data, &offset, 1, "first");
     counts[0] = c::LLVMBuildSub(e->builder, end, start, "length");
-    state::push_value(e, make_block(e, base.ty, first, counts));
+    state::push_value(e, make_block(e, base.ty, block.count, first, counts));
     return state::success();
 }
 
@@ -1224,24 +1248,28 @@ static state::Status slice_of_finish(state::Emitter *e, const state::ThenExpr *w
     if (end_written != nullptr) end = slice_bound(e, end_written, nullptr);
     c::LLVMValueRef start = slice_bound(e, start_written, zero);
     state::Value base = state::pop_value(e);
-    if (base.ty.kind == .block) return block_slice(e, base, start, end);
+    if (base.ty.kind == .block) return block_slice(e, base, base.ty.kind.block, start, end);
     c::LLVMValueRef data = nullptr;
     c::LLVMValueRef count = nullptr;
     state::Ty result = base.ty;
+    state::Ty element = {};
     if (base.ty.kind == .slice) {
         slice_parts(e, base, &data, &count);
+        element = *base.ty.kind.slice.element;
     } else if (base.ty.kind == .array) {
         data = base.llvm;
-        count = c::LLVMConstInt(index_word(e), base.ty.count, 0);
-        result = slice_type(e, *base.ty.element, "slice");
-    } else if (base.ty.kind == .pointer && base.ty.element != nullptr) {
+        count = c::LLVMConstInt(index_word(e), base.ty.kind.array.count, 0);
+        element = *base.ty.kind.array.element;
+        result = slice_type(e, element, "slice");
+    } else if (base.ty.kind == .pointer && base.ty.kind.pointer.element != nullptr) {
         // `p[a:b]`: the pointer is read from its place; the only bound there is to check is `a <= b`.
         if (end == nullptr) return state::fail("a slice of a pointer needs its end: `p[a:b]`", w->span);
+        element = *base.ty.kind.pointer.element;
         data = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
-        result = slice_type(e, *base.ty.element, "slice");
+        result = slice_type(e, element, "slice");
         c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");
         report_index(e, backwards, end, 0, end);
-        c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "first");
+        c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, element.llvm, data, &start, 1, "first");
         c::LLVMValueRef length = c::LLVMBuildSub(e->builder, end, start, "length");
         state::push_value(e, make_slice(e, result, first, length));
         return state::success();
@@ -1253,7 +1281,7 @@ static state::Status slice_of_finish(state::Emitter *e, const state::ThenExpr *w
     c::LLVMValueRef past = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, end, count, "past");
     c::LLVMValueRef bad = c::LLVMBuildOr(e->builder, backwards, past, "outside");
     report_index(e, bad, end, 0, count);
-    c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "first");
+    c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, element.llvm, data, &start, 1, "first");
     c::LLVMValueRef length = c::LLVMBuildSub(e->builder, end, start, "length");
     state::push_value(e, make_slice(e, result, first, length));
     return state::success();
@@ -1286,9 +1314,10 @@ static state::Status item_target(state::Emitter *e, state::Ty whole, ast::Initia
     Usize at = 0;
     if (whole.kind == .array) {
         if (countof(designators) > 0) return state::not_emitted("designator in an array", span);
-        if (position >= whole.count) return state::failf(span, "too many initializers for ", whole.name);
+        if (position >= whole.kind.array.count) return state::failf(span, "too many initializers for ", whole.name);
         *found = position;
-        *want = *whole.element;
+        *want = *whole.kind.array.element;
+
         return state::success();
     }
     if (whole.kind != .record || !find_record_of(e, whole, &at))
@@ -1404,11 +1433,13 @@ export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint
 // (`w->flag`).
 static state::Status array_literal_finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Ty array = w->ty;
+    if (array.kind != .array) return state::failf(w->span, "an array literal of ", array.name);
+    state::SizedTy shape = array.kind.array;
     c::LLVMValueRef built = c::LLVMConstNull(array.llvm);
     for (Usize i = (Usize)w->number; i > 0; i--) {
         state::Value item = state::pop_value(e);
-        if (!state::same_type(item.ty, *array.element)) {
-            try state::convert(e, item, *array.element, w->span, .initialize);
+        if (!state::same_type(item.ty, *shape.element)) {
+            try state::convert(e, item, *shape.element, w->span, .initialize);
             item = state::pop_value(e);
         }
         built = c::LLVMBuildInsertValue(e->builder, built, item.llvm, (U32)(i - 1), "");
@@ -1422,7 +1453,7 @@ static state::Status array_literal_finish(state::Emitter *e, const state::ThenGe
         state::push_value(e, make_slice(e, w->hint.ty, none, c::LLVMConstInt(index_word(e), 0, 0)));
         return state::success();
     }
-    return array_value_as_slice(e, (state::Value){.llvm = built, .ty = array}, w->hint.ty);
+    return array_value_as_slice(e, (state::Value){.llvm = built, .ty = array}, shape, w->hint.ty);
 }
 
 // `[1, 2, 3]` as a fixed array `[N]T` or, where a slice is expected, as `[]T` over a hidden array kept in the entry
@@ -1447,9 +1478,11 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
         return state::failf(x->span, "an array literal where ", want.name, " is expected");
     }
     state::Ty array = want;
-    if (want.kind == .slice) array = array_of(e, *want.element, countof(items));
-    if (array.count != countof(items)) {
-        return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
+    if (want.kind == .slice) array = array_of(e, *want.kind.slice.element, countof(items));
+    if (array.kind != .array) return state::failf(x->span, "an array literal where ", want.name, " is expected");
+    state::SizedTy shape = array.kind.array;
+    if (shape.count != countof(items)) {
+        return state::failf(x->span, "the array has ", shape.count, " elements, the literal ", countof(items));
     }
     state::push_then_general(e, (state::ThenGeneral){.run = array_literal_finish,
                                                      .hint = state::hint_of(want),
@@ -1458,7 +1491,7 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
                                                      .number = countof(items),
                                                      .span = x->span});
     for (Usize i = countof(items); i > 0; i--)
-        state::push_eval(e, items[i - 1], state::hint_of(*array.element));
+        state::push_eval(e, items[i - 1], state::hint_of(*shape.element));
     return state::success();
 }
 
@@ -1479,12 +1512,12 @@ export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
 
 // An integer constant of type `ty`; `negative` for `-literal`.
 static state::Status integer_constant(state::Ty ty, U64 value, Bool negative, ast::Span span, c::LLVMValueRef *out) {
-    U32 usable = ty.bits;
-    if (ty.is_signed) usable -= 1;
-    Bool fits = ty.bits >= 64 && !ty.is_signed;
-    if (usable >= 64 && ty.bits > 64)
+    U32 usable = state::width(ty);
+    if (state::is_signed(ty)) usable -= 1;
+    Bool fits = state::width(ty) >= 64 && !state::is_signed(ty);
+    if (usable >= 64 && state::width(ty) > 64)
         fits = true; // a literal is a 64-bit value; a signed 128-bit type holds all of them
-    if (!fits) fits = value < (1ULL << usable) || (negative && ty.is_signed && value == (1ULL << usable));
+    if (!fits) fits = value < (1ULL << usable) || (negative && state::is_signed(ty) && value == (1ULL << usable));
     if (!fits) return state::failf(span, "integer literal ", value, " does not fit ", ty.name);
     *out = c::LLVMConstInt(ty.llvm, value, 0);
     if (negative) *out = c::LLVMConstNeg(*out);
@@ -1548,13 +1581,13 @@ static Bool integer_operand(const ast::Expr *x, U64 *out) {
 // An integer constant from one operation on two integer constants: `1.to(u64) << 63`, `base + 1`, a flag mask. Types of
 // up to 64 bits; LLVMConstInt keeps the low bits of the result that the type holds.
 static Bool integer_operation(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (x->kind != .binary || ty.bits > 64) return false;
+    if (x->kind != .binary || state::width(ty) > 64) return false;
     U64 left = 0;
     U64 right = 0;
     if (!integer_operand(x->kind.binary.left, &left) || !integer_operand(x->kind.binary.right, &right)) return false;
     ast::BinaryOp op = x->kind.binary.op;
     U64 value = 0;
-    if (op == .shift_left && right < ty.bits) {
+    if (op == .shift_left && right < state::width(ty)) {
         value = left << right;
     } else if (op == .add) {
         value = left + right;
@@ -1617,29 +1650,30 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
 }
 
 // An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
-static state::Status array_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (x->kind == .string && ty.element->kind == .integer && ty.element->bits == 8) {
+static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
+                                    c::LLVMValueRef *out) {
+    if (x->kind == .string && array.element->kind == .integer && state::width(*array.element) == 8) {
         Str bytes = x->kind.string.bytes;
-        if (countof(bytes) + 1 > ty.count) return state::failf(x->span, "the string does not fit ", ty.name);
-        if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+        if (countof(bytes) + 1 > array.count) return state::failf(x->span, "the string does not fit ", ty.name);
+        if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
         c::LLVMValueRef values[256]; // the bytes, then zeros up to the length
-        for (Usize i = 0; i < ty.count; i++)
-            values[i] = c::LLVMConstInt(ty.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+        for (Usize i = 0; i < array.count; i++)
+            values[i] = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
         return state::success();
     }
     if (x->kind != .array_lit)
         return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
     ast::ExprRef items[:] = x->kind.array_lit.items;
-    if (countof(items) > ty.count)
-        return state::failf(x->span, "the array has ", ty.count, " elements, the literal ", countof(items));
-    if (ty.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
+    if (countof(items) > array.count)
+        return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
+    if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
     c::LLVMValueRef values[256];
-    for (Usize i = 0; i < ty.count; i++) {
-        values[i] = c::LLVMConstNull(ty.element->llvm);
-        if (i < countof(items)) try scalar_constant(e, *ty.element, items[i], &values[i]);
+    for (Usize i = 0; i < array.count; i++) {
+        values[i] = c::LLVMConstNull(array.element->llvm);
+        if (i < countof(items)) try scalar_constant(e, *array.element, items[i], &values[i]);
     }
-    *out = c::LLVMConstArray2(ty.element->llvm, values, ty.count);
+    *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
     return state::success();
 }
 
@@ -1682,8 +1716,9 @@ static state::Status construction_constant(state::Emitter *e, state::Ty ty, cons
 // constant when the value is zero, so the object holds zero or constant data and runs no code.
 static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (ty.kind != .array) return state::failf(x->span, "array.filled where ", ty.name, " is expected");
-    state::Ty chain[16];
-    Usize n = builtin::filled_chain(e, x, ty, chain);
+    state::SizedTy chain[16];
+    Usize n = builtin::filled_chain(e, x, ty.kind.array, chain);
+
     state::Ty leaf = *chain[n - 1].element;
     c::LLVMValueRef item = nullptr;
     const ast::Expr *value = builtin::filled_value(x);
@@ -1702,7 +1737,8 @@ static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast:
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
     if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
-    if (ty.kind == .array) return array_constant(e, ty, x, out);
+    if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, out);
+
     if (x->kind != .compound) {
         return scalar_constant(e, ty, x, out);
     }
