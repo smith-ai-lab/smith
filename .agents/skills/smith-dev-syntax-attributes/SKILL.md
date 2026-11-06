@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-attributes
-description: "New syntax (#1428): attributes are structs written with call syntax, `()` left off when empty (`@inline`, `@affine`, `@c_name(\"x\")`, `@when(target.os == .macos)`, `@effects(.alloc, .net)`, `@serial.rename(to = \"user_id\")`, `@serial.skip`), `@when`'s rules and its header `#if`, user attributes as `@attribute` structs, reading them by reflection, wrapping a function by an explicit call (`memo(compute)`), `_` for unused. Load when writing an attribute in the new syntax."
+description: "New syntax (#1428): attributes are structs written with call syntax, `()` left off when empty (`@inline`, `@affine`, `@c_name(\"x\")`, `@when(target.os == .macos)`, `@effects(.alloc, .net)`, `@serial.rename(new_name = \"user_id\")`, `@serial.skip`), `@when`'s rules and its header `#if`, user attributes as `@attribute` structs, reading them by reflection, wrapping a function by an explicit call (`memo(compute)`), `_` for unused. Load when writing an attribute in the new syntax."
 ---
 
 # Attributes
@@ -46,7 +46,7 @@ pub struct rename:
     to: str
 
 struct User:
-    @serial.rename(to = "user_id")
+    @serial.rename(new_name = "user_id")
     id: u64
     @serial.skip
     cache: u64 = 0

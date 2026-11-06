@@ -364,3 +364,17 @@ export void test_front_types_module_a_braced_variant_list_is_a_payload_enum_valu
           "return {.square = Circle(radius = 1)}\n",
           "a `{...}` list makes a struct", "");
 }
+
+// `cast`, `to` and `wrap` after a `.` are the built-in conversions, so no field and no function reached with method
+// syntax may be named so (#2526). A local or a parameter named `to` stays fine.
+export void test_front_types_module_conversion_names_are_reserved_as_members() {
+    fails("struct Hooks:\n    cast: i32\n\nfn run(h: Hooks) -> i32:\n    return 1\n",
+          "`cast` is reserved for the built-in conversion `x.cast(T)`", "rename the field");
+    fails("struct Edge:\n    from: i32\n    to: i32\n\nfn run(e: Edge) -> i32:\n    return 1\n",
+          "`to` is reserved for the built-in conversion `x.to(T)`", "rename the field");
+    fails("struct Edge:\n    wrap: i32\n\nfn run(e: Edge) -> i32:\n    return 1\n",
+          "`wrap` is reserved for the built-in conversion `x.wrap(T)`", "rename the field");
+    fails("struct Edge:\n    a: i32\n\nfn to(e: Edge) -> i32:\n    return 1\n",
+          "`to` is reserved for the built-in conversion `x.to(T)`", "rename the function");
+    clean("struct Edge:\n    a: i32\n\nfn run(e: Edge, to: i32) -> i32:\n    let from = e.a\n    return to + from\n");
+}

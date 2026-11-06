@@ -107,7 +107,7 @@ static Usize checked_casts(const types::Checked *r) {
         types::CastCheck cc = types::cast_checked(r, r->nodes[i].node);
         if (cc.needed) {
             test::check_condition(cc.from != nullptr);
-            test::check_condition(cc.to == r->nodes[i].type);
+            test::check_condition(cc.target_type == r->nodes[i].type);
             n += 1;
         }
     }

@@ -149,15 +149,15 @@ export void test_front_attr_needs_a_declaration_on_the_next_line() {
 // The checker
 
 static Str attribute_struct() {
-    return "@attribute\npub struct Rename:\n    to: str\n";
+    return "@attribute\npub struct Rename:\n    new_name: str\n";
 }
 
 export void test_front_attr_user_attribute_names_its_fields() {
-    clean(join(attribute_struct(), "struct User:\n    @Rename(to = \"user_id\")\n    id: u64\n"));
+    clean(join(attribute_struct(), "struct User:\n    @Rename(new_name = \"user_id\")\n    id: u64\n"));
 }
 
 export void test_front_attr_two_attributes_on_two_lines_before_a_field() {
-    clean(join(attribute_struct(), "struct User:\n    @Rename(to = \"a\")\n    @cold\n    id: u64\n"));
+    clean(join(attribute_struct(), "struct User:\n    @Rename(new_name = \"a\")\n    @cold\n    id: u64\n"));
 }
 
 export void test_front_attr_built_ins_stay_unqualified() {
@@ -166,24 +166,24 @@ export void test_front_attr_built_ins_stay_unqualified() {
 }
 
 export void test_front_attr_a_plain_struct_is_not_an_attribute() {
-    fails("pub struct Rename:\n    to: str\n@Rename(\"x\")\nfn f():\n    return\n", "`Rename` is not an attribute",
-          "mark its struct `@attribute`");
+    fails("pub struct Rename:\n    new_name: str\n@Rename(\"x\")\nfn f():\n    return\n",
+          "`Rename` is not an attribute", "mark its struct `@attribute`");
     fails("import serial;\n@serial::rename(\"x\")\nfn f():\n    return\n", "serial::rename", "another module");
     fails("@serial::rename(\"x\")\nfn f():\n    return\n", "`serial::rename` is not an attribute",
           "mark its struct `@attribute`");
 }
 
 export void test_front_attr_arguments_are_a_construction_of_the_struct() {
-    fails(join(attribute_struct(), "@Rename(to = \"a\", to = \"b\")\nfn f():\n    return\n"),
-          "the field `to` of `Rename`", "given twice");
+    fails(join(attribute_struct(), "@Rename(new_name = \"a\", new_name = \"b\")\nfn f():\n    return\n"),
+          "the field `new_name` of `Rename`", "given twice");
     fails(join(attribute_struct(), "@Rename(from = \"a\")\nfn f():\n    return\n"), "no field `from`", "Rename");
-    fails(join(attribute_struct(), "@Rename(to = 3)\nfn f():\n    return\n"), "expected Str", "found");
+    fails(join(attribute_struct(), "@Rename(new_name = 3)\nfn f():\n    return\n"), "expected Str", "found");
 }
 
 export void test_front_attr_arguments_are_computed_at_compile_time() {
-    fails(join(attribute_struct(), "fn name() -> str:\n    \"x\"\n@Rename(to = name())\nfn f():\n    return\n"),
+    fails(join(attribute_struct(), "fn name() -> str:\n    \"x\"\n@Rename(new_name = name())\nfn f():\n    return\n"),
           "an attribute's arguments are computed at compile time", "compile time");
-    clean(join(attribute_struct(), "const label = \"x\"\n@Rename(to = label)\nfn f():\n    return\n"));
+    clean(join(attribute_struct(), "const label = \"x\"\n@Rename(new_name = label)\nfn f():\n    return\n"));
 }
 
 // A positional argument fills the field at its place, as it does in a construction (#1813).
