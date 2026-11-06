@@ -333,7 +333,9 @@ I32 measure(I32 id, I32 *wait_status, Usage *used) {
     }
     if (!done) return eintr;
     U64 kilobyte = 1024;
-    if constexpr (target::os == target::macos) kilobyte = 1;
+    if constexpr (target::os == target::macos) {
+        kilobyte = 1;
+    }
     used->user_ns =
         (U64)raw.ru_utime.tv_sec * nanoseconds_per_second + (U64)raw.ru_utime.tv_usec * nanoseconds_per_microsecond;
     used->system_ns =
@@ -939,7 +941,8 @@ Usize fake_cores(c::SmithProcessHandler *self) {
 }
 
 // What the program wrote to the stdin of the n-th scripted child (counting from 0), as bytes.
-[[std::c_name("smith_process_fake_input")]] export [[nodiscard]] typeof(const U8[:]) fake_input(const Fake *fake, Usize n) {
+[[std::c_name("smith_process_fake_input")]] export [[nodiscard]] typeof(const U8[:]) fake_input(const Fake *fake,
+                                                                                                Usize n) {
     contract::requires(n < fake->count);
     return fake->children[n].input[0:fake->children[n].input_size];
 }
