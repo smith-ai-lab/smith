@@ -12,7 +12,7 @@ typedef ast::Enumerator EnumList[:];
 
 // The enumerators of the only declaration of source, which must parse without errors and be an enum.
 static EnumList items_of(Str source) {
-    parser::Parsed parsed = parser::parse("x.smith", source);
+    parser::Parsed parsed = parser::parse_file("x.smith", source);
     test::check_equal(countof(parsed.errors), 0);
     test::check_equal(countof(parsed.module.decls), 1);
     ast::DeclKind kind = parsed.module.decls[0]->kind;
@@ -66,7 +66,7 @@ export void test_parse_enum_missing_name_error() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse("x.smith", "enum { Red = 1 Green };");
+    parser::Parsed parsed = parser::parse_file("x.smith", "enum { Red = 1 Green };");
     test::check_condition(countof(parsed.errors) > 0);
     Str expected = "expected `,`, `;` or `}`, found `Green`";
     test::check_equal(parsed.errors[0].message, expected);

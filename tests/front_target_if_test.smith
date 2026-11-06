@@ -47,7 +47,7 @@ static Str format_line(Str text, Str line) {
 
 // The errors of `source` (smith's own syntax, or today's when it starts with `module`), one per line.
 static Str checked(Str source, Bool today) {
-    parser::Parsed p = today ? parser::parse("t.smith", source) : parser::parse_new("t.smith", source);
+    parser::Parsed p = today ? parser::parse_file("t.smith", source) : parser::parse_new("t.smith", source);
     Str text = "";
     for (Usize i = 0; i < countof(p.errors); i++)
         text = format_line(text, p.errors[i].message);

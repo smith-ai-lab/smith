@@ -50,12 +50,12 @@ export void test_categorical_frequencies_and_tables(random::Key key) {
     defer mem::set_allocator(before);
     const F64 weights[_] = {1.0, 2.0, 3.0, 0.0, 4.0, 0.5, 9.5};
     constexpr Usize count = 7;
-    categorical::Table categorical = categorical::make(weights, count);
-    test::check_equal(categorical.count, count);
+    categorical::Table table = categorical::make(weights, count);
+    test::check_equal(table.count, count);
     test::check_condition(a.used > 0); // from the allocator in force
     Usize observed[count] = {};
     for (U64 i = 0; i < draws; i++) {
-        Usize index = categorical::sample(take(stream), categorical);
+        Usize index = categorical::sample(take(stream), table);
         test::check_less(index, count);
         observed[index]++;
     }
@@ -77,8 +77,8 @@ export void test_categorical_frequencies_and_tables(random::Key key) {
     }
     categorical::Table same = categorical::make(weights, count); // construction is deterministic
     for (Usize i = 0; i < count; i++) {
-        test::check_equal(same.probability[i], categorical.probability[i]);
-        test::check_equal(same.alias[i], categorical.alias[i]);
+        test::check_equal(same.probability[i], table.probability[i]);
+        test::check_equal(same.alias[i], table.alias[i]);
     }
     categorical::Table tiny = categorical::make((const F64[_]){0.0, 1.0}, 2);
     for (U64 i = 0; i < 1000; i++) {

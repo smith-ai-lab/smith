@@ -582,8 +582,8 @@ export void test_front_types_expr_lists_are_typed_by_the_expected_type() {
     test::check_condition(types_expr::check(&r, list(nullptr, named), p) == p);
     types::TypeRef three = types::array_of(&r.table, ty(&r, "U8"), 3, false);
     ast::Initializer numbers[3] = {positional(num(1)), positional(num(2)), positional(num(255))};
-    ast::Expr *array = list(nullptr, numbers);
-    test::check_condition(types_expr::check(&r, array, three) == three);
+    ast::Expr *list_expr = list(nullptr, numbers);
+    test::check_condition(types_expr::check(&r, list_expr, three) == three);
     types::TypeRef maybe = types::option_of(&r.table, int32);
     ast::Initializer some[1] = {field_item("some", num(3))};
     expect(r.error_count, 0);

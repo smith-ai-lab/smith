@@ -152,7 +152,7 @@ export void test_front_check_types_typeof_expression_mismatch_is_reported() {
 // parser reads for them.
 
 static types::Checked check_c_text(Str source) {
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return types_decl::check_module(&p.module, types::lp64());
 }

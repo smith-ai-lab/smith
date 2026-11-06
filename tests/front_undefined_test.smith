@@ -35,7 +35,7 @@ static void errors(Str source, Usize count, Str needle) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked r = types_decl::check_module(&p.module, types::lp64());
     test::check_equal(r.error_count, count);

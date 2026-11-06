@@ -40,8 +40,8 @@ export void test_runner_aborts_an_expected_abort_passes_and_hides_the_childs_out
         scratch::Run assert_run = runner::tests(&p, iso, "--test abort_assert --verbose");
         runner::expect_has(iso, "aborts: an abort passes", &assert_run, "PASS abort_assert");
         runner::expect_lacks(iso, "aborts: ... and the child's output is hidden", &assert_run, "child noise");
-        scratch::Run arena = runner::tests(&p, iso, "--test abort_arena --verbose");
-        runner::expect_has(iso, "aborts: the arena's capacity stop passes", &arena, "PASS abort_arena");
+        scratch::Run aborted = runner::tests(&p, iso, "--test abort_arena --verbose");
+        runner::expect_has(iso, "aborts: the arena's capacity stop passes", &aborted, "PASS abort_arena");
         scratch::Run abort = runner::tests(&p, iso, "--test abort_abort --verbose");
         runner::expect_has(iso, "aborts: abort_abort passes", &abort, "PASS abort_abort");
         scratch::Run trap = runner::tests(&p, iso, "--test abort_trap --verbose");
