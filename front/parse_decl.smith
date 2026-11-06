@@ -1506,6 +1506,8 @@ static Str zero_of_static(Str type) {
     }
     Bool lower = type[0] >= 'a' && type[0] <= 'z';
     if (lower && !dotted) return "";
+    // a C type (`c::sigjmp_buf`, an array typedef) is no constructor: it stays `= undefined`, which a global zeroes
+    if (countof(type) > 3 && type[0] == 'c' && (type[1] == ':' || type[1] == '.')) return "";
     return as_str(format::push(type, "()"));
 }
 
@@ -3552,7 +3554,7 @@ static Bool prefix_at(Str text, Usize at, Str prefix) {
 static Bool system_word(Str word) {
     return same_text(word, "target") || same_text(word, "os") || same_text(word, "macos") || same_text(word, "linux") ||
            same_text(word, "arch") || same_text(word, "aarch64") || same_text(word, "x86_64") ||
-           same_text(word, "true") || same_text(word, "false");
+           same_text(word, "fast_math") || same_text(word, "true") || same_text(word, "false");
 }
 
 // Whether result[at:end] can be the name of a constant: it starts with a letter or `_` and no `(` follows it (a

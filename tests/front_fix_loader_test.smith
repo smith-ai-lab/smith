@@ -47,6 +47,16 @@ export void test_front_fix_loader_target_systems_are_variants() {
     check_text(got, "static fn f():\n    if target.os == .macos:\n        g()\n");
 }
 
+// D14, #2647: clang's `__FINITE_MATH_ONLY__` is the fact `target.fast_math`.
+export void test_front_fix_loader_finite_math_only_is_target_fast_math() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("module m;\nstatic void f() {\n    if (__FINITE_MATH_ONLY__) {\n        g();\n    }\n}\n");
+    check_text(got, "static fn f():\n    if target.fast_math:\n        g()\n");
+}
+
 export void test_front_fix_loader_finds_a_module_beside_the_file() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

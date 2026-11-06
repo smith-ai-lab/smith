@@ -561,11 +561,15 @@ static state::Status logical_finish(state::Emitter *e, const state::ThenGeneral 
     return state::success();
 }
 
-// The right side of a folded `&&`/`||` is still a Bool.
-static state::Status folded_right_is_bool(state::Emitter *e, const state::ThenNone *w) {
-    state::Value value = state::pop_value(e);
-    try require_bool(e, value, w->span);
-    state::push_value(e, value);
+// The right side of `&&` or `||` that a constant left side left to run: it is a Bool too.
+static state::Status right_is_bool(state::Emitter *e, const state::ThenExpr *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a logical operator", w->span);
+    }
+    ast::Span right_span = w->expr->kind.binary.right->span;
+    state::Value right = state::pop_value(e);
+    try require_bool(e, right, right_span);
+    state::push_value(e, right);
     return state::success();
 }
 
@@ -579,15 +583,14 @@ static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w)
     ast::Span left_span = w->expr->kind.binary.left->span;
     state::Value left = state::pop_value(e);
     try require_bool(e, left, left_span);
-    if (c::LLVMIsConstant(left.llvm) != 0) {
-        // A left side known now (`target.float_radix == 2 && ...`, #2643) decides the result or leaves the right side:
-        // no blocks, so a `static_assert` folds the whole condition.
-        Bool is_true = c::LLVMConstIntGetZExtValue(left.llvm) != 0;
-        if (is_true == (op == .logical_and)) {
-            state::push_then_none(e, (state::ThenNone){.run = folded_right_is_bool, .span = right->span});
-            state::push_eval(e, right, state::no_hint());
-        } else {
+    if (c::LLVMIsAConstantInt(left.llvm) != nullptr) {
+        // A known left side decides at once, so a condition of constants stays one (`static_assert(a == 2 && b == 3)`).
+        Bool truth = c::LLVMConstIntGetZExtValue(left.llvm) != 0;
+        if (op == .logical_and ? !truth : truth) {
             state::push_value(e, left);
+        } else {
+            state::push_then_expr(e, (state::ThenExpr){.run = right_is_bool, .expr = w->expr, .span = w->span});
+            state::push_eval(e, right, state::no_hint());
         }
         return state::success();
     }

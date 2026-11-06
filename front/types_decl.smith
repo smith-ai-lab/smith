@@ -268,6 +268,11 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
+    // `&rest` where `*(*mut T)` is wanted (`strtol`'s end pointer): the local `rest: *T` becomes `*mut T`.
+    if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer && from->element->kind == .pointer &&
+        to->element->kind == .pointer && from->element->pointee_const && !to->element->pointee_const &&
+        e->kind == .unary && e->kind.unary.op == .address_of)
+        fix = types_expr::pointer_name_fix(c, e->kind.unary.operand);
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type ||
          (from->element->kind == .pointer && to->element->kind == .pointer))) // `execv(path, argv)`
@@ -282,6 +287,16 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         fix[0] = (syntax::Edit){.span = e->span, .text = none};
     }
     if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
+    // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
+    const ast::Decl *declaring = state.declaring;
+    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declaring != nullptr &&
+        declaring->kind == .variable && declaring->kind.variable.init == e &&
+        declaring->kind.variable.type != nullptr && declaring->kind.variable.type->kind == .pointer) {
+        fix = mem::realloc(fix, 1);
+        U32 at = declaring->kind.variable.type->span.start;
+        Str question = "?";
+        fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
+    }
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
 }
@@ -1875,6 +1890,10 @@ export types::Options options(types::Target target) {
 
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
+    if (d->kind == .static_assert_decl) { // its condition folds before emit (`target.float_radix == 2`)
+        types_expr::check(r, d->kind.static_assert_decl.condition, r->table.bool_type);
+        return;
+    }
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
         return;
     }
@@ -1883,6 +1902,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     if (d->kind.variable.init->kind == .type_value) {
         return; // `let Point = m.Point`: an alias of a type, resolved with the declarations
+    }
+    if (types_expr::is_undefined(d->kind.variable.init)) {
+        return; // `mut p: *mut T = undefined`: a global C zeroes
     }
     Str name = d->kind.variable.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);

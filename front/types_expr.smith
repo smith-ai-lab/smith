@@ -521,10 +521,26 @@ static syntax::Edits mut_after(U32 at) {
     return edits;
 }
 
+// The fix that makes the `*T` variable `base` a `*mut T` (the edit after its star); empty for another spelling.
+export syntax::Edits pointer_name_fix(const types::Checked *c, const ast::Expr *base) {
+    syntax::Edits none = {};
+    if (base->kind != .name) return none;
+    const types::Symbol *x = types::lookup_path(&c->scopes, base->kind.name.path);
+    const ast::TypeExpr *written = x != nullptr ? x->written : nullptr;
+    if (written == nullptr || written->kind != .pointer || written->kind.pointer.is_mut) return none;
+    if (written->kind.pointer.pointee->span.start <= written->span.start) return none; // the old spelling `T *`
+    return mut_after(written->span.start + 1);
+}
+
 // The fix for `&a[i]` of a local array and `&r.f` of a local record: the one for `&a` and `&r` (#2456). A field
 // reached through a pointer is writable when the pointer is, which is another fix. Empty when neither is so.
 static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *operand) {
     syntax::Edits none = {};
+    if (operand->kind == .index && operand->kind.index.base->kind == .name) { // `&slots[i]` of a `*T` global or local
+        const ast::Expr *base = operand->kind.index.base;
+        types::TypeRef held = types::type_of(c, base);
+        if (held != nullptr && held->kind == .pointer) return pointer_name_fix(c, base);
+    }
     // `&r.word[0]`: the root of a chain of `.f` (not `->f`) and `[i]` is the local that holds the storage.
     const ast::Expr *root = operand;
     while (root->kind == .member || root->kind == .index) {
@@ -543,11 +559,7 @@ static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *
     if (root == operand || root->kind != .name) return none;
     types::TypeRef held = types::type_of(c, root);
     if (held != nullptr && held->kind == .pointer && root->kind == .name) { // `&l.frames[i]` of a `*Loops`: `*mut`
-        const types::Symbol *x = types::lookup_path(&c->scopes, root->kind.name.path);
-        const ast::TypeExpr *written = x != nullptr ? x->written : nullptr;
-        if (written == nullptr || written->kind != .pointer || written->kind.pointer.is_mut) return none;
-        if (written->kind.pointer.pointee->span.start <= written->span.start) return none; // the old spelling `T *`
-        return mut_after(written->span.start + 1);
+        return pointer_name_fix(c, root);
     }
     return held != nullptr && (held->kind == .record || held->kind == .array) ? address_fix(c, root) : none;
 }
@@ -1021,22 +1033,32 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     Bool ubsan = same_text(fact, "undefined_sanitizer");
     Bool tsan = same_text(fact, "thread_sanitizer");
     Bool checks = same_text(fact, "assertions");
-    // The numbers of the floating-point types: integers, folded the same way (#2643).
-    Bool number = same_text(fact, "float_radix") || same_text(fact, "f32_mantissa_bits") ||
-                  same_text(fact, "f64_mantissa_bits") || same_text(fact, "float_eval_method");
-    if (number) {
-        U64 given = 2;
-        if (same_text(fact, "f32_mantissa_bits")) given = 24;
-        if (same_text(fact, "f64_mantissa_bits")) given = 53;
-        if (same_text(fact, "float_eval_method")) given = (U64)target::float_eval_method;
-        node->kind = (ast::ExprKind){.integer = {.value = given}};
+    // The floating-point facts are numbers (IEEE binary32 and binary64, evaluated in their own type) on every target.
+    U64 number = 0;
+    Bool numeric = true;
+    if (same_text(fact, "float_radix")) {
+        number = 2;
+    } else if (same_text(fact, "f32_mantissa_bits")) {
+        number = 24;
+    } else if (same_text(fact, "f64_mantissa_bits")) {
+        number = 53;
+    } else if (same_text(fact, "float_eval_method")) {
+        number = 0;
+    } else {
+        numeric = false;
+    }
+    if (numeric) {
+        ast::ExprKind folded = {.integer = {.value = number}};
+        node->kind = folded;
         finish(c, e, types::builtin(&c->table, "I32"), f.expected);
         return true;
     }
     // `static_analyzer` is never true: the new front end does not run under clang's analyzer, as in `when`.
-    if (!asan && !ubsan && !tsan && !checks && !same_text(fact, "static_analyzer")) return false;
+    Bool fast = same_text(fact, "fast_math");
+    if (!asan && !ubsan && !tsan && !checks && !fast && !same_text(fact, "static_analyzer")) return false;
     Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||
-                 (tsan && target::thread_sanitizer) || (checks && target::assertions);
+                 (tsan && target::thread_sanitizer) || (checks && target::assertions) ||
+                 (fast && __FINITE_MATH_ONLY__ != 0);
     ast::ExprKind folded = {.boolean = {.value = value}};
     node->kind = folded;
     finish(c, e, types::builtin(&c->table, "Bool"), f.expected);
@@ -2263,7 +2285,8 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
         return;
     }
     types::TypeRef hint = nullptr;
-    if (op == .plain || (literal_branches(c, value) && op != .shift_left && op != .shift_right)) {
+    Bool pointer_step = tt->kind == .pointer && (op == .add || op == .subtract); // `p += 1`: the step is a count
+    if (op == .plain || (literal_branches(c, value) && op != .shift_left && op != .shift_right && !pointer_step)) {
         hint = tt;
     }
     push(w, e, f.expected, 2);
@@ -3600,6 +3623,9 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
             return nullptr;
         }
     }
+    syntax::Edits error_fix = {};
+    if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "error"))
+        error_fix = guarded_read(c, e, false);
     if (base->kind == .enumeration && base->has_payload) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
@@ -3610,6 +3636,9 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         } else {
             types::fail(c, e->span, shown);
         }
+    } else if (countof(error_fix) > 0) {
+        // `r.error` where a test or a `match` arm of `r` guards it: the binding `error` (#2611)
+        types::fail_fix(c, e->span, msg(format::push("a `", found, "`'s error is read through a binding")), error_fix);
     } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
         Str shown =
             msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));
@@ -3651,15 +3680,33 @@ static Bool narrowed_payload(types::Checked *c, Frame f) {
     return true;
 }
 
-// `text.data` is the pointer to a `str`'s characters, read-only (the library hands it to C). False when `e` is not
-// that.
-static Bool text_data_member(types::Checked *c, const ast::Expr *e, types::TypeRef base, Str name,
-                             types::TypeRef expected) {
-    if (!(e->kind == .member) || e->kind.member.arrow || base->kind != .text || !same_text(name, "data")) return false;
-    types::TypeRef character = types::builtin(&c->table, "Char");
-    if (character == nullptr) return false;
-    finish(c, e, types::pointer_to(&c->table, character, true), expected);
-    return true;
+// `text.data`, `xs.data` and `xs.count`, the members a `str` and a slice have of their own. True when `e` was one.
+static Bool builtin_member(types::Checked *c, Frame f, types::TypeRef base, Str name) {
+    const ast::Expr *e = f.node;
+    if (e->kind != .member) {
+        return false;
+    }
+    Bool arrow = e->kind.member.arrow;
+    if (base->kind == .text && !arrow && same_text(name, "data")) {
+        // `text.data` is the pointer to a `str`'s bytes, read-only (a C string's `.data`, #2611).
+        finish(c, e, types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true), f.expected);
+        return true;
+    }
+    if (base->kind == .slice && !arrow && same_text(name, "data")) {
+        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
+        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
+        return true;
+    }
+    if (base->kind == .slice && !arrow && same_text(name, "count")) {
+        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (the library builds slices by
+        // hand with it, as `.data`).
+        types::TypeRef word = types::builtin(&c->table, "Usize");
+        if (word != nullptr) {
+            finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
+            return true;
+        }
+    }
+    return false;
 }
 
 static void member_after(types::Checked *c, Frame f) {
@@ -3694,22 +3741,10 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, element->type, f.expected);
         return;
     }
-    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "data")) {
-        // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
-        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
+    if (builtin_member(c, f, base, name)) {
         return;
     }
-    if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "count")) {
-        // `xs.count[0]` is the count of a slice, one `usize` that `xs.count[0] = n` sets (as `.data`, by hand).
-        types::TypeRef word = types::builtin(&c->table, "Usize");
-        if (word != nullptr) {
-            finish(c, e, types::array_of(&c->table, word, 1, false), f.expected);
-            return;
-        }
-    }
-    Bool arrow = e->kind.member.arrow;
-    if (text_data_member(c, e, base, name, f.expected)) return;
-    types::TypeRef record = record_of(c, e, base, arrow);
+    types::TypeRef record = record_of(c, e, base, e->kind.member.arrow);
     if (record == nullptr) {
         poison(c, e);
         return;
@@ -4623,6 +4658,19 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
         }
         return 2;
     }
+    if (t->kind == .result_type) { // `.ok(x)` is case 0 and `.error(e)` case 1
+        if (same_text(name, "ok")) {
+            return 0;
+        }
+        if (same_text(name, "error")) {
+            return 1;
+        }
+        if (report) {
+            types::failf(c, span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
+                         "`; write one of those");
+        }
+        return 2;
+    }
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) {
             Bool carries = t->has_payload && carries_value(t->slots[i].type);
@@ -4654,7 +4702,7 @@ static Bool scalar_match(types::TypeRef t) {
 }
 
 static Bool matchable(types::TypeRef t) {
-    return t->kind == .enumeration || t->kind == .option || scalar_match(t);
+    return t->kind == .enumeration || t->kind == .option || t->kind == .result_type || scalar_match(t);
 }
 
 // Whether a pattern has the form of a constant: a literal, its negation, a name or a header's `k.NAME`.
@@ -4738,7 +4786,7 @@ static void constant_pattern(types::Checked *c, types::TypeRef t, ast::Pattern p
 }
 
 static Usize case_count(types::TypeRef t) {
-    if (t->kind == .option) {
+    if (t->kind == .option || t->kind == .result_type) {
         return 2;
     }
     return countof(t->slots);
@@ -4770,8 +4818,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
         }
         if (known) {
             Usize at = case_of(c, s->span, t, pats[k], true);
-            if (t->kind == .option && at == 0) {
+            if ((t->kind == .option || t->kind == .result_type) && at == 0) {
                 element = t->element;
+            } else if (t->kind == .result_type && at == 1) {
+                element = t->error;
             } else if (t->kind == .enumeration && at < countof(t->slots) && t->has_payload) {
                 element = t->slots[at].type;
             }
@@ -4794,6 +4844,8 @@ static Str missing_list(types::TypeRef t, Bool seen[:]) {
         Str name = "none";
         if (t->kind == .enumeration) {
             name = t->slots[i].name;
+        } else if (t->kind == .result_type) {
+            name = i == 0 ? "ok(x)" : "error(e)";
         } else if (i == 0) {
             name = "some(x)";
         }
@@ -5066,7 +5118,7 @@ static void type_value_before(types::Checked *c, Work *w, Frame f) {
         types::set_type(c, f.node, c->table.automatic);
         return;
     }
-    types::set_method(c, f.node, call); // the emitter builds the value from the call (#2643)
+    types::set_method(c, f.node, call); // the emitter builds the construction from it
     push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
     push(w, call, f.expected, 0);
 }

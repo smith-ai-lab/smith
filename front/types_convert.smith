@@ -425,7 +425,6 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
     if (from == to || is_invalid_or_auto(from) || is_invalid_or_auto(to)) return accept(identity);
     // A function by its name where its `Fn(...)` is expected (a field of function-pointer type: `alloc = f`).
     if (from->kind == .function && to->kind == .fn_value && function_fits(from, to->element)) return accept(identity);
-    // A parameter of function type, `fn(*mut void)`, takes a function that only reads (#2643).
     if (from->kind == .function && to->kind == .function && function_fits(from, to)) return accept(identity);
     Ctx c = {.from = from,
              .target_type = to,

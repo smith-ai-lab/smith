@@ -48,7 +48,7 @@ static Bool is_built_in(Str name) {
            same_text(name, "pure") || same_text(name, "affine") || same_text(name, "c_name") ||
            same_text(name, "attribute") || same_text(name, "effects") || same_text(name, "when") ||
            same_text(name, "returns_owned") || same_text(name, "returns_borrowed") ||
-           same_text(name, "returns_internal");
+           same_text(name, "returns_internal") || same_text(name, "capability");
 }
 
 static Str path_text(ast::Path path) {
@@ -240,7 +240,8 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
         if (is_built_in(name)) return;
         types::failf(
             r, a->span, "unknown attribute `", name,
-            "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name(...)`, ",
+            "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@capability`, "
+            "`@c_name(...)`, ",
             "`@attribute`, `@effects(...)`, `@when(...)`, `@returns_owned(...)`, `@returns_borrowed(...)` and ",
             "`@returns_internal`, and your own are structs marked `@attribute`");
         return;

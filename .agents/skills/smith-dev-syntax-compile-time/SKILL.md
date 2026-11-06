@@ -22,7 +22,7 @@ fn page_size() -> usize:
 ```
 
 - `constexpr`, `if constexpr` and `for constexpr` are removed. A declaration whose value is known at compile time is a compile-time constant on its own; `const` demands it, on a declaration or a parameter.
-- An `if` whose condition is known at compile time keeps one branch. `target.os` is the fact every declaration needs today; the others (`target.arch`, sanitizers) are not settled.
+- An `if` whose condition is known at compile time keeps one branch. `target.os` is the fact every declaration needs today; the others (`target.arch`, sanitizers) are not settled. `target.fast_math` is a `bool`: true when the compile has `-ffast-math` or `-ffinite-math-only` (D14); clang's `__FINITE_MATH_ONLY__` is written so.
 
 ## Reflection
 
