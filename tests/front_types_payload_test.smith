@@ -146,3 +146,27 @@ export void test_front_types_payload_read_without_testing_the_variant_suggests_i
     fails(shapes("fn area(s: Shape) -> f32:\n    return s.circle.radius\n"), "payload enumeration",
           "`if .variant(v) := x:`");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// A pattern starts an `&&` chain (D12): the bound name is in scope in the rest of the chain and the body, not in `else`
+
+export void test_front_types_payload_pattern_chain_binds_in_the_rest_of_the_chain_and_the_body() {
+    clean(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s && c.radius > 1:\n        return c.radius\n"
+                 "    return 0\n"));
+}
+
+export void test_front_types_payload_pattern_chain_reads_the_payload_in_every_conjunct() {
+    clean(shapes("fn wide(s: Shape) -> bool:\n    if .rect(r) := s && r.w > 1 && r.h < r.w:\n        return true\n"
+                 "    return false\n"));
+}
+
+export void test_front_types_payload_pattern_chain_leads_a_while() {
+    clean(shapes("fn spin(s: Shape) -> f32:\n    mut total: f32 = 0\n    while .circle(c) := s && total < c.radius:\n"
+                 "        total += 1\n    return total\n"));
+}
+
+export void test_front_types_payload_pattern_chain_name_is_not_in_the_else() {
+    fails(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s && c.radius > 1:\n        return 1\n"
+                 "    else:\n        return c.radius\n"),
+          "`c`", "");
+}
