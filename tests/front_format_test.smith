@@ -65,6 +65,12 @@ export void test_format_one_statement_per_line_with_the_style_of_the_tour() {
     expect_format("x = f( a ,b )", "x = f(a, b)\n");
 }
 
+// A pattern may be any conjunct of an `&&` chain (D12): the formatter keeps the chain on its line.
+export void test_format_keeps_patterns_in_an_and_chain() {
+    expect_format("fn f(k:K)->i32:\n    if .a(x)  :=k&&.b(y):=x&&y>1:\n        return y\n    0\n",
+                  "fn f(k: K) -> i32:\n    if .a(x) := k && .b(y) := x && y > 1:\n        return y\n    0\n");
+}
+
 export void test_format_keeps_trailing_and_own_line_comments() {
     expect_format("let x = 1 # one\n# two\nlet y = 2\n", "let x = 1 # one\n# two\nlet y = 2\n");
     expect_format("fn f():\n    # inside\n    g()\n", "fn f():\n    # inside\n    g()\n");

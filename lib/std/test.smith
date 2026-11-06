@@ -11,6 +11,7 @@ import std::contract;
 import std::clock;
 import std::console;
 import std::env;
+import std::failing;
 import std::files;
 import std::math;
 import std::mem;
@@ -27,8 +28,6 @@ if constexpr (target::os == target::macos) {
 import <poll.h>;
 import <setjmp.h>;
 import <signal.h>;
-import <smith/failing.h>; // NOLINT(smith-module-library): the failing allocator, by its C names (issue #405)
-import <smith/mem.h>;     // NOLINT(smith-module-library): the checked allocator, by its C names (issue #405)
 import <smith/trace.h>;
 import <stdio.h>;
 import <stdlib.h>;
@@ -204,7 +203,13 @@ constexpr I32 write_only = c::O_WRONLY;                           // NOLINT(smit
 constexpr c::clockid_t clock_monotonic = c::CLOCK_MONOTONIC;      // NOLINT(smith-preprocessor)
 
 // __builtin_trap's signal: brk raises SIGTRAP on aarch64, ud2 SIGILL on x86_64.
-constexpr I32 sig_builtin_trap = target::arch == target::x86_64 ? sig_ill : sig_trap;
+I32 builtin_trap_signal() {
+    if constexpr (target::arch == target::x86_64) {
+        return sig_ill;
+    } else {
+        return sig_trap;
+    }
+}
 
 // A status from waitpid, as the signal that ended the process (or 0) and its exit status (or 0). The low seven bits
 // are the signal, 0 for an exit and 0x7f for a stop; an exit's status is the next byte.
@@ -250,15 +255,14 @@ export constexpr Kind kind_pointer = 6;
 [[std::c_name("SmithTestValue")]] export typedef struct {
     Kind kind;
     const char *type; // "I32", "U64", "F64", "bool", "char", "ptr"
-    union {
-        U64 unsigned_value;
-        I64 signed_value;
-        F32 f32_value;
-        F64 f64_value;
-        Bool bool_value;
-        char char_value;
-        Usize pointer_value;
-    };
+    // Only the field of kind is set: separate fields, as the new front end emits no union of a .smith struct yet.
+    U64 unsigned_value;
+    I64 signed_value;
+    F32 f32_value;
+    F64 f64_value;
+    Bool bool_value;
+    char char_value;
+    Usize pointer_value;
 } Value;
 
 // The comparisons of the checks.
@@ -466,10 +470,10 @@ void format_value(Value value, char *text, Usize capacity) {
     contract::assert(text != nullptr && capacity == text_capacity);
     switch (value.kind) {
     case kind_unsigned:
-        __builtin_snprintf(text, capacity, "%ju", (c::uintmax_t)value.unsigned_value);
+        __builtin_snprintf(text, capacity, "%zu", (Usize)value.unsigned_value);
         return;
     case kind_signed:
-        __builtin_snprintf(text, capacity, "%jd", (c::intmax_t)value.signed_value);
+        __builtin_snprintf(text, capacity, "%zd", (Isize)value.signed_value);
         return;
     case kind_f32:
         format_real((F64)value.f32_value, true, text, capacity);
@@ -529,13 +533,16 @@ typedef struct {
     F64 cpu;           // the CPU seconds the test took, with the processes it waited for (--stats)
 } Shared;
 
-Shared fallback;
-Shared *shared = &fallback;
+// The storage a process uses until the runner maps its shared block: zeroed bytes, as C's static struct was.
+constexpr Usize fallback_words = 2048;
+U64 fallback[fallback_words];
+static_assert(sizeof(Shared) <= sizeof fallback);
+Shared *shared = (Shared *)&fallback[0];
 Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 U32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
 // the --test selection, nullptr when there is none
-const char *selection_text;
+const char *selection_text = nullptr;
 U8 *memory_block;
 Usize memory_used;  // a multiple of arena::align_max
 Bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
@@ -618,12 +625,14 @@ void reset() {
 // Failures.
 
 // Appends to the shared detail, silently dropping what does not fit.
-[[gnu::format(__printf__, 2, 3)]] void detail_add(Usize *used, const char *format, ...) {
+void detail_add(Usize *used, const char *format, auto... rest) {
     if (*used >= detail_capacity - 1) return;
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    I32 written = __builtin_vsnprintf(shared->detail + *used, detail_capacity - *used, format, arguments);
-    __builtin_va_end(arguments);
+    I32 written = 0;
+    if constexpr (countof(rest) == 0)
+        written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, "%s", format);
+    else {
+        written = c::smith_format_text(shared->detail + *used, detail_capacity - *used, format, rest...);
+    }
     if (written > 0) *used += (Usize)written;
     if (*used > detail_capacity - 1) *used = detail_capacity - 1;
 }
@@ -638,8 +647,8 @@ void write_values(Line *lines, Usize count) {
         if (lines[i].bits && !finite(lines[i].value)) {
             Usize length = c::strlen(lines[i].formatted);
             I32 digits = lines[i].value.kind == kind_f32 ? 8 : 16;
-            __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*jx]", digits,
-                               (c::uintmax_t)raw_bits(lines[i].value));
+            __builtin_snprintf(lines[i].formatted + length, text_capacity - length, " [0x%0*zx]", digits,
+                               (Usize)raw_bits(lines[i].value));
         }
         Usize formatted_length = c::strlen(lines[i].formatted);
         if (formatted_length > value_width) value_width = formatted_length;
@@ -648,8 +657,8 @@ void write_values(Line *lines, Usize count) {
     Usize used = 0;
     shared->detail[0] = '\0';
     for (Usize i = 0; i < count; i++) {
-        detail_add(&used, "%-*s = %-*s   (%s)\n", (I32)text_width, lines[i].text, (I32)value_width, lines[i].formatted,
-                   lines[i].value.type);
+        detail_add(&used, "%-*s = %-*s   (%s)\n", (I32)text_width, lines[i].text, (I32)value_width,
+                   &lines[i].formatted[0], lines[i].value.type);
     }
 }
 
@@ -774,11 +783,11 @@ U64 explain_read(I32 from, char *text, Usize *used, U64 began, c::pid_t child) {
 void explain_join(const char *text, Usize used, U64 ended, I32 status) {
     Usize at = c::strlen(shared->detail);
     if (ended == explain_read_cpu) {
-        detail_add(&at, "@! values not shown: the debugger spent more than %ju s of CPU time\n",
-                   (c::uintmax_t)explain_seconds);
+        detail_add(&at, "@! values not shown: the debugger spent more than %zu s of CPU time\n",
+                   (Usize)explain_seconds);
     } else if (ended == explain_read_hung) {
-        detail_add(&at, "@! values not shown: the debugger hung (%ju s of wall time, no answer)\n",
-                   (c::uintmax_t)explain_hang_seconds);
+        detail_add(&at, "@! values not shown: the debugger hung (%zu s of wall time, no answer)\n",
+                   (Usize)explain_hang_seconds);
     } else if (used == 0) {
         detail_add(&at, "@! values not shown: the debugger gave no answer (status %d)\n", status_code(status));
     }
@@ -1345,7 +1354,7 @@ Bool golden_write(const char *path, const char *text, Usize size) {
     __builtin_snprintf(folder, sizeof folder, "%s", path);
     for (char *slash = c::strchr(folder + 1, '/'); slash != nullptr; slash = c::strchr(slash + 1, '/')) {
         *slash = '\0';
-        c::mkdir(folder, 493); // 0755; one that is there already is fine
+        c::mkdir(&folder[0], 493); // 0755; one that is there already is fine
         *slash = '/';
     }
     I32 descriptor = c::open(path, c::O_WRONLY | c::O_CREAT | c::O_TRUNC, 420); // NOLINT(smith-preprocessor)
@@ -1487,7 +1496,7 @@ void golden_check(const char path[:], const char actual[:]) {
     char file[path_capacity];
     if (countof(path) == 0 || countof(path) >= path_capacity)
         golden_fail("the golden path is empty or too long", "", "");
-    __builtin_memcpy(file, path.data, countof(path));
+    __builtin_memcpy(&file[0], path.data, countof(path));
     file[countof(path)] = '\0';
     Usize size = 0;
     const char *expected = golden_read(file, &size);
@@ -1498,12 +1507,12 @@ void golden_check(const char path[:], const char actual[:]) {
     if (update_run) {
         char summary[64];
         if (expected != nullptr) golden_summary(summary, sizeof summary, expected, size, actual_text, actual_size);
-        if (!golden_write(file, actual_text, actual_size)) golden_fail("cannot write ", file, "");
-        golden_note(file, expected != nullptr ? summary : nullptr);
+        if (!golden_write(&file[0], actual_text, actual_size)) golden_fail("cannot write ", &file[0], "");
+        golden_note(&file[0], expected != nullptr ? summary : nullptr);
         return;
     }
-    if (expected == nullptr) golden_fail("no file ", file, "; run smith test --update to write it");
-    golden_differ(file, expected, size, actual_text, actual_size);
+    if (expected == nullptr) golden_fail("no file ", &file[0], "; run smith test --update to write it");
+    golden_differ(&file[0], expected, size, actual_text, actual_size);
 }
 
 export void golden(const char path[:], const char actual[:]) { // NOLINT(smith-effects): a test's files
@@ -1648,27 +1657,31 @@ void *map_bytes(Usize bytes, I32 flags) {
 }
 
 // Printing goes through the console.
-[[gnu::format(__printf__, 1, 2)]] void say(const char *format, ...) {
+void say(const char *format, auto... rest) {
     char buffer[8192];
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    (void)__builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
-    __builtin_va_end(arguments);
-    (void)console::print(buffer);
+    if constexpr (countof(rest) == 0)
+        (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
+    else {
+        (void)c::smith_format_text(&buffer[0], sizeof buffer, format, rest...);
+    }
+    const char *shown = &buffer[0];
+    (void)console::print(shown);
 }
 
-[[gnu::format(__printf__, 1, 2)]] void complain(const char *format, ...) {
+void complain(const char *format, auto... rest) {
     char buffer[8192];
-    __builtin_va_list arguments;
-    __builtin_va_start(arguments, format);
-    (void)__builtin_vsnprintf(buffer, sizeof buffer, format, arguments);
-    __builtin_va_end(arguments);
-    (void)console::print_error(buffer);
+    if constexpr (countof(rest) == 0)
+        (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
+    else {
+        (void)c::smith_format_text(&buffer[0], sizeof buffer, format, rest...);
+    }
+    const char *shown = &buffer[0];
+    (void)console::print_error(shown);
 }
 
 // A stop on purpose: SIGABRT, SIGTRAP or the signal of __builtin_trap.
 Bool is_stop(I32 signal_number) {
-    return signal_number == sig_abrt || signal_number == sig_trap || signal_number == sig_builtin_trap;
+    return signal_number == sig_abrt || signal_number == sig_trap || signal_number == builtin_trap_signal();
 }
 
 // A process that catches a fatal signal exits with 128 plus its number, so macOS writes no crash report for an expected
@@ -1692,18 +1705,21 @@ void on_signal(I32 signal_number, c::siginfo_t *info, void *context) {
     c::_exit(signal_status + signal_number);
 }
 
+// SIG_DFL and SIG_IGN are macros no header binding has: lib/trace.c calls signal with them.
+void signal_default(I32 signal_number) {
+    c::smith_signal_default(signal_number); // NOLINT(bugprone-signal-handler): it calls signal, which is safe
+}
+
+void signal_ignore(I32 signal_number) {
+    c::smith_signal_ignore(signal_number);
+}
+
+U8 alternate_bytes[alternate_stack]; // the stack the signal handlers run on (a function's own static is not emitted
+                                     // yet)
+
 void catch_signals() {
-    static U8 stack[alternate_stack];
-    c::stack_t alternate = {.ss_sp = stack, .ss_size = alternate_stack};
+    c::stack_t alternate = {.ss_sp = &alternate_bytes[0], .ss_size = alternate_stack};
     c::sigaltstack(&alternate, nullptr);
-    struct c::sigaction action = {.sa_flags = on_stack + with_info}; // two distinct bits; the mask starts empty
-    if constexpr (target::os == target::macos) {
-        action.__sigaction_u.__sa_sigaction = on_signal; // macOS's spelling of sa_sigaction, which is a macro
-    } else {
-        // glibc's sa_sigaction is a macro for a member of the union __sigaction_handler, which this names instead
-        // (the union's members begin at its address).
-        *(typeof(&on_signal) *)&action.__sigaction_handler = on_signal;
-    }
     constexpr Usize signals_count = 6;
     const I32 signals[signals_count] = {sig_trap, sig_abrt, sig_ill, sig_segv, sig_bus, sig_fpe};
     // AddressSanitizer keeps its own SIGSEGV, SIGBUS and SIGFPE handlers.
@@ -1712,7 +1728,7 @@ void catch_signals() {
         caught = 3;
     }
     for (Usize i = 0; i < caught; i++)
-        c::sigaction(signals[i], &action, nullptr);
+        c::smith_signal_catch(signals[i], (void *)on_signal, on_stack + with_info);
 }
 
 // The words a property test draws, recorded and replaced (shrinking, below), and the runner's tap that does it.
@@ -1800,8 +1816,8 @@ U64 tap_word(const random::Tap *tap, U64 key, U64 n, U64 bits) {
 // Starts the clocks of a test or a key: the CPU time limit (SIGPROF, the process's user and system time) and the
 // wall-clock backstop (SIGALRM). Either is off when its seconds are 0.
 void arm(const Options *options) {
-    struct c::itimerval cpu = {.it_value = {.tv_sec = options->timeout}};
-    struct c::itimerval wall = {.it_value = {.tv_sec = options->wall_timeout}};
+    struct c::itimerval cpu = {.it_value = {.tv_sec = options->timeout, .tv_usec = 0}};
+    struct c::itimerval wall = {.it_value = {.tv_sec = options->wall_timeout, .tv_usec = 0}};
     c::setitimer(timer_cpu, &cpu, nullptr);
     c::setitimer(timer_real, &wall, nullptr);
     shared->began = true;
@@ -1822,14 +1838,17 @@ void disarm() {
 // and the next test needs the allocator in a known state.
 // --unchecked turns it off. It wraps the test function alone, not the runner's own setup (an io test's setenv stays
 // outside), so only what the test allocates is checked.
-c::SmithChecked checked_state;
-c::SmithAllocator *checked_outside;
+// the bytes of the worker's mem::Checked (it holds an allocator, which no zero spells), viewed as one
+U64 checked_bytes[16];
+static_assert(sizeof(mem::Checked) <= sizeof checked_bytes);
+mem::Checked *checked_state = (mem::Checked *)&checked_bytes[0];
+mem::Allocator *checked_outside;
 Bool checked_active;
 
 void checked_begin(const Options *options) {
     if (options->unchecked) return;
-    checked_state = c::smith_mem_checked(nullptr);
-    checked_outside = c::smith_mem_set_allocator(&checked_state.base);
+    *checked_state = mem::checked(nullptr);
+    checked_outside = mem::set_allocator(&checked_state->base);
     checked_active = true;
 }
 
@@ -1837,30 +1856,32 @@ void checked_begin(const Options *options) {
 void checked_end() {
     if (!checked_active) return;
     checked_active = false;
-    c::smith_mem_set_allocator(checked_outside);
-    c::smith_mem_checked_release(&checked_state);
+    mem::set_allocator(checked_outside);
+    mem::checked_release(checked_state);
 }
 
 // A property test that takes a failing::Failing: the allocator that refuses by the decisions of the key's second half,
 // installed over the checked allocator (its parent, so the blocks it did not refuse are still checked) for the call of
 // the test alone.
-c::SmithFailing failing_state;
-c::SmithAllocator *failing_outside;
+U64 failing_bytes[16];
+static_assert(sizeof(failing::Failing) <= sizeof failing_bytes);
+failing::Failing *failing_state = (failing::Failing *)&failing_bytes[0];
+mem::Allocator *failing_outside;
 Bool failing_active;
 
 // The test returned or unwound: the allocator it found back.
 void failing_end() {
     if (!failing_active) return;
     failing_active = false;
-    c::smith_mem_set_allocator(failing_outside);
+    mem::set_allocator(failing_outside);
 }
 
 // The test returned: a block it allocated and did not free fails it, with the stack of the allocation as the failure's.
 // A block the C library keeps for itself (the cache of its number printing) is not a leak.
 void checked_finish() {
     if (!checked_active) return;
-    c::smith_mem_set_allocator(checked_outside);
-    c::SmithCheckedLeaks leaks = c::smith_mem_checked_leaks(&checked_state);
+    mem::set_allocator(checked_outside);
+    mem::CheckedLeaks leaks = mem::checked_leaks(checked_state);
     if (leaks.count == 0) {
         checked_end();
         return;
@@ -1879,7 +1900,9 @@ void checked_finish() {
 
 // NOLINTEND(smith-module-library)
 
-random::Tap hooking_tap; // its word is set in setup(), in the process that draws through it
+U64 hooking_bytes[4]; // a random::Tap, whose word is set in setup(), in the process that draws through it
+static_assert(sizeof(random::Tap) <= sizeof hooking_bytes);
+random::Tap *hooking_tap = (random::Tap *)&hooking_bytes[0];
 
 // A test that draws from a key: a property test, or one that also takes a failing::Failing.
 Bool keyed(const Test *test) {
@@ -1899,11 +1922,11 @@ void run_key(const Test *test, const Options *options, U64 seed) {
         random::Key halves[2];
         random::split(key, halves);
         // NOLINTBEGIN(smith-module-library): mem by its C names, as checked_begin (issue #405)
-        failing_state = c::smith_failing_make(checked_active ? &checked_state.base : nullptr, halves[1]);
-        failing_outside = c::smith_mem_set_allocator(&failing_state.base);
+        *failing_state = failing::make(checked_active ? &checked_state->base : nullptr, halves[1]);
+        failing_outside = mem::set_allocator(&failing_state->base);
         // NOLINTEND(smith-module-library)
         failing_active = true;
-        test->with_failing(halves[0], &failing_state);
+        test->with_failing(halves[0], failing_state);
         failing_end();
     } else {
         test->property(key);
@@ -1943,14 +1966,14 @@ void coverage_begin(const Test *test) {
     if (dir == nullptr || dir[0] == '\0') return;
     char clean[256];
     char path[path_capacity];
-    coverage_name(test->name, clean, sizeof clean);
+    coverage_name(test->name, &clean[0], sizeof clean);
     c::mkdir(dir, 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw", dir);
-    c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
+    c::mkdir(&path[0], 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s", dir, clean);
-    c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
+    c::mkdir(&path[0], 493); // 0755: an octal literal is an error under gnu23
     __builtin_snprintf(path, sizeof path, "%s/raw/%s/%%p.profraw", dir, clean);
-    c::setenv("LLVM_PROFILE_FILE", path, 1);
+    c::setenv("LLVM_PROFILE_FILE", &path[0], 1);
     // What the test reads (a scratch project's repository paths): one path a line, for its record (#739).
     __builtin_snprintf(path, sizeof path, "%s/reads", dir);
     c::mkdir(path, 493); // 0755: an octal literal is an error under gnu23
@@ -1998,7 +2021,7 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
 // Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
 [[std::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
-    c::smith_trace_stop = (Usize)__builtin_frame_address(0);
+    c::smith_trace_set_stop((Usize)__builtin_frame_address(0));
     explaining = command->explain;
     if (test->plain != nullptr) {
         reset();
@@ -2017,22 +2040,22 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
             run_key(test, options, random::key_bits(next[1]));
         }
     }
-    c::smith_trace_stop = 0;
+    c::smith_trace_set_stop(0);
 }
 
 // In a forked process, before its first test: all output goes down the pipe.
 void setup(Shared *block, I32 output) {
     shared = block;
-    c::signal(sig_hup, (void (*)(I32))0); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
-    c::signal(sig_int, (void (*)(I32))0);
-    c::signal(sig_term, (void (*)(I32))0);
+    signal_default(sig_hup); // SIG_DFL: the runner's handler ends the workers, it is not theirs to run
+    signal_default(sig_int);
+    signal_default(sig_term);
     catch_signals();
-    c::smith_failure_hook = on_failure;
-    hooking_tap.word = tap_word;
-    active_tap = hooking ? &hooking_tap : nullptr;
+    c::smith_failure_set_hook((void *)on_failure);
+    hooking_tap->word = tap_word;
+    active_tap = hooking ? hooking_tap : nullptr;
     if (c::dup2(output, stdout_fd) < 0 || c::dup2(output, stderr_fd) < 0) c::_exit(usage_status);
     c::close(output);
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor)
+    c::smith_stdout_unbuffered();
 }
 
 // --isolate: the process runs its one test and exits 0 if it returns.
@@ -2062,7 +2085,12 @@ End serve(const Options *options, const Command *command) {
     contract::trusted(); // the runner jumps out of a failed check with siglongjmp, until #324 unwinds instead
     const Test *test = &table[command->test];
     F64 cpu_before = process_cpu();
-    I32 jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor): a macro of __sigsetjmp in glibc
+    I32 jumped = 0;
+    if constexpr (target::os == target::macos) {
+        jumped = c::sigsetjmp(loop_jump, 1); // NOLINT(smith-preprocessor)
+    } else {
+        jumped = c::__sigsetjmp(loop_jump, 1); // glibc's sigsetjmp is a macro of it
+    }
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
     coverage_end(test, jumped == 0, process_cpu() - cpu_before);
@@ -2071,7 +2099,7 @@ End serve(const Options *options, const Command *command) {
     disarm();
     shared->cpu = process_cpu() - cpu_before;
     console::flush();
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor): a test may have buffered stdout
+    c::smith_stdout_unbuffered();
     if (jumped == 0) return End_Passed;
     return jumped == 2 ? End_Signal : End_Check; // 2: --in-process, an expected abort
 }
@@ -2079,8 +2107,8 @@ End serve(const Options *options, const Command *command) {
 // A worker's life: it takes a command, runs the test, and answers, until the runner closes the socket.
 [[noreturn]] void worker_main(const Options *options, Shared *block, I32 control, I32 output) {
     worker = true;
-    c::signal(sig_pipe, (void (*)(I32))0); // SIG_DFL
-    c::signal(sig_xfsz, (void (*)(I32))1); // SIG_IGN
+    signal_default(sig_pipe); // SIG_DFL
+    signal_ignore(sig_xfsz);  // SIG_IGN
     setup(block, output);
     for (Usize served = 0; served < commands_max; served++) {
         Command command;
@@ -2198,7 +2226,7 @@ void on_runner_signal(I32 signal_number) {
     for (Usize slot = 0; slot <= jobs_max; slot++) {
         if (processes[slot].pid > 0 && !processes[slot].reaped) kill_group(processes[slot].pid);
     }
-    c::signal(signal_number, (void (*)(I32))0); // SIG_DFL, then the signal again: the runner ends as it would have
+    signal_default(signal_number); // SIG_DFL, then the signal again: the runner ends as it would have
     c::raise(signal_number);
 }
 
@@ -2297,7 +2325,7 @@ Bool explain_wanted(const Options *options, const Test *test) {
 
 // Starts the test in the slot: a command to its worker (forked first if it has none), or its own child with --isolate.
 void dispatch(const Options *options, Usize slot, const Test *test, Run *run) {
-    shared_slots[slot] = (Shared){};
+    __builtin_memset(&shared_slots[slot], 0, sizeof(Shared));
     Command command = {.test = (U32)(test - table),
                        .seed_given = options->seed_given,
                        .seed = options->seed,
@@ -2565,7 +2593,8 @@ void print_detail(const Run *run) {
 // The failure's stack as a trace block, for smith to turn into the failing line and the call chain (smith symbolize).
 // The block is written to the descriptor, so what the console holds is already out.
 void print_trace(const Run *run, Bool with_detail) {
-    const char *heading = run->heading != nullptr ? run->heading : "check failed";
+    const char *saved_heading = run->heading;
+    const char *heading = saved_heading != nullptr ? saved_heading : "check failed";
     c::smith_trace_write(stdout_fd, "  ", heading, nullptr, with_detail ? run->detail : nullptr, run->frames,
                          run->frame_count, run->frames_exact, true);
 }
@@ -2589,7 +2618,7 @@ Bool takes_seed(const Test *test) {
 
 void print_failure(const Test *test, const Options *options, const Run *run) {
     say("%sFAIL%s %s", paint(options, "\033[31m"), paint(options, "\033[0m"), test->name);
-    if (takes_seed(test)) say(" with seed %ju", (c::uintmax_t)run->seed);
+    if (takes_seed(test)) say(" with seed %zu", (Usize)run->seed);
     if (run->shrink_changed) say(", shrunk in %u runs", run->shrink_runs);
     if (run->shrink_runs > 0 && !run->shrink_changed) say(", no smaller case in %u runs", run->shrink_runs);
     print_reason(options, run);
@@ -2606,7 +2635,7 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
     }
     print_indented(run->output.text, run->output.kept, "    ");
     if (run->output.total > run->output.kept) say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
-    if (takes_seed(test)) say("    rerun: smith test --test %s --seed %ju\n", test->name, (c::uintmax_t)run->seed);
+    if (takes_seed(test)) say("    rerun: smith test --test %s --seed %zu\n", test->name, (Usize)run->seed);
 }
 
 void report(const Test *test, const Options *options, const Run *run) {
@@ -2618,10 +2647,10 @@ void report(const Test *test, const Options *options, const Run *run) {
         if (!takes_seed(test))
             say("%sPASS%s %s\n", green, reset_color, test->name);
         else if (options->seed_given)
-            say("%sPASS%s %s (seed %ju)\n", green, reset_color, test->name,
-                (c::uintmax_t)(options->seed_given ? options->seed : run->seed));
+            say("%sPASS%s %s (seed %zu)\n", green, reset_color, test->name,
+                (Usize)(options->seed_given ? options->seed : run->seed));
         else
-            say("%sPASS%s %s (%ju seeds)\n", green, reset_color, test->name, (c::uintmax_t)options->seed_count);
+            say("%sPASS%s %s (%zu seeds)\n", green, reset_color, test->name, (Usize)options->seed_count);
         print_indented(run->output.text, run->output.kept, "    ");
         if (run->output.total > run->output.kept)
             say("    ... and %zu more bytes\n", run->output.total - run->output.kept);
@@ -2678,7 +2707,7 @@ Bool in_budget(const Shrink *shrink) {
 // in shrink->candidate, with its output.
 void try_run(Shrink *shrink) {
     draws_clear(recorded);
-    *shrink->candidate = (Run){};
+    __builtin_memset(shrink->candidate, 0, sizeof(Run));
     shrink->attempt(shrink);
     shrink->runs += 1;
 }
@@ -2798,13 +2827,14 @@ Bool shrink_passes(Shrink *shrink) {
 // the same seed gives the same shrunk case unless the time budget ends the search.
 void shrink_run(const Test *test, const Options *options, Run *run) {
     Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
-    *shrink = (Shrink){.test = test,
-                       .options = options,
-                       .seed = run->seed,
-                       .attempt = attempt_in_worker,
-                       .best = &tries[0],
-                       .candidate = &tries[1],
-                       .deadline = seconds() + options->shrink_seconds};
+    // map_private memory is zeroed, so only the fields that start with a value are set.
+    shrink->test = test;
+    shrink->options = options;
+    shrink->seed = run->seed;
+    shrink->attempt = attempt_in_worker;
+    shrink->best = &tries[0];
+    shrink->candidate = &tries[1];
+    shrink->deadline = seconds() + options->shrink_seconds;
     draws_clear(overrides);
     discard(&processes[shrink_slot]); // a worker an earlier shrink left may be dirty
     try_run(shrink);                  // the same key again, recording; it must fail as it did
@@ -2838,8 +2868,8 @@ export U64 shrink_draw(U64 key, U64 n, U64 bits) {
 
 // A key for a predicate that draws through a distribution: its words go through shrink_draw's tap.
 export [[nodiscard]] random::Key shrink_key(U64 bits) {
-    hooking_tap.word = tap_word;
-    return (random::Key){.bits = bits, .tap = &hooking_tap};
+    hooking_tap->word = tap_word;
+    return (random::Key){.bits = bits, .tap = hooking_tap};
 }
 
 void restore_tables(Draws *outer_recorded, Draws *outer_overrides) {
@@ -2857,12 +2887,12 @@ export Shrunk shrink_search(U32 (*verdict)(void *context), void *context, U32 se
     overrides = (Draws *)map_bytes((1) * sizeof(Draws), map_private);
     defer restore_tables(outer_recorded, outer_overrides);
     Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
-    *shrink = (Shrink){.attempt = attempt_by_verdict,
-                       .verdict = verdict,
-                       .context = context,
-                       .best = &tries[0],
-                       .candidate = &tries[1],
-                       .deadline = seconds() + seconds_budget};
+    shrink->attempt = attempt_by_verdict; // map_private memory is zeroed
+    shrink->verdict = verdict;
+    shrink->context = context;
+    shrink->best = &tries[0];
+    shrink->candidate = &tries[1];
+    shrink->deadline = seconds() + seconds_budget;
     draws_clear(overrides);
     try_run(shrink);
     shrink->best = shrink->candidate;
@@ -2891,7 +2921,7 @@ void explain_rerun(const Test *test, const Options *options, Run *run) {
     if (!run->shrink_changed) draws_clear(overrides);
     discard(&processes[shrink_slot]);
     Run *rerun = &tries[0];
-    *rerun = (Run){};
+    __builtin_memset(rerun, 0, sizeof(Run));
     dispatch(&replay, shrink_slot, test, rerun);
     wait_for(shrink_slot, rerun);
     if (same_failure(run, rerun)) {
@@ -3066,7 +3096,7 @@ typedef struct {
     F64 progress_at; // the time of the last look at which the tree had used CPU time
     F64 looked_at;
     Usize count;
-    c::pid_t pid[idle_seen_max];
+    I32 pid[idle_seen_max]; // pid_t, spelled int
     F64 cpu[idle_seen_max];
 } Idle;
 
@@ -3104,7 +3134,10 @@ void list_processes() {
         c::dup2(ends[1], stdout_fd);
         c::close(ends[0]);
         c::close(ends[1]);
-        char *const argv[_] = {(char *)"ps", (char *)"-axo", (char *)"pid=,ppid=,time=,command=", nullptr};
+        char name[3] = "ps";
+        char flags[5] = "-axo";
+        char columns[26] = "pid=,ppid=,time=,command=";
+        char *argv[4] = {&name[0], &flags[0], &columns[0], nullptr};
         c::execvp("ps", argv);
         c::_exit(127);
     }
@@ -3116,9 +3149,9 @@ void list_processes() {
         return;
     }
     char text[512];
-    while (ps_count < ps_rows_max && c::fgets(text, sizeof text, listing) != nullptr) {
+    while (ps_count < ps_rows_max && c::fgets(&text[0], (I32)sizeof text, listing) != nullptr) {
         char *rest = nullptr;
-        I64 pid = c::strtol(text, &rest, 10);
+        I64 pid = c::strtol(&text[0], &rest, 10);
         I64 parent = c::strtol(rest, &rest, 10);
         while (*rest == ' ')
             rest++;
@@ -3173,7 +3206,7 @@ F64 tree_progress(Idle *state, char *waited) {
     F64 grown = 0;
     Usize deepest = ps_count;
     Usize kept = 0;
-    c::pid_t pid[idle_seen_max];
+    I32 pid[idle_seen_max]; // pid_t, spelled int
     F64 cpu[idle_seen_max];
     for (Usize i = 0; i < ps_count; i++) {
         if (!ps_rows[i].below) continue;
@@ -3269,7 +3302,8 @@ void pump(Plan *plan) {
         plan->polls[2 * job + 1] = (struct c::pollfd){.fd = busy ? process->control : -1, .events = poll_in};
     }
     // a test waits for a token: look again every second
-    if (c::poll(plan->polls, (c::nfds_t)(2 * jobs), 1000) < 0) {
+    Usize watched = 2 * jobs;
+    if (c::poll(plan->polls, (c::nfds_t)watched, 1000) < 0) {
         if (*errno_place() == interrupted) return;
         die("poll");
     }
@@ -3283,7 +3317,9 @@ void pump(Plan *plan) {
         if (!service(job, &plan->runs[chosen], output_events, control_events)) continue;
         Run *run = &plan->runs[chosen];
         if (run->lost && run->lost_count < lost_retries) { // the same test again, in a fresh worker
-            *run = (Run){.lost_count = run->lost_count + 1};
+            U32 retries = run->lost_count + 1;
+            __builtin_memset(run, 0, sizeof(Run));
+            run->lost_count = retries;
             dispatch(plan->options, job, plan->tests[chosen], run);
             continue;
         }
@@ -3381,12 +3417,12 @@ void run_in_process(Plan *plan) {
     worker = true;
     in_process = true;
     catch_signals();
-    c::smith_failure_hook = on_failure;
-    c::setvbuf(c::stdout, nullptr, c::_IONBF, 0); // NOLINT(smith-preprocessor)
+    c::smith_failure_set_hook((void *)on_failure);
+    c::smith_stdout_unbuffered();
     for (Usize i = 0; i < plan->count; i++) {
         Run *run = &plan->runs[plan->order[i]];
         const Test *test = plan->tests[plan->order[i]];
-        *block = (Shared){};
+        __builtin_memset(block, 0, sizeof(Shared));
         Command command = {.test = (U32)(test - table),
                            .seed_given = options->seed_given,
                            .seed = options->seed,
@@ -3473,24 +3509,25 @@ void parse_filter(Options *options, const char *value) {
     Bool written_name = last != nullptr || is_test_name(tail + 5);
     if (c::strncmp(tail, "test_", 5) == 0 && tail[5] != '\0' && written_name && c::strlen(value) < sizeof written) {
         __builtin_snprintf(written, sizeof written, "%.*s%s", (I32)(tail - value), value, tail + 5);
-        value = written;
+        value = &written[0];
     }
-    if (options->filter == nullptr) {
+    const char *earlier = options->filter;
+    if (earlier == nullptr) {
         options->filter = value;
         return;
     }
     // A repeated --test adds up: the filters join as a comma list, and a test runs when any of them matches.
     static char joined[65536];
-    Usize used = c::strlen(options->filter);
-    if (options->filter != joined) {
+    Usize used = c::strlen(earlier);
+    if (earlier != &joined[0]) {
         if (used >= sizeof joined) return;
-        __builtin_memcpy(joined, options->filter, used + 1);
+        __builtin_memcpy(joined, earlier, used + 1);
     }
     Usize more = c::strlen(value);
     if (used + 1 + more >= sizeof joined) return;
     joined[used] = ',';
     __builtin_memcpy(joined + used + 1, value, more + 1);
-    options->filter = joined;
+    options->filter = &joined[0];
 }
 
 constexpr U64 shards_max = 1000;
@@ -3623,8 +3660,11 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             i += 1; // the flag's value
         }
     }
-    for (Usize i = 0; options->filter != nullptr && i < table_size; i++) {
-        if (c::strcmp(table[i].name, options->filter) == 0) options->exact = true;
+    const char *exact_filter = options->filter;
+    if (exact_filter != nullptr) {
+        for (Usize at = 0; at < table_size; at++) {
+            if (c::strcmp(table[at].name, exact_filter) == 0) options->exact = true;
+        }
     }
     return true;
 }
@@ -3713,9 +3753,10 @@ Bool macos_only(const char *name) {
 
 Bool selects(const Options *options, const char *name) {
     if (options->macos != 0 && macos_only(name) != (options->macos == 1)) return false;
-    if (options->filter == nullptr) return true;
-    if (options->exact) return c::strcmp(name, options->filter) == 0;
-    return selects_any(name, options->filter);
+    const char *chosen = options->filter;
+    if (chosen == nullptr) return true;
+    if (options->exact) return c::strcmp(name, chosen) == 0;
+    return selects_any(name, chosen);
 }
 
 Usize least(Usize a, Usize b) {
@@ -3863,13 +3904,13 @@ Bool better_form(const char *item, char out[256]) {
     // a `*` goes around the part after the last `::`, or around the whole item
     const char *base = plain + head;
     __builtin_memcpy(out, plain, head);
-    Usize at = head;
-    out[at++] = '*';
+    Usize used = head;
+    out[used++] = '*';
     Usize rest = c::strlen(base);
-    __builtin_memcpy(out + at, base, rest);
-    at += rest;
-    out[at++] = '*';
-    out[at] = '\0';
+    __builtin_memcpy(out + used, base, rest);
+    used += rest;
+    out[used++] = '*';
+    out[used] = '\0';
     return item_selects_any_test(out);
 }
 
@@ -3929,9 +3970,17 @@ Bool other_runner_matches(const Options *options) {
         c::close(ends[1]);
         I32 quiet = c::open("/dev/null", write_only);
         if (quiet >= 0) c::dup2(quiet, stderr_fd);
-        char *arguments[6] = {(char *)(c::uintptr_t)options->others, (char *)"--list", (char *)"--test",
-                              (char *)(c::uintptr_t)options->filter, nullptr,          nullptr};
-        if (options->macos != 0) arguments[4] = (char *)(options->macos == 1 ? "--macos-only" : "--skip-macos");
+        char list_flag[7] = "--list";
+        char test_flag[7] = "--test";
+        char macos_flag[13] = "--macos-only";
+        char skip_flag[13] = "--skip-macos";
+        char *arguments[6] = {nullptr, &list_flag[0], &test_flag[0], nullptr, nullptr, nullptr};
+        // the pointers are copied bit for bit: execv takes a non-const argv, and a null filter ends the list
+        const char *program = options->others;
+        const char *wanted = options->filter;
+        __builtin_memcpy((void *)&arguments[0], (void *)&program, sizeof program);
+        __builtin_memcpy((void *)&arguments[3], (void *)&wanted, sizeof wanted);
+        if (options->macos != 0) arguments[4] = options->macos == 1 ? &macos_flag[0] : &skip_flag[0];
         c::execv(arguments[0], arguments);
         c::_exit(127);
     }
@@ -3968,8 +4017,8 @@ F64 *read_costs(const Plan *plan, const char *path) {
     c::FILE *file = path != nullptr ? c::fopen(path, "r") : nullptr;
     if (file == nullptr) return cost;
     char line[512];
-    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(line, sizeof line, file) != nullptr; guard++) {
-        char *seconds_text = c::strchr(line, '\t');
+    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(&line[0], (I32)sizeof line, file) != nullptr; guard++) {
+        char *seconds_text = c::strchr(&line[0], '\t');
         char *name = seconds_text != nullptr ? c::strchr(seconds_text + 1, '\t') : nullptr;
         if (name == nullptr) continue;
         name += 1;
@@ -4054,7 +4103,8 @@ Bool shard_built(const Options *options) {
 
 // --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
 void shard_plan(Plan *plan, const Options *options) {
-    F64 *cost = read_costs(plan, options->costs);
+    const char *costs_file = options->costs;
+    F64 *cost = read_costs(plan, costs_file != nullptr ? costs_file : ""); // no file: every cost unknown
     Usize *leader = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
     F64 *weight = (F64 *)map_bytes((plan->count + 1) * sizeof(F64), map_private);
     Usize *owner = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
@@ -4080,7 +4130,11 @@ Plan *make_plan(const Options *options) {
     for (Usize i = 0; i < table_size; i++) {
         const Test *test = &table[i];
         contract::assert(test->name != nullptr);
-        contract::assert((test->plain != nullptr) + (test->property != nullptr) + (test->with_failing != nullptr) == 1);
+        I32 kinds = 0;
+        if (test->plain != nullptr) kinds += 1;
+        if (test->property != nullptr) kinds += 1;
+        if (test->with_failing != nullptr) kinds += 1;
+        contract::assert(kinds == 1);
         if (!selects(options, test->name)) continue;
         plan->tests[plan->count] = test;
         plan->count += 1;
@@ -4091,7 +4145,8 @@ Plan *make_plan(const Options *options) {
     for (Usize i = 0; i < plan->count; i++)
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
-    if (options->costs != nullptr) order_by_cost(plan, options->costs, options->cheapest);
+    const char *cost_path = options->costs;
+    if (cost_path != nullptr) order_by_cost(plan, cost_path, options->cheapest);
     shared_slots = (Shared *)map_bytes((jobs_max + 1) * sizeof(Shared), map_shared);
     const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
     if (kill_workers != nullptr) {
@@ -4117,17 +4172,18 @@ void raise_files(Usize jobs) {
 void say_explained(const Options *options) {
     U64 skipped = explained[explain_stat_skipped];
     if (skipped > 0)
-        say("%ju more failures were not read in the debugger (--explain-max %ju)\n", (c::uintmax_t)skipped,
-            (c::uintmax_t)options->explain_max);
+        say("%zu more failures were not read in the debugger (--explain-max %zu)\n", (Usize)skipped,
+            (Usize)options->explain_max);
     if (options->stats && options->explain != nullptr)
-        say("explained: %ju failures in %.3f s\n", (c::uintmax_t)(explained[explain_stat_explained] - skipped),
+        say("explained: %zu failures in %.3f s\n", (Usize)(explained[explain_stat_explained] - skipped),
             (F64)explained[explain_stat_nanoseconds] * 1e-9);
 }
 
 // What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
 void golden_begin(const Options *options) {
     update_run = options->update;
-    selection_text = options->filter;
+    const char *selected = options->filter;
+    if (selected != nullptr) selection_text = selected; // it starts null
     golden_log = (U8 *)map_bytes(golden_log_capacity, map_shared);
     golden_used = (Usize *)map_bytes(sizeof(Usize), map_shared);
 }
@@ -4157,17 +4213,17 @@ Usize cores() {
 
 // The options before the command line is read.
 static Options default_options(Runner *runner) {
-    Options options = {
-        .seed_count = seeds_default,
-        .jobs = cores(),
-        .timeout = 10,
-        .shrink = true,
-        .shrink_seconds = shrink_seconds_default,
-        .color = c::isatty(stdout_fd) != 0 && env::get("NO_COLOR") == .none,
-        .runner = runner,
-        .runner_pid = c::getpid(),
-        .explain_max = explain_max_default,
-    };
+    Options options;
+    __builtin_memset(&options, 0, sizeof options);
+    options.seed_count = seeds_default;
+    options.jobs = cores();
+    options.timeout = 10;
+    options.shrink = true;
+    options.shrink_seconds = shrink_seconds_default;
+    options.color = c::isatty(stdout_fd) != 0 && env::get("NO_COLOR") == .none;
+    options.runner = runner;
+    options.runner_pid = c::getpid();
+    options.explain_max = explain_max_default;
     if (options.jobs > jobs_max) options.jobs = jobs_max;
     return options;
 }
@@ -4177,7 +4233,7 @@ static void say_usage(const Runner *runner, Bool help) {
     static char text[1280];
     __builtin_snprintf(
         text, sizeof text,
-        "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %ju>] [--jobs <1 to %zu>] "
+        "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %zu>] [--jobs <1 to %zu>] "
         "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
         "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
         "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
@@ -4186,7 +4242,7 @@ static void say_usage(const Runner *runner, Bool help) {
         "a bare name or path (smith test x_test) is --test; --test takes a test file's path, a name (x_test, "
         "x_test::name) or a * pattern (x*), not a "
         "prefix; --update writes the files of the selected tests (every test without --test)\n",
-        runner->argv[0], (c::uintmax_t)seeds_max, jobs_max);
+        runner->argv[0], (Usize)seeds_max, jobs_max);
     if (help) {
         say("%s", text);
     } else {
@@ -4206,7 +4262,7 @@ static void prepare_run(Options *options) {
     full_run = options->full;
     golden_begin(options);
     raise_files(options->jobs);
-    c::signal(sig_pipe, (void (*)(I32))1); // a worker that died while idle is a failed write, not the end of the runner
+    signal_ignore(sig_pipe); // a worker that died while idle is a failed write, not the end of the runner
     if (!options->in_process) {
         c::signal(sig_hup, on_runner_signal);
         c::signal(sig_int, on_runner_signal);
@@ -4232,7 +4288,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     say("\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed, seconds() - start);
     if (skipped > 0) say("%zu not run (--fail-fast)\n", skipped);
     say_explained(options);
-    if (options->stats) say("forks: %ju\n", (c::uintmax_t)*forks);
+    if (options->stats) say("forks: %zu\n", (Usize)*forks);
     if (options->stats) print_cpu(plan);
     return failed;
 }

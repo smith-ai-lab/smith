@@ -532,7 +532,8 @@ static Str rename_type_names(Str source) {
 }
 
 // `target::macos` (a C enumerator of the system or the processor) is written `.macos` (#2519, decided on #2460);
-// `target::os` and `target::arch` stay `target.os` and `target.arch`, which the later passes write.
+// `target::os` and `target::arch` stay `target.os` and `target.arch`, which the later passes write. Clang's
+// `__FINITE_MATH_ONLY__` is `target.fast_math` (D14).
 static Str rename_target_systems(Str source) {
     lex::Lexed lexed = lex::tokenize(source);
     if (lexed == .error) return source;
@@ -542,9 +543,16 @@ static Str rename_target_systems(Str source) {
     Str linux_word = "linux";
     Str aarch64_word = "aarch64";
     Str x86_word = "x86_64";
+    Str finite_word = "__FINITE_MATH_ONLY__"; // clang's macro for -ffast-math and -ffinite-math-only (D14, #2647)
     Str out = "";
     Usize at = 0;
-    for (Usize i = 0; i + 2 < countof(tokens); i++) {
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::name && mem::equal(lex::text(source, tokens[i]), finite_word)) {
+            out = as_str(format::push(out, source[at:tokens[i].span.start], "target.fast_math"));
+            at = tokens[i].span.end;
+            continue;
+        }
+        if (i + 2 >= countof(tokens)) continue;
         if (tokens[i].kind != lex::name || tokens[i + 1].kind != lex::colon_colon || tokens[i + 2].kind != lex::name)
             continue;
         if (!mem::equal(lex::text(source, tokens[i]), target_word)) continue;

@@ -1,0 +1,14 @@
+pub fn total(count: i32, ...) -> i32:
+    mut arguments: __builtin_va_list = undefined
+    __builtin_va_start(arguments, count)
+    mut text: [32]char = undefined
+    wanted: i32 = __builtin_vsnprintf(&text[0], sizeof text, "%d-%d", arguments)
+    __builtin_va_end(arguments)
+    wanted
+
+pub fn check() -> i32:
+    if total(2, 7, 9) != 3:
+        return 1
+    if total(2, 100, 20) != 6:
+        return 2
+    0

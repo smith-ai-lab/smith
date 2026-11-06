@@ -3111,6 +3111,8 @@ class SmithHook final : public TokenHook, public NameSource {
         case SmithTarget_StaticAnalyzer: // defined only while clang-tidy's analyzer checks run
             *value = pp.isMacroDefined("__clang_analyzer__") ? 1 : 0;
             return true;
+        case SmithTarget_FastMath: // -ffast-math and -ffinite-math-only define __FINITE_MATH_ONLY__ as 1
+            return self->macroNumber("__FINITE_MATH_ONLY__", value);
         case SmithTarget_FloatRadix:
             return self->macroNumber("__FLT_RADIX__", value);
         case SmithTarget_F32MantissaBits:
