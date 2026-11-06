@@ -19,7 +19,8 @@
 // For #1585: `is_some` (an `i1`) and `payload` read an option value.
 //
 // Left: `?*T` (an option of a pointer; its layout waits for the re-ticket of #86), `match` over `?T` (#1585), `if let`
-// as a value, `try` on a `Result`, and `==` between options.
+// as a value, and `==` between options. `.ok(x)`, `.error(e)`, `if let` and `try` on a `Result` are emitted (#2128,
+// #2141).
 module front::emit_option;
 
 import front::ast;
@@ -355,7 +356,8 @@ export state::Status if_let_branch(state::Emitter *e, const state::Work *w) {
     }
     ast::Pattern pattern = s->kind.if_let.pattern;
     Bool wants_error = is_result && state::same_text(pattern.name, "error");
-    Bool wants_some = is_result ? (wants_error || state::same_text(pattern.name, "ok")) : state::same_text(pattern.name, "some");
+    Bool wants_some =
+        is_result ? (wants_error || state::same_text(pattern.name, "ok")) : state::same_text(pattern.name, "some");
     if (is_result && !wants_some) {
         return state::failf(pattern.span, "a Result has .ok and .error, not .", pattern.name);
     }
