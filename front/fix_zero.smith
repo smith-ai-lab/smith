@@ -366,6 +366,21 @@ static Bool is_empty_braces(const ast::Expr *e) {
 
 constexpr Usize no_block = ~(Usize)0;
 
+// Set when a fix wrote `mem.zeroed(T)`: the module then needs `import std.mem` (#2627, D10).
+static Bool zeroed_written = false;
+
+// Whether `written` names a C struct tag that a function of the same name hides (`stat.stat`, `struct stat` and
+// `stat()`): a construction `stat.stat(st_dev = 0, ...)` would read as the call, so such a struct starts zeroed with
+// `mem.zeroed(stat.stat)` (D10).
+static Bool tag_is_also_function(types::Checked *c, Str written) {
+    Usize dot = 0;
+    for (Usize k = 0; k < countof(written); k += 1) {
+        if (written[k] == '.') dot = k + 1;
+    }
+    Str name = written[dot:countof(written)];
+    return types::lookup(&c->scopes, types::message_of(format::push("c::", name, "()"))) != nullptr;
+}
+
 // The fix of the variable `d`, which is `items[at]` of a block (`at` is `no_block` for a global).
 static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d, ast::StmtRef items[:], Usize at,
                                Bool *filled) {
@@ -397,6 +412,9 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
                (written_first(source, items, at, name, t) || filled_by_call(source, items, at, name))) {
         text = "undefined";
+    } else if (same(t->owner, "c::") && tag_is_also_function(c, source[written->span.start:written->span.end])) {
+        text = types::message_of(format::push("mem.zeroed(", source[written->span.start:written->span.end], ")"));
+        zeroed_written = true;
     } else {
         text = construct(source[written->span.start:written->span.end], t);
     }
@@ -419,20 +437,20 @@ static core::Errors add(core::Errors out, core::ParseError found) {
 }
 
 // Whether the module imports `std.array` (`import std.array`, `import std::array;`, with or without an alias).
-static Bool imports_array(const ast::Module *module) {
+static Bool imports_std(const ast::Module *module, Str library) {
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .import_module) continue;
         ast::Identifier segments[:] = d->kind.import_module.path.segments;
-        if (countof(segments) == 2 && same(segments[0].text, "std") && same(segments[1].text, "array")) return true;
+        if (countof(segments) == 2 && same(segments[0].text, "std") && same(segments[1].text, library)) return true;
     }
     return false;
 }
 
 // The fix that adds `import std.array` once, in front of the module's first import (or its first declaration).
-static core::ParseError import_array(const ast::Module *module) {
+static core::ParseError import_std(const ast::Module *module, Str library) {
     core::ParseError none = {};
-    if (imports_array(module) || countof(module->decls) == 0) return none;
+    if (imports_std(module, library) || countof(module->decls) == 0) return none;
     const ast::Decl *first = module->decls[0];
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
@@ -444,11 +462,11 @@ static core::ParseError import_array(const ast::Module *module) {
     ast::Span at = {.start = first->span.start, .end = first->span.start};
     core::Edits edits = {};
     edits = mem::realloc(edits, 1);
-    Str line = "import std.array\n";
+    Str line = types::message_of(format::push("import std.", library, "\n"));
     edits[0] = (core::Edit){.span = at, .text = line};
     core::ParseError found = {};
     found.span = at;
-    found.message = "`array.filled` needs `import std.array`";
+    found.message = "a fix needs a standard module";
     found.fix = edits;
     return found;
 }
@@ -1213,7 +1231,9 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         }
         push_children(&w, s);
     }
-    if (filled) out = add(out, import_array(module));
+    if (filled) out = add(out, import_std(module, "array"));
+    if (zeroed_written) out = add(out, import_std(module, "mem"));
+    zeroed_written = false;
     localize(module, out);
     return out;
 }

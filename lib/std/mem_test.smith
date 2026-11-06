@@ -390,3 +390,14 @@ export void test_mem_realloc_reaches_the_allocator_in_force() {
     test::check_equal(xs[3], 4);
     test::check_equal(xs[15], 0);
 }
+
+typedef struct {
+    I32 a;
+    U8 b[3];
+} ZeroedPair;
+
+export void test_mem_zeroed_gives_a_zeroed_value_of_the_type() {
+    ZeroedPair pair = mem::zeroed(ZeroedPair);
+    test::check_equal(pair.a, 0);
+    test::check_equal(pair.b[2], (U8)0);
+}
