@@ -200,3 +200,9 @@ export void test_front_fix_blocks_a_compound_literal_keeps_its_braces() {
           "fn f(s: *Stream):\n    s.* = (Stream){}\n    s.* = (Stream){0}\n");
     check("fn f(a: i32) -> i32 {\n    return (typeof(a)){0}\n}\n", "fn f(a: i32) -> i32:\n    return (typeof(a)){0}\n");
 }
+
+// A `{` after a parenthesized operand of an operator is a block, not a compound literal (#2520).
+export void test_front_fix_blocks_a_parenthesized_condition_before_a_brace_is_a_block() {
+    check("fn f(i: usize) -> bool {\n    if i > 0 && (i == 1) { return false }\n    return true\n}\n",
+          "fn f(i: usize) -> bool:\n    if i > 0 && (i == 1):\n        return false\n    return true\n");
+}

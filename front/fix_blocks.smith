@@ -94,8 +94,9 @@ static Bool starts_list(lex::TokenKind before) {
 }
 
 // Whether the `{` at `open` follows a parenthesized type that is itself a value: `(Stream){}` and `(typeof(a)){0}` are
-// compound literals, never a block (#2520). The `(` is a value's when it follows `=`, `(`, `[`, `,`, `return` or an
-// operator; after a name or a keyword (`if (c) {`, `f(x) {`, `fn(a) {`) the `{` is a block.
+// compound literals, never a block (#2520). The `(` is a value's when it follows `=`, `(`, `[`, `,`, `return`
+// or `try`, or starts a statement; after a name, a keyword or an operator (`if (c) {`, `f(x) {`, `fn(a) {`, `a && (b) {`)
+// the `{` is a block.
 static Bool compound_literal(lex::Tokens tokens, Usize open) {
     if (open < 3 || tokens[open - 1].kind != lex::right_paren) return false;
     Usize nest = 0;
@@ -111,10 +112,7 @@ static Bool compound_literal(lex::Tokens tokens, Usize open) {
     }
     if (i == 0) return false;
     lex::TokenKind before = tokens[i - 1].kind;
-    return starts_list(before) || before == lex::semicolon || before == lex::question || before == lex::colon ||
-           before == lex::plus || before == lex::minus || before == lex::star || before == lex::ampersand ||
-           before == lex::pipe || before == lex::ampersand_ampersand || before == lex::pipe_pipe ||
-           before == lex::kw_try || before == lex::equal_equal || before == lex::bang_equal;
+    return starts_list(before) || before == lex::semicolon || before == lex::kw_try;
 }
 
 static Bool any_group(const Bool group[:]) {

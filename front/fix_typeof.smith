@@ -93,12 +93,32 @@ static Bool writes(Str text, Str name) {
     return false;
 }
 
+// Whether the offset `i` is inside a string or character literal or a comment of its line (#2520): a `typeof(` there is
+// text, not code. Strings and comments end with their line.
+static Bool in_literal(Str s, Usize i) {
+    Usize from = i;
+    while (from > 0 && s[from - 1] != '\n')
+        from -= 1;
+    char quote = 0;
+    for (Usize k = from; k < i; k++) {
+        if (quote != 0) {
+            if (s[k] == '\\') k += 1;
+            else if (s[k] == quote) quote = 0;
+        } else if (s[k] == '"' || s[k] == '\'') {
+            quote = s[k];
+        } else if (s[k] == '#' || (s[k] == '/' && k + 1 < i && s[k + 1] == '/')) {
+            return true;
+        }
+    }
+    return quote != 0;
+}
+
 // Whether `text` uses `typeof(name` and reads `name` as a slice.
 static Bool used_as_slice(Str text, Str name) {
     Bool typed = false;
     Bool sliced = false;
     for (Usize i = 0; i < countof(text); i++) {
-        if (at(text, i, "typeof(") && at(text, i + 7, name)) typed = true;
+        if (at(text, i, "typeof(") && at(text, i + 7, name) && !in_literal(text, i)) typed = true;
         if (word_then(text, i, name, ".data") || word_then(text, i, name, ".count")) sliced = true;
     }
     return typed && sliced;
@@ -107,7 +127,7 @@ static Bool used_as_slice(Str text, Str name) {
 // The edits of every `typeof(...)` in source[from:to] that the slice parameter `name` spells.
 static core::Edits rewrite_uses(core::Edits edits, Str source, Usize from, Usize to, Str name, Bool mutable) {
     for (Usize i = from; i + 7 < to; i++) {
-        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1]))) continue;
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
         Usize close = close_of(source, i + 6, to);
         if (close == to) continue;
         Str text = spelling(source[i + 7:close], name, mutable);
@@ -161,6 +181,7 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
 static core::ParseError written_type(Str source, Usize i) {
     core::ParseError none = {};
     if (!at(source, i, "typeof([") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    if (in_literal(source, i)) return none;
     Usize close = close_of(source, i + 6, countof(source));
     if (close == countof(source)) return none;
     core::ParseError out = {};
