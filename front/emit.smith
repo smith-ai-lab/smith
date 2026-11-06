@@ -555,7 +555,10 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .compound) return emit_memory::compound(e, x, hint);
     if (x->kind == .string) return emit_memory::string_literal(e, x, hint);
     if (x->kind == .slice_of) return emit_memory::slice_of(e, x, hint);
-    // type_value
+    if (x->kind == .type_value && e->options.checked != nullptr) {
+        const ast::Expr *made = types::method_of(e->options.checked, x); // `Point(a, b)`: a construction (#1813)
+        if (made != nullptr) return call::call(e, made, hint);
+    }
     return state::not_emitted("this kind of expression", x->span);
 }
 
@@ -1688,8 +1691,8 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
     const ast::Expr *init = d->kind.variable.init;
     if (init != nullptr && init->kind == .type_value) return true; // `let Plain = fn(u64) -> u64`: the checker's alias
     if (init == nullptr) return false;
-    if (init->kind == .name && countof(init->kind.name.path.segments) == 2) {
-        // a capitalized `let Word = c.Thing`: the checker declared a type for the name
+    if (init->kind == .name) {
+        // a capitalized `let Word = c.Thing` or `Wide := u128`: the checker declared a type for the name
         const types::Symbol *own = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
         return own != nullptr && own->kind == .type_name && own->decl == d;
     }

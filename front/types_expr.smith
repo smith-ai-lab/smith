@@ -4964,6 +4964,7 @@ static void type_value_before(types::Checked *c, Work *w, Frame f) {
         types::set_type(c, f.node, c->table.automatic);
         return;
     }
+    types::set_method(c, f.node, call); // the emitter builds the construction from it
     push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
     push(w, call, f.expected, 0);
 }
