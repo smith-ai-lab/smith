@@ -981,6 +981,26 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     Bool ubsan = same_text(fact, "undefined_sanitizer");
     Bool tsan = same_text(fact, "thread_sanitizer");
     Bool checks = same_text(fact, "assertions");
+    // The floating-point facts are numbers (IEEE binary32 and binary64, evaluated in their own type) on every target.
+    U64 number = 0;
+    Bool numeric = true;
+    if (same_text(fact, "float_radix")) {
+        number = 2;
+    } else if (same_text(fact, "f32_mantissa_bits")) {
+        number = 24;
+    } else if (same_text(fact, "f64_mantissa_bits")) {
+        number = 53;
+    } else if (same_text(fact, "float_eval_method")) {
+        number = 0;
+    } else {
+        numeric = false;
+    }
+    if (numeric) {
+        ast::ExprKind folded = {.integer = {.value = number}};
+        node->kind = folded;
+        finish(c, e, types::builtin(&c->table, "I32"), f.expected);
+        return true;
+    }
     // `static_analyzer` is never true: the new front end does not run under clang's analyzer, as in `when`.
     if (!asan && !ubsan && !tsan && !checks && !same_text(fact, "static_analyzer")) return false;
     Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||

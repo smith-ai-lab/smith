@@ -1733,6 +1733,10 @@ export types::Options options(types::Target target) {
 
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
+    if (d->kind == .static_assert_decl) { // its condition folds before emit (`target.float_radix == 2`)
+        types_expr::check(r, d->kind.static_assert_decl.condition, r->table.bool_type);
+        return;
+    }
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
         return;
     }
