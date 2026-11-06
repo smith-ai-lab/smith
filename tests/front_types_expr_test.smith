@@ -586,8 +586,9 @@ export void test_front_types_expr_lists_are_typed_by_the_expected_type() {
     test::check_condition(types_expr::check(&r, array, three) == three);
     types::TypeRef maybe = types::option_of(&r.table, int32);
     ast::Initializer some[1] = {field_item("some", num(3))};
-    test::check_condition(types_expr::check(&r, list(nullptr, some), maybe) == maybe);
     expect(r.error_count, 0);
+    types_expr::check(&r, list(nullptr, some), maybe);
+    test::check_condition(says(last(&r), "a `?I32` is written `.some(value)`, not `{.some = value}`"));
     ast::Initializer extra[3] = {positional(num(1)), positional(num(2)), positional(num(3))};
     types_expr::check(&r, list(nullptr, extra), p);
     test::check_condition(says(last(&r), "too many values for `Point`, which has 2 fields; remove the extra value"));
