@@ -184,7 +184,7 @@ static void recover(parse::Parser *p) {
             depth -= 1;
             if (depth == 0) {
                 parse::advance(p);
-                parse::accept(p, lex::semicolon);
+                (void)parse::accept(p, lex::semicolon);
                 return;
             }
         } else if (kind == lex::semicolon && depth == 0) {
@@ -839,14 +839,14 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
 }
 
 static ast::Decl *make(const parse::Parser *p, U32 start, const Prefixes *pre, ast::DeclKind kind) {
-    ast::Decl d = {.span = parse::span_from(p, start),
+    ast::Decl d = {.kind = kind,
+                   .span = parse::span_from(p, start),
                    .attributes = pre->attributes,
                    .exported = pre->exported,
                    .is_pub = pre->is_pub,
                    .is_static = pre->is_static,
                    .is_extern = pre->is_extern,
                    .is_inline = pre->is_inline};
-    d.kind = kind;
     return ast::new_decl(d);
 }
 
