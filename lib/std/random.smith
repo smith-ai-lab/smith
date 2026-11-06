@@ -291,7 +291,8 @@ U64 word(const Key *key, U64 n) {
     U32 key_0 = (U32)key->bits;
     U32 key_1 = (U32)(key->bits >> 32);
     U64 bits = (n & 1) == 0 ? philox_low(counter, key_0, key_1) : philox_high(counter, key_0, key_1);
-    return key->tap != nullptr ? key->tap->word(key->tap, key->bits, n, bits) : bits;
+    if (key->tap != nullptr) return key->tap->word(key->tap, key->bits, n, bits);
+    return bits;
 }
 
 // 64 random bits: a key is one draw.

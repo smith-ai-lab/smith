@@ -27,6 +27,7 @@ In C you `#include` and the names are bare; here `import <h>;` (or `import "h";`
 - **Inside an attribute** (`[[gnu::format(printf, 1, 2)]]`, `__attribute__((format(printf, 1, 2)))`) a word is the attribute's own and needs no `c::`.
 - **A symbol no header declares** (macOS's `<unistd.h>` has no `environ`), or one a project's C file defines, is declared in the module with `extern` and no `export`: `extern char **environ;`, `extern U32 triple(U32 x);`. It keeps its C name, is private and not in the header, and links to the C definition. A header's own variables work with `c::` (`c::optind`, `c::stdout`, `c::errno`). `export extern` is another thing (`smith-lang-exports`).
 - **The sized types** (`U32`) are typedefs only in the `.smith` file; a generated header says `uint32_t`. A project's `typedef uint32_t U32;` in a C header is fine in a `.smith` file that includes it.
+- **A tag and a function of one name** (`struct stat` and `stat()`, also `sigaction`, `flock`, `timezone`): the position tells them apart (#2610). In the new syntax `stat.stat` is the struct in a type and the function in a call: `mut info: stat.stat = undefined`, then `stat.stat(path, &info)`. A C out-parameter that the call fills is `= undefined`, not a zeroed construction (`smith lint --fix` writes that when nothing reads the struct before the call). `mem.alloc(stat.stat, 1)` names the struct too. No other spelling (`struct_stat`, `stat_t`) exists.
 
 ## Errors
 

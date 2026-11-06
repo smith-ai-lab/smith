@@ -349,6 +349,15 @@ export void test_front_fix_zero_an_importer_finds_a_field_renamed_from_type() {
     test::check_equal(got, want);
 }
 
+// A struct that a C call fills (#2610): `struct stat info = {}` then `stat(path, &info)` reads nothing before the call,
+// so no field is zeroed, and the tag `stat` in the type and the function `stat` in the call stay apart.
+export void test_front_fix_zero_a_struct_a_c_call_fills_is_undefined() {
+    expect_fixed("module m;\nimport <sys/stat.h>;\nint size_of(const char *path) {\n    struct c::stat info = {};\n"
+                 "    if (c::stat(path, &info) != 0) return -1;\n    return (int)info.st_size;\n}\n",
+                 "import c <sys/stat.h>\nfn size_of(path: *char) -> i32:\n    mut info: c.stat = undefined\n"
+                 "    if stat.stat(path, &info) != 0:\n        return -1\n    return info.st_size.to(i32)\n");
+}
+
 // A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
 // `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
 export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {

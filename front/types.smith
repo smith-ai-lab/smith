@@ -799,6 +799,27 @@ export Bool declare(Scopes *s, Symbol symbol) {
     return true;
 }
 
+// `declare` for a C header's declaration: a struct tag and a function of one name (`struct stat`, `stat()`) live side
+// by side (#2610), told apart by `lookup_as`; two of the same kind (two headers' `size_t`) keep the first.
+static Bool names_type(const Symbol *s) {
+    return s->kind == .type_name;
+}
+
+static Bool declare_beside(Scopes *s, Symbol symbol) {
+    for (Usize i = scope_start(s); i < s->count; i++) {
+        if (same_text(s->symbols[i].name, symbol.name) && names_type(&s->symbols[i]) == names_type(&symbol))
+            return false;
+    }
+    if (s->count == countof(s->symbols)) {
+        Usize capacity = countof(s->symbols) * 2;
+        if (capacity < 64) capacity = 64;
+        s->symbols = mem::realloc(s->symbols, capacity);
+    }
+    s->symbols[s->count] = symbol;
+    s->count += 1;
+    return true;
+}
+
 // Adds `symbol` to the innermost scope over a name that is declared already: a `?T` name that is known not to be
 // `.none` from here to the end of the scope has the type `T` (#2481). `lookup` finds the newest, so the narrowed one
 // wins.
@@ -828,6 +849,17 @@ export const Symbol *lookup(const Scopes *s, Str name) {
         if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
     }
     return nullptr;
+}
+
+// The symbol `name` stands for in a type position (`want_type`) or a value position: a C header has a struct tag and a
+// function of one name (`struct stat` and `stat()`, #2610), kept apart here by position. Falls back to the other kind
+// when only that one exists, so every other name reads as before.
+export const Symbol *lookup_as(const Scopes *s, Str name, Bool want_type) {
+    for (Usize i = s->count; i > 0; i--) {
+        const Symbol *found = &s->symbols[i - 1];
+        if (same_text(found->name, name) && names_type(found) == want_type) return found;
+    }
+    return lookup(s, name);
 }
 
 // Whether `name` is the segments of `path` joined by `::`.
@@ -2036,7 +2068,8 @@ static Str qualified(const Checked *r, Bool from_c, Str name) {
 
 static void declare_in_module(Checked *r, Symbol symbol, ast::Span span) {
     if (r->in_header) {
-        declare(&r->scopes, symbol); // two headers declare `size_t`: the first stays, and no error names a header
+        declare_beside(&r->scopes,
+                       symbol); // two headers declare `size_t`: the first stays, and no error names a header
         return;
     }
     if (!declare(&r->scopes, symbol)) {
@@ -2254,7 +2287,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
     if (!(d->kind == .record)) return;
     Bool opaque = d->kind.record.opaque;
     ast::FieldDecl members[:] = d->kind.record.fields;
-    const Symbol *symbol = lookup(&r->scopes, name);
+    const Symbol *symbol = lookup_as(&r->scopes, name, true); // a function of the tag's name may be declared (#2610)
     if (symbol == nullptr || opaque) return;
     Usize n = countof(members);
     Slot fields[:] = mem::alloc_slice(Slot, n);
@@ -2297,7 +2330,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
 }
 
 static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
-    const Symbol *symbol = lookup(&r->scopes, name);
+    const Symbol *symbol = lookup_as(&r->scopes, name, true);
     if (symbol == nullptr) return;
     Usize n = countof(members);
     Slot items[:] = mem::alloc_slice(Slot, n);
@@ -3099,7 +3132,7 @@ export Str c_member_name(const Checked *r, const ast::Expr *e) {
 export const Symbol *c_member(const Checked *r, const ast::Expr *e) {
     Str name = c_member_name(r, e);
     if (countof(name) == 0 || scoped(r, c_member_base(e)) != nullptr) return nullptr;
-    return lookup(&r->scopes, msg(format::push("c::", name)));
+    return lookup_as(&r->scopes, msg(format::push("c::", name)), false);
 }
 
 // The function `stat.sigaction` stands for when a struct of the header has the same name (`struct sigaction`), or null.
@@ -3177,11 +3210,16 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     if (count == 2 && header_binding(r, path.segments[0].text) != nullptr &&
         scoped(r, path.segments[0].text) == nullptr) {
         if (!binding_declares(r, path.segments[0].text, path.segments[1].text)) return nullptr;
-        return lookup(&r->scopes, msg(format::push("c::", path.segments[1].text))); // `stdio.size_t` is `c::size_t`
+        return lookup_as(&r->scopes, msg(format::push("c::", path.segments[1].text)),
+                         true); // `stdio.size_t` is `c::size_t`; a struct tag over a function of its name
     }
     const Symbol *found = nullptr;
     if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, path_text(path))));
     if (found == nullptr) found = lookup_path(&r->scopes, path);
+    if (found != nullptr && found->kind != .type_name && found->decl != nullptr && found->decl->from_c) {
+        const Symbol *tag = lookup_as(&r->scopes, found->name, true); // `c::stat` in a type is the struct (#2610)
+        if (tag != nullptr && tag->kind == .type_name) found = tag;
+    }
     return found;
 }
 

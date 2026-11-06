@@ -55,6 +55,15 @@ export void test_front_check_bind_fix_a_guard_that_returns_binds_the_rest() {
     expect(before, after);
 }
 
+// `if !(k == .v): return X` is the same guard as `if k != .v: return X`.
+export void test_front_check_bind_fix_a_negated_equality_guard_binds_the_rest() {
+    char before[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    if !(s == .circle):\n        return 0\n    s.circle * 2\n");
+    char after[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    .circle(circle) := s else:\n        return 0\n    circle * 2\n");
+    expect(before, after);
+}
+
 // In a chain `a || k != .v || b` the test stands alone, between `if a:` and `if b:`, which may read the payload.
 export void test_front_check_bind_fix_a_guard_in_a_chain_stands_alone() {
     char before[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0 || s != .circle || ",
