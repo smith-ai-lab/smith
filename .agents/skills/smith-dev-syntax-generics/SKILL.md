@@ -42,7 +42,7 @@ fn count[C](c: *C) -> usize:
     else: sum(for _ in c: 1)
 ```
 
-Built-in concepts are lowercase (`int`, `float`, `num`, `pointer`, ...); user ones combine with `and`, `or`, `not`. A false concept names the false part and the first type error inside `requires`. There are no traits, no `concept` declaration and no checking of a generic's body against its concept. A struct field and a function exported to C need concrete types.
+Built-in concepts are lowercase (`int`, `float`, `num`, `pointer`, ...); user ones combine with `and`, `or`, `not`. A false concept names the false part and the first type error inside `requires`. There are no traits, no `concept` declaration and no checking of a generic's body against its concept. A struct field and a function exported to C need concrete types. A concept in a parameter (`a: num`) is an implicit generic parameter of its own: one instance per argument type, and an argument that is not a `num` is an error at the call (#1701).
 
 ## Type functions
 
