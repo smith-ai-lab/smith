@@ -1050,7 +1050,7 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Stmt *else_branch = s->kind.if_stmt.else_branch;
     // A condition about the target that `when::live_module` did not decide (#2277); a local named `target` is not one.
-    if (when::about_target(test) && types::lookup(&r->scopes, "target") == nullptr) {
+    if (when::about_target(test) && !when::is_folded_fact(test) && types::lookup(&r->scopes, "target") == nullptr) {
         types::failf(r, test->span,
                      "a condition on `target` is decided at compile time and this one cannot be: write it with "
                      "`target.os == .macos` (or `.linux`), `target.static_analyzer`, `!`, `&&`, `||`, "

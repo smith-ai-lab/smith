@@ -286,6 +286,18 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
     return values[0];
 }
 
+// Whether `cond` is `target.address_sanitizer` (or another build fact the checker folds into a literal, #2461): an `if`
+// on it is an ordinary condition, not one that needs deciding earlier (#2611).
+export Bool is_folded_fact(const ast::Expr *cond) {
+    if (cond == nullptr || cond->kind != .member || cond->kind.member.arrow) return false;
+    const ast::Expr *base = cond->kind.member.base;
+    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
+    if (!same_text(base->kind.name.path.segments[0].text, "target")) return false;
+    Str fact = cond->kind.member.name;
+    return same_text(fact, "address_sanitizer") || same_text(fact, "undefined_sanitizer") ||
+           same_text(fact, "thread_sanitizer") || same_text(fact, "assertions");
+}
+
 // Whether `cond` names `target` anywhere (`target.x`, `target::x`, `target` alone), through `!`, `-`, the binary
 // operators and members; at most 32 pending nodes, deeper is not looked at.
 export Bool about_target(const ast::Expr *cond) {
