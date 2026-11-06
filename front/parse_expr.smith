@@ -849,6 +849,7 @@ static ast::Param fn_param(parse::Parser *p) {
     lex::Token name = parse::expect(p, lex::name, "a parameter name");
     if (name.kind == lex::name) param.name = parse::text(p, name);
     if (parse::accept(p, lex::colon)) param.type = parse::type(p);
+    param.is_new = true;
     param.span = parse::span_from(p, start);
     return param;
 }

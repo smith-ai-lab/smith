@@ -6,7 +6,7 @@ fn(x): x * 2
     (block
       (return
         (lambda
-          (param x)
+          (param x new)
           (block
             (expression (binary multiply (name x) (integer 2)))))))))
 
@@ -18,8 +18,8 @@ fn(x: i32, y) -> i32: x
     (block
       (return
         (lambda
-          (param x (named i32))
-          (param y)
+          (param x new (named i32))
+          (param y new)
           (result (named i32))
           (block
             (expression (name x))))))))
@@ -34,7 +34,7 @@ fn(x):
     (block
       (return
         (lambda
-          (param x)
+          (param x new)
           (block
             (expression (call (name g) (name x)))
             (expression (name x))))))))
@@ -50,7 +50,7 @@ f(1, fn(x): x)
           (name f)
           (integer 1)
           (lambda
-            (param x)
+            (param x new)
             (block
               (expression (name x)))))))))
 
@@ -65,8 +65,8 @@ sort(xs) fn(a, b): a < b
           (name sort)
           (name xs)
           (lambda
-            (param a)
-            (param b)
+            (param a new)
+            (param b new)
             (block
               (expression (binary less (name a) (name b))))))))))
 
@@ -139,7 +139,7 @@ match s:
             (arm
               (pattern b)
               (lambda
-                (param x)
+                (param x new)
                 (block
                   (expression (name x)))))))))))
 

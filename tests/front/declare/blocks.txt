@@ -32,8 +32,8 @@
           (name sort)
           (name xs)
           (lambda
-            (param a)
-            (param b)
+            (param a new)
+            (param b new)
             (block
               (expression (binary less (name a) (name b)))))))
       (expression
@@ -45,7 +45,7 @@
                 (variable g new
                   (auto)
                   (lambda
-                    (param x)
+                    (param x new)
                     (block
                       (expression (binary multiply (name x) (integer 2)))))))
               (expression (call (name g) (integer 1))))))))))
