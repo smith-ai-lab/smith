@@ -454,8 +454,9 @@ static Bool repo_has(arena::Arena *store, const char *path) {
     files::EntriesResult listed = files::list(parent[0:c::strlen(parent)]);
     switch (listed) {
     case .ok:
-        for (Usize i = 0; i < countof(listed.ok); i++)
-            if (c::strcmp(listed.ok[i].name.data, name) == 0) return true;
+        files::Entries entries = listed.ok;
+        for (Usize i = 0; i < countof(entries); i++)
+            if (c::strcmp(entries[i].name.data, name) == 0) return true;
         return false;
     case .error:
         return false;

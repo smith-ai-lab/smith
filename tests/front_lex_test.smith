@@ -32,7 +32,8 @@ static lex::LexError error_of(Str source) {
     lex::LexError none = {};
     switch (lexed) {
     case .ok:
-        test::check_equal(countof(lexed.ok), 0);
+        lex::Tokens tokens = lexed.ok;
+        test::check_equal(countof(tokens), 0);
         break;
     case .error:
         return lexed.error;
