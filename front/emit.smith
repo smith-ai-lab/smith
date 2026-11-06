@@ -1525,20 +1525,71 @@ static void make_c_union(c::LLVMTypeRef named, types::TypeRef base) {
     c::LLVMStructSetBody(named, lanes, 1, 0);
 }
 
+static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool through_pointers);
+
+// Names (as shells) the C records that `base` only points to, so its pointer fields have a type; `ensure_c_record`
+// makes their fields when a type first names them.
+static void name_pointees(state::Emitter *e, types::TypeRef base) {
+    if (!base->complete || base->is_union) return;
+    for (Usize i = 0; i < countof(base->slots); i++) {
+        types::TypeRef pointee = unmade_c_record(e, base->slots[i].type, true);
+        state::Ty known = {};
+        if (pointee == nullptr || pointee == base || find_record_by_name(e, pointee->name, &known)) continue;
+        char *label = state::cstr(pointee->name);
+        c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
+        mem::free(label);
+        state::Ty ty = {.kind = .record, .llvm = named, .name = pointee->name};
+        emit_memory::add_record(e, (state::RecordType){.name = pointee->name, .ty = ty, .shell = true});
+    }
+}
+
+// The members of a C union, read in place: each is at offset 0 of the array that sizes it. A member this emitter has
+// no type for leaves the union without fields.
+static void name_union_fields(state::Emitter *e, types::TypeRef base, Usize at) {
+    Usize count = countof(base->slots);
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
+    ast::Span nowhere = {};
+    for (Usize i = 0; i < count; i++) {
+        types::TypeRef held = base->slots[i].type;
+        state::TyResult made =
+            held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
+        if (made == .error) {
+            state::free_text(made.error.message);
+            mem::free(infos.data);
+            return;
+        }
+        infos[i] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
+    }
+    e->records[at].fields = infos;
+    e->records[at].overlay = true;
+}
+
 // A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
 // first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
 // pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer
 // to it is still a pointer.
 static void make_c_record(state::Emitter *e, types::TypeRef base) {
-    char *label = state::cstr(base->name);
-    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
-    mem::free(label);
-    state::Ty ty = {.kind = .record, .llvm = named, .name = base->name};
     Usize at = e->record_count;
-    emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
+    c::LLVMTypeRef named = nullptr;
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (e->records[i].shell && state::same_text(e->records[i].name, base->name)) {
+            at = i;
+            named = e->records[i].ty.llvm;
+            e->records[i].shell = false;
+        }
+    }
+    if (named == nullptr) {
+        char *label = state::cstr(base->name);
+        named = c::LLVMStructCreateNamed(e->context, label);
+        mem::free(label);
+        state::Ty ty = {.kind = .record, .llvm = named, .name = base->name};
+        emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
+    }
+    name_pointees(e, base);
     Usize count = countof(base->slots);
     if (base->complete && base->is_union && count > 0) {
         make_c_union(named, base);
+        name_union_fields(e, base, at);
         return;
     }
     if (!base->complete || base->is_union || count == 0 || count > 64) {
@@ -1572,9 +1623,12 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
         types::TypeRef next = base->element;
         base = next;
     }
-    state::Ty found = {};
-    if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
-        (from_header(base->name) || in_module(base->name))) {
+    Bool made = false;
+    for (Usize i = 0; i < e->record_count; i++) {
+        Bool open = e->records[i].shell && from_header(base->name);
+        if (!open && state::same_text(e->records[i].name, base->name)) made = true;
+    }
+    if (base->kind == .record && !made && (from_header(base->name) || in_module(base->name))) {
         return base;
     }
     return nullptr;
@@ -1722,6 +1776,7 @@ static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
 
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) emit_memory::record_shell(e, e->tree->decls[i]);
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .record) try emit_memory::record_decl(e, d);
@@ -1735,11 +1790,16 @@ static state::Status declare_all(state::Emitter *e) {
             else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try emit_memory::global_variable(e, d);
+            continue; // after every function: a table of callbacks names functions declared below it (#2643)
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from && d->kind != .static_assert_decl && d->kind != .asm_decl) {
             return state::not_emitted("this kind of declaration", d->span);
         }
+    }
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind == .variable && !is_module_alias(e, d) && !is_type_alias(e, d))
+            try emit_memory::global_variable(e, d);
     }
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
