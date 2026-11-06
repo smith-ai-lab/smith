@@ -1798,6 +1798,10 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
         body = parse::statement(p);
         if (renamed) rename_type(p, open, close, p->position);
     } else {
+        // `extern T f(A a) __asm__("sym");`: the label renames the C symbol, and the fix above writes it `@c_name`.
+        Usize label_end = pre->is_extern ? asm_label_end(p, p->position) : 0;
+        while (label_end > 0 && p->position < label_end)
+            parse::advance(p);
         parse::expect(p, lex::semicolon, "`{` or `;` after the parameters");
     }
     ast::DeclKind kind = {
@@ -2941,6 +2945,55 @@ static ast::Decl *parse_static_assert(parse::Parser *p, const Prefixes *pre, U32
     return make(p, start, pre, kind);
 }
 
+// A tagged literal at module level (D7, #2636): `asm` followed by backticks and raw text. `asm` is the only tag; a
+// tag that you define yourself (`html`, `css`, `sql`) waits for #2633.
+static ast::Decl *parse_tagged(parse::Parser *p, const Prefixes *pre, U32 start) {
+    lex::Token token = parse::advance(p);
+    Str whole = parse::text(p, token);
+    Usize tick = 0;
+    while (tick < countof(whole) && whole[tick] != '`')
+        tick += 1;
+    Str tag = whole[0:tick];
+    if (!same_text(tag, "asm")) {
+        parse::error(p, token.span,
+                     "`asm` is the only tag of a literal for now: `html`, `css` and `sql` wait for #2633");
+        return nullptr;
+    }
+    Str body = whole[tick + 1:countof(whole) - 1];
+    ast::DeclKind kind = {.asm_decl = {.text = body}};
+    return make(p, start, pre, kind);
+}
+
+// The old `__asm__("...");` at module level (the strings side by side are one): the fix writes it as an `asm` literal.
+static ast::Decl *parse_old_asm(parse::Parser *p, const Prefixes *pre, U32 start) {
+    parse::advance(p);
+    parse::expect(p, lex::left_paren, "`(`");
+    Str body = "";
+    lex::Token first = parse::expect(p, lex::string, "the assembly text, a string");
+    if (first.kind != lex::string) {
+        recover(p);
+        return nullptr;
+    }
+    body = string_value(p, first);
+    for (Usize i = 0; i < countof(p->tokens) && parse::at(p, lex::string); i++) {
+        body = as_str(format::push(body, string_value(p, parse::advance(p))));
+    }
+    parse::expect(p, lex::right_paren, "`)`");
+    lex::Token semi = parse::expect(p, lex::semicolon, "`;` after `__asm__`");
+    ast::DeclKind kind = {.asm_decl = {.text = body}};
+    ast::Decl *built = make(p, start, pre, kind);
+    Bool plain = true;
+    for (Usize i = 0; i < countof(body); i++) {
+        if (body[i] == '`' || (body[i] == '$' && i + 1 < countof(body) && body[i + 1] == '{')) plain = false;
+    }
+    if (plain && semi.kind == lex::semicolon) {
+        parse::Edits edits = {};
+        edits = with_edit(edits, edit(start, semi.span.end, as_str(format::push("asm`", body, "`"))));
+        warn(p, start, semi.span.end, "module-level assembly is an `asm` literal: asm`...`", edits);
+    }
+    return built;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // smith's own syntax (#1428): `a := v`, `a: T = v`, `mut a := 0`, `const X = v`, `(q, r) := f()`, `fn`
 //
@@ -3435,6 +3488,10 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
     if (pre.is_extern && is_name(kind) && parse::peek_at(p, 1).kind == lex::colon) return parse_binding(p, &pre, start);
     if (kind == lex::kw_import) return parse_import(p, &pre, start);
     if (kind == lex::kw_static_assert) return parse_static_assert(p, &pre, start);
+    if (kind == lex::tagged) return parse_tagged(p, &pre, start);
+    if (kind == lex::name && same_text(parse::text(p, parse::peek(p)), "__asm__") &&
+        parse::peek_at(p, 1).kind == lex::left_paren)
+        return parse_old_asm(p, &pre, start);
     if (kind == lex::kw_typedef) return parse_typedef(p, &pre, start);
     Bool is_tag = kind == lex::kw_struct || kind == lex::kw_union || kind == lex::kw_enum;
     if (is_tag && !at_anonymous_record(p) && !parse_type::tuple_ahead(p) && !at_tag_use(p))
