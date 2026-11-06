@@ -2030,6 +2030,18 @@ static Outcome postfix_step(parse::Parser *p, Stack *st) {
 // ---------------------------------------------------------------------------------------------------------------
 // Operands: prefix operators, parentheses, casts, `sizeof`
 
+// Whether `(u32)` follows in smith's own syntax: a builtin type's lowercase name alone in the parentheses (#2611).
+static Bool builtin_type_alone(const parse::Parser *p) {
+    if (!p->new_syntax || parse::peek_at(p, 1).kind != lex::name || parse::peek_at(p, 2).kind != lex::right_paren)
+        return false;
+    Str name = parse::text(p, parse::peek_at(p, 1));
+    Str names[_] = {"u8",  "u16", "u32", "u64",   "usize", "i8",   "i16",
+                   "i32", "i64", "isize", "f32", "f64",   "bool", "char"};
+    for (Usize i = 0; i < countof(names); i++)
+        if (same_text(name, names[i])) return true;
+    return false;
+}
+
 // `sizeof(T)`, `sizeof x`, `alignof`, `countof`: the position is at the keyword.
 static Step query(parse::Parser *p, Stack *st) {
     lex::Token keyword = parse::advance(p);
@@ -2037,7 +2049,8 @@ static Step query(parse::Parser *p, Stack *st) {
     if (keyword.kind == lex::kw_sizeof) op = .size_of;
     if (keyword.kind == lex::kw_alignof) op = .align_of;
     if (parse::at(p, lex::left_paren) &&
-        (parse_type::starts_type(p, 1) || (p->new_syntax && parse_type::typeof_new_type_at(p, 1)))) {
+        (parse_type::starts_type(p, 1) || (p->new_syntax && parse_type::typeof_new_type_at(p, 1)) ||
+         builtin_type_alone(p))) {
         parse::advance(p);
         ast::TypeExpr *type = parse::type(p);
         parse::expect(p, lex::right_paren, "`)` to end the type");
