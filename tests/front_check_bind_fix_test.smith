@@ -94,6 +94,42 @@ export void test_front_check_bind_fix_a_switch_whose_last_case_falls_off_is_a_ma
     expect(before, after);
 }
 
+// The propagate idiom on a Result is `try` (#2506): `r: Result(T, E) = f()` and `if r == .error: return {.error =
+// r.error}` are `ok := try f()`, each `r.ok` is `ok`; a one-line cleanup becomes an `errdefer`.
+static Str head_text() {
+    return "fn step(n: i32) -> Result(i32, i32):\n    if n < 0:\n        return {.error = n}\n    {.ok = n}\n";
+}
+
+export void test_front_check_bind_fix_try_the_propagate_idiom_is_try() {
+    char before[:] =
+        format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        return {.error = r.error}\n"
+                                  "    {.ok = r.ok * 2}\n");
+    char after[:] = format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    ok := try step(n)\n"
+                                              "    {.ok = ok * 2}\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_try_a_cleanup_becomes_an_errdefer() {
+    char before[:] =
+        format::push(head_text(), "fn twice(n: i32, log: *mut i32) -> Result(i32, i32):\n"
+                                  "    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        log.* = 1\n        return {.error = r.error}\n"
+                                  "    {.ok = r.ok * 2}\n");
+    char after[:] = format::push(head_text(), "fn twice(n: i32, log: *mut i32) -> Result(i32, i32):\n"
+                                              "    errdefer log.* = 1\n    ok := try step(n)\n"
+                                              "    {.ok = ok * 2}\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_try_an_error_changed_on_the_way_stays() {
+    char site[:] =
+        format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
+                                  "    if r == .error:\n        return {.error = 0}\n"
+                                  "    {.ok = r.ok * 2}\n");
+    expect(site, site);
+}
+
 // An `else if` chain of tests is one guard each: every `then` binds its own payload.
 export void test_front_check_bind_fix_an_else_if_chain_binds_each_payload() {
     char before[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    if s == .circle:\n        s.circle\n  ",
