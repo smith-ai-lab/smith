@@ -5,7 +5,7 @@ description: "New syntax (#1428): `if`/`else if`/`else` as values, one-line and 
 
 # Control flow
 
-Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428. Lines and blocks are in [smith-dev-syntax-values](../smith-dev-syntax-values/SKILL.md); loops in [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md).
+Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #1428. Lines and blocks are in [smith-dev-syntax-values](../smith-dev-syntax-values/SKILL.md); loops in [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md); options and narrowing (`if x != .none:`) in [smith-dev-syntax-options](../smith-dev-syntax-options/SKILL.md).
 
 ## if and match
 

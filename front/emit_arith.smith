@@ -13,6 +13,7 @@ module front::emit_arith;
 
 import front::ast;
 import front::emit_debug as debug;
+import front::emit_option;
 import front::emit_state as state;
 import front::types;
 import std::format;
@@ -400,7 +401,13 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
         return state::success();
     try lookup(e, x, &local);
     c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
-    state::push_value(e, (state::Value){.llvm = loaded, .ty = local.ty});
+    state::Value value = {.llvm = loaded, .ty = local.ty};
+    if (local.ty.kind == .option && local.ty.element != nullptr && e->options.checked != nullptr) {
+        // A `?T` name the checker narrowed to `T` (`if x != .none:`) reads its payload (#2481).
+        types::TypeRef seen = types::type_of(e->options.checked, x);
+        if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value);
+    }
+    state::push_value(e, value);
     return state::success();
 }
 

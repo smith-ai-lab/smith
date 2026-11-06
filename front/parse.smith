@@ -118,13 +118,6 @@ export Bool is_module(const Parser *p, Str name) {
     return false;
 }
 
-// A parser at the first token with no errors and no hooks. The tokens must end with the end of the file, as
-// lex::tokenize gives them.
-export Parser make(lex::Tokens tokens, Str source) {
-    Parser parser = {.tokens = tokens, .source = source};
-    return parser;
-}
-
 // The token `offset` places after the position; past the end of the tokens, the last one, the end of the file.
 export lex::Token peek_at(const Parser *p, Usize offset) {
     Usize last = countof(p->tokens) - 1;
@@ -251,49 +244,61 @@ export ast::Span span_from(const Parser *p, U32 start) {
     return span;
 }
 
-// Reads an expression through the hook of A3.
-export ast::Expr *expression(Parser *p) {
-    if (p->hooks.expression == nullptr) {
-        Str message = "no parser for an expression is installed";
-        error(p, peek(p).span, message);
-        return nullptr;
-    }
-    return p->hooks.expression(p);
+// The hooks a parser starts with: each records that no parser for its construct is installed, and gives null. They
+// stand where a null function pointer stood, since a function has no null in the new syntax.
+static ast::Expr *no_expression(Parser *p) {
+    Str message = "no parser for an expression is installed";
+    error(p, peek(p).span, message);
+    return nullptr;
 }
 
-// The error of a type hook that is not set. It is a function of its own because the body of a function named `type`
-// is read as a type function's by today's smith (a string literal does not convert to `Str` in it): the name is free
-// when types are rewritten to `Type` (#366).
-static void missing_type(Parser *p) {
+// A function of its own because the body of a function named `type` is read as a type function's by today's smith (a
+// string literal does not convert to `Str` in it): the name is free when types are rewritten to `Type` (#366).
+export ast::TypeExpr *no_type(Parser *p) {
     Str message = "no parser for a type is installed";
     error(p, peek(p).span, message);
+    return nullptr;
+}
+
+static ast::Stmt *no_statement(Parser *p) {
+    Str message = "no parser for a statement is installed";
+    error(p, peek(p).span, message);
+    return nullptr;
+}
+
+static ast::Decl *no_declaration(Parser *p) {
+    Str message = "no parser for a declaration is installed";
+    error(p, peek(p).span, message);
+    return nullptr;
+}
+
+// Reads an expression through the hook of A3.
+export ast::Expr *expression(Parser *p) {
+    return p->hooks.expression(p);
 }
 
 // Reads a type through the hook of A5.
 export ast::TypeExpr *type(Parser *p) {
-    if (p->hooks.type == nullptr) {
-        missing_type(p);
-        return nullptr;
-    }
     return p->hooks.type(p);
 }
 
 // Reads a statement through the hook of A4.
 export ast::Stmt *statement(Parser *p) {
-    if (p->hooks.statement == nullptr) {
-        Str message = "no parser for a statement is installed";
-        error(p, peek(p).span, message);
-        return nullptr;
-    }
     return p->hooks.statement(p);
 }
 
 // Reads a declaration through the hook of A5.
 export ast::Decl *declaration(Parser *p) {
-    if (p->hooks.declaration == nullptr) {
-        Str message = "no parser for a declaration is installed";
-        error(p, peek(p).span, message);
-        return nullptr;
-    }
     return p->hooks.declaration(p);
+}
+
+// A parser at the first token with no errors and hooks that report "not installed". The tokens must end with the end of
+// the file, as lex::tokenize gives them.
+export Parser make(lex::Tokens tokens, Str source) {
+    ast::Span nowhere = {.start = 0, .end = 0};
+    Hooks hooks = {
+        .expression = no_expression, .type = no_type, .statement = no_statement, .declaration = no_declaration};
+    NamedList no_list = {.plain = false, .positional = false, .open = nowhere, .close = nowhere};
+    Parser parser = {.tokens = tokens, .source = source, .position = 0, .hooks = hooks, .named_list = no_list};
+    return parser;
 }
