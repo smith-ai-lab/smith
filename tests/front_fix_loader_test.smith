@@ -88,3 +88,32 @@ export void test_front_fix_loader_is_not_left_after_a_run() {
     (void)c::unlink(path.data);
     check_text(fixed_text("import std::build;\n"), "import std.build\n");
 }
+
+// An import still in today's syntax is read as that (#2561): `const char w[:]` and `F32 *out` leave its function in the
+// module, so the importer's `&v` is passed to a writable pointer and `v` gets `mut`.
+export void test_front_fix_loader_import_in_todays_syntax_asks_for_mut() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_reader.smith";
+    Str user_path = "/tmp/front_fix_loader_reader_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_reader;\nexport Bool read(const char w[:], "
+                                              "F32 *out) {\n    *out = 1;\n    return true;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_reader_user;\nimport front_fix_loader_reader;\n"
+                                            "static Bool f(const char w[:]) {\n    F32 v = 0;\n"
+                                            "    return front_fix_loader_reader::read(w, &v);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    if (back == .error) {
+        check_text("cannot read back", "the file");
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    check_text(got, "import front_fix_loader_reader\nstatic fn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
+                    "    return front_fix_loader_reader.read(w, &v)\n");
+}

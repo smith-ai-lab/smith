@@ -169,14 +169,21 @@ void *resize_raw(void *block, Usize old, Usize n, Usize size) {
     return memory;
 }
 
+// n * size, or the largest usize when it overflows (no allocator has that many bytes, so a refusal names it).
+Usize saturating_bytes(Usize n, Usize size) {
+    Usize bytes = 0;
+    if (__builtin_mul_overflow(n, size, &bytes)) bytes = ~(Usize)0;
+    return bytes;
+}
+
 // xs resized to n elements, or `.none` when the allocator refuses or n * sizeof(element) overflows: then xs is
 // untouched and still the caller's. `.some` holds the first min(count, n) elements of xs and a zeroed tail; the old
 // block is gone. n == 0 frees the block and gives the empty slice. An empty xs (data null) is a fresh allocation.
 // One dimension only; the result is freed with mem::free.
 [[std::c_name("smith_mem_try_realloc_slice")]] export [[nodiscard]] Option(typeof(xs)) try_realloc(auto xs, Usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "try_realloc: realloc aligns to 16 bytes");
-    Usize old = xs.data == nullptr ? 0 : xs.count[0];
-    void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
+    Usize old = xs.data == nullptr ? 0 : countof(xs);
+    void *memory = resize_raw((void *)(Usize)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
         return .none;
     }
@@ -191,12 +198,10 @@ void *resize_raw(void *block, Usize old, Usize n, Usize size) {
 // try_realloc for n == 0 and an empty xs.
 [[std::c_name("smith_mem_realloc_slice")]] export [[nodiscard]] typeof(xs) realloc(auto xs, Usize n) {
     static_assert(alignof(typeof(*xs.data)) <= 16, "realloc: realloc aligns to 16 bytes");
-    Usize old = xs.data == nullptr ? 0 : xs.count[0];
-    void *memory = resize_raw((void *)xs.data, old, n, sizeof(*xs.data));
+    Usize old = xs.data == nullptr ? 0 : countof(xs);
+    void *memory = resize_raw((void *)(Usize)xs.data, old, n, sizeof(*xs.data));
     if (memory == nullptr && n != 0) {
-        Usize bytes = 0;
-        if (__builtin_mul_overflow(n, sizeof(*xs.data), &bytes)) bytes = ~(Usize)0;
-        refuse(bytes, alignof(typeof(*xs.data)));
+        refuse(saturating_bytes(n, sizeof(*xs.data)), alignof(typeof(*xs.data)));
     }
     typeof(xs) result = {};
     result.data = (typeof(xs.data))memory;
