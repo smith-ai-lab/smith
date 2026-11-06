@@ -168,8 +168,12 @@ Bool measure(const Arena *arena, Usize size, Usize align, Usize *padding) {
 [[std::c_name("smith_arena_fixed")]] export [[nodiscard]] Arena fixed(void *memory, Usize capacity) {
     contract::requires(((Usize)memory & (align_max - 1)) == 0);
     contract::requires(capacity > 0);
-    return (Arena){
-        .memory = (U8 *)memory, .capacity = capacity, .fixed = true}; // nothing is poisoned until the first push
+    return (Arena){.memory = (U8 *)memory,
+                   .capacity = capacity,
+                   .chunk = nullptr,
+                   .spare = nullptr,
+                   .backing = nullptr,
+                   .fixed = true}; // nothing is poisoned until the first push
 }
 
 constexpr Usize chunk_header = sizeof(struct Chunk);
@@ -188,7 +192,7 @@ Chunk *chunk_new(Arena *arena, Usize size) {
     }
     if (memory == nullptr) return nullptr;
     Chunk *chunk = (Chunk *)memory;
-    *chunk = (Chunk){.size = size};
+    *chunk = (Chunk){.previous = nullptr, .next = nullptr, .size = size, .memory_before = nullptr};
     return chunk;
 }
 
@@ -288,7 +292,7 @@ Bool grow(Arena *arena, Usize size, Usize align) {
 [[std::c_name("smith_arena_growing")]] export [[nodiscard]] Arena growing(Usize first, c::SmithAllocator *backing) {
     contract::trusted(); // the first chunk comes from the backing
     contract::requires(first > 0);
-    Arena arena = {.backing = backing};
+    Arena arena = {.memory = nullptr, .chunk = nullptr, .spare = nullptr, .backing = backing};
     Bool overflow = first > math::max(Usize) - chunk_header - chunk_round;
     Usize size = overflow ? 0 : (first + chunk_header + chunk_round - 1) & ~(chunk_round - 1);
     Chunk *chunk = size == 0 ? nullptr : chunk_new(&arena, size);
@@ -319,7 +323,7 @@ void leave_to_first(Arena *arena) {
     Chunk *chunk = arena->chunk != nullptr ? arena->chunk : arena->spare; // a scope can end before the first chunk
     c::SmithAllocator *backing = arena->backing;
     Arena gone = *arena;
-    *arena = (Arena){.backing = backing};
+    *arena = (Arena){.memory = nullptr, .chunk = nullptr, .spare = nullptr, .backing = backing};
     while (chunk != nullptr) {
         Chunk *next = chunk->next;
         chunk_free(&gone, chunk);

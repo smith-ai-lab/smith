@@ -8,6 +8,7 @@ import std::files;
 import std::arena;
 import std::mem;
 import std::test;
+import <unistd.h>;
 
 static void expect_fixed(Str before, Str want) {
     arena::Arena memory = test::memory(1U << 24);
@@ -200,6 +201,27 @@ export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_
     test::check(fix::store("/tmp/front_fix_zero_test_neighbour/b.smith", user));
     fix::Fixed fixed =
         fix::fix_text("/tmp/front_fix_zero_test_neighbour/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    test::check_equal(fixed.text, want);
+}
+
+// A construction in a file of another folder (`tests/b.smith` builds `lib/a.smith`'s `P`) gives the default too: the
+// fixer reads every file under the working folder that imports the module (#2543).
+export void test_front_fix_zero_a_construction_in_another_folder_gives_the_default() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    char home[4096];
+    test::check(c::getcwd(home, sizeof home) != nullptr);
+    (void)files::make_folder("/tmp/front_fix_zero_test_tree");
+    (void)files::make_folder("/tmp/front_fix_zero_test_tree/lib");
+    (void)files::make_folder("/tmp/front_fix_zero_test_tree/tests");
+    Str user = "import lib.a\nfn f() -> a.P:\n    return a.P(x = 1)\n";
+    test::check(fix::store("/tmp/front_fix_zero_test_tree/tests/b.smith", user));
+    test::check_equal(c::chdir("/tmp/front_fix_zero_test_tree"), 0);
+    fix::Fixed fixed = fix::fix_text("lib/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
+    test::check_equal(c::chdir(home), 0);
     Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
     test::check_equal(fixed.text, want);
 }

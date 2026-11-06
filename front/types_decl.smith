@@ -646,6 +646,14 @@ static Bool name_taken(types::Checked *r, Str name) {
     return taken != nullptr && taken->kind == .variable;
 }
 
+// The place a test reads the payload through: `p` for `p.*` (the reads are `p.v`, through the pointer), else `k`.
+static const ast::Expr *guard_base(const ast::Expr *tested) {
+    if (tested->kind == .unary && tested->kind.unary.op == .dereference) {
+        return tested->kind.unary.operand;
+    }
+    return tested;
+}
+
 static syntax::Edit edit_of(U32 start, U32 end, Str text) {
     return (syntax::Edit){.span = {.start = start, .end = end}, .text = text};
 }
@@ -664,7 +672,8 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
     head[0] = edit_of(left->span.start, left->span.start, pattern);
     head[1] = edit_of(left->span.end, right->span.end, "");
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
-    add_guard(r, (types::Guard){.base = left, .variant = variant, .reads = then_branch->span, .head = head});
+    add_guard(r,
+              (types::Guard){.base = guard_base(left), .variant = variant, .reads = then_branch->span, .head = head});
 }
 
 // The operands of a chain `a || b || c`, at most `countof(out)`; 0 when there are more.
@@ -758,7 +767,8 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     }
     ast::Span reads = {.start = parts[at]->span.end, .end = end};
     add_guard(
-        r, (types::Guard){.base = left, .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
+        r, (types::Guard){
+               .base = guard_base(left), .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
 }
 
 // The statement itself when `s` is a block of one statement, through nested blocks.
@@ -872,19 +882,21 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     head[1] = delete_statement(s->span);
     ast::Span reads = {.start = s->span.end, .end = end};
     Str ok_name = "ok";
-    add_guard(r, (types::Guard){.base = left, .variant = ok_name, .reads = reads, .head = head});
+    add_guard(r, (types::Guard){.base = guard_base(left), .variant = ok_name, .reads = reads, .head = head});
     return true;
 }
 
+// `if k == .v:` guards its `then` whether or not an `else` follows (an `else if` chain of tests is one guard each);
+// `if k != .v: return` guards the rest of the block only with no `else`.
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_stmt) || s->kind.if_stmt.else_branch != nullptr) {
+    if (!(s->kind == .if_stmt)) {
         return;
     }
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Expr *equal = variant_test(test, true);
     if (equal != nullptr) {
-        if (!note_try_guard(r, s, equal)) note_then_guard(r, s, equal);
-    } else if (leaves(s->kind.if_stmt.then_branch)) {
+        if (s->kind.if_stmt.else_branch != nullptr || !note_try_guard(r, s, equal)) note_then_guard(r, s, equal);
+    } else if (s->kind.if_stmt.else_branch == nullptr && leaves(s->kind.if_stmt.then_branch)) {
         note_rest_guard(r, s);
     }
 }
@@ -915,7 +927,8 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
         syntax::Edits head = {};
         head = mem::realloc(head, 1);
         head[0] = (syntax::Edit){.span = {.start = pats[0].span.end, .end = pats[0].span.end}, .text = binding};
-        add_guard(r, (types::Guard){.base = scrutinee, .variant = name, .reads = arms[i].value->span, .head = head});
+        add_guard(r, (types::Guard){
+                         .base = guard_base(scrutinee), .variant = name, .reads = arms[i].value->span, .head = head});
     }
 }
 

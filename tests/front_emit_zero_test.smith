@@ -1,0 +1,70 @@
+// Tests of an all-zero construction (#2543, point 5 of #2530): `W()` whose every field defaults to its zero is one
+// clear, a `memset` of the slot, as C's `{0}` is, not one store per field; a construction with a field that is not
+// zero is stored as before.
+module front_emit_zero_test;
+
+import front::emit;
+import front::emit_jit;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+import <string.h>;
+
+typedef I32 (*Nullary)();
+
+constexpr Str zero_source = "struct In:\n    n: i32 = 0\n    ok: bool = false\n"
+                            "struct W:\n    a: i32 = 0\n    f: f64 = 0.0\n    inner: In = In()\n    count: u64 = 0\n"
+                            "pub fn f() -> i32:\n    w := W()\n    w.a + w.inner.n\n"
+                            "pub fn g() -> i32:\n    w := W(a = 7)\n    w.a\n";
+
+// The IR of `source` holds `needle` in the function `name`'s text, and calling `name` gives `expected`.
+static Bool emits(Str source, const char *needle, Str name, I32 expected) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&p.module, types::lp64());
+    test::check_equal(checked.error_count, (Usize)0);
+    mem::set_allocator(outside);
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    Bool found = false;
+    if (started == .ok) {
+        emit_jit::Jit host = started.ok;
+        c::LLVMContextRef context = c::LLVMContextCreate();
+        emit::Options options = {};
+        options.target = host.target;
+        options.checked = &checked;
+        emit::ModuleResult emitted = emit::module(context, &p.module, options);
+        test::check_equal(emitted == .ok, true);
+        if (emitted == .ok) {
+            c::LLVMValueRef function = c::LLVMGetNamedFunction(emitted.ok, name.data);
+            test::check_equal(function != nullptr, true);
+            if (function != nullptr) {
+                char *text = c::LLVMPrintValueToString(function);
+                found = c::strstr(text, needle) != nullptr;
+                c::LLVMDisposeMessage(text);
+            }
+            test::check_equal(emit_jit::add(&host, context, emitted.ok) == .ok, true);
+            emit_jit::AddressResult called = emit_jit::lookup(&host, name);
+            test::check_equal(called == .ok, true);
+            if (called == .ok) test::check_equal(((Nullary)called.ok)(), expected);
+        }
+        emit_jit::stop(&host);
+    }
+    return found;
+}
+
+export void test_front_emit_zero_an_all_zero_construction_is_one_memset() {
+    test::check_equal(emits(zero_source, "llvm.memset", "f", 0), true);
+    test::check_equal(emits(zero_source, "store %", "f", 0), false);
+}
+
+export void test_front_emit_zero_a_construction_with_a_value_is_stored() {
+    test::check_equal(emits(zero_source, "llvm.memset", "g", 7), false);
+}

@@ -1076,8 +1076,9 @@ static Usize mark_closure(Usize first, Usize count) {
     return count;
 }
 
-// The cache key of the fix of file `i`: the smith, the C headers, the file's path, and each file it imports, directly
-// or not, added so that the order does not matter.
+// The cache key of the fix of file `i`: the smith, the C headers, the file's path, each file it imports, directly
+// or not, and each file that imports it directly (the fixer reads their constructions of its structs, #2543), added
+// so that the order does not matter.
 static struct Hash fix_key(Usize i) {
     static Bool seen[files_max];
     static Usize stack[files_max];
@@ -1099,6 +1100,14 @@ static struct Hash fix_key(Usize i) {
             seen[next] = true;
             stack[top] = next;
             top += 1;
+        }
+    }
+    for (Usize j = 0; j < tree_count; j++) {
+        for (Usize k = 0; k < import_count[j] && !seen[j]; k++) {
+            if (import_list[j][k] != i) continue;
+            seen[j] = true;
+            sum_a += own_hash[j].a;
+            sum_b ^= own_hash[j].b;
         }
     }
     // the file itself, apart from the sum: two files of an import cycle have the same closure (#2309)

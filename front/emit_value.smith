@@ -131,7 +131,7 @@ static state::Status store_value(state::Emitter *e, const state::Work *w) {
         try state::convert(e, value, w->ty, w->span, .initialize);
         value = state::pop_value(e);
     }
-    if (!ended(e)) c::LLVMBuildStore(e->builder, value.llvm, w->value);
+    if (!ended(e)) state::store(e, value.llvm, w->value);
     return state::success();
 }
 

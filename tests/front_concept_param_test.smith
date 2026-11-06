@@ -1,0 +1,105 @@
+// Tests of a concept as a parameter's type (#1701): `fn larger(a: num, b: typeof(a)) -> typeof(a)` is a template with
+// one instance per type its calls pass. Each scenario checks source text read by front::parser in an arena.
+module front_concept_param_test;
+
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str line = r->errors[i].message;
+        char joined[:] = mem::alloc_slice(char, countof(text) + countof(line) + 1);
+        for (Usize k = 0; k < countof(text); k++) {
+            joined[k] = text[k];
+        }
+        for (Usize k = 0; k < countof(line); k++) {
+            joined[countof(text) + k] = line[k];
+        }
+        joined[countof(joined) - 1] = '\n';
+        text = joined;
+    }
+    return text;
+}
+
+static types::Checked checked(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+static Bool has_instance(const types::Checked *r, Str name) {
+    for (Usize i = 0; i < r->instance_count; i++) {
+        types::Instance x = r->instances[i];
+        if (x.decl->kind == .function && has(x.decl->kind.function.name, name) &&
+            countof(x.decl->kind.function.name) == countof(name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+export void test_front_concept_param_one_instance_per_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source =
+        "fn larger(a: num, b: typeof(a)) -> typeof(a):\n    if a > b:\n        return a\n    return b\n\nfn run() -> "
+        "f64:\n    x := larger(3, 5)\n    y := larger(2.5, 1.5)\n    z := larger(7, 9)\n    return y\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_condition(has_instance(&r, "larger.i32"));
+    test::check_condition(has_instance(&r, "larger.f64"));
+}
+
+export void test_front_concept_param_the_result_has_the_argument_type() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn larger(a: num, b: typeof(a)) -> typeof(a):\n    if a > b:\n        return a\n    return b\n\nfn "
+                 "run(a: u8, b: u8) -> u8:\n    return larger(a, b)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_condition(has_instance(&r, "larger.u8"));
+}
+
+export void test_front_concept_param_a_type_that_fails_the_concept_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn larger(a: num, b: typeof(a)) -> typeof(a):\n    if a > b:\n        return a\n    return b\n\nfn "
+                 "run() -> i32:\n    larger(\"a\", \"b\")\n    return 0\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "num"));
+}
+
+export void test_front_concept_param_a_concept_in_a_field_is_an_error() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "struct Box:\n    value: num\n";
+    types::Checked r = checked(source);
+    test::check_condition(has(errors_of(&r), "concept"));
+}
