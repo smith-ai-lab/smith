@@ -198,7 +198,9 @@ static Bool imports_header(const ast::Module *module) {
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
     types::HeaderLoader headers = imports_header(module) ? load_header : nullptr;
+    types_decl::set_source(source); // a test in a chain `a || k != .v` is fixed by copying its `then` (#2503)
     types::Checked checked = types_decl::check_module_headers(module, types::lp64(), loader, headers);
+    types_decl::set_source("");
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
         if (countof(e.fix) == 0) continue;

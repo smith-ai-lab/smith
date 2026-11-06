@@ -45,3 +45,51 @@ export void test_front_check_bind_fix_a_name_in_scope_leaves_the_site() {
         "fn area(s: Shape, circle: i32) -> i32:\n    if s == .circle:\n        return s.circle * 2\n    circle\n");
     expect(site, site);
 }
+
+// `if k != .v: return` binds the rest of the block (#2503).
+export void test_front_check_bind_fix_a_guard_that_returns_binds_the_rest() {
+    char before[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    if s != .circle:\n        return 0\n    s.circle * 2\n");
+    char after[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    .circle(circle) := s else:\n        return 0\n    circle * 2\n");
+    expect(before, after);
+}
+
+// In a chain `a || k != .v || b` the test stands alone, between `if a:` and `if b:`, which may read the payload.
+export void test_front_check_bind_fix_a_guard_in_a_chain_stands_alone() {
+    char before[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0 || s != .circle || ",
+                                  "s.circle == 0: return 0\n    s.circle * n\n");
+    char after[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0: return 0\n    ",
+                                 ".circle(circle) := s else: return 0\n    if circle == 0: return 0\n    circle * n\n");
+    expect(before, after);
+}
+
+// A guard inside a loop binds to the end of the loop's body; `continue` leaves.
+export void test_front_check_bind_fix_a_guard_in_a_loop_binds_its_body() {
+    char before[:] = format::push(shape_text(), "fn total(xs: []Shape) -> i32:\n    mut sum := 0\n    for s in xs:\n  ",
+                                  "      if s != .square: continue\n        sum += s.square\n    sum\n");
+    char after[:] = format::push(shape_text(), "fn total(xs: []Shape) -> i32:\n    mut sum := 0\n    for s in xs:\n  ",
+                                 "      .square(square) := s else: continue\n        sum += square\n    sum\n");
+    expect(before, after);
+}
+
+// A local of the binding's name declared later leaves the site as it is: the binding would hide it.
+export void test_front_check_bind_fix_a_later_local_leaves_the_guard() {
+    char site[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    if s != .circle: return 0\n    ",
+                                "circle := s.circle\n    circle * 2\n");
+    expect(site, site);
+}
+
+// A C `switch` whose last case ends without a `break`, and whose `break` is a loop's, is a `match` (#2503).
+export void test_front_check_bind_fix_a_switch_whose_last_case_falls_off_is_a_match() {
+    Str before =
+        "module t;\n\nenum Color {\n    red,\n    green,\n};\n\nI32 f(Color c, I32 n) {\n    switch (c) {\n"
+        "    case .red:\n        return 1;\n    case .green:\n        I32 k = n;\n"
+        "        for (I32 i = 0; i < n; i++) {\n            if (i == k) break;\n        }\n        return k + n;\n"
+        "    }\n}\n";
+    Str after =
+        "\nenum Color:\n    red\n    green\n\nfn f(c: Color, n: i32) -> i32:\n    match c:\n        .red: return 1\n"
+        "        .green:\n            k: i32 = n\n            for i in range(0, n):\n                if i == k:\n"
+        "                    break\n            return k + n\n        _: ()\n";
+    expect(before, after);
+}

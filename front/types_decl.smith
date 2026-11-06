@@ -120,9 +120,17 @@ struct Pending {
     Str function;
 };
 
+// A statement of a block, and where the block ends: the reach of a binding the statement makes (#2503).
+struct Parent {
+    const ast::Stmt *stmt;
+    U32 end;
+};
+
 struct State {
     Frame work[:];
     Usize top;
+    Parent parents[:];
+    Usize parent_count;
     Local locals[:];
     Usize local_count;
     Pending pending[:];
@@ -136,6 +144,7 @@ struct State {
 };
 
 static State state;
+static Str fixed_source = ""; // the text being fixed, for the fixes that copy a part of it; empty when none (#2503)
 
 static Str msg(char chars[:]) {
     return chars;
@@ -593,7 +602,25 @@ static void block_statement(types::Checked *r, const ast::Stmt *s) {
     push(nullptr, nullptr, leave);
     for (Usize i = countof(items); i > 0; i--) {
         push(items[i - 1], nullptr, enter);
+        if (state.parent_count == countof(state.parents)) {
+            state.parents = mem::realloc(state.parents, state.parent_count < 16 ? 16 : state.parent_count * 2);
+        }
+        state.parents[state.parent_count] = (Parent){.stmt = items[i - 1], .end = s->span.end};
+        state.parent_count += 1;
     }
+}
+
+// Where the block that holds `s` ends; 0 when `s` is in none.
+static U32 block_end(const ast::Stmt *s) {
+    for (Usize i = state.parent_count; i > 0; i--) {
+        if (state.parents[i - 1].stmt == s) return state.parents[i - 1].end;
+    }
+    return 0;
+}
+
+// The text that `smith lint --fix` mends, for the fixes that copy a part of it (`front::fix` sets it, #2503).
+export void set_source(Str source) {
+    fixed_source = source;
 }
 
 // Whether the statement always ends by leaving its block: it is a `return`, `break` or `continue`, or a block whose
@@ -605,10 +632,9 @@ static Bool leaves(const ast::Stmt *s) {
     return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
 }
 
-// A variant test `k == .v` is kept, with the edits that write it as `.v(v) := k` and the reads of `k.v` in its `then`
-// branch as `v` (#2494). The binding takes the variant's name; a variable of that name in scope leaves the site as it
-// is. The guard `k != .v: return` that binds the rest of the function is not fixed yet: the spans of its `if ` do not
-// line up with the text the earlier passes write (follow-up of #2494).
+// A variant test `k == .v` or `k != .v: return` is kept, with the edits that write it as `.v(v) := k` and the reads of
+// `k.v` it guards as `v` (#2494). The binding takes the variant's name; a variable of that name in scope, or declared
+// later in the function, leaves the site as it is, as does a write through `k.v` or to `k`.
 static void add_guard(types::Checked *r, types::Guard guard) {
     if (r->guard_count == countof(r->guards)) {
         r->guards = mem::realloc(r->guards, r->guard_count < 8 ? 8 : r->guard_count * 2);
@@ -617,34 +643,147 @@ static void add_guard(types::Checked *r, types::Guard guard) {
     r->guard_count += 1;
 }
 
+// `k == .v` (or `k != .v` when not `equal`) with no payload on `.v`: the test, else null.
+static const ast::Expr *variant_test(const ast::Expr *test, Bool equal) {
+    if (!(test->kind == .binary)) return nullptr;
+    ast::BinaryOp op = test->kind.binary.op;
+    if (equal ? op != .equal : op != .not_equal) return nullptr;
+    const ast::Expr *right = test->kind.binary.right;
+    if (!(right->kind == .variant) || right->kind.variant.payload != nullptr) return nullptr;
+    return test;
+}
+
+static Bool name_taken(types::Checked *r, Str name) {
+    const types::Symbol *taken = types::lookup(&r->scopes, name);
+    return taken != nullptr && taken->kind == .variable;
+}
+
+static syntax::Edit edit_of(U32 start, U32 end, Str text) {
+    return (syntax::Edit){.span = {.start = start, .end = end}, .text = text};
+}
+
+// `if k == .v:` with no `else`: the reads in the `then` are the test's, written `if .v(v) := k:`.
+static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
+    if (!(s->kind == .if_stmt) || !(test->kind == .binary)) return;
+    const ast::Expr *left = test->kind.binary.left;
+    const ast::Expr *right = test->kind.binary.right;
+    if (!(right->kind == .variant)) return;
+    Str variant = right->kind.variant.name;
+    if (name_taken(r, variant)) return;
+    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(left->span.start, left->span.start, pattern);
+    head[1] = edit_of(left->span.end, right->span.end, "");
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    add_guard(r, (types::Guard){.base = left, .variant = variant, .reads = then_branch->span, .head = head});
+}
+
+// The operands of a chain `a || b || c`, at most `countof(out)`; 0 when there are more.
+static Usize or_operands(const ast::Expr *test, const ast::Expr *out[8]) {
+    Usize count = 0;
+    const ast::Expr *at = test;
+    while (at->kind == .binary && at->kind.binary.op == .logical_or) {
+        if (count == 7) return 0;
+        out[count] = at->kind.binary.right;
+        count += 1;
+        at = at->kind.binary.left;
+    }
+    out[count] = at;
+    count += 1;
+    for (Usize i = 0; i < count / 2; i++) { // the right operands were met first
+        const ast::Expr *swap = out[i];
+        out[i] = out[count - 1 - i];
+        out[count - 1 - i] = swap;
+    }
+    return count;
+}
+
+// The spaces that start the line holding `at`.
+static Str indent_at(U32 at) {
+    Str text = fixed_source;
+    Usize line = at;
+    while (line > 0 && text[line - 1] != '\n')
+        line -= 1;
+    Usize end = line;
+    while (end < countof(text) && text[end] == ' ')
+        end += 1;
+    return text[line:end];
+}
+
+// Whether the text holds the `if` as smith's own syntax writes it, `if test:`: while it still has C's parentheses and
+// braces the statement's span does not start at its `if` (#2503).
+static Bool indented_if(ast::Span statement, ast::Span test) {
+    Str text = fixed_source;
+    if (countof(text) < statement.end || statement.start + 3 > test.start || test.end >= countof(text)) return false;
+    return types::same_text(text[statement.start:statement.start + 3], "if ") && text[test.end] == ':';
+}
+
+// `if k != .v: return X` (or `break`, `continue`) with no `else`: the reads of `k.v` to the end of the block are the
+// test's, written `.v(v) := k else: return X` (#2503). In a chain `if a || k != .v || b: X` the test stands alone
+// between `if a: X` and `if b: X`, which copies `X`: that needs the text, so a chain is left when there is none.
+static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .if_stmt)) return;
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Expr *parts[8] = {};
+    Usize count = or_operands(test, parts);
+    Usize at = count;
+    for (Usize i = 0; i < count; i++) {
+        if (at == count && variant_test(parts[i], false) != nullptr) at = i;
+    }
+    U32 end = block_end(s);
+    if (at == count || end == 0 || !indented_if(s->span, test->span)) return;
+    const ast::Expr *tested = parts[at];
+    if (!(tested->kind == .binary)) return;
+    const ast::Expr *left = tested->kind.binary.left;
+    const ast::Expr *right = tested->kind.binary.right;
+    if (!(right->kind == .variant)) return;
+    Str variant = right->kind.variant.name;
+    if (name_taken(r, variant)) return;
+    for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
+        types::Guard *g = &r->guards[i];
+        Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
+        if (covered && types::same_text(g->variant, variant)) return;
+    }
+    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    syntax::Edits head = {};
+    if (count == 1) {
+        head = mem::realloc(head, 2);
+        head[0] = edit_of(s->span.start, left->span.start, pattern);
+        head[1] = edit_of(left->span.end, test->span.end, " else");
+    } else {
+        Str leave = fixed_source[test->span.end:s->span.end];
+        Str indent = indent_at(s->span.start);
+        Str before = "";
+        if (at > 0) {
+            Str first = fixed_source[parts[0]->span.start:parts[at - 1]->span.end];
+            before = msg(format::push("if ", first, leave, "\n", indent));
+        }
+        Str bound = fixed_source[left->span.start:left->span.end];
+        U32 stop = at + 1 < count ? parts[at + 1]->span.start : parts[at]->span.end;
+        Str after = "";
+        if (at + 1 < count) after = msg(format::push(leave, "\n", indent, "if "));
+        head = mem::realloc(head, 2);
+        head[0] = edit_of(s->span.start, parts[at]->span.start, before);
+        head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, bound, " else", after)));
+    }
+    ast::Span reads = {.start = parts[at]->span.end, .end = end};
+    add_guard(
+        r, (types::Guard){.base = left, .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
+}
+
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_stmt)) {
+    if (!(s->kind == .if_stmt) || s->kind.if_stmt.else_branch != nullptr) {
         return;
     }
     const ast::Expr *test = s->kind.if_stmt.condition;
-    if (!(test->kind == .binary)) {
-        return;
+    const ast::Expr *equal = variant_test(test, true);
+    if (equal != nullptr) {
+        note_then_guard(r, s, equal);
+    } else if (leaves(s->kind.if_stmt.then_branch)) {
+        note_rest_guard(r, s);
     }
-    const ast::Expr *left = test->kind.binary.left;
-    const ast::Expr *right = test->kind.binary.right;
-    Bool equal = test->kind.binary.op == .equal;
-    if (!equal || !(right->kind == .variant) || right->kind.variant.payload != nullptr) {
-        return;
-    }
-    Str variant = right->kind.variant.name;
-    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
-    const types::Symbol *taken = types::lookup(&r->scopes, variant);
-    if (s->kind.if_stmt.else_branch != nullptr || (taken != nullptr && taken->kind == .variable)) {
-        return;
-    }
-    char built[:] = format::push(".", variant, "(", variant, ") := ");
-    Str pattern = built;
-    Str nothing = "";
-    syntax::Edits head = {};
-    head = mem::realloc(head, 2);
-    head[0] = (syntax::Edit){.span = {.start = left->span.start, .end = left->span.start}, .text = pattern};
-    head[1] = (syntax::Edit){.span = {.start = left->span.end, .end = right->span.end}, .text = nothing};
-    add_guard(r, (types::Guard){.base = left, .variant = variant, .reads = then_branch->span, .head = head});
 }
 
 // An arm `.v: value` of a `match k:` reads the payload as `k.v`: the fix is `.v(v): value` and `v` for each read.
@@ -703,8 +842,8 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         if (live != nullptr) push(live, nullptr, enter);
         return;
     }
+    note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
     types_expr::check(r, test, r->table.bool_type);
-    note_guard(r, s);
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
@@ -778,7 +917,8 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     if (t != nullptr && t->kind == .option && t->element != nullptr) {
         element = t->element;
     }
-    types::Symbol symbol = {.name = binding, .kind = .variable, .type = element, .is_const = true, .is_new = true};
+    types::Symbol symbol = {
+        .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     types::declare(&r->scopes, symbol);
     note_local(binding, element);
 }
@@ -1085,6 +1225,9 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     r->guard_count = 0;
+    state.parent_count = 0;
+    Usize first_error = r->error_count;
+    Usize first_local = state.local_count;
     find_tails(root);
     types_undefined::check_body(r, root);
     state.top = 0;
@@ -1114,7 +1257,13 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
             enter_statement(r, f.stmt);
         }
     }
-    affine::check_body(r, root); // after the walk: it reads the types the walk recorded
+    affine::check_body(r, root);                 // after the walk: it reads the types the walk recorded
+    for (Usize i = 0; i < r->guard_count; i++) { // a local of the binding's name, anywhere in the body (#2503)
+        for (Usize k = first_local; k < state.local_count; k++) {
+            if (types::same_text(state.locals[k].name, r->guards[i].variant)) r->guards[i].spoiled = true;
+        }
+    }
+    types_expr::drop_spoiled(r, first_error);
     state.result = outer;
 }
 
