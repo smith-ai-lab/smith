@@ -27,6 +27,14 @@ First, friction was reviewed daily by the lead: sum the minutes, re-rank, move p
 
 The cloud runners pause at the subscription's daily limit. A bash loop on the owner's Mac starts `claude -p` runners on the owner's Anthropic API credits and keeps the work going; the key comes from the login Keychain on the command line, and `mac` tickets (those needing the macOS SDK) go to it first. A loop, not a chain of successors, so a crash costs one ticket.
 
+## The work order from the count (2026-11-06)
+
+What changed: the order of work is no longer the labels. It is the numbered `## Work order` list on #73, ranked by the files each ticket unblocks in the latest `frontend-coverage` count, rewritten by the lead after every count. Runners take the top entry that is not claimed or blocked; `p0` still comes first, and the labels order only what the list does not name. Owner: "We should tell them to go fix off the top unclaimed ticket in that list, and then you can update that list every time we get a new count."
+
+Why: under the label order, 28 tickets sat at `p1`, so runners took the oldest. Overnight 35 PRs merged and the count went from 465 to 505 of 1546, flat for seven hours, while `lib/std/test.smith`, the first error of 267 files, had no ticket. The coverage job was also blind for about five hours (#2586) because it gates nothing.
+
+Measure: files passing per hour of runner time, and whether every top-5 cause has a claimed ticket at each count.
+
 ## Alternatives considered
 
 - **GitHub Projects ordering (GraphQL):** a board could hold the order, but agents' tools cannot reach it (GraphQL returns HTTP 403 in cloud sessions). Labels and `gh api` REST work everywhere.
