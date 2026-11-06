@@ -40,13 +40,13 @@ static Usize errors_in(Str source) {
 // `module.to(args)` is a call of the module's function: the left side is a name an import binds (#2104).
 export void test_front_fix_args_a_module_function_named_to_is_a_call() {
     test::check_equal(
-        errors_in("import std.format\nimport std.wrapping\nfn f(pair: i32):\n    format.to(out, 8, pair)\n"
+        errors_in("import std.format\nimport std.wrapping\nfn f(pair: i32):\n    format.write(out, 8, pair)\n"
                   "    wrapping.to(u8, 300)\n"),
         (Usize)0);
 }
 
 export void test_front_fix_args_an_alias_binds_the_module_name() {
-    test::check_equal(errors_in("import std.format as fmt\nfn f(pair: i32):\n    fmt.to(out, 8, pair)\n"), (Usize)0);
+    test::check_equal(errors_in("import std.format as fmt\nfn f(pair: i32):\n    fmt.write(out, 8, pair)\n"), (Usize)0);
 }
 
 export void test_front_fix_args_a_value_to_is_still_the_conversion() {
