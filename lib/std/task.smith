@@ -291,7 +291,7 @@ void task_main(Task *task) {
         const void *bottom = nullptr;
         Usize size = 0;
         c::__sanitizer_finish_switch_fiber(task->fake_stack, &bottom, &size);
-        if (task->resumer->size == 0) {
+        if (task->resumer != nullptr && task->resumer->size == 0) {
             task->resumer->bottom = bottom;
             task->resumer->size = size;
         }
@@ -303,7 +303,7 @@ void task_main(Task *task) {
         finish_managed(task);
     else
         task->group->pending -= 1;
-    transfer(task, task->resumer);
+    if (task->resumer != nullptr) transfer(task, task->resumer);
     c::smith_failure_format(c::SmithFailure_Memory, "a finished task was entered again"); // unreachable
 }
 
@@ -367,12 +367,34 @@ void lay_frame(Task *task, U8 *end) {
 // The fields every task starts with.
 void init_task(Task *task, Group *group, void (*entry)(void *context), void *context) {
     contract::trusted(); // the handlers are copied from the runtime's table
-    *task = (Task){};
+    // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
+    task->sp = nullptr;
+    task->resumer = nullptr;
+    task->next = nullptr;
     task->group = group;
     task->entry = entry;
     task->context = context;
+    task->fake_stack = nullptr;
+    task->bottom = nullptr;
+    task->size = 0;
+    task->region = nullptr;
+    task->region_size = 0;
+    task->finished = false;
     task->handlers = *c::smith_handlers_table(); // the spawner's handlers, as of now
     task->table = &task->handlers;
+    task->saved_errno = 0;
+    task->keep_fake_stack = false;
+    task->managed = false;
+    task->worker = nullptr;
+    task->waiting_on = nullptr;
+    task->wait_next = nullptr;
+    task->in_wait = false;
+    task->parked = false;
+    task->woken = false;
+    task->io_waiting = false;
+    task->pool_next = nullptr;
+    task->pool_request = nullptr;
+    task->pool_worker = nullptr;
 }
 
 // A new task of the inline scheduler: one mapping holding a guard page, the stack and, at its top, the task's own

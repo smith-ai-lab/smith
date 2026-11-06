@@ -463,6 +463,16 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
     return edits;
 }
 
+// The edit for `&x` handed where a `*mut P` is wanted and `P` is a pointer to a constant (`const void **`): `x` becomes
+// `mut x`, and its own type stays `*T` (#2643).
+export syntax::Edits address_binding_fix(const types::Checked *c, const ast::Expr *name) {
+    syntax::Edits none = {};
+    if (name->kind != .name) return none;
+    const types::Symbol *x = types::lookup_path(&c->scopes, name->kind.name.path);
+    if (x == nullptr || x->kind != .variable || !x->is_new) return none;
+    return mut_fix(x);
+}
+
 // The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
 // becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
 static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member, Bool slice_field) {
@@ -3448,20 +3458,33 @@ static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
     return found;
 }
 
+// The read `a.f` of an option of a pointer that `place` writes through (`a.f.x = v` with `a.f` a `?*T`), or null: the
+// binding of a test of `a.f` is a copy of the pointer, and the write lands in what both point at (#2643).
+static const ast::Expr *pointer_payload_read(types::Checked *c, const ast::Expr *place) {
+    if (!(place->kind == .member)) return nullptr;
+    const ast::Expr *read = place->kind.member.base;
+    if (!(read->kind == .member)) return nullptr;
+    types::TypeRef t = typ(c, read);
+    if (t == nullptr || t->kind != .option || t->element == nullptr || t->element->kind != .pointer) return nullptr;
+    return read;
+}
+
 // A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
 // so the test's site is left as it is (#2503).
 static void spoil_written(types::Checked *c, const ast::Expr *place) {
     if (place->kind == .unary && place->kind.unary.op == .dereference) {
         place = place->kind.unary.operand; // `p.* = x` changes what a test of `p.*` read
     }
+    const ast::Expr *through = pointer_payload_read(c, place);
+    types::Guard *kept = through != nullptr ? guard_of(c, through) : nullptr;
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
-        if (inside && leads_to(place, g->base)) g->spoiled = true;
+        if (inside && leads_to(place, g->base) && g != kept) g->spoiled = true;
     }
     while (place->kind == .member || place->kind == .index) {
         types::Guard *g = guard_of(c, place);
-        if (g != nullptr) g->spoiled = true;
+        if (g != nullptr && g != kept) g->spoiled = true;
         if (place->kind == .member) {
             place = place->kind.member.base;
         } else if (place->kind == .index) {

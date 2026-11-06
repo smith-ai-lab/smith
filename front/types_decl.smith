@@ -248,6 +248,10 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         source = source->kind.binary.left;
     if (source->kind == .slice_of) source = source->kind.slice_of.base; // `buffer[filled:]` is as writable as `buffer`
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
+    // `&bottom` handed where `const void **` is wanted: the local is `mut`, and its `*void` stays (#2643).
+    if (drops_const && source->kind == .unary && source->kind.unary.op == .address_of && to->kind == .pointer &&
+        to->element->kind == .pointer && to->element->pointee_const)
+        fix = types_expr::address_binding_fix(c, source->kind.unary.operand);
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
@@ -315,6 +319,13 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && from->pointee_const &&
             !to->pointee_const) {
             fix = types_expr::pointer_fix(c, e->kind.cast.operand);
+        }
+        // `task_main.to(usize)`: a function is an address, so it is a pointer first, `task_main.cast(*void).to(usize)`
+        // (#2643).
+        if (e->kind == .cast && from->kind == .function && to->kind == .integer) {
+            Str pointer = ".cast(*void)";
+            fix = mem::realloc(fix, 1);
+            fix[0] = (syntax::Edit){.span = {.start = e->kind.cast.operand->span.end, .end = e->kind.cast.operand->span.end}, .text = pointer};
         }
         types::fail_fix(c, e->span, verdict.message, fix);
         return false;
@@ -984,6 +995,55 @@ static const ast::Expr *null_test(const ast::Expr *test, Bool equal) {
     return test;
 }
 
+// The leftmost test of a chain `a && b && c`, when `test` is one, else null.
+static const ast::Expr *chain_head(const ast::Expr *test) {
+    if (!(test->kind == .binary) || test->kind.binary.op != .logical_and) return nullptr;
+    const ast::Expr *head = test->kind.binary.left;
+    while (head->kind == .binary && head->kind.binary.op == .logical_and)
+        head = head->kind.binary.left;
+    return head;
+}
+
+// Whether only spaces come before `at` on its line.
+static Bool starts_line(U32 at) {
+    Str text = fixed_source;
+    Usize line = at;
+    while (line > 0 && text[line - 1] != '\n')
+        line -= 1;
+    return countof(indent_at(at)) == at - line;
+}
+
+// `if a.f != nullptr && rest:` (#2643): a field does not narrow, so the option is read into a local first, `f := a.f`
+// on the line before, which the test and its `then` use: `if f != .none && rest:` narrows the name. The reads of
+// `a.f` after the first test are `f`.
+static Bool note_chain_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *first) {
+    if (!(s->kind == .if_stmt)) return false;
+    if (!(first->kind == .binary)) return false;
+    const ast::Expr *left = first->kind.binary.left;
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Expr *some = null_test(first, false);
+    if (some == nullptr || !indented_if(s->span, test->span) || !starts_line(s->span.start)) return false;
+    if (!(left->kind == .member)) return false;
+    Str field = left->kind.member.name;
+    if (name_taken(r, field)) return false;
+    for (Usize i = 0; i < r->guard_count; i++) {
+        types::Guard *g = &r->guards[i];
+        Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
+        if (covered && g->option && types::same_text(g->variant, field)) return false;
+    }
+    Str read = fixed_source[left->span.start:left->span.end];
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(s->span.start, s->span.start, msg(format::push(field, " := ", read, "\n", indent_at(s->span.start))));
+    head[1] = edit_of(left->span.start, left->span.end, field);
+    types::Guard guard = {.base = left->kind.member.base, .variant = field, .option = true, .test = first};
+    guard.reads = (ast::Span){.start = first->span.end, .end = then_branch->span.end};
+    guard.head = head;
+    add_guard(r, guard);
+    return true;
+}
+
 // A test of a field that is an option (#2557): `if a.f != nullptr:` guards its `then`, written `if f := a.f:`, and
 // `if a.f == nullptr: return X` with no `else` guards the rest of the block, written `f := a.f else: return X`. Each
 // read `a.f` the test guards is `f`, the field's own name (#2455: no invented names); a name `f` in scope leaves the
@@ -993,6 +1053,8 @@ static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
     if (countof(fixed_source) == 0 || !(s->kind == .if_stmt)) return false;
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Expr *chain = chain_head(test);
+    if (chain != nullptr) return note_chain_guard(r, s, chain);
     const ast::Expr *some = null_test(test, false);
     Bool rest = null_test(test, true) != nullptr && s->kind.if_stmt.else_branch == nullptr && leaves(then_branch) &&
                 state.block_end != 0;
