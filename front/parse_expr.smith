@@ -1103,7 +1103,8 @@ struct Stack {
     Usize value_count;
     parse::Parser *parser;
     Bump bumps[:];
-    Bool head; // a condition head: a call here takes no trailing block (parentheses and arguments lift this)
+    Bool head;     // a condition head: a call here takes no trailing block (parentheses and arguments lift this)
+    Bool stop_and; // a top-level `&&` ends the expression: the chain after a pattern's value (D12)
 };
 
 typedef enum {
@@ -1711,6 +1712,7 @@ static ast::UnaryOp prefix_op(lex::TokenKind kind) {
 // An infix operator at the position: binary, assignment or the `?:`. Absent when the token is none.
 static Outcome infix_step(parse::Parser *p, Stack *st) {
     lex::TokenKind kind = parse::peek(p).kind;
+    if (st->stop_and && kind == lex::ampersand_ampersand) return .absent;
     U32 prec = binary_prec(kind);
     if (prec > 0) {
         reduce_above(st, prec, false);
@@ -2298,8 +2300,9 @@ static Step operand_step(parse::Parser *p, Stack *st) {
 
 // Reads an expression at the position, or records an error and gives null. The hook `parse::Hooks.expression`.
 export ast::Expr *expression(parse::Parser *p) {
-    Stack st = {.parser = p, .head = p->head};
+    Stack st = {.parser = p, .head = p->head, .stop_and = p->stop_and};
     p->head = false;
+    p->stop_and = false;
     Bool want_operand = true;
     for (Usize i = 0; i <= countof(p->tokens); i += 1) {
         if (want_operand) {
