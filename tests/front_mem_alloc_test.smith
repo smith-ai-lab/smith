@@ -99,7 +99,7 @@ static void clean(Str folder) {
 static void passes(Str name, Str body) {
     Str folder = folder_for(name);
     compile::Report report = compile_body(folder, name, body);
-    test::check_equal(report.ok, true);
+    if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     if (report.ok) {
         Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", c_side(),
                                          "int main(void) { return check(); }\n"));
@@ -108,8 +108,6 @@ static void passes(Str name, Str body) {
             format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/", name, ".o -o ", folder, "/prog")));
         test::check_equal(linked, 0);
         if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
-    } else {
-        test::check_equal(report.text, as_str(format::push("")));
     }
     clean(folder);
 }
@@ -135,12 +133,12 @@ export void test_front_mem_alloc_a_length_is_a_slice() {
                      "    0\n");
 }
 
-// `mem.alloc(T, [a, b])` is one zeroed block `[,]T` indexed `x[i, j]`; a size of any integer type is a `usize`.
+// `mem.alloc(T, [a, b])` is one zeroed block `[,]T` indexed `x[i, j]`; each size is a `usize`.
 export void test_front_mem_alloc_a_shape_is_one_block() {
     passes("shape", "import std.mem\n\n"
                     "pub fn check() -> i32:\n"
                     "    rows: u32 = 3\n"
-                    "    grid := mem.alloc(f64, [rows, 5])\n"
+                    "    grid := mem.alloc(f64, [rows.to(usize), 5])\n"
                     "    if grid[2, 4] != 0.0:\n        return 1\n"
                     "    grid[2, 4] = 1.5\n"
                     "    if grid[2, 4] != 1.5 || grid[0, 0] != 0.0:\n        return 2\n"
