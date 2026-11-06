@@ -190,7 +190,6 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
-
 // The edit for a local written `*mut *T` and initialized with a `*mut *mut T`: the inner pointer becomes `*mut T`,
 // since what the initializer points at is writable (std.mem's `buckets` from `table(...)`, #2427).
 static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
