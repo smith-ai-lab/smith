@@ -806,6 +806,18 @@ static Bool only_ok_reads(Str text, Str name) {
     return true;
 }
 
+// Whether the word `name` is in `text` at all.
+static Bool mentions(Str text, Str name) {
+    Usize n = countof(name);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (!types::same_text(text[i:i + n], name)) continue;
+        if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) continue;
+        if (i + n < countof(text) && word_char(text[i + n])) continue;
+        return true;
+    }
+    return false;
+}
+
 // The edit that deletes the statement and its line.
 static syntax::Edit delete_statement(ast::Span span) {
     U32 start = span.start;
@@ -889,10 +901,16 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
             return false;
         before = msg(format::push("errdefer ", line, "\n", indent_at(d->span.start)));
     }
+    // A result nothing reads is a bare `try` (#2552): no read carries the edits, so the declaration's own error does.
+    Bool unread = !mentions(fixed_source[s->span.end:end], name);
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
-    head[0] = edit_of(d->span.start, init->span.start, msg(format::push(before, "ok := try ")));
+    head[0] = edit_of(d->span.start, init->span.start, msg(format::push(before, unread ? "try " : "ok := try ")));
     head[1] = delete_statement(s->span);
+    if (unread) {
+        types::fail_fix(r, d->span, "a `Result` whose error is passed up unchanged is written `try call(...)`", head);
+        return true;
+    }
     ast::Span reads = {.start = s->span.end, .end = end};
     Str ok_name = "ok";
     add_guard(r, (types::Guard){.base = guard_base(left), .variant = ok_name, .reads = reads, .head = head});
