@@ -669,9 +669,6 @@ static void as_todays_syntax(ast::Module *module) {
                 d->kind.function.params[k].is_new = false;
         } else if (d->kind == .variable) {
             d->kind.variable.is_new = false;
-        } else if (d->kind == .record) {
-            for (Usize k = 0; k < countof(d->kind.record.fields); k++)
-                d->kind.record.fields[k].is_new = false;
         }
     }
 }
