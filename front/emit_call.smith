@@ -146,6 +146,9 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     Str name = d->kind.function.name;
     const types::Symbol *symbol =
         types::lookup_as(&e->options.checked->scopes, state::msg(format::push("c::", name)), false);
+    if (symbol != nullptr && symbol->kind == .type_name) { // a struct of the same name: the function is `name()`
+        symbol = types::lookup(&e->options.checked->scopes, state::msg(format::push("c::", name, "()")));
+    }
     if (symbol == nullptr || symbol->type->kind != .function) {
         return signature_failed(state::fail("not a C function", d->span));
     }
