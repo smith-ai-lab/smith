@@ -1492,6 +1492,47 @@ static Bool float_constant(const ast::Expr *x, F64 *out) {
     return true;
 }
 
+// The operand of an integer constant expression: a literal, `-literal` or a conversion of one (`1.to(u64)`), as the
+// bits of a 64-bit value; false for anything else.
+static Bool integer_operand(const ast::Expr *x, U64 *out) {
+    if (x->kind == .cast) x = x->kind.cast.operand;
+    if (x->kind == .integer) {
+        *out = x->kind.integer.value;
+        return true;
+    }
+    if (x->kind == .unary && x->kind.unary.op == .negate && x->kind.unary.operand->kind == .integer) {
+        *out = 0 - x->kind.unary.operand->kind.integer.value;
+        return true;
+    }
+    return false;
+}
+
+// An integer constant from one operation on two integer constants: `1.to(u64) << 63`, `base + 1`, a flag mask. Types of
+// up to 64 bits; LLVMConstInt keeps the low bits of the result that the type holds.
+static Bool integer_operation(state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind != .binary || ty.bits > 64) return false;
+    U64 left = 0;
+    U64 right = 0;
+    if (!integer_operand(x->kind.binary.left, &left) || !integer_operand(x->kind.binary.right, &right)) return false;
+    ast::BinaryOp op = x->kind.binary.op;
+    U64 value = 0;
+    if (op == .shift_left && right < ty.bits) {
+        value = left << right;
+    } else if (op == .add) {
+        value = left + right;
+    } else if (op == .subtract) {
+        value = left - right;
+    } else if (op == .multiply) {
+        value = left * right;
+    } else if (op == .bit_or) {
+        value = left | right;
+    } else {
+        return false;
+    }
+    *out = c::LLVMConstInt(ty.llvm, value, 0);
+    return true;
+}
+
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
     if (x->kind == .null_pointer && ty.kind == .pointer) {
@@ -1504,6 +1545,7 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     }
     if (ty.kind == .integer && x->kind == .integer)
         return integer_constant(ty, x->kind.integer.value, false, x->span, out);
+    if (ty.kind == .integer && integer_operation(ty, x, out)) return state::success();
     if (ty.kind == .integer && x->kind == .unary && x->kind.unary.op == .negate) {
         const ast::Expr *inner = x->kind.unary.operand;
         if (inner->kind == .integer) return integer_constant(ty, inner->kind.integer.value, true, x->span, out);

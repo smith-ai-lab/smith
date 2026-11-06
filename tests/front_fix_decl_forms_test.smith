@@ -23,7 +23,7 @@ static void expect_fixed(Str before, Str want) {
 export void test_front_fix_struct_with_a_function_pointer_and_comments() {
     expect_fixed("module m;\nstruct Task {\n    Task *next; // the link\n    void (*entry)(void *context);\n"
                  "    Bool done; // set\n};\n",
-                 "struct Task:\n    next: *Task # the link\n    entry: fn(*void)\n    done: bool # set\n");
+                 "struct Task:\n    next: *Task # the link\n    entry: fn(*mut void)\n    done: bool # set\n");
 }
 
 export void test_front_fix_type_parameter_of_a_type_function() {
@@ -134,4 +134,18 @@ export void test_front_fix_restrict_slice_without_a_precondition_is_left_alone()
         if (mem::equal(first.text[i:i + 8], word)) kept = true;
     }
     test::check_condition(kept);
+}
+
+// A prototype C defines is an `extern fn`, and `export` keeps it `pub`; the ownership attributes follow (#2469, decided
+// on #1406): the fixer wrote `pub *c.FILE open(*char path);`, a C head with `char` as a type of smith's own.
+export void test_front_fix_exported_prototype_is_a_pub_extern_fn() {
+    expect_fixed("module m;\nexport c::FILE *open(const char *path);\n",
+                 "pub extern fn open(path: *char) -> *mut c.FILE\n");
+    expect_fixed("module m;\nexport [[std::returns_owned(free)]] char *dup(const char *text);\n",
+                 "pub @returns_owned(free) extern fn dup(text: *char) -> *mut char\n");
+}
+
+export void test_front_fix_private_prototype_with_an_ownership_attribute() {
+    expect_fixed("module m;\n[[std::returns_internal]] const char *message(I32 code);\n",
+                 "@returns_internal extern fn message(code: i32) -> *char\n");
 }

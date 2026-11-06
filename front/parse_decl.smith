@@ -443,6 +443,10 @@ static Mapped map_attribute(Str inner) {
         result.text = "@affine";
     } else if (starts_with(word, "std::c_name(")) {
         result.text = as_str(format::push("@c_name(", word[12:countof(word)]));
+    } else if (starts_with(word, "std::returns_owned(") || starts_with(word, "std::returns_borrowed(")) {
+        result.text = as_str(format::push("@", word[5:countof(word)]));
+    } else if (same_text(word, "std::returns_internal")) {
+        result.text = "@returns_internal";
     } else {
         result.known = false;
     }
@@ -1381,8 +1385,10 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     Str name = named(p, pre, parse::text(p, head.name));
     Str params = "";
     // `extern void f(A a);` is `extern fn f(a: A)`: the linker provides the body, so the `;` goes (#2224).
+    // `export T f(A a);` is `pub extern fn f(a: A) -> T`, and `T f(A a);` is `extern fn f(a: A) -> T`: a function C
+    // defines, `pub` keeping it in the module's header (#2469). A `static` one has no definition to find: not here.
     Bool prototype =
-        !has_body && pre->is_extern && close + 1 < countof(p->tokens) && p->tokens[close + 1].kind == lex::semicolon;
+        !has_body && !pre->is_static && close + 1 < countof(p->tokens) && p->tokens[close + 1].kind == lex::semicolon;
     // `extern T f(A a) __asm__("sym");` renames the C symbol: `extern @c_name("sym") fn f(a: A)` (#2224).
     Usize asm_end = asm_label_end(p, close + 1);
     Str symbol = "";
@@ -1402,7 +1408,7 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
     }
     Str result = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     result = writable_result(trimmed(source_between(p, head.type_start, head.name.span.start)), result);
-    Str written = as_str(format::push("fn ", name, "(", params, ")"));
+    Str written = as_str(format::push(prototype && !pre->is_extern ? "extern fn " : "fn ", name, "(", params, ")"));
     if (countof(symbol) > 0) written = as_str(format::push("@c_name(", symbol, ") ", written));
     if (!same_text(result, "void")) written = as_str(format::push(written, " -> ", result));
     parse::Edits edits = {};
