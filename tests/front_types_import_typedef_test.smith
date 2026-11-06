@@ -1,0 +1,60 @@
+// A typedef alias exported by a module in today's syntax is a type for its importer (#2602, part of #1631), so the
+// checker's `mut` fix-it on a local of that type is produced in one `smith lint --fix` run: an alias of a list
+// (`typedef typeof(Node[:]) Nodes;`), and a construction that leaves a field of the imported struct out.
+module front_types_import_typedef_test;
+
+import front::fix;
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+static Str fixed_beside(Str module_path, Str module_text, Str user_path, Str user_text) {
+    test::check_equal(fix::store(module_path, module_text), true);
+    test::check_equal(fix::store(user_path, user_text), true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    if (back == .error) return "cannot read back";
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    return got;
+}
+
+export void test_front_types_import_typedef_list_alias_gets_mut_in_one_run() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_beside("/tmp/front_types_import_typedef_a.smith",
+                           "module front_types_import_typedef_a;\n"
+                           "export typedef struct { I32 n; } Node;\n"
+                           "export typedef typeof(Node[:]) Nodes;\n",
+                           "/tmp/front_types_import_typedef_b.smith",
+                           "module front_types_import_typedef_b;\nimport front_types_import_typedef_a;\n"
+                           "static void f(front_types_import_typedef_a::Nodes xs) {\n"
+                           "    front_types_import_typedef_a::Nodes ys = xs;\n    ys = xs;\n}\n");
+    Str want = "import front_types_import_typedef_a\nstatic fn f(xs: front_types_import_typedef_a.Nodes):\n"
+               "    mut ys: front_types_import_typedef_a.Nodes = xs\n    ys = xs\n";
+    test::check_equal(got, want);
+}
+
+export void test_front_types_import_typedef_left_out_field_keeps_the_type() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got =
+        fixed_beside("/tmp/front_types_import_typedef_c.smith",
+                     "module front_types_import_typedef_c;\n"
+                     "export typedef struct { I32 n; I32 m; } Node;\n",
+                     "/tmp/front_types_import_typedef_d.smith",
+                     "module front_types_import_typedef_d;\nimport front_types_import_typedef_c;\n"
+                     "static void f() {\n"
+                     "    front_types_import_typedef_c::Node node = (front_types_import_typedef_c::Node){.n = 1};\n"
+                     "    node.m = 2;\n}\n");
+    Str want = "import front_types_import_typedef_c\nstatic fn f():\n"
+               "    mut node: front_types_import_typedef_c.Node = front_types_import_typedef_c.Node(n = 1)\n"
+               "    node.m = 2\n";
+    test::check_equal(got, want);
+}
