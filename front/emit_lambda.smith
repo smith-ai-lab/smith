@@ -104,19 +104,19 @@ static state::Ty make_type(state::Emitter *e, state::Ty parts[:], state::Ty resu
 
 // `R (ptr, A, B)`: the code of a `fn` type.
 static c::LLVMTypeRef code_type(state::Emitter *e, state::Ty func_ty) {
-    c::LLVMTypeRef types[max_parts + 1];
-    types[0] = state::pointer_type(e, 0);
+    c::LLVMTypeRef parameter_types[max_parts + 1];
+    parameter_types[0] = state::pointer_type(e, 0);
     for (Usize i = 0; i < func_ty.part_count; i++)
-        types[i + 1] = part(func_ty, i).llvm;
-    return c::LLVMFunctionType(func_ty.element->llvm, types, (U32)func_ty.part_count + 1, 0);
+        parameter_types[i + 1] = part(func_ty, i).llvm;
+    return c::LLVMFunctionType(func_ty.element->llvm, parameter_types, (U32)func_ty.part_count + 1, 0);
 }
 
 // `R (A, B)`: the code of a C function pointer, which takes no context.
 static c::LLVMTypeRef plain_code_type(state::Ty func_ty) {
-    c::LLVMTypeRef types[max_parts];
+    c::LLVMTypeRef parameter_types[max_parts];
     for (Usize i = 0; i < func_ty.part_count; i++)
-        types[i] = part(func_ty, i).llvm;
-    return c::LLVMFunctionType(func_ty.element->llvm, types, (U32)func_ty.part_count, 0);
+        parameter_types[i] = part(func_ty, i).llvm;
+    return c::LLVMFunctionType(func_ty.element->llvm, parameter_types, (U32)func_ty.part_count, 0);
 }
 
 export state::TyResult type_function(state::Emitter *e, const ast::TypeExpr *t) {

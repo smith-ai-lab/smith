@@ -11,7 +11,7 @@ import std::test;
 
 // The dump of a file that must parse without errors.
 static Str dump_of(Str source) {
-    parser::Parsed parsed = parser::parse("x.smith", source);
+    parser::Parsed parsed = parser::parse_file("x.smith", source);
     if (countof(parsed.errors) > 0) {
         Str expected = "no error";
         test::check_equal(parsed.errors[0].message, expected);
@@ -21,7 +21,7 @@ static Str dump_of(Str source) {
 
 // The first error of a file, or `no error`.
 static Str first_error(Str source) {
-    parser::Parsed parsed = parser::parse("x.smith", source);
+    parser::Parsed parsed = parser::parse_file("x.smith", source);
     if (countof(parsed.errors) == 0) return "no error";
     return parsed.errors[0].message;
 }

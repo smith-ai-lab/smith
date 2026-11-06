@@ -21,7 +21,7 @@ static I32 run(Str source, Str symbol) {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
-    parser::Parsed parsed = parser::parse("t.smith", source);
+    parser::Parsed parsed = parser::parse_file("t.smith", source);
     test::check_equal(countof(parsed.errors), (Usize)0);
     ast::Module m = ast::new_module("front::test", parsed.module.decls);
     types::Checked checked = types_decl::check_module(&m, types::lp64());

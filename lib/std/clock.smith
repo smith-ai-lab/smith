@@ -56,10 +56,10 @@ if constexpr (target::os == target::macos) {
 
 U64 time_ns(c::clockid_t which) {
     contract::trusted(); // a call into the system, the edge a proof cannot read
-    struct c::timespec time = {};
-    I32 status = c::clock_gettime(which, &time); // NOLINT(smith-effects): the edge, as the handler answers it
-    contract::assert(status == 0);               // a valid clock always answers
-    return (U64)time.tv_sec * second + (U64)time.tv_nsec;
+    struct c::timespec reading = {};
+    I32 status = c::clock_gettime(which, &reading); // NOLINT(smith-effects): the edge, as the handler answers it
+    contract::assert(status == 0);                  // a valid clock always answers
+    return (U64)reading.tv_sec * second + (U64)reading.tv_nsec;
 }
 
 // Monotonic nanoseconds: they never go back, and mean nothing but as a difference.

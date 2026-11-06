@@ -19,7 +19,7 @@ static Str dump_of(ast::Decl *d) {
 
 // The first declaration of `source`; the source must parse.
 static ast::Decl *first_decl(Str source) {
-    parser::Parsed p = parser::parse("t.smith", source);
+    parser::Parsed p = parser::parse_file("t.smith", source);
     test::check_equal(countof(p.errors), (Usize)0);
     return p.module.decls[0];
 }
