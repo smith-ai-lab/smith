@@ -10,7 +10,7 @@
 module std::entropy;
 
 import std::contract;
-import std::random;
+import std::random as rng;
 import <smith/handlers.h>; // SmithEntropyHandler, smith_handlers_set_entropy
 import <sys/random.h>;     // getentropy: the function the handler of the thread answers
 
@@ -29,12 +29,12 @@ import <sys/random.h>;     // getentropy: the function the handler of the thread
 // wants a run it can repeat prints `key.bits` or builds its keys with `random::key_make(seed)` instead. It has the
 // `entropy` effect. A test scripts it with `entropy::fake`. A system that cannot give 64 bits of entropy is a checked
 // failure.
-[[std::c_name("smith_entropy_seed")]] export [[nodiscard]] random::Key seed() {
+[[std::c_name("smith_entropy_seed")]] export [[nodiscard]] rng::Key seed() {
     contract::trusted(); // a call into the system, the edge a proof cannot read
     U64 bits = 0;
     I32 status = c::getentropy(&bits, sizeof bits); // NOLINT(smith-effects): the edge, as the handler answers it
     contract::assert(status == 0);
-    return random::key_make(bits);
+    return rng::key_make(bits);
 }
 
 // A fake entropy: it writes the bytes of the number it holds (least significant first, again from the start when
