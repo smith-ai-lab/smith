@@ -48,20 +48,6 @@ b := Options(port = 80)
 ```
 
 - There are no zero values: every field is given, unless the struct declares a default. A default is a compile-time constant: a literal, a constant, `[]`, `.none`, a variant, a construction of constants (`Hint()`, `Span(start = 0, end = 0)`) or `array.filled(T, n, 0)`; a default of an affine type is built anew for each construction. `T()` is not an empty value; it builds a struct only when every field has a default.
-- Ported C keeps C's behaviour explicitly (owner, 2026-11-06, #2530): a field that some construction leaves out, which C zeroes, gets its zero written as its default in the struct, and the constructions stay as written. Only those fields get one:
-
-```smith
-struct Work:
-    then: Action                    # every construction gives it: no default
-    hint: Hint = Hint()             # Hint's left-out fields get defaults the same way
-    name: str = ""
-    blocks: []Block = []
-    count: usize = 0
-    done: bool = false
-    error: Error = .empty           # the variant whose value is 0
-    grid: [3]i32 = array.filled(i32, 3, 0)
-    parent: ?*Work = .none          # a pointer C leaves null is nullable
-```
-
+- Ported C keeps C's behaviour explicitly (owner, 2026-11-06, #2530): a field that some construction leaves out, which C zeroes, gets its zero written as its default in the struct (`count: usize = 0`, `name: str = ""`, `xs: []T = []`, `hint: Hint = Hint()`, `error: Error = .empty`, `grid: [3]i32 = array.filled(i32, 3, 0)`, `parent: ?*Work = .none`), only for those fields; the constructions stay as written.
 - `smith lint --fix` writes these defaults (`front/fix_zero.smith`): it reads the constructions in the struct's own file and in the other files of its folder. A field with no zero to write (a function, a type parameter, an enum with no variant of value 0) keeps the error at the construction; a struct a C header declares has no smith declaration, so its zeros are written at the construction.
 - A declaration always has a value; `= undefined` opts out.
