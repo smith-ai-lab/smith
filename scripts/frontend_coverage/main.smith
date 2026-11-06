@@ -1208,6 +1208,25 @@ static void sort_entries() {
     }
 }
 
+// The fixer reads the modules a file imports from the tree it runs in. In the scratch tree they are being fixed by
+// other jobs at that moment, and a half-written import does not parse, which drops every fix of its importers (#2521).
+// So it runs in a copy of the original tree, whose imports are the same text in every run and for every number of
+// jobs, and fixes the file in the scratch tree by its path. Makes the copy beside the scratch tree, in `pristine`.
+static Bool make_pristine(const char *root, const char *scratch, char pristine[:]) {
+    (void)format::to(pristine.data, countof(pristine), scratch, "/../pristine");
+    if (!copy_tree(root, pristine.data)) {
+        console::print_error("frontend_coverage: cannot copy the files to ", pristine.data, "\n");
+        return false;
+    }
+    char source_link[path_size * 2 + 8];
+    (void)format::to(source_link, sizeof source_link, pristine.data, "/src");
+    (void)c::unlink(source_link);
+    (void)c::symlink(".", source_link);
+    scratch_root = scratch;
+    pristine_root = pristine.data;
+    return true;
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1219,22 +1238,8 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
         return 1;
     }
     list_projects(root);
-    // The fixer reads the modules a file imports from the tree it runs in. In the scratch tree they are being fixed
-    // by other jobs at that moment, and a half-written import does not parse, which drops every fix of its importers
-    // (#2521). So it runs in a copy of the original tree, whose imports are the same text in every run and for every
-    // number of jobs, and fixes the file in the scratch tree by its path.
     char pristine[path_size * 2];
-    (void)format::to(pristine, sizeof pristine, scratch, "/../pristine");
-    if (!copy_tree(root, pristine)) {
-        console::print_error("frontend_coverage: cannot copy the files to ", pristine, "\n");
-        return 1;
-    }
-    char source_link[path_size * 2 + 8];
-    (void)format::to(source_link, sizeof source_link, (const char *)pristine, "/src");
-    (void)c::unlink(source_link);
-    (void)c::symlink(".", source_link);
-    scratch_root = scratch;
-    pristine_root = pristine;
+    if (!make_pristine(root, scratch, pristine[0:path_size * 2])) return 1;
     char folder[path_size * 2];
     (void)format::to(folder, sizeof folder, scratch, "/../fixed");
     cache_folder = folder;
