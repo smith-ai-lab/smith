@@ -125,7 +125,7 @@ export Literal constant_unsigned(U64 value) {
 struct Ctx {
     types::TypeRef from;
     types::TypeRef target_type; // the type the rule is applied to (inside an Option or a Result, its element)
-    types::TypeRef shown; // the type the caller expects, for messages
+    types::TypeRef shown;       // the type the caller expects, for messages
     Literal lit;
     U32 pointer_bits;
     types::TypeRef char_type;
@@ -258,14 +258,17 @@ static Verdict to_floating(const Ctx *c) {
     types::Kind kind = c->from->kind;
     // `F16` and `BF16` have 16 bits each but neither holds the other's values: converting one to the other is a cast.
     if (kind == .floating && c->target_type->bits > c->from->bits) return accept(widening);
-    if (kind == .floating && c->target_type->bits == c->from->bits && c->target_type == c->from) return accept(widening);
+    if (kind == .floating && c->target_type->bits == c->from->bits && c->target_type == c->from)
+        return accept(widening);
     if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
-    if (kind == .integer && !is_word_size(c->from) && always_exact(c->from, mantissa(c->target_type))) return accept(widening);
+    if (kind == .integer && !is_word_size(c->from) && always_exact(c->from, mantissa(c->target_type)))
+        return accept(widening);
     if (kind == .integer && c->lit.is_constant) {
         if (exact_in(mantissa(c->target_type), c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " is not exactly an ", types::show(c->target_type)));
-        return refuse(c, reason, msg(format::push("write a conversion: ", number, ".to(", types::show(c->target_type), ")")));
+        return refuse(c, reason,
+                      msg(format::push("write a conversion: ", number, ".to(", types::show(c->target_type), ")")));
     }
     if (kind == .integer) return needs_cast(c, "this integer may not be exact in the float, so it may round");
     return no_rule(c);
@@ -470,9 +473,9 @@ static Bool float_fits(types::TypeRef to, F64 value) {
 // A constant cast that can never fit is an error, not a check that always fails (owner, 2026-11-01).
 static Verdict never_fits(const Ctx *c, Str number) {
     Str reason = msg(format::push(number, " does not fit ", types::show(c->target_type)));
-    return refuse(
-        c, reason,
-        msg(format::push("write a value that fits, or wrapping::to(", types::show(c->target_type), ", x) to truncate")));
+    return refuse(c, reason,
+                  msg(format::push("write a value that fits, or wrapping::to(", types::show(c->target_type),
+                                   ", x) to truncate")));
 }
 
 static Verdict checked_cast() {
