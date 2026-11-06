@@ -69,6 +69,8 @@ enum FrameKind {
     defer_body,    // the statement after `defer`
     errdefer_body, // the statement after `errdefer`
     for_in_body,   // the body of a `for x in xs`
+    bind_else,     // the `else:` of a refutable binding `.v(x) := value else:` (#2494)
+    bind_rest,     // and the rest of the block it is in, which is its then branch: ends where that block ends
 };
 // NOLINTEND(readability-identifier-naming)
 
@@ -98,6 +100,7 @@ struct Frame {
     Bool braced;          // the new form of `if` and `while`: the body is a block
     Bool layout;          // a block that ends at its `dedent`, not at a `}`
     Bool is_let;          // `if let pattern = value`: `condition` is the value
+    Bool value_tail;      // a refutable binding at the end of a function body: the last line of the rest is the value
     ast::Pattern pattern; // and its pattern
     // An old header and the fix that writes it as smith's own, recorded once the body is known (old_header_fix).
     Bool old;
@@ -905,6 +908,43 @@ static void open_binding_head(parse::Parser *p, Frame *frame) {
     parse::warning_fix(p, cut, "`if let` is gone: write `if x := opt:` or `if .variant(v) := value:`", edits);
 }
 
+// Whether the binding head at the position has an `else` of its own on its line: `.tuple(t) := k else: return` (#2494).
+// An `if` value on the line (`x := if a: 1 else: 2`) takes the `else`s it opens.
+static Bool refutable_head(const parse::Parser *p) {
+    if (!binding_head(p)) return false;
+    Usize depth = 0;
+    Usize ifs = 0;
+    for (Usize i = 0; i < countof(p->tokens); i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::semicolon || kind == lex::dedent) {
+            return false;
+        }
+        if (depth == 0 && kind == lex::right_brace) return false;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        if (depth == 0 && kind == lex::kw_if) ifs += 1;
+        if (depth == 0 && kind == lex::kw_else) {
+            if (ifs == 0) return true;
+            ifs -= 1;
+        }
+    }
+    return false;
+}
+
+// `.tuple(tuple) := base.kind else: return .none`: the pattern, the value and the `else:`; its body follows.
+static Frame open_refutable(parse::Parser *p, Bool parent_layout, Bool tail) {
+    Frame frame = {.kind = bind_else, .start = parse::peek(p).span.start, .is_let = true};
+    frame.pattern = head_pattern(p);
+    frame.pattern.refutable = true;
+    frame.layout = parent_layout;
+    frame.value_tail = tail;
+    parse::expect(p, lex::colon_equal, "`:=` after the pattern");
+    frame.condition = expression(p);
+    parse::expect(p, lex::kw_else, "`else`");
+    parse::expect(p, lex::colon, "`:` after `else`");
+    return frame;
+}
+
 // `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
 // `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
 static Frame open_bare(parse::Parser *p, FrameKind kind) {
@@ -1631,6 +1671,12 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         break;
     }
     if (parse_decl::at_destructure(p)) return destructure_statement(p);
+    if (refutable_head(p)) {
+        Bool in_body = stack->depth == 1 && top(stack)->kind == block_frame;
+        Bool in_rest = stack->depth > 0 && top(stack)->kind == bind_rest && top(stack)->value_tail;
+        push(stack, open_refutable(p, stack->depth > 0 ? top(stack)->layout : p->layout, in_body || in_rest));
+        return nullptr;
+    }
     if (new_binding(p)) return declaration_statement(p);
     if (bare_block(p)) return bare_block_statement(p);
     if (parse::at(p, lex::name) && parse::peek_at(p, 1).kind == lex::colon) {
@@ -1801,9 +1847,29 @@ static void default_arm(const parse::Parser *p, Frame *frame) {
     add_switch_edit(frame, edit((ast::Span){.start = (U32)line, .end = (U32)line}, text));
 }
 
+// The last line of the rest of a function's body is the function's value (#1428), and a binding's `else` leaves, so the
+// line is written `return value`; a line that only acts (an assignment, `++`) stays what it is.
+static void return_tail(Frame *frame) {
+    if (!frame->value_tail || frame->item_count == 0) return;
+    const ast::Stmt *last = frame->items[frame->item_count - 1];
+    if (!(last->kind == .expression)) return;
+    ast::Expr *value = last->kind.expression.value;
+    if (value->kind == .assign) return;
+    if (value->kind == .unary) {
+        ast::UnaryOp op = value->kind.unary.op;
+        if (op == .pre_increment || op == .pre_decrement || op == .post_increment || op == .post_decrement) return;
+    }
+    frame->items[frame->item_count - 1] = new_stmt({.return_stmt = {.value = value}});
+}
+
 // `}` of a block or a switch: the construct is complete.
 static ast::Stmt *close_braces(parse::Parser *p, Frame frame) {
     flush_case(p, &frame);
+    if (frame.kind == bind_rest) { // the block it is in ends at the same token: the frame under it takes that
+        return_tail(&frame);
+        ast::Stmt *rest = new_stmt({.block = {.items = frame.items[0:frame.item_count]}});
+        return spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, rest, frame.first));
+    }
     if (frame.layout)
         parse::expect(p, lex::dedent, "the end of the block");
     else
@@ -1935,7 +2001,12 @@ static ast::Stmt *close_one(parse::Parser *p, Frame frame, ast::Stmt *done) {
 static ast::Stmt *deliver(parse::Parser *p, Stack *stack, ast::Stmt *done) {
     while (stack->depth > 0) {
         Frame *frame = top(stack);
-        if (frame->kind == block_frame || frame->kind == switch_frame) {
+        if (frame->kind == bind_else) { // the `else:` is read: the statements after it are the then branch
+            frame->first = done;
+            frame->kind = bind_rest;
+            return nullptr;
+        }
+        if (frame->kind == block_frame || frame->kind == bind_rest || frame->kind == switch_frame) {
             append(frame, done);
             return nullptr;
         }
@@ -2026,7 +2097,7 @@ static ast::Stmt *step(parse::Parser *p, Stack *stack) {
             frame->no_body = false;
             return empty_stmt();
         }
-        if (frame->kind == block_frame && frame->layout) {
+        if ((frame->kind == block_frame || frame->kind == bind_rest) && frame->layout) {
             if (parse::at(p, lex::newline)) {
                 parse::advance(p);
                 return nullptr;
@@ -2038,7 +2109,7 @@ static ast::Stmt *step(parse::Parser *p, Stack *stack) {
             }
             return start(p, stack);
         }
-        if (frame->kind == block_frame && at_end) {
+        if ((frame->kind == block_frame || frame->kind == bind_rest) && at_end) {
             Frame closed = *frame;
             stack->depth -= 1;
             return close_braces(p, closed);

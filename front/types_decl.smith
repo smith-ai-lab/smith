@@ -605,6 +605,78 @@ static Bool leaves(const ast::Stmt *s) {
     return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
 }
 
+// A variant test `k == .v` is kept, with the edits that write it as `.v(v) := k` and the reads of `k.v` in its `then`
+// branch as `v` (#2494). The binding takes the variant's name; a variable of that name in scope leaves the site as it
+// is. The guard `k != .v: return` that binds the rest of the function is not fixed yet: the spans of its `if ` do not
+// line up with the text the earlier passes write (follow-up of #2494).
+static void add_guard(types::Checked *r, types::Guard guard) {
+    if (r->guard_count == countof(r->guards)) {
+        r->guards = mem::realloc(r->guards, r->guard_count < 8 ? 8 : r->guard_count * 2);
+    }
+    r->guards[r->guard_count] = guard;
+    r->guard_count += 1;
+}
+
+static void note_guard(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .if_stmt)) {
+        return;
+    }
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    if (!(test->kind == .binary)) {
+        return;
+    }
+    const ast::Expr *left = test->kind.binary.left;
+    const ast::Expr *right = test->kind.binary.right;
+    Bool equal = test->kind.binary.op == .equal;
+    if (!equal || !(right->kind == .variant) || right->kind.variant.payload != nullptr) {
+        return;
+    }
+    Str variant = right->kind.variant.name;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const types::Symbol *taken = types::lookup(&r->scopes, variant);
+    if (s->kind.if_stmt.else_branch != nullptr || (taken != nullptr && taken->kind == .variable)) {
+        return;
+    }
+    char built[:] = format::push(".", variant, "(", variant, ") := ");
+    Str pattern = built;
+    Str nothing = "";
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = (syntax::Edit){.span = {.start = left->span.start, .end = left->span.start}, .text = pattern};
+    head[1] = (syntax::Edit){.span = {.start = left->span.end, .end = right->span.end}, .text = nothing};
+    add_guard(r, (types::Guard){.base = left, .variant = variant, .reads = then_branch->span, .head = head});
+}
+
+// An arm `.v: value` of a `match k:` reads the payload as `k.v`: the fix is `.v(v): value` and `v` for each read.
+static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
+    if (!(s->kind == .match_stmt)) {
+        return;
+    }
+    const ast::Expr *scrutinee = s->kind.match_stmt.value;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    for (Usize i = 0; i < countof(arms); i++) {
+        ast::Pattern pats[:] = arms[i].patterns;
+        if (countof(pats) != 1 || arms[i].value == nullptr || pats[0].wildcard || pats[0].constant != nullptr) {
+            continue;
+        }
+        Str name = pats[0].name;
+        Str bound = pats[0].binding;
+        if (countof(bound) > 0 || countof(name) == 0) {
+            continue;
+        }
+        const types::Symbol *taken = types::lookup(&r->scopes, name);
+        if (taken != nullptr && taken->kind == .variable) {
+            continue;
+        }
+        char built[:] = format::push("(", name, ")");
+        Str binding = built;
+        syntax::Edits head = {};
+        head = mem::realloc(head, 1);
+        head[0] = (syntax::Edit){.span = {.start = pats[0].span.end, .end = pats[0].span.end}, .text = binding};
+        add_guard(r, (types::Guard){.base = scrutinee, .variant = name, .reads = arms[i].value->span, .head = head});
+    }
+}
+
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .if_stmt)) {
         return;
@@ -632,6 +704,7 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types_expr::check(r, test, r->table.bool_type);
+    note_guard(r, s);
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
@@ -646,24 +719,62 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
     push(nullptr, test, open_true);
 }
 
+static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value);
+
+// Whether a refutable binding's `else` ends by leaving: `return`, `break`, `continue` or a call that never returns.
+static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
+    while (s->kind == .block && countof(s->kind.block.items) > 0) {
+        s = s->kind.block.items[countof(s->kind.block.items) - 1];
+    }
+    if (s->kind == .expression) return calls_noreturn(r, s->kind.expression.value);
+    return leaves(s);
+}
+
+// The checks of `.v(x) := value else: ...` (#2494): the pattern can fail, the `else` leaves, the name is new.
+static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef t, ast::Pattern pattern,
+                              const ast::Stmt *else_branch) {
+    Bool can_fail = t != nullptr && (t->kind == .option || (t->kind == .enumeration && t->has_payload));
+    if (t != nullptr && t != r->table.invalid && !can_fail) {
+        types::failf(r, span, "this pattern always matches: remove `else`");
+    }
+    if (else_branch != nullptr && !else_leaves(r, else_branch)) {
+        types::failf(r, else_branch->span, "the `else` of a binding must leave: end it with `return`, ",
+                     "`break`, `continue` or a call that never returns");
+    }
+    const types::Symbol *earlier = types::lookup(&r->scopes, pattern.binding);
+    if (countof(pattern.binding) > 0 && earlier != nullptr && earlier->kind == .variable) {
+        types::failf(r, pattern.span, "`", pattern.binding,
+                     "` hides a variable of the same name; shadowing is an error, choose another name");
+    }
+}
+
 // `if let .some(x) = o`: the value is typed (a call of a generic function there makes its instance), `x` has the
-// payload's type in the `then` branch, and the `else` branch is checked outside it.
+// payload's type in the `then` branch, and the `else` branch is checked outside it. A payload enumeration's
+// `.circle(c)` binds what the enumerator carries (#2494).
 static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     if (!(s->kind == .if_let)) {
         return;
     }
+    ast::Pattern pattern = s->kind.if_let.pattern;
+    const ast::Stmt *then_branch = s->kind.if_let.then_branch;
+    const ast::Stmt *else_branch = s->kind.if_let.else_branch;
+    Bool refutable = pattern.refutable;
     types::TypeRef t = types_expr::infer(r, s->kind.if_let.value);
-    if (s->kind.if_let.else_branch != nullptr) {
-        push(s->kind.if_let.else_branch, nullptr, enter);
+    if (refutable) refutable_binding(r, s->span, t, pattern, else_branch);
+    if (else_branch != nullptr) {
+        push(else_branch, nullptr, enter);
     }
     types::push_scope(&r->scopes);
     push(nullptr, nullptr, leave);
-    push(s->kind.if_let.then_branch, nullptr, enter);
-    Str binding = s->kind.if_let.pattern.binding;
+    push(then_branch, nullptr, enter);
+    Str binding = pattern.binding;
+    types::TypeRef element = r->table.invalid;
+    if (t != nullptr && t->kind == .enumeration && t->has_payload) {
+        element = types_expr::pattern_payload(r, s->span, t, pattern);
+    }
     if (countof(binding) == 0 || is_discard(binding)) {
         return;
     }
-    types::TypeRef element = r->table.invalid;
     if (t != nullptr && t->kind == .option && t->element != nullptr) {
         element = t->element;
     }
@@ -892,6 +1003,7 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
     }
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
     _ = types_expr::infer(r, s->kind.match_stmt.value);
+    note_arm_guards(r, s);
     Bool tail = r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type;
     push(s, nullptr, cover);
     for (Usize i = countof(arms); i > 0; i--) {
@@ -972,6 +1084,7 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
 static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result) {
     types::TypeRef outer = state.result;
     state.result = result;
+    r->guard_count = 0;
     find_tails(root);
     types_undefined::check_body(r, root);
     state.top = 0;
@@ -1098,18 +1211,22 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     check_function(r, function, symbol->type);
 }
 
+// Whether a function's result is written `type`.
+static Bool returns_type(const ast::TypeExpr *result) {
+    if (result == nullptr || result->kind != .named) {
+        return false;
+    }
+    ast::Path path = result->kind.named.path;
+    return countof(path.segments) == 1 && types::same_text(path.segments[0].text, "type");
+}
+
 // Whether `function` is a type function (`-> type`) whose last statement is an unnamed `enum:` or `struct:` block:
 // that declaration is the type each call returns (`Option(i32)`), so the body has nothing else to check.
 static Bool declares_type(const ast::Decl *function) {
     if (function->kind != .function) {
         return false;
     }
-    const ast::TypeExpr *result = function->kind.function.result;
-    if (result == nullptr || result->kind != .named) {
-        return false;
-    }
-    ast::Path path = result->kind.named.path;
-    if (countof(path.segments) != 1 || !types::same_text(path.segments[0].text, "type")) {
+    if (!returns_type(function->kind.function.result)) {
         return false;
     }
     const ast::Stmt *body = function->kind.function.body;
@@ -1160,7 +1277,10 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
     }
     types::TypeRef outer_generator = state.generator;
     state.generator = types_stream::generator_element(signature->element, function->kind.function.body);
-    walk(r, function->kind.function.body, state.generator != nullptr ? r->table.void_type : signature->element);
+    types::TypeRef returned = signature->element;
+    if (returns_type(function->kind.function.result))
+        returned = types::builtin(&r->table, "type"); // a type function returns a type value
+    walk(r, function->kind.function.body, state.generator != nullptr ? r->table.void_type : returned);
     state.generator = outer_generator;
     types_fn::check_once(r, params, function->kind.function.body);
     types::pop_scope(&r->scopes);

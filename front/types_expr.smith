@@ -347,7 +347,7 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
             at = at->kind.index.base;
         }
     }
-    return at != nullptr && at->kind == .call && c->new_body;
+    return at != nullptr && (at->kind == .call || at->kind == .cast) && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -1980,6 +1980,12 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    // `64 << 10` where a `usize` is expected: the shifted literal takes the expected type (the count is its own).
+    if (is_shift(op) && expected != nullptr && is_number(expected) && literal_like(left) &&
+        adaptable(typ(c, left), expected) && !retype(c, left, expected)) {
+        poison(c, e);
+        return;
+    }
     if (widen_operand(c, e, op, left, right) || float_literal_operand(c, e, op, left, right)) {
         poison(c, e);
         return;
@@ -3141,8 +3147,8 @@ static void slice_after(types::Checked *c, Frame f) {
         // smith's own syntax a slice of a read-only pointer is a `[]T` too: its const would make it no `[]T` (#2386).
         Bool element_const = base->pointee_const && !(typed_pointer && c->new_body);
         result = types::slice_of(&c->table, base->element, element_const);
-    } else if (base->kind == .text || base->kind == .block) {
-        result = base;
+    } else if (base->kind == .text || base->kind == .block || base->kind == .type_type) {
+        result = base; // `t[:]` of a type value is a type value: the slice of that type, made where it is computed
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
                      "`; slice an array, a slice, a `Str` or a typed pointer");
@@ -3152,6 +3158,48 @@ static void slice_after(types::Checked *c, Frame f) {
         return;
     }
     finish(c, e, result, f.expected);
+}
+
+// Whether two expressions are the same name or member chain (`k`, `e.kind`).
+static Bool same_place(const ast::Expr *a, const ast::Expr *b) {
+    while (a->kind == .member && b->kind == .member) {
+        if (a->kind.member.arrow != b->kind.member.arrow || !same_text(a->kind.member.name, b->kind.member.name)) {
+            return false;
+        }
+        a = a->kind.member.base;
+        b = b->kind.member.base;
+    }
+    if (a->kind == .name && b->kind == .name) {
+        return same_text(path_str(a->kind.name.path), path_str(b->kind.name.path));
+    }
+    return false;
+}
+
+// `k.v` where a test `k == .v` or `k != .v: return` guards the read (#2494): the read is the binding `v`, and the first
+// one of a test also writes the test as `.v(v) := k`. No edits when no test guards it.
+static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
+    syntax::Edits none = {};
+    if (!(e->kind == .member)) {
+        return none;
+    }
+    for (Usize i = 0; i < c->guard_count; i++) {
+        types::Guard *g = &c->guards[i];
+        Bool inside = e->span.start >= g->reads.start && e->span.end <= g->reads.end;
+        if (!inside || !same_text(g->variant, e->kind.member.name) || !same_place(g->base, e->kind.member.base)) {
+            continue;
+        }
+        syntax::Edits fix = {};
+        fix = mem::realloc(fix, g->head_sent ? 1 : 1 + countof(g->head));
+        fix[0] = (syntax::Edit){.span = e->span, .text = g->variant};
+        if (!g->head_sent) {
+            for (Usize k = 0; k < countof(g->head); k++) {
+                fix[1 + k] = g->head[k];
+            }
+        }
+        g->head_sent = true;
+        return fix;
+    }
+    return none;
 }
 
 // The record a member access reads: `.` on a record, `->` on a pointer to one; reports what to write otherwise.
@@ -3169,8 +3217,15 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     }
     Str found = types::show(base);
     if (base->kind == .enumeration && base->has_payload) {
-        types::failf(c, e->span, "`", found, "` is a payload enumeration, so a payload can't be read with `.",
-                     arrow ? "->" : ".", "`; test the variant first, with `if .variant(v) := x:` or a `match`");
+        Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `.",
+                                     arrow ? "->" : ".",
+                                     "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
+        syntax::Edits fix = guarded_read(c, e);
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span, shown, fix);
+        } else {
+            types::fail(c, e->span, shown);
+        }
     } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
@@ -4120,6 +4175,14 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
                      "`; write one of its enumerators in the arm");
     }
     return countof(t->slots);
+}
+
+// The type `.name(x)` binds over the payload enumeration `t`: what the enumerator carries; invalid, after the error
+// that says why, when it has none (#2494).
+export types::TypeRef pattern_payload(types::Checked *c, ast::Span span, types::TypeRef t, ast::Pattern pat) {
+    Usize at = case_of(c, span, t, pat, true);
+    if (at >= countof(t->slots)) return invalid(c);
+    return t->slots[at].type;
 }
 
 // A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
