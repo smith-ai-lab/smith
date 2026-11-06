@@ -489,8 +489,10 @@ static state::Status option_test_finish(state::Emitter *e, const state::ThenExpr
     Bool wants_some = false;
     option_operand(e, w->expr, &wants_some);
     state::Value o = state::pop_value(e);
-    c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
-    c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMInt8TypeInContext(e->context));
+    c::LLVMValueRef tag = o.llvm;
+    if (!(o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer)) // `?*T` is the pointer itself
+        tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
+    c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMTypeOf(tag));
     Bool same = w->expr->kind == .binary &&
                 (w->expr->kind.binary.op == .equal) == wants_some; // `== .some` and `!= .none` ask for a payload
     c::LLVMIntPredicate predicate = same ? c::LLVMIntNE : c::LLVMIntEQ;
