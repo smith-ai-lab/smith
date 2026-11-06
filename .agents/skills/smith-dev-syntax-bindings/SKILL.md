@@ -33,5 +33,5 @@ started := process.start(cmd)
   - A `match` arm `.v:` that reads `m.v` → `.v(v):`. A C `switch` becomes a `match` also when its last case ends without a `break` and when a case holds a loop's `break`; one whose cases are `.ok` and `.error` gets no `_` arm.
   - Left as it is: a write through `k.v` (`k.v.f = x`, `&k.v.f`, `k.v.n += 1`), a write to `k`, a local named `v` anywhere in the function, and a test joined with `&&`.
 - `mut` before a bound name lets it change: `.circle(mut circle) := shape else: return`. Without it the name is constant.
-- Not built yet: a `match` on a Result and `.ok(ok) := r else:`, which wait for Result values in the new front end (#2128).
+- A `match` on a Result binds its payload in the arm (`.ok(n):`, `.error(e):`) and must cover both.
 
