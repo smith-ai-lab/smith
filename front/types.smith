@@ -3030,6 +3030,14 @@ static Bool header_has(const ast::Module *header, Str name) {
     return false;
 }
 
+// Whether a header bound as `base` declares `name`. Two headers can share a binding name (`<time.h>` and
+// `<sys/time.h>` are both `time`): the name is declared when either has it (#2611).
+static Bool binding_declares(const Checked *r, Str base, Str name) {
+    for (Usize i = 0; i < r->binding_count; i++)
+        if (same_text(r->bindings[i].name, base) && header_has(r->bindings[i].header, name)) return true;
+    return false;
+}
+
 // The binding a name of a header is read through, or null: `stdio.printf` has the base `stdio`. The text of the base
 // is empty when `e` is not `name.member`.
 export Str c_member_base(const ast::Expr *e) {
@@ -3047,7 +3055,7 @@ export Str c_member_name(const Checked *r, const ast::Expr *e) {
     Str base = c_member_base(e);
     if (countof(base) == 0 || e->kind != .member) return "";
     const HeaderBinding *binding = header_binding(r, base);
-    if (binding == nullptr || !header_has(binding->header, e->kind.member.name)) return "";
+    if (binding == nullptr || !binding_declares(r, base, e->kind.member.name)) return "";
     return e->kind.member.name;
 }
 
@@ -3066,7 +3074,7 @@ export Str c_member_error(const Checked *r, const ast::Expr *e, syntax::Edits *f
     Str name = e->kind.member.name;
     const HeaderBinding *binding = header_binding(r, base);
     if (binding != nullptr) {
-        if (header_has(binding->header, name)) return "";
+        if (binding_declares(r, base, name)) return "";
         return msg(format::push("`", base, ".", name,
                                 "` is not declared by that header; check its spelling, or import ",
                                 "the header that declares it"));
@@ -3125,8 +3133,7 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     }
     if (count == 2 && header_binding(r, path.segments[0].text) != nullptr &&
         scoped(r, path.segments[0].text) == nullptr) {
-        const HeaderBinding *binding = header_binding(r, path.segments[0].text);
-        if (!header_has(binding->header, path.segments[1].text)) return nullptr;
+        if (!binding_declares(r, path.segments[0].text, path.segments[1].text)) return nullptr;
         return lookup(&r->scopes, msg(format::push("c::", path.segments[1].text))); // `stdio.size_t` is `c::size_t`
     }
     const Symbol *found = nullptr;
