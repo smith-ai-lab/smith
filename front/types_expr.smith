@@ -513,17 +513,24 @@ static syntax::Edits mut_after(U32 at) {
 // reached through a pointer is writable when the pointer is, which is another fix. Empty when neither is so.
 static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *operand) {
     syntax::Edits none = {};
-    if (operand->kind == .index) {
-        const ast::Expr *array = operand->kind.index.base;
-        types::TypeRef held = array->kind == .name ? types::type_of(c, array) : nullptr;
-        return held != nullptr && held->kind == .array ? address_fix(c, array) : none;
-    }
-    if (operand->kind != .member) return none;
+    // `&r.word[0]`: the root of a chain of `.f` (not `->f`) and `[i]` is the local that holds the storage.
     const ast::Expr *root = operand;
-    while (root->kind == .member && !root->kind.member.arrow)
-        root = root->kind.member.base;
-    types::TypeRef held = root->kind == .name ? types::type_of(c, root) : nullptr;
-    return held != nullptr && held->kind == .record ? address_fix(c, root) : none;
+    while (root->kind == .member || root->kind == .index) {
+        if (root->kind == .index) {
+            const ast::Expr *inner = root->kind.index.base;
+            types::TypeRef held = inner->kind == .name ? types::type_of(c, inner) : nullptr;
+            if (inner->kind != .name && inner->kind != .member) return none;
+            if (held != nullptr && held->kind != .array) return none;
+            root = inner;
+        } else if (root->kind == .member && !root->kind.member.arrow) {
+            root = root->kind.member.base;
+        } else {
+            return none;
+        }
+    }
+    if (root == operand || root->kind != .name) return none;
+    types::TypeRef held = types::type_of(c, root);
+    return held != nullptr && (held->kind == .record || held->kind == .array) ? address_fix(c, root) : none;
 }
 
 // The fix for `xs.data` handed where a `*mut T` is wanted: the slice `xs` (a field or a parameter) is `[]mut T`
@@ -1901,7 +1908,8 @@ static syntax::Edits to_fix(const ast::Expr *x, types::TypeRef to) {
 export syntax::Edits convert_fix(const ast::Expr *x, types::TypeRef to) {
     Bool postfix = x->kind == .name || x->kind == .member || x->kind == .call || x->kind == .index;
     syntax::Edits edits = {};
-    if (!postfix) return edits; // the span of a conditional or a binary may start inside its text: no fix
+    if (x->kind == .binary && x->kind.binary.op != .logical_and) return to_fix(x, to); // `(i - 1).to(u64)`
+    if (!postfix) return edits; // the span of a conditional may start inside its text: no fix
     edits = mem::realloc(edits, 1);
     edits[0] = (syntax::Edit){.span = {.start = x->span.end, .end = x->span.end},
                               .text = msg(format::push(".to(", types::show(to), ")"))};
@@ -2716,6 +2724,8 @@ static const ast::Expr *method_call(const ast::Expr *e, const types::Symbol *met
     return made;
 }
 
+export syntax::Edits option_read_fix(types::Checked *c, const ast::Expr *e);
+
 // Stage 7: the base of `x.f(args)` is typed. A field `f` of a record is called as a value; else `f` is a function of
 // the module that defines the type of `x` or of this module, and the call is the one written with `x` first.
 // Reports a method call whose function is missing or does not take the receiver first.
@@ -2733,6 +2743,23 @@ static void method_missing(types::Checked *c, const ast::Expr *e, const types::S
         types::failf(c, callee->span, "`", shown, "` has no method `", name, "`; write a function `", name,
                      "` whose first parameter is a `", shown, "`, in this module or in the module that defines `",
                      shown, "`");
+    } else if (bt->kind == .option) {
+        // `a.f.m(x)` where a test guards `a.f`: the read is the binding `f` (#2557)
+        syntax::Edits fix = option_read_fix(c, callee->kind.member.base);
+        // the call is poisoned, so its arguments are not checked this pass: its reads of the same option go here
+        for (Usize i = 0; countof(fix) > 0 && i < countof(e->kind.call.args); i++) {
+            const ast::Expr *argument = e->kind.call.args[i];
+            if (argument->kind != .member) continue;
+            syntax::Edits more = option_read_fix(c, argument);
+            for (Usize k = 0; k < countof(more); k++) {
+                fix = mem::realloc(fix, countof(fix) + 1);
+                fix[countof(fix) - 1] = more[k];
+            }
+        }
+        Str message = types::message_of(format::push("the function `", name, "` does not take a `", shown,
+                                                     "` first, so it is not a method of it; write `", name,
+                                                     "(...)` with the right arguments"));
+        types::fail_fix(c, callee->span, message, fix);
     } else {
         types::failf(c, callee->span, "the function `", name, "` does not take a `", shown,
                      "` first, so it is not a method of it; write `", name, "(...)` with the right arguments");
