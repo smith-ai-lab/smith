@@ -1062,7 +1062,7 @@ static Bool starts_line(U32 at) {
 // `if a.f != nullptr && rest:` (#2643): a field does not narrow, so the option is read into a local first, `f := a.f`
 // on the line before, which the test and its `then` use: `if f != .none && rest:` narrows the name. The reads of
 // `a.f` after the first test are `f`.
-static Bool note_chain_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *first) {
+static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *first) {
     if (!(s->kind == .if_stmt)) return false;
     if (!(first->kind == .binary)) return false;
     const ast::Expr *left = first->kind.binary.left;
@@ -1100,7 +1100,7 @@ static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Expr *chain = chain_head(test);
-    if (chain != nullptr) return note_chain_guard(r, s, chain);
+    if (chain != nullptr) return note_field_chain_guard(r, s, chain);
     const ast::Expr *some = null_test(test, false);
     Bool rest = null_test(test, true) != nullptr && s->kind.if_stmt.else_branch == nullptr && leaves(then_branch) &&
                 state.block_end != 0;

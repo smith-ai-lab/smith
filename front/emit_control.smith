@@ -433,6 +433,11 @@ static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w)
     state::Value right = state::pop_value(e);
     state::Value left = state::pop_value(e);
     try state::unify_operands(e, &left, &right, w->span);
+    // A `fn` value against `nullptr`: its code word is the pointer that is compared.
+    if (left.ty.kind == .fn_value && right.ty.kind == .pointer)
+        left = (state::Value){.llvm = c::LLVMBuildExtractValue(e->builder, left.llvm, 0, "code"), .ty = right.ty};
+    else if (right.ty.kind == .fn_value && left.ty.kind == .pointer)
+        right = (state::Value){.llvm = c::LLVMBuildExtractValue(e->builder, right.llvm, 0, "code"), .ty = left.ty};
     // An enumerator of a C header (an `int` constant) against a value of the enumeration's unsigned type: the constant
     // takes the other side's type, its bits kept.
     if (!state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&

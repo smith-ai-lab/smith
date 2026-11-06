@@ -525,8 +525,8 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
     }
 }
 
-// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is the real call.
-Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait, .io = real_io};
+// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is null: the real call.
+Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait, .io = nullptr};
 
 // The inline scheduler, to set with `use` or to wrap in a scheduler of your own, and for debugging: tasks run one at a
 // time on the calling thread, in an order that repeats.
@@ -683,12 +683,12 @@ void simulation_wait(Scheduler *self, Group *group) {
 // A scheduler for tests: tasks run one at a time on the calling thread, and at each switch a random ready task goes
 // next, drawn from `key`, so one key is one order, and a failure replays from it. Install it with `use`. Its state
 // comes from the current allocator and is given back when a `wait` of `main` leaves with no task alive: make one per
-// run. Its `io` is the real call.
+// run. Its `io` is null: the real call.
 export Scheduler *simulation(random::Key key) {
     Simulation *simulation = mem::alloc(Simulation);
     // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
     simulation->base = (Scheduler){
-        .spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait, .io = real_io};
+        .spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait, .io = nullptr};
     simulation->seed = random::key_bits(key);
     simulation->decisions = 0;
     simulation->ready_first = nullptr;
@@ -1332,11 +1332,6 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     Bool waits_for_write(I32 operation) {
         return operation == c::SmithIoOperation_Write || operation == c::SmithIoOperation_Writev ||
                operation == c::SmithIoOperation_Send || operation == c::SmithIoOperation_Connect;
-    }
-
-    // The `io` of the inline and the simulation schedulers: the real call, as when `io` was null.
-    void real_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
-        attempt(request);
     }
 
     // The scheduler's `io`: a plain blocking call to the code that made it.

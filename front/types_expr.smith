@@ -1125,10 +1125,6 @@ static void name_expr(types::Checked *c, Frame f) {
         if (fold_target(c, f, names) || fold_target_system(c, f, names)) return;
         if (module_value(c, f, names)) return;
     }
-    if (s == nullptr && countof(path.segments) == 1 && same_text(path.segments[0].text, "__FINITE_MATH_ONLY__")) {
-        finish(c, e, c->table.bool_type, f.expected); // clang's predefined macro; the emitter folds it
-        return;
-    }
     if (s == nullptr) {
         unknown_name(c, e, path);
         return;

@@ -459,14 +459,6 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
     if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
         !state::find_local(e, x->kind.name.path.segments[0].text, &local) && function_address(e, x))
         return state::success();
-    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
-        state::same_text(x->kind.name.path.segments[0].text, "__FINITE_MATH_ONLY__") &&
-        !state::find_local(e, x->kind.name.path.segments[0].text, &local)) {
-        state::Ty flag = {};
-        state::scalar_type(e, "bool", &flag); // clang's predefined macro: true under -ffast-math
-        state::push_value(e, (state::Value){.llvm = c::LLVMConstInt(flag.llvm, e->options.finite_math ? 1 : 0, 0), .ty = flag});
-        return state::success();
-    }
     try lookup(e, x, &local);
     c::LLVMValueRef loaded = c::LLVMBuildLoad2(e->builder, local.ty.llvm, local.address, "");
     state::Value value = {.llvm = loaded, .ty = local.ty};

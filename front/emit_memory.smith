@@ -1663,7 +1663,7 @@ static Bool integer_operation(state::Ty ty, const ast::Expr *x, c::LLVMValueRef 
 
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (x->kind == .null_pointer && ty.kind == .pointer) {
+    if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
     }
