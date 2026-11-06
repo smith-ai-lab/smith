@@ -9,6 +9,11 @@ import std::format;
 import std::mem;
 import std::slice;
 import std::test;
+import <unistd.h>;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
 
 static void check_text(Str got, Str want) {
     test::check_equal(got, want);
@@ -67,4 +72,19 @@ export void test_front_fix_loader_finds_a_module_beside_the_file() {
     Str got = chars;
     check_text(got, "import front_fix_loader_scratch\nstatic fn f():\n    mut p: front_fix_loader_scratch.Project = "
                     "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
+}
+
+// `fix_run` sets the loader for its own files only (#2560): after it, `fix_text` on an import reads no module, so a
+// later test in the same worker does not parse smith's library and overflow its arena.
+export void test_front_fix_loader_is_not_left_after_a_run() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str path = as_str(format::push("/tmp/front_fix_loader_left_", (I64)c::getpid(), ".smith"));
+    test::check_equal(fix::store(path, "module front_fix_loader_left;\n"), true);
+    const char *paths[1] = {path.data};
+    test::check_equal(fix::fix_run(paths, 1), 0);
+    (void)c::unlink(path.data);
+    check_text(fixed_text("import std::build;\n"), "import std.build\n");
 }
