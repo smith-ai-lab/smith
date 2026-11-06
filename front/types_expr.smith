@@ -3194,11 +3194,12 @@ static syntax::Edits guarded_read(types::Checked *c, const ast::Expr *e) {
 
 // Whether `place` is `base` or a part of the chain that leads to it (`e` and `e.kind` for `e.kind`).
 static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
-    while (true) {
-        if (same_place(place, base)) return true;
-        if (!(base->kind == .member)) return false;
+    Bool found = same_place(place, base);
+    while (!found && base->kind == .member) {
         base = base->kind.member.base;
+        found = same_place(place, base);
     }
+    return found;
 }
 
 // A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
