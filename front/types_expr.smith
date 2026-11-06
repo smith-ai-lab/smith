@@ -70,6 +70,7 @@ import front::ast;
 import front::parse as syntax;
 import front::types;
 import front::types_builtin as builtins;
+import front::types_convert;
 import front::types_fn;
 import front::when;
 import std::arena;
@@ -1460,8 +1461,8 @@ static Bool is_bitwise(ast::BinaryOp op) {
 
 // Both operands the same type; reports which cast to write when they differ.
 static Bool same_operands(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l, types::TypeRef r) {
-    if (l == r) {
-        return true;
+    if (types_convert::operand_type(&c->table, l, r) != nullptr) {
+        return true; // the same type, or the narrower widens to the wider (#2531)
     }
     Str left = types::show(l);
     types::failf(c, span, "the operands of `", binary_text(op), "` have different types, `", left, "` and `",
@@ -1510,7 +1511,7 @@ static types::TypeRef arith_type(types::Checked *c, ast::Span span, ast::BinaryO
     if (op == .remainder && !is_integer(l)) {
         return need_number(c, span, op, l, true);
     }
-    return l;
+    return types_convert::operand_type(&c->table, l, r);
 }
 
 static types::TypeRef shift_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
@@ -1532,7 +1533,7 @@ static types::TypeRef bitwise_type(types::Checked *c, ast::Span span, ast::Binar
     if (!same_operands(c, span, op, l, r)) {
         return invalid(c);
     }
-    return l;
+    return types_convert::operand_type(&c->table, l, r);
 }
 
 static types::TypeRef logical_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
@@ -1782,20 +1783,41 @@ static syntax::Edits to_fix(const ast::Expr *x, types::TypeRef to) {
     return edits;
 }
 
-// Two integers of the same signedness and different widths in `+`, `-`, a comparison or a bit operator: the
-// narrower one is widened with `.to(T)` by a fix, as C widens it (a file written in C's way reads in smith's). True
-// when the error was recorded.
+// The type C converts both operands of `l op r` to when they are numbers of different types: the float, else the wider
+// integer, else the unsigned one (`usize` and `u64` keep the left). Null when they are not two numbers.
+static types::TypeRef c_common(types::TypeRef l, types::TypeRef r) {
+    if (!is_number(l) || !is_number(r)) {
+        return nullptr;
+    }
+    if (l->kind == .floating && r->kind == .floating) {
+        return nullptr;
+    }
+    if (l->kind == .floating) {
+        return l;
+    }
+    if (r->kind == .floating) {
+        return r;
+    }
+    if (l->bits != r->bits) {
+        return l->bits > r->bits ? l : r;
+    }
+    return l->is_signed && !r->is_signed ? r : l;
+}
+
+// Two numbers in `+`, `-`, a comparison or a bit operator that no implicit conversion joins (`i32` and `u32`, `u64`
+// and `usize`, `i64` and `f64`): a fix writes `.to(T)` on the operand C would have converted, to the type C converts
+// to, so a file written in C's way reads in smith's (#2531). The ones that widen losslessly are not an error. True when
+// the error was recorded.
 static Bool widen_operand(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
                           const ast::Expr *right) {
     types::TypeRef l = typ(c, left);
     types::TypeRef r = typ(c, right);
-    if (is_shift(op) || is_logical(op) || !is_integer(l) || !is_integer(r) || l->is_signed != r->is_signed ||
-        l->bits == r->bits || literal_like(left) || literal_like(right)) {
+    types::TypeRef wide = c_common(l, r);
+    if (is_shift(op) || is_logical(op) || wide == nullptr || l == r || literal_like(left) || literal_like(right) ||
+        types_convert::operand_type(&c->table, l, r) != nullptr) {
         return false;
     }
-    Bool left_narrow = l->bits < r->bits;
-    const ast::Expr *narrow = left_narrow ? left : right;
-    types::TypeRef wide = left_narrow ? r : l;
+    const ast::Expr *narrow = wide == l ? right : left;
     types::fail_fix(c, e->span,
                     msg(format::push("the operands of `", binary_text(op), "` have different types, `", types::show(l),
                                      "` and `", types::show(r), "`; make both `", types::show(wide),
