@@ -25,5 +25,5 @@ export void test_front_fix_generic_mut_a_local_that_is_added_to_is_mut() {
 
 export void test_front_fix_generic_mut_a_local_that_is_only_read_stays() {
     expect_fixed("module m;\nexport I32 first(auto xs) {\n    I32 n = 3;\n    return n + (I32)xs[0];\n}\n",
-                 "pub fn first(xs) -> i32:\n    n: i32 = 3\n    return n + xs[0].to(i32)\n");
+                 "pub fn first(xs: auto) -> i32:\n    n: i32 = 3\n    return n + xs[0].to(i32)\n");
 }
