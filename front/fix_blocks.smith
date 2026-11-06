@@ -93,6 +93,29 @@ static Bool starts_list(lex::TokenKind before) {
            before == lex::kw_return || before == lex::left_brace;
 }
 
+// Whether the `{` at `open` follows a parenthesized type that is itself a value: `(Stream){}` and `(typeof(a)){0}` are
+// compound literals, never a block (#2520). The `(` is a value's when it follows `=`, `(`, `[`, `,`, `return`
+// or `try`, or starts a statement; after a name, a keyword or an operator (`if (c) {`, `f(x) {`, `fn(a) {`, `a && (b)
+// {`) the `{` is a block.
+static Bool compound_literal(lex::Tokens tokens, Usize open) {
+    if (open < 3 || tokens[open - 1].kind != lex::right_paren) return false;
+    Usize nest = 0;
+    Usize i = open;
+    Bool found = false;
+    for (Usize back = 0; back < open && !found; back++) {
+        i = open - 1 - back;
+        if (tokens[i].kind == lex::right_paren) nest += 1;
+        if (tokens[i].kind == lex::left_paren) {
+            nest -= 1;
+            found = nest == 0;
+        }
+    }
+    if (!found) return false;
+    if (i == 0) return false;
+    lex::TokenKind before = tokens[i - 1].kind;
+    return starts_list(before) || before == lex::semicolon || before == lex::kw_try;
+}
+
 static Bool any_group(const Bool group[:]) {
     for (Usize g = 0; g < countof(group); g++) {
         if (group[g]) return true;
@@ -109,8 +132,8 @@ static Braces braces_of(lex::Tokens tokens) {
     for (Usize i = 0; i < countof(tokens); i++) {
         lex::TokenKind kind = tokens[i].kind;
         if (kind == lex::left_brace || kind == lex::left_paren || kind == lex::left_bracket) {
-            Bool list =
-                kind == lex::left_brace && (i == 0 || starts_list(tokens[i - 1].kind) || tokens[i - 1].line_break);
+            Bool list = kind == lex::left_brace && (i == 0 || starts_list(tokens[i - 1].kind) ||
+                                                    tokens[i - 1].line_break || compound_literal(tokens, i));
             if (kind == lex::left_brace) {
                 out = mem::realloc(out, countof(out) + 1);
                 out[countof(out) - 1] = (Brace){.open = i, .block = !list};
@@ -289,6 +312,19 @@ static void multi_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) 
     add_cut(cuts, line_start(source, close.span.start), after_line(source, close.span.end), brace.tail);
 }
 
+// Whether the token at `at` starts a field that follows another one with no separator between them (an earlier fixer
+// drops the `;`): `pub`, or a name followed by `:`, after anything but a separator, a `:` or `pub` (#2520).
+static Bool starts_field(lex::Tokens tokens, Usize at, Usize open) {
+    if (at <= open + 1) return false;
+    lex::TokenKind kind = tokens[at].kind;
+    lex::TokenKind before = tokens[at - 1].kind;
+    if (before == lex::comma || before == lex::semicolon || before == lex::colon || before == lex::kw_pub ||
+        before == lex::colon_colon)
+        return false;
+    if (kind == lex::kw_pub) return true;
+    return (kind == lex::name || kind == lex::type_name) && tokens[at + 1].kind == lex::colon;
+}
+
 // The fields or statements between the braces of a one-line block, one to a line at `depth` spaces.
 static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
     Str out = "";
@@ -301,6 +337,10 @@ static Str lines_of(Str source, lex::Tokens tokens, Brace brace, Usize depth) {
         lex::TokenKind kind = tokens[i].kind;
         if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) nest += 1;
         if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest -= 1;
+        if (fields && nest == 0 && starts_field(tokens, i, brace.open)) {
+            out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i - 1].span.end]));
+            start = tokens[i].span.start;
+        }
         if (fields && nest == 0 && (kind == lex::comma || kind == lex::semicolon)) {
             out = as_str(format::push(out, "\n", spaces(depth), source[start:tokens[i].span.start]));
             start = tokens[i + 1].span.start;

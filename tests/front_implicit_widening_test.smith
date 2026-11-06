@@ -1,0 +1,232 @@
+// Tests of the conversion rule of #2531: a conversion that cannot lose information is implicit, everything else is
+// written `.to(T)` or `.wrap(T)`. One test per row of the ticket's points 1 and 2 (on the rule itself, in every target
+// that matters), then the sites it opens (comparisons, arithmetic, arguments, returns) and the Interactions rows,
+// each scenario as source text in smith's own syntax.
+module front_implicit_widening_test;
+
+import front::parser;
+import front::types;
+import front::types_convert;
+import front::types_decl;
+import std::arena;
+import std::console;
+import std::mem;
+import std::test;
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Str errors_of(const types::Checked *r) {
+    Str text = "";
+    for (Usize i = 0; i < r->error_count; i++) {
+        Str piece = r->errors[i].message;
+        char out[:] = mem::alloc_slice(char, countof(text) + countof(piece) + 1);
+        for (Usize k = 0; k < countof(text); k++) {
+            out[k] = text[k];
+        }
+        for (Usize k = 0; k < countof(piece); k++) {
+            out[countof(text) + k] = piece[k];
+        }
+        out[countof(text) + countof(piece)] = '\n';
+        text = out;
+    }
+    return text;
+}
+
+static types::Checked check_text(Str source) {
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    return types_decl::check_module(&p.module, types::lp64());
+}
+
+// `source` checks with no error.
+static void clean(Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    Str none = "";
+    if (r.error_count != 0) console::print_error("errors: ", errors);
+    test::check_equal(errors, none);
+    test::check_equal(r.error_count, (Usize)0);
+}
+
+// `source` gives one error that says `piece`.
+static void fails(Str source, Str piece) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(source);
+    Str errors = errors_of(&r);
+    if (r.error_count != 1 || !has(errors, piece)) console::print_error("errors: ", errors);
+    test::check_condition(has(errors, piece));
+    test::check_equal(r.error_count, (Usize)1);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The rule, one row of points 1 and 2 per test: `from` converts to `to` implicitly (or not) on a 64-bit and a 32-bit
+// target alike.
+
+static Bool implicit(Str from, Str to) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table wide = types::start(types::lp64());
+    types::Table narrow = types::start((types::Target){.pointer_bytes = 4, .max_align = 8});
+    Bool on_wide = types_convert::convert(&wide, types::builtin(&wide, from), types::builtin(&wide, to),
+                                          types_convert::no_literal())
+                       .ok;
+    Bool on_narrow = types_convert::convert(&narrow, types::builtin(&narrow, from), types::builtin(&narrow, to),
+                                            types_convert::no_literal())
+                         .ok;
+    test::check_equal(on_wide, on_narrow); // the answer never depends on the target
+    return on_wide;
+}
+
+export void test_front_widening_u8_to_wider_unsigned() {
+    test::check_condition(implicit("U8", "U16"));
+    test::check_condition(implicit("U8", "U32"));
+    test::check_condition(implicit("U8", "U64"));
+}
+
+export void test_front_widening_i8_to_wider_signed() {
+    test::check_condition(implicit("I8", "I16"));
+    test::check_condition(implicit("I8", "I32"));
+    test::check_condition(implicit("I8", "I64"));
+}
+
+export void test_front_widening_unsigned_to_a_strictly_wider_signed() {
+    test::check_condition(implicit("U8", "I16"));
+    test::check_condition(implicit("U16", "I32"));
+    test::check_condition(implicit("U32", "I64"));
+}
+
+export void test_front_widening_f32_to_f64() {
+    test::check_condition(implicit("F32", "F64"));
+}
+
+export void test_front_widening_small_integers_to_f32() {
+    test::check_condition(implicit("U8", "F32"));
+    test::check_condition(implicit("I8", "F32"));
+    test::check_condition(implicit("U16", "F32"));
+    test::check_condition(implicit("I16", "F32"));
+}
+
+export void test_front_widening_integers_up_to_32_bits_to_f64() {
+    test::check_condition(implicit("U8", "F64"));
+    test::check_condition(implicit("I8", "F64"));
+    test::check_condition(implicit("U16", "F64"));
+    test::check_condition(implicit("I16", "F64"));
+    test::check_condition(implicit("U32", "F64"));
+    test::check_condition(implicit("I32", "F64"));
+}
+
+export void test_front_explicit_narrowing() {
+    test::check_condition(!implicit("U64", "U32"));
+    test::check_condition(!implicit("I32", "I8"));
+    test::check_condition(!implicit("F64", "F32"));
+}
+
+export void test_front_explicit_sign_change() {
+    test::check_condition(!implicit("I32", "U32"));
+    test::check_condition(!implicit("U32", "I32"));
+    test::check_condition(!implicit("I8", "U64"));
+    test::check_condition(!implicit("U64", "I64"));
+}
+
+export void test_front_explicit_usize_and_isize_to_and_from_a_fixed_width() {
+    test::check_condition(!implicit("Usize", "U64"));
+    test::check_condition(!implicit("U64", "Usize"));
+    test::check_condition(!implicit("U32", "Usize"));
+    test::check_condition(!implicit("Usize", "U32"));
+    test::check_condition(!implicit("U8", "Usize"));
+    test::check_condition(!implicit("I32", "Isize"));
+    test::check_condition(!implicit("Isize", "I64"));
+    test::check_condition(!implicit("Usize", "Isize"));
+    test::check_condition(!implicit("Usize", "F64"));
+    test::check_condition(implicit("Usize", "Usize"));
+}
+
+export void test_front_explicit_64_bit_integers_to_f64() {
+    test::check_condition(!implicit("I64", "F64"));
+    test::check_condition(!implicit("U64", "F64"));
+    test::check_condition(!implicit("U32", "F32"));
+    test::check_condition(!implicit("I32", "F32"));
+}
+
+export void test_front_explicit_any_float_to_an_integer() {
+    test::check_condition(!implicit("F32", "I32"));
+    test::check_condition(!implicit("F64", "I64"));
+    test::check_condition(!implicit("F32", "U8"));
+}
+
+export void test_front_widening_a_literal_keeps_its_rule() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef plain = types::builtin(&t, "I32");
+    test::check_condition(types_convert::convert(&t, plain, types::builtin(&t, "U8"), types_convert::constant(200)).ok);
+    test::check_condition(
+        !types_convert::convert(&t, plain, types::builtin(&t, "U8"), types_convert::constant(300)).ok);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The sites: assignments, arguments, returns, comparisons and arithmetic
+
+export void test_front_widening_in_a_return_and_an_argument() {
+    clean("fn wide(x: u16) -> i64:\n    return x\nfn call(x: u16) -> i64:\n    return wide(x)\n");
+}
+
+export void test_front_widening_in_a_comparison() {
+    clean("fn f(a: u8, count: i32) -> bool:\n    return a < count\n");
+}
+
+export void test_front_widening_in_arithmetic_the_narrower_operand_widens() {
+    clean("fn f(a: u32, b: u64) -> u64:\n    return b - a\n");
+    clean("fn g(a: i16, b: f32) -> f64:\n    return a * b\n");
+}
+
+export void test_front_widening_the_sites_of_the_ticket_ask_for_to() {
+    // front/ast_clone.smith:702: `at >= count` with `at: u64` and `count: usize`
+    fails("fn f(at: u64, count: usize) -> bool:\n    return at >= count\n",
+          "the operands of `>=` have different types");
+    fails("fn g(a: i32, b: u32) -> bool:\n    return a == b\n", "make both `U32`");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Interactions
+
+export void test_front_widening_in_a_generic_applies_once_the_type_is_known() {
+    clean("fn f[T: int](a: T, b: u64) -> u64:\n    return b\nfn g(x: u8, y: u64) -> u64:\n    return f(x, y)\n");
+}
+
+export void test_front_widening_a_narrow_const_where_a_wider_is_expected() {
+    clean("const small: u8 = 7\nfn f() -> u32:\n    return small\n");
+}
+
+export void test_front_widening_needs_no_proof_and_a_narrowing_stays_a_checked_conversion() {
+    clean("fn f(x: u8) -> u64:\n    return x\n");
+    clean("fn g(x: u64) -> u8:\n    return x.to(u8)\n");
+    fails("fn h(x: u64) -> u8:\n    return x\n", "x.to(U8)");
+}
+
+export void test_front_widening_vectors_do_not_convert_between_each_other() {
+    fails("fn f(v: vec(f32, 4)) -> vec(f64, 4):\n    return v\n", "F64");
+}
