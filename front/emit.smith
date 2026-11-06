@@ -1707,7 +1707,8 @@ static Bool is_module_alias(const state::Emitter *e, const ast::Decl *d) {
 // = []u8` is skipped by the same test; there is no value to emit.
 static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
     if (e->options.checked == nullptr || d->kind != .variable || !d->kind.variable.is_new) return false;
-    if (d->kind.variable.init == nullptr || d->kind.variable.init->kind != .tuple_lit) return false;
+    if (d->kind.variable.init == nullptr) return false;
+    if (d->kind.variable.init->kind != .tuple_lit && d->kind.variable.init->kind != .name) return false;
     const types::Symbol *symbol = types::lookup(&e->options.checked->scopes, d->kind.variable.name);
     return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }
@@ -1729,7 +1730,7 @@ static state::Status declare_all(state::Emitter *e) {
         } else if (d->kind == .variable) {
             if (!is_module_alias(e, d) && !is_type_alias(e, d)) try emit_memory::global_variable(e, d);
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
-                   d->kind != .import_from && d->kind != .static_assert_decl) {
+                   d->kind != .import_from && d->kind != .static_assert_decl && d->kind != .asm_decl) {
             return state::not_emitted("this kind of declaration", d->span);
         }
     }
@@ -1794,6 +1795,16 @@ static state::Status check_static_asserts(state::Emitter *e) {
     return state::success();
 }
 
+// The `asm` literals of the module (D7, #2636), in order: LLVM module asm, which the object file's assembler reads.
+static void append_module_asm(state::Emitter *e) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .asm_decl) continue;
+        Str text = d->kind.asm_decl.text;
+        c::LLVMAppendModuleInlineAsm(e->module, text.data, countof(text));
+    }
+}
+
 static state::Status emit_all(state::Emitter *e) {
     try debug::begin_module(e);
     try declare_all(e);
@@ -1816,6 +1827,7 @@ static state::Status emit_all(state::Emitter *e) {
         }
     }
     try check_static_asserts(e);
+    append_module_asm(e);
     try debug::finish(e);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {

@@ -34,7 +34,7 @@ if st.stat(cstr.of("a.txt"), &info) == 0:   # cstr.of: a str to a NUL-terminated
     stdio.printf("%lld bytes\n", info.st_size)
 ```
 
-There is no global `c` bucket: every name comes through its header's name (or `from`), including names the header reaches through its own includes; one entity seen through two names is one. A `.c` file is C, unchanged.
+There is no global `c` bucket: every name comes through its header's name (or `from`), including names the header reaches through its own includes; one entity seen through two names is one. A `.c` file is C, unchanged. `smith lint --fix` writes a name no import declares as `import c <h>` plus `h.name` for the common libc headers (`string.h`, `stdlib.h`, ...); a macro constant is read the same way (`limits.LIMIT`), and a `#if` becomes `@when(...)`, never a `#if` in a `.smith` file.
 
 ## pub, globals and extern
 

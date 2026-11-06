@@ -42,6 +42,7 @@ export enum TokenKind {
     floating,
     character,
     string,
+    tagged,
     kw_alignas,
     kw_alignof,
     kw_auto,
@@ -188,7 +189,7 @@ export typedef struct {
 export typedef Result(Tokens, LexError) Lexed;
 
 // The names and the texts of the kinds, in the order of the enumeration (a test checks the tables are as long as it).
-static const char *const kind_names[131] = {
+static const char *const kind_names[132] = {
     "end_of_file",
     "type_name",
     "name",
@@ -196,6 +197,7 @@ static const char *const kind_names[131] = {
     "floating",
     "character",
     "string",
+    "tagged",
     "kw_alignas",
     "kw_alignof",
     "kw_auto",
@@ -322,7 +324,8 @@ static const char *const kind_names[131] = {
     "dedent",
 };
 
-static const char *const kind_texts[131] = {
+static const char *const kind_texts[132] = {
+    "",
     "",
     "",
     "",
@@ -488,6 +491,7 @@ export Bool ends_statement(Token token) {
     case floating:
     case character:
     case string:
+    case tagged:
     case kw_true:
     case kw_false:
     case kw_nullptr:
@@ -805,6 +809,23 @@ static Bool is_literal_prefix(Str word) {
     return same(word, "u8") || same(word, "u") || same(word, "U") || same(word, "L");
 }
 
+// The tagged literal `` name`...` `` (D7, #2636): the tag is the word at start, its backtick is at tick. The text may
+// span lines and nothing in it is escaped; it ends at the next backtick. `${` is reserved for holes.
+static Result(Scanned, LexError) scan_tagged(Str s, Usize start, Usize tick) {
+    Usize n = countof(s);
+    Usize p = tick + 1;
+    while (p < n && s[p] != '`') {
+        if (s[p] == '$' && p + 1 < n && s[p + 1] == '{') {
+            return {.error =
+                        error_at(p, p + 2, "`${` is reserved in a tagged literal: holes are not part of smith yet")};
+        }
+        p += 1;
+    }
+    if (p >= n) return {.error = error_at(start, n, "unterminated tagged literal")};
+    Scanned literal = {.end = p + 1, .kind = tagged};
+    return literal;
+}
+
 // An identifier, a keyword, or a literal with a prefix, starting at i.
 static Result(Scanned, LexError) scan_word(Str s, Usize i, Bool new_syntax) {
     Usize n = countof(s);
@@ -817,6 +838,7 @@ static Result(Scanned, LexError) scan_word(Str s, Usize i, Bool new_syntax) {
         Scanned literal = {.end = closed.ok, .kind = s[p] == '"' ? string : character};
         return literal;
     }
+    if (new_syntax && p < n && s[p] == '`') return scan_tagged(s, i, p);
     Scanned word = {.end = p, .kind = identifier_kind(s, i, p, new_syntax)};
     return word;
 }

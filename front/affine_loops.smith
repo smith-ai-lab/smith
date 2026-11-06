@@ -129,7 +129,11 @@ export void declare(Loops *l, Str name) {
         return;
     }
     if (f->declared_count == countof(f->declared)) {
-        f->declared = mem::realloc(f->declared, f->declared_count < 4 ? 8 : f->declared_count * 2);
+        Usize grown = f->declared_count * 2;
+        if (f->declared_count < 4) {
+            grown = 8;
+        }
+        f->declared = mem::realloc(f->declared, grown);
     }
     f->declared[f->declared_count].text = name;
     f->declared_count += 1;
@@ -145,7 +149,11 @@ export void assigned(Loops *l, Str name) {
         return;
     }
     if (f->assigned_count == countof(f->assigned)) {
-        f->assigned = mem::realloc(f->assigned, f->assigned_count < 4 ? 8 : f->assigned_count * 2);
+        Usize grown = f->assigned_count * 2;
+        if (f->assigned_count < 4) {
+            grown = 8;
+        }
+        f->assigned = mem::realloc(f->assigned, grown);
     }
     f->assigned[f->assigned_count].text = name;
     f->assigned_count += 1;
