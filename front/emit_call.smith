@@ -160,7 +160,10 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
     c::LLVMTypeRef llvm_types[64];
     for (Usize i = 0; i < count; i++) {
-        state::TyResult made = state::type_of_checked(e, type->slots[i].type, d->span);
+        // A function pointer of C is the bare `ptr`, not a `fn` value's `{ code, context }`.
+        types::TypeRef held = type->slots[i].type;
+        state::TyResult made = held->kind == .fn_value ? lambdas::pointer_from_checked(e, held)
+                                                       : state::type_of_checked(e, held, d->span);
         if (made == .error) {
             mem::free(all.data);
             return {.error = made.error};

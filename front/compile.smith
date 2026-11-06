@@ -186,6 +186,7 @@ static Str layout_of(Str triple) {
     c::LLVMInitializeAllTargets();
     c::LLVMInitializeAllTargetMCs();
     c::LLVMInitializeAllAsmPrinters();
+    c::LLVMInitializeAllAsmParsers();
     char *name = state::cstr(triple);
     defer mem::free(name);
     c::LLVMTargetRef target = nullptr;

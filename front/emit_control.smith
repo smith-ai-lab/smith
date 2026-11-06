@@ -433,6 +433,17 @@ static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w)
     state::Value right = state::pop_value(e);
     state::Value left = state::pop_value(e);
     try state::unify_operands(e, &left, &right, w->span);
+    // An enumerator of a C header (an `int` constant) against a value of the enumeration's unsigned type: the constant
+    // takes the other side's type, its bits kept.
+    if (!state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&
+        state::width(left.ty) == state::width(right.ty)) {
+        if (c::LLVMIsAConstantInt(right.llvm) != nullptr)
+            right = (state::Value){.llvm = c::LLVMConstInt(left.ty.llvm, c::LLVMConstIntGetZExtValue(right.llvm), 0),
+                                   .ty = left.ty};
+        else if (c::LLVMIsAConstantInt(left.llvm) != nullptr)
+            left = (state::Value){.llvm = c::LLVMConstInt(right.ty.llvm, c::LLVMConstIntGetZExtValue(left.llvm), 0),
+                                  .ty = right.ty};
+    }
     if (!state::same_type(left.ty, right.ty))
         return state::failf(w->span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     if (left.ty.kind == .slice && left.ty.kind.slice.element != nullptr && (op == .equal || op == .not_equal)) {
