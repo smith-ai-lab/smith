@@ -330,20 +330,34 @@ static void suffixed_type(state::Emitter *e, U64 value, Str suffix, state::Ty *o
     state::scalar_type(e, name, out);
 }
 
+// The checker's type of an unsuffixed literal when it is an integer (`3` next to a `u32` is a `u32`); false without
+// one.
+static Bool checked_integer(state::Emitter *e, const ast::Expr *x, state::Ty *out) {
+    if (e->options.checked == nullptr) return false;
+    state::TyResult checked = state::type_of_node(e, x);
+    if (checked == .error) {
+        state::free_text(checked.error.message);
+        return false;
+    }
+    if (checked.ok.kind != .integer) return false;
+    *out = checked.ok;
+    return true;
+}
+
 export state::Status integer_literal(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
     if (x->kind != .integer) {
         return state::fail("not an integer literal", x->span);
     }
+    U64 value = x->kind.integer.value;
     state::Ty ty = {};
     if (countof(x->kind.integer.suffix) > 0)
-        suffixed_type(e, x->kind.integer.value, x->kind.integer.suffix, &ty);
+        suffixed_type(e, value, x->kind.integer.suffix, &ty);
     else if (hint.present)
         ty = hint.ty;
-    else
+    else if (!checked_integer(e, x, &ty))
         state::scalar_type(e, "I32", &ty);
     // A literal where `?i64` is expected is an `i64`, which the site then wraps.
     if (ty.kind == .option && ty.element != nullptr) ty = *ty.element;
-    U64 value = x->kind.integer.value;
     if (ty.kind == .floating) {
         state::push_value(e, (state::Value){.llvm = c::LLVMConstReal(ty.llvm, (F64)value), .ty = ty});
         return state::success();

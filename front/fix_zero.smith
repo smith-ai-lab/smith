@@ -6,10 +6,11 @@
 //   x.a = 1                    x.a = 1                              the same block, assign every field by name and
 //   x.p = q                    x.p = q                              none reads `x`
 //
-// A zero value is written for a number (`0`, `0.0`), a `Bool`, a pointer, an array of those (`[0, 0]`, up to
-// `array_limit` elements) and a struct of those, one level down (three for the element of `T xs[n] = {}`, which
-// becomes `array.filled(T, n, zero)` with `import std.array` added once, #2385). A struct with any other field (an
-// enum, a slice, a union, a struct two levels down) keeps its warning: it needs a spelling smith has not settled. A
+// A zero value is written for a number (`0`, `0.0`), a `Bool`, a pointer, an enum's variant of value 0 (`.empty`), an
+// array of those (`[0, 0]`, up to `array_limit` elements) and a struct of those, one level down (three for the element
+// of `T xs[n] = {}`, which becomes `array.filled(T, n, zero)` with `import std.array` added once, #2385). A struct with
+// any other field (an enum with no variant of value 0, a slice, a union, a struct two levels down) keeps its warning:
+// it needs a spelling smith has not settled. A
 // list that has no struct type (`struct smith_array_T_n`, `typeof(xs)`) is left alone too.
 //
 // A construction that leaves fields out, `E(k = k)` (from the C list `(E){.k = k}`), is `E(k = k, s = S(a = 0, b = 0))`
@@ -96,6 +97,15 @@ static Bool nameable(Str field) {
     return ok;
 }
 
+// The zero value of an enumeration with no payloads: the variant whose value is 0, `.empty` (lead, 2026-11-05, #2488).
+// By value, not by position: with no such variant it is empty, and the error stays.
+static Str enum_zero(types::TypeRef t) {
+    if (t->kind != .enumeration || t->has_payload) return "";
+    for (Usize i = 0; i < countof(t->slots); i++)
+        if (t->slots[i].value == 0) return types::message_of(format::push(".", t->slots[i].name));
+    return "";
+}
+
 // The zero value of a type that is a number, a `Bool`, a pointer or a slice (`[]`); empty for any other.
 static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .integer) return "0";
@@ -103,7 +113,7 @@ static Str scalar_zero(types::TypeRef t) {
     if (t->kind == .bool_type) return "false";
     if (t->kind == .pointer) return "nullptr";
     if (t->kind == .slice) return "[]"; // the empty slice literal, typed by the field (owner, 2026-11-05, #2460)
-    return "";
+    return enum_zero(t);
 }
 
 // The zero value of a scalar or of an array of scalars; empty for any other.
