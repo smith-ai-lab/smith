@@ -684,9 +684,7 @@ static Result(Scanned, LexError) scan_number(Str s, Usize i) {
     }
     Bool has_exponent = false;
     if (radix != 2 && radix != 8 && (first < p || floating_point)) {
-        Result(Usize, LexError) exponent_end = exponent(s, i, p, radix == 16 ? 'p' : 'e');
-        if (exponent_end == .error) return {.error = exponent_end.error};
-        Usize after = exponent_end.ok;
+        Usize after = try exponent(s, i, p, radix == 16 ? 'p' : 'e');
         has_exponent = after != p;
         floating_point = floating_point || has_exponent;
         p = after;
@@ -833,9 +831,8 @@ static Result(Scanned, LexError) scan_word(Str s, Usize i, Bool new_syntax) {
     while (p < n && is_identifier_part(s[p]))
         p += 1;
     if (p < n && (s[p] == '"' || s[p] == '\'') && is_literal_prefix(s[i:p])) {
-        Result(Usize, LexError) closed = scan_quoted(s, i, p);
-        if (closed == .error) return {.error = closed.error};
-        Scanned literal = {.end = closed.ok, .kind = s[p] == '"' ? string : character};
+        Usize closed = try scan_quoted(s, i, p);
+        Scanned literal = {.end = closed, .kind = s[p] == '"' ? string : character};
         return literal;
     }
     if (new_syntax && p < n && s[p] == '`') return scan_tagged(s, i, p);
@@ -889,9 +886,8 @@ static Result(Scanned, LexError) scan_token(Str s, Usize i, Bool new_syntax) {
     }
     if (ascii::digit(c) || (c == '.' && i + 1 < countof(s) && ascii::digit(s[i + 1]))) return scan_number(s, i);
     if (c == '"' || c == '\'') {
-        Result(Usize, LexError) closed = scan_quoted(s, i, i);
-        if (closed == .error) return {.error = closed.error};
-        Scanned literal = {.end = closed.ok, .kind = c == '"' ? string : character};
+        Usize closed = try scan_quoted(s, i, i);
+        Scanned literal = {.end = closed, .kind = c == '"' ? string : character};
         return literal;
     }
     return scan_punctuator(s, i);
@@ -912,9 +908,7 @@ static Result(Usize, LexError) fill(Str source, Tokens tokens, Bool new_syntax) 
     Usize i = 0;
     i = try skip_trivia(source, i, new_syntax);
     while (i < n) {
-        Result(Scanned, LexError) next = scan_token(source, i, new_syntax);
-        if (next == .error) return {.error = next.error};
-        Scanned scanned = next.ok;
+        Scanned scanned = try scan_token(source, i, new_syntax);
         Usize after = try skip_trivia(source, scanned.end, new_syntax);
         Token token = {.kind = scanned.kind,
                        .span = {.start = (U32)i, .end = (U32)scanned.end},
@@ -930,12 +924,9 @@ static Result(Usize, LexError) fill(Str source, Tokens tokens, Bool new_syntax) 
 
 static Lexed tokenize_in(Str source, Bool new_syntax) {
     Tokens tokens = mem::alloc_slice(Token, countof(source) + 1);
-    Result(Usize, LexError) filled = fill(source, tokens, new_syntax);
-    if (filled == .error) {
-        mem::free(tokens.data);
-        return {.error = filled.error};
-    }
-    Tokens shrunk = mem::realloc(tokens, filled.ok);
+    errdefer mem::free(tokens.data);
+    Usize filled = try fill(source, tokens, new_syntax);
+    Tokens shrunk = mem::realloc(tokens, filled);
     return {.ok = shrunk};
 }
 
@@ -1107,9 +1098,7 @@ static Result(Usize, LexError) indentation(Str source, Usize at) {
 // line, or one `dedent` for each level dropped.
 static Result(Bool, LexError) line_start(Layout *l, Str source, Token first, TokenKind before) {
     Usize at = first.span.start;
-    Result(Usize, LexError) measured = indentation(source, at);
-    if (measured == .error) return {.error = measured.error};
-    Usize columns = measured.ok;
+    Usize columns = try indentation(source, at);
     Usize current = l->level == 0 ? 0 : l->stops[l->level - 1];
     if (columns > current) {
         if (before != colon) return {.error = error_at(at - columns, at, "unexpected indent")};
