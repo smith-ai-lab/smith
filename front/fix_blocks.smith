@@ -383,12 +383,31 @@ static Bool statement_line(lex::Tokens tokens, Usize open) {
     }
 }
 
+// The first token of the statement that ends just before token `at`: back to a token that starts a line outside every
+// bracket.
+static Usize statement_start(lex::Tokens tokens, Usize at) {
+    Usize nest = 0;
+    Usize t = at - 1;
+    while (t > 0) {
+        lex::TokenKind kind = tokens[t].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest += 1;
+        if ((kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) && nest > 0) nest -= 1;
+        lex::TokenKind before = tokens[t - 1].kind;
+        // A condition goes on after a line that ends in `&&` or `||`, or that the next one opens with.
+        Bool goes_on = before == lex::ampersand_ampersand || before == lex::pipe_pipe ||
+                       kind == lex::ampersand_ampersand || kind == lex::pipe_pipe;
+        if (nest == 0 && tokens[t - 1].line_break && !goes_on) break;
+        t -= 1;
+    }
+    return t;
+}
+
 // A block whose body is on the line of its header. Inside parentheses it stays there (`fn(a): b`); elsewhere the body
 // moves to its own line.
 static void one_line(Str source, lex::Tokens tokens, Brace brace, Cuts *cuts) {
     lex::Token open = tokens[brace.open];
     lex::Token close = tokens[brace.close];
-    Usize indent = indent_of(source, open.span.start);
+    Usize indent = indent_of(source, tokens[statement_start(tokens, brace.open)].span.start);
     Usize before = spaces_before(source, open.span.start);
     brace.inside = brace.inside || !statement_line(tokens, brace.open);
     Bool empty = brace.close == brace.open + 1;
@@ -825,21 +844,6 @@ static Bool arm_line(lex::Tokens tokens, Usize dot) {
     return false;
 }
 
-// The first token of the statement that ends just before token `at`: back to a token that starts a line outside every
-// bracket.
-static Usize statement_start(lex::Tokens tokens, Usize at) {
-    Usize nest = 0;
-    Usize t = at - 1;
-    while (t > 0) {
-        lex::TokenKind kind = tokens[t].kind;
-        if (kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) nest += 1;
-        if ((kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) && nest > 0) nest -= 1;
-        if (nest == 0 && tokens[t - 1].line_break) break;
-        t -= 1;
-    }
-    return t;
-}
-
 // Whether the `.` starts a line that goes on the line before it: `.name` after a `)`, `]` or a name. The first token
 // of a `match` arm (`.b => x`) starts its own line.
 static Bool continues_line(lex::Tokens tokens, Usize dot) {
@@ -880,7 +884,8 @@ static Usize header_indent(Str source, lex::Tokens tokens, Braces braces, Usize 
             break;
         }
     }
-    return indent_of(source, tokens[at].span.start);
+    // A condition over several lines puts the `{` on its last line: the header starts on the first.
+    return indent_of(source, tokens[statement_start(tokens, at)].span.start);
 }
 
 // The text with the forms that stop `convert` from reading a block made plain (#2225): a `}` that follows the last
