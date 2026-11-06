@@ -3510,6 +3510,9 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
             return nullptr;
         }
     }
+    syntax::Edits error_fix = {};
+    if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "error"))
+        error_fix = guarded_read(c, e, false);
     if (base->kind == .enumeration && base->has_payload) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
@@ -3520,6 +3523,9 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         } else {
             types::fail(c, e->span, shown);
         }
+    } else if (countof(error_fix) > 0) {
+        // `r.error` where a test or a `match` arm of `r` guards it: the binding `error` (#2611)
+        types::fail_fix(c, e->span, msg(format::push("a `", found, "`'s error is read through a binding")), error_fix);
     } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
         Str shown =
             msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));

@@ -168,7 +168,9 @@ constexpr Usize line_first = 128; // the first room of a line; it doubles
             mem::free(line.data);
             return {.error = got.error};
         }
-        if (got == .ok && got.ok == 0) break;
+        if (got == .ok) {
+            if (got.ok == 0) break;
+        }
         any = true;
         if (byte[0] == '\n') {
             newline = true;

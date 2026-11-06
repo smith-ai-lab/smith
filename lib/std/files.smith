@@ -496,10 +496,12 @@ void reads_log(const char *path) {
         if (got == .error) {
             return {.error = got.error};
         }
-        if (got.ok == 0) {
-            MaybeCount line = count;
-            if (count == 0) line = .none;
-            return {.ok = line};
+        if (got == .ok) {
+            if (got.ok == 0) {
+                MaybeCount line = count;
+                if (count == 0) line = .none;
+                return {.ok = line};
+            }
         }
         if (byte[0] == '\n') {
             MaybeCount line = count;
@@ -554,15 +556,9 @@ BytesResult read_open(File file, Usize hint) {
             buffer = bigger; // the old block stays in the region
         }
         U8 room[:] = buffer[filled:];
-        CountResult step = read(file, room);
-        switch (step) {
-        case .error:
-            return {.error = step.error};
-        case .ok:
-            ended = step.ok == 0;
-            filled += step.ok;
-            break;
-        }
+        Usize step = try read(file, room);
+        ended = step == 0;
+        filled += step;
     }
     U8 whole[:] = buffer[0:filled];
     return {.ok = whole};
@@ -570,38 +566,28 @@ BytesResult read_open(File file, Usize hint) {
 
 // The whole file, in a block of the current allocator that the caller's region holds.
 [[std::c_name("smith_fs_read_file")]] export [[nodiscard]] BytesResult read_file(const char path[:]) {
-    OpenResult opened = open(path, Read);
+    File opened = try open(path, Read);
     Usize hint = chunk;
     Path where = path_make(path);
     c::SmithFileStatus status = {};
     if (raw_stat(where.text, &status) == 0 && !status.folder) hint = status.size + 1; // one more to see the end
-    switch (opened) {
-    case .error:
-        return {.error = opened.error};
-    case .ok:
-        BytesResult whole = read_open(opened.ok, hint);
-        CloseResult closed = close(opened.ok);
-        if (whole == .ok && closed == .some) {
-            return {.error = closed.some};
-        }
-        return whole;
+    BytesResult whole = read_open(opened, hint);
+    CloseResult closed = close(opened);
+    if (whole == .ok && closed == .some) {
+        return {.error = closed.some};
     }
+    return whole;
 }
 
 // Opens, writes all of data and closes: Replace, Append or New.
 CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
-    OpenResult opened = open(path, mode);
-    switch (opened) {
-    case .error:
-        return {.error = opened.error};
-    case .ok:
-        CountResult written = write(opened.ok, data);
-        CloseResult closed = close(opened.ok);
-        if (written == .ok && closed == .some) {
-            return {.error = closed.some};
-        }
-        return written;
+    File opened = try open(path, mode);
+    CountResult written = write(opened, data);
+    CloseResult closed = close(opened);
+    if (written == .ok && closed == .some) {
+        return {.error = closed.some};
     }
+    return written;
 }
 
 // Writes all of data to the path as the mode says (Replace, Append, New or Atomic) and returns the bytes written.
@@ -641,6 +627,12 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
     return (Info){.folder = status.folder, .writable = status.writable, .size = status.size};
 }
 
+// Whether the failed make of a folder was only that the folder is there already.
+Bool folder_exists(Path *where, I32 code) {
+    c::SmithFileStatus status = {};
+    return code == eexist && raw_stat(where->text, &status) == 0 && status.folder;
+}
+
 // Makes the folder and the ones above it that are missing, like `mkdir -p`; one that is there already is success.
 [[std::c_name("smith_fs_make_folder")]] export [[nodiscard]] DoneResult make_folder(const char path[:]) {
     Path where = path_make(path);
@@ -652,11 +644,8 @@ CountResult write_in_place(const char path[:], const U8 data[:], Mode mode) {
         char kept = where.text[at];
         where.text[at] = 0;
         I32 code = raw_mkdir(where.text);
-        if (code != 0) {
-            c::SmithFileStatus status = {};
-            if (code != eexist || raw_stat(where.text, &status) != 0 || !status.folder) {
-                return {.error = error_from(code)};
-            }
+        if (code != 0 && !folder_exists(&where, code)) {
+            return {.error = error_from(code)};
         }
         where.text[at] = kept;
     }
@@ -857,7 +846,9 @@ I32 entry_compare(const void *a, const void *b) {
     if (is_folder) {
         return {.error = IsFolder};
     }
-    U8 view[:] = ((U8 *)(size == 0 ? (void *)where.text : bytes))[0:size];
+    U8 *base = (U8 *)bytes;
+    if (size == 0) base = (U8 *)&where.text[0]; // an empty file has no block: a view of the path's own bytes
+    U8 view[:] = base[0:size];
     return {.ok = view};
 }
 
