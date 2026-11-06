@@ -24,6 +24,7 @@ import front::cimport;
 import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
+import front::fix_equal;
 import front::fix_generic_c;
 import front::fix_method;
 import front::fix_opaque;
@@ -225,6 +226,13 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(typed); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = typed[i];
+    }
+    // `mem::equal(a, b)` (#2540): `==` compares slices and `str` by contents. The call is found by its name, so it is
+    // rewritten whatever else the file still gets wrong.
+    core::Errors equal = fix_equal::edits(source, &checked);
+    for (Usize i = 0; i < countof(equal); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = equal[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
