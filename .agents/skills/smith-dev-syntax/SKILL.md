@@ -25,6 +25,7 @@ Write tickets, tests of the new front end and examples in this syntax, never tod
 | types as arguments, inferred parameters, concepts, type functions | [smith-dev-syntax-generics](../smith-dev-syntax-generics/SKILL.md) |
 | `const`, compile-time `if`, reflection, variadics | [smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md) |
 | `import`, `from`, `pub`, C, C++ and Objective-C, globals, `extern`, build files, tests | [smith-dev-syntax-modules](../smith-dev-syntax-modules/SKILL.md) |
+| `asm`...`` at module level, tagged literals, `${` reserved | [smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md) |
 | attributes, `@when`, `@effects`, user attributes | [smith-dev-syntax-attributes](../smith-dev-syntax-attributes/SKILL.md) |
 | today's form → the new form (what each fix-it writes) | [smith-dev-syntax-from-c](../smith-dev-syntax-from-c/SKILL.md) |
 

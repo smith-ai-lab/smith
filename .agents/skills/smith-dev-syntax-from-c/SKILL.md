@@ -49,7 +49,8 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `#define F(x) ...`, `#pragma`, `#error "..."` | a function or a generic, an attribute, `static_assert(...)` |
 | `extern I32 errno;`, `extern int f(void);` | `extern mut errno: i32`, `extern fn f() -> i32` |
 | `static I32 count;` at file scope | `mut count: i32 = 0` |
+| `__asm__("...");` at file scope | `asm`...`` with `@when`, raw text over several lines |
 | `union`, `goto` and labels | a payload `enum`; `defer`, `break`, `continue`, `match` |
 | `&mut x`, `impl`, `x?`, `.iter().map()` (other languages) | errors naming `&x`, a module's functions, `try x`, `for` |
 
-Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Asm, `volatile`, atomics, bitfields, `alignas` and `[[gnu::format(...)]]` wait until after the switch-over.
+Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Module-level asm is the `asm` literal ([smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md)); asm inside a function, `volatile`, atomics, bitfields, `alignas` and `[[gnu::format(...)]]` wait until after the switch-over.

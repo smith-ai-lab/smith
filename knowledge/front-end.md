@@ -123,6 +123,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - `impl`, `&mut` and Rust's `?` at the start of a statement are warnings naming the smith form. A postfix `.` that starts a line after a finished statement does not continue it.
 - A type used by its tag is a type name: `struct Pair a = {...};` is a variable of type `Pair`; a lone lowercase tag (`struct stat`) is C's and the error says `struct c::stat`.
 - A range `for (T x : xs)` is read with `parse_decl`'s help: `for_stmt.range` holds `xs`, `init` the element and `index` the index declaration.
+- A tagged literal, `` asm`...` `` (D7, #2636): the lexer makes one `tagged` token of a name and a backtick text that may span lines, with nothing escaped (`scan_tagged` in `front/lex.smith`); `${` and an unclosed backtick are errors. `parse_decl` reads one at module level as an `asm_decl` (`asm` is the only tag; others say they wait for #2633), the emitter appends the texts of the live `asm_decl`s to the module with `LLVMAppendModuleInlineAsm`, and `@when` chooses among them like any declaration. The old `__asm__("...");` at file scope is fixed to the literal, and the label of an `extern` prototype is consumed by the function. The tree-sitter grammar has `tagged_literal` and an injection keyed on the tag. Test: `tests/front_asm_literal_test.smith`.
 - GNU spellings are errors (#1363): extended `__asm__` says to use `optimize::opaque(x)`; a type used as a value, `name name` at a statement start, is a declaration (A7o, #1360).
 
 ### parse_decl (`front/parse_decl.smith`, #1147)
