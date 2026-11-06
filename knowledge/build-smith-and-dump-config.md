@@ -89,3 +89,16 @@ command says so on stderr, prints nothing to stdout and exits 0. A folder that f
 prints the translation, and `smith build` and the verbs stop with a message that says to translate it or delete it, never
 building by convention behind it. An empty `build.c` or `build.smith` counts as none, since the redirect makes it first.) Everything else the
 command says goes to stderr, so the redirect makes the file.
+
+## The new syntax (D6, #2631)
+
+A build file does not import the module `build` beside its function `build`: a name means one thing in a file (owner, 2026-11-06). It imports the types by name and calls the rest as methods of `b`. `smith lint --fix` (`front/fix_build.smith`) writes this form from the one above, and every name in the `from` line is one the file wrote as `build::Name`:
+
+```text
+from std.build import Build, App, AppTests, Step
+
+pub fn build(b: *Build):
+    b.app(&App(entry = "main.smith"))
+    b.app_tests(&AppTests())
+    b.task("greet", &Step(command = b.list("echo", "hi", nullptr)))
+```
