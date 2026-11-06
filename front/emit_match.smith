@@ -324,14 +324,15 @@ static state::Status arm_start(state::Emitter *e, const state::ThenGeneral *w) {
     c::LLVMPositionBuilderAtEnd(e->builder, w->blocks[0]);
     state::begin_scope(e);
     ast::Pattern first = arm->patterns[0];
-    if (state::same_text(first.name, "some") && countof(first.binding) > 0 && !state::same_text(first.binding, "_")) {
-        state::Value inner = optional::payload(e, scrutinee(e, w->flag));
+    state::Value o = scrutinee(e, w->flag);
+    if (o.ty.kind == .option && state::same_text(first.name, "some") && countof(first.binding) > 0 &&
+        !state::same_text(first.binding, "_")) {
+        state::Value inner = optional::payload(e, o, o.ty.kind.option);
         c::LLVMValueRef slot = state::new_alloca(e, inner.ty, first.binding);
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = first.binding, .ty = inner.ty, .address = slot});
     }
-    if (scrutinee(e, w->flag).ty.kind == .variant_enum)
-        bind_variant(e, scrutinee(e, w->flag), first.name, first.binding);
+    if (o.ty.kind == .variant_enum) bind_variant(e, o, first.name, first.binding);
     state::ThenGeneral finish = *w;
     const ast::Expr *value = arm->value;
     if (value->kind == .stmt_expr && (!w->flag || leaves(value->kind.stmt_expr.stmt))) {
@@ -479,7 +480,7 @@ static Usize constant_count(const ast::Stmt *s) {
 // The value of a constant pattern, as the scrutinee's type.
 static c::LLVMValueRef case_value(state::Emitter *e, state::Value value, state::Value o) {
     if (c::LLVMTypeOf(value.llvm) == o.ty.llvm) return value.llvm;
-    return c::LLVMBuildIntCast2(e->builder, value.llvm, o.ty.llvm, value.ty.is_signed, "case");
+    return c::LLVMBuildIntCast2(e->builder, value.llvm, o.ty.llvm, state::is_signed(value.ty), "case");
 }
 
 // The constant patterns are on the value stack above the scrutinee, in order: one `switch` when every one is a
