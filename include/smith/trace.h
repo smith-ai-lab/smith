@@ -110,6 +110,10 @@ void smith_failure_set_hook(const void *hook);
 // does not read a header variable (stdout) yet.
 void smith_stdout_unbuffered(void);
 
+// snprintf with a pattern that is not a literal (std::test's `say` and `detail_add` take the pattern as an argument and
+// hand over the values it asks for). The caller owns the match between the pattern and the values.
+int smith_format_text(char *buffer, size_t capacity, const char *pattern, ...);
+
 // signal(number, SIG_DFL) and signal(number, SIG_IGN): the test runner's. For .smith, which does not read the macros
 // SIG_DFL and SIG_IGN of a header yet.
 void smith_signal_default(int number);

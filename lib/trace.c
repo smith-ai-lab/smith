@@ -55,6 +55,17 @@ void smith_failure_set_hook(const void *hook) {
     memcpy((void *)&smith_failure_hook, (const void *)&hook, sizeof hook);
 }
 
+int smith_format_text(char *buffer, size_t capacity, const char *pattern, ...) {
+    va_list values;
+    va_start(values, pattern);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+    int written = vsnprintf(buffer, capacity, pattern, values);
+#pragma clang diagnostic pop
+    va_end(values);
+    return written;
+}
+
 void smith_stdout_unbuffered(void) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 }

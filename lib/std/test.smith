@@ -631,8 +631,7 @@ void detail_add(Usize *used, const char *format, auto... rest) {
     if constexpr (countof(rest) == 0)
         written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, "%s", format);
     else {
-        const char *pattern = format;
-        written = __builtin_snprintf(shared->detail + *used, detail_capacity - *used, pattern, rest...);
+        written = c::smith_format_text(shared->detail + *used, detail_capacity - *used, format, rest...);
     }
     if (written > 0) *used += (Usize)written;
     if (*used > detail_capacity - 1) *used = detail_capacity - 1;
@@ -1663,8 +1662,7 @@ void say(const char *format, auto... rest) {
     if constexpr (countof(rest) == 0)
         (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
     else {
-        const char *pattern = format;
-        (void)__builtin_snprintf(buffer, sizeof buffer, pattern, rest...);
+        (void)c::smith_format_text(&buffer[0], sizeof buffer, format, rest...);
     }
     const char *shown = &buffer[0];
     (void)console::print(shown);
@@ -1675,8 +1673,7 @@ void complain(const char *format, auto... rest) {
     if constexpr (countof(rest) == 0)
         (void)__builtin_snprintf(buffer, sizeof buffer, "%s", format);
     else {
-        const char *pattern = format;
-        (void)__builtin_snprintf(buffer, sizeof buffer, pattern, rest...);
+        (void)c::smith_format_text(&buffer[0], sizeof buffer, format, rest...);
     }
     const char *shown = &buffer[0];
     (void)console::print_error(shown);
