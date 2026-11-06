@@ -93,3 +93,37 @@ export void test_front_check_bind_fix_a_switch_whose_last_case_falls_off_is_a_ma
         "                    break\n            return k + n\n        _: ()\n";
     expect(before, after);
 }
+
+// An `else if` chain of tests is one guard each: every `then` binds its own payload.
+export void test_front_check_bind_fix_an_else_if_chain_binds_each_payload() {
+    char before[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    if s == .circle:\n        s.circle\n  ",
+                                  "  else if s == .square:\n        s.square\n    else:\n        0\n");
+    char after[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    if .circle(circle) := s:\n        ",
+                                 "circle\n    else if .square(square) := s:\n        square\n    else:\n        0\n");
+    expect(before, after);
+}
+
+// A `match p.*:` reads the payload through the pointer, `p.v`: the arm binds it all the same.
+export void test_front_check_bind_fix_a_match_on_a_pointer_binds_the_payload() {
+    char before[:] = format::push(shape_text(), "fn area(p: *Shape) -> i32:\n    match p.*:\n        .circle: ",
+                                  "p.circle\n        .square: p.square\n        .empty: 0\n");
+    char after[:] = format::push(shape_text(), "fn area(p: *Shape) -> i32:\n    match p.*:\n        .circle(circle): ",
+                                 "circle\n        .square(square): square\n        .empty: 0\n");
+    expect(before, after);
+}
+
+// `if p.* == .v:` with `p.v` is `if .v(v) := p.*:` with `v`.
+export void test_front_check_bind_fix_a_test_through_a_pointer_binds_the_payload() {
+    char before[:] = format::push(
+        shape_text(), "fn area(p: *Shape) -> i32:\n    if p.* == .circle:\n        return p.circle * 2\n    0\n");
+    char after[:] = format::push(
+        shape_text(), "fn area(p: *Shape) -> i32:\n    if .circle(circle) := p.*:\n        return circle * 2\n    0\n");
+    expect(before, after);
+}
+
+// A write through the pointer, `p.* = x`, changes what the test read: the site stays as it is.
+export void test_front_check_bind_fix_a_write_through_the_pointer_leaves_the_site() {
+    char site[:] = format::push(shape_text(), "fn area(p: *mut Shape) -> i32:\n    if p.* == .circle:\n        p.* = ",
+                                ".empty\n        return p.circle * 2\n    0\n");
+    expect(site, site);
+}
