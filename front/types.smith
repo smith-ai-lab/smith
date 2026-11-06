@@ -2893,9 +2893,13 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
         if (taken != nullptr) type = taken;
     }
     Bool is_const = constexpr_variable || written->qualifiers.is_const;
-    Symbol symbol = {
-        .name = name, .kind = .variable, .type = type, .decl = d, .is_const = is_const, .is_new = is_new,
-        .exported = d->exported};
+    Symbol symbol = {.name = name,
+                     .kind = .variable,
+                     .type = type,
+                     .decl = d,
+                     .is_const = is_const,
+                     .is_new = is_new,
+                     .exported = d->exported};
     // The type as written, for the fix that makes a pointer global `*mut` where it is written through (#2611).
     if (is_new) symbol.written = written;
     declare_in_module(r, symbol, d->span);

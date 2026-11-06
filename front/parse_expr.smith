@@ -2038,8 +2038,8 @@ static Bool builtin_type_alone(const parse::Parser *p) {
     if (!p->new_syntax || parse::peek_at(p, 1).kind != lex::name || parse::peek_at(p, 2).kind != lex::right_paren)
         return false;
     Str name = parse::text(p, parse::peek_at(p, 1));
-    Str names[_] = {"u8",  "u16", "u32", "u64",   "usize", "i8",   "i16",
-                   "i32", "i64", "isize", "f32", "f64",   "bool", "char"};
+    Str names[_] = {"u8",  "u16", "u32",   "u64", "usize", "i8",   "i16",
+                    "i32", "i64", "isize", "f32", "f64",   "bool", "char"};
     for (Usize i = 0; i < countof(names); i++)
         if (same_text(name, names[i])) return true;
     return false;

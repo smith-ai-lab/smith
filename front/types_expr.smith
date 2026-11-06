@@ -5866,7 +5866,8 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record = calls_header_function(c, callee, e->kind.call.args) ? nullptr : constructed_record(c, callee);
+    types::TypeRef record =
+        calls_header_function(c, callee, e->kind.call.args) ? nullptr : constructed_record(c, callee);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
@@ -6114,8 +6115,10 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {
-            construct_after(c, f, calls_header_function(c, e->kind.call.callee, e->kind.call.args) ? nullptr
-                                                                                         : constructed_record(c, e->kind.call.callee));
+            construct_after(c, f,
+                            calls_header_function(c, e->kind.call.callee, e->kind.call.args)
+                                ? nullptr
+                                : constructed_record(c, e->kind.call.callee));
         } else {
             call_after(c, f);
         }

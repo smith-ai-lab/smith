@@ -193,7 +193,8 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
 
 // The edit for `&xs[0]` handed where `*(*mut T)` is wanted, with `xs` declared `[n]*T`: the element becomes `*mut T`
 // (`execv`'s `argv`, #2611). Empty when `e` is not that shape.
-static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
+                                     types::TypeRef to) {
     syntax::Edits edits = {};
     if (from->kind != .pointer || to->kind != .pointer || from->element->kind != .pointer ||
         to->element->kind != .pointer || !from->element->pointee_const || to->element->pointee_const)
@@ -202,7 +203,8 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
     const ast::Expr *array = e->kind.unary.operand->kind.index.base;
     if (array->kind != .name) return edits;
     const types::Symbol *s = types::lookup_path(&c->scopes, array->kind.name.path);
-    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr || s->written->kind != .array) return edits;
+    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr || s->written->kind != .array)
+        return edits;
     const ast::TypeExpr *element = s->written->kind.array.element;
     if (element->kind != .pointer || element->kind.pointer.is_mut) return edits;
     edits = mem::realloc(edits, 1);
