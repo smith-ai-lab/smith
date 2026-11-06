@@ -1,0 +1,47 @@
+// The fix for a payload read after a variant test (#2494): `if k == .v:` with `k.v` is `if .v(v) := k:` with `v`, a
+// `match` arm `.v:` that reads `k.v` is `.v(v):`; a variable of that name in scope leaves the site as it is.
+module front_check_bind_fix_test;
+
+import front::fix;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", first.text);
+    test::check_equal(again.text, after);
+}
+
+static Str shape_text() {
+    return "enum Shape:\n    circle: i32\n    square: i32\n    empty\n";
+}
+
+export void test_front_check_bind_fix_an_equality_test_binds_the_payload() {
+    char before[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    if s == .circle:\n        return s.circle * 2\n    0\n");
+    char after[:] = format::push(
+        shape_text(), "fn area(s: Shape) -> i32:\n    if .circle(circle) := s:\n        return circle * 2\n    0\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_a_match_arm_binds_the_payload() {
+    char before[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    match s:\n        .circle: s.circle\n  "
+                                                "      .square: s.square\n        .empty: 0\n");
+    char after[:] = format::push(shape_text(), "fn area(s: Shape) -> i32:\n    match s:\n        .circle(circle): "
+                                               "circle\n        .square(square): square\n        .empty: 0\n");
+    expect(before, after);
+}
+
+export void test_front_check_bind_fix_a_name_in_scope_leaves_the_site() {
+    char site[:] = format::push(
+        shape_text(),
+        "fn area(s: Shape, circle: i32) -> i32:\n    if s == .circle:\n        return s.circle * 2\n    circle\n");
+    expect(site, site);
+}

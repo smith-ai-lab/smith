@@ -1197,8 +1197,19 @@ static state::Status slice_of_finish(state::Emitter *e, const state::Work *w) {
         data = base.llvm;
         count = c::LLVMConstInt(index_word(e), base.ty.count, 0);
         result = slice_type(e, *base.ty.element, "slice");
+    } else if (base.ty.kind == .pointer && base.ty.element != nullptr) {
+        // `p[a:b]`: the pointer is read from its place; the only bound there is to check is `a <= b`.
+        if (end == nullptr) return state::fail("a slice of a pointer needs its end: `p[a:b]`", w->span);
+        data = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
+        result = slice_type(e, *base.ty.element, "slice");
+        c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");
+        report_index(e, backwards, end, 0, end);
+        c::LLVMValueRef first = c::LLVMBuildGEP2(e->builder, base.ty.element->llvm, data, &start, 1, "first");
+        c::LLVMValueRef length = c::LLVMBuildSub(e->builder, end, start, "length");
+        state::push_value(e, make_slice(e, result, first, length));
+        return state::success();
     } else {
-        return state::not_emitted("a slice of a pointer", w->span);
+        return state::not_emitted("a slice of this", w->span);
     }
     if (end == nullptr) end = count;
     c::LLVMValueRef backwards = c::LLVMBuildICmp(e->builder, c::LLVMIntUGT, start, end, "backwards");

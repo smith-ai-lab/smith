@@ -111,6 +111,14 @@ static c::LLVMTypeRef code_type(state::Emitter *e, state::Ty func_ty) {
     return c::LLVMFunctionType(func_ty.element->llvm, types, (U32)func_ty.part_count + 1, 0);
 }
 
+// `R (A, B)`: the code of a C function pointer, which takes no context.
+static c::LLVMTypeRef plain_code_type(state::Ty func_ty) {
+    c::LLVMTypeRef types[max_parts];
+    for (Usize i = 0; i < func_ty.part_count; i++)
+        types[i] = part(func_ty, i).llvm;
+    return c::LLVMFunctionType(func_ty.element->llvm, types, (U32)func_ty.part_count, 0);
+}
+
 export state::TyResult type_function(state::Emitter *e, const ast::TypeExpr *t) {
     if (t->kind != .function) return state::ty_fail("not a function type", t->span);
     if (t->kind.function.variadic) return state::ty_fail("not emitted yet: a variadic fn type", t->span);
@@ -156,6 +164,8 @@ static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
         }
     }
     if (t->kind == .option) return optional::from_checked(e, t);
+    // A pointer (a C function pointer's `self`) and the rest go the way a variable's type does.
+    if (t->kind == .pointer) return state::type_of_checked(e, t, (ast::Span){});
     Str shown = types::show(t);
     Str message = state::msg(format::push("not emitted yet: a fn of ", shown));
     state::free_text(shown);
@@ -180,6 +190,17 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
     if (result == .error) return {.error = result.error};
     state::Ty made_fn = make_type(e, parts[0:n], result.ok);
     return made_fn;
+}
+
+// A C function pointer, a field of a header's struct: the bare `ptr` of C's layout, with the parameters and the result
+// of the `fn` type the checker gives it. A call through it passes no context.
+export state::TyResult pointer_from_checked(state::Emitter *e, types::TypeRef t) {
+    state::TyResult made = from_checked(e, t);
+    if (made == .error) return made;
+    state::Ty ty = made.ok;
+    ty.kind = .fn_pointer;
+    ty.llvm = state::pointer_type(e, 0);
+    return {.ok = ty};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -498,24 +519,31 @@ static state::Status call_finish(state::Emitter *e, const state::Work *w) {
     for (Usize i = count; i > 0; i--)
         values[i - 1] = state::pop_value(e);
     state::Value callee = state::pop_value(e);
+    // A C function pointer is the code alone and its call has no context argument.
+    Bool bare = callee.ty.kind == .fn_pointer;
+    Usize first = bare ? 0 : 1;
     c::LLVMValueRef argv[max_parts + 1];
-    argv[0] = c::LLVMBuildExtractValue(e->builder, callee.llvm, 1, "context");
-    c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, callee.llvm, 0, "code");
+    c::LLVMValueRef code = callee.llvm;
+    if (!bare) {
+        argv[0] = c::LLVMBuildExtractValue(e->builder, callee.llvm, 1, "context");
+        code = c::LLVMBuildExtractValue(e->builder, callee.llvm, 0, "code");
+    }
     for (Usize i = 0; i < count; i++) {
         state::Ty want = part(func_ty, i);
         if (!state::same_type(values[i].ty, want)) {
             try state::convert(e, values[i], want, args[i]->span, .initialize);
             values[i] = state::pop_value(e);
         }
-        argv[i + 1] = values[i].llvm;
+        argv[i + first] = values[i].llvm;
     }
     state::Ty result = *func_ty.element;
-    c::LLVMTypeRef type = code_type(e, func_ty);
+    c::LLVMTypeRef type = bare ? plain_code_type(func_ty) : code_type(e, func_ty);
+    U32 argc = (U32)(count + first);
     c::LLVMValueRef made = nullptr;
     if (is_void(result))
-        made = c::LLVMBuildCall2(e->builder, type, code, argv, (U32)count + 1, "");
+        made = c::LLVMBuildCall2(e->builder, type, code, argv, argc, "");
     else
-        made = c::LLVMBuildCall2(e->builder, type, code, argv, (U32)count + 1, "call");
+        made = c::LLVMBuildCall2(e->builder, type, code, argv, argc, "call");
     state::push_value(e, (state::Value){.llvm = made, .ty = result});
     return state::success();
 }
