@@ -188,6 +188,77 @@ static const ast::Module *load_header(Str header, Bool angled) {
     return module;
 }
 
+// The libc headers a name used as `c.name` may come from, most specific first (#2627): the file never imports the
+// header (C reached it through another header's includes), so the fix adds `import c <h>` and the next pass writes
+// `h.name`.
+static Str libc_headers[14] = {"string.h", "stdlib.h", "stdio.h", "unistd.h",   "ctype.h",    "errno.h",  "fcntl.h",
+                               "signal.h", "time.h",   "math.h",  "sys/stat.h", "sys/wait.h", "dirent.h", "limits.h"};
+
+static Bool header_declares(const ast::Module *header, Str name) {
+    for (Usize i = 0; i < countof(header->decls); i++) {
+        const ast::Decl *d = header->decls[i];
+        if (d->kind == .function && mem::equal(d->kind.function.name, name)) return true;
+        if (d->kind == .variable && mem::equal(d->kind.variable.name, name)) return true;
+    }
+    return false;
+}
+
+// The name in "there is no global `c`: import the header that declares `strlen` (...)": empty for another message.
+static Str undeclared_c_name(Str message) {
+    Str lead = "there is no global `c`: import the header that declares `";
+    if (countof(message) <= countof(lead) || !mem::equal(message[0:countof(lead)], lead)) return "";
+    Usize end = countof(lead);
+    while (end < countof(message) && message[end] != '`')
+        end += 1;
+    return message[countof(lead):end];
+}
+
+// One fix per header that declares a name the file reads as `c.name` without importing it: the line `import c <h>`.
+static core::Errors c_import_fixes(const ast::Module *module, const types::Checked *checked) {
+    core::Errors out = {};
+    if (countof(module->decls) == 0) return out;
+    Str added[8];
+    Usize added_count = 0;
+    for (Usize i = 0; i < checked->error_count; i++) {
+        Str name = undeclared_c_name(checked->errors[i].message);
+        if (countof(name) == 0) continue;
+        for (Usize h = 0; h < countof(libc_headers); h++) {
+            Str header = libc_headers[h];
+            Bool done = false;
+            for (Usize k = 0; k < added_count; k++)
+                if (mem::equal(added[k], header)) done = true;
+            if (done) continue;
+            const ast::Module *found = load_header(header, true);
+            if (found == nullptr || !header_declares(found, name)) continue;
+            const ast::Decl *first = module->decls[0];
+            for (Usize k = 0; k < countof(module->decls); k++) {
+                const ast::Decl *candidate = module->decls[k];
+                Bool is_import = candidate->kind == .import_module;
+                if (candidate->kind == .import_c) is_import = true;
+                if (!is_import) continue;
+                first = candidate;
+                break;
+            }
+            ast::Span at = {.start = first->span.start, .end = first->span.start};
+            core::Edits edits = {};
+            edits = mem::realloc(edits, 1);
+            edits[0] = (core::Edit){.span = at, .text = as_str(format::push("import c <", header, ">\n"))};
+            out = mem::realloc(out, countof(out) + 1);
+            core::ParseError fix_error = {};
+            fix_error.span = at;
+            fix_error.message = "a C name needs its header";
+            fix_error.fix = edits;
+            out[countof(out) - 1] = fix_error;
+            if (added_count < 8) {
+                added[added_count] = header;
+                added_count += 1;
+            }
+            break;
+        }
+    }
+    return out;
+}
+
 // Whether the module imports a header with a language (`import c <h>`): only then does the checker need clang.
 static Bool imports_header(const ast::Module *module) {
     for (Usize i = 0; i < countof(module->decls); i++) {
@@ -211,6 +282,11 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         if (countof(e.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
+    }
+    core::Errors imports = c_import_fixes(module, &checked);
+    for (Usize i = 0; i < countof(imports); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = imports[i];
     }
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     core::Errors zeros = fix_zero::edits(source, module, &checked);
