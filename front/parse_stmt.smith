@@ -57,6 +57,14 @@ import std::mem;
 
 // What an open construct waits for.
 // NOLINTBEGIN(readability-identifier-naming)
+// One conjunct after the head of a chain `if .v(x) := value && a && .w(y) := other && b:` (D12): a test, or a pattern
+// and its value, whose names are in scope in the conjuncts to its right and in the body, not in the `else`.
+struct Link {
+    Bool bound;
+    ast::Pattern pattern;
+    ast::Expr *value; // the test, or the value of the pattern
+};
+
 enum FrameKind {
     block_frame,    // statements up to `}`
     if_then,        // the then branch
@@ -103,7 +111,7 @@ struct Frame {
     Bool is_let;          // `if let pattern = value`: `condition` is the value
     Bool value_tail;      // a refutable binding at the end of a function body: the last line of the rest is the value
     ast::Pattern pattern; // and its pattern
-    ast::Expr *chain;     // `if .v(x) := value && chain:`: the rest of the `&&` chain, read with `x` in scope (D12)
+    Link links[:]; // `if .v(x) := value && a && .w(y) := other:`: the rest of the `&&` chain, left to right (D12)
     // An old header and the fix that writes it as smith's own, recorded once the body is known (old_header_fix).
     Bool old;
     Bool has_close;   // the `)` of the header is an edit of its own (`if` and `while`)
@@ -952,6 +960,33 @@ static Frame open_refutable(parse::Parser *p, Bool parent_layout, Bool tail) {
     return frame;
 }
 
+// The `&&` conjuncts after a pattern's value (D12): each is a test or a pattern with its value, and a test next to a
+// test is one `&&` expression. A conjunct is a head too: a call at its end takes no trailing block.
+static void read_chain(parse::Parser *p, Frame *frame, Usize before) {
+    while (countof(p->errors) == before && parse::accept(p, lex::ampersand_ampersand)) {
+        Link link = {};
+        if (binding_head(p)) {
+            link.bound = true;
+            link.pattern = head_pattern(p);
+            parse::expect(p, lex::colon_equal, "`:=` after the pattern");
+        }
+        p->head = true;
+        p->stop_and = true;
+        link.value = countof(p->errors) == before ? expression(p) : nullptr;
+        p->stop_and = false;
+        if (link.value == nullptr) return;
+        Usize count = countof(frame->links);
+        if (!link.bound && count > 0 && !frame->links[count - 1].bound) {
+            ast::Expr *joined = ast::binary(.logical_and, frame->links[count - 1].value, link.value);
+            joined->span = (ast::Span){.start = frame->links[count - 1].value->span.start, .end = link.value->span.end};
+            frame->links[count - 1].value = joined;
+            continue;
+        }
+        frame->links = mem::realloc(frame->links, count + 1);
+        frame->links[count] = link;
+    }
+}
+
 // `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
 // `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
 static Frame open_bare(parse::Parser *p, FrameKind kind) {
@@ -962,10 +997,7 @@ static Frame open_bare(parse::Parser *p, FrameKind kind) {
     p->stop_and = frame.is_let; // the value of a pattern ends at `&&`, the rest of the chain is read after it (D12)
     if (countof(p->errors) == before) frame.condition = expression(p);
     p->stop_and = false;
-    if (frame.is_let && countof(p->errors) == before && parse::accept(p, lex::ampersand_ampersand)) {
-        p->head = true; // the chain is a condition head too: a call at its end takes no trailing block
-        frame.chain = expression(p);
-    }
+    if (frame.is_let) read_chain(p, &frame, before);
     p->head = false;
     frame.no_body = !require_body(p, before);
     return frame;
@@ -2026,16 +2058,29 @@ static ast::Stmt *close_do(parse::Parser *p, Frame frame, ast::Stmt *done) {
     return spanned(p, frame.start, built);
 }
 
+// The chain after the head, from its last conjunct to its first: each is an `if` or an `if` with a pattern around what
+// follows, with `otherwise` as its `else`. With no chain it is `then`.
+static ast::Stmt *chain_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
+    for (Usize i = countof(frame.links); i > 0; i--) {
+        Link link = frame.links[i - 1];
+        if (link.bound) {
+            then = spanned(p, frame.start, ast::if_let(link.pattern, link.value, then, otherwise));
+            continue;
+        }
+        then = spanned(p, frame.start,
+                       new_stmt({.if_stmt = {.condition = link.value, .then_branch = then, .else_branch = otherwise}}));
+    }
+    return then;
+}
+
 // `while item := it.next(): body` is `while true: if item := it.next(): body else: break` (#2316): the loop has no
 // node of its own, so the checker and the emitter see an `if` with a pattern they already know.
 static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *done) {
     ast::Expr *always = ast::expr({.boolean = {.value = true}});
     always->span = frame.pattern.span;
     ast::Stmt *stop = spanned(p, frame.start, new_stmt(break_kind()));
-    if (frame.chain != nullptr) { // `while .v(x) := value && rest:` stops when the rest fails too (D12)
-        ast::Stmt *again = spanned(p, frame.start, new_stmt(break_kind()));
-        done = spanned(p, frame.start,
-                       new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = done, .else_branch = again}}));
+    if (countof(frame.links) > 0) { // `while .v(x) := value && rest:` stops when the rest fails too (D12)
+        done = chain_if(p, frame, done, spanned(p, frame.start, new_stmt(break_kind())));
     }
     ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
     return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
@@ -2045,11 +2090,7 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
 // otherwise`: the checker and the emitter see the `if` with a pattern and the `if` they already know. `x` is in scope
 // in `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
 static ast::Stmt *pattern_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
-    if (frame.chain != nullptr) {
-        then =
-            spanned(p, frame.start,
-                    new_stmt({.if_stmt = {.condition = frame.chain, .then_branch = then, .else_branch = otherwise}}));
-    }
+    then = chain_if(p, frame, then, otherwise);
     return ast::if_let(frame.pattern, frame.condition, then, otherwise);
 }
 
