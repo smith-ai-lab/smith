@@ -2,7 +2,7 @@
 // of the thread (include/smith/handlers.h), so a test can stand in for them: a fake console captures what a function
 // prints and answers what it reads. Called directly, with no capability value to pass:
 //
-//   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::to; no length limit
+//   console::print("moved ", dx, " ", dy, "\n");        // typed pieces, as format::write; no length limit
 //   console::print_error("cannot open ", path, "\n");
 //   console::Line line = try console::read_line();      // the next line of stdin
 //
@@ -200,7 +200,7 @@ Written emit_long(Bool errors, char *memory, Usize characters) {
     return written;
 }
 
-// The pieces as text on stdout, as format::to writes them: `print("x = ", x, "\n")`, each piece typed (see
+// The pieces as text on stdout, as format::write writes them: `print("x = ", x, "\n")`, each piece typed (see
 // smith-format). There is no limit on the text: a long one is formatted in memory of the allocator in force and given
 // back. A piece with no rule is a compile error. Not [[nodiscard]]: a program that prints a report has nowhere else to
 // say that stdout is closed.
