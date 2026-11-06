@@ -144,6 +144,7 @@ export Fixed apply_fixes(Str source, core::Errors errors, core::Errors warnings)
 }
 
 constexpr Usize fix_passes = 16;
+constexpr Usize fix_rounds = 6;
 
 // Reads the modules a file imports (#1797): without one the checker knows nothing of an import, and the fixes that need
 // another module's types (a call written in the method form) are not made. A test supplies its own; the driver's reads
@@ -536,14 +537,15 @@ export Fixed fix_text(Str file, Str source) {
     if (total.applied > 0) total.text = fix_blocks::convert(total.text);
     // The checker mends a local only once it is declared in smith's own syntax (`mut sum`, `&xs[0]`), which the blocks
     // pass has just finished writing: one more round, so that a second run of the fixer has nothing left (#2386).
-    if (total.applied > 0 && countof(total.text) > 0) {
+    // A round can make the next one possible (a variant `lex.string` becomes `.string` only once the pointer types
+    // around it are mended), so rounds repeat until one applies nothing: a second run has nothing left (#2449).
+    for (Usize round = 0; round < fix_rounds && total.applied > 0 && countof(total.text) > 0; round++) {
         Fixed more = {.text = total.text};
         mend_passes(file, &more);
-        if (more.applied > 0) {
-            total.text = fix_blocks::convert(hash_comments(more.text));
-            total.applied += more.applied;
-            total.skipped = more.skipped;
-        }
+        if (more.applied == 0) break;
+        total.text = fix_blocks::convert(hash_comments(more.text));
+        total.applied += more.applied;
+        total.skipped = more.skipped;
     }
     if (header_arena_made) {
         arena::release(&header_arena);
