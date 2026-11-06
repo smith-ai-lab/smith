@@ -654,9 +654,16 @@ static state::Status construct_finish(state::Emitter *e, const state::Work *w) {
         Usize field = 0;
         if (!field_for(record, args, i, &field))
             return state::failf(args[i]->span, "no field ", given_name(args[i]), " in ", record.name);
-        if (!state::same_type(values[i].ty, record.fields[field].ty))
-            return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name, " is ",
-                                record.fields[field].ty.name, ", the value is ", values[i].ty.name);
+        if (!state::same_type(values[i].ty, record.fields[field].ty)) {
+            // The conversions a declaration makes (`u32` to a `usize` field) are made for a field too.
+            state::Status converted = state::convert(e, values[i], record.fields[field].ty, args[i]->span, .initialize);
+            if (converted == .error) {
+                state::free_text(converted.error.message);
+                return state::failf(args[i]->span, "field ", record.fields[field].name, " of ", record.name, " is ",
+                                    record.fields[field].ty.name, ", the value is ", values[i].ty.name);
+            }
+            values[i] = state::pop_value(e);
+        }
         built = c::LLVMBuildInsertValue(e->builder, built, values[i].llvm, (U32)field, "");
     }
     state::push_value(e, (state::Value){.llvm = built, .ty = record.ty});
@@ -835,7 +842,13 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     }
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
     if (!is_imported && instance == nullptr && callee->kind != .name) {
-        return state::not_emitted("call of something that is not a name", x->span);
+        // A call through a field that holds a function: a C function pointer, or a `fn` value of the module.
+        if (callee->kind != .member) return state::not_emitted("call of something that is not a name", x->span);
+        state::TyResult held = state::type_of_node(e, callee);
+        if (held == .error) return {.error = held.error};
+        if (held.ok.kind != .fn_value && held.ok.kind != .fn_pointer)
+            return state::not_emitted("call of something that is not a name", x->span);
+        return lambdas::call_value(e, x, held.ok);
     }
     if (!is_imported && instance == nullptr && callee->kind == .name) key = join(callee->kind.name.path);
     SignatureResult found = find(e, key, callee->span, imported);

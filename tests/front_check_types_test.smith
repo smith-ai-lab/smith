@@ -267,3 +267,16 @@ export void test_front_check_types_tag_test_on_a_payload_enum_with_a_leading_dot
     clean("struct Circle:\n    radius: f32\nenum Shape:\n    circle: Circle\n    empty\n\n"
           "fn is_circle(s: Shape) -> bool:\n    s == .circle\n");
 }
+
+export void test_front_check_types_a_shifted_literal_takes_the_expected_type() {
+    clean("const window: usize = 64 << 10\nfn wide() -> u64:\n    return 1 << 40\n");
+}
+
+export void test_front_check_types_a_global_built_from_a_record_has_its_type() {
+    clean("struct Format:\n    bits: u32\n\nconst single = Format(24)\n\n"
+          "fn width(f: *Format) -> u32:\n    return f.bits\n\nfn single_width() -> u32:\n    return width(&single)\n");
+}
+
+export void test_front_check_types_a_member_of_a_cast_pointer_needs_no_arrow() {
+    clean("struct Box:\n    size: usize\n\nfn size_of(raw: *u8) -> usize:\n    return (raw.cast(*Box)).size\n");
+}

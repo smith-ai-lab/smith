@@ -209,6 +209,9 @@ constexpr U64 double_infinity_bits = 0x7ff0000000000000;
 constexpr Format float_format = {24, -149, 150, 255};
 constexpr Format double_format = {53, -1074, 1075, 2047};
 
+constexpr F64 float_min_normal = 1.1754943508222875e-38;   // FLT_MIN, 2^-126: the smallest normal f32, as an f64
+constexpr F64 double_min_normal = 2.2250738585072014e-308; // DBL_MIN, 2^-1022
+
 const F64 powers[fast_exponent_max + 1] = {
     1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
@@ -270,8 +273,8 @@ void big_shift_left(Big *big, U64 shift) {
         big->limb[i + whole + 1] |= (U32)(moved >> 32);
         big->limb[i + whole] = (U32)moved;
     }
-    for (Usize i = 0; i < whole; i++) {
-        big->limb[i] = 0;
+    for (Usize k = 0; k < whole; k++) {
+        big->limb[k] = 0;
     }
     big->count += whole + 1;
     while (big->count > 0 && big->limb[big->count - 1] == 0) {
@@ -486,7 +489,7 @@ Bool decimal_to_f32_bits(Decimal *decimal, U32 *bits) {
         F64 nearest = decimal_fast(decimal);
         U64 nearest_bits = __builtin_bit_cast(U64, nearest);
         Bool halfway = (nearest_bits & 0x1fffffff) == 0x10000000; // between two floats: look closer
-        if (nearest >= (F64)__FLT_MIN__ && nearest <= 1e38 && !halfway) {
+        if (nearest >= float_min_normal && nearest <= 1e38 && !halfway) {
             *bits = __builtin_bit_cast(U32, (F32)nearest);
             return true;
         }
@@ -510,7 +513,7 @@ Bool decimal_to_f64_bits(Decimal *decimal, U64 *bits) {
     }
     if (decimal_is_fast(decimal)) {
         F64 nearest = decimal_fast(decimal); // one rounding of exact operands: the answer
-        if (nearest >= __DBL_MIN__ && nearest <= 1e300) {
+        if (nearest >= double_min_normal && nearest <= 1e300) {
             *bits = __builtin_bit_cast(U64, nearest);
             return true;
         }
@@ -565,11 +568,13 @@ Bool decimal_scan(const char word[:], Decimal *decimal, Bool *negative) {
 [[std::c_name("smith_text_write_u64")]] export Usize write_u64(char out[:], U64 value) {
     contract::requires(countof(out) >= number_capacity);
     char reversed[number_capacity];
-    Usize count = 0;
-    do {
+    reversed[0] = (char)('0' + value % 10); // a value of 0 is one digit, so the first digit is written before the loop
+    value /= 10;
+    Usize count = 1;
+    while (value != 0 && count < number_capacity) {
         reversed[count++] = (char)('0' + value % 10);
         value /= 10;
-    } while (value != 0 && count < number_capacity);
+    }
     check(value == 0);                                      // a number has more digits than number_capacity
     for (Usize i = 0; i < count && i < countof(out); i++) { // the requires holds, the guard shows it to the prover
         out[i] = reversed[count - 1 - i];
@@ -698,7 +703,7 @@ Bool f64_reads_back(U64 q, I64 s, U64 bits) {
     char text[number_capacity * 2];
     Usize length = write_u64(text, q);
     text[length++] = 'e';
-    length += append_i64(text + length, s);
+    length += append_i64(&text[length], s);
     F64 back = 0;
     if (length > sizeof text) return false;
     return parse_f64(text[0:length], &back) && __builtin_bit_cast(U64, back) == bits;
@@ -791,7 +796,7 @@ Bool f32_reads_back(U64 q, I64 s, U32 bits) {
     char text[number_capacity * 2];
     Usize length = write_u64(text, q);
     text[length++] = 'e';
-    length += append_i64(text + length, s);
+    length += append_i64(&text[length], s);
     F32 back = 0;
     if (length > sizeof text) return false;
     return parse_f32(text[0:length], &back) && __builtin_bit_cast(U32, back) == bits;
