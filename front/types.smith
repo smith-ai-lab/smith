@@ -890,6 +890,16 @@ export struct NodeType {
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
 };
 
+// A test of a payload enumeration's variant, `if k == .v:` or `if k != .v: return`, kept for the fix of the reads `k.v`
+// it guards: `if .v(v) := k:` or `.v(v) := k else: return`, and each read is `v` (#2494).
+export struct Guard {
+    const ast::Expr *base; // `k`
+    Str variant;           // `v`, which is also the name the fix binds
+    ast::Span reads;       // the reads inside this span are the test's
+    syntax::Edits head;    // the edits that write the test itself
+    Bool head_sent;        // the first read carries them
+};
+
 export struct Checked;
 
 // What J1d supplies: checks the body of one function of the module (its scopes are already set up to the module's).
@@ -976,6 +986,8 @@ export struct Checked {
     Usize node_count;
     Error errors[:];
     Usize error_count;
+    Guard guards[:]; // the variant tests of the function being checked (#2494)
+    Usize guard_count;
     const ast::Module *module; // the module as checked for the system smith runs on (`when::live_module`), null when
                                // it is the one given (#2277): the emitter emits this one
 };
