@@ -191,6 +191,27 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
     return edits;
 }
 
+// The edit for `&xs[0]` handed where `*(*mut T)` is wanted, with `xs` declared `[n]*T`: the element becomes `*mut T`
+// (`execv`'s `argv`, #2611). Empty when `e` is not that shape.
+static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    syntax::Edits edits = {};
+    if (from->kind != .pointer || to->kind != .pointer || from->element->kind != .pointer ||
+        to->element->kind != .pointer || !from->element->pointee_const || to->element->pointee_const)
+        return edits;
+    if (e->kind != .unary || e->kind.unary.op != .address_of || e->kind.unary.operand->kind != .index) return edits;
+    const ast::Expr *array = e->kind.unary.operand->kind.index.base;
+    if (array->kind != .name) return edits;
+    const types::Symbol *s = types::lookup_path(&c->scopes, array->kind.name.path);
+    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr || s->written->kind != .array) return edits;
+    const ast::TypeExpr *element = s->written->kind.array.element;
+    if (element->kind != .pointer || element->kind.pointer.is_mut) return edits;
+    edits = mem::realloc(edits, 1);
+    U32 after_star = element->span.start + 1;
+    Str word = "mut ";
+    edits[0] = (syntax::Edit){.span = {.start = after_star, .end = after_star}, .text = word};
+    return edits;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok) {
@@ -207,8 +228,10 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
+    if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
     if (from->kind == .array && to->kind == .pointer &&
-        (from->element == to->element || to->element->kind == .void_type))
+        (from->element == to->element || to->element->kind == .void_type ||
+         (from->element->kind == .pointer && to->element->kind == .pointer))) // `execv(path, argv)`
         fix = types_builtin::element_address_fix(e);
     // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
     if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
