@@ -1,0 +1,57 @@
+// front::fix_array, the fix-it for a fixed array passed where a C function wants a pointer (#2648).
+//
+//   c::LLVMStructType(ctx, fields, n, false)     c::LLVMStructType(ctx, &fields[0], n, false)
+//
+// C decays an array to a pointer to its first element; smith's checker says "a fixed array never converts to a bare
+// pointer; write the address of an element". When the argument is a name or a member chain, it is written `&xs[0]`.
+//
+//   fix_array::edits(source, checked)   one fix for each such error
+module front::fix_array;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+static Bool contains(Str text, Str needle) {
+    Usize n = countof(needle);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        Bool same = true;
+        for (Usize j = 0; j < n && same; j++) same = text[i + j] == needle[j];
+        if (same) return true;
+    }
+    return false;
+}
+
+// A name, or names joined by `.`: what can stand before `[0]` as it is written.
+static Bool is_chain(Str text) {
+    if (countof(text) == 0) return false;
+    for (Usize i = 0; i < countof(text); i++) {
+        char ch = text[i];
+        Bool word = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+        if (!word && ch != '.') return false;
+    }
+    return true;
+}
+
+export core::Errors edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.fix) > 0 || found.span.end > countof(source) || found.span.start >= found.span.end) continue;
+        if (!contains(found.message, "a fixed array never converts to a bare pointer")) continue;
+        Str text = source[found.span.start:found.span.end];
+        if (!is_chain(text)) continue;
+        core::Edits fix = {};
+        fix = mem::realloc(fix, 1);
+        fix[0] = (core::Edit){.span = found.span, .text = types::message_of(format::push("&", text, "[0]"))};
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError made = {};
+        made.span = found.span;
+        made.message = "write the address of the first element";
+        made.fix = fix;
+        out[countof(out) - 1] = made;
+    }
+    return out;
+}

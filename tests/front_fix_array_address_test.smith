@@ -1,0 +1,25 @@
+// Tests of the fix-it for a fixed array given to a C pointer parameter (#2648): `&xs[0]`.
+module front_fix_array_address_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_array_address_array_given_to_a_c_pointer_is_the_first_element() {
+    expect_fixed("module m;\ntypedef struct S S;\nextern void take(S **p, int n);\nvoid f(S *a) {\n    S *items[4];\n"
+                 "    items[0] = a;\n    take(items, 1);\n}\n",
+                 "struct S\nextern fn take(p: **S, n: i32)\nfn f(a: *S):\n    mut items: [4]*S = undefined\n"
+                 "    items[0] = a\n    take(&items[0], 1)\n");
+}

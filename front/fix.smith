@@ -30,6 +30,7 @@ import front::fix_generic_mut;
 import front::fix_method;
 import front::fix_opaque;
 import front::fix_payload;
+import front::fix_array;
 import front::fix_alloc;
 import front::fix_typeof;
 import front::fix_variants;
@@ -164,6 +165,99 @@ static arena::Arena header_arena;
 static Bool header_arena_made = false;
 static Str header_folder = ".";
 
+// The path of the file being fixed, to find its entry in a compile_commands.json (#2648).
+static Str database_file = "";
+static Str database_text = "";
+static Str database_name(Usize k) {
+    if (k == 0) return "compile_commands.json";
+    if (k == 1) return "build/compile_commands.json";
+    return ".smith/compile_commands.json";
+}
+static Bool database_read = false;
+
+// Whether the database's `file` names the source `path`: the same text, or one a suffix of the other after a `/`.
+static Bool same_file(Str file, Str path) {
+    while (countof(path) >= 2 && path[0] == '.' && path[1] == '/')
+        path = path[2:countof(path)];
+    Str longer = countof(file) >= countof(path) ? file : path;
+    Str shorter = countof(file) >= countof(path) ? path : file;
+    Usize gap = countof(longer) - countof(shorter);
+    if (gap > 0 && longer[gap - 1] != '/') return false;
+    return countof(shorter) > 0 && mem::equal(longer[gap:countof(longer)], shorter);
+}
+
+// The text between the last two quotes of `line`, or an empty string when there are none.
+static Str quoted(Str line) {
+    Usize end = countof(line);
+    while (end > 0 && line[end - 1] != '"')
+        end -= 1;
+    if (end == 0) return "";
+    Usize begin = end - 1;
+    while (begin > 0 && line[begin - 1] != '"')
+        begin -= 1;
+    if (begin == 0) return "";
+    return line[begin:end - 1];
+}
+
+static Bool starts_with_text(Str text, Str prefix) {
+    return countof(text) >= countof(prefix) && mem::equal(text[0:countof(prefix)], prefix);
+}
+
+static Bool is_flag(Str text, Str flag) {
+    return countof(text) == countof(flag) && starts_with_text(text, flag);
+}
+
+// The `-I`, `-isystem`, `-D` and `-isysroot` flags the database gives `database_file`, one on each line as
+// SMITH_FRONT_CIMPORT_FLAGS has them (`smith cc` does the same, #2313): `<llvm-c/Core.h>` is found at
+// `-I<llvm>/include`, so a call of it is typed and the checker's fixes for it are made (#2648).
+static Str database_flags() {
+    if (database_read) return database_text;
+    database_read = true;
+    for (Usize k = 0; k < 3; k++) {
+        if (!files::exists(database_name(k))) continue;
+        files::BytesResult loaded = files::read_file(database_name(k));
+        if (loaded == .error) continue;
+        format::Chars chars = mem::view(loaded.ok, char);
+        Str text = chars;
+        Str out = "";
+        Bool matched = false;
+        Bool inside = false;
+        Str previous = "";
+        Usize from = 0;
+        for (Usize i = 0; i <= countof(text); i++) {
+            if (i < countof(text) && text[i] != '\n') continue;
+            Str line = text[from:i];
+            from = i + 1;
+            Str value = quoted(line);
+            Bool has_quote = false;
+            for (Usize j = 0; j < countof(line); j++)
+                has_quote = has_quote || line[j] == '"';
+            if (starts_with_text(line, "    \"directory\"")) {
+                if (matched && countof(out) > 0) break;
+                matched = false;
+                inside = false;
+                previous = "";
+            } else if (starts_with_text(line, "    \"file\"")) {
+                matched = same_file(value, database_file);
+            } else if (matched && starts_with_text(line, "    \"arguments\"")) {
+                inside = true;
+            } else if (matched && inside && !has_quote) {
+                break;
+            } else if (matched && inside) {
+                Bool pair = is_flag(previous, "-I") || is_flag(previous, "-isystem") || is_flag(previous, "-D") ||
+                            is_flag(previous, "-isysroot");
+                if (pair) out = as_str(format::push(out, previous, "\n", value, "\n"));
+                if (!pair && (starts_with_text(value, "-I") || starts_with_text(value, "-D")) && countof(value) > 2)
+                    out = as_str(format::push(out, value, "\n"));
+                previous = value;
+            }
+        }
+        database_text = out;
+        break;
+    }
+    return database_text;
+}
+
 // The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
 // the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
 static const ast::Module *load_header(Str header, Bool angled) {
@@ -180,7 +274,8 @@ static const ast::Module *load_header(Str header, Bool angled) {
     // `smith lint --fix` has no `-I` of its own: a library's header (`<smith/trace.h>`) is looked for in the project's
     // `include` and `.smith/include`, as `smith cc` is given them (#2224).
     Str given_text = as_str(format::push(flags));
-    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n"));
+    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n",
+                                     database_flags()));
     flags = joined.data;
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
     if (countof(got.error) > 0) return nullptr;
@@ -336,6 +431,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(payloads); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = payloads[i];
+    }
+    // An array given to a C pointer parameter (#2648): `&xs[0]`.
+    core::Errors arrays = fix_array::edits(source, &checked);
+    for (Usize i = 0; i < countof(arrays); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = arrays[i];
     }
     if (checked.error_count == 0 && loader != nullptr) {
         core::Errors methods = fix_method::edits(source, &checked);
@@ -710,6 +811,8 @@ export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
+    if (!mem::equal(database_file, file)) database_read = false;
+    database_file = file;
     for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
         if (file[i - 1] != '/') continue;
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
