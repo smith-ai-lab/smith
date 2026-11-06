@@ -262,6 +262,16 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     return parser::parse_file(file, source);
 }
 
+// The modules `load_from_folders` has read in this run, by file (#2586). The checker loads every import, and every
+// import of an import, on each of its passes, and a library module that needs mending is mended by up to `fix_passes`
+// parses: read again each time, the fix of front/compile.smith grew past 11 GB and the 16 GB runner of
+// `frontend-coverage` was shut down. So each file is read once: `fix_run` empties the list, and so does `store`, since
+// a file the fixer writes is read again as it now is.
+constexpr Usize loaded_max = 256;
+static Str loaded_paths[loaded_max];
+static const ast::Module *loaded_modules[loaded_max];
+static Usize loaded_count = 0;
+
 // Writes `text` over the file `path`. False when it cannot.
 export Bool store(Str path, Str text) {
     U8 bytes[:] = {};
@@ -269,6 +279,7 @@ export Bool store(Str path, Str text) {
     for (Usize i = 0; i < countof(text); i++)
         bytes[i] = (U8)text[i];
     files::CountResult written = files::write_file(path, bytes, files::Replace);
+    loaded_count = 0; // an import read before may be this file (#2586)
     return written != .error;
 }
 
@@ -676,10 +687,51 @@ static void as_todays_syntax(ast::Module *module) {
     }
 }
 
+// The module of the file at `path`, read and mended as an import (#2561), or null when it does not read.
+static const ast::Module *read_import(Str path) {
+    files::BytesResult loaded = files::read_file(path);
+    if (loaded == .error) return nullptr;
+    format::Chars chars = mem::view(loaded.ok, char);
+    // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
+    // reads as the fixed module does (#2561).
+    Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
+    parser::Parsed parsed = parse_for_fix(path, source);
+    if (countof(parsed.errors) > 0) {
+        // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
+        // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
+        // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
+        // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
+        // where `F32 *value` is writable.
+        Fixed mended = {.text = source};
+        mend_passes(path, &mended, false);
+        parsed = parse_for_fix(path, mended.text);
+        if (countof(parsed.errors) > 0) return nullptr;
+    }
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = parsed.module;
+    if (has_module_line(source)) as_todays_syntax(copy);
+    // a pointer field its own fix makes `?*T = .none` is one here too, so the reads of it are mended (#2557)
+    fix_zero::nullable_fields(copy, source);
+    return copy;
+}
+
+// `read_import` of `path`, once per run: a module read before is given again, null included (#2586).
+static const ast::Module *read_import_once(Str path) {
+    for (Usize i = 0; i < loaded_count; i++) {
+        if (mem::equal(loaded_paths[i], path)) return loaded_modules[i];
+    }
+    const ast::Module *module = read_import(path);
+    if (loaded_count < loaded_max) {
+        loaded_paths[loaded_count] = path;
+        loaded_modules[loaded_count] = module;
+        loaded_count += 1;
+    }
+    return module;
+}
+
 // The tree of the module at the dotted `path` (`std.list`, NUL-terminated) for the checker: the file under the
 // project's source folder, else under smith's library folder (`front::roots`), else beside the file that imports it;
-// null when neither holds it or it does
-// not read.
+// null when neither holds it or it does not read.
 static const ast::Module *load_from_folders(const char *dotted) {
     Str relative = as_str(format::push((const char *)dotted));
     Str inside = "";
@@ -694,30 +746,7 @@ static const ast::Module *load_from_folders(const char *dotted) {
     for (Usize k = 0; k < 3; k++) {
         Str path = as_str(format::push(where[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
-        files::BytesResult loaded = files::read_file(path);
-        if (loaded == .error) return nullptr;
-        format::Chars chars = mem::view(loaded.ok, char);
-        // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
-        // reads as the fixed module does (#2561).
-        Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
-        parser::Parsed parsed = parse_for_fix(path, source);
-        if (countof(parsed.errors) > 0) {
-            // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
-            // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
-            // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
-            // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
-            // where `F32 *value` is writable.
-            Fixed mended = {.text = source};
-            mend_passes(path, &mended, false);
-            parsed = parse_for_fix(path, mended.text);
-            if (countof(parsed.errors) > 0) return nullptr;
-        }
-        ast::Module *copy = mem::alloc(ast::Module);
-        *copy = parsed.module;
-        if (has_module_line(source)) as_todays_syntax(copy);
-        // a pointer field its own fix makes `?*T = .none` is one here too, so the reads of it are mended (#2557)
-        fix_zero::nullable_fields(copy, source);
-        return copy;
+        return read_import_once(path);
     }
     return nullptr;
 }
@@ -752,7 +781,9 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
     // (the next test in the same worker) parse the real modules of smith's library folder, and overflow its arena.
     types::ModuleLoader outside = loader;
     loader = load_from_folders;
+    loaded_count = 0; // the modules of an earlier run are read again: a test may have changed the files
     defer loader = outside;
+    defer loaded_count = 0;
     fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
     I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {
