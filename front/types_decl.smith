@@ -833,10 +833,10 @@ static Bool error_item(const ast::Initializer *item) {
     return *d == .field && types::same_text(d->field.name, "error");
 }
 
-// `r: Result(T, E) = f()` followed by `if r == .error: return {.error = r.error}` passes the error up unchanged: the
-// fix is `ok := try f()`, no guard, and each read `r.ok` is `ok` (#2506). The binding takes the variant's name; `ok` in
-// scope, a use of `r` other than `r.ok`, or an error type that differs from the function's leaves the site as it is.
-// Returns whether the site is one.
+// `r: Result(T, E) = f()` followed by `if r == .error: return {.error = r.error}` (or `.error(r.error)`) passes the
+// error up unchanged: the fix is `ok := try f()`, no guard, and each read `r.ok` is `ok` (#2506). The binding takes the
+// variant's name; `ok` in scope, a use of `r` other than `r.ok`, or an error type that differs from the function's
+// leaves the site as it is. Returns whether the site is one.
 static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
     const ast::Decl *d = state.prev_decl;
     if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || !(d->kind == .variable) ||
@@ -863,10 +863,15 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     const ast::Stmt *leave = only_statement(body);
     if (!(leave->kind == .return_stmt) || leave->kind.return_stmt.value == nullptr) return false;
     const ast::Expr *value = leave->kind.return_stmt.value;
-    if (!(value->kind == .compound) || countof(value->kind.compound.items) != 1) return false;
-    const ast::Initializer *item = &value->kind.compound.items[0];
-    if (!error_item(item) || item->value == nullptr) return false;
-    Str passed = fixed_source[item->value->span.start:item->value->span.end];
+    // `{.error = r.error}` of C, or `.error(r.error)` once the option and Result fix has mended the braces (#2563)
+    const ast::Expr *error_value = nullptr;
+    if (value->kind == .compound && countof(value->kind.compound.items) == 1 &&
+        error_item(&value->kind.compound.items[0]))
+        error_value = value->kind.compound.items[0].value;
+    else if (value->kind == .variant && types::same_text(value->kind.variant.name, "error"))
+        error_value = value->kind.variant.payload;
+    if (error_value == nullptr) return false;
+    Str passed = fixed_source[error_value->span.start:error_value->span.end];
     if (!types::same_text(passed, msg(format::push(name, ".error")))) return false;
     const types::Symbol *local = types::lookup(&r->scopes, name);
     types::TypeRef want = state.result;
