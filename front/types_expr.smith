@@ -2951,6 +2951,12 @@ static types::TypeRef constructed_record(const types::Checked *c, const ast::Exp
     return t != nullptr && t->kind == .record ? t : nullptr;
 }
 
+// The record a call constructs: none when the call is of a header's function of the same name (#2611).
+static types::TypeRef constructed_call(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (calls_header_function(c, callee, args)) return nullptr;
+    return constructed_record(c, callee);
+}
+
 // `ExprKind(name = (path = p))`: a payload enumeration named as the callee with one argument `variant = payload` builds
 // the value `.variant(payload)` of that enumeration. Null when the call is no such form.
 static const ast::Expr *enum_variant_call(const types::Checked *c, ast::Span span, const ast::Expr *callee,
@@ -5866,8 +5872,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record =
-        calls_header_function(c, callee, e->kind.call.args) ? nullptr : constructed_record(c, callee);
+    types::TypeRef record = constructed_call(c, callee, e->kind.call.args);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
@@ -6115,10 +6120,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {
-            construct_after(c, f,
-                            calls_header_function(c, e->kind.call.callee, e->kind.call.args)
-                                ? nullptr
-                                : constructed_record(c, e->kind.call.callee));
+            construct_after(c, f, constructed_call(c, e->kind.call.callee, e->kind.call.args));
         } else {
             call_after(c, f);
         }
