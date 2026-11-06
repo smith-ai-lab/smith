@@ -3644,8 +3644,10 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
         }
     }
     const char *exact_filter = options->filter;
-    for (Usize i = 0; exact_filter != nullptr && i < table_size; i++) {
-        if (c::strcmp(table[i].name, exact_filter) == 0) options->exact = true;
+    if (exact_filter != nullptr) {
+        for (Usize at = 0; at < table_size; at++) {
+            if (c::strcmp(table[at].name, exact_filter) == 0) options->exact = true;
+        }
     }
     return true;
 }
@@ -3885,13 +3887,13 @@ Bool better_form(const char *item, char out[256]) {
     // a `*` goes around the part after the last `::`, or around the whole item
     const char *base = plain + head;
     __builtin_memcpy(out, plain, head);
-    Usize at = head;
-    out[at++] = '*';
+    Usize used = head;
+    out[used++] = '*';
     Usize rest = c::strlen(base);
-    __builtin_memcpy(out + at, base, rest);
-    at += rest;
-    out[at++] = '*';
-    out[at] = '\0';
+    __builtin_memcpy(out + used, base, rest);
+    used += rest;
+    out[used++] = '*';
+    out[used] = '\0';
     return item_selects_any_test(out);
 }
 
@@ -3951,9 +3953,17 @@ Bool other_runner_matches(const Options *options) {
         c::close(ends[1]);
         I32 quiet = c::open("/dev/null", write_only);
         if (quiet >= 0) c::dup2(quiet, stderr_fd);
-        char *arguments[6] = {(char *)(c::uintptr_t)options->others, (char *)"--list", (char *)"--test",
-                              (char *)(c::uintptr_t)options->filter, nullptr,          nullptr};
-        if (options->macos != 0) arguments[4] = (char *)(options->macos == 1 ? "--macos-only" : "--skip-macos");
+        char list_flag[7] = "--list";
+        char test_flag[7] = "--test";
+        char macos_flag[13] = "--macos-only";
+        char skip_flag[13] = "--skip-macos";
+        char *arguments[6] = {nullptr, &list_flag[0], &test_flag[0], nullptr, nullptr, nullptr};
+        // the pointers are copied bit for bit: execv takes a non-const argv, and a null filter ends the list
+        const char *program = options->others;
+        const char *wanted = options->filter;
+        __builtin_memcpy(&arguments[0], &program, sizeof program);
+        __builtin_memcpy(&arguments[3], &wanted, sizeof wanted);
+        if (options->macos != 0) arguments[4] = options->macos == 1 ? &macos_flag[0] : &skip_flag[0];
         c::execv(arguments[0], arguments);
         c::_exit(127);
     }
@@ -4076,7 +4086,8 @@ Bool shard_built(const Options *options) {
 
 // --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
 void shard_plan(Plan *plan, const Options *options) {
-    F64 *cost = read_costs(plan, options->costs);
+    const char *costs_file = options->costs;
+    F64 *cost = read_costs(plan, costs_file != nullptr ? costs_file : ""); // no file: every cost unknown
     Usize *leader = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
     F64 *weight = (F64 *)map_bytes((plan->count + 1) * sizeof(F64), map_private);
     Usize *owner = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
@@ -4113,7 +4124,8 @@ Plan *make_plan(const Options *options) {
     for (Usize i = 0; i < plan->count; i++)
         plan->order[i] = i;
     if (options->shuffle_given) shuffle(plan->order, plan->count, options->shuffle_seed);
-    if (options->costs != nullptr) order_by_cost(plan, options->costs, options->cheapest);
+    const char *cost_path = options->costs;
+    if (cost_path != nullptr) order_by_cost(plan, cost_path, options->cheapest);
     shared_slots = (Shared *)map_bytes((jobs_max + 1) * sizeof(Shared), map_shared);
     const char *kill_workers = c::getenv("SMITH_TEST_KILL_WORKERS");
     if (kill_workers != nullptr) {
