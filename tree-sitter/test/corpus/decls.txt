@@ -208,3 +208,41 @@ pub const limit = 10
     (layout_const_declaration
       (identifier)
       (number_literal))))
+
+================================================================================
+decls: a tagged asm literal at module level
+================================================================================
+
+@when(target.os == .linux)
+asm`.text
+.globl smith_task_switch
+smith_task_switch:
+  ret
+`
+
+fn f():
+    pass()
+
+--------------------------------------------------------------------------------
+
+(translation_unit
+  (layout_attribute
+    (dotted_path
+      (identifier))
+    (argument_list
+      (binary_expression
+        (field_expression
+          (identifier)
+          (field_identifier))
+        (variant_expression
+          (identifier)))))
+  (layout_tagged
+    (tagged_literal))
+  (fn_declaration
+    (identifier)
+    (fn_parameters)
+    (layout_block
+      (layout_expression_statement
+        (call_expression
+          (identifier)
+          (argument_list))))))

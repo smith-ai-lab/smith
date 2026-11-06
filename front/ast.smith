@@ -596,6 +596,9 @@ export typedef enum {
         Text message;
     } static_assert_decl;
     struct {
+        Text text; // the text of an `asm` literal at module level (D7, #2636), lowered to LLVM module asm
+    } asm_decl;
+    struct {
         Expr *condition;
         DeclRef then_decls[:];
         DeclRef else_decls[:];
@@ -1509,6 +1512,8 @@ static void decl_children(Items *items, Decl *d) {
     case .static_assert_decl:
         add_expr(items, d->kind.static_assert_decl.condition, false);
         break;
+    case .asm_decl:
+        break;
     case .if_constexpr:
         add_expr(items, d->kind.if_constexpr.condition, false);
         add_group(items, "then", d->kind.if_constexpr.then_decls);
@@ -2134,6 +2139,10 @@ static void decl_head(Output *text, Decl *d) {
         put(text, "static_assert ");
         put_quoted(text, d->kind.static_assert_decl.message);
         break;
+    case .asm_decl:
+        put(text, "asm ");
+        put_quoted(text, d->kind.asm_decl.text);
+        break;
     case .if_constexpr:
         put(text, "if_constexpr");
         break;
@@ -2459,6 +2468,7 @@ static void note_decl(Symbols *list, Usize *used, const Decl *d, Span everywhere
     case .import_c:
     case .import_from:
     case .static_assert_decl:
+    case .asm_decl:
     case .if_constexpr:
         break;
     }

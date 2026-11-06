@@ -1,0 +1,129 @@
+// Tests of the tagged literal asm`...` at module level (D7, #2636): the token, its errors, the declaration it reads
+// as, the fix of the old `__asm__("...");`, and the four branches of std.task's context switch (aarch64 macos, aarch64
+// linux, x86_64 linux and the fallback), each chosen by `@when`.
+module front_asm_literal_test;
+
+import front::ast;
+import front::fix;
+import front::lex;
+import front::parser;
+import front::when;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    if (countof(parsed.errors) == 0) return "";
+    return parsed.errors[0].message;
+}
+
+export void test_asm_literal_is_one_token_across_lines() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "asm`.text\n  ret\\n\n`\n";
+    lex::Lexed lexed = lex::tokenize_new(source);
+    test::check_equal(lexed == .ok, true);
+    if (lexed == .ok) {
+        test::check_equal(countof(lexed.ok), (Usize)2);
+        Bool is_tagged = lexed.ok[0].kind == lex::tagged;
+        test::check_equal(is_tagged, true);
+        test::check_equal(lexed.ok[0].span.end, (U32)(countof(source) - 1));
+    }
+}
+
+export void test_asm_literal_errors() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Lexed hole = lex::tokenize_new("asm`mov ${x}`\n");
+    test::check_equal(hole == .error, true);
+    if (hole == .error) {
+        Str expected = "`${` is reserved in a tagged literal: holes are not part of smith yet";
+        test::check_equal(hole.error.message, expected);
+    }
+    lex::Lexed open = lex::tokenize_new("asm`ret\n");
+    test::check_equal(open == .error, true);
+    Str unterminated = "unterminated tagged literal";
+    if (open == .error) test::check_equal(open.error.message, unterminated);
+    Str other_tag = "`asm` is the only tag of a literal for now: `html`, `css` and `sql` wait for #2633";
+    test::check_equal(first_error("html`<p>`\n"), other_tag);
+}
+
+export void test_asm_literal_reads_as_a_declaration() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = parser::parse_new("t.smith", "asm`.text\n  ret\n`\n");
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    test::check_equal(countof(parsed.module.decls), (Usize)1);
+    if (countof(parsed.module.decls) == 1) {
+        const ast::Decl *d = parsed.module.decls[0];
+        if (d->kind == .asm_decl) {
+            Str expected = ".text\n  ret\n";
+            test::check_equal(d->kind.asm_decl.text, expected);
+        } else {
+            test::check_equal(false, true);
+        }
+    }
+}
+
+export void test_asm_old_module_asm_is_fixed_to_a_literal() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "__asm__(\".text\\n\"\n        \"  ret\\n\");\n");
+    Str expected = "asm`.text\n  ret\n`\n";
+    test::check_equal(fixed.text, expected);
+    fix::Fixed again = fix::fix_text("t.smith", fixed.text);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+// The four branches of std.task, as the fixer writes them: each carries the `@when` that chooses it.
+static Str branches() {
+    return "@when(target.arch == .aarch64 && target.os == .macos)\nasm`a`\n"
+           "@when(target.arch == .aarch64 && target.os == .linux)\nasm`b`\n"
+           "@when(target.arch == .x86_64 && target.os == .linux)\nasm`c`\n"
+           "@when(!(target.arch == .aarch64 && target.os == .macos) && !(target.arch == .aarch64 && target.os == "
+           ".linux) && !(target.arch == .x86_64 && target.os == .linux))\nstatic_assert(false, \"no switch\");\n";
+}
+
+export void test_asm_each_branch_of_std_task_is_chosen_by_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str none = "";
+    test::check_equal(first_error(branches()), none);
+    parser::Parsed parsed = parser::parse_new("t.smith", branches());
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    test::check_equal(countof(parsed.module.decls), (Usize)4);
+    Str texts = "abc";
+    for (Usize i = 0; i < 3 && i < countof(parsed.module.decls); i++) {
+        const ast::Decl *d = parsed.module.decls[i];
+        if (d->kind == .asm_decl) {
+            Str text = d->kind.asm_decl.text;
+            Str expected = texts[i:i + 1];
+            test::check_equal(text, expected);
+        } else {
+            test::check_equal(false, true);
+        }
+        Bool guarded = when::find(d->attributes) != nullptr;
+        test::check_equal(guarded, true);
+    }
+    // on this system the live module keeps at most one of the three, and the fallback only when none holds
+    const ast::Module *live = when::live_module(&parsed.module, when::host());
+    Usize asms = 0;
+    Usize asserts = 0;
+    for (Usize i = 0; i < countof(live->decls); i++) {
+        const ast::Decl *d = live->decls[i];
+        if (d->kind == .asm_decl) asms += 1;
+        if (d->kind == .static_assert_decl) asserts += 1;
+    }
+    test::check_equal(asms + asserts, (Usize)1);
+}
