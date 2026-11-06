@@ -2741,9 +2741,9 @@ static void method_missing(types::Checked *c, const ast::Expr *e, const types::S
 }
 
 // Whether the first parameter of `fn` takes the receiver `self_type`.
-static Bool method_takes_self(const types::Symbol *fn, types::TypeRef self_type) {
-    if (has_generics(fn)) return generic_first_fits(fn, self_type);
-    return first_parameter(fn) != nullptr && first_parameter(fn) == self_type;
+static Bool method_takes_self(const types::Symbol *callee, types::TypeRef self_type) {
+    if (has_generics(callee)) return generic_first_fits(callee, self_type);
+    return first_parameter(callee) != nullptr && first_parameter(callee) == self_type;
 }
 
 static void method_resolved(types::Checked *c, Work *w, Frame f) {
