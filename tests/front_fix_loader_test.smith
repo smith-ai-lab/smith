@@ -1,0 +1,66 @@
+// Tests of three fixer rules (#2519, part of #1631): a module beside the file that imports it is found, `type` after
+// the `:` of a C conditional is a value, and `target::macos` is written `.macos`.
+module front_fix_loader_test;
+
+import front::fix;
+import std::arena;
+import std::files;
+import std::format;
+import std::mem;
+import std::slice;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+static Str fixed_text(Str source) {
+    fix::Fixed fixed = fix::fix_text("t.smith", source);
+    return fixed.text;
+}
+
+export void test_front_fix_loader_type_after_a_conditional_is_a_value() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("module m;\nstatic Ref f(Ref *type) {\n    Ref self = type->kind == 1 ? type->element : type;\n"
+                         "    return self;\n}\n");
+    check_text(got, "static fn f(ty: *Ref) -> Ref:\n    self: Ref = if ty.kind == 1: ty.element else: ty\n"
+                           "    return self\n");
+}
+
+export void test_front_fix_loader_target_systems_are_variants() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("module m;\nstatic void f() {\n    if constexpr (target::os == target::macos) {\n        g();\n"
+                         "    }\n}\n");
+    check_text(got, "static fn f():\n    if target.os == .macos:\n        g()\n");
+}
+
+export void test_front_fix_loader_finds_a_module_beside_the_file() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_scratch.smith";
+    Str user_path = "/tmp/front_fix_loader_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_scratch;\nexport struct Project { n: i32 }\n"
+                                              "export void clean(Project *p) {\n    p->n = 0;\n}\n"), true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_user;\nimport front_fix_loader_scratch;\n"
+                                            "static void f() {\n    front_fix_loader_scratch::Project p = {};\n"
+                                            "    front_fix_loader_scratch::clean(&p);\n}\n"), true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    if (back == .error) {
+        check_text("cannot read back", "the file");
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    check_text(got, "import front_fix_loader_scratch\nstatic fn f():\n    mut p: front_fix_loader_scratch.Project = "
+                    "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
+}

@@ -346,6 +346,24 @@ static Str hash_comments(Str source) {
     return as_str(format::push(out, source[copied:n]));
 }
 
+// Whether the `:` at `colon` closes a `?` of the same expression: a `?` is found before a `;`, `{` or `}` and with the
+// brackets between them balanced.
+static Bool after_question(lex::Tokens tokens, Usize colon) {
+    Usize depth = 0;
+    for (Usize k = colon; k > 0; k--) {
+        lex::TokenKind kind = tokens[k - 1].kind;
+        if (kind == lex::right_paren || kind == lex::right_bracket) depth += 1;
+        if (kind == lex::left_paren || kind == lex::left_bracket) {
+            if (depth == 0) return false;
+            depth -= 1;
+        }
+        if (depth > 0) continue;
+        if (kind == lex::question) return true;
+        if (kind == lex::semicolon || kind == lex::left_brace || kind == lex::right_brace) return false;
+    }
+    return false;
+}
+
 // `type` is reserved like `i32` (#1901): in an old-syntax text every name `type` (a field, a local, a parameter, a type
 // argument, a use after `.` or `->`) is written `ty`, in the declaration and every use. A name after `.` or `->` is
 // always `ty` (the field of another file's struct); any other is `ty_` when the text already has a `ty` of its own. The
@@ -356,6 +374,10 @@ static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
     if (tokens[i - 1].kind == lex::colon) {
         if (i + 1 >= countof(tokens)) return true;
         lex::TokenKind next = tokens[i + 1].kind;
+        // After the `:` of a C conditional (`a ? b->type : type;`) the name is a value: a `?` earlier in the same
+        // expression, or a `;` right after it (`(T: type)` and `T: type,` keep the keyword).
+        if (next == lex::semicolon) return false;
+        if (after_question(tokens, i - 1)) return false;
         return next != lex::dot && next != lex::arrow && next != lex::right_bracket;
     }
     return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
@@ -387,6 +409,34 @@ static Str rename_type_names(Str source) {
         out = as_str(format::push(out, source[at:tokens[i].span.start], member || !own_ty ? "ty" : "ty_"));
         at = tokens[i].span.end;
     }
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
+// `target::macos` (a C enumerator of the system or the processor) is written `.macos` (#2519, decided on #2460);
+// `target::os` and `target::arch` stay `target.os` and `target.arch`, which the later passes write.
+static Str rename_target_systems(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str target_word = "target";
+    Str macos_word = "macos";
+    Str linux_word = "linux";
+    Str aarch64_word = "aarch64";
+    Str x86_word = "x86_64";
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i + 2 < countof(tokens); i++) {
+        if (tokens[i].kind != lex::name || tokens[i + 1].kind != lex::colon_colon || tokens[i + 2].kind != lex::name)
+            continue;
+        if (!mem::equal(lex::text(source, tokens[i]), target_word)) continue;
+        Str word = lex::text(source, tokens[i + 2]);
+        if (!mem::equal(word, macos_word) && !mem::equal(word, linux_word) && !mem::equal(word, aarch64_word) &&
+            !mem::equal(word, x86_word))
+            continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], ".", word));
+        at = tokens[i + 2].span.end;
+    }
+    if (at == 0) return source;
     return as_str(format::push(out, source[at:countof(source)]));
 }
 
@@ -515,7 +565,7 @@ static Str rename_fn_names(Str source) {
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_fn_names(rename_in_names(rename_type_names(source)));
+    Str renamed = rename_fn_names(rename_in_names(rename_type_names(rename_target_systems(source))));
     Fixed total = {.text = renamed};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
@@ -555,7 +605,8 @@ export Fixed fix_text(Str file, Str source) {
 }
 
 // The tree of the module at the dotted `path` (`std.list`, NUL-terminated) for the checker: the file under the
-// project's source folder, else under smith's library folder (`front::roots`); null when neither holds it or it does
+// project's source folder, else under smith's library folder (`front::roots`), else beside the file that imports it;
+// null when neither holds it or it does
 // not read.
 static const ast::Module *load_from_folders(const char *dotted) {
     Str relative = as_str(format::push((const char *)dotted));
@@ -566,8 +617,9 @@ static const ast::Module *load_from_folders(const char *dotted) {
         inside = as_str(format::push(inside, piece));
     }
     roots::Roots folders = roots::default_roots();
-    Str where[2] = {folders.source, folders.library};
-    for (Usize k = 0; k < 2; k++) {
+    // The compile's `load_module` also looks beside the importing file (#2519): `tests/scratch.smith` for a test.
+    Str where[3] = {folders.source, folders.library, header_folder};
+    for (Usize k = 0; k < 3; k++) {
         Str path = as_str(format::push(where[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
         files::BytesResult loaded = files::read_file(path);
