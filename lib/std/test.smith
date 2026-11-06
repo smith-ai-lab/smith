@@ -4196,17 +4196,17 @@ Usize cores() {
 
 // The options before the command line is read.
 static Options default_options(Runner *runner) {
-    Options options = {
-        .seed_count = seeds_default,
-        .jobs = cores(),
-        .timeout = 10,
-        .shrink = true,
-        .shrink_seconds = shrink_seconds_default,
-        .color = c::isatty(stdout_fd) != 0 && env::get("NO_COLOR") == .none,
-        .runner = runner,
-        .runner_pid = c::getpid(),
-        .explain_max = explain_max_default,
-    };
+    Options options;
+    __builtin_memset(&options, 0, sizeof options);
+    options.seed_count = seeds_default;
+    options.jobs = cores();
+    options.timeout = 10;
+    options.shrink = true;
+    options.shrink_seconds = shrink_seconds_default;
+    options.color = c::isatty(stdout_fd) != 0 && env::get("NO_COLOR") == .none;
+    options.runner = runner;
+    options.runner_pid = c::getpid();
+    options.explain_max = explain_max_default;
     if (options.jobs > jobs_max) options.jobs = jobs_max;
     return options;
 }

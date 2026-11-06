@@ -3639,6 +3639,11 @@ static void member_after(types::Checked *c, Frame f) {
         finish(c, e, element->type, f.expected);
         return;
     }
+    if (base->kind == .text && !e->kind.member.arrow && same_text(name, "data")) {
+        // `text.data` is the pointer to a `str`'s bytes, read-only (a C string's `.data`, #2611).
+        finish(c, e, types::pointer_to(&c->table, types::builtin(&c->table, "Char"), true), f.expected);
+        return;
+    }
     if (base->kind == .slice && !e->kind.member.arrow && same_text(name, "data")) {
         // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
         finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
