@@ -192,6 +192,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
 static Bool imports_header(const ast::Module *module) {
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
+        if (d->kind == .import_module) return true; // a library it imports may import a header its types come from
         if (d->kind != .import_c) continue;
         if (countof(d->kind.import_c.language) > 0) return true;
     }
