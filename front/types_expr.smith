@@ -1840,6 +1840,18 @@ static syntax::Edits to_fix(const ast::Expr *x, types::TypeRef to) {
     return edits;
 }
 
+// The edits that write `x.to(T)` where an integer of another type is passed or assigned (#2506): `x` stays bare when it
+// is a name, a member, a call or an index, and any other operand has no fix.
+export syntax::Edits convert_fix(const ast::Expr *x, types::TypeRef to) {
+    Bool postfix = x->kind == .name || x->kind == .member || x->kind == .call || x->kind == .index;
+    syntax::Edits edits = {};
+    if (!postfix) return edits; // the span of a conditional or a binary may start inside its text: no fix
+    edits = mem::realloc(edits, 1);
+    edits[0] = (syntax::Edit){.span = {.start = x->span.end, .end = x->span.end},
+                              .text = msg(format::push(".to(", types::show(to), ")"))};
+    return edits;
+}
+
 // The type C converts both operands of `l op r` to when they are numbers of different types: the float, else the wider
 // integer, else the unsigned one (`usize` and `u64` keep the left). Null when they are not two numbers.
 static types::TypeRef c_common(types::TypeRef l, types::TypeRef r) {
@@ -3359,6 +3371,15 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         } else {
             types::fail(c, e->span, shown);
         }
+    } else if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "ok")) {
+        Str shown =
+            msg(format::push("a `", found, "` is unwrapped with `try`; write `ok := try ...` where it is made"));
+        syntax::Edits fix = guarded_read(c, e);
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span, shown, fix);
+        } else {
+            types::fail(c, e->span, shown);
+        }
     } else if (arrow && base->kind == .record) {
         types::failf(c, e->span, "`->` needs a pointer to a record, found `", found, "`; write `.` instead");
     } else if (through_pointer) {
@@ -3648,12 +3669,45 @@ static types::TypeRef option_item(types::Checked *c, types::TypeRef t, const ast
     if (t->kind == .result_type && same_text(name, "error")) {
         return t->error;
     }
-    Str example = "{.some = value}";
+    Str example = ".some(value)";
     if (t->kind == .result_type) {
-        example = "{.ok = value} or {.error = value}";
+        example = ".ok(value) or .error(value)";
     }
     types::failf(c, span, "a `", types::show(t), "` is written ", example, ", not a list of other values");
     return nullptr;
+}
+
+// `{.some = v}` where an option is wanted, `{.ok = v}` and `{.error = e}` where a Result is (#2563): the value of #1428
+// is `.some(v)`, `.ok(v)`, `.error(e)`. The fix rewrites the braces and the designator; empty when the list is no such
+// form (a struct with a field `ok` is a construction and never reaches here), or is written with a type.
+static syntax::Edits variant_list_fix(types::TypeRef t, const ast::Expr *e, ast::Initializer items[:]) {
+    syntax::Edits edits = {};
+    if (!(e->kind == .compound) || e->kind.compound.type != nullptr || countof(items) != 1 ||
+        !field_designator(&items[0]))
+        return edits;
+    Str name = field_name(&items[0]);
+    Bool fits = (t->kind == .option && same_text(name, "some")) ||
+                (t->kind == .result_type && (same_text(name, "ok") || same_text(name, "error")));
+    if (!fits) return edits;
+    Str open = msg(format::push(".", name, "("));
+    edits = mem::realloc(edits, 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.start, .end = items[0].value->span.start}, .text = open};
+    Str close = ")";
+    edits[1] = (syntax::Edit){.span = {.start = items[0].value->span.end, .end = e->span.end}, .text = close};
+    return edits;
+}
+
+// True (and reported) when the list `e` of the option or Result `t` is written with braces: smith writes `.some(v)`.
+static Bool refuse_variant_list(types::Checked *c, types::TypeRef t, const ast::Expr *e, ast::Initializer items[:]) {
+    if (t->kind != .option && t->kind != .result_type) return false;
+    syntax::Edits fix = variant_list_fix(t, e, items);
+    if (countof(fix) == 0) return false;
+    Str name = field_name(&items[0]);
+    types::fail_fix(
+        c, e->span,
+        msg(format::push("a `", types::show(t), "` is written `.", name, "(value)`, not `{.", name, " = value}`")),
+        fix);
+    return true;
 }
 
 // The type wanted of the value of one item of a list of type `t`, or null (reported) when the item has no place.
@@ -3722,6 +3776,11 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
     if (payload_list(w, f, t, e->kind.compound.items)) {
         return;
     }
+    ast::Initializer listed[:] = e->kind.compound.items;
+    if (refuse_variant_list(c, t, e, listed)) {
+        poison(c, e);
+        return;
+    }
     if (!listable(t)) {
         types::failf(c, e->span, "a `{...}` list makes a struct, an array, an Option or a Result, not a `",
                      types::show(t), "`; write a value of type `", types::show(t), "`");
@@ -3729,7 +3788,7 @@ static void compound_expr(types::Checked *c, Work *w, Frame f) {
         return;
     }
     Cursor cursor = {};
-    ast::Initializer items[:] = e->kind.compound.items;
+    ast::Initializer items[:] = listed;
     for (Usize i = 0; i < countof(items); i++) {
         types::TypeRef wanted = item_type(c, t, &items[i], &cursor, e->span);
         push(w, items[i].value, wanted, 0);

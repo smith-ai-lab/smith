@@ -1251,6 +1251,27 @@ static parse::Edits if_before(const parse::Parser *p, parse::Edits edits, U32 st
     return with_edit(edits, at_offset(start), "if ");
 }
 
+// Puts parentheses around the `if` value that the fix of the conditional `e` writes: a `:` after `else: b` would read
+// as the colon of a slice (`xs[(if c: a else: b):]`).
+static void parenthesize_conditional(parse::Parser *p, const ast::Expr *e) {
+    if (e == nullptr || e->kind != .conditional) return;
+    for (Usize i = countof(p->warnings); i > 0; i -= 1) {
+        parse::Edits fix = p->warnings[i - 1].fix;
+        ast::Span span = p->warnings[i - 1].span;
+        if (span.start != e->span.start || span.end != e->span.end) continue;
+        Bool opened = false;
+        for (Usize j = 0; j < countof(fix); j += 1) {
+            if (!opened && fix[j].span.start == span.start) {
+                fix[j].text = as_str(format::push("(", fix[j].text));
+                opened = true;
+            }
+            if (fix[j].span.start == span.end && fix[j].span.end == span.end)
+                fix[j].text = as_str(format::push(fix[j].text, ")"));
+        }
+        return;
+    }
+}
+
 // Whether the text between two offsets has a line break.
 static Bool has_break(Str source, U32 from, U32 to) {
     for (Usize i = from; i < to && i < countof(source); i += 1) {
@@ -1259,12 +1280,73 @@ static Bool has_break(Str source, U32 from, U32 to) {
     return false;
 }
 
+// The leading blanks of the line that holds the offset.
+static Str line_indent(Str source, U32 at) {
+    Usize start = at;
+    while (start > 0 && source[start - 1] != '\n')
+        start -= 1;
+    Usize end = start;
+    while (end < countof(source) && (source[end] == ' ' || source[end] == '\t'))
+        end += 1;
+    return source[start:end];
+}
+
+// Whether the offset is inside an unfinished `(`, `[` or initializer `{` of its statement (`f(c ? a : b)`, `.x = c ? a
+// : b` in `T x = {...}`), where a block cannot stand on lines of its own.
+static Bool open_bracket_before(Str source, U32 at) {
+    Usize depth = 0;
+    for (Usize i = at; i > 0; i -= 1) {
+        Char c = source[i - 1];
+        if (c == ')' || c == ']' || c == '}') depth += 1;
+        if (c == ';' && depth == 0) return false;
+        if (c != '(' && c != '[' && c != '{') continue;
+        if (depth > 0) {
+            depth -= 1;
+            continue;
+        }
+        if (c != '{') return true;
+        Usize j = i - 1;
+        while (j > 0 && (source[j - 1] == ' ' || source[j - 1] == '\n' || source[j - 1] == '\t'))
+            j -= 1;
+        Usize k = i;
+        while (k < countof(source) && (source[k] == ' ' || source[k] == '\n' || source[k] == '\t'))
+            k += 1;
+        Bool designated = k < countof(source) && source[k] == '.';
+        return designated || (j > 0 && (source[j - 1] == '=' || source[j - 1] == ',' || source[j - 1] == '('));
+    }
+    return false;
+}
+
+// `c ? a : b` over several lines is `if c {`, `a`, `} else {`, `b`, `}` on lines of their own, one step in from the
+// line of the condition: the block fixer turns that into the indented `if` value (`x: T = if c:` ... `else:` ...).
+static void multi_line_conditional(Stack *st, const Pending *op, const ast::Expr *condition, const ast::Expr *last) {
+    Str source = st->parser->source;
+    Str indent = line_indent(source, condition->span.start);
+    Str inner = as_str(format::push(indent, "    "));
+    parse::Edits edits = if_before(st->parser, no_edits(), condition->span.start);
+    edits = with_edit(edits, from_to(condition->span.end, op->middle->span.start), as_str(format::push(" {\n", inner)));
+    edits = with_edit(edits, from_to(op->middle->span.end, last->span.start),
+                      as_str(format::push("\n", indent, "} else {\n", inner)));
+    ast::Span span = from_to(condition->span.start, last->span.end);
+    tail_warning(st, span, "`c ? a : b` is written `if c { a } else { b }`", edits, last->span.end,
+                 as_str(format::push("\n", indent, "}")));
+}
+
 // `c ? a : b` is `if c { a } else { b }`.
 static void conditional_warning(Stack *st, const Pending *op, const ast::Expr *condition, const ast::Expr *last) {
+    Str source = st->parser->source;
+    // A break inside the condition or a branch needs lines of their own; one only before the `?` or `:` is dropped.
+    Bool inner_break = has_break(source, condition->span.start, condition->span.end) ||
+                       has_break(source, op->middle->span.start, op->middle->span.end) ||
+                       has_break(source, last->span.start, last->span.end);
+    if (inner_break && !open_bracket_before(source, condition->span.start)) {
+        multi_line_conditional(st, op, condition, last);
+        return;
+    }
     parse::Edits edits = if_before(st->parser, no_edits(), condition->span.start);
     // A `?` or `:` that starts a line leaves the line break out: `if c {` and `} else {` stay on their lines.
-    Bool head_breaks = has_break(st->parser->source, condition->span.end, op->head.start);
-    Bool colon_breaks = has_break(st->parser->source, op->middle->span.end, op->colon.start);
+    Bool head_breaks = has_break(source, condition->span.end, op->head.start);
+    Bool colon_breaks = has_break(source, op->middle->span.end, op->colon.start);
     edits =
         with_edit(edits, head_breaks ? from_to(condition->span.end, op->head.end) : op->head, head_breaks ? " {" : "{");
     edits = with_edit(edits, colon_breaks ? from_to(op->middle->span.end, op->colon.end) : op->colon,
@@ -1756,6 +1838,10 @@ static ast::Expr *index_or_slice(parse::Parser *p, ast::Expr *base) {
     }
     parse::expect(p, lex::right_bracket, "`]` to end the index");
     ast::Span span = parse::span_from(p, base->span.start);
+    if (is_slice) {
+        parenthesize_conditional(p, first);
+        parenthesize_conditional(p, last);
+    }
     if (is_slice) return make(span, {.slice_of = {.base = base, .start = first, .end = last}});
     return make(span, {.index = {.base = base, .index = first}});
 }
