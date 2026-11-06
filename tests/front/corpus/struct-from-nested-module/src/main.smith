@@ -1,0 +1,7 @@
+import c <stdio.h>
+import geometry.box
+
+fn main() -> i32:
+    let b = box.Box(2, 3)
+    let _ = stdio.printf("%d %d\n", b.w, b.area())
+    return 0
