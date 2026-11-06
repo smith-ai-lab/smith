@@ -358,7 +358,8 @@ static Bool checked_option(state::Emitter *e, const ast::Expr *x) {
 
 // `.some(x)` and `.none` when an option is expected, `.red` otherwise.
 static state::Status dispatch_variant(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
-    if ((hint.present && (hint.ty.kind == .option || hint.ty.kind == .result)) || checked_option(e, x)) return optional::variant(e, x, hint);
+    if ((hint.present && (hint.ty.kind == .option || hint.ty.kind == .result)) || checked_option(e, x))
+        return optional::variant(e, x, hint);
     return matching::variant(e, x, hint);
 }
 

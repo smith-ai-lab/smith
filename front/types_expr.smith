@@ -4122,7 +4122,8 @@ static void bind_stage(types::Checked *c, Frame f) {
         } else if (same_text(name, "error")) {
             element = t->error;
         } else {
-            types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name, "`; write one of those");
+            types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
+                         "`; write one of those");
         }
         bind_name(c, binding, element);
         return;
