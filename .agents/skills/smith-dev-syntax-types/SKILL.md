@@ -42,6 +42,8 @@ ctx: *mut void = state.cast(*mut void)       # handed to a C callback
 back := ctx.cast(*mut State)
 ```
 
+`usize` is at least 32 bits on every target (D8, #2625): `u8`, `u16` and `u32` go into `usize`, and `i8`, `i16` and `i32` into `isize`, with no conversion; `u64` to `usize` needs `.to(usize)`.
+
 Sizes in brackets are ordinary values inferred from the arguments (`fn matmul[T: num, n: usize, m: usize, p: usize](a: [n, m]T, b: [m, p]T) -> [n, p]T`), constant when the shapes are and run time otherwise; `const n: usize` requires compile time, and a sized array passes where `[,]T` is expected. See [smith-dev-syntax-arrays](../smith-dev-syntax-arrays/SKILL.md) (#2482); index sets are not designed (#2505).
 
 A `[]mut T` converts to `[]T` on its own, as `*mut T` does to `*T`. A fixed array converts to a slice where one is expected, so today's `xs[:]` is just `xs`.
