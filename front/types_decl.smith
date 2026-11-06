@@ -646,7 +646,10 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (want->kind == .void_type) {
-        types_expr::infer(r, value);
+        types::TypeRef got = types_expr::infer(r, value);
+        if (got != nullptr && got->kind == .void_type) { // the last line of a body is its value (#1428): a call of Void
+            return;
+        }
         types::failf(r, s->span,
                      "this function returns `Void`, so it has no value to return; remove the value after `return`, or "
                      "give the function a result type");

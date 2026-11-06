@@ -569,6 +569,16 @@ static syntax::Edits data_fix(const types::Checked *c, const ast::Expr *slice_ex
 // neither is so (the pointer comes from somewhere a fix cannot see).
 export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits edits = {};
+    // `s.*` of an `s: *mut *T` handed where a `*mut T` is wanted: the inner pointer is `*mut T` (#2643).
+    if (base->kind == .unary && base->kind.unary.op == .dereference && base->kind.unary.operand->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.unary.operand->kind.name.path);
+        const ast::TypeExpr *outer = s != nullptr && s->kind == .variable && s->is_new ? s->written : nullptr;
+        const ast::TypeExpr *inner = nullptr;
+        if (outer != nullptr && outer->kind == .pointer) inner = outer->kind.pointer.pointee;
+        if (inner != nullptr && inner->kind == .pointer && !inner->kind.pointer.is_mut &&
+            inner->kind.pointer.pointee->span.start > inner->span.start)
+            return mut_after(inner->span.start + 1);
+    }
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
     }
