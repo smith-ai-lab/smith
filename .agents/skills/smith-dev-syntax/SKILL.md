@@ -20,6 +20,7 @@ Write tickets, tests of the new front end and examples in this syntax, never tod
 | private fields, `init` functions, field defaults | [smith-dev-syntax-privacy](../smith-dev-syntax-privacy/SKILL.md) |
 | `if`, `if x := opt:`, `match`, `while`, `while x := it.next():`, `defer`, `errdefer`, `try` | [smith-dev-syntax-control](../smith-dev-syntax-control/SKILL.md) |
 | loops, iterators, generators, `for` expressions | [smith-dev-syntax-loops](../smith-dev-syntax-loops/SKILL.md) |
+| options: binding, narrowing `x != .none` | [smith-dev-syntax-options](../smith-dev-syntax-options/SKILL.md) |
 | types as arguments, inferred parameters, concepts, type functions | [smith-dev-syntax-generics](../smith-dev-syntax-generics/SKILL.md) |
 | `const`, compile-time `if`, reflection, variadics | [smith-dev-syntax-compile-time](../smith-dev-syntax-compile-time/SKILL.md) |
 | `import`, `from`, `pub`, C, C++ and Objective-C, globals, `extern`, build files, tests | [smith-dev-syntax-modules](../smith-dev-syntax-modules/SKILL.md) |

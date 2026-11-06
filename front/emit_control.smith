@@ -21,6 +21,7 @@ module front::emit_control;
 
 import front::ast;
 import front::emit_state as state;
+import front::types;
 import std::mem;
 import <llvm-c/Core.h>;
 
@@ -367,6 +368,43 @@ static state::Status compare_middle(state::Emitter *e, const state::Work *w) {
     return state::success();
 }
 
+// `x == .none`, `x != .some` and the like over a `?T` (#2481): the side that is not written with a leading dot, or null
+// when this is no such test. `wants_some` says whether the dotted side is `.some`.
+static const ast::Expr *option_operand(state::Emitter *e, const ast::Expr *x, Bool *wants_some) {
+    if (!(x->kind == .binary) || e->options.checked == nullptr) return nullptr;
+    ast::BinaryOp op = x->kind.binary.op;
+    if (op != .equal && op != .not_equal) return nullptr;
+    const ast::Expr *left = x->kind.binary.left;
+    const ast::Expr *right = x->kind.binary.right;
+    const ast::Expr *dotted = right->kind == .variant && left->kind != .variant ? right : nullptr;
+    if (dotted == nullptr && left->kind == .variant && right->kind != .variant) dotted = left;
+    if (dotted == nullptr || !(dotted->kind == .variant) || dotted->kind.variant.payload != nullptr) return nullptr;
+    Str name = dotted->kind.variant.name;
+    Bool some = countof(name) == 4 && name[0] == 's' && name[1] == 'o' && name[2] == 'm' && name[3] == 'e';
+    Bool none = countof(name) == 4 && name[0] == 'n' && name[1] == 'o' && name[2] == 'n' && name[3] == 'e';
+    if (!some && !none) return nullptr;
+    const ast::Expr *operand = dotted == right ? left : right;
+    types::TypeRef t = types::type_of(e->options.checked, operand);
+    if (t == nullptr || t->kind != .option) return nullptr;
+    *wants_some = some;
+    return operand;
+}
+
+// The option is on the stack: its tag says `.some` or `.none`.
+static state::Status option_test_finish(state::Emitter *e, const state::Work *w) {
+    Bool wants_some = false;
+    option_operand(e, w->expr, &wants_some);
+    state::Value o = state::pop_value(e);
+    c::LLVMValueRef tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
+    c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMInt8TypeInContext(e->context));
+    Bool same = w->expr->kind == .binary &&
+                (w->expr->kind.binary.op == .equal) == wants_some; // `== .some` and `!= .none` ask for a payload
+    c::LLVMIntPredicate predicate = same ? c::LLVMIntNE : c::LLVMIntEQ;
+    c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate, tag, zero, "");
+    state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
+    return state::success();
+}
+
 // `binary` with `less`, `greater`, `less_equal`, `greater_equal`, `equal` or `not_equal`: signed or unsigned by the
 // operands' type, a Bool (an `i1`) as the result.
 export state::Status comparison(state::Emitter *e, const ast::Expr *x, state::Hint _) {
@@ -375,6 +413,13 @@ export state::Status comparison(state::Emitter *e, const ast::Expr *x, state::Hi
     }
     const ast::Expr *left = x->kind.binary.left;
     const ast::Expr *right = x->kind.binary.right;
+    Bool wants_some = false;
+    const ast::Expr *operand = option_operand(e, x, &wants_some);
+    if (operand != nullptr) {
+        state::push_then(e, (state::Work){.then = option_test_finish, .expr = x, .span = x->span});
+        state::push_eval(e, operand, state::no_hint());
+        return state::success();
+    }
     state::Hint left_hint = state::no_hint();
     if (left->kind == .integer) left_hint = hint_from_name(e, right);
     state::push_then(e, (state::Work){.then = compare_middle, .expr = x, .span = x->span});
