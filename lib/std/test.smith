@@ -534,7 +534,7 @@ Shared *shared_slots; // the runner's: one per job, and one more for shrinking
 U32 *workers_to_kill; // SMITH_TEST_KILL_WORKERS=n: the next n commands kill their worker before it begins (a test of
                       // the runner)
 // the --test selection, nullptr when there is none
-const char *selection_text;
+const char *selection_text = nullptr;
 U8 *memory_block;
 Usize memory_used;  // a multiple of arena::align_max
 Bool full_run;      // the runner was given --full; set before any test forks, so every child sees it
@@ -4113,7 +4113,11 @@ Plan *make_plan(const Options *options) {
     for (Usize i = 0; i < table_size; i++) {
         const Test *test = &table[i];
         contract::assert(test->name != nullptr);
-        contract::assert((test->plain != nullptr) + (test->property != nullptr) + (test->with_failing != nullptr) == 1);
+        I32 kinds = 0;
+        if (test->plain != nullptr) kinds += 1;
+        if (test->property != nullptr) kinds += 1;
+        if (test->with_failing != nullptr) kinds += 1;
+        contract::assert(kinds == 1);
         if (!selects(options, test->name)) continue;
         plan->tests[plan->count] = test;
         plan->count += 1;
@@ -4161,7 +4165,8 @@ void say_explained(const Options *options) {
 // What test::golden needs, made before any test forks: --update, the runner and the log of the files it wrote.
 void golden_begin(const Options *options) {
     update_run = options->update;
-    selection_text = options->filter;
+    const char *selected = options->filter;
+    if (selected != nullptr) selection_text = selected; // it starts null
     golden_log = (U8 *)map_bytes(golden_log_capacity, map_shared);
     golden_used = (Usize *)map_bytes(sizeof(Usize), map_shared);
 }
