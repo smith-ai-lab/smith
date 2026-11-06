@@ -1822,8 +1822,7 @@ static Bool conversion_ahead(const parse::Parser *p, const ast::Expr *base) {
     if (parse::peek(p).kind != lex::dot) return false;
     // `format.to(out, n, x)`: `format` is a module bound by an import, so this is that module's function (#2104).
     if (base->kind == .name) {
-        if (countof(base->kind.name.path.segments) == 1 &&
-            parse::is_module(p, base->kind.name.path.segments[0].text))
+        if (countof(base->kind.name.path.segments) == 1 && parse::is_module(p, base->kind.name.path.segments[0].text))
             return false;
     }
     lex::Token name = parse::peek_at(p, 1);

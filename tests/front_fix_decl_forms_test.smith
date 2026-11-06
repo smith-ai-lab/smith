@@ -82,7 +82,8 @@ export void test_front_fix_type_function_returns_an_unnamed_struct() {
 }
 
 export void test_front_fix_typedef_of_a_pointer_is_a_pointer_type() {
-    expect_fixed("module m;\ntypedef U32 Wide;\ntypedef Node *NodeRef;\ntypedef const char *Name;\ntypedef typeof(U8[:]) Bytes;\n",
+    expect_fixed("module m;\ntypedef U32 Wide;\ntypedef Node *NodeRef;\ntypedef const char *Name;\ntypedef "
+                 "typeof(U8[:]) Bytes;\n",
                  "Wide := u32\nNodeRef := *mut Node\nName := *char\nBytes := []mut u8\n");
 }
 
