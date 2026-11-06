@@ -52,5 +52,5 @@ export void test_front_fix_args_an_alias_binds_the_module_name() {
 export void test_front_fix_args_a_value_to_is_still_the_conversion() {
     test::check_equal(errors_in("import std.format\nfn f(x: i32):\n    let y = x.to(i64)\n    let z = x.wrap(u8)\n"),
                       (Usize)0);
-    test::check_equal(errors_in("fn f(pair: i32):\n    format.write(out, 8, pair)\n") > 0, true);
+    test::check_equal(errors_in("fn f(pair: i32):\n    format.to(out, 8, pair)\n") > 0, true);
 }
