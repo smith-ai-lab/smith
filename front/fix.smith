@@ -261,6 +261,16 @@ export parser::Parsed parse_for_fix(Str file, Str source) {
     return parser::parse(file, source);
 }
 
+// The modules `load_from_folders` has read in this run, by file (#2586). The checker loads every import, and every
+// import of an import, on each of its passes, and a library module that needs mending is mended by up to `fix_passes`
+// parses: read again each time, the fix of front/compile.smith grew past 11 GB and the 16 GB runner of
+// `frontend-coverage` was shut down. So each file is read once: `fix_run` empties the list, and so does `store`, since
+// a file the fixer writes is read again as it now is.
+constexpr Usize loaded_max = 256;
+static Str loaded_paths[loaded_max];
+static const ast::Module *loaded_modules[loaded_max];
+static Usize loaded_count = 0;
+
 // Writes `text` over the file `path`. False when it cannot.
 export Bool store(Str path, Str text) {
     U8 bytes[:] = {};
@@ -268,6 +278,7 @@ export Bool store(Str path, Str text) {
     for (Usize i = 0; i < countof(text); i++)
         bytes[i] = (U8)text[i];
     files::CountResult written = files::write_file(path, bytes, files::Replace);
+    loaded_count = 0; // an import read before may be this file (#2586)
     return written != .error;
 }
 
@@ -672,16 +683,6 @@ static void as_todays_syntax(ast::Module *module) {
         }
     }
 }
-
-// The modules `load_from_folders` has read in this run, by file (#2586). The checker loads every import, and every
-// import of an import, on each of its passes, and a library module that needs mending is mended by up to `fix_passes`
-// parses: read again each time, the fix of front/compile.smith grew past 11 GB and the 16 GB runner of
-// `frontend-coverage` was shut down. The files do not change during a run, so each is read once; `fix_run` empties
-// the list.
-constexpr Usize loaded_max = 256;
-static Str loaded_paths[loaded_max];
-static const ast::Module *loaded_modules[loaded_max];
-static Usize loaded_count = 0;
 
 // The module of the file at `path`, read and mended as an import (#2561), or null when it does not read.
 static const ast::Module *read_import(Str path) {
