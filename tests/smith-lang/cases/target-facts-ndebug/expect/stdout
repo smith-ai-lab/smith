@@ -9,4 +9,5 @@ f32_mantissa_bits ok
 f64_mantissa_bits ok
 float_eval_method ok
 static_analyzer ok
+fast_math ok
 constexpr copies ok
