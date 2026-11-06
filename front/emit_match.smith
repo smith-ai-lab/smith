@@ -639,7 +639,7 @@ static state::Status let_branch(state::Emitter *e, const state::Work *w) {
         return state::fail("not an if let", s->span);
     }
     state::Value o = state::peek_value(e);
-    if (o.ty.kind == .option) {
+    if (o.ty.kind == .option || o.ty.kind == .result) {
         return optional::if_let_branch(e, w);
     }
     _ = state::pop_value(e);
