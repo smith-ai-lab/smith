@@ -180,8 +180,10 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
             c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, v[1].ty.is_signed ? 1 : 0, ""),
             c::LLVMAtomicOrderingMonotonic, 0);
     case .filled:
+    case .alloc:
     case .type_query:
-        return nullptr; // `filled` lowers itself; the checker decides a type question and keeps one branch
+        return nullptr; // `filled` and `alloc` lower themselves; the checker decides a type question and keeps one
+                        // branch
     case .constant:
         return c::LLVMConstRealOfStringAndSize(result.llvm, entry.intrinsic.data, 3);
     }
@@ -233,6 +235,88 @@ export state::Status call(state::Emitter *e, const ast::Expr *x) {
         }
         if (!table::is_type_argument(entry, i - 1)) state::push_eval(e, args[i - 1], hint);
     }
+    return state::success();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// `mem.alloc(T, n)` and `mem.alloc(T, [a, b])` (#2527): a bridge while lib/std/mem.smith is in today's syntax; #2539
+// makes them an ordinary generic of mem.smith and deletes this.
+
+// Whether the call `x` is `mem.alloc` or `arena.push_slice` with a size or a shape.
+export Bool is_alloc(const state::Emitter *e, const ast::Expr *x) {
+    return x->kind == .call && e->options.checked != nullptr &&
+           table::names_alloc(e->options.checked, x->kind.call.callee, countof(x->kind.call.args));
+}
+
+// a * b, or the largest size when it overflows: no allocator has that many bytes, so std.mem refuses it by name.
+static c::LLVMValueRef times_or_largest(state::Emitter *e, c::LLVMValueRef a, c::LLVMValueRef b) {
+    c::LLVMTypeRef word = c::LLVMTypeOf(a);
+    U32 id = c::LLVMLookupIntrinsicID("llvm.umul.with.overflow", 23);
+    c::LLVMValueRef declaration = c::LLVMGetIntrinsicDeclaration(e->module, id, &word, 1);
+    c::LLVMTypeRef type = c::LLVMIntrinsicGetType(e->context, id, &word, 1);
+    c::LLVMValueRef args[2] = {a, b};
+    c::LLVMValueRef pair = c::LLVMBuildCall2(e->builder, type, declaration, args, 2, "");
+    c::LLVMValueRef over = c::LLVMBuildExtractValue(e->builder, pair, 1, "");
+    return c::LLVMBuildSelect(e->builder, over, c::LLVMConstAllOnes(word),
+                              c::LLVMBuildExtractValue(e->builder, pair, 0, ""), "");
+}
+
+// The sizes are on the value stack, the first deepest (under them the arena of `arena.push_slice`): one call of
+// std.mem's `smith_mem_alloc_array` or std.arena's `smith_arena_push_array` (zeroed, never null) for their product,
+// and the slice or block over it.
+static state::Status alloc_finish(state::Emitter *e, const state::Work *w) {
+    state::TyResult typed = state::type_of_node(e, w->expr);
+    if (typed == .error) return {.error = typed.error};
+    state::Ty result = typed.ok;
+    if ((result.kind != .slice && result.kind != .block) || result.element == nullptr || e->target_data == nullptr)
+        return state::fail("mem.alloc makes a slice or a block", w->span);
+    c::LLVMTypeRef counts = c::LLVMStructGetTypeAtIndex(result.llvm, 1);
+    c::LLVMTypeRef word = result.kind == .slice ? counts : c::LLVMGetElementType(counts);
+    c::LLVMValueRef sizes[16] = {};
+    Usize rank = (Usize)w->number;
+    if (rank == 0 || rank > 16) return state::fail("mem.alloc takes one to 16 sizes", w->span);
+    for (Usize i = rank; i > 0; i--) {
+        state::Value size = state::pop_value(e);
+        sizes[i - 1] = c::LLVMBuildIntCast2(e->builder, size.llvm, word, size.ty.is_signed ? 1 : 0, "");
+    }
+    Bool arena = w->expr->kind == .call && countof(w->expr->kind.call.args) == 3; // `arena.push_slice(&a, T, n)`
+    c::LLVMValueRef in = arena ? state::pop_value(e).llvm : nullptr;
+    c::LLVMValueRef total = sizes[0];
+    for (Usize i = 1; i < rank; i++)
+        total = times_or_largest(e, total, sizes[i]);
+    c::LLVMTypeRef cell = result.element->llvm;
+    c::LLVMValueRef all[4] = {in, c::LLVMConstInt(word, c::LLVMABISizeOfType(e->target_data, cell), 0), total,
+                              c::LLVMConstInt(word, c::LLVMABIAlignmentOfType(e->target_data, cell), 0)};
+    c::LLVMTypeRef params[4] = {state::pointer_type(e, 0), word, word, word};
+    U32 skip = arena ? 0 : 1;
+    c::LLVMTypeRef type = c::LLVMFunctionType(state::pointer_type(e, 0), &params[skip], 4 - skip, 0);
+    const char *name = arena ? "smith_arena_push_array" : "smith_mem_alloc_array";
+    c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, name);
+    if (function == nullptr) function = c::LLVMAddFunction(e->module, name, type);
+    c::LLVMValueRef data = c::LLVMBuildCall2(e->builder, type, function, &all[skip], 4 - skip, "");
+    c::LLVMValueRef made = c::LLVMBuildInsertValue(e->builder, c::LLVMGetUndef(result.llvm), data, 0, "");
+    c::LLVMValueRef count = sizes[0];
+    if (result.kind == .block) {
+        count = c::LLVMGetUndef(counts);
+        for (Usize i = 0; i < rank; i++)
+            count = c::LLVMBuildInsertValue(e->builder, count, sizes[i], (U32)i, "");
+    }
+    made = c::LLVMBuildInsertValue(e->builder, made, count, 1, "");
+    state::push_value(e, (state::Value){.llvm = made, .ty = result});
+    return state::success();
+}
+
+// Emits `mem.alloc(T, n)` or `mem.alloc(T, [a, b])`: the sizes first to last, then `alloc_finish`; the arena of
+// `arena.push_slice(&a, T, n)` before them.
+export state::Status shaped_alloc(state::Emitter *e, const ast::Expr *x) {
+    if (x->kind != .call || countof(x->kind.call.args) < 2) return state::fail("not a call of mem.alloc", x->span);
+    ast::ExprRef args[:] = x->kind.call.args;
+    const ast::Expr *shape = args[countof(args) - 1];
+    Usize rank = shape->kind == .array_lit ? countof(shape->kind.array_lit.items) : 1;
+    state::push_then(e, (state::Work){.then = alloc_finish, .expr = x, .number = rank, .span = x->span});
+    for (Usize i = rank; i > 0; i--)
+        state::push_eval(e, shape->kind == .array_lit ? shape->kind.array_lit.items[i - 1] : shape, state::no_hint());
+    if (countof(args) == 3) state::push_eval(e, args[0], state::no_hint());
     return state::success();
 }
 
