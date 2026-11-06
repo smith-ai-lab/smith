@@ -1645,6 +1645,29 @@ static Bool fn_against_function(types::TypeRef l, types::TypeRef r) {
     return r->kind == .fn_value && l->kind == .function && r->element == l;
 }
 
+// Two slices compare by contents: the lengths, then each element (#2540). The elements are one type and have a `==`
+// of their own; a slice of records or of slices is not compared yet (#2514 lifts that).
+static types::TypeRef slice_compare(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
+                                    types::TypeRef r) {
+    if (!is_equality(op)) {
+        types::failf(c, span, "`", binary_text(op), "` cannot order `", types::show(l),
+                     "`; a slice is compared with `==` and `!=`");
+        return invalid(c);
+    }
+    if (l->element != r->element) {
+        types::failf(c, span, "the operands of `", binary_text(op), "` have different types, `", types::show(l),
+                     "` and `", types::show(r), "`; compare slices of one element type");
+        return invalid(c);
+    }
+    Bool plain_enum = l->element->kind == .enumeration && !l->element->has_payload;
+    if (!is_scalar(l->element) || (l->element->kind == .enumeration && !plain_enum) || l->element->kind == .fn_value) {
+        types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l), "`: its element `",
+                     types::show(l->element), "` has no `==` yet; compare the elements one by one");
+        return invalid(c);
+    }
+    return c->table.bool_type;
+}
+
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
     if (is_equality(op) && fn_against_function(l, r)) {
@@ -1654,9 +1677,10 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
         return c->table.bool_type;
     }
     if (is_equality(op) && l->kind == .text && r->kind == .text) {
-        types::failf(c, span, "`", binary_text(op),
-                     "` does not compare two `Str`; compare their bytes with `mem::equal(a, b)`");
-        return invalid(c);
+        return c->table.bool_type; // two `str` compare by contents (#2540)
+    }
+    if (l->kind == .slice && r->kind == .slice) {
+        return slice_compare(c, span, op, l, r);
     }
     if (l->kind == .tuple && r->kind == .tuple) {
         return tuple_compare(c, span, op, l, r);
@@ -3270,6 +3294,9 @@ static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
 // A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
 // so the test's site is left as it is (#2503).
 static void spoil_written(types::Checked *c, const ast::Expr *place) {
+    if (place->kind == .unary && place->kind.unary.op == .dereference) {
+        place = place->kind.unary.operand; // `p.* = x` changes what a test of `p.*` read
+    }
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
@@ -3316,6 +3343,12 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
         return base;
     }
     Str found = types::show(base);
+    // `p.v` through a pointer to a payload enumeration in smith's own syntax is a payload read like `k.v` (#2494)
+    Bool to_payloads = base->kind == .pointer && base->element->kind == .enumeration && base->element->has_payload;
+    if (!arrow && to_payloads && e->kind == .member && in_new_syntax(c, e->kind.member.base)) {
+        base = base->element;
+        found = types::show(base);
+    }
     if (base->kind == .enumeration && base->has_payload) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",

@@ -346,3 +346,31 @@ export void test_front_reflect_a_run_time_index_is_an_error() {
     test::check_equal(mentions(error, "must be a number written in the code"), true);
     test::check_equal(mentions(error, "slice"), true);
 }
+
+// `f.default` is the field's default, copied into the unrolled body (#2543): `default` is a keyword, and a keyword is a
+// member name after `.` (#2550).
+export void test_front_reflect_default_of_an_entry() {
+    Str source = "struct Config:\n"
+                 "    port: i32 = 443\n"
+                 "    retries: i32 = 3\n"
+                 "\n"
+                 "fn defaults(T: type) -> i32:\n"
+                 "    let mut total = 0\n"
+                 "    for f in fields(T):\n"
+                 "        total = total + f.default\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    defaults(Config)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)446);
+}
+
+export void test_front_reflect_default_of_a_field_with_none_is_an_error() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str error = first_error("struct Point:\n    x: i32 = 0\n    y: i32\n\n"
+                            "fn run() -> i32:\n    fields(Point)[1].default\n");
+    test::check_equal(mentions(error, "`y` has no default"), true);
+}

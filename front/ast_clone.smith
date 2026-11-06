@@ -638,6 +638,7 @@ export struct Entry {
     Str type_name;
     Str doc;
     ast::Attribute attributes[:];
+    const ast::Expr *default_value; // `f.default`: the field's default (null when it has none, #2543)
 };
 
 // The number of entries of the list `kind` ("fields" or "parameters") of the type or function `subject`; false when
@@ -796,8 +797,20 @@ static ast::Expr *at_span(ast::Expr *e, ast::Span span) {
 // ---------------------------------------------------------------------------------------------------------------
 // The choosers
 
-// `entry.name`, `entry.doc` and `entry.type` of an entry, as the value they stand for; null for another member.
-static ast::Expr *member_value(const ast::Expr *e) {
+// `entry.default`: the field's default, copied into the body; with none, an error.
+static const ast::Expr *default_of(const ast::Expr *e, Entry entry) {
+    if (entry.default_value != nullptr) return entry.default_value;
+    if (fail_sink != nullptr) {
+        char text[:] = format::push("`", entry.name, "` has no default");
+        Str message = text;
+        fail_sink(e->span, message);
+    }
+    return nullptr;
+}
+
+// `entry.name`, `entry.doc`, `entry.type` and `entry.default` of an entry, as the value they stand for; null for
+// another member.
+static const ast::Expr *member_value(const ast::Expr *e) {
     if (e->kind != .member) return nullptr;
     Ref r = ref_of(e->kind.member.base);
     if (!r.known || e->kind.member.arrow) return nullptr;
@@ -805,6 +818,7 @@ static ast::Expr *member_value(const ast::Expr *e) {
     Entry entry = entry_of(r);
     if (same(member, "name")) return at_span(ast::string(entry.name), e->span);
     if (same(member, "doc")) return at_span(ast::string(entry.doc), e->span);
+    if (same(member, "default")) return default_of(e, entry);
     if (same(member, "type")) {
         ast::Expr *value = ast::expr({.type_value = {.type = ast::named(entry.type_name)}});
         return at_span(value, e->span);
@@ -815,7 +829,7 @@ static ast::Expr *member_value(const ast::Expr *e) {
 // `sizeof(f.type)` and the like: the query of the type the entry has.
 static ast::Expr *queried(const ast::Expr *e) {
     if (e->kind != .query || e->kind.query.operand == nullptr || e->kind.query.operand->kind != .member) return nullptr;
-    ast::Expr *type = member_value(e->kind.query.operand);
+    const ast::Expr *type = member_value(e->kind.query.operand);
     if (type == nullptr || type->kind != .type_value) return nullptr;
     ast::Expr *query = ast::expr({.query = {.op = e->kind.query.op, .type = type->kind.type_value.type}});
     return at_span(query, e->span);
@@ -867,7 +881,7 @@ static void check_index(const ast::Expr *e) {
 
 static const ast::Expr *rewrite_expr(const ast::Expr *e) {
     check_index(e);
-    ast::Expr *replacement = nullptr;
+    const ast::Expr *replacement = nullptr;
     if (e->kind == .member) replacement = member_value(e);
     if (e->kind == .reflect_member) replacement = reflected_member(e);
     if (e->kind == .query) replacement = counted(e);

@@ -268,7 +268,8 @@ void big_shift_left(Big *big, U64 shift) {
     U32 part = (U32)(shift % 32);
     check(big->count + whole + 1 <= big_limbs); // a shift grew a number past its limbs
     big->limb[big->count + whole] = 0;
-    for (Usize i = big->count; i-- > 0;) {
+    for (Usize n = big->count; n > 0; n--) {
+        Usize i = n - 1;
         U64 moved = (U64)big->limb[i] << part;
         big->limb[i + whole + 1] |= (U32)(moved >> 32);
         big->limb[i + whole] = (U32)moved;
@@ -294,7 +295,8 @@ void big_shift_right_one(Big *big) {
 
 Bool big_at_least(const Big *a, const Big *b) {
     if (a->count != b->count) return a->count > b->count;
-    for (Usize i = a->count; i-- > 0;) {
+    for (Usize n = a->count; n > 0; n--) {
+        Usize i = n - 1;
         if (a->limb[i] != b->limb[i]) return a->limb[i] > b->limb[i];
     }
     return true;
@@ -441,7 +443,8 @@ Bool decimal_scan_exponent(const char word[:], Usize *index, Decimal *decimal) {
 // The exact path: the digits over a power of ten, as a ratio of big integers.
 U64 decimal_exact(const Decimal *decimal, const Format *format) {
     Big numerator = decimal->digits;
-    Big denominator = {.limb = {1}, .count = 1};
+    Big denominator = {.count = 1};
+    denominator.limb[0] = 1;
     if (decimal->exp10 >= 0)
         big_mul_pow10(&numerator, (U64)decimal->exp10);
     else
@@ -586,7 +589,8 @@ Bool decimal_scan(const char word[:], Decimal *decimal, Bool *negative) {
 [[std::c_name("smith_text_write_i64")]] export Usize write_i64(char out[:], I64 value) {
     contract::requires(countof(out) >= number_capacity);
     if (value >= 0) return write_u64(out, (U64)value);
-    char text[number_capacity + 1] = {'-'};
+    char text[number_capacity + 1] = {};
+    text[0] = '-';
     Usize count = write_u64(text[1:number_capacity + 1], 0 - (U64)value);
     for (Usize i = 0; i <= count && i < countof(out) && i <= number_capacity; i++) {
         out[i] = text[i];
@@ -644,8 +648,11 @@ U64 big_divide(Big *numerator, const Big *denominator) {
 
 // The quotient of m * 2^e / 10^s, rounded to the nearest integer, ties to even.
 U64 f64_scaled(U64 m, I64 e, I64 s, Bool round) {
-    Big numerator = {.limb = {(U32)m, (U32)(m >> 32)}, .count = (m >> 32) != 0 ? 2U : 1U};
-    Big denominator = {.limb = {1}, .count = 1};
+    Big numerator = {.count = (m >> 32) != 0 ? 2U : 1U};
+    numerator.limb[0] = (U32)m;
+    numerator.limb[1] = (U32)(m >> 32);
+    Big denominator = {.count = 1};
+    denominator.limb[0] = 1;
     if (e >= 0)
         big_shift_left(&numerator, (U64)e);
     else

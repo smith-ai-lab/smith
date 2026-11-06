@@ -336,19 +336,17 @@ export void test_front_types_expr_operand_errors_name_the_types_and_what_to_writ
     test::check_condition(says(last(&r), "`&&` needs Bool operands, found `I32`; write a comparison such as `x != 0`"));
     types_expr::infer(&r, binary(.add, ast::name("s"), ast::name("s")));
     test::check_condition(says(last(&r), "`+` needs a number, found `Str`; write an integer or floating value"));
-    types_expr::infer(&r, binary(.equal, ast::name("s"), ast::name("s")));
-    test::check_condition(
-        says(last(&r), "`==` does not compare two `Str`; compare their bytes with `mem::equal(a, b)`"));
+    types_expr::infer(&r, binary(.equal, ast::name("s"), ast::name("s"))); // two `Str` compare by contents (#2540)
     types_expr::infer(&r, binary(.remainder, ast::name("f"), real(2.0)));
     test::check_condition(says(last(&r), "`%` needs integers, found `F64`; write an integer such as `U32` or `I64`"));
     types_expr::infer(&r, binary(.add, ast::name("c"), num(300)));
     test::check_condition(
         says(last(&r), "300 does not fit U8 (0 to 255); write a value from 0 to 255, or give it a wider type"));
-    expect(r.error_count, 6);
+    expect(r.error_count, 5);
     types_expr::infer(&r, binary(.add, ast::name("nope"), num(1)));
-    expect(r.error_count, 7);
+    expect(r.error_count, 6);
     types_expr::infer(&r, binary(.add, binary(.add, ast::name("nope"), num(1)), num(2)));
-    expect(r.error_count, 8);
+    expect(r.error_count, 7);
 }
 
 export void test_front_types_expr_unary_operators_and_their_errors() {

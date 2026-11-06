@@ -264,6 +264,7 @@ export typedef TyResult (*TypeHook)(Emitter *e, const ast::TypeExpr *t);
 export typedef TyResult (*NodeTypeHook)(Emitter *e, const ast::Expr *x);
 export typedef TyResult (*CheckedTypeHook)(Emitter *e, types::TypeRef t, ast::Span span);
 export typedef Status (*ConvertHook)(Emitter *e, Value value, Ty to, ast::Span span, ConvertSite site);
+export typedef Status (*FoldHook)(Emitter *e, const ast::Expr *x, Ty to, c::LLVMValueRef *out);
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
 // A `Ty.element` block and the next one; `ty` is first, so a block's address is the element's.
@@ -315,6 +316,8 @@ export struct Emitter {
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
     ConvertHook convert_hook;
+    Bool folding;       // inside a static_assert or a global's initializer: a `const` integer global reads as its value
+    FoldHook fold_hook; // an expression built and folded to a constant (a global's initializer, #2510)
 
     Work work[:]; // the work stack, the next to run last
     Usize work_count;
@@ -425,6 +428,11 @@ export Status convert(Emitter *e, Value value, Ty to, ast::Span span, ConvertSit
     return e->convert_hook(e, value, to, span, site);
 }
 
+// `x` as the constant of type `to` it folds to, or the Error when it is not known at compile time.
+export Status fold(Emitter *e, const ast::Expr *x, Ty to, c::LLVMValueRef *out) {
+    return e->fold_hook(e, x, to, out);
+}
+
 export Hint no_hint() {
     return (Hint){};
 }
@@ -506,6 +514,21 @@ export c::LLVMValueRef new_alloca(Emitter *e, Ty ty, Str name) {
     c::LLVMValueRef slot = c::LLVMBuildAlloca(e->alloca_builder, ty.llvm, label);
     mem::free(label);
     return slot;
+}
+
+// Stores `value` at `slot`. A struct or an array whose value is all zeros (`Work()` with every field defaulted to its
+// zero) is one clear, a `memset`, as C's `{0}` is (#2543): stored as an aggregate it is one store per field, since
+// the new front end runs no optimizer.
+export void store(Emitter *e, c::LLVMValueRef value, c::LLVMValueRef slot) {
+    c::LLVMTypeRef type = c::LLVMTypeOf(value);
+    c::LLVMTypeKind kind = c::LLVMGetTypeKind(type);
+    Bool aggregate = kind == c::LLVMStructTypeKind || kind == c::LLVMArrayTypeKind;
+    if (aggregate && c::LLVMIsConstant(value) != 0 && c::LLVMIsNull(value) != 0) {
+        c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
+        c::LLVMBuildMemSet(e->builder, slot, c::LLVMConstInt(byte, 0, 0), c::LLVMSizeOf(type), 1);
+        return;
+    }
+    c::LLVMBuildStore(e->builder, value, slot);
 }
 
 export void add_local(Emitter *e, Local local) {
