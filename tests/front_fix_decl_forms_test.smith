@@ -135,3 +135,16 @@ export void test_front_fix_restrict_slice_without_a_precondition_is_left_alone()
     }
     test::check_condition(kept);
 }
+
+// A prototype C defines is an `extern fn`, and `export` keeps it `pub`; the ownership attributes follow (#2469, decided
+// on #1406): the fixer wrote `pub *c.FILE open(*char path);`, a C head with `char` as a type of smith's own.
+export void test_front_fix_exported_prototype_is_a_pub_extern_fn() {
+    expect_fixed("module m;\nexport c::FILE *open(const char *path);\n", "pub extern fn open(path: *char) -> *mut c.FILE\n");
+    expect_fixed("module m;\nexport [[std::returns_owned(free)]] char *dup(const char *text);\n",
+                 "pub @returns_owned(free) extern fn dup(text: *char) -> *mut char\n");
+}
+
+export void test_front_fix_private_prototype_with_an_ownership_attribute() {
+    expect_fixed("module m;\n[[std::returns_internal]] const char *message(I32 code);\n",
+                 "@returns_internal extern fn message(code: i32) -> *char\n");
+}

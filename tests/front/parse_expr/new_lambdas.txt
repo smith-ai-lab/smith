@@ -5,7 +5,7 @@ fn(x) { x }
     (block
       (return
         (lambda
-          (param x)
+          (param x new)
           (block))))))
 
 fn() { }
@@ -24,7 +24,7 @@ fn[a, b](x) { x }
     (block
       (return
         (lambda a b
-          (param x)
+          (param x new)
           (block))))))
 
 fn(x: i32, y) -> i32 { x }
@@ -34,8 +34,8 @@ fn(x: i32, y) -> i32 { x }
     (block
       (return
         (lambda
-          (param x (named i32))
-          (param y)
+          (param x new (named i32))
+          (param y new)
           (result (named i32))
           (block))))))
 
@@ -62,7 +62,7 @@ f(fn(x) { x }, 1)
         (call
           (name f)
           (lambda
-            (param x)
+            (param x new)
             (block))
           (integer 1))))))
 
