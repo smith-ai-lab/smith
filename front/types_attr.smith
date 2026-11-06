@@ -68,6 +68,29 @@ static Bool marks_attribute(const ast::Decl *d) {
     return false;
 }
 
+// Whether a callee names a type, so the call builds a value of it: `Span`, or `ast.Span` through a module.
+static Bool names_type(const types::Checked *r, const ast::Expr *callee) {
+    if (callee->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&r->scopes, callee->kind.name.path);
+        return s != nullptr && s->kind == .type_name;
+    }
+    if (!(callee->kind == .member)) return false;
+    const ast::Expr *base = callee->kind.member.base;
+    Str name = callee->kind.member.name;
+    if (base->kind != .name || countof(name) == 0 || name[0] < 'A' || name[0] > 'Z') return false;
+    const types::Symbol *s = types::lookup_path(&r->scopes, base->kind.name.path);
+    return s != nullptr && s->kind == .module_name;
+}
+
+// The values of a call known at compile time when its arguments are (#2530): a construction `S(a = 0)` and
+// `array.filled(T, n, 0)`, the zero defaults the fixer writes; false for any other call.
+static Bool constant_call(const types::Checked *r, const ast::Expr *e) {
+    if (!(e->kind == .call)) return false;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (names_type(r, callee)) return true;
+    return callee->kind == .member && same_text(callee->kind.member.name, "filled") && countof(e->kind.call.args) == 3;
+}
+
 // Whether an expression is known at compile time: literals, constants, and operations on them.
 static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
     const ast::Expr *stack[32];
@@ -97,6 +120,16 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         } else if (e->kind == .binary) {
             stack[top++] = e->kind.binary.left;
             stack[top++] = e->kind.binary.right;
+        } else if (e->kind == .named_arg) {
+            stack[top++] = e->kind.named_arg.value;
+        } else if (e->kind == .array_lit || constant_call(r, e)) {
+            Bool filled = e->kind == .call && !names_type(r, e->kind.call.callee);
+            ast::ExprRef items[:] = {};
+            if (e->kind == .array_lit) items = e->kind.array_lit.items;
+            if (e->kind == .call) items = e->kind.call.args;
+            if (top + countof(items) > 32) return false;
+            for (Usize i = filled ? 1 : 0; i < countof(items); i++)
+                stack[top++] = items[i];
         } else {
             return false;
         }

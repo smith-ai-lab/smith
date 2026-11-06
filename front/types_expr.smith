@@ -2850,9 +2850,25 @@ static void construct_before(Work *w, Frame f, types::TypeRef record) {
 // Outside the module that declares the record, a record with a private field is built only by a function of that
 // module, even when every private field has a default (#1813). A record whose fields are all `pub` is built anywhere.
 // False, after an error, when the record may not be built here.
-static Bool private_construction(types::Checked *c, const ast::Expr *e, types::TypeRef record) {
+// A private field with a default that the construction leaves out is filled by its default (#2530), so it does not
+// stop another module from building the struct; giving it a value does.
+static Bool gives_field(ast::ExprRef args[:], Usize index, Str name) {
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind != .named_arg) {
+            if (i == index) return true;
+        } else if (same_text(arg->kind.named_arg.name, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool private_construction(types::Checked *c, const ast::Expr *e, ast::ExprRef args[:], types::TypeRef record) {
     for (Usize i = 0; i < countof(record->slots); i++) {
-        if (!types::field_visible(record, &record->slots[i])) {
+        const types::Slot *slot = &record->slots[i];
+        if (slot->default_value != nullptr && !gives_field(args, i, slot->name)) continue;
+        if (!types::field_visible(record, slot)) {
             types::private_build(c, e->span, record);
             return false;
         }
@@ -2909,7 +2925,7 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
     ast::ExprRef args[:] = e->kind.call.args;
     Str shown = types::show(record);
     Bool seen[:] = mem::alloc_slice(Bool, countof(record->slots));
-    Bool ok = private_construction(c, e, record);
+    Bool ok = private_construction(c, e, args, record);
     Bool built_here = ok;
     Bool by_name = false;
     for (Usize i = 0; i < countof(args); i++) {
