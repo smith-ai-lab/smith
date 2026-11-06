@@ -620,6 +620,19 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
     return filled;
 }
 
+// `random.UniformInt64(low = 0, high = 9)`: a record of an imported module, declared when first needed.
+static Bool imported_record_at(state::Emitter *e, ast::Path path, Usize *at) {
+    if (e->options.checked == nullptr || countof(path.segments) != 2) return false;
+    ast::TypeExpr *written = ast::make_type({.named = {.path = path}});
+    written->span = path.span;
+    state::TyResult ty = state::type_of(e, written);
+    if (ty == .error) {
+        state::free_text(ty.error.message);
+        return false;
+    }
+    return find_record(e, ty.ok.name, at);
+}
+
 // `words.Pair(key = w)`: a record of another module, named through the module.
 static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at) {
     if (callee->kind != .member || callee->kind.member.arrow || callee->kind.member.base->kind != .name) return false;
@@ -631,7 +644,8 @@ static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
         parts[i] = base.segments[i];
     parts[count] = (ast::Identifier){.text = callee->kind.member.name, .span = callee->span};
     ast::Path path = {.segments = parts[0:count + 1], .span = callee->span};
-    return c_record(e, path, at);
+    if (c_record(e, path, at)) return true;
+    return count == 1 && imported_record_at(e, path, at);
 }
 
 // The record a construction's callee names: one of the module's, a C one or one of another module (`words.Pair`,
@@ -640,7 +654,7 @@ static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
-        return c_record(e, path, at);
+        return c_record(e, path, at) || imported_record_at(e, path, at);
     }
     return member_record(e, callee, at);
 }
