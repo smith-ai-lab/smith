@@ -561,6 +561,14 @@ static state::Status logical_finish(state::Emitter *e, const state::ThenGeneral 
     return state::success();
 }
 
+// The right side of a folded `&&`/`||` is still a Bool.
+static state::Status folded_right_is_bool(state::Emitter *e, const state::ThenNone *w) {
+    state::Value value = state::pop_value(e);
+    try require_bool(e, value, w->span);
+    state::push_value(e, value);
+    return state::success();
+}
+
 // The left side is on the stack: `&&` goes on to the right side only when it is true, `||` only when it is false.
 static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
@@ -576,6 +584,7 @@ static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w)
         // no blocks, so a `static_assert` folds the whole condition.
         Bool is_true = c::LLVMConstIntGetZExtValue(left.llvm) != 0;
         if (is_true == (op == .logical_and)) {
+            state::push_then_none(e, (state::ThenNone){.run = folded_right_is_bool, .span = right->span});
             state::push_eval(e, right, state::no_hint());
         } else {
             state::push_value(e, left);
