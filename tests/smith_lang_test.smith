@@ -1930,6 +1930,10 @@ export void test_target_facts_thread() {
     corpus_case("target-facts-thread");
 }
 
+export void test_target_facts_fast_math() {
+    corpus_case("target-facts-fast-math");
+}
+
 export void test_tuple_basic() {
     corpus_case("tuple-basic");
 }
