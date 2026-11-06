@@ -927,6 +927,7 @@ static const char *const build_front_modules[] = {
     "fix_blocks",
     "fix_equal",
     "fix_generic_c",
+    "fix_generic_mut",
     "fix_method",
     "fix_zero",
     "fix_opaque",

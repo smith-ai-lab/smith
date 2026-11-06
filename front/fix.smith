@@ -26,6 +26,7 @@ import front::parse as core;
 import front::fix_blocks;
 import front::fix_equal;
 import front::fix_generic_c;
+import front::fix_generic_mut;
 import front::fix_method;
 import front::fix_opaque;
 import front::fix_alloc;
@@ -221,6 +222,12 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     for (Usize i = 0; i < countof(generic); i++) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = generic[i];
+    }
+    // `total := 0` assigned in a template (#2613): no instance of another module carries the fix.
+    core::Errors assigned = fix_generic_mut::edits(source, module);
+    for (Usize i = 0; i < countof(assigned); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = assigned[i];
     }
     // `typeof` of a slice parameter and of a written type (#2340): the new syntax has neither.
     core::Errors typed = fix_typeof::edits(source, module);
