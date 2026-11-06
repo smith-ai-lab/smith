@@ -387,9 +387,14 @@ export types::TypeRef libc_type(const types::Checked *c, U8 letter, types::TypeR
     return types::floating(&c->table, letter == 'd' ? 64 : 32);
 }
 
+// A pointer that may be null (`?*T`): C's libc functions take it where they take a pointer.
+static Bool is_pointer_option(types::TypeRef t) {
+    return t->kind == .option && t->element != nullptr && t->element->kind == .pointer;
+}
+
 static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
     if (is_open(t)) return true;
-    if (letter == 'p') return t->kind == .pointer;
+    if (letter == 'p') return t->kind == .pointer || is_pointer_option(t);
     if (letter == 'z' || letter == 'i') return t->kind == .integer;
     return t == want;
 }
@@ -425,7 +430,7 @@ static types::TypeRef check_libc(types::Checked *c, const ast::Expr *e, Entry en
         if (!letter_fits((U8)params[i], t, libc_type(c, (U8)params[i], first))) return wrong(c, e->span, entry, wanted);
     }
     U8 result = libc_result(entry);
-    if (result == 'p' && first->kind != .pointer) return c->table.invalid;
+    if (result == 'p' && first->kind != .pointer && !is_pointer_option(first)) return c->table.invalid;
     return libc_type(c, result, first);
 }
 
