@@ -111,6 +111,11 @@ export void test_front_check_types_array_length_arithmetic() {
     clean(with_length("", "1 << 3"));
 }
 
+export void test_front_check_types_array_length_through_a_conversion() {
+    clean(with_length("const n: u32 = 8\nconst m: usize = n.to(usize)\n\n", "m"));
+    clean(with_length("const n: u32 = 8\n\n", "n.wrap(usize) + 1"));
+}
+
 export void test_front_check_types_array_length_in_a_struct_and_a_parameter() {
     clean("const N = 4\n\nstruct Block:\n    bytes: [N]u8\n\nfn first(xs: [N]u8) -> u8:\n    return xs[0]\n");
 }
