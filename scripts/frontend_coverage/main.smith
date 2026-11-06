@@ -1240,6 +1240,20 @@ static Bool make_pristine(const char *root, const char *scratch, char pristine[:
     return true;
 }
 
+// Makes `folder` an empty folder. It holds what the fixers share in a run (SMITH_FIX_IMPORT_CACHE, #2586): each import
+// mended once, and the nullable fields of each, which are read from the whole tree, so a run starts with none.
+static void empty_folder(const char folder[:]) {
+    (void)files::make_folder(folder);
+    files::EntriesResult listed = files::list(folder);
+    if (listed == .error) return;
+    for (Usize i = 0; i < countof(listed.ok); i++) {
+        if (listed.ok[i].folder) continue;
+        char path[path_size * 2];
+        (void)format::write(path, sizeof path, folder, "/", listed.ok[i].name);
+        (void)files::remove(view_of(path));
+    }
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1265,6 +1279,10 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     Bool all = countof(list) == 0;
     if (!all && mark_files(list) == 0) return 2;
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
+    char imports[path_size * 2];
+    (void)format::write(imports, sizeof imports, scratch, "/../imports");
+    empty_folder(view_of(imports));
+    (void)c::setenv("SMITH_FIX_IMPORT_CACHE", imports, 1);
     if (c::chdir(scratch) != 0) return 1;
     // All the fixes first: a file imports modules that must already be in the new syntax when it is compiled.
     job_limit = jobs_wanted();

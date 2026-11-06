@@ -687,6 +687,40 @@ static void as_todays_syntax(ast::Module *module) {
     }
 }
 
+// The text of an import that does not parse, mended by the parse errors' fixes alone (#2561). The mending of
+// front/types.smith, front/ast_clone.smith, std.mem and the others took 6 s in every fixer that imports them, and the
+// count of `frontend-coverage` (one fixer per file) no longer fitted in its 20 minutes (#2586). With
+// SMITH_FIX_IMPORT_CACHE set to a folder, the mended text is kept there by the hash of the path and the text, and the
+// next fixer reads it back; the coverage gives one folder per smith, since the mending depends on the fixer.
+static Str mended_import(Str path, Str source) {
+    const char *folder = c::getenv("SMITH_FIX_IMPORT_CACHE");
+    U64 hash = 14695981039346656037ULL; // FNV-1a over the path, a NUL, then the text
+    for (Usize i = 0; i < countof(path); i++)
+        hash = (hash ^ (U64)(U8)path[i]) * 1099511628211ULL;
+    hash = hash * 1099511628211ULL;
+    for (Usize i = 0; i < countof(source); i++)
+        hash = (hash ^ (U64)(U8)source[i]) * 1099511628211ULL;
+    Str kept = "";
+    if (folder != nullptr) kept = as_str(format::push(folder, "/", format::hex(hash, 16), ".smith"));
+    if (countof(kept) > 0 && files::exists(kept)) {
+        files::BytesResult loaded = files::read_file(kept);
+        if (loaded == .ok) {
+            format::Chars chars = mem::view(loaded.ok, char);
+            Str text = chars;
+            return text;
+        }
+    }
+    Fixed mended = {.text = source};
+    mend_passes(path, &mended, false);
+    if (countof(kept) > 0) {
+        U8 bytes[:] = mem::alloc_slice(U8, countof(mended.text));
+        for (Usize i = 0; i < countof(bytes); i++)
+            bytes[i] = (U8)mended.text[i];
+        (void)files::write_file(kept, bytes, files::Atomic);
+    }
+    return mended.text;
+}
+
 // The module of the file at `path`, read and mended as an import (#2561), or null when it does not read.
 static const ast::Module *read_import(Str path) {
     files::BytesResult loaded = files::read_file(path);
@@ -702,9 +736,7 @@ static const ast::Module *read_import(Str path) {
         // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
         // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
         // where `F32 *value` is writable.
-        Fixed mended = {.text = source};
-        mend_passes(path, &mended, false);
-        parsed = parse_for_fix(path, mended.text);
+        parsed = parse_for_fix(path, mended_import(path, source));
         if (countof(parsed.errors) > 0) return nullptr;
     }
     ast::Module *copy = mem::alloc(ast::Module);
