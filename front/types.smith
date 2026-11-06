@@ -1740,6 +1740,12 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             steps[top++] = length_step(init, false);
             continue;
         }
+        if (e->kind == .cast && e->kind.cast.form == .convert) {
+            // `n.to(usize)`, which the fixer writes into a constant (#2506): the checked conversion keeps the value
+            if (top == 32) return false;
+            steps[top++] = length_step(e->kind.cast.operand, false);
+            continue;
+        }
         if (e->kind == .binary) {
             ast::BinaryOp op = e->kind.binary.op;
             const ast::Expr *left = e->kind.binary.left;
