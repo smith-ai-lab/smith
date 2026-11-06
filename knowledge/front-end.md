@@ -38,7 +38,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 - Nodes for smith's own syntax (S0, #1440): flags `is_mut`, `is_const`, `is_once`, `is_pub`, dumped as the words `mut`, `const`, `once`, `pub`.
 - New types: `option { inner }` (`?T`), `block_type { element, dims }` (`[5,3]T`, a null size is `(absent)`), and `pointer.is_mut` (`*mut T`).
 - New expressions: `named_arg`, `variant.payload`, `tuple_lit`, `array_lit`, `stmt_expr` (an `if`, `match`, block or `for` as a value).
-- New statements: `match_stmt` (`MatchArm`, `Pattern`), `for_in`, `destructure`, `if_let`, `yield_stmt` (#1544), `errdefer_stmt`.
+- New statements: `match_stmt` (`MatchArm`, `Pattern`), `for_in`, `for_index` (#2512: `for i, j: body`, the index form with no `in`; the parser reads it on the layout path, the checker and emitter do not read it yet), `destructure`, `if_let`, `yield_stmt` (#1544), `errdefer_stmt`.
 - Reused, not new: `p.*` is `unary dereference`, `x.to(T)`, `x.wrap(T)` and `p.cast(T)` are one `cast` node with a form (convert, wrapping, reinterpret) (#1811), `fn[a](x) { }` is `lambda`, `@name(args)` is an `Attribute` in `Decl.attributes`.
 - Goldens for the new nodes: `tests/front/ast/syntax_*.txt`.
 
