@@ -2413,8 +2413,7 @@ export typedef typeof(Symbol[:]) Symbols;
 static void note(Symbols *list, Usize *used, Symbol symbol) {
     if (*used == countof(*list)) {
         Usize want = *used * 2;
-        if (*used == 0)
-            want = 64;
+        if (*used == 0) want = 64;
         Symbols grown = mem::alloc_slice(Symbol, want);
         for (Usize i = 0; i < *used; i++)
             grown[i] = (*list)[i];
