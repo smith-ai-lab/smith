@@ -1719,6 +1719,20 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     if (l->kind == .tuple && r->kind == .tuple) {
         return tuple_compare(c, span, op, l, r);
     }
+    if (is_equality(op) && l->kind == .function && r->kind == .null_type) {
+        // A function value is never null in smith: `f != nullptr` is true (#2643).
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        Str answer = "false";
+        if (op == .not_equal) {
+            answer = "true";
+        }
+        fix[0] = (syntax::Edit){.span = span, .text = answer};
+        types::fail_fix(c, span,
+                        msg(format::push("a function value is never null, so this is always ", answer, ": write ",
+                                         answer)),
+                        fix);
+        return invalid(c);
+    }
     if (!is_scalar(l)) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l),
                      "`; write numbers, Bools, enumerators or pointers");
