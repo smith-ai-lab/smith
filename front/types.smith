@@ -1473,6 +1473,13 @@ static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
         // (no recursion: only a named type, as `typeof(i32)`, is read here)
         const ast::TypeExpr *given = operand->kind.type_value.type;
         if (given->kind == .named) return resolve_name(r, given->span, given->kind.named.path);
+        // `typeof(Edit[:])`, the alias of a list (`Edits`, `Errors`): one slice of a plain name, with no recursion
+        // (#2602)
+        const ast::TypeExpr *element = given->kind == .slice ? given->kind.slice.element : nullptr;
+        if (element != nullptr && element->kind == .named) {
+            TypeRef of = resolve_name(r, element->span, element->kind.named.path);
+            return slice_of(&r->table, of, false);
+        }
         failf(r, node->span, "not yet typed: `typeof` of a type that is not a plain name; write the type itself");
         return r->table.invalid;
     }
@@ -2140,6 +2147,15 @@ static ast::TypeExpr *tuple_as_type(Checked *r, const ast::Expr *e) {
     return ast::make_type({.tuple = {.elements = elements}});
 }
 
+// Whether a name is written like a type of C: a capital first, a lowercase letter later (`FILE` and `EOF` are not).
+static Bool looks_like_type_name(Str name) {
+    if (countof(name) < 2 || name[0] < 'A' || name[0] > 'Z') return false;
+    for (Usize i = 1; i < countof(name); i++) {
+        if (name[i] >= 'a' && name[i] <= 'z') return true;
+    }
+    return false;
+}
+
 // `let Allocator = c.SmithAllocator`: `c` a binding of an imported C header (or the old global `c`) and the name a type
 // of that header. The alias stands for the type written as the path `c.SmithAllocator`; null when `init` is anything
 // else.
@@ -2164,6 +2180,12 @@ static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
         found = lookup(&r->scopes, msg(format::push("c::", segments[1].text)));
     } else {
         found = type_through_modules(r, path);
+    }
+    // A header the importer does not read (the fixer reads an import without its headers) leaves the name unfound: a
+    // capitalized name with a lowercase letter, which a macro or a constant does not have, still stands for a type
+    // (#2602: `Allocator := c.SmithAllocator` in std.mem), typed as unknown.
+    if (found == nullptr && r->options.headers == nullptr && looks_like_type_name(segments[1].text)) {
+        return ast::make_type({.named = {.path = path}});
     }
     if (found == nullptr || found->kind != .type_name) return nullptr;
     return ast::make_type({.named = {.path = path}});
