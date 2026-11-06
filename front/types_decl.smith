@@ -270,6 +270,16 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         fix[0] = (syntax::Edit){.span = e->span, .text = none};
     }
     if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
+    // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
+    const ast::Decl *declaring = state.declaring;
+    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declaring != nullptr &&
+        declaring->kind == .variable && declaring->kind.variable.init == e && declaring->kind.variable.type != nullptr &&
+        declaring->kind.variable.type->kind == .pointer) {
+        fix = mem::realloc(fix, 1);
+        U32 at = declaring->kind.variable.type->span.start;
+        Str question = "?";
+        fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
+    }
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
 }

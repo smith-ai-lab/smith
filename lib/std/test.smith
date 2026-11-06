@@ -3285,7 +3285,8 @@ void pump(Plan *plan) {
         plan->polls[2 * job + 1] = (struct c::pollfd){.fd = busy ? process->control : -1, .events = poll_in};
     }
     // a test waits for a token: look again every second
-    if (c::poll(plan->polls, (c::nfds_t)(2 * jobs), 1000) < 0) {
+    Usize watched = 2 * jobs;
+    if (c::poll(plan->polls, (c::nfds_t)watched, 1000) < 0) {
         if (*errno_place() == interrupted) return;
         die("poll");
     }
@@ -3493,22 +3494,23 @@ void parse_filter(Options *options, const char *value) {
         __builtin_snprintf(written, sizeof written, "%.*s%s", (I32)(tail - value), value, tail + 5);
         value = written;
     }
-    if (options->filter == nullptr) {
+    const char *earlier = options->filter;
+    if (earlier == nullptr) {
         options->filter = value;
         return;
     }
     // A repeated --test adds up: the filters join as a comma list, and a test runs when any of them matches.
     static char joined[65536];
-    Usize used = c::strlen(options->filter);
-    if (options->filter != joined) {
+    Usize used = c::strlen(earlier);
+    if (earlier != &joined[0]) {
         if (used >= sizeof joined) return;
-        __builtin_memcpy(joined, options->filter, used + 1);
+        __builtin_memcpy(joined, earlier, used + 1);
     }
     Usize more = c::strlen(value);
     if (used + 1 + more >= sizeof joined) return;
     joined[used] = ',';
     __builtin_memcpy(joined + used + 1, value, more + 1);
-    options->filter = joined;
+    options->filter = &joined[0];
 }
 
 constexpr U64 shards_max = 1000;
@@ -3641,8 +3643,9 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             i += 1; // the flag's value
         }
     }
-    for (Usize i = 0; options->filter != nullptr && i < table_size; i++) {
-        if (c::strcmp(table[i].name, options->filter) == 0) options->exact = true;
+    const char *exact_filter = options->filter;
+    for (Usize i = 0; exact_filter != nullptr && i < table_size; i++) {
+        if (c::strcmp(table[i].name, exact_filter) == 0) options->exact = true;
     }
     return true;
 }
@@ -3731,9 +3734,10 @@ Bool macos_only(const char *name) {
 
 Bool selects(const Options *options, const char *name) {
     if (options->macos != 0 && macos_only(name) != (options->macos == 1)) return false;
-    if (options->filter == nullptr) return true;
-    if (options->exact) return c::strcmp(name, options->filter) == 0;
-    return selects_any(name, options->filter);
+    const char *chosen = options->filter;
+    if (chosen == nullptr) return true;
+    if (options->exact) return c::strcmp(name, chosen) == 0;
+    return selects_any(name, chosen);
 }
 
 Usize least(Usize a, Usize b) {
