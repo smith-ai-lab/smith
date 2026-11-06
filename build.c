@@ -945,6 +945,7 @@ static const char *const build_front_modules[] = {
     "effects_table",
     "fix_variants",
     "fix_alloc",
+    "fix_build",
 };
 constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
 
