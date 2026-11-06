@@ -61,6 +61,14 @@ static void expect_fixed(Str source, Str want) {
     test::check_equal(applied(source, &r), want);
 }
 
+export void test_front_fix_option_literal_tail_value() {
+    expect_fixed("fn f(x: i32) -> ?i32:\n    {.some = x}\n", "fn f(x: i32) -> ?i32:\n    .some(x)\n");
+    expect_fixed("fn f(x: i32) -> Result(i32, i32):\n    {.ok = x}\n",
+                 "fn f(x: i32) -> Result(i32, i32):\n    .ok(x)\n");
+    expect_fixed("fn f(x: i32) -> Result(i32, i32):\n    {.error = x}\n",
+                 "fn f(x: i32) -> Result(i32, i32):\n    .error(x)\n");
+}
+
 export void test_front_fix_option_literal_some() {
     expect_fixed("fn f(x: i32) -> ?i32:\n    return {.some = x + 1}\n",
                  "fn f(x: i32) -> ?i32:\n    return .some(x + 1)\n");

@@ -1666,9 +1666,17 @@ static ast::Stmt *layout_line(parse::Parser *p, Stack *stack) {
     return nullptr;
 }
 
+// Whether the statement is a list `{.name = value}`, not a block.
+static Bool list_head(const parse::Parser *p) {
+    return p->layout && parse::at(p, lex::left_brace) && parse::peek_at(p, 1).kind == lex::dot &&
+           parse::peek_at(p, 2).kind == lex::name && parse::peek_at(p, 3).kind == lex::equal;
+}
+
 // The statement at the position: a finished leaf, or null after opening a frame.
 static ast::Stmt *start(parse::Parser *p, Stack *stack) {
     if (p->layout && parse::at(p, lex::newline)) return layout_line(p, stack);
+    // `{.ok = v}` is a list, the value of the last line (#2575): no block starts with a designator.
+    if (list_head(p)) return expression_statement(p);
     switch (parse::peek(p).kind) {
     case lex::left_brace:
         push(stack, open_block(p));
