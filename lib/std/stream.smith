@@ -81,7 +81,7 @@ void entry(void *context) {
     contract::requires(body != nullptr && (args != nullptr || size == 0));
     contract::trusted(); // the fiber and the allocator are the edge of this module
     Stream *stream = (Stream *)mem::alloc_raw(sizeof(Stream), alignof(Stream));
-    *stream = (Stream){};
+    __builtin_memset(stream, 0, sizeof(Stream));
     stream->body = body;
     if (size > 0) {
         stream->args = mem::alloc_raw(size, alignof(Usize) * 2);
