@@ -1,0 +1,28 @@
+# `?*T` is one pointer, null for `.none`: a struct field, a parameter, a local (#2205, lead on #2631).
+struct Node:
+    value: i32
+    next: ?*Node = .none
+
+fn value_of(n: ?*Node) -> i32:
+    if p := n:
+        return p.value
+    -1
+
+fn tail(n: *Node) -> ?*Node:
+    n.next
+
+pub fn check() -> i32:
+    leaf := Node(value = 7)
+    head := Node(value = 1, next = &leaf)
+    alone := Node(value = 2)
+    if value_of(.none) != -1:
+        return 1
+    if value_of(&leaf) != 7:
+        return 2
+    if value_of(tail(&head)) != 7:
+        return 3
+    if value_of(tail(&alone)) != -1:
+        return 4
+    if sizeof(Node) != 16:
+        return 5
+    0
