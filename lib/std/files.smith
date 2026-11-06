@@ -280,8 +280,9 @@ I32 raw_stat(const char *path, c::SmithFileStatus *status) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->stat != nullptr)
         return handler->stat(handler, path, status) == 0 ? 0 : errno_now();
-    struct c::stat info = {};
-    if (c::stat(path, &info) != 0) return errno_now();
+    struct c::stat info;
+    __builtin_memset(&info, 0, sizeof info);
+    if (c::fstatat(c::AT_FDCWD, path, &info, 0) != 0) return errno_now();
     status->folder = (info.st_mode & mode_kind_mask) == mode_folder;
     status->size = status->folder ? 0 : (Usize)info.st_size;
     status->writable = c::access(path, write_ok) == 0;
@@ -388,10 +389,11 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         if (entry == nullptr) return 0;
         if (c::strcmp(entry->d_name, ".") == 0 || c::strcmp(entry->d_name, "..") == 0) continue;
         Usize length = c::strlen(entry->d_name);
-        if (length >= sizeof item->name) length = sizeof item->name - 1;
+        if (length >= sizeof(char[256])) length = sizeof(char[256]) - 1; // name is char[256] in SmithFileItem
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
-        struct c::stat status = {};
+        struct c::stat status;
+        __builtin_memset(&status, 0, sizeof status);
         Bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
         item->size = known && !item->folder ? (Usize)status.st_size : 0;
@@ -435,8 +437,10 @@ void reads_log_append(const char *log, const char *path) {
     if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
     Usize length = c::strlen(resolved);
     if (length + 3 >= path_max) return;
-    struct c::stat status = {};
-    Bool folder = c::stat(resolved, &status) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
+    struct c::stat status;
+    __builtin_memset(&status, 0, sizeof status);
+    Bool folder =
+        c::fstatat(c::AT_FDCWD, resolved, &status, 0) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
     if (folder) resolved[length++] = '/';
     resolved[length++] = '\n';
     I32 descriptor = c::open(log, open_append, file_mode);
@@ -844,7 +848,8 @@ I32 entry_compare(const void *a, const void *b) {
         return {.error = error_from(errno_now())};
     }
     reads_log(where.text);
-    struct c::stat info_of = {};
+    struct c::stat info_of;
+    __builtin_memset(&info_of, 0, sizeof info_of);
     I32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     Bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
     Usize size = code == 0 ? (Usize)info_of.st_size : 0;
@@ -942,7 +947,8 @@ Usize fake_new(Fake *fake, const char *path) {
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
-        fake->files[i] = (FakeFile){.used = true, .data = nullptr};
+        __builtin_memset(&fake->files[i], 0, sizeof fake->files[i]);
+        fake->files[i].used = true;
         put(fake->files[i].path, path, length);
         return i;
     }
@@ -1108,7 +1114,7 @@ I32 fake_remove(c::SmithFileHandler *self, const char *path) {
         fake_fail(eperm);
         return -1;
     }
-    fake->files[found] = (FakeFile){};
+    __builtin_memset(&fake->files[found], 0, sizeof fake->files[found]);
     return 0;
 }
 
@@ -1122,7 +1128,8 @@ I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
     Usize length = c::strlen(to);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     Usize target_found = fake_find(fake, to);
-    if (target_found != fake_files_max && target_found != found) fake->files[target_found] = (FakeFile){};
+    if (target_found != fake_files_max && target_found != found)
+        __builtin_memset(&fake->files[target_found], 0, sizeof fake->files[target_found]);
     fake->files[found].path[0] = 0;
     put(fake->files[found].path, to, length);
     fake->files[found].path[length] = 0;
@@ -1142,7 +1149,7 @@ Bool fake_child(const FakeFile *file, const char *folder, c::SmithFileItem *item
     while (rest[name] != 0 && rest[name] != '/')
         name++;
     if (name == 0) return false;
-    if (name >= sizeof item->name) misuse("files fake: a name longer than 255 bytes");
+    if (name >= sizeof(char[256])) misuse("files fake: a name longer than 255 bytes");
     put(item->name, rest, name);
     item->name[name] = 0;
     Bool deeper = rest[name] == '/';
@@ -1185,8 +1192,8 @@ void *fake_map(c::SmithFileHandler *self, const char *path, Usize *size) {
         return nullptr;
     }
     *size = fake->files[found].size;
-    fake_reserve(&fake->files[found], 1); // a file that never held bytes still has an address
-    return fake->files[found].data;
+    fake_reserve(&fake->files[found], 1);          // a file that never held bytes still has an address
+    return (void *)(Usize)fake->files[found].data; // the bytes are the file's own, written through the view
 }
 
 void fake_unmap(c::SmithFileHandler *self, void *data, Usize size) {
@@ -1264,24 +1271,23 @@ I32 fake_symlink(c::SmithFileHandler *self, const char *target, const char *path
 // An empty fake. Put it in force with `files::set_handler(&fake.base)`.
 [[std::c_name("smith_fs_fake")]] export [[nodiscard]] Fake fake() {
     Fake result = {};
-    result.base = (c::SmithFileHandler){
-        .open = fake_open,
-        .read = fake_read,
-        .write = fake_write,
-        .close = fake_close,
-        .stat = fake_stat,
-        .mkdir = fake_mkdir,
-        .remove = fake_remove,
-        .rename = fake_rename,
-        .list = fake_list,
-        .map = fake_map,
-        .unmap = fake_unmap,
-        .getcwd = fake_getcwd,
-        .realpath = fake_realpath,
-        .access = fake_access,
-        .readlink = fake_readlink,
-        .symlink = fake_symlink,
-    };
+    __builtin_memset(&result.base, 0, sizeof result.base); // the fields not set below are null: libc's own call
+    result.base.open = fake_open;
+    result.base.read = fake_read;
+    result.base.write = fake_write;
+    result.base.close = fake_close;
+    result.base.stat = fake_stat;
+    result.base.mkdir = fake_mkdir;
+    result.base.remove = fake_remove;
+    result.base.rename = fake_rename;
+    result.base.list = fake_list;
+    result.base.map = fake_map;
+    result.base.unmap = fake_unmap;
+    result.base.getcwd = fake_getcwd;
+    result.base.realpath = fake_realpath;
+    result.base.access = fake_access;
+    result.base.readlink = fake_readlink;
+    result.base.symlink = fake_symlink;
     return result;
 }
 
