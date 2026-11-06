@@ -376,6 +376,32 @@ static Bool imports_module(const ast::Module *module) {
     return false;
 }
 
+// Whether `needle` is in `text`.
+// A checker fix that inserts at the first byte of a text the parser's fixes replace in the same pass would land before
+// the new text (`?e: *T = x` for `?` at the type of `T *e = x`, #2648): it waits for the next pass, which reads the
+// mended text and puts it at the new type.
+static Bool inserts_at_replaced_start(core::Errors parsed_errors, core::Errors parsed_warnings, core::ParseError more) {
+    for (Usize k = 0; k < countof(more.fix); k++) {
+        if (!is_insert(more.fix[k])) continue;
+        for (Usize i = 0; i < countof(parsed_errors) + countof(parsed_warnings); i++) {
+            core::ParseError other =
+                i < countof(parsed_errors) ? parsed_errors[i] : parsed_warnings[i - countof(parsed_errors)];
+            for (Usize j = 0; j < countof(other.fix); j++) {
+                if (!is_insert(other.fix[j]) && other.fix[j].span.start == more.fix[k].span.start) return true;
+            }
+        }
+    }
+    return false;
+}
+
+static Bool contains_text(Str text, Str needle) {
+    Usize n = countof(needle);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (mem::equal(text[i:i + n], needle)) return true;
+    }
+    return false;
+}
+
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
@@ -692,15 +718,22 @@ static void mend_passes(Str file, Fixed *total, Bool with_checker) {
             errors = mem::realloc(errors, countof(errors) + 1);
             errors[countof(errors) - 1] = sized[i];
         }
-        if (with_checker && countof(parsed.errors) == 0) {
+        // The checker waits one pass when the first still mends old forms of a file with a `Result` it tests:
+        // `Result(T, E) r = f();` is `r: Result(T, E) = f()` first, so the `try` rewrite (#2506) sees a new
+        // declaration and not the `if .error(error) := r` guard that would take its place in the same pass (#2648).
+        // Only these files wait: the guards of one test are edits at several places, so a pass cannot drop some.
+        Bool held = pass == 0 && countof(parsed.warnings) > 0 && contains_text(total->text, "Result(") &&
+                    contains_text(total->text, ".error");
+        if (with_checker && countof(parsed.errors) == 0 && !held) {
             core::Errors more = checker_fixes(total->text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
+                if (inserts_at_replaced_start(errors, parsed.warnings, more[i])) continue;
                 errors = mem::realloc(errors, countof(errors) + 1);
                 errors[countof(errors) - 1] = more[i];
             }
         }
         Fixed fixed = apply_fixes(total->text, errors, parsed.warnings);
-        if (fixed.applied == 0) break;
+        if (fixed.applied == 0 && !held) break;
         total->text = fixed.text;
         // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
         // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
