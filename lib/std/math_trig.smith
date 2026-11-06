@@ -1,14 +1,14 @@
 // smith-build: link
-// std::math_trig (math re-exports it as math::sin, cos, tan, wrap, clamp and lerp): sin, cos and tan of one angle, and
-// wrap, clamp and lerp, with the same bits on every machine. Ported from game's src/base/math.c (#1703 of #33). The f32
-// functions compute in f64 with +, -, *, / and truncation only (each exactly rounded everywhere; optimize::opaque keeps
-// a product from being fused into the next addition, so a fast and an ndebug build agree) and round to f32 once at the
-// end.
+// std::math_trig (math re-exports it as math::sin, cos, tan, wrap_angle, clamp and lerp): sin, cos and tan of one
+// angle, and wrap_angle, clamp and lerp, with the same bits on every machine. Ported from game's src/base/math.c (#1703
+// of #33). The f32 functions compute in f64 with +, -, *, / and truncation only (each exactly rounded everywhere;
+// optimize::opaque keeps a product from being fused into the next addition, so a fast and an ndebug build agree) and
+// round to f32 once at the end.
 //
 //   math_trig::sin(x)   f32: within 1 ulp for |x| <= angle_max (2^20 radians); the sign of zero is kept.
 //   math_trig::cos(x)   f32: within 1 ulp for |x| <= angle_max.
 //   math_trig::tan(x)   f32: within 1 ulp for |x| <= angle_max.
-//   math_trig::wrap(a)  the angle in [-pi, pi]. clamp(x, low, high) and lerp(a, b, t) for f32 and f64.
+//   math_trig::wrap_angle(a) the angle in [-pi, pi]. clamp(x, low, high) and lerp(a, b, t) for f32 and f64.
 //
 // An f64 sin, cos and tan stay libm's builtin until a port with a 1 ulp bound for f64 lands (asked on #1406).
 module std::math_trig;
@@ -123,7 +123,7 @@ export inline typeof(x) tan(auto x) {
 }
 
 // The angle equivalent to `angle` within [-pi, pi], for |angle| <= angle_max.
-export F32 wrap(F32 angle) {
+export F32 wrap_angle(F32 angle) {
     F32 turns = (angle + pi_float) / tau_float;
     F32 floor_turns = (F32)(I32)turns; // |angle| <= 2^20, so turns fits an I32; the cast truncates toward zero
     if (floor_turns > turns) floor_turns -= 1.0f; // floor, with no call into libm (the link has no -lm)

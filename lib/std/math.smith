@@ -61,8 +61,8 @@ export inline typeof(x) tan(auto x) {
 }
 
 // The angle equivalent to `angle` within [-pi, pi], for |angle| <= 2^20 (f32).
-export F32 wrap(F32 angle) {
-    return math_trig::wrap(angle);
+export F32 wrap_angle(F32 angle) {
+    return math_trig::wrap_angle(angle);
 }
 
 // x limited to [low, high] (low <= high); a not-a-number x stays one. The type is x's.

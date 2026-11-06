@@ -50,10 +50,10 @@ export void test_math_trig_odd_and_even() {
     }
 }
 
-export void test_math_trig_wrap() {
-    test::check_equal(math_trig::wrap(0.0f), 0.0f);
+export void test_math_trig_wrap_angle() {
+    test::check_equal(math_trig::wrap_angle(0.0f), 0.0f);
     for (I32 i = -1000; i <= 1000; i++) {
-        F32 w = math_trig::wrap((F32)i * 0.7f);
+        F32 w = math_trig::wrap_angle((F32)i * 0.7f);
         test::check(w >= -3.1415927f && w <= 3.1415927f);
     }
 }
