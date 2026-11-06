@@ -23,11 +23,15 @@
 //   Implicit conversions never lose a value or type information; anything that could is refused with the written form.
 //   integers      Widening of the same signedness is implicit (`I32` to `I64`, `U8` to `U32`), and so is unsigned to
 //                 a strictly wider signed (`U32` to `I64`). Narrowing and a change of sign are refused unless the value
-//                 is a constant that fits. `U64` to `Usize` is widening only where the target's `Usize` is 64 bits.
-//   floats        `F32` to `F64` is implicit, and so is an integer whose bits fit the float's mantissa (24 for `F32`,
-//                 53 for `F64`: `I16` to `F32`, `I32` to `F64`). Anything that could round needs a cast (`F64` to
-//                 `F32`, `I32` to `F32`, `I64` to `F64`, any float to an integer), but an integer constant that the
-//                 float holds exactly converts (`F64 x = 0;`). A written `(F32)x` rounds to nearest, unchecked.
+//                 is a constant that fits. `Usize` and `Isize` convert to and from no fixed width (32 bits on some
+//                 targets), `U64` included (#2531).
+//   floats        `F32` to `F64` is implicit, and so is an integer of a fixed width whose bits fit the float's mantissa
+//                 (24 for `F32`, 53 for `F64`: `I16` to `F32`, `I32` to `F64`). Anything that could round needs a cast
+//                 (`F64` to `F32`, `I32` to `F32`, `I64` to `F64`, `Usize` to a float, any float to an integer), but an
+//                 integer constant that the float holds exactly converts (`F64 x = 0;`). A written `(F32)x` rounds to
+//                 nearest, unchecked.
+//   operands      `operand_type(table, left, right)`: the type two operands of an operator widen to (`U8` and `I32`
+//                 are `I32`), or null when neither holds the other (#2531).
 //   Bool          Only a `Bool` is a `Bool`; write a comparison (`x != 0`, `p != null`). A `Bool` is not an integer.
 //   enumerations  An enumeration converts only to itself; to or from an integer needs a cast.
 //   pointers      `const` may be added, never dropped. `T *` converts to `void *`; `void *` never converts to `T *`
@@ -184,11 +188,18 @@ static Bool fits(U32 bits, Bool is_signed, Literal lit) {
     return lit.magnitude < ((U64)1 << bits);
 }
 
+// `Usize` and `Isize`: 32 bits on some targets and 64 on others, so no conversion to or from a fixed width is
+// lossless on every target (#2531).
+static Bool is_word_size(types::TypeRef t) {
+    return t->kind == .integer && t->name[1] == 's';
+}
+
 static Verdict integer_to_integer(const Ctx *c) {
     types::TypeRef from = c->from;
     types::TypeRef to = c->to;
-    if (from->is_signed == to->is_signed && to->bits >= from->bits) return accept(widening);
-    if (!from->is_signed && to->is_signed && to->bits > from->bits) return accept(widening);
+    Bool word = is_word_size(from) || is_word_size(to);
+    if (!word && from->is_signed == to->is_signed && to->bits >= from->bits) return accept(widening);
+    if (!word && !from->is_signed && to->is_signed && to->bits > from->bits) return accept(widening);
     if (c->lit.is_constant) {
         if (fits(to->bits, to->is_signed, c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
@@ -197,6 +208,7 @@ static Verdict integer_to_integer(const Ctx *c) {
                       msg(format::push("write a value that fits ", types::show(to), " or a conversion: ", number,
                                        ".to(", types::show(to), ")")));
     }
+    if (word) return needs_cast(c, "Usize and Isize have a different width on some targets");
     if (from->is_signed != to->is_signed && to->bits >= from->bits)
         return needs_cast(c, "a sign change may lose a value");
     return needs_cast(c, "narrowing may lose a value");
@@ -248,7 +260,7 @@ static Verdict to_floating(const Ctx *c) {
     if (kind == .floating && c->to->bits > c->from->bits) return accept(widening);
     if (kind == .floating && c->to->bits == c->from->bits && c->to == c->from) return accept(widening);
     if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
-    if (kind == .integer && always_exact(c->from, mantissa(c->to))) return accept(widening);
+    if (kind == .integer && !is_word_size(c->from) && always_exact(c->from, mantissa(c->to))) return accept(widening);
     if (kind == .integer && c->lit.is_constant) {
         if (exact_in(mantissa(c->to), c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
@@ -505,4 +517,21 @@ export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, 
     Ctx c = {.from = from, .to = to, .shown = to, .lit = lit, .pointer_bits = t->target.pointer_bytes * 8};
     if (is_wrapper(from) || is_wrapper(to)) return implicit;
     return cast_by_kind(&c);
+}
+
+// The type both operands of an arithmetic, bitwise or comparison operator widen to (#2531): the same type, or the one
+// of the two that holds every value of the other (`u8` and `i32` are `i32`; `i32` and `f64` are `f64`). Null when
+// neither does (`i32` and `u32`, `u64` and `usize`, `i64` and `f64`): the operands then need a written conversion.
+export types::TypeRef operand_type(types::Table *t, types::TypeRef left, types::TypeRef right) {
+    if (left == right) return left;
+    if (!is_number(left) || !is_number(right)) return nullptr;
+    Bool right_wider = right->kind == .floating;
+    if ((left->kind == .floating) == (right->kind == .floating)) {
+        right_wider = right->bits > left->bits;
+        if (left->is_signed != right->is_signed) right_wider = right->is_signed;
+    }
+    types::TypeRef wide = right_wider ? right : left;
+    types::TypeRef narrow = right_wider ? left : right;
+    if (convert(t, narrow, wide, no_literal()).ok) return wide;
+    return nullptr;
 }

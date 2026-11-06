@@ -326,11 +326,12 @@ export void test_front_types_expr_operand_errors_name_the_types_and_what_to_writ
     types::Checked r = fresh();
     var(&r, "a", "I32");
     var(&r, "c", "U8");
+    var(&r, "u", "U32");
     var(&r, "s", "Str");
     var(&r, "f", "F64");
-    types_expr::infer(&r, binary(.add, ast::name("a"), ast::name("c")));
-    test::check_condition(says(last(&r), "the operands of `+` have different types, `I32` and `U8`; make both `I32` "
-                                         "with a conversion, for example `y.to(I32)`"));
+    types_expr::infer(&r, binary(.add, ast::name("a"), ast::name("u")));
+    test::check_condition(says(last(&r), "the operands of `+` have different types, `I32` and `U32`; make both `U32` "
+                                         "with a conversion, for example `y.to(U32)`"));
     types_expr::infer(&r, binary(.logical_and, ast::name("a"), flag(true)));
     test::check_condition(says(last(&r), "`&&` needs Bool operands, found `I32`; write a comparison such as `x != 0`"));
     types_expr::infer(&r, binary(.add, ast::name("s"), ast::name("s")));
@@ -761,6 +762,7 @@ export void test_front_types_expr_golden_of_the_typed_expressions() {
     point(&r);
     var(&r, "x", "U8");
     var(&r, "f", "F32");
+    var(&r, "w", "I64");
     ast::Expr *a = binary(.add, ast::name("x"), num(1));
     ast::Expr *b = binary(.less, ast::name("x"), num(10));
     ast::Expr *c = binary(.multiply, ast::name("f"), real(0.5));
@@ -781,7 +783,7 @@ export void test_front_types_expr_golden_of_the_typed_expressions() {
     text = row(text, "&p", &r, e);
     text = row(text, "-128 as I8", &r, g);
     types_expr::check(&r, num(300), ty(&r, "U8"));
-    types_expr::infer(&r, binary(.add, ast::name("x"), ast::name("f")));
+    types_expr::infer(&r, binary(.add, ast::name("w"), ast::name("f")));
     for (Usize i = 0; i < r.error_count; i++) {
         text = cat(text, cat("error: ", cat(r.errors[i].message, "\n")));
     }

@@ -56,7 +56,8 @@ export void test_front_types_convert_integers_widen_never_narrow() {
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I64")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U8"), named(&t, "U32")), types_convert::widening));
     test::check_condition(is(conv(&t, named(&t, "U32"), named(&t, "I64")), types_convert::widening));
-    test::check_condition(is(conv(&t, named(&t, "U64"), named(&t, "Usize")), types_convert::widening));
+    refused(conv(&t, named(&t, "U64"), named(&t, "Usize")), "expected Usize", "found U64",
+            "write a conversion: x.to(Usize)"); // Usize is 32 bits on some targets (#2531)
     test::check_condition(is(conv(&t, named(&t, "I32"), named(&t, "I32")), types_convert::identity));
     refused(conv(&t, named(&t, "I64"), named(&t, "I32")), "expected I32", "found I64", "write a conversion: x.to(I32)");
     refused(conv(&t, named(&t, "I32"), named(&t, "U32")), "expected U32", "found I32", "write a conversion: x.to(U32)");
@@ -417,11 +418,13 @@ export void test_front_types_convert_usize_follows_the_target() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Table wide = types::start(types::lp64());
-    test::check_condition(is(conv(&wide, named(&wide, "U64"), named(&wide, "Usize")), types_convert::widening));
+    refused(conv(&wide, named(&wide, "U64"), named(&wide, "Usize")), "expected Usize", "found U64",
+            "write a conversion: x.to(Usize)");
     types::Table narrow = types::start((types::Target){.pointer_bytes = 4, .max_align = 8});
     refused(conv(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")), "expected Usize", "found U64",
             "write a conversion: x.to(Usize)");
-    test::check_condition(is(conv(&narrow, named(&narrow, "Usize"), named(&narrow, "U64")), types_convert::widening));
+    refused(conv(&narrow, named(&narrow, "Usize"), named(&narrow, "U64")), "expected U64", "found Usize",
+            "write a conversion: x.to(U64)");
     test::check_condition(cast(&narrow, named(&narrow, "U64"), named(&narrow, "Usize")).checked);
     // A pointer is 32 bits there, so it casts to a U32 and not to a U64.
     types::TypeRef plain = types::pointer_to(&narrow, named(&narrow, "I32"), false);
