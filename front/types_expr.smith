@@ -1211,6 +1211,12 @@ static void variant_expr(types::Checked *c, Frame f) {
         types::set_type(c, e, expected);
         return;
     }
+    // The same for a Result: `x == .error` and `x != .ok` test its tag (#2552).
+    if (expected->kind == .result_type && e->kind.variant.payload == nullptr &&
+        (same_text(name, "ok") || same_text(name, "error"))) {
+        types::set_type(c, e, expected);
+        return;
+    }
     if (expected->kind == .result_type && (same_text(name, "ok") || same_text(name, "error"))) {
         types::failf(c, e->span, "`.", name, "` carries a value; write `.", name, "(value)`");
         poison(c, e);
@@ -1707,8 +1713,8 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
 // are the option and the one written with a leading dot has no payload (#2481).
 static Bool is_option_test(ast::BinaryOp op, const ast::Expr *left, const ast::Expr *right, types::TypeRef l,
                            types::TypeRef r) {
-    if (!is_equality(op) || l->kind != .option || r->kind != .option) {
-        return false;
+    if (!is_equality(op) || !((l->kind == .option && r->kind == .option) || (l->kind == .result_type && r->kind == .result_type))) {
+        return false; // a Result's tag is tested the same way: `x == .error` (#2552)
     }
     if (right->kind == .variant && left->kind != .variant) {
         return right->kind.variant.payload == nullptr;
