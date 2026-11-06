@@ -144,7 +144,8 @@ static SignatureResult signature(state::Emitter *e, const ast::Decl *d) {
 static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .function) return signature_failed(state::fail("not a function", d->span));
     Str name = d->kind.function.name;
-    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, state::msg(format::push("c::", name)), false);
+    const types::Symbol *symbol =
+        types::lookup_as(&e->options.checked->scopes, state::msg(format::push("c::", name)), false);
     if (symbol == nullptr || symbol->type->kind != .function) {
         return signature_failed(state::fail("not a C function", d->span));
     }

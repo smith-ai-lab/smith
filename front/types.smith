@@ -2055,7 +2055,8 @@ static Str qualified(const Checked *r, Bool from_c, Str name) {
 
 static void declare_in_module(Checked *r, Symbol symbol, ast::Span span) {
     if (r->in_header) {
-        declare_beside(&r->scopes, symbol); // two headers declare `size_t`: the first stays, and no error names a header
+        declare_beside(&r->scopes,
+                       symbol); // two headers declare `size_t`: the first stays, and no error names a header
         return;
     }
     if (!declare(&r->scopes, symbol)) {

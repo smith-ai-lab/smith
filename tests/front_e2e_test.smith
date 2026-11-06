@@ -539,8 +539,9 @@ export void test_front_e2e_a_c_tag_and_function_of_one_name_are_told_apart_by_po
 export void test_front_e2e_sigaction_is_a_struct_in_a_type_and_a_function_in_a_call() {
     use_header_flags();
     Str folder = folder_for("c_sigaction");
-    Str source = "import c <signal.h>\n\npub fn install(signo: i32) -> i32:\n    mut action: signal.sigaction = undefined\n"
-                 "    signal.sigaction(signo, &action, nullptr)\n";
+    Str source =
+        "import c <signal.h>\n\npub fn install(signo: i32) -> i32:\n    mut action: signal.sigaction = undefined\n"
+        "    signal.sigaction(signo, &action, nullptr)\n";
     compile::Report report = compile_module(folder, "sigaction", source);
     if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
     test::check_equal(report.ok, true);

@@ -328,7 +328,8 @@ static Bool argument_of_c_call(Str text, Usize at) {
     }
     if (text[j] != '(') return false;
     Usize b = j;
-    while (b > 0 && (word_char(text[b - 1]) || text[b - 1] == ':' || text[b - 1] == '.')) b -= 1;
+    while (b > 0 && (word_char(text[b - 1]) || text[b - 1] == ':' || text[b - 1] == '.'))
+        b -= 1;
     for (Usize m = b; m + 1 < j; m++) {
         if ((text[m] == ':' && text[m + 1] == ':') || (text[m] == '.' && word_char(text[m + 1]))) return true;
     }

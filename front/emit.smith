@@ -138,7 +138,8 @@ static state::TyResult type_of_header(state::Emitter *e, const ast::TypeExpr *t)
     if (t->kind != .named || e->options.checked == nullptr) return state::ty_fail("not a C type", t->span);
     ast::Path path = t->kind.named.path;
     Str full = state::msg(format::push("c::", path.segments[1].text));
-    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, full, true); // a tag over a function (#2610)
+    const types::Symbol *symbol =
+        types::lookup_as(&e->options.checked->scopes, full, true); // a tag over a function (#2610)
     state::free_text(full);
     if (symbol == nullptr || symbol->kind != .type_name) return state::ty_fail("unknown C type", t->span);
     return type_of_checked(e, symbol->type, t->span);
@@ -1513,7 +1514,8 @@ static void make_c_union(c::LLVMTypeRef named, types::TypeRef base) {
 
 // A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
 // first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
-// pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer to it is still a pointer.
+// pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer
+// to it is still a pointer.
 static void make_c_record(state::Emitter *e, types::TypeRef base) {
     char *label = state::cstr(base->name);
     c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
