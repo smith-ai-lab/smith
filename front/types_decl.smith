@@ -136,6 +136,8 @@ struct State {
     const ast::Stmt *tails[32]; // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
     const ast::Decl *declaring; // the local whose initializer is being checked, for the fix on its written type
+    const ast::Decl *last_decl; // the local the statement entered last declared, null when it declared none
+    const ast::Decl *prev_decl; // the local declared by the statement before the one being entered (#2506)
 };
 
 static State state;
@@ -208,6 +210,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type))
         fix = types_builtin::element_address_fix(e);
+    // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
+    if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
 }
@@ -488,6 +492,7 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         is_const = !is_mut || is_constexpr;
     }
     declare_local(r, d, name, type, is_const);
+    state.last_decl = d;
 }
 
 static void local_declaration(types::Checked *r, const ast::Decl *d) {
@@ -766,6 +771,121 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
                .base = guard_base(left), .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
 }
 
+// The statement itself when `s` is a block of one statement, through nested blocks.
+static const ast::Stmt *only_statement(const ast::Stmt *s) {
+    while (s->kind == .block && countof(s->kind.block.items) == 1) {
+        s = s->kind.block.items[0];
+    }
+    return s;
+}
+
+static Bool word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Whether every use of the word `name` in `text` is followed by `.ok`: the uses a `try` leaves meaningful.
+static Bool only_ok_reads(Str text, Str name) {
+    Usize n = countof(name);
+    Str suffix = ".ok";
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (!types::same_text(text[i:i + n], name)) continue;
+        if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) continue;
+        if (i + n < countof(text) && word_char(text[i + n])) continue;
+        Bool ok = i + n + 3 <= countof(text) && types::same_text(text[i + n:i + n + 3], suffix);
+        if (ok && !(i + n + 3 < countof(text) && word_char(text[i + n + 3]))) continue;
+        return false;
+    }
+    return true;
+}
+
+// The edit that deletes the statement and its line.
+static syntax::Edit delete_statement(ast::Span span) {
+    U32 start = span.start;
+    while (start > 0 && fixed_source[start - 1] == ' ')
+        start -= 1;
+    U32 end = span.end;
+    while (end > start && (fixed_source[end - 1] == ' ' || fixed_source[end - 1] == '\n')) // the span may run on
+        end -= 1;
+    if (end < countof(fixed_source) && fixed_source[end] == '\n') end += 1;
+    return edit_of(start, end, "");
+}
+
+static Bool contains(Str text, Str needle) {
+    Usize n = countof(needle);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (types::same_text(text[i:i + n], needle)) return true;
+    }
+    return false;
+}
+
+// Whether the item is written `.error = value`.
+static Bool error_item(const ast::Initializer *item) {
+    if (countof(item->designators) != 1) return false;
+    const ast::Designator *d = &item->designators[0];
+    return *d == .field && types::same_text(d->field.name, "error");
+}
+
+// `r: Result(T, E) = f()` followed by `if r == .error: return {.error = r.error}` passes the error up unchanged: the
+// fix is `ok := try f()`, no guard, and each read `r.ok` is `ok` (#2506). The binding takes the variant's name; `ok` in
+// scope, a use of `r` other than `r.ok`, or an error type that differs from the function's leaves the site as it is.
+// Returns whether the site is one.
+static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
+    const ast::Decl *d = state.prev_decl;
+    if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || !(d->kind == .variable) ||
+        !(s->kind == .if_stmt))
+        return false;
+    const ast::Expr *init = d->kind.variable.init;
+    if (test == nullptr || !(test->kind == .binary) || init == nullptr || d->kind.variable.is_mut ||
+        !d->kind.variable.is_new)
+        return false;
+    const ast::Expr *left = test->kind.binary.left;
+    Str name = d->kind.variable.name;
+    const ast::Expr *right = test->kind.binary.right;
+    if (!(right->kind == .variant) || !types::same_text(right->kind.variant.name, "error") ||
+        !types::same_text(fixed_source[left->span.start:left->span.end], name))
+        return false;
+    // `if r == .error: cleanup; return {.error = r.error}`: the cleanup, one line, becomes an `errdefer` before the
+    // call.
+    const ast::Stmt *body = s->kind.if_stmt.then_branch;
+    const ast::Stmt *cleanup = nullptr;
+    if (body->kind == .block && countof(body->kind.block.items) == 2) {
+        cleanup = body->kind.block.items[0];
+        body = body->kind.block.items[1];
+    }
+    const ast::Stmt *leave = only_statement(body);
+    if (!(leave->kind == .return_stmt) || leave->kind.return_stmt.value == nullptr) return false;
+    const ast::Expr *value = leave->kind.return_stmt.value;
+    if (!(value->kind == .compound) || countof(value->kind.compound.items) != 1) return false;
+    const ast::Initializer *item = &value->kind.compound.items[0];
+    if (!error_item(item) || item->value == nullptr) return false;
+    Str passed = fixed_source[item->value->span.start:item->value->span.end];
+    if (!types::same_text(passed, msg(format::push(name, ".error")))) return false;
+    const types::Symbol *local = types::lookup(&r->scopes, name);
+    types::TypeRef want = state.result;
+    if (local == nullptr || local->type->kind != .result_type || want == nullptr || want->kind != .result_type ||
+        !types::same_text(types::show(local->type->error), types::show(want->error)) || name_taken(r, "ok"))
+        return false;
+    U32 end = state.block_end;
+    if (end == 0 || end < s->span.end || !only_ok_reads(fixed_source[s->span.end:end], name)) return false;
+    Str before = "";
+    if (cleanup != nullptr) {
+        Str line = fixed_source[cleanup->span.start:cleanup->span.end];
+        // a later error return would run the `errdefer` too, which the original did not: leave such a site
+        Str rest = fixed_source[s->span.end:end];
+        if (contains(line, "\n") || contains(line, name) || contains(rest, ".error") || contains(rest, "try "))
+            return false;
+        before = msg(format::push("errdefer ", line, "\n", indent_at(d->span.start)));
+    }
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(d->span.start, init->span.start, msg(format::push(before, "ok := try ")));
+    head[1] = delete_statement(s->span);
+    ast::Span reads = {.start = s->span.end, .end = end};
+    Str ok_name = "ok";
+    add_guard(r, (types::Guard){.base = guard_base(left), .variant = ok_name, .reads = reads, .head = head});
+    return true;
+}
+
 // `if k == .v:` guards its `then` whether or not an `else` follows (an `else if` chain of tests is one guard each);
 // `if k != .v: return` guards the rest of the block only with no `else`.
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
@@ -775,7 +895,7 @@ static void note_guard(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Expr *equal = variant_test(test, true);
     if (equal != nullptr) {
-        note_then_guard(r, s, equal);
+        if (s->kind.if_stmt.else_branch != nullptr || !note_try_guard(r, s, equal)) note_then_guard(r, s, equal);
     } else if (s->kind.if_stmt.else_branch == nullptr && leaves(s->kind.if_stmt.then_branch)) {
         note_rest_guard(r, s);
     }
@@ -1157,6 +1277,8 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
 
 // Reads one statement: does what needs no children now, and pushes the children.
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
+    state.prev_decl = state.last_decl;
+    state.last_decl = nullptr;
     if (s->kind == .expression) {
         expression_statement(r, s);
     } else if (s->kind == .declaration) {
@@ -1221,6 +1343,8 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     types::TypeRef outer = state.result;
     state.result = result;
     r->guard_count = 0;
+    state.last_decl = nullptr; // a declaration of an earlier body would be a dangling pointer (#2506)
+    state.prev_decl = nullptr;
     Usize first_error = r->error_count;
     Usize first_local = state.local_count;
     find_tails(root);
