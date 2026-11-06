@@ -543,6 +543,18 @@ static state::Status logical_finish(state::Emitter *e, const state::ThenGeneral 
     return state::success();
 }
 
+// The right side of `&&` or `||` that a constant left side left to run: it is a Bool too.
+static state::Status right_is_bool(state::Emitter *e, const state::ThenExpr *w) {
+    if (w->expr->kind != .binary) {
+        return state::fail("not a logical operator", w->span);
+    }
+    ast::Span right_span = w->expr->kind.binary.right->span;
+    state::Value right = state::pop_value(e);
+    try require_bool(e, right, right_span);
+    state::push_value(e, right);
+    return state::success();
+}
+
 // The left side is on the stack: `&&` goes on to the right side only when it is true, `||` only when it is false.
 static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
@@ -559,6 +571,7 @@ static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w)
         if (op == .logical_and ? !truth : truth) {
             state::push_value(e, left);
         } else {
+            state::push_then_expr(e, (state::ThenExpr){.run = right_is_bool, .expr = w->expr, .span = w->span});
             state::push_eval(e, right, state::no_hint());
         }
         return state::success();
