@@ -50,8 +50,8 @@ static c::LLVMValueRef named_intrinsic(state::Emitter *e, Str prefix, Str base, 
 // `__builtin_add_overflow(a, b, &r)`: stores the wrapped result in `r` and says whether it overflowed.
 static c::LLVMValueRef overflow(state::Emitter *e, table::Entry entry, state::Value *v) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
-    c::LLVMValueRef pair =
-        named_intrinsic(e, state::is_signed(v[0].ty) ? "s" : "u", entry.intrinsic, ".with.overflow", v[0].ty.llvm, args, 2);
+    c::LLVMValueRef pair = named_intrinsic(e, state::is_signed(v[0].ty) ? "s" : "u", entry.intrinsic, ".with.overflow",
+                                           v[0].ty.llvm, args, 2);
     c::LLVMBuildStore(e->builder, c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped"), v[2].llvm);
     return c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
 }
@@ -92,11 +92,11 @@ constexpr Usize max_values = 8;
 // float; a pointer is as it is.
 static c::LLVMValueRef coerced(state::Emitter *e, state::Value v, U8 letter) {
     if (letter == 'z')
-        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt64TypeInContext(e->context), state::is_signed(v.ty) ? 1 : 0,
-                                    "");
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt64TypeInContext(e->context),
+                                    state::is_signed(v.ty) ? 1 : 0, "");
     if (letter == 'i')
-        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context), state::is_signed(v.ty) ? 1 : 0,
-                                    "");
+        return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context),
+                                    state::is_signed(v.ty) ? 1 : 0, "");
     return v.llvm;
 }
 
@@ -268,7 +268,8 @@ static state::Status alloc_finish(state::Emitter *e, const state::ThenGeneral *w
     state::Ty *element = nullptr;
     if (result.kind == .slice) element = result.kind.slice.element;
     if (result.kind == .block) element = result.kind.block.element;
-    if (element == nullptr || e->target_data == nullptr) return state::fail("mem.alloc makes a slice or a block", w->span);
+    if (element == nullptr || e->target_data == nullptr)
+        return state::fail("mem.alloc makes a slice or a block", w->span);
     c::LLVMTypeRef counts = c::LLVMStructGetTypeAtIndex(result.llvm, 1);
     c::LLVMTypeRef word = result.kind == .slice ? counts : c::LLVMGetElementType(counts);
     c::LLVMValueRef sizes[16] = {};

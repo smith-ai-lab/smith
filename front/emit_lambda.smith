@@ -590,7 +590,6 @@ export state::Status call_value(state::Emitter *e, const ast::Expr *x, state::Ty
         e, (state::ThenGeneral){.run = call_finish, .expr = x, .number = count, .ty = func_ty, .span = x->span});
     for (Usize i = count; i > 0; i--) {
         state::push_eval(e, args[i - 1], state::hint_of(part(shape, i - 1)));
-
     }
     state::push_eval(e, x->kind.call.callee, state::no_hint());
     return state::success();

@@ -84,7 +84,8 @@ export char *cstr(Str text) {
 
 export struct Ty;
 
-// An integer: its width and signedness. `Bool` is the kind `boolean` (1 bit, unsigned); `Void` is an integer of no bits.
+// An integer: its width and signedness. `Bool` is the kind `boolean` (1 bit, unsigned); `Void` is an integer of no
+// bits.
 export struct IntegerTy {
     U32 bits;
     Bool is_signed;
@@ -139,10 +140,10 @@ export typedef enum {
     FnTy fn_pointer;  // a C function pointer (a field of a header's struct): the bare `ptr`
     ElementTy slice;
     FloatTy floating;
-    SizedTy block;    // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`
-    SizedTy vector;   // `vec(T, N)`
-    PartsTy result;   // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
-    variant_enum;     // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
+    SizedTy block;  // `[,]T`, `[,,]T`: `{ ptr, [count x usize] }`
+    SizedTy vector; // `vec(T, N)`
+    PartsTy result; // `Result(T, E)`: `{ i8 tag, T ok, E error }`, `parts` are `ok` and `error` (tag 0 ok, 1 error)
+    variant_enum; // a payload enumeration: `{ i32 tag, [N x i64] payloads }`, the tag is the variant's position (#2140)
 } TyKind;
 
 // A type as the emitter knows it: the LLVM type, the name as written and what LLVM's does not say, by kind.
@@ -345,7 +346,8 @@ export typedef Status (*ConvertHook)(Emitter *e, Value value, Ty to, ast::Span s
 export typedef Status (*FoldHook)(Emitter *e, const ast::Expr *x, Ty to, c::LLVMValueRef *out);
 
 // Every field the tickets after B1 need. A ticket that finds one missing escalates; it does not edit this.
-// A `Ty.element` block and the next one; `ty` is first, so a block's address is the element's.
+// A block a type's `element` or `parts` points to, and the next one; `ty` is first, so a block's address is the
+// element's.
 export struct OwnedTy {
     Ty ty;
     OwnedTy *next;
@@ -411,7 +413,7 @@ export struct Emitter {
     U32 parameters_left; // parameters of the function not yet declared
     U32 next_parameter;  // the `arg:` number of the next one
 
-    // The blocks `Ty.element` points to, chained so `memory::release` frees them (B3b).
+    // The blocks a type's `element` and `parts` point to, chained so `memory::release` frees them (B3b).
     OwnedTy *owned;
 };
 

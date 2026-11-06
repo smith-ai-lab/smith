@@ -181,8 +181,8 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
                                   position_arg(e, span)};
     close_failure(e, next, "smith_contract_fail_divide", by_zero, 4);
     if (state::is_signed(ty)) {
-        c::LLVMValueRef least =
-            c::LLVMBuildShl(e->builder, c::LLVMConstInt(ty.llvm, 1, 0), c::LLVMConstInt(ty.llvm, state::width(ty) - 1, 0), "");
+        c::LLVMValueRef least = c::LLVMBuildShl(e->builder, c::LLVMConstInt(ty.llvm, 1, 0),
+                                                c::LLVMConstInt(ty.llvm, state::width(ty) - 1, 0), "");
         c::LLVMValueRef is_least = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, a.llvm, least, "");
         c::LLVMValueRef is_minus_one =
             c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, b.llvm, c::LLVMConstAllOnes(ty.llvm), "");
@@ -204,9 +204,13 @@ static void check_shift(state::Emitter *e, Str op, state::Value a, state::Value 
     c::LLVMValueRef width = c::LLVMConstInt(ty.llvm, state::width(ty), 0);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide");
     c::LLVMBasicBlockRef next = open_failure(e, bad);
-    c::LLVMValueRef report[7] = {
-        text_arg(e, op),        widened(e, a.llvm, ty), widened(e, amount.llvm, ty), number_arg(e, state::is_signed(ty)),
-        number_arg(e, state::width(ty)), text_arg(e, ty.name),   position_arg(e, span)};
+    c::LLVMValueRef report[7] = {text_arg(e, op),
+                                 widened(e, a.llvm, ty),
+                                 widened(e, amount.llvm, ty),
+                                 number_arg(e, state::is_signed(ty)),
+                                 number_arg(e, state::width(ty)),
+                                 text_arg(e, ty.name),
+                                 position_arg(e, span)};
     close_failure(e, next, "smith_contract_fail_shift", report, 7);
 }
 
@@ -321,8 +325,8 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
     // takes the left's type, its value kept (#2510).
     if (!state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&
         c::LLVMIsAConstantInt(left.llvm) != nullptr && c::LLVMIsAConstantInt(right.llvm) != nullptr) {
-        U64 bits =
-            state::is_signed(right.ty) ? (U64)c::LLVMConstIntGetSExtValue(right.llvm) : c::LLVMConstIntGetZExtValue(right.llvm);
+        U64 bits = state::is_signed(right.ty) ? (U64)c::LLVMConstIntGetSExtValue(right.llvm)
+                                              : c::LLVMConstIntGetZExtValue(right.llvm);
         right = (state::Value){.llvm = c::LLVMConstInt(left.ty.llvm, bits, 0), .ty = left.ty};
     }
     if (!state::same_type(left.ty, right.ty))
@@ -441,7 +445,6 @@ export state::Status name_ref(state::Emitter *e, const ast::Expr *x, state::Hint
         // A `?T` name the checker narrowed to `T` (`if x != .none:`) reads its payload (#2481).
         types::TypeRef seen = types::type_of(e->options.checked, x);
         if (seen != nullptr && seen->kind != .option) value = emit_option::payload(e, value, local.ty.kind.option);
-
     }
     state::push_value(e, value);
     return state::success();

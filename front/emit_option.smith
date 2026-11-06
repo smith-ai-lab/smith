@@ -388,7 +388,6 @@ export state::Status if_let_branch(state::Emitter *e, const state::ThenGeneral *
         if (o.ty.kind == .result) inner = result_payload(e, o, o.ty.kind.result, wants_error);
         if (o.ty.kind == .option) inner = payload(e, o, o.ty.kind.option);
 
-
         c::LLVMValueRef slot = state::new_alloca(e, inner.ty, binding);
         c::LLVMBuildStore(e->builder, inner.llvm, slot);
         state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
@@ -441,8 +440,7 @@ static state::Status try_result_continue(state::Emitter *e, const state::ThenGen
 }
 
 // `try r` on a `Result`: `.error(x)` runs every `defer` and `errdefer` and returns `.error(x)`; `.ok(x)` is `x`.
-static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, state::Value r,
-                                state::PartsTy result) {
+static state::Status try_result(state::Emitter *e, const state::ThenGeneral *w, state::Value r, state::PartsTy result) {
     c::LLVMBasicBlockRef ok_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_ok");
     c::LLVMBasicBlockRef error_block = c::LLVMAppendBasicBlockInContext(e->context, e->function, "try_error");
     c::LLVMBuildCondBr(e->builder, is_variant(e, r, false), ok_block, error_block);

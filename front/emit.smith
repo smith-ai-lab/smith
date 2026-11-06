@@ -1047,8 +1047,11 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
                                           .llvm_type = type,
                                           .result = result,
                                           .params = params[0:count]});
-    state::Ty args = takes_args ? params[0] : result;
-    if (takes_args && args.kind == .slice) add_args_entry(e, function, type, args.llvm, args.kind.slice.element->llvm);
+    if (takes_args) {
+        state::Ty args = params[0];
+        if (args.kind == .slice) add_args_entry(e, function, type, args.llvm, args.kind.slice.element->llvm);
+    }
+
     return state::success();
 }
 
@@ -1414,7 +1417,8 @@ static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty
 static state::Ty pointer_to(state::Emitter *e, state::Ty *inner) {
     U32 space = 0;
     c::LLVMTypeRef address = c::LLVMPointerTypeInContext(e->context, space);
-    state::Ty made = {.kind = {.pointer = {.element = inner, .address_space = space}}, .llvm = address, .name = "pointer"};
+    state::Ty made = {
+        .kind = {.pointer = {.element = inner, .address_space = space}}, .llvm = address, .name = "pointer"};
     return made;
 }
 
@@ -1608,7 +1612,7 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
         Bool same_sign = state::is_signed(from) == state::is_signed(to);
         if (same_sign || (!state::is_signed(from) && state::is_signed(to))) {
             c::LLVMValueRef wide = state::is_signed(from) ? c::LLVMBuildSExt(e->builder, value.llvm, to.llvm, "widen")
-                                                  : c::LLVMBuildZExt(e->builder, value.llvm, to.llvm, "widen");
+                                                          : c::LLVMBuildZExt(e->builder, value.llvm, to.llvm, "widen");
             state::push_value(e, (state::Value){.llvm = wide, .ty = to});
             return state::success();
         }
@@ -1705,7 +1709,7 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
             *out = value.llvm;
         } else { // the checker has accepted the width: a literal is built as an `i32` before it meets its field
             U64 bits = state::is_signed(value.ty) ? (U64)c::LLVMConstIntGetSExtValue(value.llvm)
-                                          : c::LLVMConstIntGetZExtValue(value.llvm);
+                                                  : c::LLVMConstIntGetZExtValue(value.llvm);
             *out = c::LLVMConstInt(to.llvm, bits, 0);
         }
     }

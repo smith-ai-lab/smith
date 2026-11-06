@@ -128,10 +128,12 @@ static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
     if (ty.kind == .integer) {
         U32 encoding = ate_unsigned;
         if (state::is_signed(ty)) encoding = ate_signed;
-        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty), encoding, 0);
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty),
+                                               encoding, 0);
     }
     if (ty.kind == .floating) {
-        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty), ate_float, 0);
+        return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), state::width(ty),
+                                               ate_float, 0);
     }
     if (ty.kind == .boolean) {
         return c::LLVMDIBuilderCreateBasicType(e->debug_builder, ty.name.data, countof(ty.name), 8, ate_boolean, 0);

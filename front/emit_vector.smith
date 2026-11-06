@@ -176,7 +176,8 @@ static state::Status binary_finish(state::Emitter *e, const state::ThenExpr *w) 
         if (element.kind == .floating)
             flags = c::LLVMBuildFCmp(e->builder, real_predicate(op), left.llvm, right.llvm, "");
         else
-            flags = c::LLVMBuildICmp(e->builder, int_predicate(op, state::is_signed(element)), left.llvm, right.llvm, "");
+            flags =
+                c::LLVMBuildICmp(e->builder, int_predicate(op, state::is_signed(element)), left.llvm, right.llvm, "");
         state::Ty flag = {};
         state::scalar_type(e, "bool", &flag);
         state::push_value(e, (state::Value){.llvm = flags, .ty = make(e, flag, shape.count)});

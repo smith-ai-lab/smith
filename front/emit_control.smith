@@ -444,7 +444,8 @@ static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w)
     }
     if (left.ty.kind != .integer && left.ty.kind != .boolean && left.ty.kind != .pointer && left.ty.kind != .fn_pointer)
         return state::failf(w->span, "comparison of ", left.ty.name);
-    c::LLVMValueRef out = c::LLVMBuildICmp(e->builder, predicate(op, state::is_signed(left.ty)), left.llvm, right.llvm, "");
+    c::LLVMValueRef out =
+        c::LLVMBuildICmp(e->builder, predicate(op, state::is_signed(left.ty)), left.llvm, right.llvm, "");
     state::push_value(e, (state::Value){.llvm = out, .ty = bool_type(e)});
     return state::success();
 }

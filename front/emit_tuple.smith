@@ -337,7 +337,8 @@ static state::Status check_member(state::Ty base, Usize index, ast::Span span, s
     if (base.kind != .tuple) return state::failf(span, ".", index, " needs a tuple, found ", base.name);
     state::PartsTy tuple = base.kind.tuple;
     if (index >= tuple.part_count) {
-        return state::failf(span, "the tuple ", base.name, " has ", tuple.part_count, " elements; there is no .", index);
+        return state::failf(span, "the tuple ", base.name, " has ", tuple.part_count, " elements; there is no .",
+                            index);
     }
     *element = tuple.parts[index];
     return state::success();

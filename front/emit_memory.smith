@@ -1454,7 +1454,6 @@ static state::Status array_literal_finish(state::Emitter *e, const state::ThenGe
         return state::success();
     }
     return array_value_as_slice(e, (state::Value){.llvm = built, .ty = array}, shape, w->hint.ty);
-
 }
 
 // `[1, 2, 3]` as a fixed array `[N]T` or, where a slice is expected, as `[]T` over a hidden array kept in the entry
