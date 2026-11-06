@@ -323,8 +323,7 @@ static state::Status filled_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMBuildBr(e->builder, test);
     c::LLVMPositionBuilderAtEnd(e->builder, test);
     c::LLVMValueRef index = c::LLVMBuildLoad2(e->builder, word, at, "i");
-    c::LLVMValueRef more =
-        c::LLVMBuildICmp(e->builder, c::LLVMIntULT, index, c::LLVMConstInt(word, total, 0), "more");
+    c::LLVMValueRef more = c::LLVMBuildICmp(e->builder, c::LLVMIntULT, index, c::LLVMConstInt(word, total, 0), "more");
     c::LLVMBuildCondBr(e->builder, more, body, done);
     c::LLVMPositionBuilderAtEnd(e->builder, body);
     c::LLVMValueRef place = c::LLVMBuildInBoundsGEP2(e->builder, leaf.llvm, slot, &index, 1, "cell");
