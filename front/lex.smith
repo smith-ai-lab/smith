@@ -633,7 +633,7 @@ static U32 number_radix(Str s, Usize i) {
 // The end of a number's exponent at i (`e5`, `p-3`), i when there is none; an exponent with no digits is an error.
 static Result(Usize, LexError) exponent(Str s, Usize start, Usize i, U8 marker_lower) {
     Usize n = countof(s);
-    if (i >= n || (s[i] != marker_lower && s[i] != (U8)(marker_lower - 32))) return i;
+    if (i >= n || ((U8)s[i] != marker_lower && (U8)s[i] != (U8)(marker_lower - 32))) return i;
     Usize p = i + 1;
     if (p < n && (s[p] == '+' || s[p] == '-')) p += 1;
     if (p >= n || !ascii::digit(s[p])) return {.error = error_at(start, p, "the exponent of a number has no digits")};
