@@ -40,12 +40,15 @@ static Str applied(Str source, const types::Checked *r) {
     Usize n = 0;
     Usize at = 0;
     for (Usize e = 0; e < countof(fix); e++) {
-        for (; at < fix[e].span.start; at++) out[n++] = source[at];
+        for (; at < fix[e].span.start; at++)
+            out[n++] = source[at];
         Str text = fix[e].text;
-        for (Usize k = 0; k < countof(text); k++) out[n++] = text[k];
+        for (Usize k = 0; k < countof(text); k++)
+            out[n++] = text[k];
         at = fix[e].span.end;
     }
-    for (; at < countof(source); at++) out[n++] = source[at];
+    for (; at < countof(source); at++)
+        out[n++] = source[at];
     return out[0:n];
 }
 
@@ -59,7 +62,8 @@ static void expect_fixed(Str source, Str want) {
 }
 
 export void test_front_fix_option_literal_some() {
-    expect_fixed("fn f(x: i32) -> ?i32:\n    return {.some = x + 1}\n", "fn f(x: i32) -> ?i32:\n    return .some(x + 1)\n");
+    expect_fixed("fn f(x: i32) -> ?i32:\n    return {.some = x + 1}\n",
+                 "fn f(x: i32) -> ?i32:\n    return .some(x + 1)\n");
 }
 
 export void test_front_fix_option_literal_ok_and_error() {
@@ -90,5 +94,6 @@ export void test_front_fix_option_literal_leaves_a_struct_with_a_field_ok() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Checked r = check_text("struct Real:\n    ok: bool\n\nfn f() -> Real:\n    return {.ok = true}\n");
-    for (Usize i = 0; i < r.error_count; i++) test::check(!has(r.errors[i].message, "is written `.ok"));
+    for (Usize i = 0; i < r.error_count; i++)
+        test::check(!has(r.errors[i].message, "is written `.ok"));
 }

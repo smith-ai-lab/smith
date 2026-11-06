@@ -3661,7 +3661,9 @@ static types::TypeRef option_item(types::Checked *c, types::TypeRef t, const ast
 // form (a struct with a field `ok` is a construction and never reaches here), or is written with a type.
 static syntax::Edits variant_list_fix(types::TypeRef t, const ast::Expr *e, ast::Initializer items[:]) {
     syntax::Edits edits = {};
-    if (!(e->kind == .compound) || e->kind.compound.type != nullptr || countof(items) != 1 || !field_designator(&items[0])) return edits;
+    if (!(e->kind == .compound) || e->kind.compound.type != nullptr || countof(items) != 1 ||
+        !field_designator(&items[0]))
+        return edits;
     Str name = field_name(&items[0]);
     Bool fits = (t->kind == .option && same_text(name, "some")) ||
                 (t->kind == .result_type && (same_text(name, "ok") || same_text(name, "error")));
@@ -3680,9 +3682,10 @@ static Bool refuse_variant_list(types::Checked *c, types::TypeRef t, const ast::
     syntax::Edits fix = variant_list_fix(t, e, items);
     if (countof(fix) == 0) return false;
     Str name = field_name(&items[0]);
-    types::fail_fix(c, e->span, msg(format::push("a `", types::show(t), "` is written `.", name, "(value)`, not `{.", name,
-                                             " = value}`")),
-                    fix);
+    types::fail_fix(
+        c, e->span,
+        msg(format::push("a `", types::show(t), "` is written `.", name, "(value)`, not `{.", name, " = value}`")),
+        fix);
     return true;
 }
 
