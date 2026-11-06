@@ -310,6 +310,7 @@ export struct Emitter {
 
     Str instance_scope; // while the body of a generic's instance from another module is emitted: that module's prefix
     Str import_scope;   // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
+    const types::Instance *instance; // while a generic's instance is emitted: its bindings (`T` of `sizeof(T)`)
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
@@ -439,6 +440,21 @@ export Bool same_text(Str a, Str b) {
         if (a[i] != b[i]) return false;
     }
     return true;
+}
+
+// Whether the instance being emitted binds the type `name` (`T` of `fn max(T: type)` called as `max(usize)`), and
+// to what; false outside an instance or for any other name: a type parameter read as a value (`sizeof(T)`, `x.wrap(T)`)
+// (#2497).
+export Bool bound_type(const Emitter *e, Str name, types::TypeRef *found) {
+    if (e->instance == nullptr) return false;
+    for (Usize i = 0; i < countof(e->instance->bindings); i++) {
+        types::Binding b = e->instance->bindings[i];
+        if (b.is_type && same_text(b.name, name)) {
+            *found = b.type;
+            return true;
+        }
+    }
+    return false;
 }
 
 // LLVM's types are unique in a context, so the same LLVM type and signedness is the same type.

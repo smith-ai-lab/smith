@@ -1,0 +1,40 @@
+// Tests of the fix-its for a sized allocation (#2527): `mem::alloc_slice(T, a, b)` is `mem.alloc(T, [a, b])`, the
+// shape form of `arena::push_slice` takes the same brackets, and std.mem's `copy` in `auto` is a generic.
+module front_fix_alloc_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+}
+
+export void test_front_fix_alloc_slice_is_alloc_with_a_shape() {
+    expect_fixed("module m;\nimport std::mem;\nvoid f(Usize n) {\n    U8 xs[:] = mem::alloc_slice(U8, n);\n"
+                 "    F32 g[:][:] = mem::alloc_slice(F32, n, (Usize)4);\n    h(xs, g);\n}\n",
+                 "import std.mem\nfn f(n: usize):\n    xs: []u8 = mem.alloc(u8, n)\n"
+                 "    g: [][]f32 = mem.alloc(f32, [n, 4.to(usize)])\n    h(xs, g)\n");
+}
+
+export void test_front_fix_alloc_push_slice_takes_the_shape() {
+    expect_fixed(
+        "module m;\nimport std::arena;\nvoid f(arena::Arena *a, Usize n) {\n"
+        "    U8 xs[:] = arena::push_slice(a, U8, n);\n    F32 g[:][:][:] = arena::push_slice(a, F32, n, 2, 3);\n"
+        "    h(xs, g);\n}\n",
+        "import std.arena\nfn f(a: *arena.Arena, n: usize):\n    xs: []u8 = arena.push_slice(a, u8, n)\n"
+        "    g: [][][]f32 = arena.push_slice(a, f32, [n, 2, 3])\n    h(xs, g)\n");
+}
+
+export void test_front_fix_alloc_copy_in_auto_is_a_generic() {
+    expect_fixed("module m;\nvoid copy(auto dst[:], const typeof(dst[0]) src[:]) {\n"
+                 "    if (countof(dst) > 0) __builtin_memcpy(&dst[0], &src[0], countof(dst) * sizeof(dst[0]));\n}\n",
+                 "fn copy[T](dst: []mut T, src: []T):\n    if countof(dst) > 0:\n"
+                 "        __builtin_memcpy(&dst[0], &src[0], countof(dst) * sizeof(dst[0]))\n");
+}

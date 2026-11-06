@@ -440,6 +440,17 @@ static c::LLVMValueRef negate_checked(state::Emitter *e, state::Value operand, a
     return negated;
 }
 
+// Whether `-x` of a signed constant folds without overflow: every constant but the type's minimum. `-1` is then a
+// constant, so `static_assert((-1).wrap(T) > 0)` (std.math's `max`) folds (#2497).
+static Bool folds_negated(c::LLVMValueRef x) {
+    if (c::LLVMIsAConstantInt(x) == nullptr) return false;
+    U32 bits = c::LLVMGetIntTypeWidth(c::LLVMTypeOf(x));
+    if (bits == 0 || bits > 64) return false;
+    U64 sign = (U64)1 << (bits - 1);
+    U64 mask = sign + (sign - 1);
+    return (c::LLVMConstIntGetZExtValue(x) & mask) != sign;
+}
+
 static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
     if (w->expr->kind != .unary) {
         return state::fail("not a unary expression", w->span);
@@ -459,7 +470,7 @@ static state::Status unary_finish(state::Emitter *e, const state::Work *w) {
     c::LLVMValueRef out = operand.llvm;
     switch (op) {
     case .negate:
-        if (ty.is_signed)
+        if (ty.is_signed && !folds_negated(operand.llvm))
             out = negate_checked(e, operand, w->span);
         else
             out = c::LLVMBuildNeg(e->builder, operand.llvm, "");

@@ -1,12 +1,12 @@
 // front::fix_typeof, the fix-it for `typeof` of something the new syntax has no `typeof` for (#2340, part of #2224):
 // a generic over a slice is an inferred parameter, so `realloc(auto xs, ...)` that names `typeof(xs)`,
-// `typeof(xs.data)` and `typeof(xs.data.*)` is written `realloc[T](xs: []mut T, ...)` with `[]mut T`, `*mut T` and `T`
-// in their places; `typeof([]u8)`, a `typeof` of a type written out, is that type.
+// `typeof(xs.data)` and `typeof(xs.data.*)` (or `typeof(xs[0])`) is written `realloc[T](xs: []mut T, ...)` with
+// `[]mut T`, `*mut T` and `T` in their places; `typeof([]u8)`, a `typeof` of a type written out, is that type.
 //
-// The slice is `[]mut T` when the function writes through the parameter (`xs[i] = v`, `xs.data[i] = v`) or builds a
-// value of its type (`: typeof(xs) =`): a slice it makes is one its caller writes. Otherwise it is `[]T`. A function
-// with more than one `auto` parameter, an `auto` that is not used as a slice, or a `typeof` of any other expression
-// is left alone: the checker still reports it.
+// The slice is `[]mut T` when the function writes through the parameter (`xs[i] = v`, `xs.data[i] = v`,
+// `__builtin_memcpy(&xs[0], ...)`) or builds a value of its type (`: typeof(xs) =`): a slice it makes is one its
+// caller writes. Otherwise it is `[]T`. A function with more than one `auto` parameter, an `auto` that is not used as
+// a slice, or a `typeof` of any other expression is left alone: the checker still reports it.
 //
 //   fix_typeof::edits(source, module)   one fix for each generic function and each `typeof` of a written type
 module front::fix_typeof;
@@ -53,7 +53,7 @@ static Bool is_use(Str arg, Str name, Str rest) {
 static Str spelling(Str arg, Str name, Bool mutable) {
     if (is_use(arg, name, "")) return mutable ? "[]mut T" : "[]T";
     if (is_use(arg, name, ".data")) return mutable ? "*mut T" : "*T";
-    if (is_use(arg, name, ".data.*")) return "T";
+    if (is_use(arg, name, ".data.*") || is_use(arg, name, "[0]")) return "T";
     return "";
 }
 
@@ -76,10 +76,19 @@ static Usize after_bracket(Str text, Usize open) {
     return countof(text);
 }
 
+// Whether `text` at `i` is the C memory function `writer` writing at `name` (`__builtin_memcpy(&dst[0], ...)`).
+static Bool raw_write(Str text, Usize i, Str writer, Str name) {
+    Usize after = i + countof(writer);
+    return at(text, i, writer) && at(text, after, name) && at(text, after + countof(name), "[");
+}
+
 // Whether the function's text writes through `name` or builds a value of its type.
 static Bool writes(Str text, Str name) {
     for (Usize i = 0; i < countof(text); i++) {
         if (at(text, i, ": typeof(") && at(text, i + 9, name) && at(text, i + 9 + countof(name), ") =")) return true;
+        if (raw_write(text, i, "__builtin_memcpy(&", name) || raw_write(text, i, "__builtin_memmove(&", name) ||
+            raw_write(text, i, "__builtin_memset(&", name))
+            return true;
         Usize open = i + countof(name);
         if (word_then(text, i, name, ".data["))
             open += 5;
@@ -100,6 +109,7 @@ static Bool used_as_slice(Str text, Str name) {
     for (Usize i = 0; i < countof(text); i++) {
         if (at(text, i, "typeof(") && at(text, i + 7, name)) typed = true;
         if (word_then(text, i, name, ".data") || word_then(text, i, name, ".count")) sliced = true;
+        if (at(text, i, "countof(") && word_then(text, i + 8, name, ")")) sliced = true; // `copy(auto dst[:], ...)`
     }
     return typed && sliced;
 }

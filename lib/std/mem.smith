@@ -619,26 +619,22 @@ const char *allocator_name(const Allocator *allocator) {
 // functions: no cost beyond the checks. In a module the raw functions are a `smith-mem` finding (shim/mem.h); this
 // module implements the wrappers, so its functions say `contract::trusted()` to call them.
 
-// The bodies read a slice as its two fields (`.data`, `.count[0]`, the struct of smith-lang-arrays): two `auto`
-// slices of one type make `countof` and `xs[i]` fail on the second (#408), and `.data` of an empty slice is never read.
-
 // Copies the elements of src into dst: two slices of one element type and one length (checked in every build). They
-// must not overlap; mem::move allows it.
-export void copy(auto dst, auto src) {
+// must not overlap; mem::move allows it. A generic over the element type (`fn copy[T](dst: []mut T, src: []T)`): two
+// element types that differ are a type error at the call (#2527).
+export void copy(auto dst[:], const typeof(dst[0]) src[:]) {
     contract::trusted();
-    static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::copy: one element type");
-    Bool same_length = dst.count[0] == src.count[0];
+    Bool same_length = countof(dst) == countof(src);
     contract::assert(same_length);
-    if (dst.count[0] > 0) __builtin_memcpy(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+    if (countof(dst) > 0) __builtin_memcpy(&dst[0], &src[0], countof(dst) * sizeof(dst[0]));
 }
 
 // Copies the elements of src into dst as copy does, and the two may overlap.
-export void move(auto dst, auto src) {
+export void move(auto dst[:], const typeof(dst[0]) src[:]) {
     contract::trusted();
-    static_assert(__builtin_types_compatible_p(typeof(*dst.data), typeof(*src.data)), "mem::move: one element type");
-    Bool same_length = dst.count[0] == src.count[0];
+    Bool same_length = countof(dst) == countof(src);
     contract::assert(same_length);
-    if (dst.count[0] > 0) __builtin_memmove(dst.data, src.data, dst.count[0] * sizeof(*dst.data));
+    if (countof(dst) > 0) __builtin_memmove(&dst[0], &src[0], countof(dst) * sizeof(dst[0]));
 }
 
 // Sets every byte of a slice's elements, or of the one value a pointer points at, to zero: the size comes from the
