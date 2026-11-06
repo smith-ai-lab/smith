@@ -679,8 +679,17 @@ static void as_todays_syntax(ast::Module *module) {
         ast::Decl *d = module->decls[i];
         if (d->kind == .function) {
             d->kind.function.is_new = false;
-            for (Usize k = 0; k < countof(d->kind.function.params); k++)
-                d->kind.function.params[k].is_new = false;
+            for (Usize k = 0; k < countof(d->kind.function.params); k++) {
+                ast::Param *param = &d->kind.function.params[k];
+                param->is_new = false;
+                // `auto... pieces` is the pack `pieces...` the checker types: left as a rest parameter, a call of
+                // `console::print_error` had no type, so its discarded result got no `_ :=` (#2566).
+                if (param->is_rest) {
+                    param->is_rest = false;
+                    param->is_pack = true;
+                    param->is_new = true;
+                }
+            }
         } else if (d->kind == .variable) {
             d->kind.variable.is_new = false;
         }

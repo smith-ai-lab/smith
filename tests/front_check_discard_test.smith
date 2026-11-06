@@ -38,3 +38,9 @@ export void test_front_check_discard_a_void_cast_in_a_generic_body() {
     expect("void put(auto x, Usize count) {\n    (void)count;\n}\n",
            "fn put(x: auto, count: usize):\n    _ := count\n");
 }
+
+// A `Result` may be discarded with `_ :=` (#438, #2566): the checker's fix-it writes it, whatever the error type.
+export void test_front_check_discard_a_discarded_result() {
+    expect("Result(U64, I32) step(U64 n) {\n    return {.ok = n};\n}\nvoid f(U64 n) {\n    step(n);\n}\n",
+           "fn step(n: u64) -> Result(u64, i32):\n    return .ok(n)\nfn f(n: u64):\n    _ := step(n)\n");
+}
