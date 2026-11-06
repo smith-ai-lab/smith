@@ -1,0 +1,17 @@
+struct Item:
+    size: i32
+
+enum Node:
+    item: *Item
+    empty
+
+fn size_of(n: Node) -> i32:
+    match n:
+        .item(item): item.size
+        .empty: 0
+
+pub fn check() -> i32:
+    let mut it = Item(size = 7)
+    if size_of(.item(&it)) != 7 || size_of(.empty) != 0:
+        return 1
+    0

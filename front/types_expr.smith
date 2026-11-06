@@ -96,7 +96,7 @@ export typedef types::TypeRef (*FunctionResult)();
 export struct Hooks {
     FunctionResult function_result;
     Convert convert;
-    CastRule cast;
+    CastRule cast_rule;
     LambdaBody lambda_body;
     Statement statement;
 };
@@ -3466,7 +3466,7 @@ static void cast_after(types::Checked *c, Frame f) {
     types::TypeRef to = types::type_of(c, e);
     types::TypeRef from = types::type_of(c, operand);
     types::TypeRef bad = invalid(c);
-    if (hooks.cast != nullptr && from != nullptr && from != bad && to != bad && !hooks.cast(c, e, from, to)) {
+    if (hooks.cast_rule != nullptr && from != nullptr && from != bad && to != bad && !hooks.cast_rule(c, e, from, to)) {
         poison(c, e);
         return;
     }
@@ -4216,7 +4216,7 @@ static void bind_name(types::Checked *c, Str name, types::TypeRef type) {
     if (countof(name) == 0) {
         return;
     }
-    types::Symbol symbol = {.name = name, .kind = .variable, .type = type};
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true};
     if (!types::declare(&c->scopes, symbol)) {
         types::failf(c, (ast::Span){}, "`", name, "` is already declared in this scope; choose another name");
     }
