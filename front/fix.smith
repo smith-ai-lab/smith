@@ -288,6 +288,9 @@ static Bool contains_text(Str text, Str needle) {
     return false;
 }
 
+// Set when `checker_fixes` left a guard for the next pass: that pass must run even if this one applied nothing.
+static Bool guards_held = false;
+
 // Whether one of the edits writes a guard head, `.error(error) := r`: the checker's guard of a variant test.
 static Bool has_guard_edit(core::Edits fix) {
     for (Usize i = 0; i < countof(fix); i++) {
@@ -308,7 +311,10 @@ static core::Errors checker_fixes(Str source, const ast::Module *module, Bool ho
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
         if (countof(e.fix) == 0) continue;
-        if (hold_guards && has_guard_edit(e.fix)) continue;
+        if (hold_guards && has_guard_edit(e.fix)) {
+            guards_held = true;
+            continue;
+        }
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
@@ -594,17 +600,19 @@ static void mend_passes(Str file, Fixed *total, Bool with_checker) {
             errors[countof(errors) - 1] = sized[i];
         }
         if (with_checker && countof(parsed.errors) == 0) {
-            // While the first passes still mend old forms, a guard waits: `Result(T, E) r = f();` is `r: Result(T, E) =
+            // While the first pass still mends old forms, a guard waits: `Result(T, E) r = f();` is `r: Result(T, E) =
             // f()` first, so the `try` rewrite (#2506) sees a new declaration and not the `if .error(error) := r`
             // guard that would take its place in the same pass (#2648).
-            core::Errors more = checker_fixes(total->text, &parsed.module, pass < 3 && countof(parsed.warnings) > 0);
+            core::Errors more = checker_fixes(total->text, &parsed.module, pass == 0 && countof(parsed.warnings) > 0);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);
                 errors[countof(errors) - 1] = more[i];
             }
         }
         Fixed fixed = apply_fixes(total->text, errors, parsed.warnings);
-        if (fixed.applied == 0) break;
+        Bool held = guards_held;
+        guards_held = false;
+        if (fixed.applied == 0 && !held) break;
         total->text = fixed.text;
         // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
         // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for

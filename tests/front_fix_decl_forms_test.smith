@@ -162,3 +162,14 @@ export void test_front_fix_old_result_declaration_is_a_try() {
                  "static fn g(a: usize) -> Result(usize, usize):\n    ok := try f(a)\n"
                  "    after: usize = ok\n    return .ok(after + 1)\n");
 }
+
+// #2648: holding the `try` guard back in the first pass must not hold back the other guards: a file with old forms
+// still gets `.v(v) := k else:` for a test that leaves (front/fix_opaque.smith, fix_typeof.smith).
+export void test_front_fix_leaving_variant_test_is_a_binding_in_a_file_with_old_forms() {
+    expect_fixed("module m;\nexport struct Func { Usize params; };\nexport typedef enum {\n    Func function;\n    "
+                 "leaf;\n} Kind;\n"
+                 "static Usize c(Kind k) {\n    if (k != .function) return 0;\n    return k.function.params;\n}\n",
+                 "pub struct Func:\n    pub params: usize\npub enum Kind:\n    function: Func\n    leaf\n"
+                 "static fn c(k: Kind) -> usize:\n    .function(function) := k else:\n        return 0\n"
+                 "    return function.params\n");
+}
