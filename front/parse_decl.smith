@@ -1489,7 +1489,8 @@ static Str zero_of_static(Str type) {
     Bool dotted = false;
     for (Usize i = 0; i < countof(type); i += 1) {
         char c = type[i];
-        Bool word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == ':';
+        Bool word = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+                    c == '.' || c == ':';
         if (!word) return "";
         if (c == '.' || c == ':') dotted = true;
     }
