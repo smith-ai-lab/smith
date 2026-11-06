@@ -1,0 +1,262 @@
+// Tests of the refutable binding `.v(x) := value else: ...` (#2494). Each scenario is source text in smith's
+// own syntax, read by front::parser's hooks, checked by front::types_decl and emitted, then run through the JIT.
+module front_emit_bind_test;
+
+import front::ast;
+import front::emit;
+import front::emit_jit;
+import front::emit_state;
+import front::lex;
+import front::parse;
+import front::parse_decl;
+import front::parse_expr;
+import front::parse_stmt;
+import front::parse_type;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+import <llvm-c/Core.h>;
+
+struct Scenario {
+    arena::Arena memory;
+    arena::ArenaAllocator allocator;
+    parser::Parsed parsed;
+    types::Checked checked;
+    Bool has_checked;
+};
+
+static void begin(Scenario *s, Str source, Bool with_checker) {
+    s->memory = test::memory(1U << 22);
+    s->allocator = arena::allocator(&s->memory);
+    mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
+    s->parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(s->parsed.errors), (Usize)0);
+    if (with_checker) {
+        s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
+        s->has_checked = true;
+        test::check_equal(s->checked.error_count, (Usize)0);
+    }
+    mem::set_allocator(outside);
+}
+
+static emit::Options options_for(emit::Target target, const Scenario *s) {
+    emit::Options options = {};
+    options.target = target;
+    if (s->has_checked) options.checked = &s->checked;
+    return options;
+}
+
+static emit_jit::Jit start_jit() {
+    emit_jit::JitResult started = emit_jit::start();
+    test::check_equal(started == .ok, true);
+    emit_jit::Jit host = {};
+    if (started == .ok) host = started.ok;
+    return host;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; k < countof(needle); k++) {
+            if (text[i + k] != needle[k]) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+static Usize symbol_of(emit_jit::Jit *host, Str symbol) {
+    emit_jit::AddressResult found = emit_jit::lookup(host, symbol);
+    test::check_equal(found == .ok, true);
+    Usize address = 0;
+    if (found == .ok) address = found.ok;
+    return address;
+}
+
+// Emits `source` (with the checker's types), returns its IR text and adds it to `host`.
+static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
+    begin(s, source, true);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult emitted = emit::module(context, &s->parsed.module, options_for(host->target, s));
+    test::check_equal(emitted == .ok, true);
+    char *text = nullptr;
+    if (emitted == .ok) {
+        text = c::LLVMPrintModuleToString(emitted.ok);
+        emit_jit::BoolResult added = emit_jit::add(host, context, emitted.ok);
+        test::check_equal(added == .ok, true);
+    } else {
+        Str expected = "no error";
+        test::check_equal(emitted.error.message, expected);
+    }
+    return text;
+}
+
+typedef I32 (*Pick)(I32);
+
+static const Str shapes = "struct Circle:\n"
+                          "    radius: i32\n"
+                          "struct Rect:\n"
+                          "    w: i32\n"
+                          "    h: i32\n"
+                          "enum Shape:\n"
+                          "    circle: Circle\n"
+                          "    rect: Rect\n"
+                          "    empty\n"
+                          "fn make(n: i32) -> Shape:\n"
+                          "    if n == 0:\n"
+                          "        return .circle(Circle(radius = 2))\n"
+                          "    if n == 1:\n"
+                          "        return .rect(Rect(w = 3, h = 4))\n"
+                          "    .empty\n";
+
+// Runs `pick` of `source` (after `shapes` when `with_shapes`) on each input and checks the outputs.
+static void runs(Str source, Str entry, I32 in0, I32 out0, I32 in1, I32 out1) {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of(source, &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick pick = (Pick)symbol_of(&host, entry);
+    test::check_equal(pick(in0), out0);
+    test::check_equal(pick(in1), out1);
+    emit_jit::stop(&host);
+}
+
+export void test_front_emit_bind_a_variant_binds_its_payload_for_the_rest_of_the_block() {
+    char source[:] = format::push(shapes, "pub fn area(n: i32) -> i32:\n"
+                                          "    shape := make(n)\n"
+                                          "    .circle(circle) := shape else: return -1\n"
+                                          "    circle.radius * 10\n");
+    runs(source, "area", 0, 20, 1, -1);
+}
+
+export void test_front_emit_bind_two_bindings_in_a_row_nest() {
+    char source[:] = format::push(shapes, "pub fn area(n: i32) -> i32:\n"
+                                          "    shape := make(n)\n"
+                                          "    .rect(rect) := shape else: return -1\n"
+                                          "    other := make(n - 1)\n"
+                                          "    .circle(circle) := other else:\n"
+                                          "        return -2\n"
+                                          "    rect.w * circle.radius\n");
+    runs(source, "area", 1, 6, 0, -1);
+}
+
+export void test_front_emit_bind_an_option_short_form_unwraps_it() {
+    runs("fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "pub fn halved(n: i32) -> i32:\n"
+         "    h := half(n) else: return -1\n"
+         "    h + 100\n",
+         "halved", 10, 105, 7, -1);
+}
+
+export void test_front_emit_bind_break_and_continue_leave_the_loop_body() {
+    runs("fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "pub fn sum(n: i32) -> i32:\n"
+         "    mut total := 0\n"
+         "    mut i := 0\n"
+         "    while i < n:\n"
+         "        i += 1\n"
+         "        h := half(i) else: continue\n"
+         "        total += h\n"
+         "    total\n"
+         "pub fn first_even(n: i32) -> i32:\n"
+         "    mut found := 0\n"
+         "    mut i := 1\n"
+         "    while i < n:\n"
+         "        h := half(i) else:\n"
+         "            i += 1\n"
+         "            continue\n"
+         "        found = h\n"
+         "        break\n"
+         "    found\n",
+         "sum", 6, 6, 1, 0);
+}
+
+export void test_front_emit_bind_a_defer_before_it_runs_when_the_else_returns() {
+    runs("mut count: i32 = 0\n"
+         "fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "fn bump():\n"
+         "    count += 1\n"
+         "fn run(n: i32) -> i32:\n"
+         "    defer bump()\n"
+         "    h := half(n) else: return -1\n"
+         "    h\n"
+         "pub fn twice(n: i32) -> i32:\n"
+         "    _ := run(n)\n"
+         "    _ := run(n + 1)\n"
+         "    count\n",
+         "twice", 4, 2, 1, 4);
+}
+
+export void test_front_emit_bind_return_in_a_lambda_leaves_the_lambda() {
+    runs("fn half(n: i32) -> ?i32:\n"
+         "    if n % 2 != 0:\n"
+         "        return .none\n"
+         "    n / 2\n"
+         "pub fn viaLambda(n: i32) -> i32:\n"
+         "    f := fn(k: i32) -> i32:\n"
+         "        h := half(k) else: return -5\n"
+         "        h\n"
+         "    f(n) + 1\n",
+         "viaLambda", 8, 5, 3, -4);
+}
+
+// An error: the source stops in the checker with `what` in a message.
+static void is_rejected(Str source, Str what) {
+    Scenario s = {};
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    parser::Parsed parsed = parser::parse_new("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    test::check_equal(checked.error_count > 0, true);
+    Bool found = false;
+    for (Usize i = 0; i < countof(checked.errors); i++) {
+        found = found || has(checked.errors[i].message, what);
+    }
+    test::check_equal(found, true);
+    mem::set_allocator(outside);
+    _ = s;
+}
+
+export void test_front_emit_bind_an_else_that_does_not_leave_is_an_error() {
+    is_rejected("fn half(n: i32) -> ?i32:\n"
+                "    .none\n"
+                "fn f(n: i32) -> i32:\n"
+                "    h := half(n) else: 0\n"
+                "    h\n",
+                "must leave");
+}
+
+export void test_front_emit_bind_a_pattern_that_always_matches_takes_no_else() {
+    is_rejected("fn f(n: i32) -> i32:\n"
+                "    h := n + 1 else: return 0\n"
+                "    h\n",
+                "always matches");
+}
+
+export void test_front_emit_bind_a_name_in_scope_is_an_error() {
+    is_rejected("fn half(n: i32) -> ?i32:\n"
+                "    .none\n"
+                "fn f(n: i32) -> i32:\n"
+                "    h := 1\n"
+                "    h := half(n) else: return 0\n"
+                "    h\n",
+                "hides a variable");
+}

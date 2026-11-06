@@ -58,3 +58,5 @@ bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
 ## Not settled yet
 
 `[_]` lengths.
+
+A definition whose pattern can fail has an `else` that leaves: `.tuple(tuple) := base.kind else: return .none`, `first := opt else: return .none` (owner, 2026-11-06). The names are bound to the end of the block; see [smith-dev-syntax-control](../smith-dev-syntax-control/SKILL.md).
