@@ -251,6 +251,11 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
+    // `&rest` where `*(*mut T)` is wanted (`strtol`'s end pointer): the local `rest: *T` becomes `*mut T`.
+    if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer && from->element->kind == .pointer &&
+        to->element->kind == .pointer && from->element->pointee_const && !to->element->pointee_const &&
+        e->kind == .unary && e->kind.unary.op == .address_of)
+        fix = types_expr::pointer_name_fix(c, e->kind.unary.operand);
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type ||
          (from->element->kind == .pointer && to->element->kind == .pointer))) // `execv(path, argv)`

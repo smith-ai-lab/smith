@@ -2810,13 +2810,14 @@ Bool shrink_passes(Shrink *shrink) {
 // the same seed gives the same shrunk case unless the time budget ends the search.
 void shrink_run(const Test *test, const Options *options, Run *run) {
     Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
-    *shrink = (Shrink){.test = test,
-                       .options = options,
-                       .seed = run->seed,
-                       .attempt = attempt_in_worker,
-                       .best = &tries[0],
-                       .candidate = &tries[1],
-                       .deadline = seconds() + options->shrink_seconds};
+    // map_private memory is zeroed, so only the fields that start with a value are set.
+    shrink->test = test;
+    shrink->options = options;
+    shrink->seed = run->seed;
+    shrink->attempt = attempt_in_worker;
+    shrink->best = &tries[0];
+    shrink->candidate = &tries[1];
+    shrink->deadline = seconds() + options->shrink_seconds;
     draws_clear(overrides);
     discard(&processes[shrink_slot]); // a worker an earlier shrink left may be dirty
     try_run(shrink);                  // the same key again, recording; it must fail as it did
@@ -2869,12 +2870,12 @@ export Shrunk shrink_search(U32 (*verdict)(void *context), void *context, U32 se
     overrides = (Draws *)map_bytes((1) * sizeof(Draws), map_private);
     defer restore_tables(outer_recorded, outer_overrides);
     Shrink *shrink = (Shrink *)map_bytes((1) * sizeof(Shrink), map_private);
-    *shrink = (Shrink){.attempt = attempt_by_verdict,
-                       .verdict = verdict,
-                       .context = context,
-                       .best = &tries[0],
-                       .candidate = &tries[1],
-                       .deadline = seconds() + seconds_budget};
+    shrink->attempt = attempt_by_verdict; // map_private memory is zeroed
+    shrink->verdict = verdict;
+    shrink->context = context;
+    shrink->best = &tries[0];
+    shrink->candidate = &tries[1];
+    shrink->deadline = seconds() + seconds_budget;
     draws_clear(overrides);
     try_run(shrink);
     shrink->best = shrink->candidate;
@@ -3116,7 +3117,10 @@ void list_processes() {
         c::dup2(ends[1], stdout_fd);
         c::close(ends[0]);
         c::close(ends[1]);
-        char *const argv[_] = {(char *)"ps", (char *)"-axo", (char *)"pid=,ppid=,time=,command=", nullptr};
+        char name[3] = "ps";
+        char flags[5] = "-axo";
+        char columns[26] = "pid=,ppid=,time=,command=";
+        char *argv[4] = {&name[0], &flags[0], &columns[0], nullptr};
         c::execvp("ps", argv);
         c::_exit(127);
     }
@@ -3128,7 +3132,7 @@ void list_processes() {
         return;
     }
     char text[512];
-    while (ps_count < ps_rows_max && c::fgets(text, sizeof text, listing) != nullptr) {
+    while (ps_count < ps_rows_max && c::fgets(text, (I32)sizeof text, listing) != nullptr) {
         char *rest = nullptr;
         I64 pid = c::strtol(text, &rest, 10);
         I64 parent = c::strtol(rest, &rest, 10);
@@ -3982,7 +3986,7 @@ F64 *read_costs(const Plan *plan, const char *path) {
     c::FILE *file = path != nullptr ? c::fopen(path, "r") : nullptr;
     if (file == nullptr) return cost;
     char line[512];
-    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(line, sizeof line, file) != nullptr; guard++) {
+    for (Usize guard = 0; guard < ((Usize)1 << 24) && c::fgets(line, (I32)sizeof line, file) != nullptr; guard++) {
         char *seconds_text = c::strchr(line, '\t');
         char *name = seconds_text != nullptr ? c::strchr(seconds_text + 1, '\t') : nullptr;
         if (name == nullptr) continue;

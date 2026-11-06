@@ -510,7 +510,7 @@ static syntax::Edits mut_after(U32 at) {
 }
 
 // The fix that makes the `*T` variable `base` a `*mut T` (the edit after its star); empty for another spelling.
-static syntax::Edits pointer_name_fix(const types::Checked *c, const ast::Expr *base) {
+export syntax::Edits pointer_name_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits none = {};
     if (base->kind != .name) return none;
     const types::Symbol *x = types::lookup_path(&c->scopes, base->kind.name.path);
@@ -2237,7 +2237,8 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
         return;
     }
     types::TypeRef hint = nullptr;
-    if (op == .plain || (literal_branches(c, value) && op != .shift_left && op != .shift_right)) {
+    Bool pointer_step = tt->kind == .pointer && (op == .add || op == .subtract); // `p += 1`: the step is a count
+    if (op == .plain || (literal_branches(c, value) && op != .shift_left && op != .shift_right && !pointer_step)) {
         hint = tt;
     }
     push(w, e, f.expected, 2);
