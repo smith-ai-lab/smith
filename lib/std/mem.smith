@@ -434,7 +434,8 @@ Usize checked_size(Allocator *self, const void *block) {
                               .free = checked_free,
                               .owns = checked_owns,
                               .size = checked_size},
-                     .parent = parent};
+                     .parent = parent,
+                     .buckets = nullptr};
 }
 
 // The blocks not freed, and their bytes.

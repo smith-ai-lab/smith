@@ -246,6 +246,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     const ast::Expr *source = e;
     while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
         source = source->kind.binary.left;
+    if (source->kind == .slice_of) source = source->kind.slice_of.base; // `buffer[filled:]` is as writable as `buffer`
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
@@ -684,13 +685,21 @@ static void add_guard(types::Checked *r, types::Guard guard) {
 }
 
 // `k == .v` (or `k != .v` when not `equal`) with no payload on `.v`: the test, else null.
-static const ast::Expr *variant_test(const ast::Expr *test, Bool equal) {
+static const ast::Expr *plain_variant_test(const ast::Expr *test, Bool equal) {
     if (!(test->kind == .binary)) return nullptr;
     ast::BinaryOp op = test->kind.binary.op;
     if (equal ? op != .equal : op != .not_equal) return nullptr;
     const ast::Expr *right = test->kind.binary.right;
     if (!(right->kind == .variant) || right->kind.variant.payload != nullptr) return nullptr;
     return test;
+}
+
+// The same, and `!(k == .v)` counts as `k != .v` (its inner test is returned).
+static const ast::Expr *variant_test(const ast::Expr *test, Bool equal) {
+    if (!equal && test->kind == .unary && test->kind.unary.op == .logical_not) {
+        return plain_variant_test(test->kind.unary.operand, true);
+    }
+    return plain_variant_test(test, equal);
 }
 
 static Bool name_taken(types::Checked *r, Str name) {
@@ -783,8 +792,8 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     }
     U32 end = state.block_end;
     if (at == count || end == 0 || !indented_if(s->span, test->span)) return;
-    const ast::Expr *tested = parts[at];
-    if (!(tested->kind == .binary)) return;
+    const ast::Expr *tested = variant_test(parts[at], false);
+    if (tested == nullptr || !(tested->kind == .binary)) return;
     const ast::Expr *left = tested->kind.binary.left;
     const ast::Expr *right = tested->kind.binary.right;
     if (!(right->kind == .variant)) return;
