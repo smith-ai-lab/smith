@@ -191,7 +191,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
-    types::HeaderLoader headers = load_header; // an imported module's C types (`c::SmithAllocator` of std.arena) are read too
+    types::HeaderLoader headers = load_header; // imported modules' C types too (std.arena's SmithAllocator)
     types_decl::set_source(source); // a test in a chain `a || k != .v` is fixed by copying its `then` (#2503)
     types::Checked checked = types_decl::check_module_headers(module, types::lp64(), loader, headers);
     types_decl::set_source("");
