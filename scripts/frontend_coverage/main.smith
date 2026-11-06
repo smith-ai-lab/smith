@@ -754,6 +754,10 @@ static Usize job_head = 0;
 static Usize job_count = 0;
 static const char *job_folder = nullptr;
 static Bool fixed_ok[files_max];
+// The scratch tree, where the files are fixed, and a copy of the original tree that nothing writes to, where the fixer
+// runs and reads the imports (#2521).
+static const char *scratch_root = nullptr;
+static const char *pristine_root = nullptr;
 
 static void finish_measure(Usize file, const struct Ran *compiled);
 
@@ -808,9 +812,10 @@ static void jobs_drain() {
         job_finish();
 }
 
-// Starts `program` in the current folder with an address space capped at `limit` (a ulimit -v value), after the oldest
+// Starts `program` in `folder` with an address space capped at `limit` (a ulimit -v value), after the oldest
 // job when all the slots are busy.
-static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const char *const program[:]) {
+static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const char *folder,
+                             const char *const program[:]) {
     if (job_count == job_limit) job_finish();
     Usize slot = (job_head + job_count) % job_limit;
     job_count += 1;
@@ -821,12 +826,13 @@ static struct Job *job_start(Bool is_fix, Usize file, const char *limit, const c
     const char *argv[job_args_max];
     argv[0] = "/bin/sh";
     argv[1] = "-c";
-    argv[2] = "ulimit -v \"$1\"; o=$2; e=$3; shift 3; exec \"$@\" >\"$o\" 2>\"$e\"";
+    argv[2] = "ulimit -v \"$1\"; o=$2; e=$3; cd \"$4\" || exit 127; shift 4; exec \"$@\" >\"$o\" 2>\"$e\"";
     argv[3] = "sh";
     argv[4] = limit;
     argv[5] = job->out;
     argv[6] = job->err;
-    Usize n = 7;
+    argv[7] = folder;
+    Usize n = 8;
     for (Usize i = 0; i < countof(program) && n < job_args_max; i++) {
         argv[n] = program[i];
         n += 1;
@@ -852,8 +858,12 @@ static Usize jobs_wanted() {
 // Starts the fixer on the copy of one file (the process is in the scratch tree). A failure is recorded when the job
 // finishes. `cache` is the cache entry to fill then, or empty.
 static void fix(const char *smith, Usize i, const char cache[:]) {
-    const char *const fixer[_] = {smith, "lint", "--fix", tree[i]};
-    struct Job *job = job_start(true, i, "unlimited", fixer[0:4]);
+    // The fixer runs in the pristine tree, so the imports it reads never change under it, and it fixes the copy in the
+    // scratch tree by its absolute path (#2521).
+    char target[path_size * 2];
+    (void)format::to(target, sizeof target, scratch_root, "/", (const char *)tree[i]);
+    const char *const fixer[_] = {smith, "lint", "--fix", target};
+    struct Job *job = job_start(true, i, "unlimited", pristine_root, fixer[0:4]);
     copy_text(job->cache[0:path_size * 2], cache);
     job->cache_length = countof(cache);
 }
@@ -886,7 +896,7 @@ static void measure(const char *smith, const char *scratch, Usize file) {
     // before it fails, which killed the 16 GB hosted runner (#2254); a file over the cap fails alone, as `parse` does.
     const char *const compile[_] = {
         smith, "cc", "--front-end=new", (const char *)include, (const char *)own, "-c", name, "-o", object};
-    (void)job_start(false, file, "6291456", compile[0:9]);
+    (void)job_start(false, file, "6291456", ".", compile[0:9]);
 }
 
 // The result of the compile of file `file`.
@@ -1209,6 +1219,22 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
         return 1;
     }
     list_projects(root);
+    // The fixer reads the modules a file imports from the tree it runs in. In the scratch tree they are being fixed
+    // by other jobs at that moment, and a half-written import does not parse, which drops every fix of its importers
+    // (#2521). So it runs in a copy of the original tree, whose imports are the same text in every run and for every
+    // number of jobs, and fixes the file in the scratch tree by its path.
+    char pristine[path_size * 2];
+    (void)format::to(pristine, sizeof pristine, scratch, "/../pristine");
+    if (!copy_tree(root, pristine)) {
+        console::print_error("frontend_coverage: cannot copy the files to ", pristine, "\n");
+        return 1;
+    }
+    char source_link[path_size * 2 + 8];
+    (void)format::to(source_link, sizeof source_link, (const char *)pristine, "/src");
+    (void)c::unlink(source_link);
+    (void)c::symlink(".", source_link);
+    scratch_root = scratch;
+    pristine_root = pristine;
     char folder[path_size * 2];
     (void)format::to(folder, sizeof folder, scratch, "/../fixed");
     cache_folder = folder;
