@@ -1427,7 +1427,10 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     c::LLVMTypeRef fields[64];
     ast::Span nowhere = {};
     for (Usize i = 0; i < count; i++) {
-        state::TyResult made = type_from_checked(e, base->slots[i].type, nowhere);
+        // A function pointer of C is the bare `ptr` in the struct's layout, not a `fn` value's `{ code, context }`.
+        types::TypeRef held = base->slots[i].type;
+        state::TyResult made =
+            held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
         if (made == .error) {
             state::free_text(made.error.message);
             mem::free(infos.data);

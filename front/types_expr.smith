@@ -347,7 +347,7 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
             at = at->kind.index.base;
         }
     }
-    return at != nullptr && at->kind == .call && c->new_body;
+    return at != nullptr && (at->kind == .call || at->kind == .cast) && c->new_body;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -1953,6 +1953,12 @@ static void binary_after(types::Checked *c, Frame f) {
         poison(c, e);
         return;
     }
+    // `64 << 10` where a `usize` is expected: the shifted literal takes the expected type (the count is its own).
+    if (is_shift(op) && expected != nullptr && is_number(expected) && literal_like(left) &&
+        adaptable(typ(c, left), expected) && !retype(c, left, expected)) {
+        poison(c, e);
+        return;
+    }
     if (widen_operand(c, e, op, left, right) || float_literal_operand(c, e, op, left, right)) {
         poison(c, e);
         return;
@@ -3114,8 +3120,8 @@ static void slice_after(types::Checked *c, Frame f) {
         // smith's own syntax a slice of a read-only pointer is a `[]T` too: its const would make it no `[]T` (#2386).
         Bool element_const = base->pointee_const && !(typed_pointer && c->new_body);
         result = types::slice_of(&c->table, base->element, element_const);
-    } else if (base->kind == .text || base->kind == .block) {
-        result = base;
+    } else if (base->kind == .text || base->kind == .block || base->kind == .type_type) {
+        result = base; // `t[:]` of a type value is a type value: the slice of that type, made where it is computed
     } else if (base != bad) {
         types::failf(c, e->span, "cannot slice a value of type `", types::show(base),
                      "`; slice an array, a slice, a `Str` or a typed pointer");
