@@ -1493,6 +1493,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         }
         if (base->kind == .tuple) return tupled::from_checked(e, base);
         if (base->kind == .fn_value) return lambdas::from_checked(e, base);
+        if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
         Str shown = types::show(base);
         state::Error error = {.message = state::msg(format::push("not emitted yet: ", shown)), .span = span};
         state::free_text(shown);
