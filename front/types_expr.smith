@@ -2935,6 +2935,16 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     return s->type;
 }
 
+// Whether a call of `h.name(...)` is of the header's function, not a construction of its struct of the same name:
+// the struct is built with named arguments (`signal.sigaction(sa_flags = 0)`), the function called with values.
+static Bool calls_header_function(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
+    if (callee->kind != .member || types::c_member_function(c, callee) == nullptr) return false;
+    if (countof(args) == 0) return true;
+    const ast::Expr *first = args[0];
+    if (first->kind == .named_arg) return false;
+    return true;
+}
+
 // The record a call constructs when its callee names a struct (or an alias of one), else null.
 static types::TypeRef constructed_record(const types::Checked *c, const ast::Expr *callee) {
     types::TypeRef t = named_type(c, callee);
@@ -5856,7 +5866,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
             return;
         }
     }
-    types::TypeRef record = constructed_record(c, callee);
+    types::TypeRef record = calls_header_function(c, callee, e->kind.call.args) ? nullptr : constructed_record(c, callee);
     if (record != nullptr) {
         construct_before(w, f, record);
         return;
@@ -6025,7 +6035,8 @@ static void before(types::Checked *c, Work *w, Frame f) {
         const ast::Expr *base = e->kind.member.base;
         const types::Symbol *header = types::c_member(c, e);
         if (header != nullptr) { // `stdio.name` after `import c <stdio.h>`: the header's declaration
-            finish(c, e, header->type, f.expected);
+            const types::Symbol *function = header->kind == .type_name ? types::c_member_function(c, e) : nullptr;
+            finish(c, e, function != nullptr ? function->type : header->type, f.expected);
             return;
         }
         syntax::Edits fix = {};
@@ -6103,7 +6114,8 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 5) {
             vector_after(c, f);
         } else if (f.stage == 3) {
-            construct_after(c, f, constructed_record(c, e->kind.call.callee));
+            construct_after(c, f, calls_header_function(c, e->kind.call.callee, e->kind.call.args) ? nullptr
+                                                                                         : constructed_record(c, e->kind.call.callee));
         } else {
             call_after(c, f);
         }

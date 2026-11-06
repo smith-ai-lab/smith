@@ -2430,6 +2430,10 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     pop_scope(&r->scopes);
     TypeRef type = function_of(&r->table, params, result, variadic);
     Symbol symbol = {.name = name, .kind = .function_symbol, .type = type, .decl = d, .exported = d->exported};
+    // C keeps struct tags apart from functions (`struct sigaction`, `sigaction()`): the function of a header takes
+    // `name()` where a struct already has the plain name (#2611).
+    const Symbol *tagged = r->in_header ? lookup(&r->scopes, name) : nullptr;
+    if (tagged != nullptr && tagged->kind == .type_name) symbol.name = msg(format::push(name, "()"));
     declare_in_module(r, symbol, d->span);
 }
 
@@ -3064,6 +3068,13 @@ export const Symbol *c_member(const Checked *r, const ast::Expr *e) {
     Str name = c_member_name(r, e);
     if (countof(name) == 0 || scoped(r, c_member_base(e)) != nullptr) return nullptr;
     return lookup(&r->scopes, msg(format::push("c::", name)));
+}
+
+// The function `stat.sigaction` stands for when a struct of the header has the same name (`struct sigaction`), or null.
+export const Symbol *c_member_function(const Checked *r, const ast::Expr *e) {
+    Str name = c_member_name(r, e);
+    if (countof(name) == 0 || scoped(r, c_member_base(e)) != nullptr) return nullptr;
+    return lookup(&r->scopes, msg(format::push("c::", name, "()")));
 }
 
 // The text of the error for `base.name` when `base` is a header binding that lacks `name`, or `c.name` with no `c`
