@@ -452,7 +452,7 @@ static Str rename_target_systems(Str source) {
 }
 
 // The passes of `fix_text`: parse, apply the fixes, parse the result again, until a pass applies none.
-static void mend_passes(Str file, Fixed *total) {
+static void mend_passes(Str file, Fixed *total, Bool with_checker) {
     for (Usize pass = 0; pass < fix_passes; pass++) {
         parser::Parsed parsed = parse_for_fix(file, total->text);
         core::Errors errors = parsed.errors;
@@ -468,7 +468,7 @@ static void mend_passes(Str file, Fixed *total) {
             errors = mem::realloc(errors, countof(errors) + 1);
             errors[countof(errors) - 1] = sized[i];
         }
-        if (countof(parsed.errors) == 0) {
+        if (with_checker && countof(parsed.errors) == 0) {
             core::Errors more = checker_fixes(total->text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
                 errors = mem::realloc(errors, countof(errors) + 1);
@@ -591,7 +591,7 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
-    mend_passes(file, &total);
+    mend_passes(file, &total, true);
     if (header_arena_made) { // what the headers declared is not needed once the passes are done
         arena::release(&header_arena);
         header_arena_made = false;
@@ -608,7 +608,7 @@ export Fixed fix_text(Str file, Str source) {
     // around it are mended), so rounds repeat until one applies nothing: a second run has nothing left (#2449).
     for (Usize round = 0; round < fix_rounds && total.applied > 0 && countof(total.text) > 0; round++) {
         Fixed more = {.text = total.text};
-        mend_passes(file, &more);
+        mend_passes(file, &more, true);
         if (more.applied == 0) break;
         total.text = fix_blocks::convert(hash_comments(more.text));
         total.applied += more.applied;
@@ -619,6 +619,61 @@ export Fixed fix_text(Str file, Str source) {
         header_arena_made = false;
     }
     return total;
+}
+
+// The text of a library module for the checker that reads it as an import (#2561): `char` and `bool` are C types to the
+// checker while the module is still in today's syntax, and a function with one in its signature was left out of the
+// module (`text.parse_f32(word, &value)` then had no `parse_f32` to check its arguments against, so `value` got no
+// `mut`). They are written `Char` and `Bool` here, as the fixed module has them.
+static Str read_c_types(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return source;
+    lex::Tokens tokens = lexed.ok;
+    Str out = "";
+    Usize at = 0;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        Bool is_char = tokens[i].kind == lex::kw_char;
+        if (!is_char && tokens[i].kind != lex::kw_bool) continue;
+        if (i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow ||
+                      tokens[i - 1].kind == lex::colon_colon))
+            continue;
+        out = as_str(format::push(out, source[at:tokens[i].span.start], is_char ? "Char" : "Bool"));
+        at = tokens[i].span.end;
+    }
+    if (at == 0) return source;
+    return as_str(format::push(out, source[at:countof(source)]));
+}
+
+// Whether the text is a module written in today's syntax: it has a `module` line (smith's own syntax derives the name
+// from the path and has none).
+static Bool has_module_line(Str source) {
+    lex::Lexed lexed = lex::tokenize(source);
+    if (lexed == .error) return false;
+    lex::Tokens tokens = lexed.ok;
+    for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::kw_module) return true;
+    }
+    return false;
+}
+
+// A module in today's syntax that the own-syntax parser took (it reads C-like declarations too) is marked as written in
+// today's syntax: `Parser *p` is then a writable pointer, as it is in the file, and the importer's `&x` and `p` need
+// `mut x` and `*mut Parser` to be passed (#2561). Left as the own parser marked them, they were read-only pointers and
+// the checker asked for nothing.
+static void as_todays_syntax(ast::Module *module) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        ast::Decl *d = module->decls[i];
+        if (d->kind == .function) {
+            d->kind.function.is_new = false;
+            for (Usize k = 0; k < countof(d->kind.function.params); k++)
+                d->kind.function.params[k].is_new = false;
+        } else if (d->kind == .variable) {
+            d->kind.variable.is_new = false;
+        } else if (d->kind == .record) {
+            for (Usize k = 0; k < countof(d->kind.record.fields); k++)
+                d->kind.record.fields[k].is_new = false;
+        }
+    }
 }
 
 // The tree of the module at the dotted `path` (`std.list`, NUL-terminated) for the checker: the file under the
@@ -642,11 +697,24 @@ static const ast::Module *load_from_folders(const char *dotted) {
         files::BytesResult loaded = files::read_file(path);
         if (loaded == .error) return nullptr;
         format::Chars chars = mem::view(loaded.ok, char);
-        Str source = chars;
+        // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
+        // reads as the fixed module does (#2561).
+        Str source = read_c_types(rename_fn_names(rename_in_names(rename_type_names(rename_target_systems(chars)))));
         parser::Parsed parsed = parse_for_fix(path, source);
-        if (countof(parsed.errors) > 0) return nullptr;
+        if (countof(parsed.errors) > 0) {
+            // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
+            // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
+            // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
+            // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
+            // where `F32 *value` is writable.
+            Fixed mended = {.text = source};
+            mend_passes(path, &mended, false);
+            parsed = parse_for_fix(path, mended.text);
+            if (countof(parsed.errors) > 0) return nullptr;
+        }
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
+        if (has_module_line(source)) as_todays_syntax(copy);
         return copy;
     }
     return nullptr;
