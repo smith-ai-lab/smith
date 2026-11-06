@@ -318,7 +318,12 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         syntax::Edits fix = discard_fix(e, to);
         if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && from->pointee_const &&
             !to->pointee_const) {
-            fix = types_expr::pointer_fix(c, e->kind.cast.operand);
+            // `(base + n).cast(*mut T)` points where `base` does: the fix is the one for `base` (#2643).
+            const ast::Expr *source = e->kind.cast.operand;
+            while (source->kind == .binary &&
+                   (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
+                source = source->kind.binary.left;
+            fix = types_expr::pointer_fix(c, source);
         }
         // `task_main.to(usize)`: a function is an address, so it is a pointer first, `task_main.cast(*void).to(usize)`
         // (#2643).
