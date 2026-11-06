@@ -2310,6 +2310,8 @@ export Bool is_auto_param(const ast::Param *p) {
     if (p->is_gather) return p->is_new && !p->is_pack;
     if (p->is_pack) return p->is_new; // `rest...`: its type is the tuple of the leftover positional arguments
     if (p->type == nullptr || p->is_rest || p->is_pack || p->is_gather) return false;
+    // `a: num` (smith's own syntax): a concept in a parameter is an implicit generic parameter of its own (#1701)
+    if (p->is_new && countof(written_concept(p->type)) > 0) return true;
     return is_auto_slice(p->type) || p->type->kind == .auto_type;
 }
 
