@@ -699,7 +699,7 @@ static const ast::Module *load_from_folders(const char *dotted) {
         format::Chars chars = mem::view(loaded.ok, char);
         // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
         // reads as the fixed module does (#2561).
-        Str source = read_c_types(rename_fn_names(rename_in_names(rename_type_names(rename_target_systems(chars)))));
+        Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
         parser::Parsed parsed = parse_for_fix(path, source);
         if (countof(parsed.errors) > 0) {
             // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
