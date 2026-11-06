@@ -1012,6 +1012,18 @@ static Bool fold_target(types::Checked *c, Frame f, types::Names names) {
     Bool ubsan = same_text(fact, "undefined_sanitizer");
     Bool tsan = same_text(fact, "thread_sanitizer");
     Bool checks = same_text(fact, "assertions");
+    // The numbers of the floating-point types: integers, folded the same way (#2643).
+    Bool number = same_text(fact, "float_radix") || same_text(fact, "f32_mantissa_bits") ||
+                  same_text(fact, "f64_mantissa_bits") || same_text(fact, "float_eval_method");
+    if (number) {
+        U64 given = 2;
+        if (same_text(fact, "f32_mantissa_bits")) given = 24;
+        if (same_text(fact, "f64_mantissa_bits")) given = 53;
+        if (same_text(fact, "float_eval_method")) given = (U64)target::float_eval_method;
+        node->kind = (ast::ExprKind){.integer = {.value = given}};
+        finish(c, e, types::builtin(&c->table, "I32"), f.expected);
+        return true;
+    }
     // `static_analyzer` is never true: the new front end does not run under clang's analyzer, as in `when`.
     if (!asan && !ubsan && !tsan && !checks && !same_text(fact, "static_analyzer")) return false;
     Bool value = (asan && target::address_sanitizer) || (ubsan && target::undefined_sanitizer) ||
@@ -1103,6 +1115,10 @@ static void name_expr(types::Checked *c, Frame f) {
             names.items[i] = path.segments[i].text;
         if (fold_target(c, f, names) || fold_target_system(c, f, names)) return;
         if (module_value(c, f, names)) return;
+    }
+    if (s == nullptr && countof(path.segments) == 1 && same_text(path.segments[0].text, "__FINITE_MATH_ONLY__")) {
+        finish(c, e, c->table.bool_type, f.expected); // clang's predefined macro; the emitter folds it
+        return;
     }
     if (s == nullptr) {
         unknown_name(c, e, path);

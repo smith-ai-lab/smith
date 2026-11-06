@@ -1872,6 +1872,11 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
     types::Checked r = types::check(m, chosen);
     for (Usize i = 0; i < countof(m->decls); i++) {
         check_initializer(&r, m->decls[i]);
+        const ast::Decl *asserted = m->decls[i];
+        if (asserted->kind == .static_assert_decl) {
+            state.function = "static_assert";
+            types_expr::check(&r, asserted->kind.static_assert_decl.condition, r.table.bool_type);
+        }
     }
     check_instances(&r);
     drain(&r);

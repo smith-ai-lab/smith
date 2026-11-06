@@ -36,6 +36,7 @@ export struct Options {
     Str source; // the file's text, for debug info's lines (B5)
     Bool debug_info;
     Bool fill_undefined;           // a debug build fills an `undefined` local with the byte 0xAA
+    Bool finite_math;              // the flags have `-ffast-math` or `-ffinite-math-only`: clang's `__FINITE_MATH_ONLY__`
     const types::Checked *checked; // the checker's result for the module; null: no cast is checked (K2, #1329)
 };
 

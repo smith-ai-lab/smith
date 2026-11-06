@@ -555,6 +555,17 @@ static state::Status logical_middle(state::Emitter *e, const state::ThenExpr *w)
     ast::Span left_span = w->expr->kind.binary.left->span;
     state::Value left = state::pop_value(e);
     try require_bool(e, left, left_span);
+    if (c::LLVMIsConstant(left.llvm) != 0) {
+        // A left side known now (`target.float_radix == 2 && ...`, #2643) decides the result or leaves the right side:
+        // no blocks, so a `static_assert` folds the whole condition.
+        Bool is_true = c::LLVMConstIntGetZExtValue(left.llvm) != 0;
+        if (is_true == (op == .logical_and)) {
+            state::push_eval(e, right, state::no_hint());
+        } else {
+            state::push_value(e, left);
+        }
+        return state::success();
+    }
     c::LLVMBasicBlockRef left_end = c::LLVMGetInsertBlock(e->builder);
     c::LLVMBasicBlockRef right_block = new_block(e, "rhs");
     c::LLVMBasicBlockRef end_block = new_block(e, "endlogic");
