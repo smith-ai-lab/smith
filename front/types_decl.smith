@@ -212,6 +212,14 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         fix = types_builtin::element_address_fix(e);
     // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
     if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
+    // `nullptr` where a `?T` is wanted is `.none`; a read `a.f` of an option field that a test guards is its binding
+    // `f` (#2557).
+    if (from->kind == .null_type && to->kind == .option && e->kind == .null_pointer) {
+        Str none = ".none";
+        fix = mem::realloc(fix, 1);
+        fix[0] = (syntax::Edit){.span = e->span, .text = none};
+    }
+    if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
 }
@@ -891,10 +899,65 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     return true;
 }
 
+// `a.f != nullptr` or `a.f != .none` (`==` when `equal`), where `a.f` is a field read: the test, else null.
+static const ast::Expr *null_test(const ast::Expr *test, Bool equal) {
+    if (!(test->kind == .binary)) return nullptr;
+    ast::BinaryOp op = test->kind.binary.op;
+    if (equal ? op != .equal : op != .not_equal) return nullptr;
+    const ast::Expr *left = test->kind.binary.left;
+    const ast::Expr *right = test->kind.binary.right;
+    if (!(left->kind == .member) || left->kind.member.arrow) return nullptr;
+    Bool none = right->kind == .variant && right->kind.variant.payload == nullptr &&
+                types::same_text(right->kind.variant.name, "none");
+    if (!none && !(right->kind == .null_pointer)) return nullptr;
+    return test;
+}
+
+// A test of a field that is an option (#2557): `if a.f != nullptr:` guards its `then`, written `if f := a.f:`, and
+// `if a.f == nullptr: return X` with no `else` guards the rest of the block, written `f := a.f else: return X`. Each
+// read `a.f` the test guards is `f`, the field's own name (#2455: no invented names); a name `f` in scope leaves the
+// site as it is. Only while the fixer runs, on the `if` as smith's own syntax writes it. The guard is kept whatever
+// the field's type: only a read of an option takes it (`front::types_expr`). Returns whether the test is one.
+static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
+    if (countof(fixed_source) == 0 || !(s->kind == .if_stmt)) return false;
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    const ast::Expr *some = null_test(test, false);
+    Bool rest = null_test(test, true) != nullptr && s->kind.if_stmt.else_branch == nullptr && leaves(then_branch) &&
+                state.block_end != 0;
+    if ((some == nullptr && !rest) || !indented_if(s->span, test->span) || !(test->kind == .binary)) return false;
+    const ast::Expr *left = test->kind.binary.left;
+    if (!(left->kind == .member)) return false;
+    Str field = left->kind.member.name;
+    if (name_taken(r, field)) return false;
+    for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same field is covered by the first
+        types::Guard *g = &r->guards[i];
+        Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
+        if (covered && g->option && types::same_text(g->variant, field)) return false;
+    }
+    Str pattern = msg(format::push(field, " := "));
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    types::Guard guard = {.base = left->kind.member.base, .variant = field, .option = true, .test = test};
+    if (some != nullptr) {
+        head[0] = edit_of(left->span.start, left->span.start, pattern);
+        head[1] = edit_of(left->span.end, test->span.end, "");
+        guard.reads = then_branch->span;
+    } else {
+        head[0] = edit_of(s->span.start, left->span.start, pattern);
+        head[1] = edit_of(left->span.end, test->span.end, " else");
+        guard.reads = (ast::Span){.start = test->span.end, .end = state.block_end};
+        guard.skip = then_branch->span;
+    }
+    guard.head = head;
+    add_guard(r, guard);
+    return true;
+}
+
 // `if k == .v:` guards its `then` whether or not an `else` follows (an `else if` chain of tests is one guard each);
 // `if k != .v: return` guards the rest of the block only with no `else`.
 static void note_guard(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_stmt)) {
+    if (note_option_guard(r, s) || !(s->kind == .if_stmt)) {
         return;
     }
     const ast::Expr *test = s->kind.if_stmt.condition;
@@ -1389,6 +1452,14 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
         }
     }
     types_expr::drop_spoiled(r, first_error);
+    // The test of an option field whose binding no read wrote (or whose site is spoiled) gets its own fix: `nullptr`
+    // as `.none` (#2557).
+    for (Usize i = 0; i < r->guard_count; i++) {
+        types::Guard *g = &r->guards[i];
+        if (g->option && g->null_error > 0 && (!g->head_sent || g->spoiled)) {
+            r->errors[g->null_error - 1].fix = g->null_fix;
+        }
+    }
     state.result = outer;
 }
 

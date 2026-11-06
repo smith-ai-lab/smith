@@ -225,3 +225,85 @@ export void test_front_fix_zero_a_construction_in_another_folder_gives_the_defau
     Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
     test::check_equal(fixed.text, want);
 }
+
+// A pointer field that a construction leaves null and a read tests is `?*T = .none` (#2557): a read after
+// `!= nullptr` binds the field by its own name, `== nullptr: return` binds the rest of the block, `nullptr` is `.none`.
+export void test_front_fix_zero_a_tested_pointer_is_an_option_and_its_tested_reads_bind() {
+    expect_fixed("module m;\nstruct Node {\n    int value;\n    struct Node *next;\n};\n"
+                 "typedef const Node *NodeRef;\nstruct Holder {\n    NodeRef head;\n"
+                 "    int n;\n};\nNode make(int v) {\n    return (Node){.value = v};\n}\n"
+                 "Holder hold(void) {\n    return (Holder){.n = 1};\n}\n"
+                 "int first(const Node *n) {\n"
+                 "    if (n->next != nullptr) return n->next->value;\n    return 0;\n}\n"
+                 "int second(const Holder *h) {\n    if (h->head == nullptr) return 0;\n"
+                 "    return h->head->value;\n}\nvoid clear(Node *n) {\n"
+                 "    n->next = nullptr;\n}\n",
+                 "struct Node:\n    value: i32\n    next: ?*Node = .none\nNodeRef := *Node\n"
+                 "struct Holder:\n    head: ?NodeRef = .none\n    n: i32\n"
+                 "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
+                 "fn hold() -> Holder:\n    return Holder(n = 1)\n"
+                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n"
+                 "        return next.value\n    return 0\nfn second(h: *Holder) -> i32:\n"
+                 "    head := h.head else:\n        return 0\n    return head.value\n"
+                 "fn clear(n: *mut Node):\n    n.next = .none\n");
+}
+
+// A read of the option with no test before it is left as it is (#2557): it is an error to mend by hand.
+export void test_front_fix_zero_a_read_with_no_test_is_not_unwrapped() {
+    expect_fixed("module m;\nstruct Node {\n    I32 value;\n    Node *next;\n};\n"
+                 "Node make(I32 v) {\n    return (Node){.value = v};\n}\n"
+                 "I32 first(const Node *n) {\n"
+                 "    if (n->next != nullptr) return n->next->value;\n    return 0;\n}\n"
+                 "I32 unchecked(const Node *n) {\n    return n->next->value;\n}\n",
+                 "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
+                 "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
+                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n"
+                 "        return next.value\n    return 0\nfn unchecked(n: *Node) -> i32:\n"
+                 "    return n.next.value\n");
+}
+
+// A function pointer that C leaves null is `?F = .none` and a tested call binds it (lead on #2557).
+export void test_front_fix_zero_a_tested_function_pointer_is_an_option() {
+    expect_fixed("module m;\ntypedef void (*Handler)(I32 code);\nstruct Hooks {\n"
+                 "    I32 count;\n    Handler on_exit;\n};\nHooks quiet(void) {\n"
+                 "    return (Hooks){.count = 0};\n}\n"
+                 "void leave(const Hooks *h, I32 code) {\n"
+                 "    if (h->on_exit != nullptr) h->on_exit(code);\n}\n",
+                 "Handler := fn(i32)\nstruct Hooks:\n    count: i32\n"
+                 "    on_exit: ?Handler = .none\nfn quiet() -> Hooks:\n"
+                 "    return Hooks(count = 0)\nfn leave(h: *Hooks, code: i32):\n"
+                 "    if on_exit := h.on_exit:\n        on_exit(code)\n");
+}
+
+// A file that imports the struct reads it as the struct's own fix writes it (#2557): the module, read from its
+// pristine text, has `next` as `?*Node = .none`, so the importer's tested reads bind it too.
+export void test_front_fix_zero_an_importer_binds_the_reads_of_an_option_field() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_zero_list.smith";
+    Str user_path = "/tmp/front_fix_zero_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_zero_list;\nexport struct Node {\n    I32 value;\n"
+                                              "    Node *next;\n};\nexport Node make(I32 v) {\n"
+                                              "    return (Node){.value = v};\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_zero_user;\nimport front_fix_zero_list;\n"
+                                            "I32 second(const front_fix_zero_list::Node *n) {\n"
+                                            "    if (n->next == nullptr) return 0;\n    return n->next->value;\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    (void)c::unlink(module_path.data);
+    (void)c::unlink(user_path.data);
+    if (back == .error) {
+        test::check(false);
+        return;
+    }
+    char chars[:] = mem::view(back.ok, char);
+    Str got = chars;
+    Str want = "import front_fix_zero_list\nfn second(n: *front_fix_zero_list.Node) -> i32:\n"
+               "    next := n.next else:\n        return 0\n    return next.value\n";
+    test::check_equal(got, want);
+}
