@@ -51,3 +51,7 @@ export void test_front_fix_const_a_nullptr_out_parameter_local_is_mut() {
                    "    c.LLVMParseIRInContext(context, &module)\n",
                    1, 37);
 }
+
+export void test_front_fix_const_the_address_of_an_element_does_not_make_the_array_mut() {
+    expect_inserts("fn f():\n    xs: [3]f64 = [1.0, 2.0, 3.0]\n    g(&xs[0])\n", 0, 0);
+}

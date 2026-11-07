@@ -62,12 +62,12 @@ static Str initialized_local(Str line) {
     return name;
 }
 
-// Whether `&name` (not `&name2`) is in `text`.
+// Whether `&name` (not `&name2`, not the element `&name[0]`) is in `text`.
 static Bool takes_address(Str text, Str name) {
     for (Usize i = 0; i + 1 + countof(name) <= countof(text); i++) {
         if (text[i] != '&' || !starts_with(text[i + 1:countof(text)], name)) continue;
         Usize after = i + 1 + countof(name);
-        if (after >= countof(text) || !word_char(text[after])) return true;
+        if (after >= countof(text) || (!word_char(text[after]) && text[after] != '[')) return true;
     }
     return false;
 }
