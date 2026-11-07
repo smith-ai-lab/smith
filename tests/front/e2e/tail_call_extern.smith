@@ -1,0 +1,22 @@
+# A call in tail position to a C function declared with `extern fn` is a tail call when the types match; a call through
+# a `fn` value is an ordinary call (its prototype takes a context first) and still runs (#2709).
+
+extern fn abs(x: i32) -> i32
+
+fn magnitude(x: i32) -> i32:
+    return abs(x)
+
+fn magnitude_last(x: i32) -> i32:
+    abs(x)
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32:
+    return f(x)
+
+pub fn check() -> i32:
+    if magnitude(-5) != 5:
+        return 1
+    if magnitude_last(-7) != 7:
+        return 2
+    if apply(fn(v): v + 1, 41) != 42:
+        return 3
+    0

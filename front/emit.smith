@@ -782,6 +782,8 @@ static state::Status return_finish(state::Emitter *e, const state::ThenNone *w) 
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
+    // With no `defer` to run after the call, the call is the last thing the function does: a guaranteed tail call.
+    if (e->defer_count == 0) call::mark_tail_call(e, value.llvm);
     state::push_then_general(
         e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);
@@ -1309,6 +1311,89 @@ static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w)
     return blockval::value_of(e, s, w->hint);
 }
 
+// A block whose last line is an expression, with that line written as `return <expression>` (#2709), or null.
+static ast::Stmt *returning_block(const ast::Stmt *b) {
+    if (b->kind != .block || countof(b->kind.block.items) == 0) return nullptr;
+    ast::StmtRef items[:] = b->kind.block.items;
+    Usize count = countof(items);
+    const ast::Stmt *last = items[count - 1];
+    if (last->kind != .expression) return nullptr;
+    ast::StmtRef *room = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), count, alignof(ast::StmtRef));
+    for (Usize i = 0; i + 1 < count; i++)
+        room[i] = items[i];
+    room[count - 1] = ast::return_value(last->kind.expression.value);
+    room[count - 1]->span = last->span;
+    ast::StmtRef list[:] = room[0:count];
+    ast::Stmt *made = ast::block(list);
+    made->span = b->span;
+    mem::free((void *)room);
+    return made;
+}
+
+// An `if` (with `else if` and `else`) whose every branch ends in an expression, with each branch's last line
+// written as `return <expression>`, so a call there is in tail position (#2709). Null for anything else: a branch that
+// is not such a block, no `else`, or a chain of more than 32. The chain is read with a loop, not recursion.
+static ast::Stmt *returning_if(const ast::Stmt *s) {
+    const ast::Stmt *chain[32];
+    Usize count = 0;
+    const ast::Stmt *current = s;
+    ast::Stmt *tail = nullptr;
+    while (tail == nullptr) {
+        if (current->kind != .if_stmt || current->kind.if_stmt.is_constexpr || count == 32) return nullptr;
+        const ast::Stmt *otherwise = current->kind.if_stmt.else_branch;
+        if (otherwise == nullptr || current->kind.if_stmt.then_branch->kind != .block) return nullptr;
+        chain[count++] = current;
+        if (otherwise->kind == .if_stmt)
+            current = otherwise;
+        else if (otherwise->kind == .block) {
+            tail = returning_block(otherwise);
+            if (tail == nullptr) return nullptr;
+        } else
+            return nullptr;
+    }
+    for (Usize i = count; i > 0; i--) {
+        const ast::Stmt *node = chain[i - 1];
+        if (node->kind != .if_stmt) return nullptr;
+        ast::Stmt *then_branch = returning_block(node->kind.if_stmt.then_branch);
+        if (then_branch == nullptr) return nullptr;
+        ast::Stmt copy = *node;
+        if (copy.kind != .if_stmt) return nullptr;
+        copy.kind.if_stmt.then_branch = then_branch;
+        copy.kind.if_stmt.else_branch = tail;
+        tail = ast::new_stmt(copy);
+    }
+    return tail;
+}
+
+// A `match` whose every arm is an expression (or already a `return`), with each arm written as `return <expression>`,
+// so a call that ends an arm is in tail position (#2709). Null when an arm is a block or another statement.
+static ast::Stmt *returning_match(const ast::Stmt *s) {
+    if (s->kind != .match_stmt) return nullptr;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    Usize count = countof(arms);
+    if (count == 0 || count > 64) return nullptr;
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *value = arms[i].value;
+        if (value->kind == .stmt_expr && value->kind.stmt_expr.stmt->kind != .return_stmt) return nullptr;
+    }
+    ast::MatchArm *room = (ast::MatchArm *)mem::alloc_array_raw(sizeof(ast::MatchArm), count, alignof(ast::MatchArm));
+    for (Usize i = 0; i < count; i++) {
+        room[i] = arms[i];
+        const ast::Expr *given = arms[i].value;
+        if (given->kind != .stmt_expr) {
+            ast::Stmt *made = ast::return_value(arms[i].value);
+            made->span = arms[i].span;
+            room[i].value = ast::stmt_expr(made);
+            room[i].value->span = arms[i].value->span;
+        }
+    }
+    ast::MatchArm list[:] = room[0:count];
+    ast::Stmt *made = ast::match_stmt(s->kind.match_stmt.value, list);
+    made->span = s->span;
+    mem::free((void *)room);
+    return made;
+}
+
 // The body with its last `if`, `match` or block returned: as `value_block`, through the same continuation.
 static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *body) {
     try debug::stmt_location(e, body);
@@ -1317,6 +1402,19 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     }
     ast::StmtRef items[:] = body->kind.block.items;
     const ast::Stmt *last = items[countof(items) - 1];
+    ast::Stmt *returning = nullptr;
+    if (last->kind == .if_stmt) returning = returning_if(last);
+    if (last->kind == .match_stmt) returning = returning_match(last);
+    if (returning != nullptr) {
+        // Each branch returns its own value, so a call that ends a branch is a tail call (#2709).
+        state::begin_scope(e);
+        state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
+        state::push_statement(e, returning);
+        state::push_then_general(e, (state::ThenGeneral){.run = value_after_end, .span = last->span});
+        for (Usize i = countof(items) - 1; i > 0; i--)
+            state::push_statement(e, items[i - 1]);
+        return state::success();
+    }
     state::begin_scope(e);
     state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
     state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = last->span});
@@ -2020,6 +2118,7 @@ static state::Status emit_all(state::Emitter *e) {
     try check_static_asserts(e);
     append_module_asm(e);
     try debug::finish(e);
+    try call::check_recursion(e->module);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {
         ast::Span nowhere = {};

@@ -46,7 +46,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `T f(constexpr Usize n)` | `fn f(const n: usize) -> T:` |
 | `auto f(auto x)` | `fn f[T](x: T):`, or a concept in the type's place: `fn f(x: num):` |
 | `Lambda(F)` parameter | `fn(A) -> R` |
-| `[[nodiscard]]`, `[[maybe_unused]] I32 x` | nothing (an unused result is an error), `_x` |
+| `[[nodiscard]]`, `[[maybe_unused]] I32 x`, `[[clang::musttail]] return f(x);` | nothing (an unused result is an error), `_x`, `return f(x)` (a call in tail position is always a tail call, #2709) |
 | `[[std::affine]]`, `[[gnu::always_inline]]`, `[[std::c_name("X")]]` | `@affine`, `@inline`, `@c_name("X")`: `[[std::x]]` becomes `@x` |
 | `[[std::effects(alloc, net)]]` | `@effects(.alloc, .net)` |
 | `#if defined(__APPLE__)` around declarations | `@when(target.os == .macos)` on each |

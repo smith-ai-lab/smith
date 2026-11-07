@@ -1,0 +1,31 @@
+
+
+// The same functions as recursion.smith in a .smith file with no `module` line: nothing is said (the strictness
+// ladder).
+
+U64 fib(U64 n) {
+    return n < 2 ? n : fib(n - 1) + fib(n - 2);
+}
+
+Bool is_even(U32 n);
+
+Bool is_odd(U32 n) {
+    return n != 0 && is_even(n - 1);
+}
+
+Bool is_even(U32 n) {
+    return n == 0 || is_odd(n - 1);
+}
+
+// One call that is not a jump on a cycle of jumps is enough.
+U64 mixed(U64 n);
+
+U64 mixed_back(U64 n) {
+    if (n == 0) return 0;
+    [[clang::musttail]] return mixed(n - 1);
+}
+
+U64 mixed(U64 n) {
+    if (n == 0) return 1;
+    return mixed_back(n - 1) + 1;
+}

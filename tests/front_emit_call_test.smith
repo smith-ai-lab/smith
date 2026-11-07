@@ -431,7 +431,8 @@ export void test_front_emit_call_a_void_function_with_an_early_return() {
     emit_jit::stop(&host);
 }
 
-// `I32 fact(I32 a) { return a <= 1 ? 1 : a * fact(a - 1); }` and the statement form with `if`.
+// `I32 fact(I32 a) { return a <= 1 ? 1 : a * fact(a - 1); }` is recursion that is not a tail call: an error (#2709).
+// The statement form `if (a <= 1) { 1 } fact2(a - 1)` ends in a call to itself, a tail call, and runs.
 export void test_front_emit_call_fact_calls_itself() {
     TreeMemory trees = {};
     tree_begin(&trees);
@@ -439,7 +440,7 @@ export void test_front_emit_call_fact_calls_itself() {
     ast::StmtRef items[1] = {give(choose(ast::binary(.less_equal, name("a"), number(1)), number(1), rest))};
     ast::DeclRef decls[1] = {function1("fact", "I32", "I32", items)};
     ast::Module m = module_of(decls);
-    ast::Expr *again = ast::binary(.multiply, name("a"), call1("fact2", ast::binary(.subtract, name("a"), number(1))));
+    ast::Expr *again = call1("fact2", ast::binary(.subtract, name("a"), number(1)));
     ast::StmtRef base[1] = {give(number(1))};
     ast::StmtRef items2[2] = {if_else(ast::binary(.less_equal, name("a"), number(1)), ast::block(base), nullptr),
                               give(again)};
@@ -447,12 +448,11 @@ export void test_front_emit_call_fact_calls_itself() {
     ast::Module m2 = module_of(decls2);
     tree_end(&trees);
     emit_jit::Jit host = start_jit();
-    UnaryI32 fact = (UnaryI32)jit_function(&host, &m, "front::test::fact");
-    test::check_equal(fact(1), 1);
-    test::check_equal(fact(5), 120);
-    test::check_equal(fact(10), 3628800);
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    emit::ModuleResult refused = emit::module(context, &m, options_for(host.target));
+    test::check_equal(refused == .ok, false);
     UnaryI32 fact2 = (UnaryI32)jit_function(&host, &m2, "front::test::fact2");
-    test::check_equal(fact2(6), 720);
+    test::check_equal(fact2(6), 1);
     emit_jit::stop(&host);
 }
 

@@ -9,7 +9,8 @@
 //   smith-mem           a call of C's memcpy, memmove, memset, memcmp, malloc, calloc, realloc or free: each has a
 //                       checked replacement in std::mem.
 //   smith-bounded-loop  a `for` with no condition, or a `while`, `do ... while` or `for` whose condition is the
-//                       constant `true` (or a non-zero integer), outside `main`.
+//                       constant `true` (or a non-zero integer), outside `main`. In a generator (a body with a
+//                       `yield`) such a loop is allowed when every turn reaches a `yield` (#2709).
 //   smith-module-library  `import c <smith/arena.h>`, or a `c::name` the header lists, where the header is a library
 //                       that is a module: its generated header says `// smith-module: std::arena` and `// smith-names:
 //                       push_raw=smith_arena_push ...`, and the module is imported by name instead. The checker
@@ -466,7 +467,111 @@ static Bool always(const ast::Expr *e) {
     return false;
 }
 
-static void report_loop(types::Checked *r, const ast::Stmt *s) {
+static Bool is_loop(const ast::Stmt *s) {
+    return s->kind == .while_stmt || s->kind == .for_stmt || s->kind == .do_while;
+}
+
+// Whether `root` holds a `continue` (one of an inner loop is that loop's, not the outer one's).
+static Bool holds_continue(const ast::Stmt *root) {
+    Work w = {};
+    push(&w, root, nullptr);
+    Bool found = false;
+    while (w.top > 0 && !found) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt == nullptr) {
+            continue;
+        }
+        if (item.stmt->kind == .continue_stmt) {
+            found = true;
+        } else if (!is_loop(item.stmt) || item.stmt == root) {
+            stmt_parts(&w, item.stmt);
+            stmt_parts_more(&w, item.stmt);
+        }
+    }
+    mem::free(w.items.data);
+    return found;
+}
+
+// Whether `root` holds a `yield` (the function is a generator).
+static Bool holds_yield(const ast::Stmt *root) {
+    Work w = {};
+    push(&w, root, nullptr);
+    Bool found = false;
+    while (w.top > 0 && !found) {
+        w.top -= 1;
+        Item item = w.items[w.top];
+        if (item.stmt == nullptr) {
+            continue;
+        }
+        if (item.stmt->kind == .yield_stmt) {
+            found = true;
+        } else {
+            stmt_parts(&w, item.stmt);
+            stmt_parts_more(&w, item.stmt);
+        }
+    }
+    mem::free(w.items.data);
+    return found;
+}
+
+// Whether a branch yields on every path through it: it is a `yield`, or a block with a `yield` among its own lines.
+static Bool branch_yields(const ast::Stmt *s) {
+    if (s == nullptr) {
+        return false;
+    }
+    if (s->kind == .yield_stmt) {
+        return true;
+    }
+    if (s->kind != .block) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(s->kind.block.items); i++) {
+        const ast::Stmt *line = s->kind.block.items[i];
+        if (line->kind == .yield_stmt) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether every turn of the loop body reaches a `yield` (owner, 2026-11-07, #2709: "each step needs to be bounded"):
+// a `yield` among the body's own lines, or an `if` with an `else` whose branches both have one, with no `continue`
+// before it. "Not obviously infinite", as the lint reads loops today.
+static Bool yields_every_turn(const ast::Stmt *body) {
+    if (body == nullptr || body->kind != .block) {
+        return body != nullptr && body->kind == .yield_stmt;
+    }
+    for (Usize i = 0; i < countof(body->kind.block.items); i++) {
+        const ast::Stmt *line = body->kind.block.items[i];
+        if (line->kind == .yield_stmt) {
+            return true;
+        }
+        if (line->kind == .if_stmt && branch_yields(line->kind.if_stmt.then_branch) &&
+            branch_yields(line->kind.if_stmt.else_branch)) {
+            return true;
+        }
+        if (holds_continue(line)) {
+            return false;
+        }
+    }
+    return false;
+}
+
+static const ast::Stmt *loop_body(const ast::Stmt *s) {
+    if (s->kind == .while_stmt) {
+        return s->kind.while_stmt.body;
+    }
+    if (s->kind == .for_stmt) {
+        return s->kind.for_stmt.body;
+    }
+    if (s->kind == .do_while) {
+        return s->kind.do_while.body;
+    }
+    return nullptr;
+}
+
+static void report_loop(types::Checked *r, const ast::Stmt *s, Bool generator) {
     Str spelled = "";
     if (s->kind == .for_stmt && s->kind.for_stmt.range == nullptr && s->kind.for_stmt.condition == nullptr &&
         s->kind.for_stmt.init == nullptr && s->kind.for_stmt.step == nullptr) {
@@ -478,7 +583,15 @@ static void report_loop(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .do_while && always(s->kind.do_while.condition)) {
         spelled = "a `do ... while` with a constant condition";
     }
-    if (countof(spelled) > 0) {
+    if (countof(spelled) > 0 && generator) {
+        // A generator's loop is lazy: whoever consumes it bounds it, so each step has to reach a `yield`.
+        if (!yields_every_turn(loop_body(s))) {
+            types::failf(r, s->span, spelled,
+                         " in a generator may never reach a `yield`: a step of this generator "
+                         "must yield on every path");
+            tag(r, "smith-bounded-loop");
+        }
+    } else if (countof(spelled) > 0) {
         types::failf(r, s->span, spelled,
                      " never ends on its own: bound the loop by a count (`for i in range(limit)`); only `main` "
                      "runs forever");
@@ -790,6 +903,7 @@ static void check_function(types::Checked *r, const CNames *c, const Libraries *
     if (is_trusted(root)) {
         return;
     }
+    Bool generator = holds_yield(root);
     Work w = {};
     push(&w, root, nullptr);
     while (w.top > 0) {
@@ -797,7 +911,7 @@ static void check_function(types::Checked *r, const CNames *c, const Libraries *
         Item item = w.items[w.top];
         if (item.stmt != nullptr) {
             if (!is_main) {
-                report_loop(r, item.stmt);
+                report_loop(r, item.stmt, generator);
             }
             report_local_type(r, libs, item.stmt);
             stmt_parts(&w, item.stmt);

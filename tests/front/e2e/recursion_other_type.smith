@@ -1,0 +1,12 @@
+# A call to a function of another type is not a tail call: a tail call needs the same parameters and result.
+
+fn first(n: u64) -> u64:
+    if n == 0:
+        return 0
+    return second(n - 1, 1)
+
+fn second(n: u64, step: u64) -> u64:
+    return first(n - step)
+
+pub fn check() -> i32:
+    0

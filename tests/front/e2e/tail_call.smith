@@ -1,0 +1,51 @@
+# A call in tail position is always a guaranteed tail call (#2709): tail recursion is a loop, with no annotation, so
+# ten million calls fit in the stack at -O0.
+
+fn sum_to(n: u64, total: u64) -> u64:
+    if n == 0:
+        return total
+    return sum_to(n - 1, total + n)
+
+fn ping(n: u64) -> u64:
+    if n == 0:
+        return 1
+    return pong(n - 1)
+
+fn pong(n: u64) -> u64:
+    if n == 0:
+        return 0
+    return ping(n - 1)
+
+# The last line of the body is a tail call too.
+fn count_down(n: u64, steps: u64) -> u64:
+    if n == 0:
+        return steps
+    count_down(n - 1, steps + 1)
+
+# The last line is an `if` whose branches end in a call: each is a tail call.
+fn count_up(n: u64, limit: u64) -> u64:
+    if n == limit:
+        n
+    else if n > limit:
+        0
+    else:
+        count_up(n + 1, limit)
+
+# The last line is a `match`: a call ending an arm is a tail call.
+fn walk(n: u64, left: u64) -> u64:
+    match left:
+        0: n
+        _: walk(n + 1, left - 1)
+
+pub fn check() -> i32:
+    if sum_to(10000000, 0) != 50000005000000:
+        return 1
+    if ping(10000000) != 1:
+        return 2
+    if count_down(10000000, 0) != 10000000:
+        return 3
+    if count_up(0, 10000000) != 10000000:
+        return 4
+    if walk(0, 10000000) != 10000000:
+        return 5
+    0
