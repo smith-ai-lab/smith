@@ -1043,3 +1043,17 @@ export void test_parse_decl_alignas_is_an_attribute() {
     expect_fixed("void f(void) {\n    alignas(16) U8 b[16];\n}\n",
                  "fn f():\n    @align(16)\n    mut b: [16]u8 = undefined\n", 3);
 }
+
+// A variable of an anonymous struct type gets a struct of its own at the end of the file, named from the variable (the
+// checker types no struct declared inside a function), and `alignas` on a field is kept as `@align`.
+export void test_parse_decl_anonymous_struct_variable_is_hoisted() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("static struct {\n    alignas(16) U8 bytes[8];\n} scratch_area;\n",
+                 "import std.array\nstatic mut scratch_area: ScratchArea = ScratchArea()\n\nstruct ScratchArea:\n    "
+                 "@align(16)\n"
+                 "    bytes: [8]u8 = array.filled(u8, 8, 0)\n",
+                 9);
+}
