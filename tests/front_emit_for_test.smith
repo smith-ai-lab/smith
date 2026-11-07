@@ -372,3 +372,24 @@ export void test_front_emit_for_an_array_value_must_be_stored_in_a_local_first()
              "    0\n",
              "store it in a local first", "g()");
 }
+
+// A `static` local is a private global: it keeps its value from call to call and starts as its constant.
+export void test_front_emit_static_local_keeps_its_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn next() -> i32:\n"
+                "    static mut count: i32 = 10\n"
+                "    count += 1\n"
+                "    count\n"
+                "pub fn other() -> i32:\n"
+                "    static mut count: i32 = 100\n"
+                "    count += 1\n"
+                "    count\n",
+                &host, &s);
+    Nullary next = (Nullary)symbol_of(&host, "next");
+    Nullary other = (Nullary)symbol_of(&host, "other");
+    test::check_equal(next(), (I32)11);
+    test::check_equal(next(), (I32)12);
+    test::check_equal(other(), (I32)101);
+    emit_jit::stop(&host);
+}

@@ -689,6 +689,7 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
         return state::fail("not a variable", span);
     }
     const ast::TypeExpr *type = d->kind.variable.type;
+    Str name = d->kind.variable.name;
     if (state::same_text(d->kind.variable.name, "_") && d->kind.variable.init != nullptr) {
         // `let _ = f()`: the value is computed and dropped; no slot, no local.
         state::Hint dropped = state::no_hint();
@@ -705,6 +706,13 @@ static state::Status local_variable(state::Emitter *e, const ast::Decl *d, ast::
     }
     // A local `const X = v` is a constant local; today's `constexpr T x` is not emitted yet.
     Bool is_const_local = d->kind.variable.is_constexpr && d->kind.variable.is_new;
+    if (d->is_static && !d->is_extern && !d->kind.variable.is_thread_local && d->kind.variable.init != nullptr) {
+        state::Ty held = {};
+        c::LLVMValueRef global = nullptr; // `static mut buffer: [1024]char = ...`: a private global, same name
+        try emit_memory::static_local(e, d, &held, &global);
+        state::add_local(e, (state::Local){.name = name, .ty = held, .address = global});
+        return state::success();
+    }
     if ((d->kind.variable.is_constexpr && !is_const_local) || d->kind.variable.is_thread_local || d->is_static ||
         d->is_extern)
         return state::not_emitted("this kind of variable", span);
