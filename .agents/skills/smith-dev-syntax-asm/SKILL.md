@@ -5,6 +5,8 @@ description: "New syntax (D7, #2636): the tagged backtick literal, `asm` followe
 
 # Tagged literals and module assembly
 
+**Decided, not yet built (D22, #2727):** backticks leave the language. A tag is a name before a string, and assembly is written `asm"""` ... `"""`, with escapes like any string. Until #2727 merges, the parser reads only the backtick form below; write that in tests today.
+
 ```smith
 @when(target.arch == .x86_64 and target.os == .linux)
 asm`.text
