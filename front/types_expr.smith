@@ -4311,9 +4311,9 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
     }
     push(w, e, f.expected, 4);
     for (Usize i = countof(items); i > 0; i--) {
-        if (items[i - 1]->kind == .expand) {
-            push(w, items[i - 1]->kind.expand.pattern, nullptr,
-                 0); // `[a..., b]`: the pack or array is read, then spliced
+        const ast::Expr *item = items[i - 1];
+        if (item->kind == .expand) {
+            push(w, item->kind.expand.pattern, nullptr, 0); // `[a..., b]`: the pack or array is read, then spliced
         } else {
             push(w, items[i - 1], wanted, 0);
         }
@@ -4321,7 +4321,7 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
 }
 
 // How many elements the item `[a..., b]` of an array literal adds: one, or the count of the tuple or array it
-// spreads; -1 (reported) when it spreads a value whose count is not known at compile time.
+// spreads; 0 (reported) when it spreads a value whose count is not known at compile time.
 static Usize spread_count(types::Checked *c, const ast::Expr *item, Bool *ok) {
     if (!(item->kind == .expand)) return 1;
     types::TypeRef t = typ(c, item->kind.expand.pattern);
