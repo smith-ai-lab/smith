@@ -214,18 +214,27 @@ export Bool find(Str name, Entry *found) {
 }
 
 // Whether the callee is `<module>.<name>`, `name` read through a module that `import <module>` bound.
-static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str name) {
+static Bool is_module_named(const types::Checked *c, Str first, Str module_path) {
+    const types::Symbol *module = types::scoped(c, first);
+    if (module == nullptr) return false;
+    if (!(module->kind == .module_name)) return false;
+    return same(types::module_dotted(module), module_path);
+}
+
+static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str function) {
     types::Names names = {};
-    if (callee->kind == .member && !callee->kind.member.arrow) {
-        names = types::member_names(callee);
-    } else if (callee->kind == .name) {
+    if (callee->kind == .member) {
+        if (!callee->kind.member.arrow) names = types::member_names(callee);
+    }
+    if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         if (countof(path.segments) != 2) return false;
-        names = (types::Names){.count = 2, .items = {path.segments[0].text, path.segments[1].text}};
+        names.count = 2;
+        names.items[0] = path.segments[0].text;
+        names.items[1] = path.segments[1].text;
     }
-    if (names.count != 2 || !same(names.items[1], name)) return false;
-    const types::Symbol *module = types::scoped(c, names.items[0]);
-    return module != nullptr && module->kind == .module_name && same(types::module_dotted(module), module_path);
+    if (names.count != 2 || !same(names.items[1], function)) return false;
+    return is_module_named(c, names.items[0], module_path);
 }
 
 static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
