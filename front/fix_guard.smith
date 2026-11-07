@@ -189,11 +189,11 @@ export core::Errors edits(Str source) {
         Str binding = types::message_of(format::push(".ok(ok) := ", name, " else:"));
         out = add(out, head, head + after, binding);
         Usize from = 0;
-        for (;;) {
-            Usize found = read_at(source[body_end:rest_end], from, name);
-            if (found >= rest_end - body_end) break;
+        Usize found = read_at(source[body_end:rest_end], from, name);
+        while (found < rest_end - body_end) {
             out = add(out, body_end + found, body_end + found + countof(name) + 3, "ok");
             from = found + countof(name) + 3;
+            found = read_at(source[body_end:rest_end], from, name);
         }
         at = end + 1;
     }

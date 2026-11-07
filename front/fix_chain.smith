@@ -190,11 +190,11 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
         Str head = types::message_of(format::push(".", variant, "(", variant, ") := ", subject));
         out = add(out, base + a, base + b, head);
         Usize at = parts[i].stop;
-        for (;;) {
-            Usize found = read_at(line, at, subject, variant);
-            if (found >= countof(line)) break;
+        Usize found = read_at(line, at, subject, variant);
+        while (found < countof(line)) {
             out = add(out, base + found, base + found + countof(subject) + 1 + countof(variant), variant);
             at = found + countof(subject) + 1 + countof(variant);
+            found = read_at(line, at, subject, variant);
         }
     }
     return out;
