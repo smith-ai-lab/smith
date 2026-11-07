@@ -30,7 +30,8 @@ constexpr Usize check_capacity = 1U << 16;
 // The folder of the repository (`name`, relative to $SMITH_REPO) as a path, from the current allocator.
 static const char *in_repo(const char *name) {
     env::Value repo = env::get("SMITH_REPO");
-    return format::push(repo == .some ? repo.some.data : ".", "/", name).data;
+    const char *base = repo == .some ? repo.some.data : ".";
+    return format::push(base, "/", name).data;
 }
 
 // The check of a folder of the repository, in process (smith_core_docs_check): the problems and the summary line, as
