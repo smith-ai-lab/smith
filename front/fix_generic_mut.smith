@@ -292,6 +292,18 @@ static core::Errors pointer_params(const ast::Module *module, Str source, ast::P
     return out;
 }
 
+// A parameter of a generic function that the body assigns (`p += 1`, `n -= 1`) is `mut p: T`, as a local is.
+static core::Errors assigned_params(Str source, ast::Param params[:], Usize body, Usize end, core::Errors out) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_mut || params[i].is_pack || params[i].is_rest || !params[i].is_new) continue;
+        if (params[i].span.start >= countof(source) || !assigned_later(source, body, end, params[i].name, false, body))
+            continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = fix_at(params[i].span.start);
+    }
+    return out;
+}
+
 // front::fix_generic_mut also holds the fix-it for the index loop over a compile-time list (#2668): the old
 // `for constexpr (Usize i = 0; i < countof(args); i++)` reads each element as `args[i]`, which the new syntax has only
 // as an unrolled loop over the elements: an index is a run-time value, and a pack or `fields(T)` is indexed by a
@@ -394,16 +406,45 @@ static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize h
     if (!fields && !is_pack(module, list)) return none;
     Str name = fields ? "f" : "arg";
     Usize end = body_end(s, header_end, indent);
-    if (end == header_end || has_word(s, header_end, end, name)) return none;
+    if (end == header_end) return none;
+    // `constexpr const f: Field = fields(T)[i]` on the first line of the body names the element: that name is the
+    // loop's, and the line goes.
+    Usize scan_from = header_end;
+    Usize bound_start = header_end + 1;
+    Usize bound_end = bound_start;
+    Bool bound = false;
+    Usize word = bound_start;
+    while (word < end && s[word] == ' ')
+        word += 1;
+    if (fields && text_at(s, word, "constexpr const ")) {
+        Usize n0 = word + 16;
+        Usize n1 = n0;
+        while (n1 < end && word_char(s[n1]))
+            n1 += 1;
+        Usize after = n1 + 10 + countof(list) + countof(index) + 2;
+        if (text_at(s, n1, ": Field = ") && text_at(s, n1 + 10, list) && text_at(s, n1 + 10 + countof(list), "[") &&
+            text_at(s, n1 + 11 + countof(list), index) && after <= end && s[after - 1] == ']' &&
+            line_stop(s, bound_start) == after) {
+            name = s[n0:n1];
+            bound = true;
+            bound_end = after + 1;
+            scan_from = bound_end;
+        }
+    }
+    if (!bound && has_word(s, header_end, end, name)) return none;
     core::Edits out = {};
     Usize uses = 0;
-    for (Usize k = header_end; k + countof(index) <= end; k++) {
+    for (Usize k = scan_from; k + countof(index) <= end; k++) {
         if (!text_at(s, k, index) || word_char(s[k - 1]) || s[k - 1] == '.') continue;
         if (k + countof(index) < countof(s) && word_char(s[k + countof(index)])) continue;
         Usize before = countof(list) + 1;
         if (k < before || !text_at(s, k - before, list) || s[k - 1] != '[' || s[k + countof(index)] != ']') return none;
         out = edit_push(out, k - before, k + countof(index) + 1, name);
         uses += 1;
+    }
+    if (bound) {
+        uses += 1;
+        out = edit_push(out, bound_start, bound_end, "");
     }
     if (uses == 0) return none;
     out = edit_push(out, name_start, name_start + countof(index), name);
@@ -445,6 +486,7 @@ export core::Errors edits(Str source, const ast::Module *module) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
             if (body < end) out = scan(source, body, end, out);
+            if (body < end) out = assigned_params(source, params, body, end, out);
             if (body < end) out = pointer_params(module, source, params, body, end, out);
         }
     }

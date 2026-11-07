@@ -76,3 +76,17 @@ export void test_front_fix_generic_mut_an_index_loop_that_uses_the_index_stays()
         "pub fn weighted(rest...) -> i32:\n    weights: [3]i32 = [1, 2, 3]\n    mut sum: i32 = 0\n"
         "    for i in range(0, countof(rest)):\n        sum += rest[i].to(i32) * weights[i]\n    return sum\n");
 }
+
+export void test_front_fix_generic_mut_a_parameter_the_body_assigns_is_mut() {
+    expect_fixed("module m;\nexport void walk(auto p, Usize n) {\n    while (n > 0) {\n        p += 1;\n        n -= "
+                 "1;\n    }\n}\n",
+                 "pub fn walk(mut p: auto, mut n: usize):\n    while n > 0:\n        p += 1\n        n -= 1\n");
+}
+
+export void test_front_fix_generic_mut_the_field_bound_in_an_index_loop_names_the_loop() {
+    expect_fixed(
+        "module m;\nexport void each(auto v) {\n"
+        "    for constexpr (Usize i = 0; i < countof(fields(typeof(v))); i++) {\n"
+        "        constexpr Field f = fields(typeof(v))[i];\n        (void)f;\n        sink(v.[f]);\n    }\n}\n",
+        "pub fn each(v: auto):\n    for f in fields(typeof(v)):\n        _ := f\n        sink(v.[f])\n");
+}
