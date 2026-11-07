@@ -406,4 +406,3 @@ export void test_front_fix_zero_a_c_layout_struct_leaves_its_pointers_unset() {
                  "    pub flags: ?**char = .none\n    pub n: i32\nfn plain() -> App:\n    return App(n = 1)\n"
                  "fn set() -> App:\n    return App(entry = \"main\", flags = .none, n = 2)\n");
 }
-
