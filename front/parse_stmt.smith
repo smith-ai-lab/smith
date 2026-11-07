@@ -1992,6 +1992,8 @@ static void case_fix(const parse::Parser *p, Frame *frame, Bool closing) {
         frame->switch_edits[frame->last_label].text = arm;
         ast::Span gone = {.start = first->span.end, .end = first->span.end};
         if (plain) gone.end = last->span.end;
+        // the arm's `;` and the `break;` go together: `case .ok: f(); break;` is `.ok => f()`
+        if (plain && gone.end < countof(p->source) && p->source[gone.end] == ';') gone.end += 1;
         if (single && gone.end < countof(p->source) && p->source[gone.end] == ';') gone.end += 1;
         add_switch_edit(frame, edit(gone, nothing));
         return;
