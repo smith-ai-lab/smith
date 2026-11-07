@@ -932,6 +932,16 @@ void extend_path(char *next, const char *path, const char *name) {
     __builtin_snprintf(next, label_capacity, "%s%s%s", path, path[0] != '\0' && name[0] != '[' ? "." : "", name);
 }
 
+// Two slices (a slice type, whose `countof(a)` and `a[i]` an instance writes as the lowering does): equal when counts
+// and every element is as check_part compares one, through the pointers to the first elements. The first that differs
+// is named, the count (`a.count = 3`) or the index (`a[1] = 5`, `b[1] = 6`).
+void check_slices(auto a, typeof(a) b) {
+    if (countof(a) != countof(b)) {
+        fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
+    }
+    check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
+}
+
 // Compares a and b part by part and fails at the first that differs, naming it. A struct is compared field by field
 // (`fields(T)`, at compile time), a fixed array element by element (count elements, a and b the pointers they decay
 // to), anything else by value. The fields of a struct are reached with `a.[f]`, so a bit-field is read, never
@@ -976,27 +986,13 @@ void check_part(const char *path, auto a, typeof(a) b, Usize count) {
     }
 }
 
-// Two slices (a slice type, whose `countof(a)` and `a[i]` an instance writes as the lowering does): equal when counts
-// and every element is as check_part compares one, through the pointers to the first elements. The first that differs
-// is named, the count (`a.count = 3`) or the index (`a[1] = 5`, `b[1] = 6`).
-void check_slices(auto a, typeof(a) b) {
-    if (countof(a) != countof(b)) {
-        fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
-    }
-    check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
-}
-
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
 // values print with it. Two structs are equal when every field is, and the first that differs is named
 // (`a.pair.m = 1`, `b.pair.m = 2`); a fixed array field is compared element by element, and two slices by their counts
 // and then their elements (`a[1] = 5`, `b[1] = 6`).
 export void check_equal(auto a, typeof(a) b) {
     if constexpr (is_slice(typeof(a))) {
-        // what check_slices does, written here: an instance of a generic called from a generic has no `T` to infer
-        if (countof(a) != countof(b)) {
-            fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
-        }
-        check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
+        check_slices(a, b);
     } else if constexpr (is_record(typeof(a))) {
         check_part("", a, b, 0);
     } else if constexpr (target::static_analyzer) {
