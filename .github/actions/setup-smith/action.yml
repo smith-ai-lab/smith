@@ -123,7 +123,7 @@ runs:
         if ! SMITH_OUTPUT=full "$SMITH" test --list ${{ inputs.test-flags }} >"$RUNNER_TEMP/list.out" 2>&1; then
           tail -n 300 "$RUNNER_TEMP/list.out"
           for runner in build/*/front-project/build/tests; do
-            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
+            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100 || true; echo "::endgroup::"; }
           done
           for nested in .smith/log build/*/*-project/.smith/log; do
             [ -d "$nested" ] || continue
