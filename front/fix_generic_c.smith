@@ -11,14 +11,30 @@ import front::parse as core;
 import front::types;
 import std::mem;
 
+// Whether the type is `auto` or a pointer, slice or array of it (`xs: []auto`, `const auto xs[:]`).
+static Bool has_auto(const ast::TypeExpr *type) {
+    while (type != nullptr) {
+        if (type->kind == .auto_type) return true;
+        if (type->kind == .pointer) {
+            type = type->kind.pointer.pointee;
+        } else if (type->kind == .slice) {
+            type = type->kind.slice.element;
+        } else if (type->kind == .array) {
+            type = type->kind.array.element;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
 // Whether the function is a template: a compile-time parameter or an `auto` one.
 static Bool is_generic(const ast::Decl *d) {
     if (d->kind != .function) return false;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
-        const ast::TypeExpr *type = params[i].type;
-        if (type != nullptr && type->kind == .auto_type) return true;
+        if (has_auto(params[i].type)) return true;
     }
     return false;
 }
