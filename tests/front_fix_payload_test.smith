@@ -1,0 +1,28 @@
+// Tests of the fix-it for a payload enumeration built with a named tuple (#2648): C's `{.kind = {.vector = {...}}}`.
+module front_fix_payload_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_payload_nested_designator_of_a_payload_enum_is_a_variant() {
+    expect_fixed("module m;\ntypedef struct {\n    int count;\n} Sized;\n"
+                 "typedef enum {\n    Sized vector;\n    boolean;\n} Kind;\n"
+                 "typedef struct {\n    Kind kind;\n    int n;\n} Ty;\n"
+                 "Ty make(int c) {\n    Ty t = {.kind = {.vector = {.count = c}}, .n = 1};\n    return t;\n}\n",
+                 "struct Sized:\n    count: i32\nenum Kind:\n    vector: Sized\n    boolean\n"
+                 "struct Ty:\n    kind: Kind\n    n: i32\n"
+                 "fn make(c: i32) -> Ty:\n    t := Ty(kind = .vector((count = c)), n = 1)\n    return t\n");
+}
