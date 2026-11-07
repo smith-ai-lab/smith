@@ -80,7 +80,7 @@ tags: [lowering, internals]
   in the file the instance is written in (a generic's instance is compiled where it is called, where another module's
   function is a declaration, except an import's functions over `type`, which the importer defines, #107). The raw lowering has no `value_query` and says so. `SMITH_LANG_ASK='!grid.cells,!f(3)'`
   prints the tree.
-- **The lowering** is C (`runtime/lang*.c`, included by smith.c): a state machine over tokens that knows nothing of
+- **The lowering** is C (`runtime/lang*.c`): a state machine over tokens that knows nothing of
   clang. An exported declaration is read whole before it is written (its prefix and, for a function, a prototype with
   the symbol label are decided by all of it); the plain lexer (`runtime/lang_lex.c`, for `smith cc --smith-header`) reads every
   declaration that way. A private declaration of a module is decided as it streams by, which is what keeps the hook

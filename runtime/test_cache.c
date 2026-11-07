@@ -11,6 +11,11 @@
 // test is never stored. A test the key cannot pin down is not cached: unknown means run it. That is a test with the
 // marker `// smith-test: uncached`, one that reads the clock, the network, entropy or a file without `files`, one that
 // asks git, and one whose source file is not found.
+#include "test_cache.h"
+#include "changed.h"
+#include "core.h"
+#include "package.h"
+
 #include <dirent.h>
 #include <ftw.h>
 #include <sys/stat.h>
@@ -89,7 +94,7 @@ static bool smith_tc_hash_folder(const char *path, char hex[smith_sha256_hex_siz
         used += length;
     }
     closedir(folder);
-    qsort(names, count, sizeof names[0], smith_tc_compare);
+    qsort((void *)names, count, sizeof names[0], smith_tc_compare);
     SmithSha256 sha;
     smith_sha256_init(&sha);
     for (size_t i = 0; i < count; i++) { // bounded by the names
@@ -135,7 +140,7 @@ static void smith_tc_feed_environment(SmithSha256 *sha) {
     for (size_t i = 0; environ[i] != nullptr && count < 256; i++) { // bounded by the environment and the kept
         if (smith_tc_env_keyed(environ[i])) kept[count++] = environ[i];
     }
-    qsort(kept, count, sizeof kept[0], smith_tc_compare);
+    qsort((void *)kept, count, sizeof kept[0], smith_tc_compare);
     for (size_t i = 0; i < count; i++) { // bounded by the kept
         smith_tc_feed(sha, kept[i]);
         if (smith_tc_why) fprintf(stderr, "smith test cache: the key holds %s\n", kept[i]);
@@ -594,7 +599,7 @@ static size_t smith_tc_load_passed(const char *folder, const char **names) {
         used += length + 1;
     }
     fclose(file);
-    qsort(names, count, sizeof names[0], smith_tc_compare);
+    qsort((void *)names, count, sizeof names[0], smith_tc_compare);
     return count;
 }
 
@@ -616,7 +621,8 @@ static int smith_tc_store_main(const char *folder) {
         const char *key = tab + 1;
         const char *name = row;
         tab[1 + strcspn(key, "\n")] = '\0';
-        if (bsearch(&name, names, count, sizeof names[0], smith_tc_compare) == nullptr) continue;
+        if (bsearch((const void *)&name, (const void *)names, count, sizeof names[0], smith_tc_compare) == nullptr)
+            continue;
         char clean[smith_tc_name_max];
         smith_tc_clean(name, clean, sizeof clean);
         snprintf(path, sizeof path, "%s/reads/%s.txt", folder, clean);
@@ -628,7 +634,7 @@ static int smith_tc_store_main(const char *folder) {
 }
 
 // `smith test --cache check|store <folder>` (the runner's calls).
-static int smith_tc_main(int count, char **args) {
+int smith_tc_main(int count, char **args) {
     if (count != 2) {
         fputs("usage: smith test --cache check|store <folder>\n", stderr);
         return smith_exit_usage;

@@ -4,7 +4,9 @@
 // only for the real /usr/bin/xcrun (a stub on PATH is asked), only while the key (DEVELOPER_DIR and where xcode-select
 // points) is the same and the folder is the same one (device, inode and modification time), so a new Xcode, a switch
 // with xcode-select or a different SDK behind the same name is asked again. Any failure to read or write it asks xcrun
-// as before. Included by smith.c, on macOS.
+// as before. Linked into smith, on macOS.
+#include "core.h"
+
 constexpr char smith_sdk_cache_xcrun[] = "/usr/bin/xcrun";
 constexpr char smith_sdk_cache_select[] = "/var/db/xcode_select_link";
 constexpr size_t smith_sdk_cache_max = 4 * (size_t)PATH_MAX;
@@ -63,7 +65,7 @@ static bool smith_sdk_cache_read(const char *path, char *text, char *lines[3]) {
 }
 
 // The remembered SDK path of the real xcrun, when its key and the folder still match.
-static bool smith_sdk_cache_get(const char *xcrun, char *out) {
+bool smith_sdk_cache_get(const char *xcrun, char *out) {
     char path[PATH_MAX];
     if (strcmp(xcrun, smith_sdk_cache_xcrun) != 0 || !smith_sdk_cache_path(path)) return false;
     char text[smith_sdk_cache_max];
@@ -80,7 +82,7 @@ static bool smith_sdk_cache_get(const char *xcrun, char *out) {
 
 // Remembers the answer of the real xcrun, written beside its place and renamed into it so that a reader sees a whole
 // file. Silent when it cannot: the next start asks again.
-static void smith_sdk_cache_put(const char *xcrun, const char *sdk) {
+void smith_sdk_cache_put(const char *xcrun, const char *sdk) {
     char path[PATH_MAX];
     char identity[128];
     if (strcmp(xcrun, smith_sdk_cache_xcrun) != 0 || !smith_sdk_cache_path(path)) return;

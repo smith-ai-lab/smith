@@ -2,13 +2,24 @@
 // mcp.c. A result is for an agent to read: a stopped location with its source line, frames as `#n function file:line`,
 // variables as `name = value (type)` with what is inside a struct indented under it.
 
-constexpr size_t smith_mcp_depth_max = 6;                // how deep `variables` may expand
+#include "mcp_show.h"
+#include "core.h"
+#include "mcp_dap.h"
+#include "mcp_text.h"
+#include "mcp_unit.h"
+#include "world.h"
+#ifdef SMITH_MCP
+#include "dap.h"
+#endif
+#ifdef SMITH_MCP
+#include "protocol/protocol.h"
+#endif
+
 constexpr size_t smith_mcp_nodes_max = 2000;             // how many variables one result lists
 constexpr size_t smith_mcp_source_max = (size_t)8 << 20; // a source file longer than this shows no line
 
 // A path as short as it can be told: relative to the session's folder when it is inside it.
-static void smith_mcp_path_add(SmithMcpText *out, const SmithMcpSession *session,
-                               struct smith_array_const_char_n path) {
+void smith_mcp_path_add(SmithMcpText *out, const SmithMcpSession *session, struct smith_array_const_char_n path) {
     size_t folder = strlen(session->cwd);
     if (folder > 0 && path.count[0] > folder + 1 && memcmp(path.data, session->cwd, folder) == 0 &&
         path.data[folder] == '/') {
@@ -19,8 +30,8 @@ static void smith_mcp_path_add(SmithMcpText *out, const SmithMcpSession *session
 }
 
 // `#0 function file:line` (the line alone, no newline).
-static void smith_mcp_frame_add(SmithMcpText *out, const SmithMcpSession *session, size_t index,
-                                const SmithDapStackFrame *frame) {
+void smith_mcp_frame_add(SmithMcpText *out, const SmithMcpSession *session, size_t index,
+                         const SmithDapStackFrame *frame) {
     smith_mcp_text_add(out, "#%zu ", index);
     smith_mcp_text_add_text(out, frame->name);
     if (frame->has_source && frame->source.has_path) {
@@ -36,8 +47,8 @@ static void smith_mcp_frame_add(SmithMcpText *out, const SmithMcpSession *sessio
 
 // The frames of the stopped thread, from `start`, at most `levels`. False, with the reason in out, if they cannot be
 // had.
-static bool smith_mcp_stack_get(SmithMcpServer *server, SmithMcpSession *session, int64_t start, int64_t levels,
-                                SmithDapStackTraceResponseBody *body, SmithMcpText *out) {
+bool smith_mcp_stack_get(SmithMcpServer *server, SmithMcpSession *session, int64_t start, int64_t levels,
+                         SmithDapStackTraceResponseBody *body, SmithMcpText *out) {
     SmithDapStackTraceRequest request = {.arguments = {.threadId = session->thread,
                                                        .has_startFrame = true,
                                                        .startFrame = start,
@@ -87,8 +98,8 @@ static void smith_mcp_source_line(SmithMcpServer *server, struct smith_array_con
 }
 
 // `stopped: breakpoint (breakpoint 1)`, then the top frame and its source line.
-static void smith_mcp_show_stop(SmithMcpServer *server, SmithMcpSession *session, const SmithMcpEvent *stop,
-                                SmithMcpText *out) {
+void smith_mcp_show_stop(SmithMcpServer *server, SmithMcpSession *session, const SmithMcpEvent *stop,
+                         SmithMcpText *out) {
     smith_mcp_text_add(out, "stopped: %s", stop->reason);
     if (stop->breakpoint > 0) smith_mcp_text_add(out, " (breakpoint %lld)", (long long)stop->breakpoint);
     // The adapter's description of a breakpoint or step stop repeats the reason ("breakpoint 1.1", "step over").
@@ -110,7 +121,7 @@ static void smith_mcp_show_stop(SmithMcpServer *server, SmithMcpSession *session
 }
 
 // What the call learned of the program ending.
-static void smith_mcp_show_finished(const SmithMcpSession *session, SmithMcpText *out) {
+void smith_mcp_show_finished(const SmithMcpSession *session, SmithMcpText *out) {
     if (session->has_exit_code)
         smith_mcp_text_add(out, "exited: the program exited with code %lld\n", (long long)session->exit_code);
     else
@@ -170,8 +181,8 @@ static void smith_mcp_variable_add(SmithMcpText *out, size_t indent, const Smith
 // Lists the variables of a reference and, to `depth` levels, what is inside them, each level indented under its
 // parent. Nothing recurses: the levels are a stack of at most smith_mcp_depth_max + 1, and the count of variables
 // listed is bounded. A level shows at most `max` variables and says how many it left out.
-static void smith_mcp_show_variables(SmithMcpServer *server, SmithMcpSession *session, int64_t reference, int64_t depth,
-                                     int64_t max, SmithMcpText *out) {
+void smith_mcp_show_variables(SmithMcpServer *server, SmithMcpSession *session, int64_t reference, int64_t depth,
+                              int64_t max, SmithMcpText *out) {
     SMITH_ASSERT(depth >= 0 && depth <= (int64_t)smith_mcp_depth_max && max > 0);
     SmithMcpVariableLevel stack[smith_mcp_depth_max + 1] = {};
     size_t top = 0;

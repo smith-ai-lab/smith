@@ -6,6 +6,7 @@ module front_e2e_test;
 
 import front::compile;
 import front::roots;
+import std::console;
 import std::files;
 import std::format;
 import std::mem;
@@ -125,33 +126,48 @@ static I32 link_and_run(Str folder, Str name, Str main_c) {
     return sh_status(as_str(format::push(folder, "/prog")));
 }
 
-// One case of the corpus.
+// One case of the corpus. A failure is one check with the text "<name>: <what went wrong>" printed under it ("" is a
+// pass), so the case's name and the compiler's error are in the output, never a bare `false, true`.
+static Str case_failure(Str name, Str folder, compile::Report report, Str errors_path) {
+    if (files::exists(errors_path)) {
+        if (report.ok) {
+            return as_str(format::push(name, ": compiled, but ", name, ".error expects an error"));
+        }
+        Str want = text_of(errors_path);
+        Str got = replace(report.text, folder, "<dir>");
+        if (roots::same(want, got)) return "";
+        return as_str(format::push(name, ": wrong error, got:\n", got, "\nwant (", name, ".error):\n", want));
+    }
+    if (!report.ok) return as_str(format::push(name, ": ", report.text));
+    Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
+                                     stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n"));
+    I32 status = link_and_run(folder, name, main_c);
+    if (status != 0) return as_str(format::push(name, ": exit ", (I64)status));
+    return "";
+}
+
+// Failures are collected so that every case runs: each prints at once and the test fails at the end, once, with the
+// number of failed cases (a failed check ends the test, so it is the last call).
+static Usize failed_cases = 0;
+
+static void fail_with(Str text) {
+    if (countof(text) == 0) return;
+    failed_cases += 1;
+    (void)console::print_error("FAILED CASE ", text, "\n");
+}
+
 static void run_case(Str name) {
     Str dir = "tests/front/e2e/";
     Str source = text_of(as_str(format::push(dir, name, ".smith")));
     Str folder = folder_for(name);
     compile::Report report = compile_module(folder, name, source);
-    Str errors_path = as_str(format::push(dir, name, ".error"));
-    if (files::exists(errors_path)) {
-        test::check_equal(report.ok, false);
-        Str want = text_of(errors_path);
-        Str got = replace(report.text, folder, "<dir>");
-        if (!roots::same(want, got)) {
-            test::check_equal(got, want);
-        }
-    } else {
-        test::check_equal(report.ok, true);
-        if (!report.ok) test::check_equal(report.text, as_str(format::push("")));
-        if (report.ok) {
-            Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n",
-                                             stand_ins("__builtin_trap();"), "int main(void) { return check(); }\n"));
-            test::check_equal(link_and_run(folder, name, main_c), 0);
-        }
-    }
+    Str failure = case_failure(name, folder, report, as_str(format::push(dir, name, ".error")));
+    fail_with(failure);
     remove_all(folder);
 }
 
-// Every case of tests/front/e2e/, one check each (a failure's message is the case's name).
+// Every case of tests/front/e2e/, one check each (a failure's text starts with the case's name and shows the compiler's
+// error).
 export void test_front_e2e_every_case_of_the_corpus() {
     files::EntriesResult listing = files::list("tests/front/e2e");
     test::check_equal(listing == .ok, true);
@@ -163,6 +179,7 @@ export void test_front_e2e_every_case_of_the_corpus() {
         Str name = file[0:countof(file) - countof(suffix)];
         run_case(name);
     }
+    test::check_equal(failed_cases, 0);
 }
 
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object

@@ -1,45 +1,25 @@
-// Per-test records (issue #456, knowledge/coverage-selection.md). Included by smith.c after runtime/coverage.c.
-//
-// Every test that ran under coverage keeps a record in `.smith/records/<test>.rec` (or $SMITH_RECORDS_DIR), keyed by
-// content only, so it needs no repository and no commit, and a record that came from elsewhere is as good as one made
-// here: a hash that still matches means the same thing. Text, a tab between fields:
-//   smith-record 2
-//   test <name>
-//   result <pass|fail>
-//   opened 1                                            the record lists what the test opened (read, readdir lines)
-//   fn <file> <name> <lines> <hash> <first line hash>    a function the test executed, found again by its first line
-//   outside <file> <hash>                               the file's code outside its functions (globals, macros, types,
-//   the
-//                                                       lines of a table's braces): for each executed file, and each
-//                                                       .c or .h file one of them includes, chains included
-//   input <path> <hash>                                  any other file the executed files include, and build.c
-//   read <path> <hash>                                   a file of the project the test or its children read
-//   readdir <path>/ <hash>                              a folder of the project they listed: the names in it
-// A test is stale when its last result failed, a function it executed is not found as it was, an outside hash or an
-// input or a read file differs (or is gone). A hash is 64-bit FNV-1a; the guard is against edits, not forgery.
-constexpr size_t smith_rec_source_max = 1U << 23;
-constexpr size_t smith_rec_records_max = 8192;
+#include "record.h"
+#include "core.h"
+#include "coverage.h"
+
 constexpr size_t smith_rec_seen_max = 1024;
 constexpr size_t smith_rec_mention_slots = 1U << 15;
 
-static char smith_rec_source[smith_rec_source_max + 1];
+char smith_rec_source[smith_rec_source_max + 1];
 static uint64_t smith_rec_line_hash[smith_cov_lines_max];
 static bool smith_rec_line_code[smith_cov_lines_max];
-static bool smith_rec_line_opens[smith_cov_lines_max];  // a function's opening line: `...) {`
-static bool smith_rec_line_inside[smith_cov_lines_max]; // a line of a function, its opening and closing lines included
-static size_t smith_rec_line_count;
-static char smith_rec_source_path[PATH_MAX];
+bool smith_rec_line_opens[smith_cov_lines_max];  // a function's opening line: `...) {`
+bool smith_rec_line_inside[smith_cov_lines_max]; // a line of a function, its opening and closing lines included
+size_t smith_rec_line_count;
+char smith_rec_source_path[PATH_MAX];
 static bool smith_rec_source_ok;
 static const char *smith_rec_seen[smith_rec_seen_max];
 static size_t smith_rec_seen_count;
 
-// Judged elsewhere (runtime/changed.c, issue #456): functions a change reaches through an `#embed` (file, name), and an
-// input whose change is not a reason by itself (build.c, when its diff touches only functions no test runs).
-constexpr size_t smith_rec_touched_max = 64;
-static const char *smith_rec_touched_file[smith_rec_touched_max];
-static const char *smith_rec_touched_name[smith_rec_touched_max];
-static size_t smith_rec_touched_count;
-static const char *smith_rec_ignored_input;
+const char *smith_rec_touched_file[smith_rec_touched_max];
+const char *smith_rec_touched_name[smith_rec_touched_max];
+size_t smith_rec_touched_count;
+const char *smith_rec_ignored_input;
 
 static bool smith_rec_touched(const char *file, const char *name) {
     size_t length = strlen(name);
@@ -149,7 +129,7 @@ static void smith_rec_braces_after(const char *line, size_t length, SmithRecBrac
 }
 
 // Loads a source file into smith_rec_source and the tables of its lines (1-based): hash, depth, whether it is code.
-static bool smith_rec_load_source(const char *relative) {
+bool smith_rec_load_source(const char *relative) {
     if (strcmp(relative, smith_rec_source_path) == 0) return smith_rec_source_ok;
     snprintf(smith_rec_source_path, sizeof smith_rec_source_path, "%s", relative);
     smith_rec_line_count = 0;
@@ -372,7 +352,7 @@ static void smith_rec_write_file(FILE *out, size_t from, size_t to) {
     (void)smith_rec_write_outside(out, file);
 }
 
-static bool smith_rec_write(const char *dir, const char *name, const char *clean, bool pass) {
+bool smith_rec_write(const char *dir, const char *name, const char *clean, bool pass) {
     const char *given = smith_cov_env("SMITH_RECORDS_DIR");
     char folder[PATH_MAX];
     char path[PATH_MAX + 8];
@@ -409,19 +389,7 @@ static bool smith_rec_write(const char *dir, const char *name, const char *clean
 
 // ---- Reading records
 
-constexpr size_t smith_rec_named_max = 1U << 18;
-
-typedef struct {
-    const char *name;
-    bool stale;
-    const char *why;
-    size_t named_first; // its files in smith_rec_named: what its program was built from
-    size_t named_count;
-    double cpu;  // seconds the test took when it was recorded, 0 when unknown
-    bool opened; // the record lists what the test opened (#739): a file it never opened is no input of it
-} SmithRecResult;
-
-static const char *smith_rec_named[smith_rec_named_max];
+const char *smith_rec_named[smith_rec_named_max];
 static size_t smith_rec_named_used;
 
 // Remembers that the record's test touched `path` (one entry for each).
@@ -437,8 +405,8 @@ static void smith_rec_name(SmithRecResult *result, const char *path) {
     result->named_count++;
 }
 
-static SmithRecResult smith_rec_results[smith_rec_records_max];
-static size_t smith_rec_result_count;
+SmithRecResult smith_rec_results[smith_rec_records_max];
+size_t smith_rec_result_count;
 static const char *smith_rec_mentions[smith_rec_mention_slots];
 
 static void smith_rec_mention(const char *path) {
@@ -462,7 +430,7 @@ static bool smith_rec_mentioned_exactly(const char *path) {
 }
 
 // Whether some record names the path (an executed file, an input or a read), or the folder it is in (a listing).
-static bool smith_rec_mentioned(const char *path) {
+bool smith_rec_mentioned(const char *path) {
     if (smith_rec_mentioned_exactly(path)) return true;
     for (const char *slash = strchr(path, '/'); slash != nullptr; slash = strchr(slash + 1, '/')) { // each folder above
         char folder[PATH_MAX];
@@ -598,7 +566,7 @@ static bool smith_rec_check_file(const char *path) {
 }
 
 // Reads every record of a folder (smith_cov_root is the project). The count of records read.
-static size_t smith_rec_check_folder(const char *folder) {
+size_t smith_rec_check_folder(const char *folder) {
     DIR *dir = opendir(folder);
     if (dir == nullptr) return 0;
     struct dirent *entry = nullptr;
@@ -616,7 +584,7 @@ static size_t smith_rec_check_folder(const char *folder) {
 #include "smith_core_coverage.h"
 
 // Forgets what an earlier call read or wrote, so the next starts from nothing (each `smith test` is a process).
-static void smith_rec_reset(void) {
+void smith_rec_reset(void) {
     smith_rec_source_path[0] = '\0';
     smith_rec_source_ok = false;
     smith_rec_line_count = 0;

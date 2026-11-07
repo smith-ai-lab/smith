@@ -10,6 +10,15 @@
 // The declared type decides between a copy and a pointer: `T x` copies when T is the element type, anything else is
 // the address of the element (`T *p`), a choice of C's own (`__builtin_choose_expr`).
 
+#include "lang_rfor.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_tuple.h"
+
 constexpr size_t smith_lang_rfor_head_max = 120; // the tokens of a header
 constexpr size_t smith_lang_rfor_out_max = 640;  // the tokens it is written as
 constexpr size_t smith_lang_rfor_commas_max = 4;
@@ -257,7 +266,7 @@ static void smith_lang_rfor_pattern(char *out, size_t capacity, SmithLangRforFor
 }
 
 // `for (...) {` at the `for` token: true when the tokens were replaced (also after an error, by `for (;;)`).
-static bool smith_lang_rfor(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_rfor(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangRforHead *head = &smith_lang_rfor_head;
     if (!smith_lang_rfor_read(lang, host, head)) return false;
     size_t replaced = head->after; // the header; the body's `{` is written again with the rest
@@ -316,7 +325,7 @@ static bool smith_lang_rfor(SmithLang *lang, const SmithHost *host, const SmithT
 }
 
 // Counts the braces the lowering sees while a slice's loop is open.
-static bool smith_lang_rfor_count(SmithLang *lang, const SmithToken *token) {
+bool smith_lang_rfor_count(SmithLang *lang, const SmithToken *token) {
     if (lang->rfor_count == 0 || token->foreign || token->kind != SmithTokenKind_Punctuator) return false;
     if (smith_lang_punct(token, "{")) lang->rfor_braces += 1;
     if (!smith_lang_punct(token, "}")) return false;
@@ -325,7 +334,7 @@ static bool smith_lang_rfor_count(SmithLang *lang, const SmithToken *token) {
 }
 
 // The `}` that ended the body was written: the block that holds the slice's copy ends after it.
-static void smith_lang_rfor_close(SmithLang *lang, const SmithToken *token) {
+void smith_lang_rfor_close(SmithLang *lang, const SmithToken *token) {
     lang->rfor_count -= 1;
     SmithToken closing = smith_lang_tuple_made(SmithTokenKind_Punctuator, "}", 1, token, false);
     closing.line_start = false;

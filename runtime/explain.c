@@ -1,5 +1,5 @@
 // `smith --smith-explain --pid <pid>`: the values of a failed check, read from the stopped test as a debugger would.
-// Included by smith.c after symbolize.c, whose rules for the failing frame and whose source reader it uses.
+// Linked into smith, whose rules for the failing frame and whose source reader it uses.
 //
 // The test runner (lib/std/test.smith, option --explain <smith>) starts this as a child of the worker that has just
 // failed a check or a contract, while that worker waits for it. The program does not capture anything: this attaches
@@ -14,6 +14,11 @@
 // Without lldb in smith (the stage0 and an LLVM install without lldb) there are no values and one note. Time: the
 // attach, the symbols of the program and the reads, about a quarter of a second
 // (knowledge/failure-reports-and-tests.md).
+
+#include "explain.h"
+#include "core.h"
+#include "platform_linux.h"
+#include "symbolize.h"
 
 #include <ctype.h>
 
@@ -403,7 +408,7 @@ static void smith_explain_resume(long pid) {
 }
 
 // `smith --smith-explain --pid <pid>` and `smith --smith-explain --available`.
-static int smith_explain_main(int argc, char **argv, const char *self) {
+int smith_explain_main(int argc, char **argv, const char *self) {
     long pid = 0;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--available") == 0) return smith_explain_has_lldb ? 0 : smith_explain_exit_unavailable;
@@ -539,7 +544,7 @@ static int smith_crash_run(const SmithCrashOptions *options, const char *self) {
     return status;
 }
 
-static int smith_crash_main(int argc, char **argv, const char *self) {
+int smith_crash_main(int argc, char **argv, const char *self) {
     SmithCrashOptions options = smith_crash_parse(argc, argv);
     if (getcwd(smith_sym_directory, sizeof smith_sym_directory) == nullptr) smith_sym_directory[0] = '\0';
     int status = smith_crash_run(&options, self);

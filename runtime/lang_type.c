@@ -30,6 +30,17 @@
 // "regions": the initializer of a declaration whose type holds a type, the arguments of a call to a function that takes
 // a type, the `return` of a function that returns one, and either side of `==` and `!=`.
 
+#include "lang_type.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_tuple.h"
+
 constexpr size_t smith_lang_ty_types_max = 4096;
 constexpr size_t smith_lang_ty_spelling_max = 256;
 constexpr size_t smith_lang_ty_names_max = 512;
@@ -132,7 +143,7 @@ typedef struct {
 
 static SmithLangTySliceFacts smith_lang_ty_facts;
 
-static void smith_lang_ty_reset(void) {
+void smith_lang_ty_reset(void) {
     smith_lang_ty_table.count = 0;
     smith_lang_ty_facts = (SmithLangTySliceFacts){};
     memset(&smith_lang_ty, 0, sizeof smith_lang_ty);
@@ -227,7 +238,7 @@ static uint64_t smith_lang_ty_slice_make(const SmithLangTySliceFacts *facts, uin
            ((uint64_t)facts->log2 << 24) | (size << 32);
 }
 
-static unsigned smith_lang_ty_depth_of(uint64_t handle) {
+unsigned smith_lang_ty_depth_of(uint64_t handle) {
     return (unsigned)((handle >> smith_lang_ty_depth_shift) & 15U);
 }
 
@@ -288,7 +299,7 @@ static bool smith_lang_ty_slice_tag(SmithLang *lang, const char *base, unsigned 
 
 // The spelling of the type a handle names (a slice is `struct` and its tag). Null when the number is no handle of this
 // file.
-static const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle) {
+const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle) {
     unsigned depth = 0;
     const char *base = smith_lang_ty_split(handle, &depth);
     if (base == nullptr || depth == 0) return base;
@@ -305,7 +316,7 @@ static const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle) {
 
 // The C spelling of the element a slice's tag names, from the part of the tag before its dimensions (`f32`,
 // `const_char_ptr`, `geometry_Point`, `struct_Node_ptr`). False for what the tag cannot say back (a tuple, a hash).
-static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *out, size_t capacity) {
+bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *out, size_t capacity) {
     char text[smith_lang_ty_spelling_max];
     if (length == 0 || length >= sizeof text) return false;
     memcpy(text, stem, length);
@@ -497,8 +508,8 @@ static bool smith_lang_ty_entry(SmithLang *lang, const SmithHost *host, const ch
     return true;
 }
 
-static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle) {
+bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
+                          uint64_t *handle) {
     char canonical[smith_lang_ty_spelling_max];
     if (!smith_lang_ty_entry(lang, host, spelling, location, handle, canonical, sizeof canonical)) return false;
     static const char slice_tag[] = "struct smith_array_";
@@ -509,7 +520,7 @@ static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const c
 }
 
 // What an error adds when the value of a type is 0: the pointee of a pointee (the one place a handle is 0).
-static const char *smith_lang_ty_second_level(void) {
+const char *smith_lang_ty_second_level(void) {
     return ": a pointer's pointee is known one level deep (a type function cannot walk `T **` twice with "
            "`typeof(*(t)nullptr)`)";
 }
@@ -526,7 +537,7 @@ static uint64_t smith_lang_ty_pointee_of(uint64_t handle) {
     return smith_lang_ty_table.pointee[index];
 }
 
-static size_t smith_lang_ty_pieces(uint64_t handle, char pieces[][smith_lang_ty_piece_size]) {
+size_t smith_lang_ty_pieces(uint64_t handle, char pieces[][smith_lang_ty_piece_size]) {
     uint64_t pointee = smith_lang_ty_pointee_of(handle);
     if (pointee == 0) {
         snprintf(pieces[0], smith_lang_ty_piece_size, "%lluULL", (unsigned long long)handle);
@@ -545,13 +556,13 @@ static size_t smith_lang_ty_pieces(uint64_t handle, char pieces[][smith_lang_ty_
     return used;
 }
 
-static SmithTokenKind smith_lang_ty_piece_kind(const char *piece) {
+SmithTokenKind smith_lang_ty_piece_kind(const char *piece) {
     if (isdigit((unsigned char)piece[0])) return SmithTokenKind_Number;
     return isalpha((unsigned char)piece[0]) || piece[0] == '_' ? SmithTokenKind_Identifier : SmithTokenKind_Punctuator;
 }
 
 // The handle as text for a value query: its pieces joined by `\x1f`. False when it does not fit.
-static bool smith_lang_ty_literal(uint64_t handle, char *out, size_t capacity) {
+bool smith_lang_ty_literal(uint64_t handle, char *out, size_t capacity) {
     char pieces[smith_lang_ty_pieces_max][smith_lang_ty_piece_size];
     size_t count = smith_lang_ty_pieces(handle, pieces);
     size_t used = 0;
@@ -654,7 +665,7 @@ static bool smith_lang_ty_put(SmithLang *lang, size_t consumed, const SmithToken
 
 // ---- Type leaves: a type written where a value is expected
 
-static SmithLang *smith_lang_ty_lang; // the lowering being read, for the names of its module
+SmithLang *smith_lang_ty_lang; // the lowering being read, for the names of its module
 
 // A name of this module as the lowering writes it: `Pair` of module `main` is `main_Pair`. The name itself otherwise.
 static const char *smith_lang_ty_lowered(const char *text, size_t length, size_t *lowered_length) {
@@ -1098,8 +1109,8 @@ static size_t smith_lang_ty_declared_tokens(const char *base, const SmithToken *
     return count + 3;
 }
 
-static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity, bool bare) {
+size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
+                                 size_t capacity, bool bare) {
     unsigned depth = 0;
     const char *base = smith_lang_ty_split(handle, &depth);
     if (base == nullptr) return 0;
@@ -1565,13 +1576,13 @@ static void smith_lang_ty_qualified(SmithLang *lang, const SmithHost *host, cons
 
 // `[[std::c_name("...")]]` is read whole by the lowering, so the tracker saw its first `[` and none of the rest: the
 // bracket it counted is closed here, or every declaration after it would read as inside brackets.
-static void smith_lang_ty_attribute_taken(void) {
+void smith_lang_ty_attribute_taken(void) {
     if (smith_lang_ty.paren > 0) smith_lang_ty.paren -= 1;
 }
 
 // Called for each token of a file with type values, before the lowering looks at it. True when the token was replaced:
 // the tokens that stand for it are at the front of the queue.
-static bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_ty_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTy *ty = &smith_lang_ty;
     smith_lang_ty_lang = lang;
     if (token->synthetic || token->kind == SmithTokenKind_Eof) return false;
@@ -1662,7 +1673,7 @@ static size_t smith_lang_plain_tokens(SmithLang *lang, const SmithHost *host, co
 // an import after a declaration). The tokens are queued, not written, since the lowering reads a declaration's tokens
 // as they come; nothing after the line has been read (a token read past it would enter the include after the next, in
 // its middle). Their names are known to the type values (a call to one takes types).
-static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (host->type_query == nullptr || lang->recording) return;
     static SmithToken made[smith_lang_queue_max];
     size_t used = 0;
@@ -1698,7 +1709,7 @@ static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint
 // that uses `fields(` or the name, or imports a generic that reflects, so that the first declaration may use them and
 // the compiler has read them before an instance's condition asks about a `Field`. Written as the lowering leaves them.
 // Only the compile of the file defines them: the raw passes (headers, interfaces) have no parser.
-static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host) {
+void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host) {
     if (lang->field_defined || host->type_field == nullptr || !(host->maybe_field || lang->field_import) ||
         lang->recording || !lang->is_module) {
         return;
@@ -1721,7 +1732,7 @@ static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *hos
 // scope the call sees defines it. What the tag says back is enough for the definition an instance writes at file scope:
 // the element's spelling (`smith_lang_ty_stem_spelling`) and the number of run-time dimensions. False for a tag that
 // does not say its element (a hash, a tuple).
-static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count) {
+bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count) {
     SmithLangSliceDims dims;
     size_t stem = 0;
     size_t prefix = sizeof smith_lang_slice_prefix - 1;
