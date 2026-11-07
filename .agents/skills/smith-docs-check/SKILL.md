@@ -20,7 +20,6 @@ description: "The checks of smith docs with their messages (path: message), conc
 | an index entry sorts before the entry above it in its section | `knowledge/index.md:9: entry a.md is out of order; sort the entries of each section by file name (after b.md)` |
 | an index description differs from the concept's | `knowledge/index.md: description of x.md differs from its own` |
 | a skill folder has no `SKILL.md`, no frontmatter, a wrong `name`, no `description` | `.agents/skills/a/SKILL.md: missing`, `no frontmatter`, `name 'b' does not match its folder`, `frontmatter lacks description` |
-| a skill has more than 60 lines | `.agents/skills/a/SKILL.md: 61 lines; a skill stays under 60: split it or shorten it` |
 | `.agents/skills` exists and `.claude/skills` is not a symlink to it | `.claude/skills: missing; it must be a symlink to ../.agents/skills`, `is not a symlink`, `links to X, not ../.agents/skills` |
 | a relative link in knowledge or a skill does not resolve (links in code, `#anchors` and URLs are ignored) | `knowledge/x.md: broken link gone.md` |
 | a document of `knowledge/` links into a skill | `knowledge/x.md: links the skill ../.agents/skills/a/SKILL.md; knowledge never links skills` |
