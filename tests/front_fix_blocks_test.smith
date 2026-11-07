@@ -211,3 +211,10 @@ export void test_front_fix_blocks_a_parenthesized_condition_before_a_brace_is_a_
     check("fn f(i: usize) -> bool {\n    if i > 0 && (i == 1) { return false }\n    return true\n}\n",
           "fn f(i: usize) -> bool:\n    if i > 0 && (i == 1):\n        return false\n    return true\n");
 }
+
+// A C `for` with several declarators and several steps: one declaration to a line, one step to a line (#2648).
+export void test_front_fix_blocks_a_for_with_two_declarators_and_two_steps() {
+    check("fn f() {\n    for (usize a = 0, b = 9; a < b; a++, b--) {\n        use(a, b)\n    }\n}\n",
+          "fn f():\n    mut a: usize = 0\n    mut b: usize = 9\n    while a < b:\n        use(a, b)\n        a += 1\n"
+          "        b -= 1\n");
+}
