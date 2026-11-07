@@ -1,0 +1,15 @@
+# A recursion that goes only through a function value it was passed has no direct cycle, but the call through the value
+# may reach any function of its type, so it counts as a possible edge and gets stack segments (#2710).
+
+fn walk(n: u64, next: fn(u64) -> u64) -> u64:
+    if n == 0:
+        return 0
+    return next(n - 1) + 1
+
+fn again(n: u64) -> u64:
+    return walk(n, again)
+
+pub fn check() -> i32:
+    if again(500000) != 500000:
+        return 1
+    0

@@ -1,4 +1,5 @@
-# A call to a function of another type is not a tail call: a tail call needs the same parameters and result.
+# A call to a function of another type is not a tail call (a tail call needs the same parameters and result), so it is
+# lowered like any other call on a cycle.
 
 fn first(n: u64) -> u64:
     if n == 0:
@@ -9,4 +10,6 @@ fn second(n: u64, step: u64) -> u64:
     return first(n - step)
 
 pub fn check() -> i32:
+    if first(200000) != 0:
+        return 1
     0

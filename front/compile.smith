@@ -1282,7 +1282,7 @@ static Spelled spell_dimensional(const ast::TypeExpr *t) {
     }
     if (at->kind == .slice || at->kind == .block_type || at->kind == .array) return none;
     is_const = is_const || at->qualifiers.is_const;
-    // The element is a scalar: a pointer or a struct here would call `spell` back, and the checker allows no recursion.
+    // The element is a scalar: a pointer or a struct here would call `spell` back.
     Str written = named_once(at);
     if (countof(written) == 0) return none;
     Spelled element = {.text = scalar_spelling(written), .by_value = false, .suffix = ""};

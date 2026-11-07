@@ -321,3 +321,8 @@ SmithHandlers *smith_handlers_table(void);
 // Makes `table` the current table of the calling thread (null: its own) and returns the one that was current, as
 // signal() does; restoring it is the caller's.
 SmithHandlers *smith_handlers_set_table(SmithHandlers *table);
+
+// Non-tail recursion (#2710, lib/handlers.c): runs thunk(record) on the stack in use while it has room, and on a stack
+// segment from the allocator in force once it is nearly full. The emitter calls it for a call that closes a cycle of
+// calls and is not a tail call; no one writes it by hand. When the allocator has no block for a segment the task fails.
+void smith_recurse_call(void (*thunk)(void *record), void *record);
