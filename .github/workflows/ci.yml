@@ -598,6 +598,18 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
+      - name: Upload the step cache for cloud runners
+        # the Actions cache cannot be read from outside Actions, so a cloud runner (smith-dev-runner, step 3) downloads
+        # the same folder as an artifact. Only this job on main writes it; 3 days keep it inside free storage, and the
+        # folder is already pruned to SMITH_CACHE_MAX by the build above (#2690)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smith-steps-linux-${{ github.sha }}
+          path: ~/.cache/smith/steps
+          retention-days: 3
+          compression-level: 1
+          if-no-files-found: warn
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
