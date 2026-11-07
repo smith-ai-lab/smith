@@ -3660,9 +3660,65 @@ export int f64() {
 }
 ==> error-import-chain-limit/src/chain/m65.smith <==
 module chain::m65;
+import chain::m66;
 
 export int f65() {
     return 65;
+}
+==> error-import-chain-limit/src/chain/m66.smith <==
+module chain::m66;
+import chain::m67;
+
+export int f66() {
+    return 66;
+}
+==> error-import-chain-limit/src/chain/m67.smith <==
+module chain::m67;
+import chain::m68;
+
+export int f67() {
+    return 67;
+}
+==> error-import-chain-limit/src/chain/m68.smith <==
+module chain::m68;
+import chain::m69;
+
+export int f68() {
+    return 68;
+}
+==> error-import-chain-limit/src/chain/m69.smith <==
+module chain::m69;
+import chain::m70;
+
+export int f69() {
+    return 69;
+}
+==> error-import-chain-limit/src/chain/m70.smith <==
+module chain::m70;
+import chain::m71;
+
+export int f70() {
+    return 70;
+}
+==> error-import-chain-limit/src/chain/m71.smith <==
+module chain::m71;
+import chain::m72;
+
+export int f71() {
+    return 71;
+}
+==> error-import-chain-limit/src/chain/m72.smith <==
+module chain::m72;
+import chain::m73;
+
+export int f72() {
+    return 72;
+}
+==> error-import-chain-limit/src/chain/m73.smith <==
+module chain::m73;
+
+export int f73() {
+    return 73;
 }
 ==> error-import-cycle/src/cycle/a.smith <==
 module cycle::a;
