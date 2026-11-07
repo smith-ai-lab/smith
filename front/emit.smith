@@ -782,6 +782,8 @@ static state::Status return_finish(state::Emitter *e, const state::ThenNone *w) 
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
+    // With no `defer` to run after the call, the call is the last thing the function does: a guaranteed tail call.
+    if (e->defer_count == 0) call::mark_tail_call(e, value.llvm);
     state::push_then_general(
         e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);

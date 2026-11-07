@@ -973,6 +973,23 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     return state::success();
 }
 
+// A call whose result is the function's value is a guaranteed tail call (#2709): LLVM `musttail`, so tail recursion is a
+// loop at every optimization level, `-O0` included. The call is marked only where LLVM's rules hold: it is the last
+// instruction of the block, so nothing runs after it (`value` is its result, returned unchanged), and the caller and
+// the callee have the same function type and calling convention. Anywhere else the call stays ordinary.
+export void mark_tail_call(state::Emitter *e, c::LLVMValueRef value) {
+    if (value == nullptr || c::LLVMIsACallInst(value) == nullptr) return;
+    c::LLVMBasicBlockRef here = c::LLVMGetInsertBlock(e->builder);
+    if (c::LLVMGetLastInstruction(here) != value) return;
+    c::LLVMValueRef caller = c::LLVMGetBasicBlockParent(here);
+    if (c::LLVMGetCalledFunctionType(value) != c::LLVMGlobalGetValueType(caller)) return;
+    if (c::LLVMGetInstructionCallConv(value) != c::LLVMGetFunctionCallConv(caller)) return;
+    if (c::LLVMIsAFunction(c::LLVMGetCalledValue(value)) != nullptr &&
+        c::LLVMGetIntrinsicID(c::LLVMGetCalledValue(value)) != 0)
+        return;
+    c::LLVMSetTailCallKind(value, c::LLVMTailCallKindMustTail);
+}
+
 // `return;` in a function with no result.
 export state::Status return_void(state::Emitter *e, const ast::Stmt *s) {
     if (!is_void(e->result))
