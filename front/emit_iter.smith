@@ -328,6 +328,7 @@ static state::Status range_start(state::Emitter *e, const state::ThenGeneral *w)
     Bool has_first = countof(args) >= 2;
     if (has_first) first = state::pop_value(e);
     if (bound.ty.kind != .integer) return state::fail("`range` counts integers", w->span);
+    if (has_first) try state::unify_operands(e, &first, &bound, w->span); // `range(count, width)`: usize and u32
     if (has_first && !state::same_type(first.ty, bound.ty))
         return state::failf(w->span, "range bounds of different types: ", first.ty.name, " and ", bound.ty.name);
     Plan plan = {.counter = bound.ty, .bound = bound.llvm};

@@ -182,6 +182,22 @@ export void test_front_emit_for_range_with_two_bounds_signed_and_unsigned() {
     emit_jit::stop(&host);
 }
 
+// Bounds of different widths: the narrower widens to the wider (`range(count, width)` of std.format, usize and u32).
+export void test_front_emit_for_range_bounds_of_different_widths() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn pad(a: usize, b: u32) -> i32:\n"
+                "    let mut n = 0\n"
+                "    for _ in range(a, b):\n"
+                "        n += 1\n"
+                "    n\n",
+                &host, &s);
+    Binary pad = (Binary)symbol_of(&host, "pad");
+    test::check_equal(pad(2, 9), (I32)7);
+    test::check_equal(pad(9, 2), (I32)0);
+    emit_jit::stop(&host);
+}
+
 export void test_front_emit_for_range_with_a_step_ends_on_and_past_the_bound() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
@@ -355,4 +371,69 @@ export void test_front_emit_for_an_array_value_must_be_stored_in_a_local_first()
              "        let _ = x\n"
              "    0\n",
              "store it in a local first", "g()");
+}
+
+// A `static` local is a private global: it keeps its value from call to call and starts as its constant.
+export void test_front_emit_static_local_keeps_its_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn next() -> i32:\n"
+                "    static mut count: i32 = 10\n"
+                "    count += 1\n"
+                "    count\n"
+                "pub fn other() -> i32:\n"
+                "    static mut count: i32 = 100\n"
+                "    count += 1\n"
+                "    count\n",
+                &host, &s);
+    Nullary next = (Nullary)symbol_of(&host, "next");
+    Nullary other = (Nullary)symbol_of(&host, "other");
+    test::check_equal(next(), (I32)11);
+    test::check_equal(next(), (I32)12);
+    test::check_equal(other(), (I32)101);
+    emit_jit::stop(&host);
+}
+
+typedef U32 (*ShiftU32)(U32, Usize);
+
+// A shift has its left operand's type whatever the amount's: `u32 << usize` is a `u32` (`set |= 1 << i`).
+export void test_front_emit_shift_takes_the_left_operands_type() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn shl(a: u32, i: usize) -> u32:\n"
+                "    a << i\n"
+                "pub fn shr(a: u32, i: usize) -> u32:\n"
+                "    a >> i\n",
+                &host, &s);
+    ShiftU32 shl = (ShiftU32)symbol_of(&host, "shl");
+    ShiftU32 shr = (ShiftU32)symbol_of(&host, "shr");
+    test::check_equal(shl(1, 31), 0x80000000U);
+    test::check_equal(shl(3, 4), 48U);
+    test::check_equal(shr(0x80000000U, 31), 1U);
+    emit_jit::stop(&host);
+}
+
+typedef I32 (*TextFn)(const char *);
+typedef U32 (*BitFn)(Usize);
+
+// `p += 1` on a pointer moves it by one element; `x <<= n` with an amount of another width keeps x's type.
+export void test_front_emit_compound_assign_on_a_pointer_and_a_shift() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn digits(mut text: *char) -> i32:\n"
+                "    mut n: i32 = 0\n"
+                "    while text.* >= '0' && text.* <= '9':\n"
+                "        n += 1\n"
+                "        text += 1\n"
+                "    n\n"
+                "pub fn bit(i: usize) -> u32:\n"
+                "    mut x: u32 = 1\n"
+                "    x <<= i\n"
+                "    x\n",
+                &host, &s);
+    TextFn digits = (TextFn)symbol_of(&host, "digits");
+    BitFn bit = (BitFn)symbol_of(&host, "bit");
+    test::check_equal(digits("2026x"), (I32)4);
+    test::check_equal(bit(5), 32U);
+    emit_jit::stop(&host);
 }
