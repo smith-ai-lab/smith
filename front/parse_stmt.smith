@@ -109,6 +109,7 @@ struct Frame {
     Bool braced;          // the new form of `if` and `while`: the body is a block
     Bool layout;          // a block that ends at its `dedent`, not at a `}`
     Bool is_let;          // `if let pattern = value`: `condition` is the value
+    ast::Expr *lead;      // `if ok && .v(x) := value:`: the tests before the first pattern, run before it (D12)
     Bool value_tail;      // a refutable binding at the end of a function body: the last line of the rest is the value
     ast::Pattern pattern; // and its pattern
     Link links[:]; // `if .v(x) := value && a && .w(y) := other:`: the rest of the `&&` chain, left to right (D12)
@@ -952,7 +953,7 @@ static Frame open_refutable(parse::Parser *p, Bool parent_layout, Bool tail) {
     frame.pattern = head_pattern(p);
     frame.pattern.refutable = true;
     frame.layout = parent_layout;
-    frame.value_tail = tail;
+    frame.value_tail = tail && !p->void_body; // a function with no result has no value line (#2669)
     parse::expect(p, lex::colon_equal, "`:=` after the pattern");
     frame.condition = expression(p);
     parse::expect(p, lex::kw_else, "`else`");
@@ -987,11 +988,57 @@ static void read_chain(parse::Parser *p, Frame *frame, Usize before) {
     }
 }
 
+// Whether the head is plain tests and then a pattern, `ok && .v(x) := value` (D12): a top-level `&&` followed by a
+// binding before the head ends. A top-level `||` makes it no chain, so that `a || .v(x) := k` stays an error.
+static Bool lead_ahead(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(p->tokens); i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::semicolon || kind == lex::dedent)
+            return false;
+        if (depth == 0 && (kind == lex::colon || kind == lex::left_brace || kind == lex::kw_else)) return false;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        if (depth != 0) continue;
+        if (kind == lex::pipe_pipe) return false;
+        if (kind != lex::ampersand_ampersand) continue;
+        parse::Parser ahead = *p;
+        ahead.position = p->position + i + 1;
+        if (binding_head(&ahead)) return true;
+    }
+    return false;
+}
+
+// The tests of `ok && a && .v(x) := value` before its first pattern, `&&` between them, the position at the pattern.
+static ast::Expr *read_lead(parse::Parser *p, Usize before) {
+    ast::Expr *lead = nullptr;
+    while (countof(p->errors) == before) {
+        p->head = true;
+        p->stop_and = true;
+        ast::Expr *test = expression(p);
+        p->stop_and = false;
+        if (test == nullptr) return nullptr;
+        if (lead == nullptr) {
+            lead = test;
+        } else {
+            ast::Expr *joined = ast::binary(.logical_and, lead, test);
+            joined->span = (ast::Span){.start = lead->span.start, .end = test->span.end};
+            lead = joined;
+        }
+        if (!parse::accept(p, lex::ampersand_ampersand) || binding_head(p)) break;
+    }
+    return lead;
+}
+
 // `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
 // `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
 static Frame open_bare(parse::Parser *p, FrameKind kind) {
     Frame frame = {.kind = kind, .start = parse::advance(p).span.start, .braced = true};
     Usize before = countof(p->errors);
+    if (!binding_head(p) && !old_let_head(p) && lead_ahead(p)) {
+        frame.lead = read_lead(p, before);
+        if (frame.lead == nullptr) return frame;
+    }
     if (binding_head(p) || old_let_head(p)) open_binding_head(p, &frame);
     p->head = true;
     p->stop_and = frame.is_let; // the value of a pattern ends at `&&`, the rest of the chain is read after it (D12)
@@ -2083,6 +2130,11 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
         done = chain_if(p, frame, done, spanned(p, frame.start, new_stmt(break_kind())));
     }
     ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
+    if (frame.lead != nullptr) { // `while ok && .v(x) := value:` stops when `ok` fails
+        ast::Stmt *leave = spanned(p, frame.start, new_stmt(break_kind()));
+        test = spanned(p, frame.start,
+                       new_stmt({.if_stmt = {.condition = frame.lead, .then_branch = test, .else_branch = leave}}));
+    }
     return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
 }
 
@@ -2091,7 +2143,10 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
 // in `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
 static ast::Stmt *pattern_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
     then = chain_if(p, frame, then, otherwise);
-    return ast::if_let(frame.pattern, frame.condition, then, otherwise);
+    ast::Stmt *bound = ast::if_let(frame.pattern, frame.condition, then, otherwise);
+    if (frame.lead == nullptr) return bound;
+    return spanned(p, frame.start,
+                   new_stmt({.if_stmt = {.condition = frame.lead, .then_branch = bound, .else_branch = otherwise}}));
 }
 
 // A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)

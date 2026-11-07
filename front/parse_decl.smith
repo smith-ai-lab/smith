@@ -3326,7 +3326,10 @@ static ast::Decl *finish_layout_function(parse::Parser *p, const Prefixes *pre, 
         ast::StmtRef none[:] = {};
         body = ast::block(none);
     } else {
+        Bool outer = p->void_body;
+        p->void_body = result == nullptr;
         body = parse::statement(p);
+        p->void_body = outer;
     }
     ast::DeclKind kind = {.function = {.name = parse::text(p, name),
                                        .params = params,
@@ -3403,7 +3406,10 @@ static ast::Decl *finish_braced_function(parse::Parser *p, const Prefixes *pre, 
         skip_new_function(p);
         return nullptr;
     }
+    Bool outer = p->void_body;
+    p->void_body = result == nullptr;
     ast::Stmt *body = parse::statement(p);
+    p->void_body = outer;
     ast::DeclKind kind = {.function = {.name = parse::text(p, name),
                                        .params = params,
                                        .generics = generics,

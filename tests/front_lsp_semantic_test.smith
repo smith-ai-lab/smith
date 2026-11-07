@@ -172,6 +172,19 @@ export void test_semantic_tokens_of_a_chain_with_two_patterns() {
     test::check(use.there && use.length == 1);
 }
 
+export void test_semantic_tokens_of_a_chain_that_starts_with_a_test() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/lead.smith", "fn f(k: K, ok: bool):\\n    if ok && .a(x) := k:\\n        g(x)\\n");
+    Str out = tokens("file:///t/lead.smith");
+    Found keyword = token_at(out, 1, 4);
+    test::check(keyword.there && keyword.type == 8);
+    Found use = token_at(out, 2, 10);
+    test::check(use.there && use.length == 1);
+}
+
 export void test_semantic_tokens_range_and_unknown_documents() {
     arena::Arena memory = test::memory(1U << 26);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

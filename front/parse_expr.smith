@@ -763,7 +763,10 @@ static ast::Expr *lambda(parse::Parser *p) {
         parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
         return nullptr;
     }
+    Bool outer = p->void_body;
+    p->void_body = false; // a lambda's last line is its value, whatever the function around it returns
     ast::Stmt *body = parse::statement(p);
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
@@ -899,12 +902,18 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
         if (result == nullptr) return nullptr;
     }
     ast::Stmt *body = nullptr;
+    Bool outer = p->void_body;
+    p->void_body = false;
     if (p->layout) {
-        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) return nullptr;
+        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) {
+            p->void_body = outer;
+            return nullptr;
+        }
         body = layout_body(p);
     } else {
         body = parse::statement(p);
     }
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
@@ -1774,7 +1783,10 @@ static ast::Expr *trailing_block(parse::Parser *p) {
     ast::Identifier captures[:] = {};
     ast::Param params[:] = {};
     if (p->layout) parse::advance(p);
+    Bool outer = p->void_body;
+    p->void_body = false;
     ast::Stmt *body = parse::statement(p);
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});

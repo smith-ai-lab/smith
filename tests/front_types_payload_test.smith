@@ -207,3 +207,29 @@ export void test_front_types_payload_pattern_chain_ends_with_a_call_and_a_statem
                  "    if .circle(c) := s && !near(c.radius):\n        return c.radius\n    if near(1.0):\n"
                  "        return 2.0\n    return 0.0\n"));
 }
+
+// A pattern after a plain test (D12): `ok && .v(x) := k`, the name is in the rest of the chain and the body.
+export void test_front_types_payload_pattern_chain_may_follow_a_plain_test() {
+    clean(shapes("fn big(s: Shape, ok: bool) -> f32:\n    if ok && .circle(c) := s && c.radius > 1.0:\n"
+                 "        return c.radius\n    return 0.0\n"));
+}
+
+export void test_front_types_payload_pattern_chain_after_a_test_does_not_leak_into_the_else() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(shapes("fn big(s: Shape, ok: bool) -> f32:\n    if ok && .circle(c) := s:\n"
+                                         "        return 1.0\n    else:\n        return c.radius\n"));
+    test::check_condition(r.error_count > 0); // `c` is not in the else (once per path the else is run by)
+}
+
+// A function with no result has no value line (#2669): the last line after a refutable binding stays a statement.
+export void test_front_types_payload_binding_in_a_function_without_a_result_ends_with_a_call() {
+    clean(shapes("fn note(x: f32):\n    return\nfn run(s: Shape):\n    .circle(c) := s else:\n        return\n"
+                 "    note(c.radius)\n"));
+}
+
+export void test_front_types_payload_binding_in_a_function_with_a_result_returns_its_last_line() {
+    clean(shapes("fn area(s: Shape) -> f32:\n    .circle(c) := s else:\n        return 0.0\n    c.radius * 2.0\n"));
+}
