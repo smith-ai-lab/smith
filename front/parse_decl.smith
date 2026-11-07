@@ -1305,8 +1305,8 @@ struct Head {
 };
 
 // The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
-// comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as smith writes them in
-// front of the type, the first one outermost: `[3]`, `[][2]`.
+// comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as
+// smith writes them in front of the type, the first one outermost: `[3]`, `[][2]`.
 static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dims, Bool unsized_ok) {
     Str none = "";
     *dims = none;
