@@ -765,6 +765,18 @@ export Bool is_c_name(ast::Attribute attribute) {
     return n == 2 && same_text(name.segments[0].text, "std") && same_text(name.segments[1].text, "c_name");
 }
 
+// `@align(N)` on a global or a local (D18): the LLVM alignment of its storage. `N` is an integer literal (a power of
+// two, checked by the checker); anything else is left as the type's own alignment.
+export void apply_align(const ast::Decl *d, c::LLVMValueRef storage) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Attribute attribute = d->attributes[i];
+        if (countof(attribute.name.segments) != 1 || !same_text(attribute.name.segments[0].text, "align")) continue;
+        if (countof(attribute.args) != 1) continue;
+        const ast::Expr *argument = attribute.args[0];
+        if (argument->kind == .integer) c::LLVMSetAlignment(storage, (U32)argument->kind.integer.value);
+    }
+}
+
 // The function's c_name, or "" when it has none (checked by `check_function`).
 export Str c_name_of(const ast::Decl *d) {
     for (Usize i = 0; i < countof(d->attributes); i++) {

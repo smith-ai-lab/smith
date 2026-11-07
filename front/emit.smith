@@ -655,6 +655,7 @@ static state::Status declare_finish(state::Emitter *e, const state::ThenGeneral 
         value = state::pop_value(e);
     }
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
+    state::apply_align(d, slot);
     state::store(e, value.llvm, slot);
     state::add_local(e, (state::Local){.name = name, .ty = ty, .address = slot});
     try debug::declare_local(e, name, ty, slot, w->span);
@@ -676,6 +677,7 @@ static state::Status declare_undefined(state::Emitter *e, const ast::Decl *d, as
     state::Ty ty = made.ok;
     Str name = d->kind.variable.name;
     c::LLVMValueRef slot = state::new_alloca(e, ty, name);
+    state::apply_align(d, slot);
     if (e->options.fill_undefined) {
         c::LLVMTypeRef byte = c::LLVMInt8TypeInContext(e->context);
         c::LLVMBuildMemSet(e->builder, slot, c::LLVMConstInt(byte, 0xAA, 0), c::LLVMSizeOf(ty.llvm), 1);
