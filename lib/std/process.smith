@@ -812,8 +812,10 @@ Isize fake_read(c::SmithProcessHandler *self, I32 id, I32 stream, void *buffer, 
         return -1;
     }
     const Script *script = &fake->scripts[(Usize)id - 1];
-    const char *text = stream == 1 ? script->output : script->errors;
-    Usize total = text != nullptr ? c::strlen(text) : 0;
+    const char *output = script->output; // locals, so the null tests narrow them (a field is not narrowed)
+    const char *errors = script->errors;
+    const char *text = stream == 1 ? (output != nullptr ? output : "") : (errors != nullptr ? errors : "");
+    Usize total = c::strlen(text);
     Usize *position = stream == 1 ? &child->output_position : &child->errors_position;
     Usize count = total - *position;
     if (count > size) count = size;
