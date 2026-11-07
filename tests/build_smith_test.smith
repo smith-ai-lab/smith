@@ -10,6 +10,7 @@ import std::format;
 import std::mem;
 import std::test;
 import scratch;
+import <stdio.h>;
 import <string.h>;
 
 constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
@@ -36,8 +37,9 @@ static void expect_exists(const char *name, const scratch::Project *p, const cha
 // The commands smith would run for the conventions' three profiles and the tests of the project `name`.
 static const char *commands_of(const scratch::Project *p, const char *name) {
     char command[512];
-    (void)format::write(command, sizeof command, "smith build -t commands build/debug/", name, " build/release/", name,
-                        " build/fast/", name, " build/tests");
+    (void)c::snprintf(command, sizeof command,
+                      "smith build -t commands build/debug/%s build/release/%s build/fast/%s build/tests", name, name,
+                      name);
     return scratch::sh(p, command).out;
 }
 

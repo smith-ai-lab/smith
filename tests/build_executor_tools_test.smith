@@ -9,13 +9,16 @@ module build_executor_tools_test;
 
 import std::arena;
 import std::mem;
-import std::format;
 import std::test;
+import <stdio.h>;
 import scratch;
+
+static char outputs_text[16];
+static char status_and_output_text[1024];
 
 static scratch::Run exec(const scratch::Project *p, const char *arguments) {
     char command[1024];
-    (void)format::write(command, sizeof command, "smith --smith-exec build.ninja ", arguments);
+    (void)c::snprintf(command, sizeof command, "smith --smith-exec build.ninja %s", arguments);
     return scratch::sh(p, command);
 }
 
@@ -25,9 +28,8 @@ static const char *yes_no(const scratch::Project *p, const char *name) {
 
 // The two outputs of exec_tools: "app dir/one.o", each yes or no.
 static const char *outputs(const scratch::Project *p) {
-    static char text[16];
-    (void)format::write(text, sizeof text, yes_no(p, "app"), " ", yes_no(p, "dir/one.o"));
-    return text;
+    (void)c::snprintf(outputs_text, sizeof outputs_text, "%s %s", yes_no(p, "app"), yes_no(p, "dir/one.o"));
+    return outputs_text;
 }
 
 // 14f. The tools, and the manifests the executor refuses.
@@ -60,7 +62,7 @@ export void test_build_executor_tools_list_targets_commands_and_the_compilation_
     scratch::expect_contains("tools: compdb prints the JSON compilation database", compdb.out, "\"file\": \"one.c\"");
     scratch::expect_contains("tools: compdb names the output", compdb.out, "\"output\": \"dir/one.o\"");
     char directory[1024];
-    (void)format::write(directory, sizeof directory, "\"directory\": \"", scratch::capture(&p, "pwd -P"), "\"");
+    (void)c::snprintf(directory, sizeof directory, "\"directory\": \"%s\"", scratch::capture(&p, "pwd -P"));
     scratch::expect_contains("tools: compdb names the directory", compdb.out, directory);
     scratch::expect_contains("tools: an unknown tool names the known ones", exec(&p, "-t nothing").err,
                              "unknown tool 'nothing'");
@@ -111,12 +113,12 @@ static void refuses(const char *name, const char *manifest, const char *argument
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     char text[512];
-    (void)format::write(text, sizeof text, "rule step\n  command = $cmd\n", manifest, "\n");
+    (void)c::snprintf(text, sizeof text, "rule step\n  command = $cmd\n%s\n", manifest);
     scratch::write(&p, "build.ninja", text);
     scratch::Run run = exec(&p, argument);
-    (void)format::write(text, sizeof text, "manifest: ", name, " is refused with its reason");
+    (void)c::snprintf(text, sizeof text, "manifest: %s is refused with its reason", name);
     scratch::expect_contains(text, run.err, reason);
-    (void)format::write(text, sizeof text, "manifest: ... and the build fails (", name, ")");
+    (void)c::snprintf(text, sizeof text, "manifest: ... and the build fails (%s)", name);
     scratch::expect_status(text, 1, &run);
 }
 
@@ -251,9 +253,9 @@ static scratch::Run build_with_ninja(const scratch::Project *p) {
 }
 
 static const char *status_and_output(const scratch::Project *p, const scratch::Run *run) {
-    static char text[1024];
-    (void)format::write(text, sizeof text, run->status, " ", scratch::read(p, "output"));
-    return text;
+    (void)c::snprintf(status_and_output_text, sizeof status_and_output_text, "%d %s", run->status,
+                      scratch::read(p, "output"));
+    return status_and_output_text;
 }
 
 export void test_build_executor_smith_ninja_runs_the_manifest_with_ninja() {
