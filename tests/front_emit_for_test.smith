@@ -393,3 +393,22 @@ export void test_front_emit_static_local_keeps_its_value() {
     test::check_equal(other(), (I32)101);
     emit_jit::stop(&host);
 }
+
+typedef U32 (*ShiftU32)(U32, Usize);
+
+// A shift has its left operand's type whatever the amount's: `u32 << usize` is a `u32` (`set |= 1 << i`).
+export void test_front_emit_shift_takes_the_left_operands_type() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn shl(a: u32, i: usize) -> u32:\n"
+                "    a << i\n"
+                "pub fn shr(a: u32, i: usize) -> u32:\n"
+                "    a >> i\n",
+                &host, &s);
+    ShiftU32 shl = (ShiftU32)symbol_of(&host, "shl");
+    ShiftU32 shr = (ShiftU32)symbol_of(&host, "shr");
+    test::check_equal(shl(1, 31), 0x80000000U);
+    test::check_equal(shl(3, 4), 48U);
+    test::check_equal(shr(0x80000000U, 31), 1U);
+    emit_jit::stop(&host);
+}

@@ -211,12 +211,12 @@ static c::LLVMValueRef divide(state::Emitter *e, Bool remainder, state::Value a,
 // A shift reports when the amount, read as unsigned (a negative one is huge), is the width or more.
 static void check_shift(state::Emitter *e, Str op, state::Value a, state::Value amount, ast::Span span) {
     state::Ty ty = a.ty;
-    c::LLVMValueRef width = c::LLVMConstInt(ty.llvm, state::width(ty), 0);
+    c::LLVMValueRef width = c::LLVMConstInt(amount.ty.llvm, state::width(ty), 0);
     c::LLVMValueRef bad = c::LLVMBuildICmp(e->builder, c::LLVMIntUGE, amount.llvm, width, "wide");
     c::LLVMBasicBlockRef next = open_failure(e, bad);
     c::LLVMValueRef report[7] = {text_arg(e, op),
                                  widened(e, a.llvm, ty),
-                                 widened(e, amount.llvm, ty),
+                                 widened(e, amount.llvm, amount.ty),
                                  number_arg(e, state::is_signed(ty)),
                                  number_arg(e, state::width(ty)),
                                  text_arg(e, ty.name),
@@ -240,16 +240,22 @@ static c::LLVMValueRef multiply_values(state::Emitter *e, state::Value a, state:
     return c::LLVMBuildMul(e->builder, a.llvm, b.llvm, "");
 }
 
+// The shift amount in the shifted value's type: a shift takes the left operand's type whatever the amount's (`1u << i`
+// with a `usize` `i` is a `u32`), the amount having been checked against the width in its own type.
+static c::LLVMValueRef amount_as(state::Emitter *e, state::Value a, state::Value amount) {
+    return c::LLVMBuildIntCast2(e->builder, amount.llvm, a.ty.llvm, state::is_signed(amount.ty), "");
+}
+
 static c::LLVMValueRef shift_left_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
     check_shift(e, "<<", a, b, span);
-    return c::LLVMBuildShl(e->builder, a.llvm, b.llvm, "");
+    return c::LLVMBuildShl(e->builder, a.llvm, amount_as(e, a, b), "");
 }
 
 // Arithmetic shift for a signed type, logical for an unsigned one.
 static c::LLVMValueRef shift_right_values(state::Emitter *e, state::Value a, state::Value b, ast::Span span) {
     check_shift(e, ">>", a, b, span);
-    if (state::is_signed(a.ty)) return c::LLVMBuildAShr(e->builder, a.llvm, b.llvm, "");
-    return c::LLVMBuildLShr(e->builder, a.llvm, b.llvm, "");
+    if (state::is_signed(a.ty)) return c::LLVMBuildAShr(e->builder, a.llvm, amount_as(e, a, b), "");
+    return c::LLVMBuildLShr(e->builder, a.llvm, amount_as(e, a, b), "");
 }
 
 // The value of `left op right` for the ten arithmetic operators, null for any other.
@@ -330,16 +336,17 @@ export state::Status apply_binary(state::Emitter *e, ast::BinaryOp op, state::Va
         return pointer_offset(e, op, left, right);
     if (left.ty.kind == .pointer && right.ty.kind == .pointer && op == .subtract)
         return pointer_distance(e, left, right, span);
-    try state::unify_operands(e, &left, &right, span);
+    Bool shift = (op == .shift_left || op == .shift_right) && left.ty.kind == .integer && right.ty.kind == .integer;
+    if (!shift) try state::unify_operands(e, &left, &right, span);
     // Two compile-time integers of different types (`const` names the checker has accepted together): the right one
     // takes the left's type, its value kept (#2510).
-    if (!state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&
+    if (!shift && !state::same_type(left.ty, right.ty) && left.ty.kind == .integer && right.ty.kind == .integer &&
         c::LLVMIsAConstantInt(left.llvm) != nullptr && c::LLVMIsAConstantInt(right.llvm) != nullptr) {
         U64 bits = state::is_signed(right.ty) ? (U64)c::LLVMConstIntGetSExtValue(right.llvm)
                                               : c::LLVMConstIntGetZExtValue(right.llvm);
         right = (state::Value){.llvm = c::LLVMConstInt(left.ty.llvm, bits, 0), .ty = left.ty};
     }
-    if (!state::same_type(left.ty, right.ty))
+    if (!shift && !state::same_type(left.ty, right.ty))
         return state::failf(span, "operands of different types: ", left.ty.name, " and ", right.ty.name);
     if (left.ty.kind == .floating) return float_arithmetic(e, op, left, right, span);
     if (left.ty.kind != .integer) return state::failf(span, "arithmetic on ", left.ty.name);
