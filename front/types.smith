@@ -205,14 +205,14 @@ static Str single_name(const ast::Expr *e) {
 }
 
 // `k.f` with `k` a plain name and `.` (not `->`): the identifier `k` and the member `f`.
-static Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *member) {
+static Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *field) {
     if (e->kind != .member) return false;
     if (e->kind.member.arrow) return false;
     const ast::Expr *owner = e->kind.member.base;
     if (owner->kind != .name) return false;
     if (countof(owner->kind.name.path.segments) != 1) return false;
     *base = owner->kind.name.path.segments[0];
-    *member = e->kind.member.name;
+    *field = e->kind.member.name;
     return true;
 }
 
@@ -1800,6 +1800,45 @@ static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
     return false;
 }
 
+// Whether a declaration is a function written in the new syntax.
+static Bool is_new_function(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    return d->kind.function.is_new;
+}
+
+// `k.f` with `.` (not `->`): the base `k` and the member `f`.
+static Bool member_step(const ast::Expr *e, const ast::Expr **base, Str *field) {
+    if (e->kind != .member) return false;
+    if (e->kind.member.arrow) return false;
+    *base = e->kind.member.base;
+    *field = e->kind.member.name;
+    return true;
+}
+
+// The value of an expression that is an integer literal, false for anything else.
+static Bool integer_of(const ast::Expr *e, U64 *out) {
+    if (e == nullptr) return false;
+    if (e->kind != .integer) return false;
+    *out = e->kind.integer.value;
+    return true;
+}
+
+// The operand of a negation `-x`, else null.
+static const ast::Expr *negated_operand(const ast::Expr *e) {
+    if (e == nullptr) return nullptr;
+    if (e->kind != .unary) return nullptr;
+    if (e->kind.unary.op != .negate) return nullptr;
+    return e->kind.unary.operand;
+}
+
+// The path of an expression that is a name, false for anything else.
+static Bool name_path(const ast::Expr *e, ast::Path *path) {
+    if (e == nullptr) return false;
+    if (e->kind != .name) return false;
+    *path = e->kind.name.path;
+    return true;
+}
+
 // The operand of `countof(x)`, else null.
 static const ast::Expr *counted_operand(const ast::Expr *e) {
     if (e->kind != .query) return nullptr;
@@ -1826,10 +1865,10 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             continue;
         }
         ast::Path path = {};
-        const ast::Expr *counted = counted_operand(e);
-        if (counted != nullptr && counted->kind == .name) {
+        ast::Path counted_path = {};
+        if (name_path(counted_operand(e), &counted_path)) {
             // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
-            const Symbol *pack = type_through_modules(r, counted->kind.name.path);
+            const Symbol *pack = type_through_modules(r, counted_path);
             if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
                 return false;
             values[have++] = countof(pack->type->slots);
@@ -1891,16 +1930,19 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
         U64 value = 0;
         Bool known = true;
         ast::Path path = {};
-        if (e->kind == .integer) {
-            value = e->kind.integer.value;
-        } else if (e->kind == .character) {
-            value = e->kind.character.value;
-        } else if (e->kind == .boolean) {
-            value = e->kind.boolean.value ? 1 : 0;
-        } else if (e->kind == .unary && e->kind.unary.op == .negate) {
+        const ast::Expr *inner = negated_operand(e);
+        if (inner != nullptr) {
             negated = !negated;
-            e = e->kind.unary.operand;
+            e = inner;
             continue;
+        }
+        const ast::Expr *at = e;
+        if (at->kind == .integer) {
+            value = at->kind.integer.value;
+        } else if (at->kind == .character) {
+            value = at->kind.character.value;
+        } else if (at->kind == .boolean) {
+            value = at->kind.boolean.value ? 1 : 0;
         } else if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
             if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
@@ -1935,8 +1977,9 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
-        if (count != nullptr && count->kind == .name && countof(count->kind.name.path.segments) == 1) {
-            const Symbol *bound = lookup(&r->scopes, count->kind.name.path.segments[0].text); // `n` of an instance
+        Str count_name = single_name(count);
+        if (countof(count_name) > 0) {
+            const Symbol *bound = lookup(&r->scopes, count_name); // `n` of an instance
             if (bound != nullptr && bound->has_value) {
                 Bool bound_const = node->kind.array.element->qualifiers.is_const;
                 return array_of(&r->table, w->values[base].type, bound->value, bound_const);
@@ -2255,14 +2298,16 @@ static Bool looks_like_type_name(Str name) {
 // else.
 static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
     ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
-    if (init->kind == .member && !init->kind.member.arrow && init->kind.member.base->kind == .name &&
-        countof(init->kind.member.base->kind.name.path.segments) == 1) {
-        segments[0] = init->kind.member.base->kind.name.path.segments[0];
-        segments[1] = (ast::Identifier){.text = init->kind.member.name, .span = init->span};
-    } else if (init->kind == .name && countof(init->kind.name.path.segments) == 2) {
+    ast::Identifier header = {};
+    Str thing = "";
+    ast::Path pair = {};
+    if (member_of_name(init, &header, &thing)) {
+        segments[0] = header;
+        segments[1] = (ast::Identifier){.text = thing, .span = init->span};
+    } else if (name_path(init, &pair) && countof(pair.segments) == 2) {
         // a capitalized `c.Thing` is read as one qualified name
-        segments[0] = init->kind.name.path.segments[0];
-        segments[1] = init->kind.name.path.segments[1];
+        segments[0] = pair.segments[0];
+        segments[1] = pair.segments[1];
     } else {
         return nullptr;
     }
@@ -2377,10 +2422,10 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
             }
         }
     }
-    Ty *record = own(&r->table, symbol->type);
-    if (record != nullptr) {
-        set_fields(record, fields);
-        record->owner = r->prefix;
+    Ty *made = own(&r->table, symbol->type);
+    if (made != nullptr) {
+        set_fields(made, fields);
+        made->owner = r->prefix;
     }
 }
 
@@ -2397,9 +2442,8 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     for (Usize i = 0; i < n; i++) {
         const ast::Enumerator *item = &members[i];
         const ast::Expr *value = item->value;
-        if (value != nullptr && value->kind == .integer) {
-            next = value->kind.integer.value;
-        } else if (value != nullptr) {
+        Bool literal = integer_of(value, &next);
+        if (!literal && value != nullptr) {
             failf(r, value->span, "not yet typed: an enumerator value that is not an integer literal");
         }
         TypeRef carried = symbol->type->element;
@@ -2492,7 +2536,7 @@ static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Para
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
     // a function whose first parameter is a value is reached as `x.name(...)`, which these names never mean
-    if (d->kind == .function && d->kind.function.is_new && countof(list) > 0 && !is_type_name(list[0].type)) {
+    if (is_new_function(d) && countof(list) > 0 && !is_type_name(list[0].type)) {
         reject_conversion_name(r, d->span, name, "function");
     }
     if (is_template(d, list, result_type)) {
@@ -2540,7 +2584,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
-        r->new_syntax = (countof(list) > 0 && list[0].is_new) || (d->kind == .function && d->kind.function.is_new);
+        r->new_syntax = (countof(list) > 0 && list[0].is_new) || is_new_function(d);
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
     }
@@ -2943,8 +2987,9 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
             inner = w->kind.array.element;
             inner_given = g->element;
             const ast::Expr *count = w->kind.array.count;
-            if (count != nullptr && count->kind == .name) {
-                Str name = path_text(count->kind.name.path);
+            ast::Path count_path = {};
+            if (name_path(count, &count_path)) {
+                Str name = path_text(count_path);
                 for (Usize i = 0; i < countof(generics); i++) {
                     if (is_generic_type(&generics[i]) || !same_text(generics[i].name, name)) continue;
                     if (!bind_generic(bound, set, i, false, nullptr, g->count, strict, out)) return false;
@@ -2967,12 +3012,16 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
 // The type a literal initializer gives `let a = 3` (smith's own syntax: `i32` for an integer, `f64` for a float, the
 // suffix and `-` considered), or null when the initializer is not a literal; a name or an expression is typed with the
 // bodies.
-static TypeRef literal_type(Checked *r, const ast::Expr *init) {
+static TypeRef literal_type(Checked *r, const ast::Expr *given) {
     Bool negated = false;
-    while (init != nullptr && init->kind == .unary && init->kind.unary.op == .negate) {
-        init = init->kind.unary.operand;
+    const ast::Expr *at = given;
+    for (Usize steps = 0; steps < 64; steps++) {
+        const ast::Expr *inner = negated_operand(at);
+        if (inner == nullptr) break;
+        at = inner;
         negated = true;
     }
+    const ast::Expr *init = at;
     if (init == nullptr) return nullptr;
     if (init->kind == .integer) {
         Str suffix = init->kind.integer.suffix;
@@ -3099,14 +3148,17 @@ export Names member_names(const ast::Expr *e) {
     Names out = {};
     Names reversed = {};
     const ast::Expr *at = e;
-    while (at->kind == .member && !at->kind.member.arrow) {
+    const ast::Expr *base = nullptr;
+    Str field = "";
+    while (member_step(at, &base, &field)) {
         if (reversed.count == 7) return out;
-        reversed.items[reversed.count] = at->kind.member.name;
+        reversed.items[reversed.count] = field;
         reversed.count += 1;
-        at = at->kind.member.base;
+        at = base;
     }
-    if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return out;
-    out.items[0] = at->kind.name.path.segments[0].text;
+    Str root = single_name(at);
+    if (countof(root) == 0) return out;
+    out.items[0] = root;
     out.count = 1;
     while (reversed.count > 0) {
         reversed.count -= 1;
