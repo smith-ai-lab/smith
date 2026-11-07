@@ -2211,7 +2211,10 @@ static Bool old_literal_ahead(const parse::Parser *p) {
         at += 2;
     if (parse::peek_at(p, at + 1).kind != lex::right_paren || parse::peek_at(p, at + 2).kind != lex::left_brace)
         return false;
-    return parse::peek_at(p, at + 3).kind == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
+    lex::TokenKind inside = parse::peek_at(p, at + 3).kind;
+    // `(P){}` and, in the indented syntax where no block follows a `)`, `(P){1, 2}` are list values a pass left over.
+    if (inside == lex::right_brace || p->layout) return true;
+    return inside == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
 }
 
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {

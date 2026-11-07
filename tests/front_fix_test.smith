@@ -326,6 +326,18 @@ export void test_an_attribute_on_the_line_after_export_joins_it() {
     check_text(fixed.text, "pub fn make(a: i32) -> Io:\n    return io\n");
 }
 
+// An empty or positional compound literal left in a text that already reads as the indented syntax (a `#` comment makes
+// the old reader refuse it) is mended by the new reader (lib/std/task.smith `init_task`).
+export void test_an_empty_compound_literal_in_the_indented_syntax_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "fn f(task: *Task):\n    task.* = (Task){} # reset\n    x = (P){1, 2}\n");
+    check_text(fixed.text, "fn f(task: *Task):\n    task.* = Task() # reset\n    x = P(1, 2)\n");
+}
+
 // A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
 // the type was mended and the cast never (lib/std/net.smith `symbol`).
 export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
