@@ -1568,6 +1568,15 @@ static types::TypeRef need_number(types::Checked *c, ast::Span span, ast::Binary
     return invalid(c);
 }
 
+// Whether `r` is a pointer, or an array that decays to one, to the element that the pointer `l` points to: the
+// difference of two pointers into one object, whatever their `const`.
+static Bool same_element(types::TypeRef l, types::TypeRef r) {
+    if (r->kind != .pointer && r->kind != .array) {
+        return false;
+    }
+    return l->element == r->element;
+}
+
 static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                          types::TypeRef r) {
     if (l->kind == .pointer && is_integer(r)) {
@@ -1576,7 +1585,7 @@ static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast:
     if (op == .add && is_integer(l) && r->kind == .pointer) {
         return r;
     }
-    if (op == .subtract && l->kind == .pointer && l == r) {
+    if (op == .subtract && l->kind == .pointer && same_element(l, r)) {
         return types::builtin(&c->table, "Isize");
     }
     types::failf(c, span, "cannot ", op == .add ? "add" : "subtract", " `", types::show(r), "` ",
@@ -5408,6 +5417,10 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
             if (literal != (pass == 1)) continue;
             types::TypeRef t = typ(c, arg);
             if (t == invalid(c)) return false;
+            const ast::TypeExpr *written = params[i].type;
+            if (t->kind == .text && written != nullptr && written->kind == .slice) {
+                t = types::slice_of(&c->table, types::builtin(&c->table, "Char"), true); // `str` is a slice of `char`
+            }
             if (!types::unify_generics(generics, params[i].type, t, bound, set, pass == 0, &clash)) {
                 types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
                              "` from an earlier argument and `", types::show(clash.now),
