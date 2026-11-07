@@ -7,7 +7,6 @@ Ideas that are not on the roadmap of #73, one line each with the closed issue th
 - #1952: lsp: smith's clang-tidy checks and fallback config for .c without patch (part of #1887)
 - #2049: agents format .smith files as they write them: a Claude Code hook in smith new's settings and in smith's repo
 - #2050: smith new: a committed pre-commit hook that formats staged .smith files (`smith fmt --staged`)
-- #2047: test: hello world in the new syntax from a fresh `smith new` project (acceptance test of the switch-over)
 
 ## Docs: the plugin knowledge base
 - #2026: plugin: the language as a knowledge graph in plugin/knowledge, one concept per idea, new syntax only (part of #1631)
