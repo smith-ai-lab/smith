@@ -95,6 +95,7 @@ struct Style {
 };
 
 typedef Str StrList[:];
+typedef U32 OffsetList[:];
 
 // An open `if constexpr (c) { ... }`: the declarations read so far in each branch.
 struct Frame {
@@ -111,6 +112,10 @@ struct Frame {
     ast::Span close;
     Bool nested;    // opened inside a branch of another block (not `else if`): no fix
     StrList before; // the conditions of the branches before this one in an `else if` chain, as `@when` text
+    // Where a declaration that failed to read starts (it has a fix of its own to apply first): it still gets its
+    // `@when`.
+    OffsetList failed_then;
+    OffsetList failed_else;
 };
 
 typedef Frame FrameList[:];
@@ -134,6 +139,17 @@ static DeclRefList push_decl(DeclRefList list, ast::Decl *item) {
         block[i] = list[i];
     block[n] = item;
     DeclRefList grown = block[0:n + 1];
+    return grown;
+}
+
+static OffsetList push_offset(OffsetList list, U32 item) {
+    Usize n = countof(list);
+    OffsetList grown = {};
+    grown = mem::realloc(grown, n + 1);
+    for (Usize i = 0; i < n; i++) {
+        grown[i] = list[i];
+    }
+    grown[n] = item;
     return grown;
 }
 
@@ -3656,6 +3672,15 @@ static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits
             if (from > 0 && p->source[from - 1] != '\n') from = item->span.start; // not first on its line
             *edits = with_edit(*edits, edit(from, item->span.start, text));
         }
+        OffsetList failed = in_else ? frame->failed_else : frame->failed_then;
+        for (Usize k = 0; k < countof(failed); k++) {
+            U32 start = failed[k];
+            U32 from = start;
+            while (from > 0 && (p->source[from - 1] == ' ' || p->source[from - 1] == '\t'))
+                from -= 1;
+            if (from > 0 && p->source[from - 1] != '\n') continue; // not first on its line
+            *edits = with_edit(*edits, edit(from, start, text));
+        }
     }
     if (frame->chained) return true;
     if (frame->in_else) {
@@ -3682,6 +3707,15 @@ static void add_to_frame(Frame *top, ast::Decl *item) {
         top->else_decls = push_decl(top->else_decls, item);
     } else {
         top->then_decls = push_decl(top->then_decls, item);
+    }
+}
+
+// A declaration that failed to read in the open block on top of the stack.
+static void note_failed(Frame *top, U32 start) {
+    if (top->in_else) {
+        top->failed_else = push_offset(top->failed_else, start);
+    } else {
+        top->failed_then = push_offset(top->failed_then, start);
     }
 }
 
@@ -3749,8 +3783,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             parse::error(p, parse::peek(p).span, "expected `}` to close `if constexpr`, found the end of the file");
             done = finish_frame(p, &stack[depth - 1]);
             fixable = false;
-            depth -= 1;
-            closed = true;
+            depth -= 1, closed = true;
         } else if (depth > 0 && (kind == (p->layout ? lex::dedent : lex::right_brace))) {
             lex::Token brace = parse::advance(p);
             Frame *top = &stack[depth - 1];
@@ -3778,8 +3811,10 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             continue;
         } else {
             Usize before = p->position;
+            U32 start = parse::peek(p).span.start;
             done = parse_simple(p, at_top);
             if (done == nullptr && p->position == before) parse::advance(p);
+            if (done == nullptr && depth > 0) note_failed(&stack[depth - 1], start);
         }
         for (Usize level = 0; level <= countof(stack); level++) {
             if (depth == 0) {

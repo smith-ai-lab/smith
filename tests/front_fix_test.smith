@@ -275,6 +275,57 @@ export void test_a_top_level_if_constexpr_becomes_when() {
                            "@when(target.os != .macos and target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
 }
 
+// A declaration of the block that has a fix of its own to apply first (a struct member that is a function pointer)
+// left the block with no `@when` for it: the block waits for the next pass, which reads it whole (lib/std/net.smith).
+export void test_a_declaration_with_its_own_fix_in_an_if_constexpr_still_gets_its_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "if constexpr (target::os == target::macos) {\n    typedef struct {\n"
+                                                "        I32 (*f)(void *x);\n    } Api;\n}\n");
+    test::check_condition(fixed.text[0] == '@');
+}
+
+static Bool contains_text(const char text[:], const char *word) {
+    Usize n = 0;
+    while (word[n] != 0)
+        n += 1;
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        Usize k = 0;
+        while (k < n && text[i + k] == word[k])
+            k += 1;
+        if (k == n) return true;
+    }
+    return false;
+}
+
+// The same with two branches: the failed declaration of the else branch is written with its `@when` too, so the
+// block is mended in one pass and no `else:` is left beside a brace.
+export void test_a_two_branch_if_constexpr_with_a_failed_declaration_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "if constexpr (target::os == target::macos) {\n    constexpr U64 b = 1;\n} else {\n"
+                                 "    constexpr U64 a = 1 << 7; // a peer\n    typedef struct {\n"
+                                 "        void (*clear)();\n    } Api;\n}\n");
+    test::check_condition(!contains_text(fixed.text, "constexpr"));
+    test::check_condition(!contains_text(fixed.text, "else"));
+}
+
+// A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
+// the type was mended and the cast never (lib/std/net.smith `symbol`).
+export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "void f(I32 x) {\n    put((const char *)&x);\n}\n");
+    check_text(fixed.text, "fn f(x: i32):\n    put((&x).cast(*char))\n");
+}
+
 // Two `else if` branches with `&&` conditions: the second chain frame used to share the first one's list of earlier
 // conditions and grow it with realloc, which freed the block the first frame still read (a crash, #2565).
 export void test_a_chain_of_two_else_if_constexpr_with_and_becomes_when() {

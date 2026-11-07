@@ -2179,7 +2179,10 @@ static Bool fn_type_cast(const parse::Parser *p) {
 // never has before a `)`. A text a pass has half mended (the head of its function is new, the body is not) holds it.
 static Bool old_pointer_cast(const parse::Parser *p) {
     Usize at = 0;
-    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    // `(const char *)&x`: the qualifiers in front of the type are no part of its words.
+    while (parse_type::is_qualifier(parse::peek_at(p, at).kind))
+        at += 1;
+    lex::TokenKind first = parse::peek_at(p, at).kind;
     if (parse_type::is_keyword_type(first)) {
         while (parse_type::is_keyword_type(parse::peek_at(p, at + 1).kind))
             at += 1;

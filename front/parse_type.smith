@@ -41,7 +41,7 @@ import std::mem;
 import std::text;
 
 // Whether a token is a qualifier.
-static Bool is_qualifier(lex::TokenKind kind) {
+export Bool is_qualifier(lex::TokenKind kind) {
     return kind == lex::kw_const || kind == lex::kw_volatile || kind == lex::kw_restrict;
 }
 
