@@ -12,7 +12,10 @@
 //                      record and an enumeration are nominal (one per declaration, equal only to themselves); every
 //                      other type is equal by structure: kind, size in bits, signedness, element, count, parameters,
 //                      qualifiers.
-//   Ty.kind            invalid (a type that already has an error; checking goes on without a second report),
+//   Ty.kind            A payload enum (`TyKind`): each kind has only its own fields, and the accessors below
+//   (`element_of`,
+//                      `slots_of`, `bits_of`, `name_of`, ...) read a field that several kinds share. The kinds are
+//                      invalid (a type that already has an error; checking goes on without a second report),
 //                      automatic (`Auto`, the concept that is always true), void_type, bool_type, integer, floating,
 //                      text (`Str`), null_type (the type of `null`), pointer, array, slice, record, enumeration,
 //                      function (`R (P1, P2)`), option, result, fn_value (`Fn(F)` as a value).

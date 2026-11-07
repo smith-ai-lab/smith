@@ -530,3 +530,28 @@ export void test_front_types_a_module_variable_takes_its_literals_type() {
     // today's `Auto d = 3;` is not changed
     test::check_condition(types::lookup(&r.scopes, "d")->type == r.table.automatic);
 }
+
+// A type is its kind, a payload enum (#2673): each kind has its own fields, and a record is completed in place.
+export void test_front_types_kind_holds_the_fields_of_its_kind() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = types::builtin(&t, "I32");
+    types::TypeRef pointer = types::pointer_to(&t, int32, true);
+    test::check_condition(int32->kind == .integer && int32->kind.integer.bits == 32 && int32->kind.integer.is_signed);
+    test::check_condition(pointer->kind == .pointer && pointer->kind.pointer.element == int32 &&
+                          pointer->kind.pointer.pointee_const);
+    test::check_condition(types::element_of(pointer) == int32 && types::bits_of(int32) == 32);
+    types::TypeRef array = types::array_of(&t, int32, 3, false);
+    test::check_condition(array->kind == .array && array->kind.array.count == 3 && types::count_of(array) == 3);
+    types::Ty *point = types::new_record(&t, "Point", false);
+    test::check_condition(point->kind == .record && !point->kind.record.complete && !types::is_complete(point));
+    types::Slot fields[2] = {slot("x", int32), slot("y", int32)};
+    types::set_fields(point, fields);
+    test::check_condition(types::is_complete(point) && countof(types::slots_of(point).items) == 2);
+    types::Ty *color = types::new_enumeration(&t, "Color", int32);
+    test::check_condition(color->kind == .enumeration && color->kind.enumeration.element == int32);
+    test::check_condition(says(types::name_of(point), "Point"));
+}
