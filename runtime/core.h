@@ -79,10 +79,8 @@ constexpr bool smith_has_lldb = false;
 #endif
 
 // The modules and libraries every file of the old unity saw.
-#include <elf.h>
 #include <fnmatch.h>
 #include <glob.h>
-#include <linux/fs.h>
 #include <runtime/io.h>
 #include <smith/arena.h>
 #include <smith/contract.h>
