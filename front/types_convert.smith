@@ -410,10 +410,10 @@ static Bool function_fits(types::TypeRef from, types::TypeRef to) {
     if (to->kind != .function || types::is_variadic(from) != types::is_variadic(to) ||
         types::element_of(from) != types::element_of(to))
         return false;
-    if (countof(from->slots) != countof(to->slots)) return false;
-    for (Usize i = 0; i < countof(from->slots); i++) {
-        types::TypeRef have = from->slots[i].type;
-        types::TypeRef want = to->slots[i].type;
+    if (countof(types::slots_of(from).items) != countof(types::slots_of(to).items)) return false;
+    for (Usize i = 0; i < countof(types::slots_of(from).items); i++) {
+        types::TypeRef have = types::slots_of(from).items[i].type;
+        types::TypeRef want = types::slots_of(to).items[i].type;
         if (have == want) continue;
         // A callback parameter written `fn(*mut void)` is the header's `Fn(...)` of that function type.
         if (have->kind == .function && want->kind == .fn_value && types::element_of(want) == have) continue;

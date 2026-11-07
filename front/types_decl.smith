@@ -623,9 +623,9 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
                      types::show(found), "`; write a single name, or call something that returns a tuple");
         return;
     }
-    if (countof(found->slots) != countof(names)) {
+    if (countof(types::slots_of(found).items) != countof(names)) {
         types::failf(r, s->span, "this destructuring has ", countof(names), " names, but the tuple `",
-                     types::show(found), "` has ", countof(found->slots),
+                     types::show(found), "` has ", countof(types::slots_of(found).items),
                      " elements; write one name (or `_`) per element");
         return;
     }
@@ -640,7 +640,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
                          "assign with `=`, or choose another name");
             continue;
         }
-        types::TypeRef type = found->slots[i].type;
+        types::TypeRef type = types::slots_of(found).items[i].type;
         types::Symbol symbol = {
             .name = name, .kind = .variable, .type = type, .is_const = !(is_mut || names[i].is_mut), .is_new = true};
         if (!types::declare(&r->scopes, symbol)) {
@@ -1721,13 +1721,14 @@ static void lambda_body(types::Checked *r, Pending p) {
     types::TypeRef function = types::element_of(p.type);
     Str outer_function = state.function;
     state.function = p.function;
-    for (Usize i = 0; i < countof(params) && i < countof(function->slots); i++) {
-        types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = function->slots[i].type};
+    for (Usize i = 0; i < countof(params) && i < countof(types::slots_of(function).items); i++) {
+        types::Symbol symbol = {
+            .name = params[i].name, .kind = .variable, .type = types::slots_of(function).items[i].type};
         if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
         } else {
-            note_local(params[i].name, function->slots[i].type);
+            note_local(params[i].name, types::slots_of(function).items[i].type);
         }
     }
     walk(r, body, types::element_of(function));
@@ -1808,7 +1809,7 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
     Str name = function->kind.function.name;
     ast::Param params[:] = function->kind.function.params;
     types::push_scope(&r->scopes);
-    for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
+    for (Usize i = 0; i < countof(params) && i < countof(types::slots_of(signature).items); i++) {
         Bool is_const = params[i].type != nullptr && params[i].type->qualifiers.is_const;
         if (params[i].is_new) {
             is_const = !params[i].is_mut;
@@ -1816,7 +1817,7 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
         ast::Attribute attributes[:] = params[i].attributes;
         types::Symbol parameter = {.name = params[i].name,
                                    .kind = .variable,
-                                   .type = signature->slots[i].type,
+                                   .type = types::slots_of(signature).items[i].type,
                                    .is_const = is_const,
                                    .is_new = params[i].is_new,
                                    .at = params[i].span,

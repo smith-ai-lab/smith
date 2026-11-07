@@ -607,18 +607,20 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
     if (self->kind == .record) {
         for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
             if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
-        for (Usize i = 0; i < countof(self->slots); i++) {
-            if (!types::field_visible(self, &self->slots[i]) || !starts_with_text(self->slots[i].name, prefix))
+        for (Usize i = 0; i < countof(types::slots_of(self).items); i++) {
+            if (!types::field_visible(self, &types::slots_of(self).items[i]) ||
+                !starts_with_text(types::slots_of(self).items[i].name, prefix))
                 continue;
-            list = offer(
-                list, (Candidate){.label = self->slots[i].name, .kind = 5, .detail = types::show(self->slots[i].type)});
+            list = offer(list, (Candidate){.label = types::slots_of(self).items[i].name,
+                                           .kind = 5,
+                                           .detail = types::show(types::slots_of(self).items[i].type)});
         }
     }
     for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
         const types::Symbol *s = &checked->scopes.symbols[i];
         if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
-        if (countof(s->type->slots) == 0 || s->generic) continue;
-        types::TypeRef takes = s->type->slots[0].type;
+        if (countof(types::slots_of(s->type).items) == 0 || s->generic) continue;
+        types::TypeRef takes = types::slots_of(s->type).items[0].type;
         if (takes->kind == .pointer) takes = types::element_of(takes);
         if (takes != self) continue;
         Str label = s->name;

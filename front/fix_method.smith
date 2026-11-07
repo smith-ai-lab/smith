@@ -50,8 +50,9 @@ static Str prefix_of(const types::Symbol *module) {
 
 // The type a function's first parameter takes, seen through one pointer; null when it has no parameter.
 static types::TypeRef first_parameter(const types::Symbol *s) {
-    if (s->type == nullptr || s->type->kind != .function || countof(s->type->slots) == 0) return nullptr;
-    types::TypeRef t = s->type->slots[0].type;
+    if (s->type == nullptr || s->type->kind != .function || countof(types::slots_of(s->type).items) == 0)
+        return nullptr;
+    types::TypeRef t = types::slots_of(s->type).items[0].type;
     if (t->kind == .pointer) return t->element;
     return t;
 }
@@ -66,7 +67,7 @@ static Bool is_simple(const ast::Expr *e) {
 // passed to a function that takes the value.
 static const ast::Expr *receiver(const ast::Expr *first, types::TypeRef given, const types::Symbol *function_sym) {
     Bool takes_pointer = false;
-    types::TypeRef takes = function_sym->type->slots[0].type;
+    types::TypeRef takes = types::slots_of(function_sym->type).items[0].type;
     if (takes->kind == .pointer) takes_pointer = true;
     if (first->kind == .unary && first->kind.unary.op == .address_of) {
         if (!takes_pointer) return nullptr;

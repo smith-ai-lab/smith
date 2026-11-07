@@ -1099,12 +1099,12 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
     }
     Str name = d->kind.function.name;
     types::TypeRef signature = instance->signature;
-    Usize count = countof(signature->slots);
+    Usize count = countof(types::slots_of(signature).items);
     if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
     state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
     c::LLVMTypeRef llvm_types[64];
     for (Usize i = 0; i < count; i++) {
-        state::TyResult made = type_of_checked(e, signature->slots[i].type, d->span);
+        state::TyResult made = type_of_checked(e, types::slots_of(signature).items[i].type, d->span);
         if (made == .error) {
             return {.error = made.error};
         }
@@ -1576,8 +1576,8 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
 // makes their fields when a type first names them.
 static void name_pointees(state::Emitter *e, types::TypeRef base) {
     if (!types::is_complete(base) || types::is_union_record(base)) return;
-    for (Usize i = 0; i < countof(base->slots); i++) {
-        types::TypeRef pointee = unmade_c_record(e, base->slots[i].type, true);
+    for (Usize i = 0; i < countof(types::slots_of(base).items); i++) {
+        types::TypeRef pointee = unmade_c_record(e, types::slots_of(base).items[i].type, true);
         state::Ty known = {};
         if (pointee == nullptr || pointee == base || find_record_by_name(e, pointee->name, &known)) continue;
         char *label = state::cstr(pointee->name);
@@ -1591,11 +1591,11 @@ static void name_pointees(state::Emitter *e, types::TypeRef base) {
 // The members of a C union, read in place: each is at offset 0 of the array that sizes it. A member this emitter has
 // no type for leaves the union without fields.
 static void name_union_fields(state::Emitter *e, types::TypeRef base, Usize at) {
-    Usize count = countof(base->slots);
+    Usize count = countof(types::slots_of(base).items);
     state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
     ast::Span nowhere = {};
     for (Usize i = 0; i < count; i++) {
-        types::TypeRef held = base->slots[i].type;
+        types::TypeRef held = types::slots_of(base).items[i].type;
         state::TyResult made =
             held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
         if (made == .error) {
@@ -1603,7 +1603,7 @@ static void name_union_fields(state::Emitter *e, types::TypeRef base, Usize at) 
             mem::free(infos.data);
             return;
         }
-        infos[i] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
+        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
     }
     e->records[at].fields = infos;
     e->records[at].overlay = true;
@@ -1631,7 +1631,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
         emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
     }
     name_pointees(e, base);
-    Usize count = countof(base->slots);
+    Usize count = countof(types::slots_of(base).items);
     if (types::is_complete(base) && types::is_union_record(base) && count > 0) {
         make_c_union(named, base);
         name_union_fields(e, base, at);
@@ -1645,7 +1645,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     ast::Span nowhere = {};
     for (Usize i = 0; i < count; i++) {
         // A function pointer of C is the bare `ptr` in the struct's layout, not a `fn` value's `{ code, context }`.
-        types::TypeRef held = base->slots[i].type;
+        types::TypeRef held = types::slots_of(base).items[i].type;
         state::TyResult made =
             held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
         if (made == .error) {
@@ -1653,7 +1653,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
             mem::free(infos.data);
             return;
         }
-        infos[i] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
+        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
         fields[i] = made.ok.llvm;
     }
     c::LLVMStructSetBody(named, fields, (U32)count, 0);
@@ -1682,8 +1682,8 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
 // The first field held by value (a struct or an array of them) whose record is not made yet, else null.
 static types::TypeRef unmade_field(state::Emitter *e, types::TypeRef record) {
     if (!types::is_complete(record) || types::is_union_record(record)) return nullptr;
-    for (Usize i = 0; i < countof(record->slots); i++) {
-        types::TypeRef inner = unmade_c_record(e, record->slots[i].type, false);
+    for (Usize i = 0; i < countof(types::slots_of(record).items); i++) {
+        types::TypeRef inner = unmade_c_record(e, types::slots_of(record).items[i].type, false);
         if (inner != nullptr && inner != record) return inner;
     }
     return nullptr;

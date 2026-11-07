@@ -153,7 +153,7 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
         return signature_failed(state::fail("not a C function", d->span));
     }
     types::TypeRef type = symbol->type;
-    Usize count = countof(type->slots);
+    Usize count = countof(types::slots_of(type).items);
     if (count > 64) {
         return signature_failed(state::not_emitted("more than 64 parameters", d->span));
     }
@@ -161,7 +161,7 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     c::LLVMTypeRef llvm_types[64];
     for (Usize i = 0; i < count; i++) {
         // A function pointer of C is the bare `ptr`, not a `fn` value's `{ code, context }`.
-        types::TypeRef held = type->slots[i].type;
+        types::TypeRef held = types::slots_of(type).items[i].type;
         state::TyResult made =
             held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : state::type_of_checked(e, held, d->span);
         if (made == .error) {
