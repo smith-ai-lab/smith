@@ -1828,6 +1828,80 @@ export Bool integer_of(const ast::Expr *e, U64 *out) {
     return true;
 }
 
+// What the declaration of a symbol says. A symbol has none when it is a builtin, so each reader below tests for it once
+// and gives an empty answer.
+
+// Whether the symbol is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); its initializer.
+static Bool constant_initializer(const Symbol *s, const ast::Expr **init) {
+    if (s == nullptr) return false;
+    if (s->kind != .variable) return false;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .variable) return false;
+    Bool fixed = s->is_const;
+    if (decl->kind.variable.is_new) fixed = !decl->kind.variable.is_mut || decl->kind.variable.is_constexpr;
+    *init = decl->kind.variable.init;
+    return fixed;
+}
+
+// Whether the symbol's declaration is `pub` or `export`.
+static Bool declared_public(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->is_pub || decl->exported;
+}
+
+// Whether the symbol was declared in a C header.
+static Bool declared_in_c(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->from_c;
+}
+
+// Whether the symbol is the declaration `d`.
+static Bool declared_by(const Symbol *s, const ast::Decl *d) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl == d;
+}
+
+// Whether the symbol is declared by a record.
+static Bool declared_by_record(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->kind == .record;
+}
+
+// Whether the symbol is declared by a record that is only named (`struct Expr;`), with no fields.
+static Bool declared_opaque(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .record) return false;
+    return decl->kind.record.opaque;
+}
+
+// The number of parameters of a symbol that is a function with a declaration that is not generic.
+static Bool declared_arity(const Symbol *s, Usize *count) {
+    if (s == nullptr) return false;
+    if (s->generic) return false;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .function) return false;
+    *count = countof(decl->kind.function.params);
+    return true;
+}
+
+// The `at`th parameter of a symbol that is a function with a declaration, else null.
+static const ast::Param *declared_param(const Symbol *s, Usize at) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return nullptr;
+    if (decl->kind != .function) return nullptr;
+    return &decl->kind.function.params[at];
+}
+
+// The prefix an import symbol stands for, else an empty text.
+static Str prefix_of_symbol(const Symbol *s);
+
 // The operand of a negation `-x`, else null.
 static const ast::Expr *negated_operand(const ast::Expr *e) {
     if (e == nullptr) return nullptr;
@@ -1881,11 +1955,8 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
         }
         if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
-            const ast::Expr *init = s->decl->kind.variable.init;
-            Bool fixed = s->is_const;
-            if (s->decl->kind.variable.is_new)
-                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
+            const ast::Expr *init = nullptr;
+            Bool fixed = constant_initializer(s, &init);
             if (!fixed || init == nullptr || top == 32) return false;
             steps[top++] = length_step(init, false);
             continue;
@@ -1950,12 +2021,10 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
             value = at->kind.boolean.value ? 1 : 0;
         } else if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
-            Bool fixed = s->is_const;
-            if (s->decl->kind.variable.is_new)
-                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
+            const ast::Expr *init = nullptr;
+            Bool fixed = constant_initializer(s, &init);
             if (!fixed) return false;
-            e = s->decl->kind.variable.init;
+            e = init;
             continue;
         } else {
             known = constant_length(r, e, &value);
@@ -2146,7 +2215,7 @@ export void private_build(Checked *r, ast::Span span, const Ty *record) {
     for (Usize i = 0; i < r->scopes.count; i++) {
         const Symbol *s = &r->scopes.symbols[i];
         if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
-        Bool public = s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+        Bool public = s->exported || declared_public(s);
         if (s->type->element != record || !public) continue;
         if (countof(s->name) <= countof(record->owner) || !starts_with(s->name, record->owner)) continue;
         Str name = s->name[countof(record->owner):countof(s->name)];
@@ -2209,10 +2278,9 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
             if (same_text(r->scopes.symbols[i - 1].name, name)) earlier = &r->scopes.symbols[i - 1];
         }
-        if (earlier != nullptr && earlier->kind == .type_name && earlier->decl != nullptr &&
-            earlier->decl->kind == .record) {
+        if (earlier != nullptr && earlier->kind == .type_name && declared_by_record(earlier)) {
             if (forward) return;
-            if (earlier->decl->kind.record.opaque) {
+            if (declared_opaque(earlier)) {
                 *earlier = type_symbol(name, made, d, exported);
                 return;
             }
@@ -2724,9 +2792,7 @@ static Bool reflect_count(Str kind, Str subject, Usize *count) {
         return true;
     }
     const Symbol *s = reflected_symbol(subject, false);
-    if (s == nullptr || s->decl == nullptr || s->decl->kind != .function || s->generic) return false;
-    *count = countof(s->decl->kind.function.params);
-    return true;
+    return declared_arity(s, count);
 }
 
 static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
@@ -2742,8 +2808,8 @@ static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
         return entry;
     }
     const Symbol *s = reflected_symbol(subject, false);
-    if (s->decl->kind != .function) return entry;
-    const ast::Param *param = &s->decl->kind.function.params[at];
+    const ast::Param *param = declared_param(s, at);
+    if (param == nullptr) return entry;
     Str shown = {};
     if (at < countof(s->type->slots)) shown = written_name(s->type->slots[at].type);
     entry = (ast_clone::Entry){.name = param->name, .type_name = shown, .attributes = param->attributes};
@@ -3109,7 +3175,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
 
 // Whether other modules may name the symbol: `pub` or `export` on its declaration.
 export Bool is_public(const Symbol *s) {
-    return s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+    return s->exported || declared_public(s);
 }
 
 static Str joined(ast::Path path, Str separator) {
@@ -3127,6 +3193,12 @@ static Str prefix_of_import(const ast::Decl *imported) {
     return msg(format::push(joined(imported->kind.import_module.path, "::"), "::"));
 }
 
+static Str prefix_of_symbol(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    return prefix_of_import(decl);
+}
+
 // The prefix a declaration's table name carries: `util::` for `util::apply`, empty for a name of the module being
 // checked.
 export Str module_prefix(Str name) {
@@ -3138,8 +3210,10 @@ export Str module_prefix(Str name) {
 
 // The module's path as written, `std.math`.
 export Str module_dotted(const Symbol *s) {
-    if (s->decl->kind != .import_module) return "";
-    return joined(s->decl->kind.import_module.path, ".");
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    if (decl->kind != .import_module) return "";
+    return joined(decl->kind.import_module.path, ".");
 }
 
 // The names of `m.a.b`, the root first.
@@ -3297,7 +3371,7 @@ export Through through_modules(const Checked *r, const Names *names) {
             out.stopped = true;
             return out;
         }
-        Str prefix = prefix_of_import(module->decl);
+        Str prefix = prefix_of_symbol(module);
         Str full = msg(format::push(prefix, names->items[i]));
         const Symbol *next = lookup(&r->scopes, full);
         if (next == nullptr || (countof(r->prefix) == 0 && !is_public(next))) {
@@ -3329,7 +3403,7 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     const Symbol *found = nullptr;
     if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, path_text(path))));
     if (found == nullptr) found = lookup_path(&r->scopes, path);
-    if (found != nullptr && found->kind != .type_name && found->decl != nullptr && found->decl->from_c) {
+    if (found != nullptr && found->kind != .type_name && declared_in_c(found)) {
         const Symbol *tag = lookup_as(&r->scopes, found->name, true); // `c::stat` in a type is the struct (#2610)
         if (tag != nullptr && tag->kind == .type_name) found = tag;
     }
@@ -3380,7 +3454,7 @@ export Str enumeration_of(const Checked *r, Str prefix, Str name) {
 
 // Reports `std.math has no public sinn`, with the closest public name when one is near.
 export void report_missing(Checked *r, ast::Span span, Through t) {
-    Str prefix = prefix_of_import(t.module->decl);
+    Str prefix = prefix_of_symbol(t.module);
     Str owner = enumeration_of(r, prefix, t.missing);
     if (countof(owner) > 0) {
         syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
@@ -3625,10 +3699,11 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
 // whose initializer is the value the header gave it.
 static void declare_enumerators(Checked *r, const ast::Decl *d) {
     if (d->kind != .enumeration) return;
+    ast::Enumerator items[:] = d->kind.enumeration.items;
     const Symbol *named = lookup(&r->scopes, qualified(r, true, d->kind.enumeration.name));
-    if (named == nullptr || named->decl != d) return;
-    for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
-        ast::Enumerator item = d->kind.enumeration.items[i];
+    if (named == nullptr || !declared_by(named, d)) return;
+    for (Usize i = 0; i < countof(items); i++) {
+        ast::Enumerator item = items[i];
         if (item.value == nullptr) continue;
         ast::Decl *constant = ast::variable(item.name, ast::named("I32"), item.value);
         constant->from_c = true;
