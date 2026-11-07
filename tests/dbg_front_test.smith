@@ -15,27 +15,27 @@ import std::test;
 
 constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 
-constexpr char geometry[_] = "pub fn area(w: i32, h: i32) -> i32:\n"
-                             "    let r = w * h\n"
-                             "    r\n"
-                             "\n"
-                             "pub fn check() -> i32:\n"
-                             "    area(2, 3) - 6\n"
-                             "\n"
-                             "pub fn boom(p: i32) -> i32:\n"
-                             "    let q = area(p, 2)\n"
-                             "    q / (p - p)\n";
+static const char *const geometry = "pub fn area(w: i32, h: i32) -> i32:\n"
+                                    "    let r = w * h\n"
+                                    "    r\n"
+                                    "\n"
+                                    "pub fn check() -> i32:\n"
+                                    "    area(2, 3) - 6\n"
+                                    "\n"
+                                    "pub fn boom(p: i32) -> i32:\n"
+                                    "    let q = area(p, 2)\n"
+                                    "    q / (p - p)\n";
 
 // The stand-ins of the checks the new emitter calls, so the program links without smith's runtime.
-constexpr char main_c[_] = "int check(void);\n"
-                           "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
-                           "const char *d, const char *e) { __builtin_trap(); }\n"
-                           "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
-                           "{ __builtin_trap(); }\n"
-                           "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
-                           "const char *d, const char *e) { __builtin_trap(); }\n"
-                           "int boom(int);\n"
-                           "int main(int argc, char **argv) { return argc > 1 ? boom(argc) : check(); }\n";
+static const char *const main_c = "int check(void);\n"
+                                  "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
+                                  "const char *d, const char *e) { __builtin_trap(); }\n"
+                                  "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
+                                  "{ __builtin_trap(); }\n"
+                                  "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
+                                  "const char *d, const char *e) { __builtin_trap(); }\n"
+                                  "int boom(int);\n"
+                                  "int main(int argc, char **argv) { return argc > 1 ? boom(argc) : check(); }\n";
 
 static Bool made(scratch::Project *p) {
     if (scratch::sh(p, "smith dbg --version").status != 0) return false;
@@ -109,18 +109,18 @@ export void test_dbg_front_a_crash_in_a_new_syntax_function_shows_its_source_lin
 }
 
 // A main that prints its arguments, since the shared main calls `boom` as soon as it has one.
-constexpr char args_c[_] = "#include <stdio.h>\n"
-                           "int check(void);\n"
-                           "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
-                           "const char *d, const char *e) { __builtin_trap(); }\n"
-                           "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
-                           "{ __builtin_trap(); }\n"
-                           "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
-                           "const char *d, const char *e) { __builtin_trap(); }\n"
-                           "int main(int count, char **arguments) {\n"
-                           "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
-                           "    return check();\n"
-                           "}\n";
+static const char *const args_c = "#include <stdio.h>\n"
+                                  "int check(void);\n"
+                                  "void smith_contract_fail_overflow(const char *a, unsigned long b, unsigned long c, "
+                                  "const char *d, const char *e) { __builtin_trap(); }\n"
+                                  "void smith_contract_fail_negate(unsigned long a, const char *b, const char *c) "
+                                  "{ __builtin_trap(); }\n"
+                                  "void smith_contract_fail_divide(const char *a, unsigned long b, unsigned long c, "
+                                  "const char *d, const char *e) { __builtin_trap(); }\n"
+                                  "int main(int count, char **arguments) {\n"
+                                  "    for (int i = 1; i < count; i++) printf(\"<%s>\\n\", arguments[i]);\n"
+                                  "    return check();\n"
+                                  "}\n";
 
 // `run` passes the arguments as they are, for a program the new front end compiled as for one from C (#388).
 export void test_dbg_front_run_passes_arguments_as_they_are() {

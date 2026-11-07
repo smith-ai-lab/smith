@@ -83,8 +83,8 @@ static Bool has_line_starting(Str text, Str prefix) {
     while (i < countof(text)) {
         while (i < countof(text) && (text[i] == ' ' || text[i] == '\t'))
             i += 1;
-        Bool match = i + countof(prefix) <= countof(text) && slice::equal(text[i:i + countof(prefix)], prefix);
-        if (match) return true;
+        Bool matched = i + countof(prefix) <= countof(text) && slice::equal(text[i:i + countof(prefix)], prefix);
+        if (matched) return true;
         while (i < countof(text) && text[i] != '\n')
             i += 1;
         i += 1;

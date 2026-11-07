@@ -11,6 +11,8 @@
 // (knowledge/verbs.md). Included by smith.c.
 #include <fnmatch.h>
 #include <ftw.h>
+
+#include "test_cache.c" // `smith test --cache` (#2686): the runner asks it which tests are unchanged
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
@@ -1446,6 +1448,7 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
 static int smith_test_project(int count, char **args, const char *self) {
     if (count > 0 && strcmp(args[0], "--coverage") == 0) return smith_coverage_main(count - 1, args + 1); // #456
+    if (count > 0 && strcmp(args[0], "--cache") == 0) return smith_tc_main(count - 1, args + 1);          // #2686
     int quiet = smith_quiet_verb("test", count, args, self, true);
     if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);

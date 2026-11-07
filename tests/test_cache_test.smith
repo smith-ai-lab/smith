@@ -1,0 +1,87 @@
+// The cache of `smith test` (#2686, runtime/test_cache.c, lib/std/test.smith): a test that passed is not run again
+// while nothing it depends on has changed. Each case runs `smith test` in a project of its own, with a cache of its own
+// and the cache on (a runner inside a test has it off, so a scratch project's runs stay what they say). smith-covers:
+// runtime/test_cache.c runtime/verbs.c runtime/changed.c lib/std/test.smith tests/runner.smith smith-covers:
+// tests/build_fixtures/runner_cache/
+module test_cache_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import runner;
+import scratch;
+
+constexpr char run_cached[_] = "env SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test 2>&1";
+
+// A project of the fixture with a cache of its own, its runner built.
+static scratch::Project cached_project() {
+    scratch::Project p = runner::project("runner_base", "runner_cache");
+    scratch::own_cache(&p);
+    return p;
+}
+
+export void test_test_cache_a_second_run_reports_the_tests_cached_and_no_cache_runs_them() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("cache: the first run passes", 0, &first);
+    scratch::expect_contains("cache: ... all four tests", first.out, "4 passed, 0 failed");
+    scratch::expect_lacks("cache: ... and nothing is cached yet", first.out, " cached:");
+    scratch::Run second = scratch::sh(&p, run_cached);
+    scratch::expect_status("cache: the second run passes", 0, &second);
+    scratch::expect_contains("cache: ... still four tests passed", second.out, "4 passed, 0 failed");
+    scratch::expect_contains("cache: ... three of them cached (the fourth is marked uncached)", second.out,
+                             "3 cached:");
+    scratch::Run forced = scratch::sh(&p, "env SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test --no-cache 2>&1");
+    scratch::expect_lacks("cache: --no-cache runs them all", forced.out, " cached:");
+    scratch::Run off = scratch::sh(&p, "env SMITH_RESULT_CACHE=off SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_lacks("cache: SMITH_RESULT_CACHE=off is the same", off.out, " cached:");
+}
+
+export void test_test_cache_editing_a_test_or_a_file_it_reads_runs_only_what_depends_on_it() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("edit: the first run passes", 0, &first);
+    scratch::write(&p, "data/value.txt", "2\n");
+    scratch::Run data = scratch::sh(&p, run_cached);
+    scratch::expect_status("edit: a changed data file passes", 0, &data);
+    scratch::expect_contains("edit: ... only the test that read it runs again, with the marked one", data.out,
+                             "2 cached:");
+    scratch::Run settled = scratch::sh(&p, run_cached);
+    scratch::expect_contains("edit: ... and then it is cached with the new content", settled.out, "3 cached:");
+    scratch::write(&p, "tests/test_cache_pass.smith",
+                   "import std::test;\n\nvoid test_cache_one(void) {\n    test::check_equal(1 + 1, 2);\n}\n\n"
+                   "void test_cache_two(void) {\n    test::check_equal(6, 6);\n}\n");
+    scratch::Run source = scratch::sh(&p, run_cached);
+    scratch::expect_status("edit: a changed test passes", 0, &source);
+    scratch::expect_contains("edit: ... only that file's tests run again (and the marked one)", source.out,
+                             "1 cached:");
+}
+
+export void test_test_cache_a_failing_test_runs_every_time() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::write(&p, "tests/test_cache_bad.smith",
+                   "import std::test;\n\nvoid test_cache_bad(void) {\n    test::check_equal(1, 2);\n}\n");
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("failing: the run fails", 1, &first);
+    scratch::expect_contains("failing: ... one test failed", first.out, "4 passed, 1 failed");
+    scratch::Run second = scratch::sh(&p, run_cached);
+    scratch::expect_status("failing: the next run fails again", 1, &second);
+    scratch::expect_contains("failing: ... the failing test ran again, the passing ones were cached", second.out,
+                             "3 cached:");
+    scratch::expect_contains("failing: ... and it still fails", second.out, "4 passed, 1 failed");
+}

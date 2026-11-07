@@ -6,5 +6,6 @@ void build(build::Build *b) {
     build::alias(b, "fmt", step.outputs);
     build::Step other = {.command = build::list(b, "true", nullptr)};
     build::task(b, "release", &other);
-    build::app(b, &(build::App){.entry = "prog.c"});
+    build::App app = {.entry = "prog.c"};
+    build::app(b, &app);
 }

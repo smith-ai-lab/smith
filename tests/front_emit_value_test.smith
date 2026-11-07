@@ -94,6 +94,7 @@ static char *ir_of(Str source, emit_jit::Jit *host, Scenario *s) {
 typedef I32 (*Pick)(I32);
 typedef I64 (*Wide)(I64, I64);
 typedef I32 (*Choose)(I32, I32);
+typedef I64 (*Mixed)(Bool, I32);
 
 export void test_front_emit_value_an_if_chain_is_the_functions_last_line() {
     Scenario s = {};
@@ -140,8 +141,7 @@ export void test_front_emit_value_an_if_initializes_a_local_with_and_without_a_t
           "        0\n"
           "    x\n",
           &host, &s);
-    typedef I32 (*Flag)(I32);
-    Flag typed = (Flag)symbol_of(&host, "typed");
+    Pick typed = (Pick)symbol_of(&host, "typed");
     Choose inferred = (Choose)symbol_of(&host, "inferred");
     Pick nested = (Pick)symbol_of(&host, "nested");
     test::check_equal(typed(1), 8);
@@ -219,7 +219,6 @@ export void test_front_emit_value_a_narrower_branch_widens_to_the_slot() {
                      "    x + 1\n",
                      &host, &s);
     test::check_equal(contains(ir, "sext i32"), true);
-    typedef I64 (*Mixed)(Bool, I32);
     Mixed mixed = (Mixed)symbol_of(&host, "pick");
     test::check_equal(mixed(true, 4), (I64)5);
     test::check_equal(mixed(false, 4), (I64)101);

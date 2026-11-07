@@ -30,10 +30,10 @@ pub fn check() -> i32:
     (q, mut r) := divmod(17, 5)
     r += 1
     _ := divmod(1, 1)
-    if q != 3 || r != 3 || calls != 2:
+    if q != 3 or r != 3 or calls != 2:
         return 1
     n = x + count.to(i32) + step
-    if n != 10 || buf[0] != 7:
+    if n != 10 or buf[0] != 7:
         return 2
     if h := half(limit):
         if h != 20:
@@ -47,7 +47,7 @@ pub fn check() -> i32:
     while h := half(k):
         k = h
         halvings += 1
-    if halvings != 4 || k != 3:
+    if halvings != 4 or k != 3:
         return 6
     mut total := 0
     repeat(3):

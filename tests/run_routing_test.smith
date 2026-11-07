@@ -56,7 +56,13 @@ static Rig make_rig(arena::Arena *store, const scratch::Project *p, Bool link, c
     scratch::copy_tree(p, "tests/stub.c", "tests/stub.c");
     scratch::Run made = scratch::sh(p, format::push("STUBS='", stubs, "'; ", stubs_script).data);
     scratch::expect_status("the stub compilers are built", 0, &made);
-    Rig r = {.p = p, .arena = store, .dir = p->dir, .form = link ? "link" : "verb"};
+    Rig r = {.p = p,
+             .arena = store,
+             .dir = p->dir,
+             .cl = nullptr,
+             .cc = nullptr,
+             .plus = nullptr,
+             .form = link ? "link" : "verb"};
     r.cl = format::push(p->dir, "/bin/clang").data;
     r.cc = link ? format::push(p->dir, "/smith-cc").data : "\"$SMITH_SELF\" cc";
     r.plus = link ? format::push(p->dir, "/smith-c++").data : "\"$SMITH_SELF\" c++";
@@ -133,7 +139,13 @@ static Unit make_unit(arena::Arena *store, const scratch::Project *p, Bool link,
                              .data;
     scratch::Run made = scratch::sh(p, script);
     scratch::expect_status("the stub files are made", 0, &made);
-    Unit u = {.p = p, .arena = store, .dir = p->dir, .self = self_path(), .link = link, .form = link ? "link" : "verb"};
+    Unit u = {.p = p,
+              .arena = store,
+              .dir = p->dir,
+              .cl = nullptr,
+              .self = self_path(),
+              .link = link,
+              .form = link ? "link" : "verb"};
     u.cl = format::push(p->dir, "/bin/clang").data;
     return u;
 }
@@ -250,7 +262,8 @@ static const char *mixed_refusal =
 
 static const char *path_with(const Unit *u) {
     env::Value path = env::get("PATH");
-    return format::push("PATH=", u->dir, "/bin:", path == .some ? path.some.data : "").data;
+    const char *rest = path == .some ? path.some.data : "";
+    return format::push("PATH=", u->dir, "/bin:", rest).data;
 }
 
 static void metal_route(Bool link) {

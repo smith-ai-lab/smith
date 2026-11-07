@@ -6,7 +6,7 @@ fn total(xs: []i32) -> i32:
 
 pub fn check() -> i32:
     let empty: []i32 = {}
-    if countof(empty) != 0 || total(empty) != 0:
+    if countof(empty) != 0 or total(empty) != 0:
         return 1
     let a: u64 = 10
     let b: u32 = 3

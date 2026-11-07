@@ -1,10 +1,13 @@
 import std::build;
 
 void build(build::Build *b) {
-    build::app(b, &(build::App){});
-    build::app_tests(b, &(build::AppTests){});
-    build::task(b, "greet", &(build::Step){
+    build::App app = {};
+    build::app(b, &app);
+    build::AppTests app_tests = {};
+    build::app_tests(b, &app_tests);
+    build::Step greet = {
         .command = build::list(b, "echo", build::fmt(b, "hello from %s", b->os), nullptr),
         .description = "greeting",
-    });
+    };
+    build::task(b, "greet", &greet);
 }

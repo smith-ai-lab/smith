@@ -114,7 +114,7 @@ static void same(Str actual, Str expected) {
 // The first error message of a source; the test fails when there is none.
 static Str first_error(Str source) {
     parse::Parser p = parser_of(source);
-    _ = parse::expression(&p);
+    (void)parse::expression(&p);
     test::check_condition(countof(p.errors) > 0);
     return p.errors[0].message;
 }
@@ -311,7 +311,7 @@ static Str fix_one(Str source) {
     Usize left = 0;
     for (Usize pass = 0; pass < 8; pass += 1) {
         parse::Parser p = parser_of(current);
-        _ = parse::expression(&p);
+        (void)parse::expression(&p);
         for (Usize i = 0; i < countof(p.warnings) && pass == 0; i += 1) {
             parse::ParseError warning = p.warnings[i];
             Str note = "";
@@ -514,4 +514,53 @@ export void test_parse_expr_a_keyword_is_a_member_name() {
     test::check_condition(!contains(dumped, "left over"));
     test::check_condition(contains(dumped, "match"));
     test::check_condition(contains(dumped, "default"));
+}
+
+// A type is a value (lead, 2026-11-07, #2668): `typeof(x) == *mut char` and `== []u8` compare with a type written out.
+export void test_parse_expr_a_type_is_an_operand_of_a_comparison() {
+    Str one = dump_one("typeof(x) == *mut char", true);
+    test::check_condition(!contains(one, "error "));
+    test::check_condition(!contains(one, "left over"));
+    Str two = dump_one("typeof(x) == []u8 or typeof(x) == *char", true);
+    test::check_condition(!contains(two, "error "));
+    test::check_condition(!contains(two, "left over"));
+    test::check_condition(contains(one, "mut"));
+    Str slices = dump_one("typeof(x) == []mut char or typeof(x) == []char", true);
+    test::check_condition(!contains(slices, "error "));
+    test::check_condition(!contains(slices, "left over"));
+}
+
+// D19: `and`, `or` and `not` are the logic of the new syntax; `&&`, `||` and `!` are read, with a warning that has a
+// fix.
+export void test_parse_expr_logic_words_are_clean_and_the_signs_have_fixes() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parse::Parser words = parser_in("not a and b or c", true);
+    _ = parse::expression(&words);
+    test::check_equal(countof(words.errors), (Usize)0);
+    test::check_equal(countof(words.warnings), (Usize)0);
+    parse::Parser signs = parser_in("!a && b || c", true);
+    _ = parse::expression(&signs);
+    test::check_equal(countof(signs.errors), (Usize)0);
+    test::check_equal(countof(signs.warnings), (Usize)3);
+    fix::Fixed fixed = fix::apply_fixes("!a && b || c", signs.errors, signs.warnings);
+    Str expected = "not a and b or c";
+    test::check_equal(fixed.text, expected);
+}
+
+// C2y's `_Countof` is `countof`, with the operand's parentheses added when it has none.
+export void test_parse_expr_underscore_countof_is_countof() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "_Countof xs + _Countof(ys)";
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_equal(countof(p.errors), (Usize)0);
+    fix::Fixed fixed = fix::apply_fixes(source, p.errors, p.warnings);
+    Str expected = "countof(xs) + countof(ys)";
+    test::check_equal(fixed.text, expected);
 }

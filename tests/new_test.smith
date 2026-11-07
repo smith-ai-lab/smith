@@ -183,15 +183,20 @@ static Bool present(const scratch::Project *p, const char *name) {
 static const char *slurp(const scratch::Project *p, const char *name) {
     const char *path = joined(p->dir, "/", name);
     files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
-    test::check_condition(file == .ok);
-    if (file != .ok) return "";
-    Usize size = countof(file.ok);
-    char *text = mem::alloc_slice(char, size + 1).data;
-    for (Usize i = 0; i < size; i++) {
-        text[i] = (char)file.ok[i];
+    switch (file) {
+    case .error:
+        test::check_condition(false);
+        return "";
+    case .ok:
+        files::Bytes bytes = file.ok;
+        Usize size = countof(bytes);
+        char *text = mem::alloc_slice(char, size + 1).data;
+        for (Usize i = 0; i < size; i++) {
+            text[i] = (char)bytes[i];
+        }
+        text[size] = '\0';
+        return text;
     }
-    text[size] = '\0';
-    return text;
 }
 
 static void expect_present(const scratch::Project *p, const char *label, const char *name, Bool expected) {
@@ -225,17 +230,17 @@ export void test_new_hello_the_smith_project_it_writes() {
     git_isolate(&p, true, &saved);
     Said created = smith_new(&p, "", "hello", nullptr, &saved);
     test::check_equal(created.status, 0);
-    const char *const files[_] = {"main.smith",
-                                  "primes.smith",
-                                  "primes_test.smith",
-                                  ".gitignore",
-                                  ".claude/settings.json",
-                                  "knowledge/index.md",
-                                  "knowledge/program.md",
-                                  ".agents/skills/hello-docs/SKILL.md"};
+    const char *const written[_] = {"main.smith",
+                                    "primes.smith",
+                                    "primes_test.smith",
+                                    ".gitignore",
+                                    ".claude/settings.json",
+                                    "knowledge/index.md",
+                                    "knowledge/program.md",
+                                    ".agents/skills/hello-docs/SKILL.md"};
     const char *const absent[_] = {"build.c", "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
                                    "main.c",  "primes.c",    "primes.h"};
-    expect_the_written_files(&p, "new hello", "hello", files[0:countof(files)], absent[0:countof(absent)]);
+    expect_the_written_files(&p, "new hello", "hello", written[0:countof(written)], absent[0:countof(absent)]);
     scratch::expect_contains("new hello: primes.smith names the program", slurp(&p, "hello/primes.smith"),
                              "console::print(\"hello from hello\\n\");");
     scratch::expect_text(
@@ -289,18 +294,18 @@ export void test_new_language_c_the_c_project_it_writes() {
     git_isolate(&p, true, &saved);
     Said created = smith_new(&p, "", "hellc", "c", &saved);
     test::check_equal(created.status, 0);
-    const char *const files[_] = {"main.c",
-                                  "primes.c",
-                                  "primes.h",
-                                  "primes_test.c",
-                                  ".gitignore",
-                                  ".claude/settings.json",
-                                  "knowledge/index.md",
-                                  "knowledge/program.md",
-                                  ".agents/skills/hellc-docs/SKILL.md"};
+    const char *const written[_] = {"main.c",
+                                    "primes.c",
+                                    "primes.h",
+                                    "primes_test.c",
+                                    ".gitignore",
+                                    ".claude/settings.json",
+                                    "knowledge/index.md",
+                                    "knowledge/program.md",
+                                    ".agents/skills/hellc-docs/SKILL.md"};
     const char *const absent[_] = {"build.c",    "build.smith", ".clang-format", ".clang-tidy", "compile_commands.json",
                                    "main.smith", "primes.smith"};
-    expect_the_written_files(&p, "new --language c", "hellc", files[0:countof(files)], absent[0:countof(absent)]);
+    expect_the_written_files(&p, "new --language c", "hellc", written[0:countof(written)], absent[0:countof(absent)]);
     scratch::expect_contains("new --language c: main.c names the program", slurp(&p, "hellc/main.c"),
                              "hello from hellc\\n\", sum);");
     scratch::expect_contains("new --language c: the concept describes the C program",
@@ -394,17 +399,21 @@ static void prove_the_template(const scratch::Project *p, const char *dir, const
 }
 
 // The verbs on a new project, in `dir`. Everything here ends with the files as they began, in git.
+
+static const char *const args_main_smith =
+    "import <stdio.h>;\n\nI32 main(I32 argc, char *argv[]) {\n    for (I32 i = 1; i < "
+    "argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n";
+static const char *const args_main_c =
+    "#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < "
+    "argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n";
+
 static void verbs_on_a_new_project(const scratch::Project *p, const char *dir, const char *label, Bool smith_language) {
     const char *main_file = smith_language ? "main.smith" : "main.c";
     const char *test_file = smith_language ? "primes_test.smith" : "primes_test.c";
     const char *primes_file = smith_language ? "primes.smith" : "primes.c";
     char both[16384];
     in_folder(p, dir, "cp %s %s.orig", main_file, main_file, "");
-    scratch::write(p, "args-main",
-                   smith_language ? "import <stdio.h>;\n\nI32 main(I32 argc, char *argv[]) {\n    for (I32 i = 1; i < "
-                                    "argc; i++)\n        c::puts(argv[i]);\n    return 0;\n}\n"
-                                  : "#include <stdio.h>\n\nint main(int argc, char **argv) {\n    for (int i = 1; i < "
-                                    "argc; i++)\n        puts(argv[i]);\n    return 0;\n}\n");
+    scratch::write(p, "args-main", smith_language ? args_main_smith : args_main_c);
     in_folder(p, dir, "mv ../args-main %s", main_file, "", "");
     scratch::expect_text(say(label, "smith run passes its arguments to the program, -D after --"),
                          "a\nb c\nx;y\n5%\n-Dkeep",
@@ -478,7 +487,7 @@ static void profiles_of_a_new_project(const scratch::Project *p, const char *dir
     scratch::Run built = run_in(p, dir, "smith build release fast");
     scratch::expect_status(say(label, "smith build release fast exits 0"), 0, &built);
     const char *modes[_] = {"debug", "release", "fast"};
-    for (Usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "[ -e build/%s/$(basename \"$PWD\") ] && echo yes || echo no",
                            modes[i]);
         __builtin_snprintf(text, sizeof text, "the %s program exists", modes[i]);
@@ -633,7 +642,7 @@ static void assert_false_stops(const char *dir, const char *language_flag, const
     const char *modes[_] = {"debug", "release", "fast"};
     const char *statuses[_] = {"134", "134", "134"};
     const char *meanings[_] = {"debug stops", "release stops", "fast stops"};
-    for (Usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < countof(modes); i++) {
         __builtin_snprintf(command, sizeof command, "build/%s/%s >/dev/null 2>&1; echo $?", modes[i], dir);
         __builtin_snprintf(label, sizeof label, "assert(false) in %s: %s", extension, meanings[i]);
         scratch::expect_text(label, statuses[i], capture(&p, dir, command));
@@ -664,7 +673,7 @@ export void test_new_the_libraries_build_under_the_conventions_flags() {
     scratch::Run built = run_in(&p, "libs", "smith build && smith build release fast");
     scratch::expect_status("libraries: the three build under the conventions' flags", 0, &built);
     const char *modes[_] = {"debug", "release", "fast"};
-    for (Usize i = 0; i < _Countof(modes); i++) {
+    for (Usize i = 0; i < countof(modes); i++) {
         char command[256];
         char label[256];
         __builtin_snprintf(command, sizeof command, "build/%s/libs", modes[i]);

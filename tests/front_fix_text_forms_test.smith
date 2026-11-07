@@ -26,14 +26,14 @@ export void test_front_fix_do_while_is_a_loop_with_a_break() {
         "0 && n < 20);\n"
         "    return n;\n}\n",
         "fn g(mut v: u64) -> usize:\n    mut n: usize = 0\n    while true:\n        n += 1\n        v /= 10\n"
-        "        if !(v != 0 && n < 20):\n            break\n    return n\n");
+        "        if not (v != 0 and n < 20):\n            break\n    return n\n");
 }
 
 export void test_front_fix_for_with_a_longer_condition_is_a_while() {
     expect_fixed(
         "module m;\nvoid h(char out[:], Usize count) {\n    for (Usize i = 0; i < count && i < countof(out); i++) {\n"
         "        out[i] = 1;\n    }\n}\n",
-        "fn h(out: []char, count: usize):\n    mut i: usize = 0\n    while i < count && i < countof(out):\n"
+        "fn h(out: []char, count: usize):\n    mut i: usize = 0\n    while i < count and i < countof(out):\n"
         "        out[i] = 1\n        i += 1\n");
 }
 

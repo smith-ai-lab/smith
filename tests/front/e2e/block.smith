@@ -24,9 +24,9 @@ pub fn check() -> i32:
             k += 1
         r += 1
     let grid: [,]i32 = raw
-    if countof(grid) != 3 || countof(grid[0]) != 3:
+    if countof(grid) != 3 or countof(grid[0]) != 3:
         return 1
-    if trace(grid) != 15 || sum_row(grid[2]) != 24:
+    if trace(grid) != 15 or sum_row(grid[2]) != 24:
         return 2
     let fixed: [3,3]i32 = raw
     if fixed[2, 1] != 8:

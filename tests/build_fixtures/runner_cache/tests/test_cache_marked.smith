@@ -1,0 +1,6 @@
+import std::test;
+
+// smith-test: uncached
+void test_cache_marked(void) {
+    test::check_equal(3, 3);
+}

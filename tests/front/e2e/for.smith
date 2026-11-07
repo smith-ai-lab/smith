@@ -14,7 +14,7 @@ fn evens(limit: u32) -> u32:
     count
 
 pub fn check() -> i32:
-    if sum_to(5) != 10 || sum_to(0) != 0:
+    if sum_to(5) != 10 or sum_to(0) != 0:
         return 1
     if evens(10) != 4:
         return 2

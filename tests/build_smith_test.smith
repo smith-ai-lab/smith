@@ -285,7 +285,7 @@ export void test_build_smith_lint_reads_a_build_smith_as_written() {
     scratch::Run bad = scratch::sh(&p, "env SMITH_OUTPUT=full smith lint");
     scratch::expect_status("lint: a finding in build.smith fails", 1, &bad);
     scratch::expect_contains("lint: ... at its line, in the name as written", format::push(bad.out, bad.err).data,
-                             "build.smith:10:12");
+                             "build.smith:12:12");
 }
 
 // smith check reads a build.smith too: with no build.c and no main, it still lints and tests.

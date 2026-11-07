@@ -19,7 +19,7 @@ static ast::Expr *stub_expression(parse::Parser *p) {
     lex::Token token = parse::advance(p);
     if (token.kind == lex::integer) {
         U64 value = 0;
-        _ = text::parse_u64(parse::text(p, token), &value);
+        (void)text::parse_u64(parse::text(p, token), &value);
         return ast::integer(value);
     }
     return ast::name(parse::text(p, token));
@@ -91,7 +91,7 @@ static void check_golden(Str path, Str lines) {
 // The message of the first error of a source.
 static Str first_error(Str source) {
     parse::Parser p = parser_of(source);
-    _ = parse::type(&p);
+    (void)parse::type(&p);
     test::check_condition(countof(p.errors) > 0);
     return p.errors[0].message;
 }
@@ -262,7 +262,7 @@ static Str dump_fixing_one(Str source) {
     Usize left = 0;
     for (Usize pass = 0; pass < 8; pass += 1) {
         parse::Parser p = parser_of(current);
-        _ = parse::type(&p);
+        (void)parse::type(&p);
         left = countof(p.errors) + countof(p.warnings);
         Usize total = countof(p.errors) + countof(p.warnings);
         for (Usize i = 0; i < total && pass == 0; i += 1) {
@@ -333,7 +333,7 @@ export void test_parse_type_old_forms_are_warnings_not_errors() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     parse::Parser p = parser_of("I32 *[:]");
-    _ = parse::type(&p);
+    (void)parse::type(&p);
     test::check_equal(countof(p.errors), 0);
     test::check_equal(countof(p.warnings), 1);
 }

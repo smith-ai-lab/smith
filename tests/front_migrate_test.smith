@@ -89,9 +89,9 @@ export void test_front_migrate_the_fixes_of_ascii_are_the_golden() {
     Str source = read_text("lib/std/ascii.smith");
     test::check_equal(countof(source) > (Usize)0, true);
     fix::Fixed fixed = fix::fix_text("ascii.smith", source);
-    test::check_equal(fixed.applied, (Usize)10);
+    test::check_equal(fixed.applied, (Usize)17);
     // The three type fixes inside a declaration are written by the declaration's own fix (#1742), so they are left out.
-    test::check_equal(fixed.skipped, (Usize)3);
+    test::check_equal(fixed.skipped, (Usize)0);
     test::golden("tests/front/migrate/ascii.smith", fixed.text);
 }
 

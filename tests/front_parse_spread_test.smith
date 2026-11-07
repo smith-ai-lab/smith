@@ -1,0 +1,38 @@
+// Tests of the spread in an array literal in front::parse_expr: `[a..., b]` splices a compile-time pack or a tuple, as
+// `...` does in a call (owner, 2026-11-07). The item is an `expand` of its pattern.
+module front_parse_spread_test;
+
+import front::ast;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+typedef ast::ExprRef ItemList[:];
+
+// The items of the array literal that is the value of the first declaration of source, which must parse.
+static ItemList items_of(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    test::check_equal(countof(parsed.errors), 0);
+    test::check_condition(countof(parsed.module.decls) >= 1);
+    ast::DeclKind kind = parsed.module.decls[0]->kind;
+    if (kind == .variable) {
+        ast::ExprKind value = kind.variable.init->kind;
+        if (value == .array_lit) return value.array_lit.items;
+    }
+    test::check_condition(false);
+    return {};
+}
+
+export void test_parse_spread_in_array_literal_is_an_expand_item() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    ItemList items = items_of("x := [rest..., 1]\n");
+    test::check_equal(countof(items), 2);
+    ast::ExprKind first = items[0]->kind;
+    ast::ExprKind second = items[1]->kind;
+    test::check_condition(first == .expand);
+    test::check_condition(second != .expand);
+}
