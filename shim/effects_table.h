@@ -419,6 +419,7 @@ inline constexpr Entry effect_functions[] = {
     {"smith_contract_failed", Fails},
     {"smith_check_failed", Fails},
     {"smith_test_failed", Fails},
+    {"smith_recurse_call", Alloc | Fails}, // a segment from the allocator (#2710)
     {"__error", Globals},
     // state kept across calls (issue #724): libc's own memory, which an allocator swapped for an arena would leave
     // dangling

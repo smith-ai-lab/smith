@@ -1,0 +1,154 @@
+// front::emit_recursion: the lowering of a call that closes a cycle of calls and is not a tail call (#2710). A cycle of
+// tail calls is a loop (front::emit_call::mark_tail_call, #2709); any other call on a cycle would grow the stack, so it
+// is lowered here, on the finished module, one call at a time:
+//
+//   r = f(a, b)         becomes     record = { a, b, r }        (an alloca of the caller's entry block)
+//                                   smith_recurse_call(f.rec, &record)
+//                                   r = record.r
+//
+// `f.rec` is an internal function, one per callee, `void (ptr record)`: it loads the arguments out of the record, makes
+// the call and stores the result back. The runtime (std::recurse, lib/std/recurse.smith) runs `f.rec` on the stack in
+// use while it has room, and on a stack segment of its own (a fiber of std::task) when it is nearly full. The call's
+// attributes (`byval`, `zeroext`, ...) move to the call inside the thunk, where the arguments are made.
+//
+//   wrap   Replaces one call instruction of the module with the call of the runtime.
+module front::emit_recursion;
+
+import front::emit_state as state;
+import std::format;
+import std::mem;
+import <llvm-c/Core.h>;
+
+static c::LLVMTypeRef ptr_type(c::LLVMContextRef context) {
+    return c::LLVMPointerTypeInContext(context, 0);
+}
+
+// `void smith_recurse_call(ptr thunk, ptr record)`.
+static c::LLVMValueRef runtime(c::LLVMModuleRef module) {
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(module, "smith_recurse_call");
+    if (found != nullptr) return found;
+    c::LLVMContextRef context = c::LLVMGetModuleContext(module);
+    c::LLVMTypeRef both[2] = {ptr_type(context), ptr_type(context)};
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(context), both, 2, 0);
+    return c::LLVMAddFunction(module, "smith_recurse_call", type);
+}
+
+// The record of a call: one field per parameter, then the function value of a call through one, then the result unless
+// it is void.
+static c::LLVMTypeRef record_of(c::LLVMContextRef context, c::LLVMTypeRef function_type, Bool indirect) {
+    c::LLVMTypeRef fields[257];
+    U32 count = c::LLVMCountParamTypes(function_type);
+    c::LLVMGetParamTypes(function_type, fields);
+    c::LLVMTypeRef result = c::LLVMGetReturnType(function_type);
+    U32 total = count;
+    if (indirect) {
+        fields[total] = ptr_type(context); // the function value the call goes through
+        total += 1;
+    }
+    if (c::LLVMGetTypeKind(result) != c::LLVMVoidTypeKind) {
+        fields[total] = result;
+        total += 1;
+    }
+    return c::LLVMStructTypeInContext(context, fields, total, false);
+}
+
+// Copies the attributes of `from` (a call) onto `to` (a call): the function's, the result's and each parameter's.
+static void copy_attributes(c::LLVMValueRef from, c::LLVMValueRef to, U32 params) {
+    for (U32 index = 0; index <= params + 1; index++) {
+        U32 slot = index == params + 1 ? 0xFFFFFFFFu : index; // the result (0), the parameters (1..n), the function
+        U32 count = c::LLVMGetCallSiteAttributeCount(from, slot);
+        if (count == 0) continue;
+        c::LLVMAttributeRef list[64];
+        if (count > 64) count = 64;
+        c::LLVMGetCallSiteAttributes(from, slot, list);
+        for (U32 k = 0; k < count; k++)
+            c::LLVMAddCallSiteAttribute(to, slot, list[k]);
+    }
+}
+
+// The thunk of a callee: made once, found by its name afterwards.
+static c::LLVMValueRef thunk_of(c::LLVMModuleRef module, c::LLVMValueRef call, c::LLVMValueRef callee,
+                                c::LLVMTypeRef record, Bool indirect) {
+    c::LLVMContextRef context = c::LLVMGetModuleContext(module);
+    // A call through a function value has a thunk of its own, named by the call; a direct call, one for the callee.
+    Str name = indirect ? state::msg(format::push("indirect.", (Usize)call, ".rec"))
+                        : state::msg(format::push((const char *)c::LLVMGetValueName(callee), ".rec"));
+    char *label = state::cstr(name);
+    state::free_text(name);
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(module, label);
+    if (found != nullptr) {
+        mem::free(label);
+        return found;
+    }
+    c::LLVMTypeRef one[1] = {ptr_type(context)};
+    c::LLVMTypeRef type = c::LLVMFunctionType(c::LLVMVoidTypeInContext(context), one, 1, 0);
+    c::LLVMValueRef thunk = c::LLVMAddFunction(module, label, type);
+    mem::free(label);
+    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
+    c::LLVMBasicBlockRef entry = c::LLVMAppendBasicBlockInContext(context, thunk, "entry");
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(context);
+    c::LLVMPositionBuilderAtEnd(b, entry);
+    c::LLVMValueRef function_record = c::LLVMGetParam(thunk, 0);
+    c::LLVMTypeRef function_type = c::LLVMGetCalledFunctionType(call);
+    U32 count = c::LLVMCountParamTypes(function_type);
+    c::LLVMValueRef args[256];
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMTypeRef field_types[257];
+        c::LLVMGetParamTypes(function_type, field_types);
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, function_record, i, "");
+        args[i] = c::LLVMBuildLoad2(b, field_types[i], at, "");
+    }
+    c::LLVMValueRef target = callee;
+    if (indirect) {
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, function_record, count, "");
+        target = c::LLVMBuildLoad2(b, ptr_type(context), at, "");
+    }
+    c::LLVMValueRef made = c::LLVMBuildCall2(b, function_type, target, args, count, "");
+    c::LLVMSetInstructionCallConv(made, c::LLVMGetInstructionCallConv(call));
+    copy_attributes(call, made, count);
+    if (c::LLVMGetTypeKind(c::LLVMGetReturnType(function_type)) != c::LLVMVoidTypeKind) {
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, function_record, indirect ? count + 1 : count, "");
+        c::LLVMBuildStore(b, made, at);
+    }
+    c::LLVMBuildRetVoid(b);
+    c::LLVMDisposeBuilder(b);
+    return thunk;
+}
+
+// Replaces `call`, a call of a function defined in `module`, by the call of the runtime that runs it on the stack in
+// use or on a new segment.
+export void wrap(c::LLVMModuleRef module, c::LLVMValueRef call) {
+    c::LLVMContextRef context = c::LLVMGetModuleContext(module);
+    c::LLVMValueRef callee = c::LLVMGetCalledValue(call);
+    c::LLVMTypeRef function_type = c::LLVMGetCalledFunctionType(call);
+    Bool indirect = c::LLVMIsAFunction(callee) == nullptr;
+    c::LLVMTypeRef record = record_of(context, function_type, indirect);
+    c::LLVMValueRef thunk = thunk_of(module, call, callee, record, indirect);
+    c::LLVMBasicBlockRef here = c::LLVMGetInstructionParent(call);
+    c::LLVMValueRef caller = c::LLVMGetBasicBlockParent(here);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(context);
+    // The record lives in the entry block, so a call in a loop reuses one slot.
+    c::LLVMValueRef first = c::LLVMGetFirstInstruction(c::LLVMGetEntryBasicBlock(caller));
+    c::LLVMPositionBuilderBefore(b, first);
+    c::LLVMValueRef slot = c::LLVMBuildAlloca(b, record, "rec");
+    c::LLVMPositionBuilderBefore(b, call);
+    U32 count = c::LLVMCountParamTypes(function_type);
+    for (U32 i = 0; i < count; i++) {
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, slot, i, "");
+        c::LLVMBuildStore(b, c::LLVMGetOperand(call, i), at);
+    }
+    if (indirect) {
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, slot, count, "");
+        c::LLVMBuildStore(b, callee, at);
+    }
+    c::LLVMValueRef both[2] = {thunk, slot};
+    c::LLVMValueRef run = runtime(module);
+    c::LLVMBuildCall2(b, c::LLVMGlobalGetValueType(run), run, both, 2, "");
+    if (c::LLVMGetTypeKind(c::LLVMGetReturnType(function_type)) != c::LLVMVoidTypeKind) {
+        c::LLVMValueRef at = c::LLVMBuildStructGEP2(b, record, slot, indirect ? count + 1 : count, "");
+        c::LLVMValueRef loaded = c::LLVMBuildLoad2(b, c::LLVMGetReturnType(function_type), at, "");
+        c::LLVMReplaceAllUsesWith(call, loaded);
+    }
+    c::LLVMInstructionEraseFromParent(call);
+    c::LLVMDisposeBuilder(b);
+}

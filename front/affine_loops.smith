@@ -16,7 +16,7 @@
 //               change the counter has nothing left to check.
 //   range for   `for k in keys` hands out one element per turn: `k` is declared in the loop, so it is fresh each turn.
 //
-// No recursion: the frames are a stack in a slice that grows.
+// The frames are a stack in a slice that grows: a deep nest needs no deep call stack.
 module front::affine_loops;
 
 import front::ast;
