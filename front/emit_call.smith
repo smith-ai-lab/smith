@@ -1224,6 +1224,79 @@ static Str rec_way_round(const CallGraph *g, Usize caller, Usize callee) {
     return way;
 }
 
+// Whether the function has a way out that is not a tail call: a `ret` that does not return a `musttail` call, or an
+// `unreachable` (the program ends there).
+static Bool rec_has_exit(c::LLVMValueRef function) {
+    for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
+        c::LLVMValueRef last = c::LLVMGetLastInstruction(b);
+        if (last == nullptr) {
+            continue;
+        }
+        c::LLVMOpcode opcode = c::LLVMGetInstructionOpcode(last);
+        if (opcode == c::LLVMUnreachable) {
+            return true;
+        }
+        if (opcode != c::LLVMRet) {
+            continue;
+        }
+        c::LLVMValueRef before = c::LLVMGetPreviousInstruction(last);
+        if (before == nullptr || c::LLVMIsACallInst(before) == nullptr ||
+            c::LLVMGetTailCallKind(before) != c::LLVMTailCallKindMustTail) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// `main` of a module, whatever its prefix: it may run forever.
+static Bool rec_is_main(c::LLVMValueRef function) {
+    Usize length = 0;
+    const char *name = c::LLVMGetValueName2(function, &length);
+    if (length < 4) {
+        return false;
+    }
+    const char *tail = name + length - 4;
+    return tail[0] == 'm' && tail[1] == 'a' && tail[2] == 'i' && tail[3] == 'n' &&
+           (length == 4 || (length > 5 && name[length - 5] == ':'));
+}
+
+// A cycle of tail calls with no exit never ends: outside `main` it is an error (owner, 2026-11-07: "We don't want to
+// allow infinite recursion"). The cycle has an exit when one of its functions has a way out that is not a tail call.
+static state::Status rec_check_exits(const CallGraph *g, const Usize component[:]) {
+    Usize n = countof(g->functions);
+    Bool exits[:] = mem::alloc_slice(Bool, n);
+    Bool looped[:] = mem::alloc_slice(Bool, n);
+    for (Usize u = 0; u < n; u++) {
+        Usize id = component[u];
+        if (rec_has_exit(g->functions[u].value) || rec_is_main(g->functions[u].value)) {
+            exits[id] = true;
+        }
+        for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
+            if (component[g->to[k]] == id) {
+                looped[id] = true;
+            }
+        }
+    }
+    state::Status result = state::success();
+    for (Usize u = 0; u < n && result == .ok; u++) {
+        if (!looped[component[u]] || exits[component[u]]) {
+            continue;
+        }
+        for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
+            if (component[g->to[k]] != component[u]) {
+                continue;
+            }
+            ast::Span nowhere = {};
+            Str way = rec_way_round(g, u, g->to[k]);
+            result = state::failf(nowhere, "this recursion never ends: no path returns without the call: ", way);
+            break;
+        }
+    }
+    mem::free(exits.data);
+    mem::free(looped.data);
+    return result;
+}
+
 // The first call of a cycle that is not a tail call is an error; a cycle of tail calls only is fine.
 export state::Status check_recursion(c::LLVMModuleRef module) {
     CallGraph g = {};
@@ -1264,6 +1337,9 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
                                   " (write a loop; a call that ends the function is a tail call: `return f(...)`)");
             break;
         }
+    }
+    if (result == .ok) {
+        result = rec_check_exits(&g, component);
     }
     mem::free(component.data);
     mem::free(g.functions.data);
