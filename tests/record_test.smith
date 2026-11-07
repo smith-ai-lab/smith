@@ -27,13 +27,13 @@ import <string.h>;
 constexpr Usize report_capacity = 1U << 16;
 
 // A repository of the fixture, committed on main. SMITH_OUTPUT=full for the messages of the nested smith.
-constexpr char repository[_] = "export SMITH_OUTPUT=full; git init -q -b main . && printf "
-                               "'build\\n.smith\\n*.profraw\\n' > .gitignore && git add -A && "
-                               "git -c user.name=t -c user.email=t@t commit -q -m base; ";
+static const char *const repository = "export SMITH_OUTPUT=full; git init -q -b main . && printf "
+                                      "'build\\n.smith\\n*.profraw\\n' > .gitignore && git add -A && "
+                                      "git -c user.name=t -c user.email=t@t commit -q -m base; ";
 
 // A .c file that another includes (smith.c includes runtime/lang.c and the rest) is judged by function, not as a whole
 // input (#638): ops.c includes more.c, which has a table and a function, committed before the first run.
-constexpr char more_unit[_] =
+static const char *const more_unit =
     "printf 'static const int table[] = {\\n    1,\\n    2,\\n};\\n\\nstatic int more_add(int a, int b) {\\n"
     "    return a + b + table[0] - 1;\\n}\\n' > more.c; "
     "{ printf '#include \"more.c\"\\n'; sed 's/return a + b;/return more_add(a, b);/' ops.c; } > next.c && "
@@ -43,13 +43,13 @@ constexpr char more_unit[_] =
 // first run is `smith test --changed` in a repository, and the cache keeps its output and, after `---`, the list of
 // records and the record named by `show`, in $SMITH_TEST_CACHE/record-<smith's size and time>/<name>.out (the way
 // lsp_test.smith's `built_script` does it). The copy is the folder as that run left it.
-constexpr char built_script[_] =
+static const char *const built_script =
     "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
     "base=$SMITH_TEST_CACHE/record-$key; c=$base/$name; lock=$base.lock-$name; "
     "if [ ! -f \"$c.done\" ] && mkdir \"$lock\" 2>/dev/null; then "
     "find \"$SMITH_TEST_CACHE\" -maxdepth 1 -name 'record-*' -mtime +1 -exec rm -rf {} + 2>/dev/null; "
     "mkdir -p \"$base\" && rm -rf \"$c\" && cp -Rp . \"$c\" && (cd \"$c\" && ";
-constexpr char built_end[_] =
+static const char *const built_end =
     "{ smith test --changed --base HEAD 2>&1; echo ---; ls .smith/records; echo ---; cat \".smith/records/$show\"; } "
     "> \"$c.out\" 2>&1); touch \"$c.done\"; rmdir \"$lock\"; "
     "else i=0; while [ ! -f \"$c.done\" ] && [ $i -lt 3000 ]; do sleep 0.2; i=$((i + 1)); done; fi; "

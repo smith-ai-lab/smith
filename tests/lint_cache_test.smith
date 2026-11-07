@@ -49,10 +49,10 @@ static void edit(const char *folder, const char *name, const char *original) {
 // `third` is what the fake clang-tidy does for c.c (its status and output); `setting` is SMITH_LINT_CACHE.
 static Lint run(const char *folder, const char *cache, const char *setting, I32 status, const char *output) {
     const c::SmithCoreLintFile planned[_] = {
-        {"a.c", "clang\t-c\ta.c", "a.c\ncommon.h", 0, ""},
-        {"b.c", "clang\t-c\tb.c", "b.c\ncommon.h", 0, ""},
-        {"c.c", "clang\t-c\tc.c", "c.c", status, output},
-        {"build.c", "clang\t-c\tbuild.c", "build.c", 0, ""},
+        {.file = "a.c", .flags = "clang\t-c\ta.c", .reads = "a.c\ncommon.h", .status = 0, .output = ""},
+        {.file = "b.c", .flags = "clang\t-c\tb.c", .reads = "b.c\ncommon.h", .status = 0, .output = ""},
+        {.file = "c.c", .flags = "clang\t-c\tc.c", .reads = "c.c", .status = status, .output = output},
+        {.file = "build.c", .flags = "clang\t-c\tbuild.c", .reads = "build.c", .status = 0, .output = ""},
     };
     Lint lint = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
@@ -66,7 +66,8 @@ static Lint run(const char *folder, const char *cache, const char *setting, I32 
 // One lint run of m.smith alone: the fake clang-tidy reads only m.smith, as it does of a module's imports, which come
 // through the generated headers under .smith/include and not the preprocessor.
 static Bool run_module(const char *folder, const char *cache) {
-    const c::SmithCoreLintFile planned[_] = {{"m.smith", "clang\t-c\tm.smith", "m.smith", 0, ""}};
+    const c::SmithCoreLintFile planned[_] = {
+        {.file = "m.smith", .flags = "clang\t-c\tm.smith", .reads = "m.smith", .status = 0, .output = ""}};
     c::SmithCoreLintResult result[1] = {};
     char *text = mem::alloc_slice(char, output_capacity).data;
     Bool done =

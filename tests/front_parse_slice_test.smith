@@ -17,7 +17,7 @@ static ast::Expr *stub_expression(parse::Parser *p) {
     lex::Token token = parse::advance(p);
     if (token.kind == lex::integer) {
         U64 value = 0;
-        _ = text::parse_u64(parse::text(p, token), &value);
+        (void)text::parse_u64(parse::text(p, token), &value);
         return ast::integer(value);
     }
     return ast::name(parse::text(p, token));
@@ -53,7 +53,7 @@ static Bool begins(Str text, Str prefix) {
 // The message of the first error of reading source as a type, or an empty text.
 static Str first_error(Str source) {
     parse::Parser p = parser_of(source);
-    _ = parse::type(&p);
+    (void)parse::type(&p);
     if (countof(p.errors) == 0) return "";
     return p.errors[0].message;
 }
@@ -137,7 +137,7 @@ export void test_parse_lambda_type() {
         test::check_condition(is_function_arg(type->kind.applied.args[0]));
     }
     parse::Parser q = parser_of("Lambda(Bool (I32))");
-    _ = parse::type(&q);
+    (void)parse::type(&q);
     test::check_equal(countof(q.errors), 0);
 }
 

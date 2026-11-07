@@ -8,10 +8,11 @@ void build(build::Build *b) {
         .flags = build::list(b, "-O1", "-Wall", nullptr),
     };
     build::object(b, &object);
+    const build::Object *program_objects[2] = {&object, nullptr};
     build::Program program = {
         .linker = "smith-cc",
         .output = "build/plain",
-        .objects = (const build::Object *const[]){&object, nullptr},
+        .objects = &program_objects[0],
     };
     build::program(b, &program);
     build::default_targets(b, program.step.outputs);

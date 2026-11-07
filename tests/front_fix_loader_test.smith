@@ -74,14 +74,18 @@ export void test_front_fix_loader_finds_a_module_beside_the_file() {
     const char *paths[1] = {user_path.data};
     (void)fix::fix_run(paths, 1);
     files::BytesResult back = files::read_file(user_path);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         check_text("cannot read back", "the file");
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got,
+                   "import front_fix_loader_scratch\nstatic fn f():\n    mut p: front_fix_loader_scratch.Project = "
+                   "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    check_text(got, "import front_fix_loader_scratch\nstatic fn f():\n    mut p: front_fix_loader_scratch.Project = "
-                    "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
 }
 
 // `fix_run` sets the loader for its own files only (#2560): after it, `fix_text` on an import reads no module, so a
@@ -118,14 +122,17 @@ export void test_front_fix_loader_import_in_todays_syntax_asks_for_mut() {
     const char *paths[1] = {user_path.data};
     (void)fix::fix_run(paths, 1);
     files::BytesResult back = files::read_file(user_path);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         check_text("cannot read back", "the file");
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_reader\nstatic fn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
+                        "    return front_fix_loader_reader.read(w, &v)\n");
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    check_text(got, "import front_fix_loader_reader\nstatic fn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
-                    "    return front_fix_loader_reader.read(w, &v)\n");
 }
 
 // A call of an import's `auto... pieces` function whose result is dropped gets `_ :=` too (#2566): the pack was
@@ -147,14 +154,18 @@ export void test_front_fix_loader_a_rest_import_result_is_discarded() {
     const char *paths[1] = {user_path.data};
     (void)fix::fix_run(paths, 1);
     files::BytesResult back = files::read_file(user_path);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         check_text("cannot read back", "the file");
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got,
+                   "import front_fix_loader_rest\nstatic fn f(n: u64):\n    _ := front_fix_loader_rest.put(\"x\", n)\n"
+                   "    m: u64 = n\n");
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    check_text(got, "import front_fix_loader_rest\nstatic fn f(n: u64):\n    _ := front_fix_loader_rest.put(\"x\", n)\n"
-                    "    m: u64 = n\n");
 }
 
 // #2648: a struct of another module that holds a `str` is zeroed field by field, `Place(file = "", line = 0)`, as
@@ -176,13 +187,17 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
     const char *paths[1] = {user_path.data};
     (void)fix::fix_run(paths, 1);
     files::BytesResult back = files::read_file(user_path);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         check_text("cannot read back", "the file");
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got,
+                   "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place = "
+                   "front_fix_zero_place.Place(file = \"\", line = 0)\nstatic fn f() -> u32:\n    "
+                   "row := Row(kind = 1)\n    return row.kind\n");
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    check_text(got, "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place = "
-                    "front_fix_zero_place.Place(file = \"\", line = 0)\nstatic fn f() -> u32:\n    "
-                    "row := Row(kind = 1)\n    return row.kind\n");
 }

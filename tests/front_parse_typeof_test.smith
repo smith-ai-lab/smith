@@ -69,7 +69,7 @@ export void test_parse_typeof_reflected_error_says_what_to_write() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     parse::Parser p = parser_of("typeof(T.[f)");
-    _ = parse_type::type(&p);
+    (void)parse_type::type(&p);
     test::check_condition(countof(p.errors) > 0);
     Str expected = "expected `]` to end the reflected member, found `)`";
     test::check_equal(p.errors[0].message, expected);

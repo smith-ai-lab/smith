@@ -12,15 +12,15 @@ import std::test;
 import scratch;
 import std::mem;
 
+static char first_line_line[512];
 static const char *first_line(const char *text) {
-    static char line[512];
     Usize length = 0;
-    while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof line) {
+    while (text[length] != '\0' && text[length] != '\n' && length + 1 < sizeof first_line_line) {
         length++;
     }
-    mem::copy(line[0:length], text[0:length]);
-    line[length] = '\0';
-    return line;
+    mem::copy(first_line_line[0:length], text[0:length]);
+    first_line_line[length] = '\0';
+    return first_line_line;
 }
 
 export void test_build_errors_no_build_c_fails() {

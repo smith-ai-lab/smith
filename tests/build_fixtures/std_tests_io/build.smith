@@ -3,6 +3,8 @@ module build;
 import std::build;
 
 export void build(build::Build *b) {
-    build::app(b, &(build::App){.entry = "main.smith"});
-    build::app_tests(b, &(build::AppTests){.folder = "tests"});
+    build::App app = {.entry = "main.smith"};
+    build::app(b, &app);
+    build::AppTests app_tests = {.folder = "tests"};
+    build::app_tests(b, &app_tests);
 }

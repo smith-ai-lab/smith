@@ -16,7 +16,7 @@ constexpr Usize memory_size = (Usize)1 << 20; // 1 MiB
 
 // The developer folders on this machine whose SDK paths differ (two folders can answer with the same SDK): the first
 // two, one per line.
-constexpr char folders_script[_] =
+static const char *const folders_script =
     "for d in \"$(xcode-select -p 2>/dev/null)\" /Applications/Xcode*.app/Contents/Developer "
     "/Library/Developer/CommandLineTools; do [ -d \"$d\" ] || continue; "
     "s=$(DEVELOPER_DIR=$d /usr/bin/xcrun --show-sdk-path 2>/dev/null) && [ -n \"$s\" ] && "

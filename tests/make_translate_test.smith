@@ -116,7 +116,9 @@ export void test_variables() {
     has("variables: the flags of the compile are written out", &t, "\"-DR1=\\\"2\\\"\"");
     has("variables: a command-line variable is an option", &t, "build::option_value(b, \"UNDEFINED_VARIABLE\"");
     has("variables: the option has the Makefile's line", &t, "Makefile:");
-    const Define table[_] = {{"R1", "2"}, {"R2", "1"}, {"R7", "2y"}, {"R8", "2-1"}, {"R9", "j"}, {"R10", "changed"}};
+    const Define table[_] = {{.name = "R1", .value = "2"},  {.name = "R2", .value = "1"},
+                             {.name = "R7", .value = "2y"}, {.name = "R8", .value = "2-1"},
+                             {.name = "R9", .value = "j"},  {.name = "R10", .value = "changed"}};
     defines("variables: the value make computes", &t, table, countof(table));
 }
 
@@ -133,10 +135,16 @@ export void test_functions() {
     Translation t = translate(folder);
     scratch::expect_text("functions: no construct is reported", "", t.report);
     const Define table[_] = {
-        {"R1", "a_b_c"},       {"R2", "4"},          {"R3", "x.o_y.o_z.h"}, {"R4", "x.c_z.h"},   {"R5", "y.o_z.h"},
-        {"R6", "pre-a_pre-b"}, {"R7", "a.x_b.x"},    {"R8", "a/b_d"},       {"R9", "b.c_e.h"},   {"R10", "a/_./"},
-        {"R11", ".c_.h"},      {"R12", "b-a-a-a_c"}, {"R13", "a1_b2"},      {"R14", "11_22_33"}, {"R15", "yes-no-z-b"},
-        {"R16", "bx"},         {"R17", "b_A_c_A"},   {"R18", "main.c"},     {"R19", "a b-a;b"},  {"R20", "a_b_c"},
+        {.name = "R1", .value = "a_b_c"},       {.name = "R2", .value = "4"},
+        {.name = "R3", .value = "x.o_y.o_z.h"}, {.name = "R4", .value = "x.c_z.h"},
+        {.name = "R5", .value = "y.o_z.h"},     {.name = "R6", .value = "pre-a_pre-b"},
+        {.name = "R7", .value = "a.x_b.x"},     {.name = "R8", .value = "a/b_d"},
+        {.name = "R9", .value = "b.c_e.h"},     {.name = "R10", .value = "a/_./"},
+        {.name = "R11", .value = ".c_.h"},      {.name = "R12", .value = "b-a-a-a_c"},
+        {.name = "R13", .value = "a1_b2"},      {.name = "R14", .value = "11_22_33"},
+        {.name = "R15", .value = "yes-no-z-b"}, {.name = "R16", .value = "bx"},
+        {.name = "R17", .value = "b_A_c_A"},    {.name = "R18", .value = "main.c"},
+        {.name = "R19", .value = "a b-a;b"},    {.name = "R20", .value = "a_b_c"},
     };
     defines("functions: the value make computes", &t, table, countof(table));
 }
@@ -214,7 +222,7 @@ export void test_include() {
     scratch::expect_text("include: nothing is reported", "", t.report);
     has("include: dependency files are dropped, with a note", &t, "smith tracks the headers");
     lacks("include: -MMD is not kept", &t, "\"-MMD\"");
-    const Define table[_] = {{"R1", "included"}};
+    const Define table[_] = {{.name = "R1", .value = "included"}};
     defines("include: the value make computes", &t, table, countof(table));
 }
 
@@ -230,8 +238,9 @@ export void test_conditionals() {
     main_c(folder);
     Translation t = translate(folder);
     has("conditionals: a test of an option the Makefile never sets is an option", &t, "build_never");
-    const Define table[_] = {{"R1", "fast"},  {"R2", "other"},  {"R3", "defined"},
-                             {"R4", "empty"}, {"R6", "quoted"}, {"R7", "nested"}};
+    const Define table[_] = {{.name = "R1", .value = "fast"},    {.name = "R2", .value = "other"},
+                             {.name = "R3", .value = "defined"}, {.name = "R4", .value = "empty"},
+                             {.name = "R6", .value = "quoted"},  {.name = "R7", .value = "nested"}};
     has("conditionals: ifndef of an option is undefined while the option is empty", &t,
         "(build_never)[0] == '\\0') ? \"undefined\" : \"\"");
     defines("conditionals: the value make computes", &t, table, countof(table));

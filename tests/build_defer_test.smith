@@ -22,10 +22,10 @@ static const char *sorted(const scratch::Project *p, const char *file) {
     return scratch::capture(p, command);
 }
 
+static char status_and_buffer[1024];
 static const char *status_and(const scratch::Run *run, const char *text) {
-    static char buffer[1024];
-    __builtin_snprintf(buffer, sizeof buffer, "%d %s", run->status, text);
-    return buffer;
+    __builtin_snprintf(status_and_buffer, sizeof status_and_buffer, "%d %s", run->status, text);
+    return status_and_buffer;
 }
 
 // Back to a fresh tree: no output, no list, no record of the steps that ran, no manifest and no source but the

@@ -38,20 +38,20 @@ static const char *mismatched_function_cast = "module main;\n"
                                               "    return f == nullptr;\n"
                                               "}\n";
 
+static char both_text[16384];
 // What the build printed, on either stream.
 static const char *both(const scratch::Run *run) {
-    static char text[16384];
-    __builtin_snprintf(text, sizeof text, "%s%s", run->out, run->err);
-    return text;
+    __builtin_snprintf(both_text, sizeof both_text, "%s%s", run->out, run->err);
+    return both_text;
 }
 
+static char build_with_text[512];
 static const char *build_with(const char *field) {
-    static char text[512];
-    __builtin_snprintf(text, sizeof text,
+    __builtin_snprintf(build_with_text, sizeof build_with_text,
                        "module build;\n\nimport std::build;\n\nexport void build(build::Build *b) {\n"
                        "    build::defaults(b, &(build::Defaults){%s});\n    build::app(b, &(build::App){});\n}\n",
                        field);
-    return text;
+    return build_with_text;
 }
 
 export void test_module_diagnostics_a_module_fails_on_the_baseline() {
