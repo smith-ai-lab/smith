@@ -1,5 +1,5 @@
 // `smith --smith-explain --pid <pid>`: the values of a failed check, read from the stopped test as a debugger would.
-// Included by smith.c after symbolize.c, whose rules for the failing frame and whose source reader it uses.
+// Linked into smith, whose rules for the failing frame and whose source reader it uses.
 //
 // The test runner (lib/std/test.smith, option --explain <smith>) starts this as a child of the worker that has just
 // failed a check or a contract, while that worker waits for it. The program does not capture anything: this attaches

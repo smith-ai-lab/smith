@@ -1,5 +1,5 @@
 // `smith cache`: shows and cleans the two caches, and the lock that tells a clean a build is using them. One file,
-// included by smith.c after runtime/package.c, which holds where the caches are and the pruning rule. See
+// linked into smith, which holds where the caches are and the pruning rule. See
 // knowledge/caches.md.
 //
 // The caches are $XDG_CACHE_HOME/smith/modules (clang's module cache, shared by every project and worktree) and

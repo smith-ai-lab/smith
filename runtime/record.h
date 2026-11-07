@@ -4,7 +4,7 @@
 #include "core.h"
 #include "coverage.h"
 
-// Per-test records (issue #456, knowledge/coverage-selection.md). Included by smith.c after runtime/coverage.c.
+// Per-test records (issue #456, knowledge/coverage-selection.md). Linked into smith.
 //
 // Every test that ran under coverage keeps a record in `.smith/records/<test>.rec` (or $SMITH_RECORDS_DIR), keyed by
 // content only, so it needs no repository and no commit, and a record that came from elsewhere is as good as one made

@@ -1,4 +1,4 @@
-// Coverage-based test selection (issue #456, knowledge/coverage-selection.md). Included by smith.c, before
+// Coverage-based test selection (issue #456, knowledge/coverage-selection.md). Linked into smith, before
 // runtime/changed.c. The train's full run builds smith with `-fprofile-instr-generate -fcoverage-mapping`; the test
 // runner gives each test a profile folder (LLVM_PROFILE_FILE), and after the test runs
 // `smith test --coverage merge <test>` merges its profiles and reads them against the programs (shim/coverage.cpp, as

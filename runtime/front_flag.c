@@ -1,7 +1,7 @@
 // `smith cc --front-end=new` (issue #1221, J2 of #1112): the `.smith` files of the command line go through smith's own
 // front end (front/compile.smith: parse, check, emit, write) and become objects; the other arguments go on to clang as
 // they were, with each `.smith` file replaced by its object. Experimental and off by default: without the flag a
-// `.smith` file still goes through the token lowering. Included by smith.c; the units runner (SMITH_CORE) has no front
+// `.smith` file still goes through the token lowering. Linked into smith; the units runner (SMITH_CORE) has no front
 // end linked, so it has none of this.
 #include "front_flag.h"
 #include "core.h"

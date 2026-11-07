@@ -1,5 +1,5 @@
 // What smith's own C shares before anything else: the assertion every build keeps, the exit statuses, the way a
-// program stops with a message, and the byte copy. Included by smith.c and the runtime/lang*.c it includes.
+// program stops with a message, and the byte copy. Linked into smith, and used by the runtime/lang*.c.
 #pragma once
 
 #include <stdio.h>

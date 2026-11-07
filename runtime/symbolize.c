@@ -1,5 +1,5 @@
 // `smith symbolize`, and smith answering as llvm-symbolizer: the traces <smith/trace.h> writes, turned into the failing
-// line and the call chain. Included by smith.c.
+// line and the call chain. Linked into smith.
 //
 // One filter does the work wherever output passes through smith: it copies its input, and replaces each block of
 // `smith-trace` lines with a report. `smith test` pipes the test runner through it; `smith symbolize` runs it on

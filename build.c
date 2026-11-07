@@ -1138,7 +1138,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     const char *const *flags = smith_cat(
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
-                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", "-D_GNU_SOURCE", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
                          nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
@@ -1332,7 +1332,8 @@ static void build_other_objects(SmithBuild *b, const BuildConfig *config, const 
         .source = "runtime/build_runtime.c",
         .output = smith_fmt(b, "%s/build_runtime.o", folder),
         .flags =
-            smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", nullptr}, nullptr),
+            smith_cat(b, config->cflags, (const char *[]){"-I", "include", "-I", ".smith/include", "-D_GNU_SOURCE", nullptr},
+                      nullptr),
     };
     smith_object(b, &runtime);
     SmithObject stub = {
@@ -3693,6 +3694,8 @@ static const char *build_enzyme_install(SmithBuild *b) {
 }
 
 void build(SmithBuild *b) {
+    // smith's own C follows the conventions it gives a project (#2685): Clang modules, one per header of runtime/.
+    smith_modules(b, &(SmithModules){.folders = (const char *[]){"runtime", nullptr}});
     const char *std = build_variable(b, "STD", "gnu23", "the C standard");
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
     const char *folder = build_variable(b, "BUILD", smith_fmt(b, "build/%s-%s", b->os, b->arch), "the build folder");

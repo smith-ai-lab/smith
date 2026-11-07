@@ -26,7 +26,7 @@ so a project that enables the plugin has the tools; by hand: `claude mcp add smi
 The server is `runtime/mcp.c` and the files it includes, in order: `mcp_text.c` (the text a result is built in, the
 readers of a tool's arguments), `mcp_dap.c` (a session: the child, DAP's framing, requests and replies, the queue of
 events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools.c` (the tools and their table) and
-`mcp_serve.c` (MCP: the messages, the versions, the loop). smith.c includes it after the JSON, text and protocol code.
+`mcp_serve.c` (MCP: the messages, the versions, the loop). each is an object of its own since #2685.
 
 - **On the event loop of `<runtime/io.h>` and in one thread, until #2662.** The server's stdin, every session's pipes and exit, and the clock are ops on
   one event loop. A tool call is a function that runs the loop (`smith_mcp_pump`) until what it waits for has happened or

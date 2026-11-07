@@ -1,5 +1,5 @@
 // What a run costs (issue #31): the wall and CPU time of each task of a build and how many times smith started under
-// it, so that the slow ones are seen, and what to port or shard is chosen by numbers. Included by smith.c.
+// it, so that the slow ones are seen, and what to port or shard is chosen by numbers. Linked into smith.
 //
 // `smith test` (and so `smith check`) names a file in SMITH_ACCOUNT_FILE; the executor then runs each task (an edge
 // that makes `.smith/task/<name>`) through `smith --smith-account <file> <name> <command...>`, which runs the command,

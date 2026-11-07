@@ -1,7 +1,7 @@
 // The expander of make's `$(...)`: variables, substitution references, the automatic variables and the functions of
 // issue #44. It is a machine with a stack of frames and one buffer, not a recursion: a text frame scans its text, and
 // meeting `$(` it pushes a call frame, which expands its arguments by pushing a text frame for each, then computes. The
-// buffer is a stack too: a call's result goes where its first argument began. Included by smith.c after make.c.
+// buffer is a stack too: a call's result goes where its first argument began. Linked into smith.
 
 #include "make_expand.h"
 #include "core.h"

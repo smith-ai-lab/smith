@@ -1,4 +1,4 @@
-// Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, included by smith.c
+// Packages: a URL and the SHA-256 of the archive's bytes, fetched into smith's cache. One file, linked into smith
 // (`smith fetch`) and by the build runtime (`smith_package`), and embedded in smith so the runtime finds it next to
 // itself in .smith/. It needs SMITH_ASSERT from its includer. See knowledge/packages.md.
 //

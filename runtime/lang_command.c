@@ -1,6 +1,6 @@
 // The rule for the command of a compile that names .smith inputs, shared by `smith cc` (smith.c) and `smith lsp`
 // (shim/clangd.cpp, which applies it to every command clangd compiles with), so that what the CLI accepts the editor
-// accepts, and they cannot drift. Included by smith.c, which has smith_ends_with and smith_takes_value.
+// accepts, and they cannot drift. Linked into smith, which has smith_ends_with and smith_takes_value.
 
 #include "lang_command.h"
 #include "core.h"

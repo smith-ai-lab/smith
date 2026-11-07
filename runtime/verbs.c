@@ -8,7 +8,7 @@
 //   run    the program the build's default names; the arguments go to the program
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
 // What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes
-// (knowledge/verbs.md). Included by smith.c.
+// (knowledge/verbs.md). Linked into smith.
 #include "verbs.h"
 #include "account.h"
 #include "changed.h"

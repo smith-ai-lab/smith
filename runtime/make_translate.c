@@ -1,5 +1,5 @@
 // The translation as a whole: the options, the named arrays, the declarations in order, the default, the header and
-// what was not translated. Included by smith.c after make_print.c.
+// what was not translated. Linked into smith.
 
 // ---- Options
 

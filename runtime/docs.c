@@ -1,6 +1,6 @@
 // `smith docs`: checks a project's documents, knowledge/ (an OKF bundle) and .agents/skills/, and prints
 // each problem on stderr as path: message, in the order of the rules below, then a summary on stdout. It exits 1 if
-// there was a problem. One file, included by smith.c; it allocates nothing itself (its memory is two mapped regions,
+// there was a problem. One file, linked into smith; it allocates nothing itself (its memory is two mapped regions,
 // used as arenas). Ported from virtual-cell's docs_check; the rules, the fixtures and the skill smith-docs describe it.
 //
 //   smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]...

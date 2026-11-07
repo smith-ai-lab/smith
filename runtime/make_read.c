@@ -1,5 +1,5 @@
 // Reading a Makefile: logical lines, assignments, `define`, `include`, conditionals (a test of the platform or an
-// option keeps both branches) and rules. Included by smith.c after make_expand.c.
+// option keeps both branches) and rules. Linked into smith.
 
 #include "make_read.h"
 #include "core.h"

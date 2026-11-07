@@ -1,5 +1,5 @@
 // The cache of `smith lint` (issue #621, knowledge/caches.md): clang-tidy's result for one file, its output text and
-// exit status, kept under $XDG_CACHE_HOME/smith/lint and replayed when nothing it read has changed. Included by smith.c
+// exit status, kept under $XDG_CACHE_HOME/smith/lint and replayed when nothing it read has changed. Linked into smith
 // before runtime/verbs.c, which asks it about each file and runs clang-tidy only on a miss.
 //
 // Two levels, as a compiler cache with a manifest does. The FIRST key is the SHA-256 of what is known before the run:

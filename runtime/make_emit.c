@@ -1,6 +1,6 @@
 // Writing build.c: each target the Makefile builds becomes smith_object, smith_program, smith_step, smith_task or
 // smith_alias, a variable a recipe uses as whole words becomes a named array, and an option becomes
-// smith_option_value. Included by smith.c after make_graph.c.
+// smith_option_value. Linked into smith.
 
 #include "make_emit.h"
 #include "core.h"

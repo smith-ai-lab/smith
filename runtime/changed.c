@@ -1,5 +1,5 @@
 // `smith test --changed` (issue #441): the tests a change can affect, found from what the compiler knows and never
-// declared by a test. knowledge/changed-tests.md. Included by smith.c, before runtime/verbs.c.
+// declared by a test. knowledge/changed-tests.md. Linked into smith, before runtime/verbs.c.
 //
 // The reverse dependency graph, and nothing else: every source of the project (`.smith`, `.c`, `.h`, `.cpp`, `.hpp`,
 // `.m`) is scanned for its `module`, `import` and `#include` lines, an edge goes to each project file they name, and

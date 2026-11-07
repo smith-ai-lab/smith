@@ -1,5 +1,5 @@
 // The targets a Makefile builds: the explicit ones, the pattern rules and make's built-in C rules applied to what needs
-// them, with prerequisites and recipes. Included by smith.c after make_read.c.
+// them, with prerequisites and recipes. Linked into smith.
 
 #include "make_graph.h"
 #include "core.h"

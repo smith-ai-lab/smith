@@ -6,7 +6,7 @@
 // Quiet output (issue #78): what a run prints is a line per stage, and the rest goes to a log under `.smith/log/`.
 // A failure shows a bounded excerpt of its output (the lines from the first one that reports a failure) and the path
 // of the log. `-v` (or SMITH_OUTPUT=full, which the outermost run sets for everything beneath it, so a test of smith
-// that runs `smith test` sees what it always saw) prints everything as it happens. Included by smith.c.
+// that runs `smith test` sees what it always saw) prints everything as it happens. Linked into smith.
 constexpr size_t smith_quiet_lines = 30;
 
 constexpr size_t smith_quiet_columns = 200;

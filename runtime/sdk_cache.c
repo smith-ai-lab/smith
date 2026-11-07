@@ -4,7 +4,7 @@
 // only for the real /usr/bin/xcrun (a stub on PATH is asked), only while the key (DEVELOPER_DIR and where xcode-select
 // points) is the same and the folder is the same one (device, inode and modification time), so a new Xcode, a switch
 // with xcode-select or a different SDK behind the same name is asked again. Any failure to read or write it asks xcrun
-// as before. Included by smith.c, on macOS.
+// as before. Linked into smith, on macOS.
 #include "core.h"
 
 constexpr char smith_sdk_cache_xcrun[] = "/usr/bin/xcrun";

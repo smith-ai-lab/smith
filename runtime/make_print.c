@@ -1,4 +1,4 @@
-// Printing the declarations of build.c. Included by smith.c after make_class.c.
+// Printing the declarations of build.c. Linked into smith.
 
 #include "make_print.h"
 #include "core.h"

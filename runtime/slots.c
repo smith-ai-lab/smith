@@ -3,7 +3,7 @@
 // flock on, so the OS drops it when the process dies (no daemon). `smith build`, `check` and `test` take one token at
 // their first heavy step (the base: the run's first worker rides on it); every further worker the run starts (an
 // executor job, a test runner worker) takes one more and gives it back when it ends, so a run grows as tokens free up.
-// knowledge/slots.md. Included by smith.c.
+// knowledge/slots.md. Linked into smith.
 #include "slots.h"
 #include "core.h"
 #include "mcp_unit.h"

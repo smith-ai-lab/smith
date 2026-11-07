@@ -21,7 +21,7 @@
 //   mcp_tools.c   the tools, their schemas, and the table that finds them
 //   mcp_serve.c   MCP: the messages, the version negotiation, and the loop
 //
-// It is included by smith.c after lib/text.c, lib/json.c and the protocol code, and compiled alone, with those linked,
+// It is linked into smith, lib/json.c and the protocol code, and compiled alone, with those linked,
 // by the tests of tests/mcp_test.smith.
 #include "core.h"
 #include "mcp_unit.h"
