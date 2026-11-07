@@ -49,5 +49,5 @@ export void test_front_fix_const_an_initialized_local_whose_field_address_is_tak
 export void test_front_fix_const_a_nullptr_out_parameter_local_is_mut() {
     expect_inserts("fn g(context: c.LLVMContextRef):\n    module: c.LLVMModuleRef = nullptr\n"
                    "    c.LLVMParseIRInContext(context, &module)\n",
-                   1, 42);
+                   1, 37);
 }
