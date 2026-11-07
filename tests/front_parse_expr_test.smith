@@ -549,3 +549,18 @@ export void test_parse_expr_logic_words_are_clean_and_the_signs_have_fixes() {
     Str expected = "not a and b or c";
     test::check_equal(fixed.text, expected);
 }
+
+// C2y's `_Countof` is `countof`, with the operand's parentheses added when it has none.
+export void test_parse_expr_underscore_countof_is_countof() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "_Countof xs + _Countof(ys)";
+    parse::Parser p = parser_of(source);
+    _ = parse::expression(&p);
+    test::check_equal(countof(p.errors), (Usize)0);
+    fix::Fixed fixed = fix::apply_fixes(source, p.errors, p.warnings);
+    Str expected = "countof(xs) + countof(ys)";
+    test::check_equal(fixed.text, expected);
+}

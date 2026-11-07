@@ -1101,6 +1101,7 @@ struct Pending {
     ast::Expr *middle;
     ast::Span head;  // a cast's `(T)`, a prefix operator's token, the `?` of a conditional
     ast::Span colon; // the `:` of a conditional
+    Bool legacy;     // a query written `_Countof` (C2y)
 };
 
 // A `++` or `--` seen in an expression: it is a statement in Smith, so the end of the expression decides its warning.
@@ -1277,6 +1278,20 @@ static void deref_warning(Stack *st, const Pending *op, const ast::Expr *operand
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
     tail_warning(st, from_to(op->head.start, operand->span.end), "`*p` reads through a pointer as `p.*`", edits,
                  operand->span.end, plain ? ".*" : ").*");
+}
+
+// `_Countof x` and `_Countof(x)` (C2y) are `countof(x)`.
+static void countof_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Edits edits = {};
+    Bool wrapped = st->parser->source[operand->span.start] == '(';
+    if (wrapped) {
+        edits = with_edit(edits, op->head, "countof");
+        parse::warning_fix(st->parser, from_to(op->head.start, operand->span.end), "`_Countof` is `countof`", edits);
+        return;
+    }
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), "countof(");
+    tail_warning(st, from_to(op->head.start, operand->span.end), "`_Countof x` is `countof(x)`", edits,
+                 operand->span.end, ")");
 }
 
 // Puts `if ` in front of the condition: into the edit of an inner fix that already replaces the text from there (a cast
@@ -1542,6 +1557,7 @@ static void reduce(Stack *st) {
         push_value(st, make(between(op.start, right), {.cast = {.type = op.type, .operand = right}}));
         break;
     case .query_form:
+        if (op.legacy) countof_warning(st, &op, right);
         push_value(st, make(between(op.start, right), {.query = {.op = op.query, .type = nullptr, .operand = right}}));
         break;
     case .try_form:
@@ -2081,7 +2097,12 @@ static Step query(parse::Parser *p, Stack *st) {
             st, make(parse::span_from(p, keyword.span.start), {.query = {.op = op, .type = type, .operand = nullptr}}));
         return .value;
     }
-    Pending pending = {.form = .query_form, .prec = prefix_prec, .start = keyword.span.start, .query = op};
+    Pending pending = {.form = .query_form,
+                       .prec = prefix_prec,
+                       .start = keyword.span.start,
+                       .head = keyword.span,
+                       .query = op,
+                       .legacy = parse::text(p, keyword)[0] == '_'};
     push_op(st, pending);
     return .more;
 }
