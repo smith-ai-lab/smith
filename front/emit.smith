@@ -1365,6 +1365,35 @@ static ast::Stmt *returning_if(const ast::Stmt *s) {
     return tail;
 }
 
+// A `match` whose every arm is an expression (or already a `return`), with each arm written as `return <expression>`,
+// so a call that ends an arm is in tail position (#2709). Null when an arm is a block or another statement.
+static ast::Stmt *returning_match(const ast::Stmt *s) {
+    if (s->kind != .match_stmt) return nullptr;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    Usize count = countof(arms);
+    if (count == 0 || count > 64) return nullptr;
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *value = arms[i].value;
+        if (value->kind == .stmt_expr && value->kind.stmt_expr.stmt->kind != .return_stmt) return nullptr;
+    }
+    ast::MatchArm *room = (ast::MatchArm *)mem::alloc_array_raw(sizeof(ast::MatchArm), count, alignof(ast::MatchArm));
+    for (Usize i = 0; i < count; i++) {
+        room[i] = arms[i];
+        const ast::Expr *given = arms[i].value;
+        if (given->kind != .stmt_expr) {
+            ast::Stmt *made = ast::return_value(arms[i].value);
+            made->span = arms[i].span;
+            room[i].value = ast::stmt_expr(made);
+            room[i].value->span = arms[i].value->span;
+        }
+    }
+    ast::MatchArm list[:] = room[0:count];
+    ast::Stmt *made = ast::match_stmt(s->kind.match_stmt.value, list);
+    made->span = s->span;
+    mem::free((void *)room);
+    return made;
+}
+
 // The body with its last `if`, `match` or block returned: as `value_block`, through the same continuation.
 static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *body) {
     try debug::stmt_location(e, body);
@@ -1373,7 +1402,9 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     }
     ast::StmtRef items[:] = body->kind.block.items;
     const ast::Stmt *last = items[countof(items) - 1];
-    ast::Stmt *returning = last->kind == .if_stmt ? returning_if(last) : nullptr;
+    ast::Stmt *returning = nullptr;
+    if (last->kind == .if_stmt) returning = returning_if(last);
+    if (last->kind == .match_stmt) returning = returning_match(last);
     if (returning != nullptr) {
         // Each branch returns its own value, so a call that ends a branch is a tail call (#2709).
         state::begin_scope(e);

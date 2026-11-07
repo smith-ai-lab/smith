@@ -1333,8 +1333,14 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
             }
             ast::Span nowhere = {};
             Str way = rec_way_round(&g, u, g.to[k]);
-            result = state::failf(nowhere, "recursion in a module: ", way,
-                                  " (write a loop; a call that ends the function is a tail call: `return f(...)`)");
+            if (c::LLVMGlobalGetValueType(g.functions[u].value) !=
+                c::LLVMGlobalGetValueType(g.functions[g.to[k]].value)) {
+                result = state::failf(nowhere, "recursion in a module: ", way,
+                                      " (not a tail call: the callee has other parameters or another result than the "
+                                      "caller, and a tail call needs the same function type; write a loop)");
+            } else
+                result = state::failf(nowhere, "recursion in a module: ", way,
+                                      " (write a loop; a call that ends the function is a tail call: `return f(...)`)");
             break;
         }
     }

@@ -107,6 +107,44 @@ export void test_front_effects_pass_sets() {
     test::check_equal(bits(&g, "not_in_the_graph"), effects_table::unknown);
 }
 
+// A function that prints and then tail-calls itself or its partner (`musttail`, #2709) has the printing effect, as a
+// plain call would give it: the effect reaches the caller of the loop.
+static const char *tail_ir = "declare i32 @printf(ptr, ...)\n"
+                             "@.str = private constant [3 x i8] c\"hi\\00\"\n"
+                             "define i64 @loud(i64 %n) {\n"
+                             "  %r = call i32 (ptr, ...) @printf(ptr @.str)\n"
+                             "  %m = musttail call i64 @loud(i64 %n)\n"
+                             "  ret i64 %m\n"
+                             "}\n"
+                             "define i64 @left(i64 %n) {\n"
+                             "  %m = musttail call i64 @right(i64 %n)\n"
+                             "  ret i64 %m\n"
+                             "}\n"
+                             "define i64 @right(i64 %n) {\n"
+                             "  %r = call i32 (ptr, ...) @printf(ptr @.str)\n"
+                             "  %m = musttail call i64 @left(i64 %n)\n"
+                             "  ret i64 %m\n"
+                             "}\n"
+                             "define i64 @user(i64 %n) {\n"
+                             "  %m = call i64 @left(i64 %n)\n"
+                             "  ret i64 %m\n"
+                             "}\n";
+
+export void test_front_effects_pass_a_tail_call_carries_its_effects() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context, tail_ir, "tail.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    test::check_equal(bits(&g, "loud"), effects_table::console | effects_table::globals);
+    test::check_equal(bits(&g, "right"), effects_table::console | effects_table::globals);
+    test::check_equal(bits(&g, "left"), effects_table::console | effects_table::globals);
+    test::check_equal(bits(&g, "user"), effects_table::console | effects_table::globals);
+}
+
 export void test_front_effects_pass_chain_of_causes() {
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);

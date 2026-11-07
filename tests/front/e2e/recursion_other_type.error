@@ -1,0 +1,1 @@
+<dir>/src/recursion_other_type.smith:1:1: error: recursion in a module: recursion_other_type::first -> recursion_other_type::second -> recursion_other_type::first (not a tail call: the callee has other parameters or another result than the caller, and a tail call needs the same function type; write a loop)
