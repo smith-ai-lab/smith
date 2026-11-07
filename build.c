@@ -12,6 +12,7 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -3479,6 +3481,45 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
+// `smith build stage0` (#2719): downloads the newest release into .smith/stage0/ and checks its .sha256, as the
+// README's Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C
+// and uses no `.smith` module of the tree: the tree builds only with the newest release (smith-dev-build, the lag
+// rule), so a clone with an older smith runs this first and cannot build anything else. Running it again replaces the
+// folder.
+static int build_stage0(SmithRun *run) {
+    SmithBuild *b = run->b;
+    struct utsname system = {};
+    if (uname(&system) != 0) return 1;
+    char os[sizeof system.sysname];
+    size_t length = strlen(system.sysname);
+    for (size_t i = 0; i <= length; i++)
+        os[i] = (char)tolower((unsigned char)system.sysname[i]);
+    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/latest/download";
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    for (int which = 0; which < 2; which++) {
+        const char *file = which == 0 ? name : smith_fmt(b, "%s.sha256", name);
+        int status = build_exec(smith_list(b, "curl", "-fsSL", "--retry", "3", "-o", smith_fmt(b, ".smith/%s", file),
+                                           smith_fmt(b, "%s/%s", base, file), nullptr));
+        if (status != 0) return status;
+    }
+#ifdef __APPLE__
+    const char *const *check = smith_list(b, "shasum", "-a", "256", "-c", smith_fmt(b, "%s.sha256", name), nullptr);
+#else
+    const char *const *check = smith_list(b, "sha256sum", "-c", smith_fmt(b, "%s.sha256", name), nullptr);
+#endif
+    int status = build_spawn(&(BuildSpawn){.argv = check, .folder = build_absolute(b, ".smith"), .tail = 5});
+    if (status != 0) return status;
+    status = build_exec(smith_list(b, "/bin/rm", "-rf", ".smith/stage0", nullptr));
+    if (status == 0) status = build_make_folder(b, ".smith/stage0");
+    if (status == 0)
+        status =
+            build_exec(smith_list(b, "tar", "-C", ".smith/stage0", "-xJf", smith_fmt(b, ".smith/%s", name), nullptr));
+    if (status == 0)
+        fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    return status;
+}
+
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
 // suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
@@ -3623,6 +3664,8 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);
+    SmithStep stage0 = {.run = build_stage0, .description = "downloading the newest release into .smith/stage0"};
+    smith_task(b, "stage0", &stage0);
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),

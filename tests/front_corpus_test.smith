@@ -5,7 +5,8 @@
 //   ...`) expect/header/  `<module>.h`: what `compile::header` writes for that file c/main.c   a C program that calls
 //   the case's headers, linked with the objects instead of a `pub fn main` expect/stdout   the objects are linked (the
 //   case has `pub fn main`) and the program prints exactly this
-// Add a case by adding a folder.
+// Add a case by adding a folder. `FC_ONLY=<case>` runs that one case. Every case runs: a failure is reported with the
+// case's name, its errors first and the warnings that came before them after, and the next case goes on (#2146).
 module front_corpus_test;
 
 import front::compile;
@@ -233,6 +234,29 @@ static void check_stdout(Str dir, Str folder, Built built) {
                       text_of(as_str(format::push(dir, "/expect/stdout"))));
 }
 
+// Failures are collected so that every case runs: each prints at once and the test fails at the end, once, with the
+// number of failed cases (a failed check ends the test, so it is the last call).
+static Usize failed_cases = 0;
+
+static void fail_with(Str text) {
+    failed_cases += 1;
+    (void)console::print_error("FAILED CASE ", text, "\n");
+}
+
+// The text with the warnings that come before the first error moved after it, so a failure shows its errors first.
+static Str errors_first(Str text) {
+    Str mark = ": error:";
+    for (Usize i = 0; i + countof(mark) <= countof(text); i++) {
+        if (!roots::same(text[i:i + countof(mark)], mark)) continue;
+        Usize line = i;
+        while (line > 0 && text[line - 1] != '\n')
+            line -= 1;
+        if (line == 0) return text;
+        return as_str(format::push(text[line:], "\n(warnings before the first error:)\n", text[0:line]));
+    }
+    return text;
+}
+
 static void remove_all(Str folder) {
     const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
@@ -267,26 +291,30 @@ static void run_case(Str name) {
     Built built = add_c_sources(folder, c_sources_of(dir), build_case(folder, modules));
     Str errors_path = as_str(format::push(dir, "/expect/error"));
     if (files::exists(errors_path)) {
-        test::check_equal(built.ok, false);
         Str got = replace(built.text, as_str(format::push(folder, "/")), "");
         Str want = text_of(errors_path);
-        if (!roots::same(want, got)) test::check_equal(got, want);
+        if (built.ok) {
+            fail_with(as_str(format::push(name, ": compiled, but ", name, "/expect/error expects an error")));
+        } else if (!roots::same(want, got)) {
+            fail_with(as_str(format::push(name, ": wrong error, got:\n", got, "\nwant:\n", want)));
+        }
     } else {
-        if (!built.ok) (void)console::print_error(built.text, "\n");
-        if (!built.ok) test::check_equal(built.text, as_str(format::push("")));
-        test::check_equal(built.ok, true);
+        if (!built.ok) fail_with(as_str(format::push(name, ": ", errors_first(built.text))));
         if (built.ok) check_headers(dir, folder, modules);
         if (built.ok && files::exists(as_str(format::push(dir, "/expect/stdout")))) check_stdout(dir, folder, built);
     }
     remove_all(folder);
 }
 
-// Every case of tests/front/corpus/, one check each (a failure's message is the case's name).
+// Every case of tests/front/corpus/, one check each (a failure's text starts with the case's name).
 export void test_front_corpus_every_case() {
     files::EntriesResult listing = files::list("tests/front/corpus");
     test::check_equal(listing == .ok, true);
     if (listing != .ok) return;
+    const char *only = c::getenv("FC_ONLY");
     for (files::Entry entry : listing.ok) {
+        if (only != nullptr && !roots::same(entry.name, as_str(format::push(only)))) continue;
         run_case(entry.name);
     }
+    test::check_equal(failed_cases, 0);
 }
