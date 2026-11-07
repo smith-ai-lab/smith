@@ -602,6 +602,14 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
                                edits);
             return;
         }
+        if (plain && fix->designated == 0 && fix->positional >= 2 && type->kind == .tuple) {
+            // `(struct { I32, F32 }){1, 2.0f}` is the tuple `(1, 2.0f)`: the type is the tuple's own.
+            parse::Edits edits = fix->edits;
+            edits = with_edit(edits, from_to(start, open.span.end), "(");
+            edits = with_edit(edits, close.span, ")");
+            parse::warning_fix(p, whole, "a compound literal of a tuple type `(T){a, b}` is written `(a, b)`", edits);
+            return;
+        }
         if ((plain || empty) && unmixed && type->kind == .named) {
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, start + 1), "");
