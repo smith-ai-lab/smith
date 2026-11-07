@@ -76,7 +76,7 @@ static Bool plain_integer(const ast::Expr *e) {
 }
 
 static types::TypeRef range_element(types::Checked *r, const ast::Expr *site) {
-    if (!(site->kind == .call)) {
+    if (site->kind != .call) {
         return nullptr;
     }
     ast::ExprRef args[:] = site->kind.call.args;
@@ -107,7 +107,7 @@ static types::TypeRef range_element(types::Checked *r, const ast::Expr *site) {
 
 // The elements of each argument of `zip` or `enumerate`; true when every one is iterable.
 static Bool arguments_iterable(types::Checked *r, const ast::Expr *site, Str name) {
-    if (!(site->kind == .call)) {
+    if (site->kind != .call) {
         return false;
     }
     ast::ExprRef args[:] = site->kind.call.args;
@@ -157,7 +157,7 @@ export types::TypeRef element_type(types::Checked *r, const ast::Expr *iterable,
     }
     if (same(fn_name, "range")) return range_element(r, iterable);
     if (same(fn_name, "refs")) {
-        if (!(iterable->kind == .call)) {
+        if (iterable->kind != .call) {
             return nullptr;
         }
         ast::ExprRef args[:] = iterable->kind.call.args;

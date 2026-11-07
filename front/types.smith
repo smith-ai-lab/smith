@@ -1564,7 +1564,7 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
 // `typeof(T)` is `T`; `typeof(x)` is the type of the variable or parameter `x` that is in scope. Another expression is
 // typed by `options.expression` (J1b's `infer`, which this file cannot import); without one it is reported.
 static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
-    if (!(node->kind == .type_of)) return r->table.invalid;
+    if (node->kind != .type_of) return r->table.invalid;
     const ast::Expr *operand = node->kind.type_of.operand;
     if (operand->kind == .type_value) {
         // (no recursion: only a named type, as `typeof(i32)`, is read here)
@@ -1628,7 +1628,7 @@ static void reject_conversion_name(Checked *r, ast::Span span, Str name, Str wha
 // An anonymous struct or union used as a type (a payload variant `struct { I32 a; } one;`): a nominal record of its
 // own, one per place it is written, whose fields are the children's types.
 static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
-    if (!(node->kind == .record)) return r->table.invalid;
+    if (node->kind != .record) return r->table.invalid;
     ast::FieldDecl members[:] = node->kind.record.fields;
     Slot fields[:] = mem::alloc_slice(Slot, n);
     for (Usize i = 0; i < n; i++) {
@@ -1659,7 +1659,7 @@ static Bool any_invalid(const Checked *r, const Walk *w, Usize base, Usize n) {
 
 // `vec(T, N)`: `T` is a number type and `N` an integer literal of 1 or more.
 static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef element) {
-    if (!(node->kind == .applied)) {
+    if (node->kind != .applied) {
         return r->table.invalid;
     }
     ast::TypeArg args[:] = node->kind.applied.args;
@@ -1695,7 +1695,7 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out);
 // `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
 // constant, or `countof` of a pack.
 static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef element) {
-    if (!(node->kind == .applied)) return r->table.invalid;
+    if (node->kind != .applied) return r->table.invalid;
     ast::TypeArg args[:] = node->kind.applied.args;
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
@@ -1721,7 +1721,7 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
     Bool is_lambda = same_text(name, "Lambda");
     if ((same_text(name, "Fn") || is_lambda) && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;
-        if (!(argument->kind == .function)) {
+        if (argument->kind != .function) {
             Str written = is_lambda ? "Lambda" : "Fn";
             failf(r, span, "`", written, "` takes a function type; write `", written, "(R (P1, P2))`, for example `",
                   written, "(Bool (I32, I32))`");
@@ -2338,7 +2338,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         TypeRef underlying = builtin(&r->table, "I32");
         if (over != nullptr) {
             underlying = resolve(r, over);
-            if (!(underlying->kind == .integer)) {
+            if (underlying->kind != .integer) {
                 if (underlying != r->table.invalid) {
                     failf(r, span, "an enumeration is over an integer type, not `", show(underlying), "`; write `enum ",
                           name, " : U8`");
@@ -2504,7 +2504,7 @@ static void declare_alias(Checked *r, const ast::Decl *d) {
 }
 
 static void fill_record(Checked *r, const ast::Decl *d, Str name) {
-    if (!(d->kind == .record)) return;
+    if (d->kind != .record) return;
     Bool opaque = d->kind.record.opaque;
     ast::FieldDecl members[:] = d->kind.record.fields;
     const Symbol *symbol = lookup_as(&r->scopes, name, true); // a function of the tag's name may be declared (#2610)
@@ -2604,7 +2604,7 @@ export Bool is_type_parameter(const ast::Param *p) {
 // Whether a written type is a slice of `auto` (`const auto xs[:]`): the call's argument must be a slice, and the
 // instance keeps its element type and the parameter's `const` (#2070).
 export Bool is_auto_slice(const ast::TypeExpr *t) {
-    if (t == nullptr || !(t->kind == .slice)) return false;
+    if (t == nullptr || t->kind != .slice) return false;
     const ast::TypeExpr *inner = t->kind.slice.element;
     return inner != nullptr && inner->kind == .auto_type;
 }
@@ -2624,7 +2624,7 @@ export Bool is_auto_param(const ast::Param *p) {
 // The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
 // `auto` its element with the parameter's `const` added; null when the argument is not a slice.
 export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
-    if (!is_auto_slice(p->type) || !(p->type->kind == .slice)) return given;
+    if (!is_auto_slice(p->type) || p->type->kind != .slice) return given;
     if (given->kind != .slice) return nullptr;
     Bool fixed = given->pointee_const || p->type->kind.slice.element->qualifiers.is_const;
     return slice_of(&r->table, given->element, fixed);
@@ -2962,7 +2962,7 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
         if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
             if (bound >= countof(given) || given[bound].type == nullptr) break;
             TypeRef pack = given[bound].type;
-            if (!(pack->kind == .tuple)) break;
+            if (pack->kind != .tuple) break;
             return ast_clone::clone_decl_unrolling(template, params[i].name, countof(pack->slots));
         }
         if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
@@ -3087,7 +3087,7 @@ struct UnifyPair {
 
 // The index of the generic a written type names (`T`), or the count when it names none.
 static Usize generic_named(ast::Param generics[:], const ast::TypeExpr *written) {
-    if (!(written->kind == .named)) return countof(generics);
+    if (written->kind != .named) return countof(generics);
     Str name = path_text(written->kind.named.path);
     for (Usize i = 0; i < countof(generics); i++) {
         if (is_generic_type(&generics[i]) && same_text(generics[i].name, name)) return i;

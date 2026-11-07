@@ -375,7 +375,7 @@ static void path_expression(Pass *p, const ast::Expr *e, Str path) {
 
 // `target = value`: the value is read, then the target holds a new value.
 static void assignment(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .assign)) {
+    if (e->kind != .assign) {
         return;
     }
     const ast::Expr *target = e->kind.assign.target;
@@ -391,7 +391,7 @@ static void assignment(Pass *p, const ast::Expr *e) {
 
 // The conditional expression `c ? a : b` and `a && b`, `a || b`: the later operands are alternatives.
 static void conditional(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .conditional)) {
+    if (e->kind != .conditional) {
         return;
     }
     push_item(p, (Item){.step = begin_branches, .expr = e});
@@ -402,11 +402,11 @@ static void expression(Pass *p, const ast::Expr *e);
 
 // A call: its callee and arguments in order, or the call a method call stands for.
 static void call(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .call)) {
+    if (e->kind != .call) {
         return;
     }
     const ast::Expr *method = types::method_of(p->r, e);
-    if (!(e->kind == .call)) {
+    if (e->kind != .call) {
         return;
     }
     // An array or a slice of affine values passed to a call is filled by it: its elements are fresh afterwards.
@@ -581,16 +581,16 @@ static void begin(Pass *p, Item item) {
 // Whether `e` is `range(countof(xs))`: the counter of a loop over it is one element of `xs` per turn. Gives the place
 // of `xs`, else an empty text.
 static Str counted_array(Pass *p, const ast::Expr *e) {
-    if (e == nullptr || !(e->kind == .call) || countof(e->kind.call.args) != 1) {
+    if (e == nullptr || e->kind != .call || countof(e->kind.call.args) != 1) {
         return "";
     }
     const ast::Expr *callee = e->kind.call.callee;
     const ast::Expr *count = e->kind.call.args[0];
-    if (!(callee->kind == .name) || countof(callee->kind.name.path.segments) != 1 ||
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1 ||
         !same(callee->kind.name.path.segments[0].text, "range")) {
         return "";
     }
-    if (!(count->kind == .query) || count->kind.query.op != .count_of || count->kind.query.operand == nullptr) {
+    if (count->kind != .query || count->kind.query.op != .count_of || count->kind.query.operand == nullptr) {
         return "";
     }
     return path_of(p, count->kind.query.operand);

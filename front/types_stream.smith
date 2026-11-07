@@ -84,7 +84,7 @@ export types::TypeRef generator_element(types::TypeRef result, const ast::Stmt *
 
 // `yield x` in a function whose generator element is `element` (null outside a generator).
 export void check_yield(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
-    if (!(s->kind == .yield_stmt)) return;
+    if (s->kind != .yield_stmt) return;
     const ast::Expr *value = s->kind.yield_stmt.value;
     if (element == nullptr) {
         if (value != nullptr) (void)types_expr::infer(r, value);
@@ -98,7 +98,7 @@ export void check_yield(types::Checked *r, const ast::Stmt *s, types::TypeRef el
 
 // `return` in a generator: true when it was handled here (a plain `return` is fine, `return v` is refused).
 export Bool check_return(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
-    if (element == nullptr || !(s->kind == .return_stmt)) return false;
+    if (element == nullptr || s->kind != .return_stmt) return false;
     const ast::Expr *value = s->kind.return_stmt.value;
     if (value != nullptr) {
         (void)types_expr::infer(r, value);
