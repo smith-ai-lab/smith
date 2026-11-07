@@ -1,49 +1,20 @@
 // The targets a Makefile builds: the explicit ones, the pattern rules and make's built-in C rules applied to what needs
 // them, with prerequisites and recipes. Included by smith.c after make_read.c.
 
+#include "core.h"
+#include "make.h"
+#include "make_expand.h"
+#include "make_graph.h"
+#include "make_read.h"
+#include "mcp_unit.h"
+
 constexpr size_t smith_make_nodes_max = 32768;
 constexpr size_t smith_make_commands_max = 512;
 
-typedef struct {
-    const char *text; // expanded, without the leading @, - and +
-    bool silent;
-    bool ignore;
-    SmithMakeWhere where;
-} SmithMakeCommand;
 
-typedef struct {
-    const char *name;
-    SmithMakeWhere where;
-    const char **prerequisites;
-    size_t prerequisite_count;
-    const char **order_only;
-    size_t order_count;
-    const char *stem;
-    int64_t rule; // the rule whose recipe it runs, or -1
-    const char *guard;
-    bool phony;
-    bool has_recipe;
-    bool built_in;   // its recipe is make's own
-    const char *cwd; // the folder its commands run in, when it comes from the Makefile of another folder
-    SmithMakeCommand *commands;
-    size_t command_count;
-    bool expanded;
-} SmithMakeNode;
 
-typedef struct {
-    SmithMakeNode *nodes;
-    size_t node_count;
-    uint32_t *slots;
-    size_t builtin_first; // the first built-in pattern rule
-    const char **missing;
-    size_t missing_count;
-    const char **listed;    // the names in the folder, for smith_make_exists_here
-    uint32_t *listed_slots; // an open-addressed table of indexes into `listed`, plus one
-    size_t listed_mask;
-    int listing; // 0 not read yet, 1 usable, 2 not used
-} SmithMakeGraph;
 
-static SmithMakeGraph smith_make_graph;
+SmithMakeGraph smith_make_graph;
 
 // make's built-in rules for C and C++: the recipe, with the variables make's own text uses.
 typedef struct {
@@ -91,7 +62,7 @@ static void smith_make_graph_init(void) {
 
 // ---- Nodes
 
-static SmithMakeNode *smith_make_node_find(const char *name) {
+SmithMakeNode *smith_make_node_find(const char *name) {
     SmithMakeGraph *g = &smith_make_graph;
     uint32_t mask = (uint32_t)(smith_make_nodes_max * 2 - 1);
     uint32_t at = smith_make_hash(name, strlen(name)) & mask;
@@ -104,7 +75,7 @@ static SmithMakeNode *smith_make_node_find(const char *name) {
     return nullptr;
 }
 
-static SmithMakeNode *smith_make_node_new(const char *name) {
+SmithMakeNode *smith_make_node_new(const char *name) {
     SmithMakeGraph *g = &smith_make_graph;
     if (g->node_count >= smith_make_nodes_max) smith_make_too_many("targets", smith_make_nodes_max);
     uint32_t mask = (uint32_t)(smith_make_nodes_max * 2 - 1);
@@ -276,7 +247,7 @@ static const char **smith_make_substituted(const char *const *list, size_t count
     return out;
 }
 
-static void smith_make_append(const char ***list, size_t *count, const char *const *more, size_t more_count) {
+void smith_make_append(const char ***list, size_t *count, const char *const *more, size_t more_count) {
     const char **joined = smith_make_new_list((*count + more_count + 1));
     for (size_t i = 0; i < *count; i++)
         joined[i] = (*list)[i];
@@ -373,7 +344,7 @@ static void smith_make_note_missing(const char *name) {
 }
 
 // Every target the Makefile has, and what they need, as nodes.
-static void smith_make_graph_build(void) {
+void smith_make_graph_build(void) {
     SmithMakeGraph *g = &smith_make_graph;
     const SmithMakeReader *r = &smith_make_reader;
     smith_make_graph_init();
@@ -434,7 +405,7 @@ static void smith_make_set_automatic(const SmithMakeNode *node) {
 }
 
 // Expands a node's recipe lines, with its automatic variables. Idempotent.
-static void smith_make_node_expand(SmithMakeNode *node) {
+void smith_make_node_expand(SmithMakeNode *node) {
     if (node->expanded) return;
     node->expanded = true;
     if (node->rule < 0) return;

@@ -4,12 +4,15 @@
 //
 // smith's identity on Linux is the ELF note NT_GNU_BUILD_ID, which build.c asks lld for as an MD5 of the output
 // (`--build-id=md5`): 16 bytes, the size of a Mach-O LC_UUID, so a programs folder has a name of the same length.
+#include "core.h"
+#include "mcp_unit.h"
+#include "platform_linux.h"
+
 #include <elf.h>
 #include <linux/fs.h>
 #include <sys/ioctl.h>
 
 constexpr size_t smith_platform_elf_max = 1U << 16; // the headers and notes are in the first pages of an executable
-constexpr size_t smith_platform_id_bytes = 16;
 constexpr size_t smith_platform_notes_max = 4096; // notes in one PT_NOTE segment
 
 static unsigned char smith_platform_elf[smith_platform_elf_max];
@@ -35,7 +38,7 @@ static bool smith_platform_note_id(size_t at, size_t end, char *out) {
 }
 
 // The build-id of the 64-bit ELF file `path` as hex, from its first 64 KB; false when it has none of 16 bytes.
-static bool smith_platform_file_id(const char *path, char *out) {
+bool smith_platform_file_id(const char *path, char *out) {
     int file = open(path, O_RDONLY | O_CLOEXEC);
     if (file < 0) return false;
     ssize_t count = read(file, smith_platform_elf, sizeof smith_platform_elf);
@@ -57,7 +60,7 @@ static bool smith_platform_file_id(const char *path, char *out) {
 }
 
 // The hex of the running executable's build-id: the same smith is the same name, another build another.
-static void smith_platform_self_id(char *out, size_t size) {
+void smith_platform_self_id(char *out, size_t size) {
     SMITH_ASSERT(size >= 2 * smith_platform_id_bytes + 1);
     if (!smith_platform_file_id("/proc/self/exe", out))
         smith_die(smith_exit_usage, "this smith has no build-id of 16 bytes (link it with --build-id=md5)", nullptr);
@@ -65,7 +68,7 @@ static void smith_platform_self_id(char *out, size_t size) {
 
 // Makes `to` a program that is `from`: a clone (FICLONE, on a file system with copy on write: btrfs, XFS), else a hard
 // link, else a symbolic link, as on macOS. False when none can be made.
-static bool smith_platform_clone(const char *from, const char *to) {
+bool smith_platform_clone(const char *from, const char *to) {
     int source = open(from, O_RDONLY | O_CLOEXEC);
     if (source >= 0) {
         int target = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0755);
@@ -80,7 +83,7 @@ static bool smith_platform_clone(const char *from, const char *to) {
 
 // Makes `to`, which must not exist, a copy of the file `from` that shares its blocks (FICLONE, on a file system with
 // copy on write: btrfs, XFS). False, with nothing left behind, when this one cannot: the caller copies the bytes.
-static bool smith_platform_clone_file(const char *from, const char *to) {
+bool smith_platform_clone_file(const char *from, const char *to) {
     int source = open(from, O_RDONLY | O_CLOEXEC);
     if (source < 0) return false;
     int target = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
@@ -92,21 +95,21 @@ static bool smith_platform_clone_file(const char *from, const char *to) {
 }
 
 // The monotonic clock in nanoseconds.
-[[maybe_unused]] static unsigned long long smith_platform_monotonic_ns(void) {
+[[maybe_unused]] unsigned long long smith_platform_monotonic_ns(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
 }
 
 // When the file was last changed.
-static struct timespec smith_platform_mtime(const struct stat *info) {
+struct timespec smith_platform_mtime(const struct stat *info) {
     return info->st_mtim;
 }
 
 // 1 when the process is stopped (SIGSTOP or a debugger), 0 when it runs, -1 when it cannot be read (it is gone): the
 // state letter of /proc/<pid>/stat, after the command's closing parenthesis. Only a smith with lldb calls it
 // (runtime/explain.c).
-[[maybe_unused]] static int smith_platform_process_stopped(long pid) {
+[[maybe_unused]] int smith_platform_process_stopped(long pid) {
     char path[64];
     snprintf(path, sizeof path, "/proc/%ld/stat", pid);
     int file = open(path, O_RDONLY | O_CLOEXEC);
@@ -124,7 +127,7 @@ static struct timespec smith_platform_mtime(const struct stat *info) {
 
 // The resource pack is stored uncompressed on Linux (release/pack.smith compresses only on macOS, with Apple's
 // libcompression), so every file of it has its stored size equal to its size and nothing calls this; 0 says so.
-static size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size) {
+size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size) {
     (void)out;
     (void)capacity;
     (void)in;

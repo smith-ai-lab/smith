@@ -12,43 +12,23 @@
 // and `is_slice`. A type is written as the tokens of C's type names: T, the sized types, `struct S`, a typedef,
 // qualifiers and `*`.
 
-constexpr size_t smith_lang_cx_stack_max = 32;
-constexpr size_t smith_lang_cx_types_max = 8;
-constexpr size_t smith_lang_cx_name_max = 256;
 
-static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle);
-static void smith_lang_word_state(SmithLang *lang, const SmithToken *token, SmithLangWord word);
-static void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
-                                uint32_t location);
 
-typedef struct {
-    bool is_type;
-    int64_t number;
-    uint8_t type; // is_type: the index of its canonical spelling
-} SmithLangCxValue;
 
-typedef struct {
-    uint8_t code; // a binary operator (an index of smith_lang_cx_binary), a unary one (100 + a character), or open
-    int8_t precedence;
-} SmithLangCxOp;
 
-typedef struct {
-    SmithLang *lang;
-    const SmithHost *host;
-    const SmithLangInstance *instance;
-    const SmithLangReplay *replay; // the argument list and loop variables the condition may name
-    uint32_t location;
-    bool unknown_name; // the evaluation failed at a name that is no constant or type: `unknown_at` is its token
-    uint32_t unknown_at;
-    char canonical[smith_lang_cx_types_max][smith_lang_cx_name_max];
-    size_t canonical_count;
-    char message[smith_lang_message_max];
-    SmithLangCxValue values[smith_lang_cx_stack_max];
-    size_t value_count;
-    SmithLangCxOp ops[smith_lang_cx_stack_max];
-    size_t op_count;
-} SmithLangCx;
+
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_declare.h"
+#include "lang_enum.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_target.h"
+#include "lang_type.h"
 
 typedef struct {
     const char *text;
@@ -59,12 +39,11 @@ static const SmithLangCxBinary smith_lang_cx_binary[] = {
     {"||", 1}, {"&&", 2}, {"|", 3},  {"^", 4},  {"&", 5}, {"==", 6}, {"!=", 6}, {"<", 7},  {">", 7},
     {"<=", 7}, {">=", 7}, {"<<", 8}, {">>", 8}, {"+", 9}, {"-", 9},  {"*", 10}, {"/", 10}, {"%", 10},
 };
-constexpr uint32_t smith_lang_cx_value_nodes = 4096;
 constexpr uint8_t smith_lang_cx_open = 200;
 constexpr uint8_t smith_lang_cx_unary = 100;
 constexpr int8_t smith_lang_cx_unary_precedence = 11;
 
-[[gnu::format(printf, 2, 3)]] static bool smith_lang_cx_fail(SmithLangCx *cx, const char *format, ...) {
+[[gnu::format(printf, 2, 3)]] bool smith_lang_cx_fail(SmithLangCx *cx, const char *format, ...) {
     va_list args;
     va_start(args, format);
     vsnprintf(cx->message, sizeof cx->message, format, args);
@@ -72,21 +51,20 @@ constexpr int8_t smith_lang_cx_unary_precedence = 11;
     return false;
 }
 
-static SmithLangGenToken *smith_lang_cx_token(uint32_t at) {
+SmithLangGenToken *smith_lang_cx_token(uint32_t at) {
     return &smith_lang_gt.tokens[at];
 }
 
-static bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result);
 static uint32_t smith_lang_cx_primary_end(uint32_t at, uint32_t last);
 static bool smith_lang_cx_ask(SmithLangCx *cx, uint32_t *at, uint32_t end, SmithLangCxValue *value);
 
-static bool smith_lang_cx_word(const SmithLangGenToken *token, const char *word) {
+bool smith_lang_cx_word(const SmithLangGenToken *token, const char *word) {
     return smith_lang_gt_is(token, SmithTokenKind_Identifier, word);
 }
 
 // The index after the group that begins at `at` (an opening bracket), or UINT32_MAX when it does not close before
 // `limit`.
-static uint32_t smith_lang_cx_skip_group(uint32_t at, uint32_t limit) {
+uint32_t smith_lang_cx_skip_group(uint32_t at, uint32_t limit) {
     int depth = 0;
     for (; at < limit; at++) { // bounded by the generic
         const SmithLangGenToken *token = smith_lang_cx_token(at);
@@ -103,7 +81,7 @@ static bool smith_lang_cx_is_if(const SmithLangGenToken *token) {
 
 // The index after the statement that begins at `at`: a block, an `if` with its `else`, a loop, or tokens up to a `;`.
 // UINT32_MAX when it does not end before `limit`. Nested `if`s are tracked in a bit stack, not by recursion.
-static uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
+uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
     uint32_t then_part = 0; // bit n: the n-th open statement is the then-branch of an `if` (an `else` may follow)
     unsigned depth = 0;
     for (size_t guard = 0; guard < smith_lang_gt_max; guard++) { // bounded by the pool
@@ -153,11 +131,7 @@ static uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
 }
 
 // runtime/lang_type.c, which comes after this file
-static size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity, bool bare);
-static unsigned smith_lang_ty_depth_of(uint64_t handle);
 
-#include "lang_fields.c"
 
 // ---- Types in a condition ------------------------------------------------------------------------------------------
 
@@ -223,7 +197,7 @@ static uint32_t smith_lang_cx_type_end(SmithLangCx *cx, uint32_t at, uint32_t la
 
 // A small constant for an index (no recursion into the evaluator, which asks for types): terms of a number, the
 // variable of a `for constexpr` or `countof(rest)`, joined by `+` and `-`.
-static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result) {
+bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result) {
     int64_t total = 0;
     int sign = 1;
     bool want_term = true;
@@ -493,8 +467,6 @@ static bool smith_lang_cx_is_builtin(const SmithLangGenToken *token) {
 // runtime/lang_target.c: the value of the fact whose macro the raw lowering wrote (`SMITH_TARGET_STATIC_ANALYZER`), as
 // the compiler says it: 1 with the value, 0 when `name` is no such macro, -1 when it is one the host cannot answer
 // (the raw lowering has no compiler).
-static int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                         int64_t *value);
 
 // The operand at `at` when it is `countof(rest)`, the whole `rest` (an error) or the variable of a `for constexpr`: 1
 // and the value, -1 after an error, 0 when it is none of them.
@@ -701,11 +673,7 @@ static bool smith_lang_cx_type_argument(uint32_t first, uint32_t last, uint32_t 
 
 // The tokens [first, last) as the compiler is asked about them (separated by \x1f): the type arguments of the instance
 // for its T and the number of a `for constexpr` variable for its name.
-static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
-                                           size_t capacity);
 
-static void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
-                                   char *out, size_t capacity);
 
 // `m::f` of a call kept as a group (CallBegin ... CallEnd), as the compiler reads it: the name `m_f`, which an import's
 // function over `type` is defined by (issue #107).
@@ -718,7 +686,7 @@ static void smith_lang_cx_callee(const SmithLang *lang, const SmithLangGenToken 
     smith_lang_callee_name(lang, text, module_length, colons + 1, token->length - module_length - 2, out, capacity);
 }
 
-static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
+bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity) {
     size_t used = 0;
     for (uint32_t at = first; at < last; at++) { // the tokens
         char piece[4096];
@@ -791,7 +759,7 @@ static bool smith_lang_cx_ask(SmithLangCx *cx, uint32_t *at, uint32_t end, Smith
 }
 
 // The value of the condition made of the tokens [first, last). False with cx->message when it is not constant.
-static bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result) {
+bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result) {
     bool want_operand = true;
     uint32_t at = first;
     for (size_t guard = 0; at < last && guard < smith_lang_gt_max; guard++) { // bounded by the condition
@@ -810,7 +778,7 @@ static bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, i
 
 // At an `if constexpr` of the replay: evaluates the condition for the instance, and the branch it chooses replaces the
 // whole statement. The other branch is skipped, never written.
-static void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                  SmithLangFrame *frame) {
     uint32_t at = frame->pos;
     uint32_t location = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location);
@@ -853,7 +821,7 @@ static void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLa
 }
 
 // In a generic's body, `if` followed by `constexpr`: one token of its own in the record. False when it is not that.
-static bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
                                             SmithLangWord word) {
     if (!lang->recording) return false;
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
@@ -867,7 +835,7 @@ static bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *ho
 
 // `for` followed by `constexpr` outside a generic's body: an error (the loop is run when an instance is written, and
 // only a generic has instances). The `constexpr` is taken, and the loop goes on to the parser as a `for`.
-static void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!smith_lang_ident(smith_lang_peek(lang, host, 0, false), "constexpr")) return;
     smith_lang_take(lang, host);
     smith_lang_error(lang, host, token->location,
@@ -876,7 +844,7 @@ static void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *h
 }
 
 // `for` followed by `constexpr` in a generic's body: one token of its own in the record. False when it is not that.
-static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
                                              SmithLangWord word) {
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(next, "constexpr")) return false;
@@ -892,7 +860,7 @@ static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *h
 
 // Whether the head's result type is a call, `slice_of(T, countof(rest)) name(`: an ordinary function over types and
 // numbers that returns `type`, run in the compiler for each instance (one body, the type settled per instance).
-static bool smith_lang_result_call(const SmithLangGeneric *generic) {
+bool smith_lang_result_call(const SmithLangGeneric *generic) {
     uint32_t first = smith_lang_generic_skip_attributes(generic);
     if (first + 3 > generic->name_index) return false;
     const SmithLangGenToken *callee = smith_lang_cx_token(generic->first + first);
@@ -937,7 +905,7 @@ static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t las
 
 // Asks the compiler for the type that the call in the generic's tokens `first` to `last` computes (`slice_of(T, 1)`)
 // for the instance: its spelling and handle. Null when it is a type, else why it is not.
-static const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                             SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
                                             size_t capacity, uint64_t *handle) {
     static SmithLangReplay replay;
@@ -999,7 +967,7 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
 // A result that is a slice: its struct, defined here unless an earlier declaration at file scope has (the same as
 // `T xs[:]` writes it, so the call's and the instance's types are one). The tokens are written to the parser as they
 // are, so a sized name is the compiler's own.
-static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uint64_t handle, uint32_t location,
+void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uint64_t handle, uint32_t location,
                                             uint32_t instance_id) {
     static SmithToken tokens[256];
     SmithToken like = {};
@@ -1034,7 +1002,7 @@ static void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *ho
 }
 
 // The instance's result type, written where the head has its call: the tokens of the spelling.
-static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t location, uint32_t instance_id) {
     SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
     if (kept->result_state == 0) kept->result_state = smith_lang_result_ask(lang, host, generic, kept) ? 1 : 2;

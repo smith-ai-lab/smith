@@ -3,6 +3,22 @@
 // (the lowered text, for reading). It has no macros and no parser: `#include` lines are noted for the header, other
 // directives are skipped, and the questions about names are answered with "unknown". Included by runtime/lang.c.
 
+#include "core.h"
+#include "lang.h"
+#include "lang_enum.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_lex.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_sparse.h"
+#include "lang_stream.h"
+#include "lang_target.h"
+#include "lang_type.h"
+#include "main.h"
+#include "mcp_unit.h"
+
 constexpr size_t smith_lang_source_max = (size_t)1 << 23;
 
 static char smith_lang_source[smith_lang_source_max + 1];
@@ -282,7 +298,7 @@ static void smith_raw_keep_directive(SmithLangRaw *raw, const char *name, size_t
 }
 
 // The next kept directive that comes before `before`, for the dump; false when there is none.
-static bool smith_raw_take_directive(uint32_t before, const char **text, size_t *length) {
+bool smith_raw_take_directive(uint32_t before, const char **text, size_t *length) {
     if (smith_raw_directives_next >= smith_raw_directives_count) return false;
     const SmithRawDirective *entry = &smith_raw_directives[smith_raw_directives_next];
     if (entry->location >= before) return false;
@@ -584,7 +600,6 @@ size_t smith_lang_interface_capacity(void) {
     return sizeof smith_lang_header_full;
 }
 
-static void smith_lang_enum_aside(bool save);
 static bool smith_lang_aside_held; // a state is set aside and not yet restored
 
 // Holds one saved state, not a stack: a second save before the restore would overwrite the first, and the caller's
@@ -620,7 +635,7 @@ constexpr size_t smith_lang_lines_max = (size_t)1 << 20;
 static uint32_t smith_lang_line_starts[smith_lang_lines_max];
 static size_t smith_lang_line_count;
 
-static bool smith_lang_lines_known(void) {
+bool smith_lang_lines_known(void) {
     return smith_lang_line_count > 0;
 }
 
@@ -633,7 +648,7 @@ static void smith_lang_index_lines(size_t length) {
 }
 
 // The line (from 1) of the source at a byte offset.
-static size_t smith_lang_line_of(uint32_t offset) {
+size_t smith_lang_line_of(uint32_t offset) {
     size_t low = 0;
     size_t high = smith_lang_line_count;
     for (size_t step = 0; high - low > 1 && step < 64; step++) { // halves the lines
@@ -647,7 +662,7 @@ static size_t smith_lang_line_of(uint32_t offset) {
     return low + 1;
 }
 
-static size_t smith_lang_column_of(uint32_t offset) {
+size_t smith_lang_column_of(uint32_t offset) {
     return offset - smith_lang_line_starts[smith_lang_line_of(offset) - 1] + 1;
 }
 
@@ -766,15 +781,11 @@ size_t smith_lang_declarations(const char *file, const char *text, size_t length
     return used;
 }
 
-// The compile flags the header pass was given beside the file (`smith cc --smith-header f.smith -o f.h -I x -DY`): the
-// ones that decide which header a name is found in. Only the question of smith_lang_ask_compiler uses them.
-constexpr size_t smith_header_flags_max = 64;
-static const char *smith_header_flags[smith_header_flags_max];
-static size_t smith_header_flag_count;
-static const char *smith_header_source;
+const char *smith_header_flags[smith_header_flags_max];
+size_t smith_header_flag_count;
+const char *smith_header_source;
 
 // smith.c: asks a compile of the module's imports alone which import declared each C name the exports use.
-static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings);
 
 // ---- The headers of imported modules, for the lowering without a compiler
 //
@@ -1184,7 +1195,7 @@ static int smith_lang_run_raw(const SmithRawRun *run) {
 }
 
 // smith cc --smith-header file.smith [-o header.h] and smith cc --smith-lower file.smith
-static int smith_lang_main(int count, char **args, bool header) {
+int smith_lang_main(int count, char **args, bool header) {
     const char *usage = header ? "usage: smith cc --smith-header file.smith [-o header.h] [compile flags]"
                                : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;

@@ -12,18 +12,26 @@
 // chain (`a.items[i].rows[b:c]`) at its first token, from the queue, types each prefix with the compiler (`expr_type`)
 // and writes the chain again. Included by runtime/lang.c, after runtime/lang_tuple.c.
 
-constexpr size_t smith_lang_slice_chain_max = 200;
-constexpr size_t smith_lang_slice_cur_max = 600;
-constexpr size_t smith_lang_slice_dims_max = 8;
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_enum.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_tuple.h"
+#include "lang_type.h"
+
 constexpr size_t smith_lang_slice_elements_max = 24;
 constexpr size_t smith_lang_slice_scan_max = 48;
-constexpr size_t smith_lang_slice_text_max = 4096;
 constexpr size_t smith_lang_slice_args_max = 16;
-constexpr char smith_lang_slice_prefix[] = "smith_array_";
 
 // The end of the comment, string or character literal that begins at `at` (`at` itself when the text there is code): a
 // `[:]` in either is no slice (issue #121). A `'` after a letter or digit is a digit separator.
-static size_t smith_lang_text_skip(const char *text, size_t length, size_t at) {
+size_t smith_lang_text_skip(const char *text, size_t length, size_t at) {
     char c = text[at];
     if (c == '/' && at + 1 < length && text[at + 1] == '/') {
         while (at < length && text[at] != '\n')
@@ -88,7 +96,7 @@ static bool smith_lang_text_has_range_for(const char *text, size_t length) {
 
 // Whether the text has a `[ ]` with a `:` that is neither `::` nor the `:` of a `? :` (the hook's hasSlice), outside
 // comments and strings, or a range `for`.
-static bool smith_lang_text_has_slice(const char *text, size_t length) {
+bool smith_lang_text_has_slice(const char *text, size_t length) {
     for (size_t at = 0; at < length; at++) { // each `[` of the code
         size_t after = smith_lang_text_skip(text, length, at);
         if (after != at) {
@@ -123,7 +131,7 @@ static bool smith_lang_text_has_slice(const char *text, size_t length) {
 }
 
 // Whether the code of the text has the word `str` (the type `const char[:]`, issue #85), outside comments and strings.
-static bool smith_lang_text_has_str(const char *text, size_t length) {
+bool smith_lang_text_has_str(const char *text, size_t length) {
     for (size_t at = 0; at + 3 <= length; at++) { // each place a word could begin
         size_t after = smith_lang_text_skip(text, length, at);
         if (after != at) {
@@ -141,21 +149,15 @@ bool smith_lang_slices_on(const SmithLang *lang) {
     return lang->slices_seen;
 }
 
-static bool smith_lang_slice_active(const SmithLang *lang, const SmithHost *host) {
+bool smith_lang_slice_active(const SmithLang *lang, const SmithHost *host) {
     return host->maybe_slice || lang->slices_seen;
 }
 
-static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host);
-static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host);
 
 // ---- Tokens from a pattern
 
-typedef struct {
-    const SmithToken *tokens;
-    size_t count;
-} SmithLangSliceSpan;
 
-static SmithTokenKind smith_lang_slice_kind(const char *word) {
+SmithTokenKind smith_lang_slice_kind(const char *word) {
     unsigned char c = (unsigned char)word[0];
     if (c == '"') return SmithTokenKind_String;
     if (c >= '0' && c <= '9') return SmithTokenKind_Number;
@@ -193,7 +195,7 @@ static size_t smith_lang_slice_build(SmithToken *out, size_t used, size_t capaci
 }
 
 // The tokens of a pattern (as smith_lang_slice_build), the unsigned type of a size spelled as the compiler does.
-static size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capacity, const char *pattern,
+size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capacity, const char *pattern,
                                        const SmithLangSliceSpan *spans, const SmithToken *like) {
     unsigned counter = ++smith_lang_counter.slice_pattern;
     size_t from = used;
@@ -223,26 +225,15 @@ static size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capa
 
 // ---- The dimensions of a slice (issue #105)
 
-// `f32[:][2]` is two dimensions, the first of them run-time. The struct of a run-time array keeps its sizes in
-// `count[k]`, k the number of `:`; the fixed ones are in its name (`smith_array_f32_n_2`), and everything else (the
-// strides, the checks) is written from them. The first dimension is always a `:`: a row of fixed size is a `[:]`.
-typedef struct {
-    size_t count;
-    bool runtime[smith_lang_slice_dims_max];
-    uint64_t fixed[smith_lang_slice_dims_max];
-    bool restrict_data; // `[restrict :]`: the data pointer is `__restrict` (C and C++ headers both read it; its own
-                        // struct, `smith_array_restrict_...`)
-} SmithLangSliceDims;
 
-static SmithLangSliceDims smith_lang_slice_dims_one(void) {
+SmithLangSliceDims smith_lang_slice_dims_one(void) {
     SmithLangSliceDims dims = {.count = 1};
     dims.runtime[0] = true;
     return dims;
 }
 
-static bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size_t *stem);
 
-static size_t smith_lang_slice_dims_runtime(const SmithLangSliceDims *dims) {
+size_t smith_lang_slice_dims_runtime(const SmithLangSliceDims *dims) {
     size_t runtime = 0;
     for (size_t at = 0; at < dims->count; at++) // at most 8
         runtime += dims->runtime[at] ? 1 : 0;
@@ -251,7 +242,7 @@ static size_t smith_lang_slice_dims_runtime(const SmithLangSliceDims *dims) {
 
 // How many dimensions a slice's tag names, and how many of them are run-time ones (`smith_array_f32_n_n`: 2 and 2;
 // `smith_array_f32_n_2`: 2 and 1); false for a tag that names none.
-static bool smith_lang_slice_tag_dims_count(const char *tag, size_t *all, size_t *runtime) {
+bool smith_lang_slice_tag_dims_count(const char *tag, size_t *all, size_t *runtime) {
     SmithLangSliceDims dims;
     size_t stem = 0;
     if (!smith_lang_slice_dims_parse(tag, &dims, &stem)) return false;
@@ -295,7 +286,7 @@ static bool smith_lang_slice_dims_last(const char *text, size_t end, size_t *sta
 
 // The dimensions a slice's tag names, and the length of the tag before them (its element's part). A tag's element
 // never ends like a dimension (`_e` is written between), so reading from the end is unambiguous.
-static bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size_t *stem) {
+bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size_t *stem) {
     bool runtime[smith_lang_slice_dims_max];
     uint64_t fixed[smith_lang_slice_dims_max] = {};
     size_t found = 0;
@@ -341,13 +332,13 @@ static void smith_lang_slice_tag_dims(const char *spelled, const SmithLangSliceD
              (unsigned long long)hash, suffix);
 }
 
-static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity) {
+void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity) {
     SmithLangSliceDims one = smith_lang_slice_dims_one();
     smith_lang_slice_tag_dims(spelled, &one, tag, capacity);
 }
 
 // The struct a slice of the element written as `elem` is, or false with the reason at `where`.
-static bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count,
+bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count,
                                     const SmithLangSliceDims *dims, char *tag, size_t capacity, const char **problem,
                                     uint32_t *where) {
     char spelled[smith_lang_tuple_name_max];
@@ -363,7 +354,7 @@ static bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, siz
 // Whether the struct of this tag is defined at file scope by an earlier declaration: a later use names the tag only.
 // (A second definition inside a function's head, after one at file scope, is read by the compiler but the token after
 // the head is lost from the hook's stream; and a bare tag is shorter.)
-static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag) {
+bool smith_lang_slice_defined(const SmithLang *lang, const char *tag) {
     for (uint32_t i = 0; i < lang->slice.tag_count; i++) { // at most 32
         if (strcmp(lang->slice.tags[i], tag) == 0) return true;
     }
@@ -400,7 +391,7 @@ static const char *smith_lang_slice_header_text(SmithLang *lang, const char *tag
 
 // The struct a slice is, ready for the queue: `struct tag { T *data; usize count[1]; }`, or only `struct tag` when an
 // earlier declaration defined it at file scope. The first use at file scope defines it.
-static size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used,
+size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used,
                                       size_t capacity, const char *tag, const SmithToken *elem, size_t count,
                                       const SmithLangSliceDims *dims, const SmithToken *like) {
     size_t sizes = smith_lang_slice_dims_runtime(dims);
@@ -438,9 +429,8 @@ static size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, Sm
 
 // ---- A declaration: `T xs[:]`
 
-static bool smith_lang_slice_boundary(const SmithToken *token);
 
-static bool smith_lang_slice_statement_word(const SmithToken *token) {
+bool smith_lang_slice_statement_word(const SmithToken *token) {
     static const char *const words[] = {"return",  "sizeof", "case",    "goto",       "else",
                                         "do",      "if",     "while",   "for",        "switch",
                                         "default", "typeof", "alignof", "__typeof__", "defer"};
@@ -557,7 +547,7 @@ static size_t smith_lang_slice_leading(const SmithToken *span, size_t name) {
     return at < name ? at : name;
 }
 
-static void smith_lang_slice_flag(SmithLang *lang) {
+void smith_lang_slice_flag(SmithLang *lang) {
     // A generic's head (`typeof(T[:]) push_slice(...)`) is no slice written in the module: its importers keep the
     // plain lowering unless they write a `[:]` of their own, since every module imports arena.
     if (lang->decl.generic) return;
@@ -806,13 +796,13 @@ static bool smith_lang_slice_result_begin(SmithLang *lang, const SmithHost *host
 }
 
 // At the first token of a declaration: `T xs[:]` or `T (*xs)[:]`.
-static bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+bool smith_lang_slice_begin(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
     return smith_lang_slice_result_begin(lang, host, first) || smith_lang_slice_begin_array(lang, host, first) ||
            smith_lang_slice_pointer_begin(lang, host, first);
 }
 
 // `typeof(T[:])`: a slice's struct as a type, the result of a function or the type of a local.
-static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) return false;
     size_t close = 0;
     for (size_t at = 1; at < smith_lang_slice_scan_max && close == 0; at++) { // the type is a few tokens
@@ -865,7 +855,7 @@ static bool smith_lang_slice_typeof(SmithLang *lang, const SmithHost *host, cons
 // written again as `typeof(const char[:])`. A file with no `module` line means what C means (`str` is a name there), a
 // name the module declares itself wins (`typedef const char str[:];` still works), and as the name of a variable, a
 // field or a function it is an error: it is a type here, like `i32`. True when the token was replaced.
-static bool smith_lang_slice_str(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_slice_str(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!lang->is_module || token->foreign || token->synthetic || token->declared || lang->recording ||
         lang->in_attribute || lang->prev_member || token->location == lang->slice.skip ||
         !smith_lang_ident(token, "Str") || smith_lang_name_find(lang, token->text, token->length) != nullptr ||
@@ -892,31 +882,14 @@ static bool smith_lang_slice_str(SmithLang *lang, const SmithHost *host, const S
 }
 
 // Whether a token begins a declaration or ends one: where a slice's type may start.
-static bool smith_lang_slice_boundary(const SmithToken *token) {
+bool smith_lang_slice_boundary(const SmithToken *token) {
     return token->kind == SmithTokenKind_Punctuator && token->length == 1 &&
            strchr(";{}(,:", token->text[0]) != nullptr;
 }
 
 // ---- What the compiler says of an expression
 
-typedef enum {
-    SmithLangSlice_None,
-    SmithLangSlice_Slice,
-    SmithLangSlice_Pointer,
-    SmithLangSlice_Array
-} SmithLangSliceKind;
 
-typedef struct {
-    SmithLangSliceKind kind;
-    char tag[smith_lang_tuple_name_max];   // a slice: its struct
-    char plain[smith_lang_tuple_name_max]; // a slice: its struct without `restrict` (what a cut or a row makes)
-    char stem[smith_lang_tuple_name_max];  // a slice: its tag without the dimensions
-    SmithLangSliceDims dims;               // a slice: its dimensions
-    char element[256];                     // a pointer or an array: the element as the parser writes it
-    uint64_t count;                        // an array: how many
-    uint32_t rank;                         // an array: its dimensions, `array_dims` their sizes
-    uint64_t array_dims[smith_lang_slice_dims_max];
-} SmithLangSliceType;
 
 // The element of `int32_t *` or `float[4]`: what stands before the last `*` or `[`.
 static bool smith_lang_slice_element(const char *written, const char *canonical, char *out, size_t capacity) {
@@ -951,7 +924,7 @@ static void smith_lang_slice_type_tag(SmithLangSliceType *out, const char *tag) 
     snprintf(out->stem, sizeof out->stem, "%.*s", (int)stem, out->plain);
 }
 
-static bool smith_lang_slice_type(const SmithHost *host, const char *text, SmithLangSliceType *out) {
+bool smith_lang_slice_type(const SmithHost *host, const char *text, SmithLangSliceType *out) {
     *out = (SmithLangSliceType){};
     SmithExprType found = {};
     if (host->expr_type == nullptr || !host->expr_type(host->context, text, (uint32_t)strlen(text), &found)) {
@@ -1019,7 +992,7 @@ static size_t smith_lang_slice_words(SmithToken *out, size_t capacity, const cha
 
 // The tokens as one expression for `expr_type`: a module's names as the lowering writes them, the tokens it made as
 // they are.
-static bool smith_lang_slice_text(SmithLang *lang, const SmithToken *tokens, size_t count, char *out, size_t capacity) {
+bool smith_lang_slice_text(SmithLang *lang, const SmithToken *tokens, size_t count, char *out, size_t capacity) {
     size_t used = 0;
     for (size_t at = 0; at < count; at++) { // each token
         const SmithToken *next = &tokens[at];
@@ -1087,19 +1060,11 @@ typedef struct {
     bool calls;
 } SmithLangSliceChain;
 
-// What the lowering made of a chain, being written.
-typedef struct {
-    SmithToken tokens[smith_lang_slice_cur_max];
-    size_t count;
-    bool changed;
-    bool overflow;
-    bool sliced; // the last subscript was a slice (`xs[a:b]`)
-} SmithLangSliceCur;
 
 static SmithLangSliceChain smith_lang_slice_chain_state;
 static SmithLangSliceCur smith_lang_slice_cur;
 
-static void smith_lang_slice_add(SmithLangSliceCur *cur, const SmithToken *tokens, size_t count) {
+void smith_lang_slice_add(SmithLangSliceCur *cur, const SmithToken *tokens, size_t count) {
     if (cur->count + count > smith_lang_slice_cur_max) {
         cur->overflow = true;
         return;
@@ -1380,12 +1345,8 @@ static size_t smith_lang_slice_view_rows(SmithLangSliceCur *cur, const SmithHost
 
 // ---- Reading a subscript: `[i]`, `[a:b]`, `[:b]`, `[a:]`
 
-typedef struct {
-    size_t colon;  // index of the slice's `:` in the inner tokens, or SIZE_MAX for an index
-    size_t second; // a second `:` (a step), or SIZE_MAX
-} SmithLangSliceShape;
 
-static SmithLangSliceShape smith_lang_slice_shape(const SmithToken *inner, size_t count) {
+SmithLangSliceShape smith_lang_slice_shape(const SmithToken *inner, size_t count) {
     SmithLangSliceShape shape = {.colon = SIZE_MAX, .second = SIZE_MAX};
     int depth = 0;
     int conditions = 0;
@@ -1591,7 +1552,6 @@ static size_t smith_lang_slice_params(const char *canonical, char tags[][smith_l
     return count;
 }
 
-static bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *out, size_t capacity);
 
 // The definition of the struct a tag names, `struct tag { E * data ; usize count [ k ] ; } ;`, when no declaration at
 // file scope defined it (a function whose only mention is in its parameters defines it in the prototype's scope, and a
@@ -1780,7 +1740,7 @@ static void smith_lang_slice_requalify(SmithLang *lang, const SmithHost *host, c
 }
 
 // The type of `X[a:b]` before it is lowered: a slice of X's element, or of what X is a slice of (one dimension).
-static bool smith_lang_slice_cut_type(SmithLang *lang, const SmithHost *host, const SmithToken *expr, size_t count,
+bool smith_lang_slice_cut_type(SmithLang *lang, const SmithHost *host, const SmithToken *expr, size_t count,
                                       SmithLangSliceType *out) {
     if (count < 4 || !smith_lang_punct(&expr[count - 1], "]")) return false;
     size_t open = count - 1;
@@ -1936,8 +1896,6 @@ static void smith_lang_slice_convert_pointer(SmithLang *lang, const SmithHost *h
 
 // The arguments of a call, converted: an array where the function wants a slice, and, for a C function, a slice
 // where it wants a pointer (`xs.data`; its length is `countof(xs)`).
-static bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, const char *callee, size_t index,
-                                     const SmithToken *tokens, size_t count, SmithLangSliceCur *cur);
 
 static void smith_lang_slice_call(SmithLang *lang, const SmithHost *host, const SmithLangSliceChain *chain,
                                   const SmithLangSliceElement *element, SmithLangSliceCur *cur) {
@@ -2023,7 +1981,7 @@ static bool smith_lang_slice_eligible(SmithLang *lang, const SmithHost *host, co
 }
 
 // The expression after an `=` up to the `;` or `,` that ends it, from the queue at `from`.
-static size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, size_t from, SmithToken *out,
+size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, size_t from, SmithToken *out,
                                      size_t capacity) {
     int depth = 0;
     size_t count = 0;
@@ -2064,7 +2022,7 @@ static size_t smith_lang_slice_type_before(SmithLang *lang, const SmithHost *hos
 
 // The expression whose type is the declared type of `T name =` or `T *name =`, as the tokens the compiler is asked
 // about: `( T ) { }` (`( T * ) 0`). False when the tokens before the `=` are no such declaration; `pointer` says which.
-static bool smith_lang_slice_declared_text(SmithLang *lang, const SmithHost *host, char *text, size_t capacity,
+bool smith_lang_slice_declared_text(SmithLang *lang, const SmithHost *host, char *text, size_t capacity,
                                            bool *pointer) {
     SmithToken name = {};
     SmithToken star = {};
@@ -2152,7 +2110,7 @@ typedef struct {
 } SmithLangSliceMember;
 
 // A type spelling, `const char *` or `struct Pair`, asked of the compiler as the expression `( T ) { }`.
-static bool smith_lang_slice_spelled(const SmithHost *host, const char *spelling, SmithExprType *found) {
+bool smith_lang_slice_spelled(const SmithHost *host, const char *spelling, SmithExprType *found) {
     char text[300];
     size_t used = (size_t)snprintf(text, sizeof text, "(\x1f");
     for (size_t at = 0; spelling[at] != 0 && used + 8 < sizeof text; at++) { // the spelling, a token at each space
@@ -2252,8 +2210,6 @@ static size_t smith_lang_slice_init_slice(SmithLang *lang, const SmithHost *host
 }
 
 static bool smith_lang_slice_init_holds(const SmithHost *host, const char *type, bool *anonymous);
-static bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const char *spelling,
-                                   const SmithToken *tokens, size_t count, SmithLangSliceCur *cur);
 static void smith_lang_slice_init_unread(SmithLang *lang, const SmithHost *host, const SmithToken *open,
                                          const char *why);
 
@@ -2502,7 +2458,7 @@ static bool smith_lang_slice_init_equals(SmithLang *lang, const SmithHost *host)
 }
 
 // `( T ) { ... }`, a compound literal of a struct, at its `{`: the same. True when the token was replaced.
-static bool smith_lang_slice_init_compound(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_slice_init_compound(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (token->foreign || token->synthetic || lang->recording || host->expr_type == nullptr ||
         !smith_lang_punct(token, "{") || token->location == lang->slice.brace_skip) {
         return false;
@@ -2544,7 +2500,7 @@ static bool smith_lang_slice_init_compound(SmithLang *lang, const SmithHost *hos
 // The `=` being lowered, of `slice = array` or `T xs[:] = array`: the right side becomes the slice of the left's type.
 // (The left side is typed from the tokens before it; a declaration's own name is not declared yet, so it is known by
 // the tag its declaration made.)
-static void smith_lang_slice_equals(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_slice_equals(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (token->foreign || token->synthetic || lang->recording || host->expr_type == nullptr ||
         host->previous == nullptr || !smith_lang_punct(token, "=")) {
         return;
@@ -2615,7 +2571,7 @@ static bool smith_lang_slice_real(const SmithToken *token) {
     return !token->synthetic && !token->foreign && token->instance == 0;
 }
 
-static void smith_lang_slice_cover(SmithToken *tokens, size_t count) {
+void smith_lang_slice_cover(SmithToken *tokens, size_t count) {
     for (size_t at = 0; at < count; at++) {
         if (smith_lang_slice_real(&tokens[at]) || tokens[at].copy || tokens[at].instance != 0) continue;
         size_t end = at;
@@ -2648,7 +2604,7 @@ static void smith_lang_slice_cover(SmithToken *tokens, size_t count) {
 }
 
 // A chain with a subscript, a call or an assignment: written again, or left as it is (false).
-static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangSliceChain *chain = &smith_lang_slice_chain_state;
     if (!smith_lang_slice_eligible(lang, host, token) || !smith_lang_slice_read(lang, host, token, chain)) return false;
     if (!chain->subscripts && !chain->calls && !chain->assigned) return false;
@@ -2685,7 +2641,7 @@ static bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const
 }
 
 // `return array;` in a function that returns a slice.
-static void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->enums_seen && smith_lang_enum_return(lang, host)) return;
     char type[256];
     if (host->return_type == nullptr || !host->return_type(host->context, type, sizeof type) ||
@@ -2706,7 +2662,7 @@ static void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, cons
 
 // `countof(xs)` of a slice: `((xs).count[0])`. `span` holds the operand at 1 to close - 1. A row, `countof(xs[0])`, is
 // a slice too: the operand is written again as a slice and the subscripts lower it.
-static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
+bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
                                      const char *tokens, const SmithToken *span, size_t close) {
     SmithLangSliceType type = {};
     bool sliced = false; // `countof(xs[a:b])`: the operand is a slice whatever it is a slice of
@@ -2763,13 +2719,8 @@ static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, con
 // frames: the words of the pattern and the generic's own tokens between them (which are replayed in turn, so a
 // `countof(xs)` in an index is lowered too).
 
-typedef struct {
-    const char *text; // words, or nullptr: the generic's tokens [first, last)
-    uint32_t first;
-    uint32_t last;
-} SmithLangSlicePart;
 
-static void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, const SmithLangSlicePart *parts,
+void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, const SmithLangSlicePart *parts,
                                    size_t count) {
     for (size_t at = count; at > 0; at--) { // the frames run last to first
         const SmithLangSlicePart *part = &parts[at - 1];
@@ -3429,7 +3380,7 @@ static bool smith_lang_slice_replay_words(SmithLang *lang, const SmithHost *host
 // An argument of slice type `from_tag` written where the slice of `to_tag` is wanted (issue #193: `const auto xs[:]`
 // takes a slice of non-const elements): the replay frames of the argument's own tokens [first, last) between the words
 // that convert it. Pushed where the argument itself would be.
-static void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                              uint32_t place, const char *from_tag, const char *to_tag, uint32_t first,
                                              uint32_t last) {
     static char texts[2][640];
@@ -3440,7 +3391,7 @@ static void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *h
 
 // An array or a string literal written where the slice of `to_tag` is wanted: `(struct T){.data = A, .count = {n}}`,
 // n from `sizeof` (less the NUL of a literal), which does not evaluate the argument.
-static void smith_lang_slice_replay_array(SmithLang *lang, SmithLangReplay *replay, uint32_t place, const char *to_tag,
+void smith_lang_slice_replay_array(SmithLang *lang, SmithLangReplay *replay, uint32_t place, const char *to_tag,
                                           bool literal, uint32_t first, uint32_t last) {
     static char texts[3][640];
     char definition[smith_lang_tuple_name_max + 200];
@@ -3566,7 +3517,7 @@ static bool smith_lang_slice_replay_call(SmithLang *lang, const SmithHost *host,
 
 // The token at the frame's position starts `countof(xs)`, `xs[i]` or `xs[a:b]` of a slice parameter: write it as the
 // lowering does and take its tokens. False when it is not one.
-static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                     SmithLangFrame *frame) {
     const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
     if (replay->instance != nullptr && replay->generic != nullptr && smith_lang_gt_punct(token, "(") &&

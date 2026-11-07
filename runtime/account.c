@@ -8,12 +8,15 @@
 // process (a compile, a link, a verb, a test's own) that began while SMITH_START_LOG named a file: smith appends a
 // byte to it as main begins, so a count needs no parent to know the child. A test that clears the environment is not
 // counted, and neither is a start of a smith that is older than this one.
+#include "core.h"
+#include "account.h"
+
 constexpr size_t smith_account_tasks_max = 1024;
 constexpr size_t smith_account_summary = 8;
 constexpr uint64_t smith_account_ms_per_s = 1000;
 
 // Called as main begins: one more smith start, when a start log is named.
-static void smith_account_start(void) {
+void smith_account_start(void) {
     const char *path = getenv("SMITH_START_LOG");
     if (path == nullptr || *path == '\0') return;
     int fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0644);
@@ -22,18 +25,18 @@ static void smith_account_start(void) {
     close(fd);
 }
 
-static uint64_t smith_account_ms(struct timeval time) {
+uint64_t smith_account_ms(struct timeval time) {
     return (uint64_t)time.tv_sec * smith_account_ms_per_s + (uint64_t)time.tv_usec / smith_account_ms_per_s;
 }
 
-static uint64_t smith_account_now_ms(void) {
+uint64_t smith_account_now_ms(void) {
     struct timespec now = {};
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * smith_account_ms_per_s + (uint64_t)now.tv_nsec / 1'000'000;
 }
 
 // `smith --smith-account <file> <name> <program> [arguments]`: runs the program and appends its line to the file.
-static int smith_account_main(int count, char **args) {
+int smith_account_main(int count, char **args) {
     if (count < 3)
         smith_die(smith_exit_usage, "usage: smith --smith-account <file> <name> <program> [arguments]", nullptr);
     char starts[PATH_MAX];
@@ -112,7 +115,7 @@ static size_t smith_account_read(const char *path) {
 
 // Prints the tasks of the file, the slowest first (all of them, or the slowest few), and the totals. `what` names the
 // verb. The CPU time of tasks that ran side by side adds up to more than the wall time of the run, which is the point.
-static void smith_account_report(const char *path, const char *what, bool all) {
+void smith_account_report(const char *path, const char *what, bool all) {
     size_t count = smith_account_read(path);
     if (count == 0) return;
     qsort(smith_account_tasks, count, sizeof smith_account_tasks[0], smith_account_slower);

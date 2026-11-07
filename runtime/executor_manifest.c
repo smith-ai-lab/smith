@@ -3,6 +3,11 @@
 // continuation lines. `include`, `subninja` and a variable that a rule's text takes from another rule's are not read
 // (they are errors): smith writes none of them, and SMITH_NINJA runs a manifest that has them through ninja itself.
 
+#include "core.h"
+#include "executor.h"
+#include "executor_manifest.h"
+#include "world.h"
+
 typedef struct {
     char *cursor;
     char *end;
@@ -230,7 +235,7 @@ static void smith_manifest_grow_table(SmithExec *exec) {
 }
 
 // The node for a canonical path, made if there is none. `created` says whether it is new.
-static uint32_t smith_exec_node(SmithExec *exec, const char *path, size_t length, bool create, bool *created) {
+uint32_t smith_exec_node(SmithExec *exec, const char *path, size_t length, bool create, bool *created) {
     SmithGraph *graph = &exec->graph;
     if (created != nullptr) *created = false;
     if (graph->table == nullptr || (graph->node_count + 1) * 2 > graph->table_capacity) {
@@ -556,7 +561,7 @@ static void smith_manifest_allocate(SmithExec *exec) {
 }
 
 // Reads the manifest into exec->graph. Any problem is a message and the end of the build.
-static void smith_manifest_read(SmithExec *exec) {
+void smith_manifest_read(SmithExec *exec) {
     SmithWorldRead file = smith_world_read(exec->arena, exec->manifest);
     if (file.error.code != 0) smith_exec_fail("loading '%s': %s", exec->manifest, strerror(file.error.code));
     smith_manifest_allocate(exec);

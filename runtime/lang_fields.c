@@ -11,47 +11,25 @@
 // (`typeof(((T *)0)->name)` for a T). Every use is written as plain member access; nothing is left for run time.
 // Unions, anonymous members and a T that is no struct are errors.
 
-static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
-static bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, char *text, size_t capacity);
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_type.h"
+
 static void smith_lang_fields_alias(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                     const SmithLangFrame *frame);
-static bool smith_lang_fields_valued(uint32_t first, uint32_t last);
-static bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling,
-                                          size_t capacity);
-static bool smith_lang_cx_simple(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result);
-static int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
-                                    SmithLangSpan span);
 
-static bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle);
-static const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle);
-static const char *smith_lang_ty_second_level(void);
-constexpr size_t smith_lang_ty_pieces_max = 11;
-constexpr size_t smith_lang_ty_piece_size = 32;
-static size_t smith_lang_ty_pieces(uint64_t handle, char pieces[][smith_lang_ty_piece_size]);
-static SmithTokenKind smith_lang_ty_piece_kind(const char *piece);
-static bool smith_lang_ty_literal(uint64_t handle, char *out, size_t capacity);
 
-constexpr size_t smith_lang_fields_pieces_max = 40;
 
 // The spelling of the type the last `smith_lang_fields_load` read.
 static char smith_lang_fields_spelling[smith_lang_cx_name_max];
 
-// What a use is written as: a few tokens.
-typedef struct {
-    size_t count;
-    SmithTokenKind kind[smith_lang_fields_pieces_max];
-    char text[smith_lang_fields_pieces_max][smith_lang_name_max];
-} SmithLangFieldPieces;
 
-// One field of `fields(T)[index]`: where the expression ends, which field it is.
-typedef struct {
-    uint32_t consumed; // the tokens of `fields ( T ) [ index ]`
-    uint32_t type_at;  // the token T
-    size_t index;
-    SmithFieldInfo info;
-    char message[smith_lang_message_max];
-} SmithLangFieldRef;
 
 static bool smith_lang_fields_punct(uint32_t at, uint32_t limit, const char *text) {
     return at < limit && smith_lang_gt_punct(smith_lang_cx_token(at), text);
@@ -93,7 +71,7 @@ static bool smith_lang_fields_field_at(uint32_t at, uint32_t limit) {
 }
 
 // How many tokens `countof ( fields ( T ) )` at `at` takes, or 0.
-static uint32_t smith_lang_fields_countof_len(uint32_t at, uint32_t limit) {
+uint32_t smith_lang_fields_countof_len(uint32_t at, uint32_t limit) {
     if (at + 6 >= limit || !smith_lang_cx_word(smith_lang_cx_token(at), "countof") ||
         !smith_lang_fields_punct(at + 1, limit, "(")) {
         return 0;
@@ -102,13 +80,13 @@ static uint32_t smith_lang_fields_countof_len(uint32_t at, uint32_t limit) {
     return length != 0 && smith_lang_fields_punct(at + 2 + length, limit, ")") ? length + 3 : 0;
 }
 
-static bool smith_lang_fields_countof_at(uint32_t at, uint32_t limit) {
+bool smith_lang_fields_countof_at(uint32_t at, uint32_t limit) {
     return smith_lang_fields_countof_len(at, limit) != 0;
 }
 
 // Stages `typeof ( E )`, the tokens [first, last), with each parameter of the generic that E names as a value of its
 // type (`(*(T *)0)`: never evaluated), so the compiler can read what E is. False when the pool is full.
-static bool smith_lang_fields_stage_expression(uint32_t first, uint32_t last, const SmithLangInstance *instance,
+bool smith_lang_fields_stage_expression(uint32_t first, uint32_t last, const SmithLangInstance *instance,
                                                uint32_t location, uint32_t *staged_first, uint32_t *staged_count) {
     uint8_t flags[64];
     uint8_t params[64];
@@ -139,7 +117,7 @@ static bool smith_lang_fields_stage_expression(uint32_t first, uint32_t last, co
 
 // Whether the tokens [first, last) are `typeof ( E )` with E more than a name: an expression of the generic's
 // parameters (`*p`, `p->f`), whose type the compiler reads with each parameter as a value of its type.
-static bool smith_lang_fields_expression_type(uint32_t first, uint32_t last) {
+bool smith_lang_fields_expression_type(uint32_t first, uint32_t last) {
     const SmithLangGenToken *token = smith_lang_cx_token(first);
     return last > first + 4 && (smith_lang_cx_word(token, "typeof") || smith_lang_cx_word(token, "__typeof__")) &&
            smith_lang_fields_punct(first + 1, last, "(") && smith_lang_cx_skip_group(first + 1, last) == last;
@@ -273,7 +251,7 @@ static bool smith_lang_fields_ask(SmithLangCx *cx, uint32_t first, uint32_t last
 // The field named by the tokens [first, last) inside `.[ ]`: `fields(T)[i]` itself, or any expression of type `Field`
 // (a `constexpr Field f`, a call that returns one), whose name and type the compiler reads. 1 with the field, -1 and
 // the message.
-static int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
+int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
                                    uint32_t first, uint32_t last, uint32_t place, SmithLangFieldRef *ref) {
     *ref = (SmithLangFieldRef){};
     if (replay == nullptr || replay->instance == nullptr) {
@@ -324,7 +302,7 @@ static int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const
 }
 
 // The number of fields in `fields ( T )` at `at`. False with the message.
-static bool smith_lang_fields_count(const SmithHost *host, const SmithLangGeneric *generic,
+bool smith_lang_fields_count(const SmithHost *host, const SmithLangGeneric *generic,
                                     const SmithLangInstance *instance, uint32_t at, uint32_t location, int64_t *count,
                                     char *message, size_t capacity) {
     SmithFieldInfo info;
@@ -367,7 +345,7 @@ static bool smith_lang_fields_typeof_parts(uint32_t at, uint32_t after, uint32_t
 
 // The index after `typeof ( ... . [ fields(T)[i] ] )` at `at`, or 0 when the tokens are not that: the type of a field
 // (or of an element of it, `typeof(x.[f][0])`).
-static uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
+uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit) {
     const SmithLangGenToken *token = smith_lang_cx_token(at);
     if (at + 5 >= limit || !(smith_lang_cx_word(token, "typeof") || smith_lang_cx_word(token, "__typeof__")) ||
         !smith_lang_fields_punct(at + 1, limit, "(")) {
@@ -395,7 +373,7 @@ static int smith_lang_fields_in_typeof(SmithLang *lang, const SmithHost *host, c
 
 // The element of a type: what a subscript of a value of it is. `spelling` is rewritten (a pointer or an array, or the
 // struct of a slice, whose element is what its `data` points to). False when there is none.
-static bool smith_lang_fields_element(const SmithHost *host, char *spelling, size_t capacity) {
+bool smith_lang_fields_element(const SmithHost *host, char *spelling, size_t capacity) {
     size_t length = strlen(spelling);
     char *open = strchr(spelling, '[');
     if (open != nullptr && length > 0 && spelling[length - 1] == ']') { // `double[4]`: the first dimension goes
@@ -421,7 +399,7 @@ static bool smith_lang_fields_element(const SmithHost *host, char *spelling, siz
 }
 
 // The spelling of the type of the field in `typeof ( ... [ F ] )` at `first`..`last`, for the parser to read.
-static bool smith_lang_cx_field_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling, size_t capacity) {
+bool smith_lang_cx_field_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling, size_t capacity) {
     SmithLangFieldRef ref;
     uint32_t subscripts = 0;
     if (smith_lang_fields_in_typeof(cx->lang, cx->host, cx->replay, cx->location, first, last, &ref, &subscripts) !=
@@ -439,7 +417,7 @@ static bool smith_lang_cx_field_type(SmithLangCx *cx, uint32_t first, uint32_t l
 
 // Whether the tokens [first, last) use `fields`, so the arguments of a call that holds them are typed as the instance
 // writes them (a member of a parameter, which is not declared while the body is written).
-static bool smith_lang_fields_in(uint32_t first, uint32_t last) {
+bool smith_lang_fields_in(uint32_t first, uint32_t last) {
     for (uint32_t at = first; at < last; at++) { // bounded by the call
         if (smith_lang_fields_call_len(at, last) != 0) return true;
         if ((smith_lang_fields_punct(at, last, ".") || smith_lang_fields_punct(at, last, "->")) &&
@@ -505,7 +483,7 @@ static bool smith_lang_fields_doc_fits(const SmithFieldInfo *info, bool of_type,
 }
 
 // Whether the tokens at `at` begin a use of `fields`: the cheap check that nothing needs evaluating for.
-static bool smith_lang_fields_begins(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
+bool smith_lang_fields_begins(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
     if (replay->generic == nullptr || replay->instance == nullptr) return false;
     const SmithLangGenToken *token = smith_lang_cx_token(at);
     if (token->special != SmithLangGen_Plain) return false;
@@ -582,14 +560,8 @@ static int smith_lang_fields_use_countof(SmithLangFieldUse *use) {
     return 1;
 }
 
-// The arrays `fields(T)` is, one per type, that the instance being written declared (smith_lang_fields_declare).
-typedef struct {
-    uint32_t instance;
-    size_t count;
-    char spelling[16][smith_lang_cx_name_max];
-} SmithLangFieldArrays;
 
-static SmithLangFieldArrays smith_lang_field_arrays;
+SmithLangFieldArrays smith_lang_field_arrays;
 
 // A `constexpr Field f = fields(T)[i];` of the body being written is not read by the parser until the instance is done,
 // so the compiler cannot be asked about `f` (`is_f32(f)`, `x.[f]`): the name stands for its value, written out.
@@ -744,7 +716,7 @@ static int smith_lang_fields_use_member(SmithLangFieldUse *use) {
 
 // What the use of `fields` at `at` is written as: 0 when the tokens are none (nothing written), 1 with the pieces, -1
 // after an error (reported; the pieces are empty). `consumed` is how many tokens the use takes.
-static int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, uint32_t at,
+int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, uint32_t at,
                                  uint32_t limit, SmithLangFieldPieces *pieces, uint32_t *consumed) {
     pieces->count = 0;
     if (!smith_lang_fields_begins(replay, at, limit)) return 0;
@@ -848,7 +820,7 @@ static bool smith_lang_countof_begin(SmithLangReplay *replay, uint32_t place, Sm
 }
 
 // The member was written to the pool: ask the compiler its type, then write the count.
-static void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                       SmithLangFrame *frame) {
     const SmithLangFrame done = *frame;
     replay->count -= 1;
@@ -897,7 +869,7 @@ static void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, Sm
 }
 
 // Writes the use of `fields` at the frame's position, if there is one: true when the tokens were taken.
-static bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
                                      SmithLangFrame *frame) {
     static SmithLangFieldPieces pieces;
     uint32_t consumed = 0;
@@ -1071,8 +1043,6 @@ static size_t smith_lang_field_definition(bool bare, const char *const **words) 
     return used;
 }
 
-static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
-static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length);
 
 // Whether the struct of a `char[:]` is defined already, by this file or by a header it includes.
 static bool smith_lang_fields_slice_bare(const SmithLang *lang, const SmithHost *host) {
@@ -1083,7 +1053,7 @@ static bool smith_lang_fields_slice_bare(const SmithLang *lang, const SmithHost 
 }
 
 // Writes the definition of `Field` where an instance is, in a file that did not define it at its first declaration.
-static void smith_lang_fields_define(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+void smith_lang_fields_define(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                      uint32_t location, uint32_t id) {
     lang->field_defined = true; // first: a lookup below can set the state aside
     bool bare = smith_lang_fields_slice_bare(lang, host);
@@ -1178,7 +1148,7 @@ static void smith_lang_fields_array(SmithLang *lang, const SmithHost *host, cons
 }
 
 // Before an instance is written: the array of each type its body asks `fields` of as a value, in the file.
-static void smith_lang_fields_declare(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+void smith_lang_fields_declare(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                       const SmithLangInstance *instance, uint32_t id, uint32_t location) {
     smith_lang_field_arrays.instance = id;
     smith_lang_field_arrays.count = 0;
@@ -1211,7 +1181,7 @@ static void smith_lang_fields_declare(SmithLang *lang, const SmithHost *host, co
 
 // What the `fields(T)[i]` at `at` is as an expression for the compiler: tokens of a call of `smith_field_make`, as many
 // as the group takes. 0 when the tokens are no such group, UINT32_MAX when it cannot be read.
-static uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
+uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
                                            size_t capacity) {
     const SmithLangGenToken *token = smith_lang_cx_token(at);
     if (token->kind == SmithTokenKind_Identifier && token->special == SmithLangGen_Plain && token->param == 0) {
@@ -1305,7 +1275,7 @@ static void smith_lang_fields_alias(SmithLang *lang, const SmithHost *host, cons
 
 // Whether the tokens [first, last) are a `Field`'s member read as a type (`f.type`, `fields(T)[i].type`): they begin
 // with a variable that stands for a `Field`, or with `fields(`.
-static bool smith_lang_fields_valued(uint32_t first, uint32_t last) {
+bool smith_lang_fields_valued(uint32_t first, uint32_t last) {
     const SmithLangGenToken *token = smith_lang_cx_token(first);
     if (last <= first + 1 || token->special != SmithLangGen_Plain) return false;
     if (smith_lang_fields_call_len(first, last) != 0) return true;
@@ -1316,7 +1286,7 @@ static bool smith_lang_fields_valued(uint32_t first, uint32_t last) {
 }
 
 // The spelling of the type that the handle the tokens [first, last) evaluate to names.
-static bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling,
+bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling,
                                           size_t capacity) {
     static SmithValue nodes[smith_lang_cx_value_nodes];
     static SmithValueQuery query;

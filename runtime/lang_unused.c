@@ -8,9 +8,17 @@
 // as written, and reading a name that starts with `_` (one already declared when the token comes) is the error. The
 // names C reserves (`__x`, `_X`), a member (`p._x`, `p->_x`) and a name after `::` (`c::_exit`) are no module's.
 
-static unsigned smith_lang_unused_serial;
+#include "core.h"
+#include "lang.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_sparse.h"
+#include "lang_tuple.h"
+#include "lang_unused.h"
+
+unsigned smith_lang_unused_serial;
 static SmithToken smith_lang_unused_last; // the token before, for a lowering with no host record (the raw one)
-static bool smith_lang_unused_has_last;
+bool smith_lang_unused_has_last;
 static SmithToken smith_lang_unused_last2; // and the one before that, for `[3][_]`
 
 static bool smith_lang_unused_reserved(const SmithToken *token) {
@@ -69,7 +77,7 @@ static bool smith_lang_unused_write(SmithLang *lang, const SmithToken *token, bo
 // is an error in every position: C's three meanings of it each have a spelling of their own.
 
 // Whether the declaration the `]` closes began with `extern`: seen by every token, since the host's record is short.
-static bool smith_lang_brackets_extern_seen;
+bool smith_lang_brackets_extern_seen;
 
 static void smith_lang_brackets_track(const SmithToken *token) {
     if (token->synthetic) return;
@@ -162,7 +170,7 @@ static void smith_lang_brackets_close(SmithLang *lang, const SmithHost *host, co
 }
 
 // A `_` or a name starting with `_` in a module: true when the token was replaced.
-static bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     smith_lang_brackets_track(token);
     SmithToken own = smith_lang_unused_last;
     SmithToken own2 = smith_lang_unused_last2;

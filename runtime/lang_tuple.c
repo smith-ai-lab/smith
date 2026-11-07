@@ -11,18 +11,25 @@
 // f32 }` and `struct { f64, f32 }` are different types even when Meters is f64. The generated header hoists each
 // definition out of the signatures (smith_lang_tuple_hoist).
 
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_sparse.h"
+#include "lang_tuple.h"
+
 constexpr size_t smith_lang_tuple_depth_max = 8;      // tuples inside tuples
-constexpr size_t smith_lang_tuple_name_max = 512;     // the spelling of a tuple's fields
 constexpr size_t smith_lang_tuple_fields_max = 128;   // fields of one tuple
 constexpr size_t smith_lang_tuple_text_max = 1 << 15; // the ring of text the tokens made here point into
-constexpr size_t smith_lang_tuple_long = 120;         // a spelling longer than this is cut and hashed
-constexpr char smith_lang_tuple_prefix[] = "smith_tuple_";
 
 static char smith_lang_tuple_text[smith_lang_tuple_text_max];
-static size_t smith_lang_tuple_used;
+size_t smith_lang_tuple_used;
 
 // Text for a token made here. It lives until the ring wraps, long after the token has been used.
-static const char *smith_lang_tuple_keep(const char *text, size_t length) {
+const char *smith_lang_tuple_keep(const char *text, size_t length) {
     if (smith_lang_tuple_used + length + 1 > smith_lang_tuple_text_max) smith_lang_tuple_used = 0;
     char *at = smith_lang_tuple_text + smith_lang_tuple_used;
     memcpy(at, text, length);
@@ -130,7 +137,7 @@ static bool smith_lang_tuple_finish(SmithLangTupleReader *reader, uint32_t where
 
 // The name an identifier at span[i] is written with (`x::Name` takes three tokens), as the module resolves it. Returns
 // the tokens it took.
-static size_t smith_lang_tuple_resolve(SmithLang *lang, const SmithToken *span, size_t i, size_t to, char *out,
+size_t smith_lang_tuple_resolve(SmithLang *lang, const SmithToken *span, size_t i, size_t to, char *out,
                                        size_t capacity) {
     const SmithToken *id = &span[i];
     if (i + 2 < to && smith_lang_punct(&span[i + 1], "::") && span[i + 2].kind == SmithTokenKind_Identifier &&
@@ -289,7 +296,7 @@ static bool smith_lang_tuple_word(SmithLang *lang, SmithLangTupleReader *reader,
 }
 
 // The fields of the tuple span[from, to) as the spelling that names it, or false with the reason.
-static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
+bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
                                    size_t capacity, const char **problem, uint32_t *where) {
     static SmithLangTupleReader reader;
     reader = (SmithLangTupleReader){};
@@ -332,7 +339,7 @@ static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size
 }
 
 // `smith_tuple_` and the spelling; a long one is cut and ends in a hash of the whole.
-static void smith_lang_tuple_tag(const char *spelled, char *tag, size_t capacity) {
+void smith_lang_tuple_tag(const char *spelled, char *tag, size_t capacity) {
     size_t length = strlen(spelled);
     if (length <= smith_lang_tuple_long) {
         snprintf(tag, capacity, "%s%s", smith_lang_tuple_prefix, spelled);
@@ -348,7 +355,7 @@ static void smith_lang_tuple_tag(const char *spelled, char *tag, size_t capacity
 // ---- The queue
 
 // The first `count` tokens of the queue are replaced by `tokens`.
-static bool smith_lang_tuple_replace(SmithLang *lang, size_t count, const SmithToken *tokens, size_t made) {
+bool smith_lang_tuple_replace(SmithLang *lang, size_t count, const SmithToken *tokens, size_t made) {
     size_t rest = lang->queue_count - count;
     if (rest + made > smith_lang_queue_max) return false;
     lang->queue_head = (lang->queue_head + count) % smith_lang_queue_max;
@@ -361,7 +368,7 @@ static bool smith_lang_tuple_replace(SmithLang *lang, size_t count, const SmithT
     return true;
 }
 
-static SmithToken smith_lang_tuple_made(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like,
+SmithToken smith_lang_tuple_made(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like,
                                         bool space) {
     SmithToken made = smith_lang_synth(kind, smith_lang_tuple_keep(text, length), length, like);
     made.line_start = false;
@@ -425,7 +432,7 @@ static void smith_lang_tuple_recover(SmithLang *lang, const SmithToken *token, c
 
 // `struct` is being processed and a `{` follows: if it is a tuple, the tokens up to its `}` become the tag, the
 // braces and the fields with names (`_0`, `_1`) that the struct is defined with, and the `struct` goes on to them.
-static void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     size_t close = smith_lang_tuple_extent(lang, host);
     if (close == 0) return;
     static SmithToken span[smith_lang_queue_max];
@@ -481,21 +488,19 @@ static void smith_lang_tuple_begin(SmithLang *lang, const SmithHost *host, const
 
 // A generic's body is kept as written and replayed for each instance, and a tuple type in it would reach the compiler
 // as written. Until the tuple is a type a generic can take (issue #95, ticket 6), it is named outside: a typedef.
-static void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (smith_lang_tuple_extent(lang, host) == 0) return;
     smith_lang_error(lang, host, token->location,
                      "a tuple type cannot be written in a generic function yet: name it outside the generic with a "
                      "typedef (`typedef struct { I32, F32 } Pair;`)");
 }
 
-static bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                     const char *tokens, const SmithToken *span, size_t close);
 
 // ---- An expression that is a tuple: `t[0]` and `countof(t)`
 
 // The token `back` places before the one being lowered: in the arguments of a call to a generic, which are kept and not
 // yet written, the kept ones; else the host's record.
-static bool smith_lang_tuple_previous(SmithLang *lang, const SmithHost *host, unsigned back, SmithToken *token) {
+bool smith_lang_tuple_previous(SmithLang *lang, const SmithHost *host, unsigned back, SmithToken *token) {
     if (lang->cap_frames == 0) return smith_lang_previous(lang, host, back, token);
     if (back > smith_lang_gt.count) return false;
     const SmithLangGenToken *kept = &smith_lang_gt.tokens[smith_lang_gt.count - back];
@@ -505,7 +510,7 @@ static bool smith_lang_tuple_previous(SmithLang *lang, const SmithHost *host, un
 
 // The tokens of the postfix expression that ends just before the token being lowered, from the host's record of the
 // last tokens, separated by \x1f; false when they are not one, or reach back farther than the record does.
-static bool smith_lang_tuple_base(SmithLang *lang, const SmithHost *host, char *out, size_t capacity) {
+bool smith_lang_tuple_base(SmithLang *lang, const SmithHost *host, char *out, size_t capacity) {
     SmithToken before[8];
     size_t count = 0;
     for (unsigned back = 1; back <= 8; back++) { // the host remembers eight
@@ -601,7 +606,7 @@ static void smith_lang_tuple_shown(const char *tag, char *out, size_t capacity) 
 
 // `[` after an expression of tuple type: `t[1]` is `t._1`; the index is a number or a constant. Returns true when the
 // subscript was written as the member.
-static bool smith_lang_tuple_subscript(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_tuple_subscript(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     // The `[` of `count[1]` in a slice's struct (the lowering's own token) is no subscript of a tuple. The question
     // to the compiler below runs the parser's own type reader from inside its read of the token before, which left
     // the end of the declaration before it wrong (a function's `}` ended at the slice parameter after it, and hover
@@ -666,7 +671,7 @@ static bool smith_lang_tuple_subscript(SmithLang *lang, const SmithHost *host, c
 }
 
 // `countof(t)` where t is a tuple: the number of its fields, as the number.
-static bool smith_lang_tuple_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_tuple_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (host->previous == nullptr || host->expr_type == nullptr || lang->recording ||
         !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
         return false;
@@ -726,7 +731,7 @@ static bool smith_lang_tuple_countof(SmithLang *lang, const SmithHost *host, con
 
 // `return {1, 2.0f};` in a function that returns a tuple: the braces are a compound literal of the return type, which
 // the compiler says (`(struct smith_tuple_i32__f32){1, 2.0f}`).
-static void smith_lang_tuple_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_tuple_return(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (host->return_type == nullptr || lang->recording ||
         !smith_lang_punct(smith_lang_peek(lang, host, 0, false), "{")) {
         return;
@@ -887,7 +892,7 @@ static void smith_lang_tuple_hoist_kind(char *body, size_t *used, size_t capacit
     }
 }
 
-static void smith_lang_tuple_hoist(char *body, size_t *used, size_t capacity) {
+void smith_lang_tuple_hoist(char *body, size_t *used, size_t capacity) {
     smith_lang_tuple_hoist_kind(body, used, capacity, smith_lang_tuple_prefix, "SMITH_TUPLE_");
     smith_lang_tuple_hoist_kind(body, used, capacity, "smith_array_", "SMITH_ARRAY_");
 }

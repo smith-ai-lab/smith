@@ -15,6 +15,11 @@
 // attach, the symbols of the program and the reads, about a quarter of a second
 // (knowledge/failure-reports-and-tests.md).
 
+#include "core.h"
+#include "explain.h"
+#include "platform_linux.h"
+#include "symbolize.h"
+
 #include <ctype.h>
 
 #include "../shim/lldb_explain.h"
@@ -403,7 +408,7 @@ static void smith_explain_resume(long pid) {
 }
 
 // `smith --smith-explain --pid <pid>` and `smith --smith-explain --available`.
-static int smith_explain_main(int argc, char **argv, const char *self) {
+int smith_explain_main(int argc, char **argv, const char *self) {
     long pid = 0;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--available") == 0) return smith_explain_has_lldb ? 0 : smith_explain_exit_unavailable;
@@ -539,7 +544,7 @@ static int smith_crash_run(const SmithCrashOptions *options, const char *self) {
     return status;
 }
 
-static int smith_crash_main(int argc, char **argv, const char *self) {
+int smith_crash_main(int argc, char **argv, const char *self) {
     SmithCrashOptions options = smith_crash_parse(argc, argv);
     if (getcwd(smith_sym_directory, sizeof smith_sym_directory) == nullptr) smith_sym_directory[0] = '\0';
     int status = smith_crash_run(&options, self);

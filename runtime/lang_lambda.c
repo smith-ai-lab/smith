@@ -19,6 +19,14 @@
 // definition are lowered like any others when they are read again: a lambda inside a lambda is lifted from the
 // definition of the first.
 
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_lambda.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_tuple.h"
+
 constexpr size_t smith_lang_lambda_max = 900;
 constexpr size_t smith_lang_lambda_text_max = (size_t)1 << 17;
 constexpr size_t smith_lang_lambda_hints_max = 64;
@@ -894,7 +902,7 @@ static bool smith_lang_lambda_step(SmithLang *lang, const SmithHost *host, const
 
 // The token is the first of a declaration at file scope when the one before ended a declaration or a function (the
 // host's record of the tokens before lags behind the lowering's, so the lowering keeps its own).
-static bool smith_lang_lambda_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_lambda_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangLambda *state = &lang->lambda;
     if (token->foreign) return false;
     bool at_start = !state->started || (state->after_close && state->depth == 0);

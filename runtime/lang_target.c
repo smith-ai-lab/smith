@@ -19,6 +19,20 @@
 
 // ---- The facts -----------------------------------------------------------------------------------------------------
 
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_import.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_stream.h"
+#include "lang_target.h"
+#include "lang_trivia.h"
+#include "lang_type.h"
+#include "mcp_unit.h"
+
 typedef struct {
     const char *name;
     int fact; // a SmithTarget, or -1 for a constant of this table
@@ -94,7 +108,7 @@ static const char *const smith_lang_target_prelude_text[] = {
 
 // The definitions a header needs, for the facts the `if constexpr` of its inline functions use (the header is
 // written without the compiler, so the includer's preprocessor answers).
-static size_t smith_lang_target_header_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_target_header_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
         if ((lang->header_target_used & (1U << i)) != 0)
             used = smith_lang_append(out, capacity, used, "%s", smith_lang_target_prelude_text[i]);
@@ -104,7 +118,7 @@ static size_t smith_lang_target_header_prelude(const SmithLang *lang, char *out,
 
 // The definitions the conditionals around the imports need: the include lines come before everything else in a
 // header, so they define the facts they ask themselves (each definition is guarded, a second one is harmless).
-static size_t smith_lang_target_include_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_target_include_prelude(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
         if ((lang->include_target_used & (1U << i)) != 0)
             used = smith_lang_append(out, capacity, used, "%s", smith_lang_target_prelude_text[i]);
@@ -113,7 +127,7 @@ static size_t smith_lang_target_include_prelude(const SmithLang *lang, char *out
 }
 
 // The definitions the raw lowering's output needs, for the facts it used.
-static void smith_lang_target_prelude(const SmithLang *lang, FILE *out) {
+void smith_lang_target_prelude(const SmithLang *lang, FILE *out) {
     for (size_t i = 0; i < sizeof smith_lang_target_prelude_text / sizeof smith_lang_target_prelude_text[0]; i++) {
         if ((lang->target_used & (1U << i)) != 0) fputs(smith_lang_target_prelude_text[i], out);
     }
@@ -147,7 +161,7 @@ static bool smith_lang_target_value(const SmithLang *lang, const SmithHost *host
     return host->target_fact != nullptr && host->target_fact(host->context, (SmithTarget)entry->fact, value);
 }
 
-static int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                          int64_t *value) {
     for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) { // 15 facts
         const SmithLangTargetEntry *entry = &smith_lang_target_table[i];
@@ -184,7 +198,7 @@ static SmithToken smith_lang_target_value_token(const SmithToken *like, uint32_t
 
 // `target::member`, read by smith_lang_namespace: the token that stands where the access stood. `digits` holds its
 // text, and lives as long as the caller's use of it.
-static void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                   const SmithToken *member, SmithToken *result, char *digits, size_t capacity) {
     const SmithLangTargetEntry *entry = smith_lang_target_find(member->text, member->length);
     *result = smith_lang_target_value_token(name, member->location, 0, false, digits, capacity);
@@ -475,7 +489,6 @@ static bool smith_lang_ifc_file_scope(const SmithLang *lang) {
     return lang->is_module && !lang->in_function && lang->state == SmithLangState_Start;
 }
 
-static void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host); // runtime/lang_type.c
 
 // The `{` of a branch at file scope, which is dropped: the braces the frame counts begin inside it. What is defined
 // after the last import (`Field`) is defined here when the branch begins with no import.
@@ -572,7 +585,7 @@ static void smith_lang_ifc_directive(SmithLang *lang, const char *directive, con
 
 // `if constexpr` begins here (`if` is the token, `constexpr` is next). Returns false when the next token is no
 // `constexpr`: an ordinary `if`.
-static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!smith_lang_ident(smith_lang_peek(lang, host, 0, false), "constexpr")) return false;
     smith_lang_take(lang, host);
     if (!smith_lang_punct(smith_lang_peek(lang, host, 0, false), "(")) {
@@ -625,7 +638,7 @@ static bool smith_lang_ifc_begin(SmithLang *lang, const SmithHost *host, const S
 }
 
 // The `}` that ended the then-block (or the else-block) of the innermost `if constexpr` was written.
-static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
+void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
     SmithLangIfFrame *frame = &lang->ifc[lang->ifc_count - 1];
     if (!frame->raw) {
         smith_lang_ifc_discard_else(lang, host, frame->file_scope);
@@ -677,7 +690,7 @@ static void smith_lang_ifc_close(SmithLang *lang, const SmithHost *host) {
 // (already taken) `constexpr <type> name = initializer;` is read ahead, without taking anything, and the name is
 // recorded with the `#if` text of its initializer. An initializer that is no constant of the kind a condition has is
 // not recorded: naming it in a condition is the error.
-static void smith_lang_ifc_constant(SmithLang *lang, const SmithHost *host) {
+void smith_lang_ifc_constant(SmithLang *lang, const SmithHost *host) {
     if (host->target_fact != nullptr) return;
     size_t equals = SIZE_MAX;
     size_t end = SIZE_MAX;

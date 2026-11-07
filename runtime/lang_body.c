@@ -16,6 +16,16 @@
 // carried). What the header holds is left out. An importer that needs `fib` defines SMITH_BODY_calc_fib, with those
 // of what it needs in turn, and includes the file (the depfile then names it).
 
+#include "core.h"
+#include "lang.h"
+#include "lang_body.h"
+#include "lang_decl.h"
+#include "lang_import.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_target.h"
+
 constexpr size_t smith_lang_body_sections_max = 8192;
 constexpr size_t smith_lang_body_names_text = 512;
 
@@ -27,7 +37,7 @@ typedef struct {
 static SmithLangBodySpan smith_lang_body_spans[smith_lang_body_sections_max];
 
 // A declaration is complete: the text written since the one before it is its section.
-static void smith_lang_body_note(SmithLang *lang) {
+void smith_lang_body_note(SmithLang *lang) {
     if (!lang->body_enabled || lang->body_closed) return;
     if (lang->dump_used > lang->body_mark && lang->body_count >= smith_lang_body_sections_max) {
         smith_lang_limit(lang, "declarations whose bodies an importer may run", smith_lang_body_sections_max);
@@ -359,7 +369,7 @@ static void smith_body_put(FILE *file, const SmithBodyDecl *decl, const char *te
     fputs("\n#endif\n", file);
 }
 
-static void smith_lang_body_write(SmithLang *lang) {
+void smith_lang_body_write(SmithLang *lang) {
     const char *path = getenv("SMITH_LANG_BODY");
     if (!lang->body_enabled || path == nullptr || !lang->is_module || lang->errors > 0) return;
     FILE *file = fopen(path, "wb");
@@ -825,7 +835,7 @@ static size_t smith_body_assemble(const SmithHost *host) {
     return used;
 }
 
-static void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (host->read_body == nullptr || host->mentions == nullptr || host->include_text == nullptr || lang->recording) {
         return;
     }

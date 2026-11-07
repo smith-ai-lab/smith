@@ -24,6 +24,10 @@
 // each and as root/relative, every file it read or found to exist: the documents, the skills, and what each link
 // points at. A file that is not there is not named, since the check then has a problem and builds no stamp. A space is
 // written as "\ ", # as "\#" and $ as "$$". A build.c step reruns the check when one of them changes.
+#include "core.h"
+#include "docs.h"
+#include "main.h"
+
 #include <dirent.h>
 #include <stdint.h>
 #include <sys/mman.h>
@@ -1250,7 +1254,7 @@ static const char *smith_docs_find_root(void) {
     return ".";
 }
 
-static int smith_docs_check(int count, char **args) {
+int smith_docs_check(int count, char **args) {
     SmithDocs docs = {.root = nullptr, .errors = stderr};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
     if (docs.root == nullptr) docs.root = smith_docs_find_root();
@@ -1268,7 +1272,7 @@ static int smith_docs_check(int count, char **args) {
 
 // `smith docs`: the check on the project they name (the current folder by default), with the types and required fields
 // knowledge/index.md declares. Its arguments are the check's options.
-static int smith_docs_main(int count, char **args) {
+int smith_docs_main(int count, char **args) {
     return smith_docs_check(smith_only_options(count, args) ? 0 : count, args);
 }
 

@@ -7,7 +7,9 @@
 // The read puts the bytes in the arena it is given, with a zero after them that the size does not count, so a caller
 // can hand the text to C. A user of this file takes what it needs: the rest is `maybe_unused`.
 
-#pragma once
+#include "core.h"
+#include "world.h"
+
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,28 +31,9 @@ constexpr uint64_t smith_world_second = 1'000'000'000;
 constexpr mode_t smith_world_file_mode = 0666; // the umask takes its share
 constexpr mode_t smith_world_folder_mode = 0777;
 
-typedef struct {
-    int code; // 0 for success, otherwise an errno value
-    char message[192];
-} SmithWorldError;
 
-typedef struct {
-    SmithWorldError error;
-    const uint8_t *data; // size bytes and a zero; null when the read failed
-    size_t size;
-} SmithWorldRead;
 
-typedef struct {
-    SmithWorldError error; // ENOENT if there is nothing at the path
-    bool folder;
-    size_t size; // bytes of a file; 0 for a folder
-} SmithWorldInfo;
 
-typedef enum {
-    SmithWorld_Replace, // creates the file or replaces what it held
-    SmithWorld_Atomic,  // the bytes go to "<path>.tmp" and are renamed over the path
-    SmithWorld_Append   // adds to the end, creating the file if it is not there
-} SmithWorldWrite;
 
 static SmithWorldError smith_world_error(int code, const char *what, const char *path) {
     SmithWorldError error = {.code = code};
@@ -59,7 +42,7 @@ static SmithWorldError smith_world_error(int code, const char *what, const char 
 }
 
 // What is at the path (symbolic links followed).
-static SmithWorldInfo smith_world_info(const char *path) {
+SmithWorldInfo smith_world_info(const char *path) {
     SmithFileHandler *handler = smith_handlers_files();
     if (handler != nullptr && handler->stat != nullptr) {
         SmithFileStatus fake;
@@ -75,7 +58,7 @@ static SmithWorldInfo smith_world_info(const char *path) {
 
 // A whole file in the arena. A name that is not a file is the error of its open or read. With a files handler set
 // (smith_handlers_set_files) its members do the work, so a test can swap the file system.
-static SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
+SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
     SmithFileHandler *handler = smith_handlers_files();
     SmithWorldInfo info = smith_world_info(path);
     if (info.error.code != 0) return (SmithWorldRead){.error = info.error};
@@ -103,7 +86,7 @@ static SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
 }
 
 // Deletes a file (not a folder: EPERM, as on macOS).
-static SmithWorldError smith_world_remove(const char *path) {
+SmithWorldError smith_world_remove(const char *path) {
     SmithFileHandler *handler = smith_handlers_files();
     if (handler != nullptr && handler->remove != nullptr) {
         if (handler->remove(handler, path) == 0) return (SmithWorldError){};
@@ -141,7 +124,7 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 }
 
 // Writes the bytes to the file as the mode says. A failed atomic write leaves the old file as it was.
-[[maybe_unused]] static SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size,
+[[maybe_unused]] SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size,
                                                           SmithWorldWrite mode) {
     if (mode == SmithWorld_Append) return smith_world_write_to(path, data, size, O_APPEND);
     if (mode == SmithWorld_Replace) return smith_world_write_to(path, data, size, O_TRUNC);
@@ -160,7 +143,7 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 }
 
 // Makes the folder and the ones above it that are missing; one that is there already is success.
-[[maybe_unused]] static SmithWorldError smith_world_make_folder(const char *path) {
+[[maybe_unused]] SmithWorldError smith_world_make_folder(const char *path) {
     char text[PATH_MAX];
     size_t length = strlen(path);
     if (length == 0 || length >= sizeof text)
@@ -180,7 +163,7 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 }
 
 // Monotonic time in nanoseconds.
-[[maybe_unused]] static uint64_t smith_world_clock(void) {
+[[maybe_unused]] uint64_t smith_world_clock(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * smith_world_second + (uint64_t)now.tv_nsec;
@@ -188,7 +171,7 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 
 // An arena over address space reserved up front (nothing is committed until used). The memory is never given back:
 // the process ends. A failed reservation stops the program.
-static SmithArena smith_world_arena(void) {
+SmithArena smith_world_arena(void) {
     void *memory =
         mmap(nullptr, smith_world_reservation, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
     if (memory == MAP_FAILED) {
@@ -204,7 +187,7 @@ extern char **environ;
 // start, fails to read or exits with a status other than 0, and -2 when it prints a buffer's worth or more (the child
 // is then killed by the closed pipe, and its status is not asked). Its stderr is discarded. One blocking run: waiting
 // on many processes at once is the task runtime's.
-[[maybe_unused]] static ptrdiff_t smith_world_capture(const char *const *argv, char *buffer, size_t capacity) {
+[[maybe_unused]] ptrdiff_t smith_world_capture(const char *const *argv, char *buffer, size_t capacity) {
     int pipes[2];
     if (pipe(pipes) != 0) return -1;
     posix_spawn_file_actions_t actions;

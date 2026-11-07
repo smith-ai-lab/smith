@@ -14,6 +14,12 @@
 // replaced by a fixed word in the command and the output, so a clone in another folder shares the entries. A result is
 // stored only when the run completed (exit status 0 or 1) and no file it read was changed during or just before the
 // run.
+#include "core.h"
+#include "lint_cache.h"
+#include "mcp_unit.h"
+#include "package.h"
+#include "platform_linux.h"
+
 #include <sys/stat.h>
 
 constexpr size_t smith_lc_files_max = (size_t)1 << 15;
@@ -406,7 +412,7 @@ static void smith_lc_second_key(SmithLcJob *job, char key[smith_sha256_hex_size]
 }
 
 // Finds the keys of a file with the flags of its compile (tab separated; nullptr: it has none of its own).
-static void smith_lc_plan(size_t number, const char *file, const char *flags) {
+void smith_lc_plan(size_t number, const char *file, const char *flags) {
     SMITH_ASSERT(number < smith_lc_jobs_max);
     SmithLcJob *job = &smith_lc_jobs[number];
     *job = (SmithLcJob){};
@@ -470,7 +476,7 @@ static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     return true;
 }
 
-static bool smith_lc_replay(size_t number, int *status) {
+bool smith_lc_replay(size_t number, int *status) {
     return smith_lc_replay_to(number, status, stdout);
 }
 
@@ -485,7 +491,7 @@ static bool smith_lc_depfile(size_t number, char *out) {
 // The argument that makes clang-tidy write its dependency file: `-Wp,-MMD,<file>`, which clang-tooling's stripping of
 // -MD, -MMD, -MF and -MT leaves alone. It goes to `extra`; returns how many arguments that is (0 for a job that is not
 // cached).
-static size_t smith_lc_extra(size_t number, char **extra) {
+size_t smith_lc_extra(size_t number, char **extra) {
     static char argument[PATH_MAX + 16];
     char depfile[PATH_MAX];
     if (!smith_lc_jobs[number].usable || !smith_lc_depfile(number, depfile)) return 0;
@@ -584,7 +590,7 @@ static void smith_lc_write(char kind, const char *key, const char *head, const c
 
 // Stores the result of a run that completed (exit status 0 or 1: a crash or a missing tool is not a result), from the
 // log the child wrote and the dependency file it left; always removes that file.
-static void smith_lc_store(size_t number, int wait_status, FILE *log) {
+void smith_lc_store(size_t number, int wait_status, FILE *log) {
     SmithLcJob *job = &smith_lc_jobs[number];
     char depfile[PATH_MAX];
     if (!job->usable || !smith_lc_depfile(number, depfile)) return;
@@ -675,7 +681,7 @@ static void smith_lc_prune(void) {
 
 // Opens the cache for a run of `smith lint`; false (and nothing cached) when it is off (SMITH_LINT_CACHE=0) or cannot
 // be used.
-static bool smith_lc_open(void) {
+bool smith_lc_open(void) {
     smith_lc.enabled = smith_lc_start();
     if (smith_lc.enabled) smith_lc_prune();
     return smith_lc.enabled;

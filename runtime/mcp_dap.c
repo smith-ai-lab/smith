@@ -8,7 +8,18 @@
 
 // --- the loop -------------------------------------------------------------------------------------------------
 
-static void smith_mcp_input_submit(SmithMcpServer *server) {
+#include "core.h"
+#include "mcp_dap.h"
+#include "mcp_text.h"
+#include "mcp_unit.h"
+#ifdef SMITH_MCP
+#include "dap.h"
+#endif
+#ifdef SMITH_MCP
+#include "protocol/protocol.h"
+#endif
+
+void smith_mcp_input_submit(SmithMcpServer *server) {
     smith_arena_reset(&server->input_arena);
     smith_console_read_async(&server->io->console, &server->input_op, &server->input_arena, (size_t)1 << 16);
     server->input_pending = true;
@@ -63,7 +74,7 @@ static void smith_mcp_service(SmithMcpServer *server) {
     }
 }
 
-static void smith_mcp_pump(SmithMcpServer *server, int64_t timeout_ns) {
+void smith_mcp_pump(SmithMcpServer *server, int64_t timeout_ns) {
     SMITH_ASSERT(timeout_ns > 0 || timeout_ns == smith_io_forever);
     (void)smith_io_run(server->io, timeout_ns);
     smith_mcp_service(server);
@@ -343,16 +354,16 @@ static bool smith_mcp_session_dead(const SmithMcpSession *session) {
 
 // --- requests out and their replies ---------------------------------------------------------------------------------
 
-static int64_t smith_mcp_dap_seq(SmithMcpSession *session) {
+int64_t smith_mcp_dap_seq(SmithMcpSession *session) {
     return session->next_seq++;
 }
 
-static SmithJsonWriter smith_mcp_dap_writer(SmithMcpSession *session) {
+SmithJsonWriter smith_mcp_dap_writer(SmithMcpSession *session) {
     return smith_json_writer_make((char *)session->frame_out + 64, sizeof session->frame_out - 64, 0);
 }
 
 // Writes the message with its header and waits until the adapter has taken it (or is gone).
-static bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *session, SmithJsonWriter *writer) {
+bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *session, SmithJsonWriter *writer) {
     struct smith_array_const_char_n body;
     if (!smith_json_writer_finish(writer, &body)) return false;
     char header[48];
@@ -374,22 +385,10 @@ static bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *sess
     return !session->input_closed;
 }
 
-typedef enum {
-    SmithMcpReply_Ok,
-    SmithMcpReply_Failed,  // the adapter answered success: false; message says why
-    SmithMcpReply_Timeout, // no answer in time
-    SmithMcpReply_Dead,    // the adapter is gone, or would not take the request
-    SmithMcpReply_Bad,     // an answer that is not a DAP response
-} SmithMcpReplyStatus;
 
-typedef struct {
-    SmithMcpReplyStatus status;
-    SmithDapResponse response; // in the server's scratch arena: valid until the caller's scope ends
-    char message[256];
-} SmithMcpReply;
 
 // Takes the response to the request with that seq, waiting for it up to the timeout.
-static SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq,
+SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq,
                                          int64_t timeout_ns) {
     SmithMcpReply reply = {};
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
@@ -427,31 +426,14 @@ static SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession
     return reply;
 }
 
-static SmithMcpReply smith_mcp_reply_dead(void) {
+SmithMcpReply smith_mcp_reply_dead(void) {
     return (SmithMcpReply){.status = SmithMcpReply_Dead};
 }
 
-// Sends a typed request: the macro stamps its seq and calls the type's own write. A function cannot, since the
-// generated writers take their own types.
-#define SMITH_MCP_DAP_SEND(server, session, name, request, sent) \
-    do { \
-        (request).seq = smith_mcp_dap_seq(session); \
-        SmithJsonWriter writer_ = smith_mcp_dap_writer(session); \
-        smith_dap_##name##_write(&writer_, &(request)); \
-        (sent) = smith_mcp_dap_transmit((server), (session), &writer_); \
-    } while (false)
 
-// Sends a request and takes its reply.
-#define SMITH_MCP_DAP_CALL(server, session, name, request, timeout_ns, reply) \
-    do { \
-        bool sent_ = false; \
-        SMITH_MCP_DAP_SEND(server, session, name, request, sent_); \
-        (reply) = \
-            sent_ ? smith_mcp_dap_await((server), (session), (request).seq, (timeout_ns)) : smith_mcp_reply_dead(); \
-    } while (false)
 
 // Why a request did not succeed, as one line.
-static void smith_mcp_reply_error(const SmithMcpReply *reply, const char *what, SmithMcpText *out) {
+void smith_mcp_reply_error(const SmithMcpReply *reply, const char *what, SmithMcpText *out) {
     switch (reply->status) {
     case SmithMcpReply_Ok:
         return;
@@ -473,11 +455,6 @@ static void smith_mcp_reply_error(const SmithMcpReply *reply, const char *what, 
 
 // --- taking events -------------------------------------------------------------------------------------------------
 
-typedef enum {
-    SmithMcpTake_Nothing,
-    SmithMcpTake_Stopped,  // the program stopped: stop says where
-    SmithMcpTake_Finished, // the program exited or the adapter ended
-} SmithMcpTake;
 
 static void smith_mcp_note_output(SmithMcpText *notes, const SmithMcpEvent *event) {
     if (notes == nullptr) return;
@@ -499,7 +476,7 @@ static void smith_mcp_note_output(SmithMcpText *notes, const SmithMcpEvent *even
 // Takes events off the front of the queue, in order, up to and including the first that changes whether the program
 // runs. Output goes into the notes. While the program is stopped a stop, exit or termination further on in the queue is
 // not taken: it cannot have happened yet, and a script that has it ready is waiting for the call that resumes.
-static SmithMcpTake smith_mcp_events_take(SmithMcpSession *session, SmithMcpText *notes, SmithMcpEvent *stop) {
+SmithMcpTake smith_mcp_events_take(SmithMcpSession *session, SmithMcpText *notes, SmithMcpEvent *stop) {
     for (size_t turn = 0; turn < smith_mcp_events_max * 2 && session->event_count > 0; turn++) {
         SmithMcpEvent *event = smith_mcp_event_at(session, 0);
         switch (event->kind) {
@@ -536,7 +513,7 @@ static SmithMcpTake smith_mcp_events_take(SmithMcpSession *session, SmithMcpText
 
 // Waits for the program to stop or finish, taking the events in order. Nothing means the time ran out with the
 // program still running.
-static SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession *session, int64_t timeout_ns,
+SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession *session, int64_t timeout_ns,
                                         SmithMcpText *notes, SmithMcpEvent *stop) {
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
@@ -556,7 +533,7 @@ static SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession 
 
 // Waits for the adapter's `initialized` event, which says it takes the configuration (breakpoints) now; the launch
 // request's own reply, if it comes first, is a refusal.
-static bool smith_mcp_wait_initialized(SmithMcpServer *server, SmithMcpSession *session, int64_t launch_seq,
+bool smith_mcp_wait_initialized(SmithMcpServer *server, SmithMcpSession *session, int64_t launch_seq,
                                        int64_t timeout_ns) {
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
@@ -575,7 +552,7 @@ static bool smith_mcp_wait_initialized(SmithMcpServer *server, SmithMcpSession *
 
 // --- sessions -------------------------------------------------------------------------------------------------
 
-static SmithMcpSession *smith_mcp_session_find(SmithMcpServer *server, const char *id) {
+SmithMcpSession *smith_mcp_session_find(SmithMcpServer *server, const char *id) {
     for (size_t i = 0; i < smith_mcp_sessions_max; i++) { // bounded by the table
         if (server->sessions[i].used && strcmp(server->sessions[i].id, id) == 0) return &server->sessions[i];
     }
@@ -583,7 +560,7 @@ static SmithMcpSession *smith_mcp_session_find(SmithMcpServer *server, const cha
 }
 
 // The session a call without an id means: the one started last that is still there.
-static SmithMcpSession *smith_mcp_session_latest(SmithMcpServer *server) {
+SmithMcpSession *smith_mcp_session_latest(SmithMcpServer *server) {
     SmithMcpSession *latest = nullptr;
     for (size_t i = 0; i < smith_mcp_sessions_max; i++) { // bounded by the table
         SmithMcpSession *session = &server->sessions[i];
@@ -593,7 +570,7 @@ static SmithMcpSession *smith_mcp_session_latest(SmithMcpServer *server) {
 }
 
 // Starts `smith dap` in a free slot. nullptr, with the reason in out, if there is none or it will not start.
-static SmithMcpSession *smith_mcp_session_start(SmithMcpServer *server, SmithMcpText *out) {
+SmithMcpSession *smith_mcp_session_start(SmithMcpServer *server, SmithMcpText *out) {
     SmithMcpSession *session = nullptr;
     for (size_t i = 0; i < smith_mcp_sessions_max && session == nullptr; i++) {
         if (!server->sessions[i].used) session = &server->sessions[i];
@@ -638,7 +615,7 @@ static void smith_mcp_session_reap(SmithMcpServer *server, SmithMcpSession *sess
 }
 
 // Ends the session. A polite one asks the adapter to disconnect and kill the program first.
-static void smith_mcp_session_close(SmithMcpServer *server, SmithMcpSession *session, bool polite) {
+void smith_mcp_session_close(SmithMcpServer *server, SmithMcpSession *session, bool polite) {
     if (polite && !smith_mcp_session_dead(session) && !session->input_closed) {
         SmithArenaScope scope = smith_arena_scope_begin(&server->scratch);
         SmithDapDisconnectRequest request = {.has_arguments = true,

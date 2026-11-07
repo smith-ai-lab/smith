@@ -1,6 +1,18 @@
 // The progress line, the jobs and the loop that runs them. A job is a process; smith_io_run waits for all of them at
 // once on the io's kqueue, and each job's output is printed whole when it ends, as ninja does.
 
+#include "core.h"
+#include "executor.h"
+#include "executor_cache.h"
+#include "executor_manifest.h"
+#include "executor_plan.h"
+#include "executor_run.h"
+#include "executor_state.h"
+#include "main.h"
+#include "quiet.h"
+#include "slots.h"
+#include "world.h"
+
 constexpr int64_t smith_run_wait_ns = 50'000'000; // how long one wait for the loop is, so that a signal is seen soon
 constexpr size_t smith_run_stop_rounds = 100;     // rounds (of that wait) a job gets to end after the signal
 constexpr size_t smith_run_loops_max = (size_t)1 << 40;
@@ -11,7 +23,7 @@ static void smith_run_on_signal(int signal_number) {
     smith_run_signal = signal_number;
 }
 
-static void smith_run_watch_signals(void) {
+void smith_run_watch_signals(void) {
     struct sigaction action = {};
     action.sa_handler = smith_run_on_signal; // no SA_RESTART: a wait is interrupted and the flag is looked at
     sigemptyset(&action.sa_mask);
@@ -22,7 +34,7 @@ static void smith_run_watch_signals(void) {
 
 // ---------------------------------------------------------------- the printer
 
-static void smith_run_printer_open(SmithExec *exec) {
+void smith_run_printer_open(SmithExec *exec) {
     SmithPrinter *printer = &exec->printer;
     const char *term = getenv("TERM");
     printer->smart = isatty(STDOUT_FILENO) && term != nullptr && strcmp(term, "dumb") != 0;
@@ -303,7 +315,7 @@ static bool smith_run_parse_depfile(SmithExec *exec, const char *text, size_t si
 
 // The edge's depfile: its dependencies go to the depfile log and the file is removed. A missing depfile is no
 // dependencies. False, with the reason in the job, if it does not name the edge's first output.
-static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, SmithJob *job) {
+bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, SmithJob *job) {
     SmithWorldRead file = smith_world_read(exec->arena, edge->depfile);
     if (file.error.code != 0 && file.error.code != ENOENT) {
         snprintf(job->message, sizeof job->message, "%s", file.error.message);
@@ -339,7 +351,7 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
 }
 
 // The file system's idea of now, in nanoseconds since the epoch: the clock that modification times come from.
-static int64_t smith_run_wall_ns(void) {
+int64_t smith_run_wall_ns(void) {
     struct timespec now = {};
     clock_gettime(CLOCK_REALTIME, &now);
     return (int64_t)now.tv_sec * (int64_t)smith_exec_nanoseconds + (int64_t)now.tv_nsec;
@@ -363,7 +375,7 @@ static int64_t smith_run_newest_input(const SmithExec *exec, const SmithEdge *ed
 // is later; one that left every output alone records the time of its newest input, not its own start: a file system
 // stamps a file from a coarse clock (Linux: a tick, up to 10 ms behind the one the start was read from), so an input
 // written after the step ended can carry a time before its start, and would then look as old as the output.
-static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack) {
+int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack) {
     SmithGraph *graph = &exec->graph;
     if (!edge->restat && !edge->generator) {
         // The outputs are new: a restat step that reads them as inputs records the time they have now, not the one the
@@ -569,7 +581,7 @@ static SmithJob *smith_run_free_job(SmithExec *exec) {
 }
 
 // Makes the folder a path is in, as ninja does for every output before its command runs.
-static void smith_run_make_parents(const char *path) {
+void smith_run_make_parents(const char *path) {
     const char *slash = strrchr(path, '/');
     if (slash == nullptr || slash == path) return;
     char folder[smith_exec_name_max];
@@ -710,7 +722,7 @@ static void smith_run_recap(const SmithExec *exec) {
 // Runs the plan until it is done, a job fails past what -k allows, or a signal stops it. Returns 0, 1 or the status of
 // an interrupt.
 static int smith_run_plan_steps(SmithExec *exec);
-static int smith_run_plan(SmithExec *exec) {
+int smith_run_plan(SmithExec *exec) {
     uint64_t mark = smith_time_now();
     int status = smith_run_plan_steps(exec);
     smith_time_state.steps_run_nanoseconds += smith_time_since(mark);
@@ -754,7 +766,7 @@ static int smith_run_plan_steps(SmithExec *exec) {
 }
 
 // Plans the targets and runs the plan. Prints that there is nothing to do when there is not.
-static int smith_run_targets(SmithExec *exec, const uint32_t *targets, size_t count, bool say_done) {
+int smith_run_targets(SmithExec *exec, const uint32_t *targets, size_t count, bool say_done) {
     uint64_t mark = smith_time_now();
     bool dirty = smith_plan_build(exec, targets, count);
     smith_time_state.plan_nanoseconds += smith_time_since(mark);
@@ -766,7 +778,7 @@ static int smith_run_targets(SmithExec *exec, const uint32_t *targets, size_t co
 }
 
 // Whether the manifest has a rule of its own: the node, or UINT32_MAX when nothing makes it.
-static uint32_t smith_run_manifest_node(SmithExec *exec) {
+uint32_t smith_run_manifest_node(SmithExec *exec) {
     char folded[smith_exec_name_max];
     size_t length = strlen(exec->manifest);
     if (length >= sizeof folded) return UINT32_MAX;

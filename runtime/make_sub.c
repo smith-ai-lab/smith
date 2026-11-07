@@ -2,34 +2,35 @@
 // the graph of this one, named with the folder in front and run with `cd dir` first (the graph is flattened). Included
 // by smith.c after make_cc.c.
 
-constexpr size_t smith_make_subs_max = 32;
 
-typedef struct {
-    const char *path; // the folder, from the project's root
-    const char **goals;
-    size_t goal_count;
-    const char *default_goal; // the goal of the folder's Makefile that no goal was given for, under the folder
-} SmithMakeSub;
 
-static SmithMakeSub smith_make_subs[smith_make_subs_max];
-static size_t smith_make_sub_count;
+#include "core.h"
+#include "make.h"
+#include "make_cc.h"
+#include "make_emit.h"
+#include "make_expand.h"
+#include "make_graph.h"
+#include "make_read.h"
+#include "make_sub.h"
+
+SmithMakeSub smith_make_subs[smith_make_subs_max];
+size_t smith_make_sub_count;
 
 // The state of the Makefile being translated, put away while a Makefile in another folder is read.
-static SmithMake smith_make_saved_make;
-static SmithMakeReader smith_make_saved_reader;
-static SmithMakeGraph smith_make_saved_graph;
-static SmithMakeAuto smith_make_saved_auto;
+SmithMake smith_make_saved_make;
+SmithMakeReader smith_make_saved_reader;
+SmithMakeGraph smith_make_saved_graph;
+SmithMakeAuto smith_make_saved_auto;
 
 // path joined to a name: dir/name, leaving an absolute name and a name that starts with a hole as they are.
-static const char *smith_make_under(const char *dir, const char *name) {
+const char *smith_make_under(const char *dir, const char *name) {
     if (dir == nullptr || dir[0] == '\0' || name[0] == '/' || name[0] == smith_make_hole_begin) return name;
     return smith_make_format("%s/%s", dir, name);
 }
 
-typedef enum { SmithMakeCall_None, SmithMakeCall_Self, SmithMakeCall_Folder, SmithMakeCall_Other } SmithMakeCall;
 
 // A command that runs make: on this Makefile (its goals), in another folder (-C dir and its goals), or in another way.
-static SmithMakeCall smith_make_parse_make(const SmithMakeCommand *command, const char **folder, const char ***goals,
+SmithMakeCall smith_make_parse_make(const SmithMakeCommand *command, const char **folder, const char ***goals,
                                            size_t *count) {
     SmithMakeArgv argv;
     if (!smith_make_lex(smith_make_unmark(command->text), true, &argv) || argv.count == 0) return SmithMakeCall_None;
@@ -60,7 +61,7 @@ static SmithMakeCall smith_make_parse_make(const SmithMakeCommand *command, cons
 
 // ---- Reading the other Makefile
 
-static const char *smith_make_find_makefile(void) {
+const char *smith_make_find_makefile(void) {
     static const char *const names[] = {"GNUmakefile", "makefile", "Makefile"};
     DIR *folder = opendir(".");
     if (folder == nullptr) return nullptr;
@@ -220,7 +221,7 @@ static void smith_make_import(SmithMakeSub *sub) {
 }
 
 // The record of a folder already read for these goals.
-static SmithMakeSub *smith_make_sub_find(const char *path, const char *const *goals, size_t goal_count) {
+SmithMakeSub *smith_make_sub_find(const char *path, const char *const *goals, size_t goal_count) {
     for (size_t i = 0; i < smith_make_sub_count; i++) {
         SmithMakeSub *sub = &smith_make_subs[i];
         bool same = strcmp(sub->path, path) == 0 && sub->goal_count == goal_count;
@@ -232,7 +233,7 @@ static SmithMakeSub *smith_make_sub_find(const char *path, const char *const *go
 }
 
 // Every `make -C dir goal` among the commands, until there are none left that were not followed.
-static void smith_make_import_all(void) {
+void smith_make_import_all(void) {
     SmithMakeGraph *g = &smith_make_graph;
     for (size_t round = 0; round < 8; round++) {
         bool followed = false;

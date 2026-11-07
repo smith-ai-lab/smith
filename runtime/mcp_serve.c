@@ -8,6 +8,20 @@
 // code has the 2026-07-28 messages; the `initialize` request and result are older and are not in its schema, so they
 // are read by name and written as a result with the extra members `protocolVersion`, `capabilities` and `serverInfo`.
 
+#include "core.h"
+#include "mcp_dap.h"
+#include "mcp_serve.h"
+#include "mcp_text.h"
+#include "mcp_tools.h"
+#include "mcp_unit.h"
+#include "world.h"
+#ifdef SMITH_MCP
+#include "mcp.h"
+#endif
+#ifdef SMITH_MCP
+#include "protocol/protocol.h"
+#endif
+
 static const char *const smith_mcp_versions[] = {"2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"};
 static constexpr char smith_mcp_legacy_newest[] = "2025-11-25";
 static constexpr char smith_mcp_name[] = "smith";

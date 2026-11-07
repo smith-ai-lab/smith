@@ -23,59 +23,56 @@
 // ---- Records
 // ------------------------------------------------------------------------------------------------------------
 
-static SmithLangGeneric smith_lang_generics[smith_lang_generics_max];
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_enum.h"
+#include "lang_fields.h"
+#include "lang_generic.h"
+#include "lang_head.h"
+#include "lang_import.h"
+#include "lang_lex.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_nested.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_stream.h"
+#include "lang_trivia.h"
+#include "lang_tuple.h"
+#include "lang_type.h"
+
+SmithLangGeneric smith_lang_generics[smith_lang_generics_max];
 
 typedef struct {
     SmithTokenKind kind;
     const char *text;
 } SmithLangPiece;
 
-typedef struct {
-    uint32_t start; // the tokens of one parameter: [start, end) in smith_lang_gt
-    uint32_t end;
-    int8_t type_index; // which `type T` or `constexpr auto f` it is (-1: any other parameter)
-    uint8_t kind;      // a SmithLangSlot (Plain for a parameter that is no slot)
-} SmithLangParam;
 
-typedef struct {
-    uint32_t generic;
-    uint32_t arg_first[smith_lang_entries_max]; // the type arguments, lowered, in smith_lang_it: a slot each, and the
-    uint32_t arg_count[smith_lang_entries_max]; // types of `auto... rest` where its slot is
-    uint8_t entries;                            // how many (the last slot's list may be empty)
-    SmithLangText key;
-    SmithLangText cname;
-    SmithLangText label;
-    SmithLangText description;
-    uint32_t call_location;
-    uint32_t depth;
-    uint32_t parent;        // 1 + the instance whose body asked for it (0: the file's own code)
-    uint8_t result_state;   // a computed result type (issue #102): 0 not yet asked, 1 in `result`, 2 failed (reported)
-    char result[160];       // its spelling
-    uint64_t result_handle; // and its type's handle (a slice is written with its struct, runtime/lang_type.c)
-    SmithLangText slices; // the slice structs of its types (issue #119): `slot\x1ftag\x1fdata type\x1fcount\x1e`, each
-} SmithLangInstance;
 
-static SmithLangInstance smith_lang_instances[smith_lang_instances_max];
+SmithLangInstance smith_lang_instances[smith_lang_instances_max];
 
-static const char *smith_lang_gt_str(const SmithLangGenToken *token) {
+const char *smith_lang_gt_str(const SmithLangGenToken *token) {
     return smith_lang_pool_text(&smith_lang_gt, token);
 }
 
-static bool smith_lang_gt_is(const SmithLangGenToken *token, SmithTokenKind kind, const char *literal) {
+bool smith_lang_gt_is(const SmithLangGenToken *token, SmithTokenKind kind, const char *literal) {
     return token->kind == kind && token->special == SmithLangGen_Plain &&
            smith_lang_equals(smith_lang_gt_str(token), token->length, literal);
 }
 
-static bool smith_lang_gt_punct(const SmithLangGenToken *token, const char *literal) {
+bool smith_lang_gt_punct(const SmithLangGenToken *token, const char *literal) {
     return smith_lang_gt_is(token, SmithTokenKind_Punctuator, literal);
 }
 
-static bool smith_lang_gt_open(const SmithLangGenToken *token) {
+bool smith_lang_gt_open(const SmithLangGenToken *token) {
     return token->kind == SmithTokenKind_Punctuator && token->length == 1 &&
            strchr("([{", smith_lang_gt_str(token)[0]) != nullptr;
 }
 
-static bool smith_lang_gt_close(const SmithLangGenToken *token) {
+bool smith_lang_gt_close(const SmithLangGenToken *token) {
     return token->kind == SmithTokenKind_Punctuator && token->length == 1 &&
            strchr(")]}", smith_lang_gt_str(token)[0]) != nullptr;
 }
@@ -91,17 +88,11 @@ static int smith_lang_param_named(const SmithLangGeneric *generic, const char *n
     return -1;
 }
 
-static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, size_t length) {
+bool smith_lang_is_type_param(const SmithLang *lang, const char *name, size_t length) {
     return lang->recording && smith_lang_param_named(&smith_lang_generics[lang->recording_generic], name, length) >= 0;
 }
 
 // runtime/lang_tuple.c and runtime/lang_slice.c, which come after this file
-static bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
-                                   size_t capacity, const char **problem, uint32_t *where);
-static void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity);
-static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
-static bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count);
-static bool smith_lang_slice_tag_dims_count(const char *tag, size_t *all, size_t *runtime);
 
 // The type parameter a slice's tag is made of: `smith_array_T_n` in `typeof(T[:]) push_slice(...)`, whose struct is
 // named after its element. The token is marked as a slice tag (the instance spells the tag of the type it was asked
@@ -120,7 +111,7 @@ static int smith_lang_slice_tag_param(const SmithLangGeneric *generic, SmithLang
 }
 
 // A token that names the T of the generic being recorded is marked, unless it is a member (`x.T`).
-static void smith_lang_capture_mark(SmithLang *lang, uint32_t index) {
+void smith_lang_capture_mark(SmithLang *lang, uint32_t index) {
     const SmithLangGeneric *generic = &smith_lang_generics[lang->recording_generic];
     SmithLangGenToken *token = &smith_lang_gt.tokens[index];
     int found = smith_lang_param_named(generic, smith_lang_gt_str(token), token->length);
@@ -209,7 +200,7 @@ static bool smith_lang_generic_fold_head(SmithLangGeneric *generic) {
 
 // A `)` was just recorded in a generic's body: when it ends `typeof(x)` of an `auto` parameter, the four tokens become
 // one.
-static void smith_lang_capture_fold(SmithLang *lang) {
+void smith_lang_capture_fold(SmithLang *lang) {
     const SmithLangGeneric *generic = &smith_lang_generics[lang->recording_generic];
     uint32_t count = smith_lang_gt.count;
     if (generic->type_count == 0 || count < generic->first + 4) return;
@@ -241,7 +232,7 @@ static bool smith_lang_param_is_bare_type(const SmithLangParam *param) {
 
 // The concepts, the questions of a type that can stand for a type (`Num x`, issue #193): a name here is the
 // concept `auto` is, narrowed. The order is the one of smith_lang_concept_holds.
-static const char *const smith_lang_concepts[] = {"Int",     "Float", "Signed", "Unsigned", "Num",
+const char *const smith_lang_concepts[] = {"Int",     "Float", "Signed", "Unsigned", "Num",
                                                   "Pointer", "Enum",  "Struct", "Array",    "Slice"};
 
 // The concept a token names: 1 + its index, or 0.
@@ -254,7 +245,7 @@ static unsigned smith_lang_concept_of(const SmithLangGenToken *token) {
 }
 
 // Whether the token written in the source names a concept.
-static bool smith_lang_concept_word(const SmithToken *token) {
+bool smith_lang_concept_word(const SmithToken *token) {
     if (token->kind != SmithTokenKind_Identifier) return false;
     for (size_t i = 0; i < sizeof smith_lang_concepts / sizeof smith_lang_concepts[0]; i++) { // 10 concepts
         if (smith_lang_equals(token->text, token->length, smith_lang_concepts[i])) return true;
@@ -263,7 +254,7 @@ static bool smith_lang_concept_word(const SmithToken *token) {
 }
 
 // Whether the type, spelled as the compiler writes it, is of the concept (1 + its index in smith_lang_concepts).
-static bool smith_lang_concept_holds(const SmithHost *host, unsigned concept_id, const char *spelling) {
+bool smith_lang_concept_holds(const SmithHost *host, unsigned concept_id, const char *spelling) {
     SmithTypeQuery query = {};
     if (host->type_query == nullptr || !host->type_query(host->context, spelling, (uint32_t)strlen(spelling), &query)) {
         return true; // a host that cannot read the type judges nothing: the instance's own compile does
@@ -450,7 +441,7 @@ static bool smith_lang_param_is_function(const SmithLangParam *param) {
 // Whether the parameter is `Lambda(F) name` (#957): `lambda`, a parenthesized function type F, and the name. The
 // argument is a lambda or a function known at compile time, and each distinct one is an instance (a slot like
 // `constexpr auto`).
-static bool smith_lang_param_is_lambda(const SmithLangParam *param) {
+bool smith_lang_param_is_lambda(const SmithLangParam *param) {
     const SmithLangGenToken *first = &smith_lang_gt.tokens[param->start];
     const SmithLangGenToken *last = &smith_lang_gt.tokens[param->end - 1];
     return param->end - param->start >= 5 && smith_lang_gt_is(first, SmithTokenKind_Identifier, "Lambda") &&
@@ -485,7 +476,7 @@ static bool smith_lang_param_is_pack(const SmithLangParam *param) {
 
 // The parameters of a generic: the tokens between the parentheses, split at the commas that stand outside any
 // brackets. Returns how many; SIZE_MAX when there are more than `capacity`.
-static size_t smith_lang_generic_params(const SmithLangGeneric *generic, SmithLangParam *out, size_t capacity) {
+size_t smith_lang_generic_params(const SmithLangGeneric *generic, SmithLangParam *out, size_t capacity) {
     size_t count = 0;
     uint32_t start = generic->first + generic->open_index + 1;
     uint32_t end = generic->first + generic->close_index;
@@ -525,7 +516,7 @@ static size_t smith_lang_generic_params(const SmithLangGeneric *generic, SmithLa
 
 // Whether a declaration that begins with this token may be generic: only the text of the file decides for the host's
 // fast path, which asks before it has read anything.
-static bool smith_lang_generic_candidate(const SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+bool smith_lang_generic_candidate(const SmithLang *lang, const SmithHost *host, const SmithToken *first) {
     if (!lang->is_module || !host->maybe_generic || lang->broken) return false;
     if (smith_lang_punct(first, "[")) return true;
     if (first->kind != SmithTokenKind_Identifier) return false;
@@ -693,7 +684,7 @@ static bool smith_lang_parameter_generic_at(SmithLang *lang, const SmithHost *ho
 
 // Reads ahead, to the end of the parameter list of the function the declaration begins with: is there a `type T` in it.
 // The tokens stay queued; nothing is changed.
-static bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
+bool smith_lang_generic_ahead(SmithLang *lang, const SmithHost *host, const SmithToken *first) {
     if (!lang->is_module || !host->maybe_generic || lang->broken) return false;
     int depth = 0;
     bool in_params = false;
@@ -754,7 +745,6 @@ static void smith_lang_generic_discard(SmithLang *lang) {
     smith_lang_end_declaration(lang);
 }
 
-static uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *generic);
 
 // The result type is written before the parameters, where C does not know them: `typeof(*x) gradient(auto x)` has no
 // `x` there. Each `auto` parameter's name in a `typeof(...)` of the result type stands for a value of its type, written
@@ -902,7 +892,7 @@ static void smith_lang_generic_note(SmithLang *lang, SmithLangGeneric *generic, 
     generic->note_count += 1;
 }
 
-static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token) {
+void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token) {
     if (!lang->recording || lang->recording_skip) return;
     bool tag = false;
     if (smith_lang_gt.count > 0) {
@@ -913,7 +903,7 @@ static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *t
                             tag);
 }
 
-static void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via) {
+void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via) {
     smith_lang_generic_note(lang, &smith_lang_generics[lang->recording_generic], via, "", 0, false);
 }
 
@@ -1039,7 +1029,7 @@ static void smith_lang_generic_head_uses(SmithLang *lang, const SmithLangGeneric
 
 // The head of the declaration is complete and its terminator is the `{` of the body: the head is recorded and the body
 // is read into the pool, not written. (A generic with no body, or anything else the terminator says, is the error.)
-static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
+void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator) {
     uint32_t location = lang->head[0].location;
     SmithLangName *name = nullptr;
     if (lang->decl.last_name < lang->head_count) {
@@ -1153,7 +1143,7 @@ static void smith_lang_generic_placeholder(SmithLang *lang, const SmithHost *hos
 }
 
 // The body has been read to its `}`: the record is complete.
-static void smith_lang_generic_finish(SmithLang *lang) {
+void smith_lang_generic_finish(SmithLang *lang) {
     const SmithHost *host = lang->host_now;
     lang->recording = false;
     // the body's `{` was counted by the `if constexpr` block around it (runtime/lang_stream.c), its `}` is not seen
@@ -1236,8 +1226,6 @@ static char smith_lang_kind_letter(const SmithLangGenToken *token) {
 
 // One line for an exported generic of the module: its tokens as an importer needs them, with where each was written
 // (line and column of the module's source) so that a diagnostic in an instance points there.
-[[gnu::format(printf, 4, 5)]] static size_t smith_lang_append(char *buffer, size_t capacity, size_t used,
-                                                              const char *format, ...);
 
 static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char *out, size_t capacity, size_t used) {
     used = smith_lang_append(out, capacity, used, "%s", smith_lang_generic_marker);
@@ -1277,7 +1265,7 @@ static size_t smith_lang_generic_serialize(const SmithLangGeneric *generic, char
 }
 
 // The exported generics of the module, as lines of its header.
-static size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     for (size_t i = 0; i < lang->generics_count; i++) { // the module's own
         const SmithLangGeneric *generic = &smith_lang_generics[i];
         if (generic->own && (generic->exported || generic->needed))
@@ -1288,7 +1276,7 @@ static size_t smith_lang_generic_lines(const SmithLang *lang, char *out, size_t 
 
 // `// smith-types: slice_of small`: the functions over `type` the header records, which an importer defines (issue
 // #107).
-static size_t smith_lang_types_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_types_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     bool any = false;
     for (size_t i = 0; i < lang->generics_count; i++) { // the module's own
         const SmithLangGeneric *generic = &smith_lang_generics[i];
@@ -1495,7 +1483,7 @@ static void smith_lang_generics_read(SmithLang *lang, const char *text, size_t l
 // ---- Layout of what is written
 // -------------------------------------------------------------------------------------------
 
-static char smith_lang_gen_dump[(size_t)1 << 20];
+char smith_lang_gen_dump[(size_t)1 << 20];
 
 // Whether a space goes before this token, given the one before it: `f(x)` and `a->b`, `x = y`.
 static bool smith_lang_gen_space(const SmithLang *lang, SmithTokenKind kind, const char *text, size_t length) {
@@ -1539,7 +1527,7 @@ static void smith_lang_gen_note(SmithLang *lang, SmithTokenKind kind, const char
 }
 
 // A new line in the dump: a call or an instance begins.
-static void smith_lang_gen_note_break(SmithLang *lang) {
+void smith_lang_gen_note_break(SmithLang *lang) {
     if (lang->gen_dump_on && lang->gen_dump_used > 0 && smith_lang_gen_dump[lang->gen_dump_used - 1] != '\n') {
         smith_lang_gen_dump[lang->gen_dump_used++] = '\n';
     }
@@ -1551,7 +1539,7 @@ static void smith_lang_gen_note_break(SmithLang *lang) {
 static bool smith_lang_gen_begin_line;
 
 // Writes a token of the lowering's own: no source has it, and `instance` says whose body it is in (0: none).
-static void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
+void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
                                          uint32_t location, uint32_t instance, bool expand) {
     SmithToken token = {};
     token.expand = expand; // a builtin macro such as __SIZE_TYPE__
@@ -1570,7 +1558,7 @@ static void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host,
     smith_lang_emit_code(lang, host, token);
 }
 
-static void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
+void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
                                uint32_t location, uint32_t instance) {
     smith_lang_gen_put_expanding(lang, host, kind, text, location, instance, false);
 }
@@ -1584,7 +1572,7 @@ static void smith_lang_gen_puts(SmithLang *lang, const SmithHost *host, const Sm
 
 // Where a recorded token was written: the host's own, else (a token read from a header) the host's place for its line
 // and column in the module's source, else the call's.
-static uint32_t smith_lang_gen_place(const SmithHost *host, const SmithLangGeneric *generic, SmithLangGenToken *token,
+uint32_t smith_lang_gen_place(const SmithHost *host, const SmithLangGeneric *generic, SmithLangGenToken *token,
                                      uint32_t fallback) {
     if (token->location != UINT32_MAX) return token->location;
     if (token->line != 0 && host->locate != nullptr) {
@@ -1598,7 +1586,7 @@ static uint32_t smith_lang_gen_place(const SmithHost *host, const SmithLangGener
 }
 
 // A token of a pool as written. The tokens of an instance are the generic's own, so errors in them point there.
-static void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, const SmithLangPool *pool,
+void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, const SmithLangPool *pool,
                                      const SmithLangGenToken *token, uint32_t location, uint32_t instance, bool real) {
     SmithToken written = smith_lang_gt_token(pool, token);
     written.location = location;
@@ -1627,7 +1615,7 @@ static bool smith_lang_it_has_paren(uint32_t first, uint32_t count) {
 }
 
 // A type written as tokens for the parser to read: the lowered spelling, one space between tokens.
-static size_t smith_lang_it_spelling(uint32_t first, uint32_t count, char *out, size_t capacity) {
+size_t smith_lang_it_spelling(uint32_t first, uint32_t count, char *out, size_t capacity) {
     size_t used = 0;
     for (uint32_t i = 0; i < count && used + 2 < capacity; i++) { // the tokens of one type
         const SmithLangGenToken *token = &smith_lang_it.tokens[first + i];
@@ -1707,7 +1695,7 @@ static SmithLangText smith_lang_instance_cname(SmithLang *lang, const SmithLangG
     return smith_lang_store(lang, unique, strlen(unique));
 }
 
-static bool smith_lang_has_pack(const SmithLangGeneric *generic) {
+bool smith_lang_has_pack(const SmithLangGeneric *generic) {
     return generic->type_count > 0 && generic->type_kind[generic->type_count - 1] == SmithLangSlot_Pack;
 }
 
@@ -1718,7 +1706,7 @@ static uint8_t smith_lang_entry_kind(const SmithLangGeneric *generic, size_t ent
 }
 
 // The index of the first entry of `auto... rest`: where the slots that are one entry each end.
-static size_t smith_lang_pack_base(const SmithLangGeneric *generic) {
+size_t smith_lang_pack_base(const SmithLangGeneric *generic) {
     return generic->type_count - 1;
 }
 
@@ -1742,7 +1730,7 @@ static const SmithLangGenToken *smith_lang_pack_name(const SmithLangGeneric *gen
 }
 
 // How many arguments the instance's list has.
-static size_t smith_lang_pack_size(const SmithLangGeneric *generic, const SmithLangInstance *instance) {
+size_t smith_lang_pack_size(const SmithLangGeneric *generic, const SmithLangInstance *instance) {
     return instance->entries - smith_lang_pack_base(generic);
 }
 
@@ -1965,21 +1953,14 @@ static int smith_lang_instance_request(SmithLang *lang, const SmithHost *host, u
 // ---- Writing a signature and a call
 // --------------------------------------------------------------------------------------
 
-constexpr size_t smith_lang_replay_depth_max = 256;
 constexpr size_t smith_lang_replay_steps_max = (size_t)1 << 24;
 
-typedef struct {
-    uint32_t start; // [start, end) of smith_lang_gt
-    uint32_t end;
-} SmithLangSpan;
 
-static int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length);
 static int smith_lang_generic_named(SmithLang *lang, const SmithHost *host, SmithLangSpan span);
-static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
 
 // A type argument in place of its T: its tokens, as a `__typeof__` when it has parentheses (a function pointer's). A
 // function (`constexpr auto f`) is its name, as it is.
-static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
                                    unsigned param, uint32_t instance_id) {
     uint32_t first = instance->arg_first[param];
     uint32_t count = instance->arg_count[param];
@@ -2015,7 +1996,7 @@ static void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const
 }
 
 // The tag of a slice of the type argument, as `T xs[:]` would name it where the instance is written.
-static void smith_lang_gen_slice_tag_text(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
+void smith_lang_gen_slice_tag_text(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
                                           unsigned param, uint32_t location, char *tag, size_t capacity) {
     static SmithToken span[48];
     uint32_t first = instance->arg_first[param];
@@ -2088,7 +2069,7 @@ static void smith_lang_gen_put_subst(SmithLang *lang, const SmithHost *host, con
 }
 
 // The index of the first token of the head after its leading attributes (`[[nodiscard]]`).
-static uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *generic) {
+uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *generic) {
     uint32_t at = 0;
     const SmithLangGenToken *tokens = &smith_lang_gt.tokens[generic->first];
     while (at + 1 < generic->name_index && smith_lang_gt_punct(&tokens[at], "[") &&
@@ -2129,13 +2110,6 @@ static size_t smith_lang_gen_pack_params(SmithLang *lang, const SmithHost *host,
     return written;
 }
 
-static bool smith_lang_result_call(const SmithLangGeneric *generic);
-static bool smith_lang_eshape_named(const SmithToken *name);
-static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                           const SmithLangInstance *instance, uint32_t at, uint32_t end, uint32_t place,
-                                           uint32_t instance_id, bool define);
-static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                             const SmithLangInstance *instance, uint32_t place, uint32_t instance_id);
 
 // `typeof(xs[0])` in a head, where `xs` is a slice (a value of its struct was just written): the element is
 // `.data[0]`, however many indexes were written. Returns how many of the generic's tokens after `at` were taken.
@@ -2186,7 +2160,7 @@ static uint32_t smith_lang_gen_put_element_index(SmithLang *lang, const SmithHos
 
 // The tokens [from, to) of the generic's head, each with the instance's types for T; a type function that returns an
 // enum, `option(T)`, is the instance's struct (lang_enum.c).
-static void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
                                    const SmithLangInstance *instance, uint32_t from, uint32_t to, uint32_t location,
                                    uint32_t instance_id) {
     for (uint32_t at = from; at < to;) {
@@ -2249,8 +2223,6 @@ static void smith_lang_gen_put_shaped(SmithLang *lang, const SmithHost *host, co
     smith_lang_gen_put_run(lang, host, generic, instance, shape->name_at + 2, param->end, location, instance_id);
 }
 
-static void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                      const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
 
 // `R name(P)` for an instance: the head with the type arguments for T, the instance's name, and the parameters that are
 // no `type`. `attributes` keeps the head's own leading attributes (a definition has them, a declaration cannot).
@@ -2411,109 +2383,18 @@ static void smith_lang_gen_call_start(SmithLang *lang, const SmithHost *host, co
 // ---- Replaying tokens
 // ----------------------------------------------------------------------------------------------------
 
-constexpr size_t smith_lang_pack_name_max = 64; // characters of the argument list's or a loop variable's name
-constexpr size_t smith_lang_vars_max = 40;      // `for constexpr` loops open at once, and the numbers of an instance
 constexpr size_t smith_lang_loop_iterations_max = 1024; // turns of one `for constexpr`
 
-// The variable of a `for constexpr`: a number while the loop is written out.
-typedef struct {
-    char name[smith_lang_pack_name_max];
-    uint16_t length;
-    int64_t value;
-} SmithLangVar;
 
-typedef enum {
-    SmithLangFrame_Tokens,      // [pos, end) of smith_lang_gt
-    SmithLangFrame_Loop,        // a `for constexpr`
-    SmithLangFrame_TypedStart,  // the arguments of a call that holds a call are written to the pool, to be typed
-    SmithLangFrame_TypedFinish, // ... and the call is written, now that they are typed
-    SmithLangFrame_CountFinish, // the member `countof` takes is typed, and the count is written (lang_fields.c)
-} SmithLangFrameAction;
 
-typedef struct {
-    uint32_t cond_start; // the condition, [start, end) of smith_lang_gt
-    uint32_t cond_end;
-    uint32_t step_start;
-    uint32_t step_end;
-    uint32_t body_start; // the statement written once for each turn
-    uint32_t body_end;
-    uint32_t iterations;
-    bool stepping;       // the body has run: the step comes before the condition
-    bool wrap;           // the body is one statement without braces: each turn is written in braces of its own
-    bool range;          // `for constexpr (auto x : list)`: each turn's body names the element for `x`
-    uint32_t alias;      // range: the token of the generic that names the element
-    uint32_t list_start; // range: the list, [start, end) of smith_lang_gt
-    uint32_t list_end;
-    uint32_t pool_first; // range: where the pool was before the loop's condition and step were made, and
-    uint32_t pool_mark;  // after (each turn's body is copied above it)
-    uint32_t text_first;
-    uint32_t text_mark;
-} SmithLangLoop;
 
-typedef struct {
-    uint32_t pos; // [pos, end) of smith_lang_gt, or a punctuator to write
-    uint32_t end;
-    char literal;
-    char words[640]; // words to write, separated by spaces (a slice's index in an instance, issue #119)
-    uint32_t place;  // of a punctuator to write (0: the call that asked for the instance)
-    bool line_start; // the words begin a line, as the generic's token they stand for does
-    uint32_t begin;  // where the frame's tokens began (an empty `rest...` looks at the token before it)
-    uint8_t action;  // SmithLangFrameAction
-    bool started;    // TypedFinish: the typing flag to restore
-    int32_t source;  // TypedStart: the finish
-    SmithLangLoop loop;
-    uint32_t pool_first; // TypedFinish: where in smith_lang_gt the captured arguments begin
-    uint32_t pool_text;
-    uint32_t group; // TypedFinish: the call's CallBegin; `end` is its CallEnd
-    uint16_t generic_index;
-} SmithLangFrame;
 
-constexpr size_t smith_lang_junk_max = 64;
 
-typedef struct {
-    SmithLangFrame frames[smith_lang_replay_depth_max];
-    size_t count;
-    SmithLangVar vars[smith_lang_vars_max];
-    size_t var_count;
-    const SmithLangInstance *instance; // whose type arguments are written for T (none: the file's own code)
-    uint32_t instance_id;
-    const SmithLangGeneric *generic; // whose tokens these are
-    uint32_t location;               // of the call that asked for the instance
-    bool start_line;                 // and the call as written begins its line
-    bool typing; // the tokens are written to be typed by the compiler: a parameter of the instance stands for a value
-    // The call being finished holds a call: its arguments as the instance writes them, for the compiler to type.
-    SmithLangSpan spans[smith_lang_call_params_max]; // the arguments as the generic's tokens have them
-    SmithLangSpan typed[smith_lang_call_params_max]; // and as captured (same count)
-    size_t typed_count;
-    uint32_t typed_first; // the captured arguments of the call being finished: [first, last) of smith_lang_gt
-    uint32_t typed_last;
-    // Tokens in the pool that a capture holds but are not part of it: the written-out lists and patterns of a call or
-    // a pattern in the arguments, read by the replay and never by the compiler (smith_lang_typed_compact).
-    SmithLangSpan junk[smith_lang_junk_max];
-    size_t junk_count;
-    // `try` and `errdefer` (runtime/lang_enum.c): the braces open in the body, the flags of the open `errdefer`s and
-    // the numbers of the names a `try` and a `return` write.
-    uint32_t braces;
-    uint32_t try_next;
-    uint32_t flag_count;
-    struct {
-        uint32_t id;
-        uint32_t depth;
-    } flags[16];
-} SmithLangReplay;
 
 static SmithLangReplay smith_lang_replay;
 
 // runtime/lang_slice.c, which comes after this file: `countof(xs)`, `xs[i]` and `xs[a:b]` of a slice in an instance's
 // body
-static bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                    SmithLangFrame *frame);
-static SmithTokenKind smith_lang_slice_kind(const char *word);
-static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                   SmithLangFrame *frame);
-static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  SmithLangFrame *frame);
-static const char *smith_lang_tuple_keep(const char *text, size_t length);
 
 // Writes the words of a frame, then the frame is done.
 static void smith_lang_replay_words(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
@@ -2544,7 +2425,7 @@ static void smith_lang_replay_words(SmithLang *lang, const SmithHost *host, cons
     }
 }
 
-static bool smith_lang_replay_push(SmithLangReplay *replay, uint32_t pos, uint32_t end, char literal) {
+bool smith_lang_replay_push(SmithLangReplay *replay, uint32_t pos, uint32_t end, char literal) {
     if (replay->count >= smith_lang_replay_depth_max) return false;
     replay->frames[replay->count++] = (SmithLangFrame){.pos = pos, .end = end, .literal = literal, .begin = pos};
     return true;
@@ -2562,21 +2443,15 @@ static bool smith_lang_replay_literal(SmithLangReplay *replay, char literal, uin
 // ---- Lists and loop variables of an instance's body
 // ------------------------------------------------------------------------------------
 
-// What an identifier of the body names, when it is the argument list `auto... rest`: its elements are the instance's
-// parameters `rest_0`, ...
-typedef struct {
-    char name[smith_lang_pack_name_max];
-    size_t count;
-} SmithLangPackRef;
 
-static bool smith_lang_member_before(uint32_t at) {
+bool smith_lang_member_before(uint32_t at) {
     if (at == 0) return false;
     const SmithLangGenToken *before = &smith_lang_gt.tokens[at - 1];
     return smith_lang_gt_punct(before, ".") || smith_lang_gt_punct(before, "->");
 }
 
 // Whether the identifier at `at` names the argument list of the replay's instance.
-static bool smith_lang_pack_resolve(const SmithLangReplay *replay, uint32_t at, SmithLangPackRef *ref) {
+bool smith_lang_pack_resolve(const SmithLangReplay *replay, uint32_t at, SmithLangPackRef *ref) {
     *ref = (SmithLangPackRef){};
     const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
     if (replay->generic == nullptr || replay->instance == nullptr || token->kind != SmithTokenKind_Identifier ||
@@ -2595,7 +2470,7 @@ static void smith_lang_pack_element(const SmithLangPackRef *ref, size_t index, c
 }
 
 // Whether the tokens at `at` are `countof ( rest )`.
-static bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit,
+bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit,
                                        SmithLangPackRef *ref) {
     return at + 3 < limit && smith_lang_gt_is(&smith_lang_gt.tokens[at], SmithTokenKind_Identifier, "countof") &&
            smith_lang_gt_punct(&smith_lang_gt.tokens[at + 1], "(") && smith_lang_pack_resolve(replay, at + 2, ref) &&
@@ -2603,7 +2478,7 @@ static bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t a
 }
 
 // Whether the identifier at `at` is a variable of an open `for constexpr`: its value.
-static bool smith_lang_var_value(const SmithLangReplay *replay, uint32_t at, int64_t *value) {
+bool smith_lang_var_value(const SmithLangReplay *replay, uint32_t at, int64_t *value) {
     const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
     if (replay->var_count == 0 || token->kind != SmithTokenKind_Identifier || token->special != SmithLangGen_Plain ||
         token->param != 0 || smith_lang_member_before(at)) {
@@ -2620,7 +2495,7 @@ static bool smith_lang_var_value(const SmithLangReplay *replay, uint32_t at, int
 }
 
 // The CallEnd that closes the CallBegin at `begin`.
-static uint32_t smith_lang_group_end(uint32_t begin, uint32_t limit) {
+uint32_t smith_lang_group_end(uint32_t begin, uint32_t limit) {
     int depth = 0;
     for (uint32_t at = begin; at < limit; at++) { // bounded by the generic
         const SmithLangGenToken *token = &smith_lang_gt.tokens[at];
@@ -2652,7 +2527,7 @@ static size_t smith_lang_split_args(uint32_t first, uint32_t last, SmithLangSpan
 
 // Stages the tokens of one type argument in smith_lang_it, with the type arguments of the instance being written in
 // place of its T. The staged range, or false when the pool is full.
-static bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *instance, uint32_t fallback,
+bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *instance, uint32_t fallback,
                                   uint32_t *first, uint32_t *count) {
     *first = smith_lang_it.count;
     for (uint32_t at = span.start; at < span.end; at++) { // the tokens of the type
@@ -2697,11 +2572,11 @@ static bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *i
 // The text of the calls to generics already lowered, as the source wrote them, for a message that quotes an argument
 // (`pick::larger(a, 3)` and not the statement expression it became). Made again at each outermost call.
 static char smith_lang_written_text[1 << 14];
-static uint32_t smith_lang_written_used;
+uint32_t smith_lang_written_used;
 
 // The argument as the source wrote it (a nested call to a generic is still its own tokens here, not the lowered
 // statement expression), for a message.
-static void smith_lang_infer_written(SmithLangSpan span, char *out, size_t capacity) {
+void smith_lang_infer_written(SmithLangSpan span, char *out, size_t capacity) {
     size_t used = 0;
     out[0] = 0;
     for (uint32_t at = span.start; at < span.end; at++) { // the tokens
@@ -2777,7 +2652,7 @@ static uint32_t smith_lang_infer_place(const SmithHost *host, const SmithLangRep
 }
 
 // The argument's tokens, with the instance's types for T, separated by \x1f for the host's question.
-static bool smith_lang_infer_text(SmithLangSpan span, const SmithLangInstance *instance, uint32_t location, char *out,
+bool smith_lang_infer_text(SmithLangSpan span, const SmithLangInstance *instance, uint32_t location, char *out,
                                   size_t capacity) {
     uint32_t mark[2] = {smith_lang_it.count, smith_lang_it.text_used};
     uint32_t first = 0;
@@ -2826,18 +2701,9 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
     return *count > 0;
 }
 
-static void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
-                                   size_t member_length, char *out, size_t capacity);
 
-#include "lang_constexpr.c"
 
-static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
 // runtime/lang_nested.c: a lambda passed to `Lambda(F)`
-static bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to);
-static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
-                                  SmithLangSpan span, uint32_t place);
-static void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  const SmithLangInstance *instance, uint32_t location, uint32_t id);
 
 // ---- Argument lists: `auto... rest`
 // ------------------------------------------------------------------------------------------------------
@@ -3141,7 +3007,6 @@ static int smith_lang_pack_pattern_open(SmithLang *lang, const SmithHost *host, 
 }
 
 // The pattern at `start` written once for each element, in new tokens at the pool's end, a comma between the copies.
-static bool smith_lang_nested_member_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit);
 
 static bool smith_lang_pack_pattern_copies(const SmithLangReplay *replay, uint32_t start,
                                            const SmithLangPattern *pattern, bool indexed) {
@@ -3290,7 +3155,7 @@ static bool smith_lang_pack_expand_range(SmithLang *lang, const SmithHost *host,
 
 // The parameter of a generic that a lone identifier names, when its type is one of the generic's types (`auto x`,
 // `typeof(x) y`, `T v`): the type's index, else -1. In an instance's body, that parameter's type is the instance's.
-static int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
+int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
                                     SmithLangSpan span) {
     if (span.end - span.start != 1) return -1;
     const SmithLangGenToken *name = &smith_lang_gt.tokens[span.start];
@@ -3498,11 +3363,9 @@ static bool smith_lang_infer_auto(SmithLang *lang, const SmithHost *host, SmithL
     return true;
 }
 
-static int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, const char *module, size_t module_length,
-                                      const char *member, size_t member_length);
 
 // The generic function that a token names (`module::member`, one token: smith_lang_generic_as_argument), or -1.
-static int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length) {
+int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length) {
     const char *colons = text + length;
     while (colons > text && !(colons[0] == ':' && colons[-1] == ':'))
         colons -= 1;
@@ -4033,7 +3896,7 @@ static const char *smith_lang_type_kind(const SmithTypeQuery *query) {
 
 // The note that says why the type is not of the concept, and the facts it rests on: `arithmetic(char)` is
 // `integer(char) || floating(char)`; every other concept is a leaf, a question of the type the compiler answers.
-static void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
+void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
                                    unsigned concept_id, const char *judged) {
     SmithTypeQuery query = {};
     char written[256];
@@ -4377,11 +4240,6 @@ static bool smith_lang_typed_compact(SmithLangReplay *replay) {
     return smith_lang_junk_add(replay, first, smith_lang_gt.count);
 }
 
-static void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                             uint32_t place, const char *from_tag, const char *to_tag, uint32_t first,
-                                             uint32_t last);
-static void smith_lang_slice_replay_array(SmithLang *lang, SmithLangReplay *replay, uint32_t place, const char *to_tag,
-                                          bool literal, uint32_t first, uint32_t last);
 
 // A call to a generic: `args` is the `( ... )` with its parentheses, in smith_lang_gt at [first, last). The types are
 // taken out of the arguments (a `constexpr Type T` is passed; an `auto` parameter's is its argument's) and asked for,
@@ -4458,7 +4316,7 @@ static bool smith_lang_call_finish(SmithLang *lang, const SmithHost *host, Smith
 // ---- Resolving a name to a generic
 // -----------------------------------------------------------------------------------------
 
-static void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module) {
+void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module) {
     for (size_t i = 0; i < lang->generic_modules_count; i++) { // the modules read
         if (strcmp(smith_lang_str(lang->generic_modules[i]), module) == 0) return;
     }
@@ -4472,7 +4330,7 @@ static void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, con
 }
 
 // The generic `member` of `module`, reading the module's header if it was not read yet. Its index, or -1.
-static int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, const char *module, size_t module_length,
+int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, const char *module, size_t module_length,
                                       const char *member, size_t member_length) {
     int found = smith_lang_generic_find(lang, module, module_length, member, member_length);
     if (found >= 0 || lang->cap_frames > 0 || module_length >= smith_lang_name_max) return found;
@@ -4485,7 +4343,7 @@ static int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, co
 }
 
 // The name a module's member has in C: the module's prefix and the member.
-static void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
+void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
                                    char *out, size_t capacity) {
     char module_text[smith_lang_name_max];
     snprintf(module_text, sizeof module_text, "%.*s", (int)module_length, module);
@@ -4498,7 +4356,7 @@ static void smith_lang_member_name(const char *module, size_t module_length, con
 
 // The name a call to `module::member` is written by: `m_f`, or the C name an export chose (`[[std::c_name("m_g")]]`),
 // which the importing file read from the header.
-static void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
+void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
                                    size_t member_length, char *out, size_t capacity) {
     smith_lang_member_name(module, module_length, member, member_length, out, capacity);
     const SmithLangCName *chosen = lang->cnames_count > 0 ? smith_lang_cname_find(lang, out, strlen(out)) : nullptr;
@@ -5357,7 +5215,6 @@ static bool smith_lang_replay_special(SmithLang *lang, const SmithHost *host, Sm
     return true;
 }
 
-#include "lang_nested.c"
 
 // The replays of what an instance's body writes differently from the generic's tokens. True when one took the frame.
 static bool smith_lang_replay_rewritten(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -5385,7 +5242,7 @@ static bool smith_lang_replay_list(SmithLang *lang, const SmithHost *host, Smith
 }
 
 // The previous token of a body being replayed was a `[`; reset by smith_lang_reset.
-static bool smith_lang_replay_after_open;
+bool smith_lang_replay_after_open;
 
 // One token of the generic, written with the instance's types for T.
 static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
@@ -5428,7 +5285,7 @@ static void smith_lang_replay_plain(SmithLang *lang, const SmithHost *host, Smit
 }
 
 // Writes the tokens the replay holds, in order. A group becomes its call; a token that names T becomes the type.
-static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay) {
+void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay) {
     for (size_t step = 0; replay->count > 0 && step < smith_lang_replay_steps_max; step++) { // bounded
         SmithLangFrame *frame = &replay->frames[replay->count - 1];
         if (smith_lang_replay_written(lang, host, replay, frame)) continue;
@@ -5467,7 +5324,7 @@ static void smith_lang_replay_numbers(SmithLangReplay *replay, const SmithLangGe
 }
 
 // A replay of the instance's tokens, from the start.
-static void smith_lang_replay_begin(SmithLangReplay *replay, const SmithLangGeneric *generic,
+void smith_lang_replay_begin(SmithLangReplay *replay, const SmithLangGeneric *generic,
                                     const SmithLangInstance *instance, uint32_t id, uint32_t location) {
     *replay = (SmithLangReplay){};
     replay->instance = instance;
@@ -5531,7 +5388,7 @@ static void smith_lang_instance_emit(SmithLang *lang, const SmithHost *host, siz
 }
 
 // At the end of the file: the code of each instance asked for, and of those they ask for in turn.
-static void smith_lang_generic_instances(SmithLang *lang, const SmithHost *host) {
+void smith_lang_generic_instances(SmithLang *lang, const SmithHost *host) {
     for (size_t guard = 0; lang->instances_emitted < lang->instances_count && guard < smith_lang_instances_max;
          guard++) {
         smith_lang_instance_emit(lang, host, lang->instances_emitted++);
@@ -5569,7 +5426,7 @@ static bool smith_lang_generic_push_frame(SmithLang *lang, const SmithHost *host
 }
 
 // Pushes a token of the lowering's own into the pool (a group's start or end).
-static void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
+void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
                                 uint32_t location) {
     SmithLangGenToken token = {};
     token.kind = SmithTokenKind_Identifier;
@@ -5631,7 +5488,7 @@ static bool smith_lang_generic_direct_call(SmithLang *lang, const SmithHost *hos
 
 // What stands where a call that could not be written stood: a name the parser cannot find, whose error is not shown, so
 // that the statement around it is not reported a second time.
-static void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (host->suppress != nullptr) host->suppress(host->context, location);
     smith_lang_gen_put(lang, host, SmithTokenKind_Identifier, "smith_call_failed", location, 0);
 }
@@ -5699,7 +5556,7 @@ static void smith_lang_generic_finish_call(SmithLang *lang, const SmithHost *hos
 static void smith_lang_generic_abandon(SmithLang *lang, const SmithHost *host, const SmithToken *after);
 
 // Called by the feed loop after each token it has lowered: the token counts toward the innermost call being read.
-static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->call_top == 0) return;
     SmithLangCallFrame *frame = &lang->calls[lang->call_top - 1];
     if (frame->skip) { // the token the call began at
@@ -5751,7 +5608,7 @@ static void smith_lang_generic_abandon(SmithLang *lang, const SmithHost *host, c
 }
 
 // The file ends inside a call.
-static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host) {
+void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host) {
     if (lang->call_top > 0) smith_lang_generic_abandon(lang, host, nullptr);
 }
 
@@ -5817,7 +5674,7 @@ static bool smith_lang_generic_call_core(SmithLang *lang, const SmithHost *host,
 }
 
 // `x::name(` where x is an import: a generic of that module, or in a generic's body any call.
-static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                     const SmithLangBinding *binding, const SmithToken *member) {
     if (binding->is_c || binding->missing || (lang->generics_count == 0 && !lang->recording)) return false;
     const char *module = smith_lang_str(binding->module);
@@ -5827,7 +5684,7 @@ static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, cons
 }
 
 // A call to a generic of the module itself, by its name.
-static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
                                          const SmithLangName *known) {
     bool handled =
         smith_lang_generic_call_core(lang, host, lang->module, strlen(lang->module), name->text, name->length,
@@ -5838,7 +5695,7 @@ static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host,
 
 // A name of the module that a generic's exported body uses must be public: the body is compiled where the generic is
 // called.
-static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
+void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
                                             const char *name, size_t length, uint32_t location) {
     (void)host;
     (void)name;
@@ -5861,7 +5718,7 @@ static SmithLangPool smith_lang_saved_it;
 
 // The tables of generics are static, like the lowering's: a nested read (smith_lang_interface) keeps the caller's aside
 // and puts them back.
-static void smith_lang_generics_aside(bool save, const SmithLang *lang) {
+void smith_lang_generics_aside(bool save, const SmithLang *lang) {
     if (save) {
         smith_lang_saved_gt = smith_lang_gt;
         smith_lang_saved_it = smith_lang_it;
@@ -5883,7 +5740,7 @@ static void smith_lang_generics_aside(bool save, const SmithLang *lang) {
     memcpy(smith_lang_instances, smith_lang_saved_instances, lang->instances_count * sizeof *smith_lang_instances);
 }
 
-static void smith_lang_generics_reset(void) {
+void smith_lang_generics_reset(void) {
     smith_lang_gt.count = 0;
     smith_lang_gt.text_used = 0;
     smith_lang_it.count = 0;

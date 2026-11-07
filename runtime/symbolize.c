@@ -27,6 +27,11 @@
 // `.smith` function is shown as written, `geometry::box::area` (the debug names of issue #27), and so is the name of a
 // module's test.
 
+#include "core.h"
+#include "platform_linux.h"
+#include "symbolize.h"
+
+[[maybe_unused]] constexpr int smith_sym_exit_unavailable = 3; // read when built as the core
 constexpr size_t smith_sym_frames_max = 64;
 constexpr size_t smith_sym_images_max = 32;
 constexpr size_t smith_sym_rows_max = 256;
@@ -37,7 +42,6 @@ constexpr size_t smith_sym_chain_max = 32;
 constexpr size_t smith_sym_details_max = 48; // a golden file's diff is 40 lines and its frame
 constexpr size_t smith_sym_values_max = 16;
 constexpr size_t smith_sym_arguments_max = 4;
-constexpr int smith_sym_exit_unavailable = 3;
 
 typedef struct {
     char function[512];
@@ -130,7 +134,7 @@ typedef struct {
 } SmithSymNotes;
 
 static const char *smith_sym_binary_override;
-static char smith_sym_directory[PATH_MAX];
+char smith_sym_directory[PATH_MAX];
 
 static bool smith_sym_starts(const char *text, const char *prefix) {
     return strncmp(text, prefix, strlen(prefix)) == 0;
@@ -257,7 +261,7 @@ static const char *smith_sym_skipped[] = {
     "smith_failure",   "smith_contract_", "smith_trace_",   "smith.test.",     "smith.contract.", "std::test::",
     "std::contract::", "std::trace::",    "smith_mem_",     "smith_handlers_", "std::mem::"};
 
-static bool smith_sym_machinery(const char *function) {
+bool smith_sym_machinery(const char *function) {
     while (*function == '_')
         function += 1;
     for (size_t i = 0; i < sizeof smith_sym_skipped / sizeof smith_sym_skipped[0]; i++)
@@ -265,7 +269,7 @@ static bool smith_sym_machinery(const char *function) {
     return false;
 }
 
-static bool smith_sym_system_path(const char *path) {
+bool smith_sym_system_path(const char *path) {
     return smith_sym_starts(path, "/usr/lib/") || smith_sym_starts(path, "/System/") ||
            smith_sym_starts(path, "/Library/Apple/") || smith_sym_starts(path, "/lib/") ||
            smith_sym_starts(path, "/lib64/");
@@ -356,7 +360,7 @@ static size_t smith_sym_rows(SmithSymTrace *trace, SmithSymRow *rows, SmithSymNo
 // Text.
 
 // A path relative to the current folder when it is under it.
-static const char *smith_sym_short(const char *path) {
+const char *smith_sym_short(const char *path) {
     // The system's /var, /tmp and /etc are links into /private: getcwd names the real folder, a compile's paths may
     // not.
     const char *folder = smith_sym_directory;
@@ -367,7 +371,7 @@ static const char *smith_sym_short(const char *path) {
 }
 
 // Line number `line` of the file, without its newline and trailing blanks. False when it cannot be read.
-static bool smith_sym_source(const char *file, uint32_t line, char *text, size_t capacity) {
+bool smith_sym_source(const char *file, uint32_t line, char *text, size_t capacity) {
     FILE *source = fopen(file, "r");
     if (source == nullptr) return false;
     bool found = false;
@@ -703,7 +707,7 @@ static int smith_sym_filter(FILE *in, FILE *out) {
 }
 
 // `smith symbolize [--binary <program>] [<file>]`, and `smith symbolize --available`.
-static int smith_symbolize_main(int argc, char **argv) {
+int smith_symbolize_main(int argc, char **argv) {
     const char *file = nullptr;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--available") == 0) {
@@ -792,7 +796,7 @@ static bool smith_sym_request(char *line, bool *code, char **module, uint64_t *o
     return end != at;
 }
 
-static int smith_llvm_symbolizer_main(int argc, char **argv) {
+int smith_llvm_symbolizer_main(int argc, char **argv) {
     SmithSymProtocol protocol = {.inlines = true};
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--relative-address") == 0) protocol.relative = true;

@@ -9,7 +9,16 @@
 // still written as it was).
 
 // Where the module's words start in a line: the words after `marker`, one at a time, as [start, end) in the text.
-static bool smith_lang_header_word(const char *text, size_t length, const char *marker, size_t *cursor, size_t *start,
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_import.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_private.h"
+
+bool smith_lang_header_word(const char *text, size_t length, const char *marker, size_t *cursor, size_t *start,
                                    size_t *end) {
     size_t marker_length = strlen(marker);
     if (*cursor == 0) {
@@ -40,7 +49,7 @@ static uint32_t smith_lang_written_slot(const char *text, size_t length) {
     return smith_lang_hash(text, length) & (smith_lang_written_slots - 1);
 }
 
-static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const char *text, size_t length) {
+SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const char *text, size_t length) {
     uint32_t slot = smith_lang_written_slot(text, length);
     for (size_t probe = 0; probe < smith_lang_written_slots; probe++) { // the table is half empty at most
         uint32_t entry = lang->written_slots[slot];
@@ -54,7 +63,7 @@ static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const 
 
 // The name `lowered` is written `written`. `prefix_length` is how much of `lowered` is the module's prefix (the rest is
 // the member). A name the file binds itself (`direct`) wins over one reached through another module's imports.
-static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
+void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
                                    size_t written_length, size_t prefix_length, SmithLangText module, bool direct,
                                    const char *member, size_t member_length) {
     SmithLangWritten *known = smith_lang_written_lookup(lang, lowered, lowered_length);
@@ -97,7 +106,7 @@ static void smith_lang_cname_add(SmithLang *lang, const char *fallback, size_t f
 }
 
 // The C name an imported export has instead of `fallback`; null when it has none.
-static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const char *fallback, size_t length) {
+const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const char *fallback, size_t length) {
     for (size_t i = 0; i < lang->cnames_count; i++) { // the imports' exports that have a C name, few
         const SmithLangCName *entry = &lang->cnames[i];
         if (entry->fallback.length == length && memcmp(smith_lang_str(entry->fallback), fallback, length) == 0) {
@@ -109,7 +118,7 @@ static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const 
 
 // The C prefix of a module's names: `a::b` is `a_b_`, and the standard library, which C writes without a namespace,
 // is `smith_`: `std::arena` is `smith_arena_` (#366).
-static void smith_lang_c_prefix(const char *module, char *prefix, size_t capacity) {
+void smith_lang_c_prefix(const char *module, char *prefix, size_t capacity) {
     size_t used = 0;
     if (strncmp(module, "std::", 5) == 0) {
         memcpy(prefix, "smith_", 6);
@@ -165,7 +174,6 @@ static void smith_lang_written_from_header(SmithLang *lang, const char *text, si
     }
 }
 
-static void smith_lang_module_to_path(const char *module, char *path, size_t capacity);
 
 // An import: the module's exports, and those of the modules it imports in their turn (a signature can name them).
 static void smith_lang_written_import(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
@@ -202,7 +210,7 @@ static void smith_lang_written_import(SmithLang *lang, const SmithHost *host, co
 }
 
 // Reads the header again (the cycle check read others) for the names it lists, bound as `bind`.
-static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, const char *header, const char *module,
+void smith_lang_written_read(SmithLang *lang, const SmithHost *host, const char *header, const char *module,
                                     const char *bind, size_t bind_length) {
     char bound[smith_lang_name_max];
     snprintf(bound, sizeof bound, "%.*s", (int)bind_length, bind);
@@ -218,7 +226,7 @@ static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, cons
 }
 
 // `x::member` was written: the name is known, declared or not.
-static void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *binding, size_t lowered_length,
+void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *binding, size_t lowered_length,
                                       const char *member, size_t member_length) {
     char written[smith_lang_name_max];
     int length =
@@ -261,7 +269,7 @@ bool smith_lang_written_find(const SmithLang *lang, const char *lowered, size_t 
 
 // ---- A completion after `x::`
 
-static void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor) {
+void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor) {
     lang->qualifier_set = true;
     lang->qualifier_is_c = binding->is_c;
     lang->qualifier_location = cursor->location;

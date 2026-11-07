@@ -7,16 +7,25 @@
 // answers Slow, before it has changed anything, and the token goes through smith_lang_feed, which can look ahead.
 // Included by runtime/lang.c, after runtime/lang_sparse.c.
 
-static void smith_lang_reset_declaration(SmithLang *lang);
 
 // runtime/lang_generic.c
-static bool smith_lang_generic_candidate(const SmithLang *lang, const SmithHost *host, const SmithToken *first);
-static void smith_lang_generic_finish(SmithLang *lang);
 
 // ---- The state a token changes in the stream (after a head), apart from writing it
 // ---------------------------------------
 
-static void smith_lang_open_state(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_declare.h"
+#include "lang_generic.h"
+#include "lang_head.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_sparse.h"
+#include "lang_stream.h"
+#include "mcp_unit.h"
+
+void smith_lang_open_state(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangBrace kind = SmithLangBrace_Block;
     if (lang->agg_pending) {
         kind = lang->enum_pending ? SmithLangBrace_Enum : SmithLangBrace_Aggregate;
@@ -28,7 +37,7 @@ static void smith_lang_open_state(SmithLang *lang, const SmithHost *host, const 
     smith_lang_push_brace(lang, host, kind, token->location);
 }
 
-static void smith_lang_close_state(SmithLang *lang) {
+void smith_lang_close_state(SmithLang *lang) {
     if (lang->brace_depth == 0) return;
     SmithLangBrace kind = lang->braces[--lang->brace_depth];
     if (lang->brace_depth != 0) return;
@@ -42,7 +51,7 @@ static void smith_lang_close_state(SmithLang *lang) {
 }
 
 // A punctuator that is not a brace.
-static void smith_lang_punctuator_state(SmithLang *lang, char c) {
+void smith_lang_punctuator_state(SmithLang *lang, char c) {
     if (c == '(') lang->paren_depth += 1;
     if (c == ')' && lang->paren_depth > 0) lang->paren_depth -= 1;
     if (c == '=' && lang->brace_depth == 0) {
@@ -56,7 +65,7 @@ static void smith_lang_punctuator_state(SmithLang *lang, char c) {
 }
 
 // After the `;` is written.
-static void smith_lang_semicolon_state(SmithLang *lang, char c) {
+void smith_lang_semicolon_state(SmithLang *lang, char c) {
     if (c != ';' || lang->paren_depth != 0) return;
     lang->statement_typedef = false;
     lang->agg_pending = false;
@@ -64,7 +73,7 @@ static void smith_lang_semicolon_state(SmithLang *lang, char c) {
 }
 
 // typedef, struct, union and enum.
-static void smith_lang_word_state(SmithLang *lang, const SmithToken *token, SmithLangWord word) {
+void smith_lang_word_state(SmithLang *lang, const SmithToken *token, SmithLangWord word) {
     if (word == SmithLangWord_Typedef) {
         lang->statement_typedef = true;
         lang->typedef_depth = lang->brace_depth;
@@ -599,7 +608,7 @@ SmithLangAct smith_lang_fast(SmithLang *lang, const SmithHost *host, const Smith
 // ------------------------------------------------------------
 
 // A token of a private declaration's head when the host did not answer it (or it begins one).
-static void smith_lang_declare_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_declare_process(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithToken shown = *token;
     bool forced = lang->state == SmithLangState_Start;
     SmithLangAct act = smith_lang_head_step(lang, host, &shown, true, forced);

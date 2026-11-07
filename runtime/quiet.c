@@ -1,14 +1,10 @@
-// Quiet output (issue #78): what a run prints is a line per stage, and the rest goes to a log under `.smith/log/`.
-// A failure shows a bounded excerpt of its output (the lines from the first one that reports a failure) and the path
-// of the log. `-v` (or SMITH_OUTPUT=full, which the outermost run sets for everything beneath it, so a test of smith
-// that runs `smith test` sees what it always saw) prints everything as it happens. Included by smith.c.
-constexpr size_t smith_quiet_lines = 30;
-constexpr size_t smith_quiet_columns = 200;
-constexpr size_t smith_quiet_excerpt_max = smith_quiet_lines * (smith_quiet_columns + 8) + 256;
+#include "core.h"
+#include "quiet.h"
+
 constexpr size_t smith_quiet_text_max = (size_t)32 << 20;
 
 // Whether this run prints everything: SMITH_OUTPUT=full is set by the run that captures its children's output.
-static bool smith_quiet_full(void) {
+bool smith_quiet_full(void) {
     const char *mode = getenv("SMITH_OUTPUT");
     return mode != nullptr && strcmp(mode, "full") == 0;
 }
@@ -34,7 +30,7 @@ static size_t smith_quiet_line_length(const char *text, size_t size, size_t at) 
     return length;
 }
 
-static size_t smith_quiet_count_lines(const char *text, size_t size) {
+size_t smith_quiet_count_lines(const char *text, size_t size) {
     size_t lines = 0;
     for (size_t at = 0; at < size; lines++) // each step ends a line
         at += smith_quiet_line_length(text, size, at) + 1;
@@ -78,7 +74,7 @@ static size_t smith_quiet_first_failure(const char *text, size_t size, size_t fr
 // reports a failure or, when none does, the last ones, each cut to smith_quiet_columns. When that line is the
 // executor's `FAILED:` header, its two lines come first and then the first failure the step itself printed (its
 // own `FAIL`, an error). `hidden` is how many lines of the text are not in it. Returns the length.
-static size_t smith_quiet_excerpt(char *out, const char *text, size_t size, size_t *hidden) {
+size_t smith_quiet_excerpt(char *out, const char *text, size_t size, size_t *hidden) {
     size_t total = smith_quiet_count_lines(text, size);
     size_t start = smith_quiet_first_failure(text, size, 0, total);
     size_t used = 0;
@@ -111,7 +107,7 @@ static size_t smith_quiet_excerpt(char *out, const char *text, size_t size, size
 
 // The path of the log of `name` (`.smith/log/<name>.log`), with the folders made. Characters that are not a name's are
 // written as `_`.
-static const char *smith_quiet_log_path(char *path, size_t capacity, const char *name) {
+const char *smith_quiet_log_path(char *path, size_t capacity, const char *name) {
     (void)mkdir(".smith", 0755);
     (void)mkdir(".smith/log", 0755);
     int length = snprintf(path, capacity, ".smith/log/%s", name);
@@ -124,7 +120,7 @@ static const char *smith_quiet_log_path(char *path, size_t capacity, const char 
 }
 
 // Reads a log whole (up to smith_quiet_text_max bytes; the rest is dropped) into a static buffer.
-static const char *smith_quiet_read(const char *path, size_t *size) {
+const char *smith_quiet_read(const char *path, size_t *size) {
     static char text[smith_quiet_text_max];
     FILE *file = fopen(path, "r");
     *size = file != nullptr ? fread(text, 1, sizeof text - 1, file) : 0;
@@ -134,7 +130,7 @@ static const char *smith_quiet_read(const char *path, size_t *size) {
 }
 
 // Reads a number at `*at` that is followed by `after`; moves `*at` past both.
-static bool smith_quiet_field(const char **at, size_t *value, const char *after) {
+bool smith_quiet_field(const char **at, size_t *value, const char *after) {
     if (!isdigit((unsigned char)**at)) return false;
     char *end = nullptr;
     *value = strtoull(*at, &end, 10);
@@ -149,7 +145,7 @@ static bool smith_quiet_field(const char **at, size_t *value, const char *after)
 // nothing).
 // A prove run also says, for each group, "N of M functions have contracts" (issue #51); the sums go to `coverage` as
 // "N of M functions" (empty when the log has no such line).
-static void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity,
+void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity,
                                char *coverage, size_t coverage_capacity) {
     out[0] = '\0';
     coverage[0] = '\0';

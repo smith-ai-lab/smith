@@ -13,49 +13,43 @@
 //   inst <file> <ranges>                      the lines coverage counts ("3-9,12")
 //   cov <file> <ranges>                       the lines some test ran
 //   test <name> <hex>                         the bits of the functions the test executed
-static bool smith_changed_git(const char *const *arguments, void (*line)(char *)); // runtime/changed.c
 
-static bool smith_rec_write(const char *dir, const char *name, const char *clean, bool pass); // runtime/record.c
 
-constexpr size_t smith_cov_files_max = 1024;
-constexpr size_t smith_cov_functions_max = 1U << 16;
+#include "core.h"
+#include "changed.h"
+#include "coverage.h"
+#include "record.h"
+
 constexpr size_t smith_cov_tests_max = 6144;
-constexpr size_t smith_cov_lines_max = 1U << 15;
 constexpr size_t smith_cov_pool_max = 1U << 23;
 constexpr size_t smith_cov_text_max = 1U << 25;
 constexpr size_t smith_cov_bits_bytes = smith_cov_functions_max / 8;
 constexpr size_t smith_cov_line_bytes = smith_cov_lines_max / 8;
 
-typedef struct {
-    uint32_t file;
-    uint32_t first;
-    uint32_t last;
-    const char *name;
-} SmithCovFunction;
 
 static char smith_cov_pool[smith_cov_pool_max];
-static size_t smith_cov_pool_used;
-static const char *smith_cov_files[smith_cov_files_max];
-static size_t smith_cov_file_count;
+size_t smith_cov_pool_used;
+const char *smith_cov_files[smith_cov_files_max];
+size_t smith_cov_file_count;
 static uint8_t smith_cov_inst[smith_cov_files_max][smith_cov_line_bytes];
 static uint8_t smith_cov_cover[smith_cov_files_max][smith_cov_line_bytes];
-static SmithCovFunction smith_cov_functions[smith_cov_functions_max];
-static size_t smith_cov_function_count;
-static bool smith_cov_function_run[smith_cov_functions_max]; // executed in the lcov being read
+SmithCovFunction smith_cov_functions[smith_cov_functions_max];
+size_t smith_cov_function_count;
+bool smith_cov_function_run[smith_cov_functions_max]; // executed in the lcov being read
 static const char *smith_cov_test_names[smith_cov_tests_max];
 static uint8_t smith_cov_test_bits[smith_cov_tests_max][smith_cov_bits_bytes];
 static size_t smith_cov_test_count;
 static char smith_cov_commit[64];
 static char smith_cov_text[smith_cov_text_max + 1];
-static bool smith_cov_overflow;
+bool smith_cov_overflow;
 
 // An input crossed a fixed limit: what it dropped would make the numbers wrong, so the run says which limit, once.
-static void smith_cov_cross(const char *limit) {
+void smith_cov_cross(const char *limit) {
     if (!smith_cov_overflow) fprintf(stderr, "smith coverage: %s crossed its limit, the table is not used\n", limit);
     smith_cov_overflow = true;
 }
 
-static const char *smith_cov_copy(const char *text) {
+const char *smith_cov_copy(const char *text) {
     size_t length = strlen(text);
     if (smith_cov_pool_used + length + 1 > smith_cov_pool_max) {
         smith_cov_cross("the pool of names (8 MiB)");
@@ -82,7 +76,7 @@ static int smith_cov_file_find(const char *path) {
     return -1;
 }
 
-static int smith_cov_file_index(const char *path) {
+int smith_cov_file_index(const char *path) {
     int at = smith_cov_file_find(path);
     if (at >= 0) return at;
     if (smith_cov_file_count >= smith_cov_files_max) {
@@ -206,7 +200,7 @@ static bool smith_cov_load(const char *path) {
 
 // ---- Reading llvm-cov's lcov
 
-static char smith_cov_root[PATH_MAX];
+char smith_cov_root[PATH_MAX];
 
 // `path` relative to the repository, or nullptr outside it (the SDK, LLVM's headers) or in `.smith/`.
 static const char *smith_cov_relative(const char *path) {
@@ -331,19 +325,19 @@ static void smith_cov_write_test(FILE *out, size_t test) {
 }
 
 // Writes through a temporary name and renames, so a reader never sees half a file.
-static FILE *smith_cov_open(const char *path, char *temporary, size_t size) {
+FILE *smith_cov_open(const char *path, char *temporary, size_t size) {
     snprintf(temporary, size, "%s.%d.tmp", path, (int)getpid());
     return fopen(temporary, "w");
 }
 
-static bool smith_cov_close(FILE *out, const char *temporary, const char *path) {
+bool smith_cov_close(FILE *out, const char *temporary, const char *path) {
     bool good = fclose(out) == 0;
     if (good && rename(temporary, path) == 0) return true;
     (void)unlink(temporary);
     return false;
 }
 
-static void smith_cov_clean_name(const char *name, char *out, size_t size) {
+void smith_cov_clean_name(const char *name, char *out, size_t size) {
     size_t used = 0;
     for (; name[used] != '\0' && used + 1 < size; used++) {
         char c = name[used];
@@ -355,13 +349,13 @@ static void smith_cov_clean_name(const char *name, char *out, size_t size) {
 
 // ---- merge, join and report
 
-static const char *smith_cov_env(const char *name) {
+const char *smith_cov_env(const char *name) {
     const char *value = getenv(name);
     return value != nullptr && value[0] != '\0' ? value : nullptr;
 }
 
 // Runs `argv`, with its output in `output` when given; its exit status, or -1.
-static int smith_cov_spawn(const char *const *argv, const char *output, bool output_to_stderr) {
+int smith_cov_spawn(const char *const *argv, const char *output, bool output_to_stderr) {
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     if (output_to_stderr) posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDOUT_FILENO);
@@ -461,7 +455,7 @@ static size_t smith_cov_binaries(char *text, const char **out) {
 
 // `smith test --coverage merge <test name>`: SMITH_COVERAGE_DIR (where the profiles are) and SMITH_COVERAGE_BINARY (the
 // instrumented programs, separated by `:`) say where.
-static double smith_cov_cpu_seconds; // the CPU time the test took, for its record (issue #506)
+double smith_cov_cpu_seconds; // the CPU time the test took, for its record (issue #506)
 
 static int smith_cov_merge(const char *name, bool pass) {
     const char *dir = smith_cov_env("SMITH_COVERAGE_DIR");
@@ -565,7 +559,7 @@ static size_t smith_cov_hunk_count;
 static char smith_cov_diff_path[PATH_MAX];
 static bool smith_cov_new_side;
 
-static bool smith_cov_code_line(const char *text) {
+bool smith_cov_code_line(const char *text) {
     while (*text == ' ' || *text == '\t')
         text++;
     return *text != '\0' && strncmp(text, "//", 2) != 0 && strncmp(text, "/*", 2) != 0 && *text != '*' && *text != '\r';
@@ -669,7 +663,7 @@ static int smith_cov_report(const char *table, const char *base, const char *out
 }
 
 // The entry of `smith test --coverage <merge|join|report> ...`.
-static int smith_coverage_main(int argc, char **argv) {
+int smith_coverage_main(int argc, char **argv) {
     if (argc >= 2 && argc <= 4 && strcmp(argv[0], "merge") == 0) {
         smith_cov_cpu_seconds = argc == 4 ? strtod(argv[3], nullptr) : 0;
         return smith_cov_merge(argv[1], argc == 2 || strcmp(argv[2], "fail") != 0);

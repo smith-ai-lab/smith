@@ -9,10 +9,24 @@
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
 // What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes
 // (knowledge/verbs.md). Included by smith.c.
+#include "core.h"
+#include "account.h"
+#include "changed.h"
+#include "coverage.h"
+#include "docs.h"
+#include "executor.h"
+#include "lint_cache.h"
+#include "main.h"
+#include "mcp_unit.h"
+#include "quiet.h"
+#include "slots.h"
+#include "test_cache.h"
+#include "verbs.h"
+#include "world.h"
+
 #include <fnmatch.h>
 #include <ftw.h>
 
-#include "test_cache.c" // `smith test --cache` (#2686): the runner asks it which tests are unchanged
 constexpr size_t smith_verb_args_max = 16384;
 constexpr size_t smith_verbs_files_max = 16384;
 constexpr size_t smith_verbs_names_max = 16U << 20;
@@ -72,7 +86,7 @@ static void smith_verb_room(size_t used, size_t more, const char *what) {
 // `--front-end=new` among a verb's arguments (before any `--`): the build compiles its .smith sources with smith's own
 // front end (#2042). It becomes the option -DSMITH_FRONT_END=new, which only smith_object reads (it is not a variable
 // of the project's). Any other value is an error, as smith cc reports it.
-static bool smith_front_end_flag(const char *arg) {
+bool smith_front_end_flag(const char *arg) {
     if (strncmp(arg, "--front-end=", 12) != 0) return false;
     if (strcmp(arg + 12, "new") != 0) smith_die(smith_exit_usage, "--front-end takes only `new`", arg);
     return true;
@@ -814,7 +828,7 @@ static char *smith_lint_dir_argv[smith_defaults_args_max];
 // sees (so ignored and generated folders stay out) and `.clang-format-ignore` does not name, as the project lint
 // picks them; the other arguments stay as they are. A folder with none is an error that says so. Returns true when it
 // replaced the arguments.
-static bool smith_lint_expand_dirs(int *argc, char ***argv) {
+bool smith_lint_expand_dirs(int *argc, char ***argv) {
     bool any = false;
     for (int i = 2; i < *argc && strcmp((*argv)[i], "--") != 0; i++) { // bounded by the arguments
         struct stat info;
@@ -865,7 +879,7 @@ static bool smith_lint_expand_dirs(int *argc, char ***argv) {
 // `.clang-format-ignore` does not name) with the command of the nearest compile. The others (the stage0) leave them out
 // and say so once, as `smith cc` refuses them. The last line says how many files were linted, and a project with
 // `.smith` sources that lints none is an error.
-static int smith_lint_project(int count, char **args, const char *self) {
+int smith_lint_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("lint", count, args, self, false);
     if (quiet >= 0) return quiet;
     SmithVerbArgs *split = smith_verb_split(count, args);
@@ -1154,7 +1168,7 @@ static int smith_prove_unit(const char *self, const SmithInfo *info, char *sourc
 // `smith prove` with no arguments: the contracts of the sources each program of the build links (not the tests'
 // runner), each compiled with the flags the build gives it, less what only instruments or caches (sanitizers and
 // modules). Sources with the same flags are proved together; programs with the same sources once.
-static int smith_prove_project(int count, char **args, const char *self) {
+int smith_prove_project(int count, char **args, const char *self) {
     int quiet = smith_quiet_verb("prove", count, args, self, false);
     if (quiet >= 0) return quiet;
     if (!smith_has_prover()) {
@@ -1446,7 +1460,7 @@ static int smith_test_take_changed(SmithVerbArgs *split, const char *self) {
 }
 
 // `smith test`: builds and runs the tests smith_tests declares; the arguments go to the runner.
-static int smith_test_project(int count, char **args, const char *self) {
+int smith_test_project(int count, char **args, const char *self) {
     if (count > 0 && strcmp(args[0], "--coverage") == 0) return smith_coverage_main(count - 1, args + 1); // #456
     if (count > 0 && strcmp(args[0], "--cache") == 0) return smith_tc_main(count - 1, args + 1);          // #2686
     int quiet = smith_quiet_verb("test", count, args, self, true);
@@ -1483,7 +1497,7 @@ static int smith_test_project(int count, char **args, const char *self) {
 }
 
 // `smith run`: builds the default, then runs the one program it names with the verb's arguments.
-static int smith_run_project(int count, char **args, const char *self) {
+int smith_run_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     const char *const targets[] = {nullptr};
     int status = smith_verb_build(self, split, targets, false);
@@ -1637,7 +1651,7 @@ static void smith_check_promises(bool list) {
 
 // `smith check`: formatting (clang-format's dry run), the docs, lint, the tests and the proofs, in that order, cheapest
 // first. A part that fails does not stop the rest: every part is reported, and the exit status is 1 if any failed.
-static int smith_check_project(int count, char **args, const char *self) {
+int smith_check_project(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     bool every_task = split->own_count == 1 && strcmp(split->own[0], "-v") == 0;
     if (split->own_count > (every_task ? 1U : 0U))
@@ -1690,7 +1704,7 @@ static int smith_check_project(int count, char **args, const char *self) {
 
 // `smith fmt` with no file names: in place, or with --dry-run (-n) the project's check, which fails on a file that
 // would change (--Werror is always part of it).
-static int smith_fmt_verb(int count, char **args, const char *self) {
+int smith_fmt_verb(int count, char **args, const char *self) {
     SmithVerbArgs *split = smith_verb_split(count, args);
     bool check = false;
     for (size_t i = 0; i < split->own_count; i++)

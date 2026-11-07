@@ -7,9 +7,18 @@
 // dirty order-only input. After a restat step runs, an output that did not change cleans the edges that were dirty
 // only because of it.
 
+#include "core.h"
+#include "executor.h"
+#include "executor_manifest.h"
+#include "executor_plan.h"
+#include "executor_run.h"
+#include "executor_state.h"
+#include "mcp_unit.h"
+#include "platform_linux.h"
+
 constexpr uint32_t smith_plan_none = UINT32_MAX;
 
-static int64_t smith_plan_stat_path(const char *path) {
+int64_t smith_plan_stat_path(const char *path) {
     struct stat info = {};
     if (stat(path, &info) != 0) return 0;
     struct timespec modified = smith_platform_mtime(&info);
@@ -25,11 +34,11 @@ static int64_t smith_plan_mtime(SmithExec *exec, uint32_t number) {
 
 // The number of inputs of every kind, and the one at position k: the explicit and implicit ones, then what the depfile
 // log named, then the order-only ones.
-static uint32_t smith_plan_input_count(const SmithEdge *edge) {
+uint32_t smith_plan_input_count(const SmithEdge *edge) {
     return edge->explicit_count + edge->implicit_count + edge->dep_count + edge->order_count;
 }
 
-static uint32_t smith_plan_input(const SmithExec *exec, const SmithEdge *edge, uint32_t k) {
+uint32_t smith_plan_input(const SmithExec *exec, const SmithEdge *edge, uint32_t k) {
     const uint32_t *ids = exec->graph.ids;
     uint32_t plain = edge->explicit_count + edge->implicit_count;
     if (k < plain) return ids[edge->inputs + k];
@@ -37,17 +46,17 @@ static uint32_t smith_plan_input(const SmithExec *exec, const SmithEdge *edge, u
     return ids[edge->inputs + plain + (k - plain - edge->dep_count)];
 }
 
-static bool smith_plan_is_order_only(const SmithEdge *edge, uint32_t k) {
+bool smith_plan_is_order_only(const SmithEdge *edge, uint32_t k) {
     return k >= edge->explicit_count + edge->implicit_count + edge->dep_count;
 }
 
-static uint32_t smith_plan_output(const SmithExec *exec, const SmithEdge *edge, uint32_t k) {
+uint32_t smith_plan_output(const SmithExec *exec, const SmithEdge *edge, uint32_t k) {
     return exec->graph.ids[edge->outputs + k];
 }
 
 // Where -d explain writes: stderr, or in the units runner the text of the call in process.
 #ifdef SMITH_CORE
-static FILE *smith_plan_core_stream;
+FILE *smith_plan_core_stream;
 #endif
 static FILE *smith_plan_stream(void) {
 #ifdef SMITH_CORE
@@ -57,8 +66,7 @@ static FILE *smith_plan_stream(void) {
 }
 
 // -d explain: the reason an output is out of date, on stderr.
-static void smith_plan_explain(const SmithExec *exec, const char *format, ...) __attribute__((format(printf, 2, 3)));
-static void smith_plan_explain(const SmithExec *exec, const char *format, ...) {
+void smith_plan_explain(const SmithExec *exec, const char *format, ...) {
     if (!exec->options.explain) return;
     va_list arguments;
     va_start(arguments, format);
@@ -297,7 +305,7 @@ static void smith_plan_scan(SmithExec *exec, uint32_t root, uint32_t *stack) {
 
 // The nodes the build is asked for: the names on the command line, else the manifest's defaults, else every node
 // that nothing reads. Returns how many.
-static size_t smith_plan_targets(SmithExec *exec, uint32_t *targets) {
+size_t smith_plan_targets(SmithExec *exec, uint32_t *targets) {
     SmithGraph *graph = &exec->graph;
     size_t count = 0;
     for (size_t i = 0; i < exec->options.target_count; i++) {
@@ -429,7 +437,7 @@ static void smith_plan_start(SmithExec *exec) {
 }
 
 // The edge is done, with or without a command: its outputs are ready, and the edges that waited only for it can go.
-static void smith_plan_done(SmithExec *exec, uint32_t number) {
+void smith_plan_done(SmithExec *exec, uint32_t number) {
     SmithGraph *graph = &exec->graph;
     SmithEdge *edge = &graph->edges[number];
     if (edge->want == SmithWant_Start || edge->want == SmithWant_Running) exec->wanted -= 1;
@@ -448,7 +456,7 @@ static void smith_plan_done(SmithExec *exec, uint32_t number) {
 }
 
 // Finishes the edges that need no command, and those they let go of, until none is left.
-static void smith_plan_settle(SmithExec *exec) {
+void smith_plan_settle(SmithExec *exec) {
     for (size_t steps = 0; exec->finishing_count > 0; steps++) {
         if (steps > exec->graph.edge_count * 2 + 2) smith_exec_fail("the plan did not settle");
         uint32_t number = exec->finishing[--exec->finishing_count];
@@ -458,7 +466,7 @@ static void smith_plan_settle(SmithExec *exec) {
 
 // An output of a restat step did not change: the edges that were dirty only because of it may be clean. They stay in
 // the plan, without a command, until what they wait for is done.
-static void smith_plan_clean(SmithExec *exec, uint32_t first, uint32_t *stack) {
+void smith_plan_clean(SmithExec *exec, uint32_t first, uint32_t *stack) {
     SmithGraph *graph = &exec->graph;
     size_t depth = 0;
     stack[depth++] = first;
@@ -527,7 +535,7 @@ static void smith_plan_weigh(SmithExec *exec) {
 }
 
 // Scans and plans the targets. Returns whether there is anything to do.
-static bool smith_plan_build(SmithExec *exec, const uint32_t *targets, size_t count) {
+bool smith_plan_build(SmithExec *exec, const uint32_t *targets, size_t count) {
     SmithGraph *graph = &exec->graph;
     size_t stack_size = (graph->node_count + graph->link_count + 8) * sizeof(SmithPlanStep);
     SmithPlanStep *stack = smith_exec_push(exec, stack_size, alignof(SmithPlanStep));
@@ -549,10 +557,6 @@ static bool smith_plan_build(SmithExec *exec, const uint32_t *targets, size_t co
 
 #ifdef SMITH_CORE
 #include "smith_core_plan.h"
-
-// Defined in executor_run.c, which this file comes before.
-static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack);
-static void smith_run_make_parents(const char *path);
 
 static bool smith_plan_core_listed(const char *const *list, const char *path) {
     for (size_t i = 0; list != nullptr && list[i] != nullptr; i++) { // bounded by the list
@@ -590,7 +594,7 @@ static uint32_t smith_plan_core_deps(SmithExec *exec, const SmithCorePlan *build
 
 // The fake command of an edge: it makes the outputs its text names (a task that only writes a log makes none), unless
 // the build says it leaves an existing one as it is. The depfile is recorded as the executor does after a command.
-static void smith_plan_core_command(SmithExec *exec, const SmithCorePlan *build, SmithEdge *edge) {
+void smith_plan_core_command(SmithExec *exec, const SmithCorePlan *build, SmithEdge *edge) {
     for (uint32_t k = 0; k < edge->output_count; k++) {
         const char *path = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
         bool exists = smith_plan_stat_path(path) != 0;

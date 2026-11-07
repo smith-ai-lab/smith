@@ -5,6 +5,8 @@
 // points) is the same and the folder is the same one (device, inode and modification time), so a new Xcode, a switch
 // with xcode-select or a different SDK behind the same name is asked again. Any failure to read or write it asks xcrun
 // as before. Included by smith.c, on macOS.
+#include "core.h"
+
 constexpr char smith_sdk_cache_xcrun[] = "/usr/bin/xcrun";
 constexpr char smith_sdk_cache_select[] = "/var/db/xcode_select_link";
 constexpr size_t smith_sdk_cache_max = 4 * (size_t)PATH_MAX;

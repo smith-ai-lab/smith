@@ -11,6 +11,11 @@
 // test is never stored. A test the key cannot pin down is not cached: unknown means run it. That is a test with the
 // marker `// smith-test: uncached`, one that reads the clock, the network, entropy or a file without `files`, one that
 // asks git, and one whose source file is not found.
+#include "core.h"
+#include "changed.h"
+#include "package.h"
+#include "test_cache.h"
+
 #include <dirent.h>
 #include <ftw.h>
 #include <sys/stat.h>
@@ -628,7 +633,7 @@ static int smith_tc_store_main(const char *folder) {
 }
 
 // `smith test --cache check|store <folder>` (the runner's calls).
-static int smith_tc_main(int count, char **args) {
+int smith_tc_main(int count, char **args) {
     if (count != 2) {
         fputs("usage: smith test --cache check|store <folder>\n", stderr);
         return smith_exit_usage;

@@ -3,6 +3,11 @@
 // they were, with each `.smith` file replaced by its object. Experimental and off by default: without the flag a
 // `.smith` file still goes through the token lowering. Included by smith.c; the units runner (SMITH_CORE) has no front
 // end linked, so it has none of this.
+#include "core.h"
+#include "front_flag.h"
+#include "main.h"
+#include "mcp_unit.h"
+
 #ifndef SMITH_CORE
 
 // front::compile's entry (front/compile.smith, `front_compile_run`), declared here by hand: the generated header
@@ -40,11 +45,10 @@ static void smith_front_std_sources(void) {
     }
 }
 
-constexpr size_t smith_front_args_max = 1024;
 constexpr size_t smith_front_sources_max = 64;
 constexpr size_t smith_front_name_max = 4096;
 
-static char *smith_front_arguments[smith_front_args_max + 8];
+char *smith_front_arguments[smith_front_args_max + 8];
 static const char *smith_front_sources[smith_front_sources_max];
 static const char *smith_front_objects[smith_front_sources_max];
 static char smith_front_names[smith_front_sources_max][smith_front_name_max];
@@ -72,7 +76,7 @@ static bool smith_front_is_source(const char *argument) {
 }
 
 // Whether `--front-end=new` is among the arguments; any other value of the flag is an error.
-static bool smith_front_requested(int count, char **args) {
+bool smith_front_requested(int count, char **args) {
     bool requested = false;
     for (int i = 0; i < count; i++) { // bounded by count
         if (strncmp(args[i], "--front-end=", 12) != 0) continue;
@@ -276,7 +280,7 @@ static void smith_front_depfile(const char *depfile, const char *output, const c
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
-static int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
+int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
     SMITH_ASSERT((size_t)count < smith_front_args_max && first >= 1 && first <= 8);
     for (int i = 0; i < first; i++) // bounded by 8
         smith_front_arguments[i] = argv[i];
@@ -337,7 +341,7 @@ static int smith_front_rewrite(char **argv, int first, int count, char **args, c
 
 // Whether `smith lint --fix FILE...` is the front end's: `--fix` first and no `--`. With a `--` it is clang-tidy's
 // `--fix` on a `.smith` file with the flags of its compile (smith-check), as before.
-static bool smith_lint_fix_requested(int count, char **args) {
+bool smith_lint_fix_requested(int count, char **args) {
     if (count < 1 || strcmp(args[0], "--fix") != 0) return false;
     for (int i = 1; i < count; i++) { // bounded by count
         if (strcmp(args[i], "--") == 0) return false;
@@ -348,7 +352,7 @@ static bool smith_lint_fix_requested(int count, char **args) {
 // `smith lint --fix FILE...` (#1442): each `.smith` file is parsed by smith's own front end, the fixes its parse errors
 // carry are applied, and `path: N fixes applied` is printed; a file with nothing to fix reports 0. The units runner has
 // no front end, so it refuses.
-static int smith_lint_fix(int count, char **args, const char *self) {
+int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE
     (void)count;
     (void)args;
@@ -390,7 +394,7 @@ static bool smith_fmt_ignored(const char *file) {
     return ignored;
 }
 
-static int smith_fmt_front(int *count, char **args, bool *only) {
+int smith_fmt_front(int *count, char **args, bool *only) {
     static const char *taken[smith_front_args_max];
     size_t found = 0;
     bool write = true;

@@ -1,6 +1,10 @@
 // What smith does differently on macOS, one function each; runtime/platform_linux.c has the same functions for Linux
 // and knowledge/platform-layer.md the table of what differs. smith.c includes exactly one of the two, after
 // smith_die, and the files it includes after that (the executor, the symbolizer, explain) call these by name.
+#include "core.h"
+#include "mcp_unit.h"
+#include "platform_linux.h"
+
 #include <compression.h>
 #include <libproc.h>
 #include <mach-o/dyld.h>

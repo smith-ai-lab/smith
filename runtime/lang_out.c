@@ -1,7 +1,18 @@
 // The lowering's output: what goes to the host, to the generated header and to the dump; the lookahead; errors.
 // Included by runtime/lang.c.
 
-[[gnu::format(printf, 4, 5)]] static void smith_lang_error(SmithLang *lang, const SmithHost *host, uint32_t location,
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_lex.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_private.h"
+#include "lang_trivia.h"
+#include "mcp_unit.h"
+
+[[gnu::format(printf, 4, 5)]] void smith_lang_error(SmithLang *lang, const SmithHost *host, uint32_t location,
                                                            const char *format, ...) {
     char message[smith_lang_message_max];
     va_list arguments;
@@ -13,14 +24,14 @@
 }
 
 // A table of the lowering is full: the first one is kept, and smith_lang_feed reports it with its name and size.
-static void smith_lang_limit(SmithLang *lang, const char *table, size_t size) {
+void smith_lang_limit(SmithLang *lang, const char *table, size_t size) {
     if (lang->limit[0] != 0) return;
     snprintf(lang->limit, sizeof lang->limit, "the lowering's table of %s holds %zu and is full", table, size);
 }
 
 // A note for the error that is reported next at `error_location`, at `location` (0: no place, the note stands alone).
 // A host without notes says nothing of them: the error's own text stands.
-[[gnu::format(printf, 4, 5)]] static void smith_lang_note(const SmithHost *host, uint32_t error_location,
+[[gnu::format(printf, 4, 5)]] void smith_lang_note(const SmithHost *host, uint32_t error_location,
                                                           uint32_t location, const char *format, ...) {
     if (host->note == nullptr || location == UINT32_MAX) return;
     char message[smith_lang_message_max];
@@ -31,13 +42,13 @@ static void smith_lang_limit(SmithLang *lang, const char *table, size_t size) {
     host->note(host->context, error_location, location, message);
 }
 
-static bool smith_lang_word_char(char c) {
+bool smith_lang_word_char(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
 }
 
 // Writes a token in the layout of the source: a new line where it began one, a space where it had one.
 // Returns false, writing nothing, when the text does not fit: the caller sets `lang->broken`, which says so.
-static bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
+bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
                            bool line_start, bool space) {
     size_t separator = *used > 0 && (line_start || space) ? 1 : 0;
     if (*used + separator + length + 2 > capacity) return false;
@@ -50,40 +61,20 @@ static bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const ch
 // ---- Tokens kept for a later time: a generic's, and the call being read
 // ---------------------------------------------------
 
-// A pool of tokens with their text. `smith_lang_gt` is a stack: the tokens of the generics, which stay for the whole
-// file, and above them the calls being read, which are popped when they have been written. `smith_lang_it` only grows:
-// the types the instances were asked for.
-typedef struct {
-    SmithLangGenToken *tokens;
-    char *text;
-    uint32_t count;
-    uint32_t text_used;
-    uint32_t capacity;
-    uint32_t text_capacity;
-    uint32_t keep; // smith_lang_it only: what an instance's types hold (a call typed inside another's arguments)
-    uint32_t keep_text;
-} SmithLangPool;
 
-static SmithLangGenToken smith_lang_gt_tokens[smith_lang_gt_max];
-static char smith_lang_gt_chars[smith_lang_gt_text_max];
-static SmithLangGenToken smith_lang_it_tokens[smith_lang_it_max];
-static char smith_lang_it_chars[smith_lang_it_text_max];
-static SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,    0, 0,
+SmithLangGenToken smith_lang_gt_tokens[smith_lang_gt_max];
+char smith_lang_gt_chars[smith_lang_gt_text_max];
+SmithLangGenToken smith_lang_it_tokens[smith_lang_it_max];
+char smith_lang_it_chars[smith_lang_it_text_max];
+SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,    0, 0,
                                       smith_lang_gt_max,    smith_lang_gt_text_max, 0, 0};
-static SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,    0, 0,
+SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,    0, 0,
                                       smith_lang_it_max,    smith_lang_it_text_max, 0, 0};
 
-constexpr unsigned smith_lang_gen_flag_line_start = 1U;
-constexpr unsigned smith_lang_gen_flag_space = 2U;
-constexpr unsigned smith_lang_gen_flag_expand = 4U;
 constexpr unsigned smith_lang_gen_flag_name = 8U;
-constexpr unsigned smith_lang_gen_flag_value = 16U; // an `auto` parameter's name in the result type's `typeof(...)`
-constexpr unsigned smith_lang_gen_flag_slice = 32U; // `smith_array_T_n`: the tag of a slice of the type parameter T
-constexpr unsigned smith_lang_gen_flag_made =
-    64U; // a captured token the lowering made: written again, still no source's
 
 // Adds a token, with its text; the index it got, or UINT32_MAX when the pool is full.
-static uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token, const char *text, size_t length) {
+uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token, const char *text, size_t length) {
     if (pool->count >= pool->capacity || pool->text_used + length + 1 > pool->text_capacity) return UINT32_MAX;
     memcpy(pool->text + pool->text_used, text, length);
     pool->text[pool->text_used + length] = 0;
@@ -94,11 +85,11 @@ static uint32_t smith_lang_pool_add(SmithLangPool *pool, SmithLangGenToken token
     return pool->count++;
 }
 
-static const char *smith_lang_pool_text(const SmithLangPool *pool, const SmithLangGenToken *token) {
+const char *smith_lang_pool_text(const SmithLangPool *pool, const SmithLangGenToken *token) {
     return pool->text + token->text;
 }
 
-static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
+SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
     SmithLangGenToken kept = {};
     kept.kind = (uint8_t)token->kind;
     kept.flags =
@@ -111,7 +102,7 @@ static SmithLangGenToken smith_lang_gt_from(const SmithToken *token) {
 }
 
 // The token back as the lowering writes it: not from the source (the parser has no token of it).
-static SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLangGenToken *kept) {
+SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLangGenToken *kept) {
     SmithToken token = {};
     token.kind = (SmithTokenKind)kept->kind;
     token.handle = smith_token_no_handle;
@@ -124,15 +115,12 @@ static SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLang
     return token;
 }
 
-static bool smith_lang_capturing(const SmithLang *lang) {
+bool smith_lang_capturing(const SmithLang *lang) {
     return lang->recording || lang->cap_frames > 0;
 }
 
-static void smith_lang_capture_mark(SmithLang *lang, uint32_t index);
-static void smith_lang_capture_fold(SmithLang *lang);
 
 // runtime/lang_generic.c: the token is part of an exported generic's record
-static void smith_lang_generic_note_capture(SmithLang *lang, const SmithToken *token);
 
 // A token that would go to the parser is kept instead.
 static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
@@ -149,11 +137,10 @@ static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
 }
 
 // runtime/lang_lex.c: the next directive that `smith cc --smith-lower` keeps and that comes before `before`
-static bool smith_raw_take_directive(uint32_t before, const char **text, size_t *length);
 
 // Writes the directives before `before` (a place in the source) each on a line of its own, as written. Only the plain
 // lexer offers any; a compiler's run has preprocessed them.
-static void smith_lang_dump_directives(SmithLang *lang, uint32_t before) {
+void smith_lang_dump_directives(SmithLang *lang, uint32_t before) {
     const char *text = nullptr;
     size_t length = 0;
     for (size_t guard = 0; guard < smith_lang_dump_max && smith_raw_take_directive(before, &text, &length); guard++) {
@@ -186,9 +173,6 @@ static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
 }
 
 // runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset
-static size_t smith_lang_line_of(uint32_t offset);
-static size_t smith_lang_column_of(uint32_t offset);
-static bool smith_lang_lines_known(void);
 
 // Writes a token of the header body on the line the source has it on, a space after the token before where the source
 // had one, and a name where the source has it on its line (spaces before it, as far as the text before allows), so
@@ -216,12 +200,10 @@ static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, con
     lang->aligned_column = base + gap + length;
 }
 
-static void smith_lang_trivia_to(SmithLang *lang, uint32_t location);
 // runtime/lang_trivia.c: an exported declaration uses a name written `x::name`
-static void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name, size_t length, bool tag);
 
 // Whether the last word of `text` is struct, union or enum: the name that follows it is a tag.
-static bool smith_lang_tag_before(const char *text, size_t used) {
+bool smith_lang_tag_before(const char *text, size_t used) {
     while (used > 0 && (text[used - 1] == ' ' || text[used - 1] == '\n' || text[used - 1] == '\t'))
         used -= 1;
     size_t end = used;
@@ -235,24 +217,6 @@ static bool smith_lang_tag_before(const char *text, size_t used) {
 }
 
 // runtime/lang_private.c
-static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token);
-static void smith_lang_priv_begin(SmithLang *lang);
-static void smith_lang_priv_end(SmithLang *lang);
-static void smith_lang_priv_abandon(SmithLang *lang);
-static void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked);
-static void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
-                                 size_t cname_length);
-static void smith_lang_priv_resolve(SmithLang *lang);
-static size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, size_t used);
-static size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity, size_t used);
-static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used, bool c_linkage);
-static size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
-static size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capacity, size_t used);
-static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,
-                                   size_t prefix_length);
-static bool smith_lang_is_hidden(const SmithLang *lang, const char *lowered, size_t length);
-static void smith_lang_linked_read(SmithLang *lang, const SmithHost *host);
-static bool smith_lang_is_linked(const SmithLang *lang, const char *name, size_t length);
 
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
     if (lang->private_active) { // a private declaration the header pass keeps, for the instance section
@@ -277,7 +241,7 @@ static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
         lang->broken = true;
 }
 
-static void smith_lang_flush_kept(SmithLang *lang, const SmithHost *host) {
+void smith_lang_flush_kept(SmithLang *lang, const SmithHost *host) {
     if (!lang->pending_kept_set) return;
     lang->pending_kept_set = false;
     host->emit(host->context, &lang->pending_kept);
@@ -289,7 +253,7 @@ static void smith_lang_apply_carry(SmithLang *lang, SmithToken *token) {
 }
 
 // A token the lowering made or changed: to the parser, the dump and, inside an exported declaration, the header.
-static void smith_lang_emit(SmithLang *lang, const SmithHost *host, SmithToken token) {
+void smith_lang_emit(SmithLang *lang, const SmithHost *host, SmithToken token) {
     token.synthetic = token.synthetic || lang->emit_synthetic;
     token.copy = token.copy || lang->emit_synthetic;
     smith_lang_apply_carry(lang, &token);
@@ -305,7 +269,7 @@ static void smith_lang_emit(SmithLang *lang, const SmithHost *host, SmithToken t
     lang->changed = true;
 }
 
-static void smith_lang_emit_code(SmithLang *lang, const SmithHost *host, SmithToken token) {
+void smith_lang_emit_code(SmithLang *lang, const SmithHost *host, SmithToken token) {
     token.synthetic = token.synthetic || lang->emit_synthetic;
     token.copy = token.copy || lang->emit_synthetic;
     smith_lang_apply_carry(lang, &token);
@@ -320,7 +284,7 @@ static void smith_lang_emit_code(SmithLang *lang, const SmithHost *host, SmithTo
     lang->changed = true;
 }
 
-static void smith_lang_emit_header(SmithLang *lang, SmithToken token) {
+void smith_lang_emit_header(SmithLang *lang, SmithToken token) {
     bool active = lang->export_active;
     lang->export_active = true;
     smith_lang_header_token(lang, &token);
@@ -329,7 +293,7 @@ static void smith_lang_emit_header(SmithLang *lang, SmithToken token) {
 
 // A token that goes through as it came. If it is the only one of the call the host is not even told, since it need
 // not replace it.
-static void smith_lang_emit_kept(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_emit_kept(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithToken copy = *token;
     smith_lang_apply_carry(lang, &copy);
     if (smith_lang_capturing(lang)) {
@@ -351,7 +315,7 @@ static void smith_lang_emit_kept(SmithLang *lang, const SmithHost *host, const S
     lang->changed = true;
 }
 
-static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like) {
+SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like) {
     SmithToken made = {};
     made.kind = kind;
     made.line_start = like->line_start;
@@ -367,7 +331,7 @@ static SmithToken smith_lang_synth(SmithTokenKind kind, const char *text, size_t
 }
 
 // The `static` the lowering writes before a private declaration: it has no token of its own in the source.
-static SmithToken smith_lang_static_keyword(const SmithToken *like) {
+SmithToken smith_lang_static_keyword(const SmithToken *like) {
     SmithToken keyword = smith_lang_synth(SmithTokenKind_Identifier, "static", 6, like);
     keyword.synthetic = true;
     return keyword;
@@ -377,7 +341,7 @@ static SmithToken smith_lang_static_keyword(const SmithToken *like) {
 
 // The token `index` places after the one being processed, read from the host if it has not been yet. `unexpanded` is
 // for the name after `c.`, which must reach the stream as written so that a macro there can be expanded then.
-static const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host, size_t index, bool unexpanded) {
+const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host, size_t index, bool unexpanded) {
     SMITH_ASSERT(index < smith_lang_queue_max);
     while (lang->queue_count <= index) { // bounded by the index
         size_t slot = (lang->queue_head + lang->queue_count) % smith_lang_queue_max;
@@ -387,7 +351,6 @@ static const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host,
     return &lang->queue[(lang->queue_head + index) % smith_lang_queue_max];
 }
 
-static void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
 // The host keeps a capitalized type name after `->` as written (a member is not a type), so the name that starts a
 // lambda's return type, `[](...) -> Bool`, is read here: after `) ->` it is the lowercase type (issue #1322).
@@ -406,7 +369,7 @@ static void smith_lang_take_arrow(SmithLang *lang, SmithToken *token) {
     }
 }
 
-static SmithToken smith_lang_take(SmithLang *lang, const SmithHost *host) {
+SmithToken smith_lang_take(SmithLang *lang, const SmithHost *host) {
     smith_lang_peek(lang, host, 0, false);
     SmithToken token = lang->queue[lang->queue_head];
     smith_lang_take_arrow(lang, &token);
@@ -419,7 +382,7 @@ static SmithToken smith_lang_take(SmithLang *lang, const SmithHost *host) {
 
 // ---- Text -----------------------------------------------------------------------------------------------------------
 
-static SmithLangText smith_lang_scratch_store(SmithLang *lang, const char *text, size_t length) {
+SmithLangText smith_lang_scratch_store(SmithLang *lang, const char *text, size_t length) {
     if (lang->scratch_used + length + 1 > smith_lang_scratch_max) {
         lang->broken = true;
         return (SmithLangText){0, 0};
@@ -431,14 +394,13 @@ static SmithLangText smith_lang_scratch_store(SmithLang *lang, const char *text,
     return stored;
 }
 
-static const char *smith_lang_scratch_str(SmithLangText text) {
+const char *smith_lang_scratch_str(SmithLangText text) {
     return smith_lang_scratch + text.offset;
 }
 
-static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, size_t length);
 
 // The module's prefix and a name, in lang->tmp; or the C name chosen for it, if it has one.
-static const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length) {
+const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length) {
     if (lang->c_name_count > 0) {
         SmithLangName *known = smith_lang_name_find(lang, name, length);
         if (known != nullptr && known->c_name.length > 0 && known->c_name.length < sizeof lang->tmp) {

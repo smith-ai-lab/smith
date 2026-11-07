@@ -15,6 +15,8 @@
 // The download is smith's own HTTPS client (<smith/http.h> on io.net), which this file includes with the libraries it
 // needs, so whoever includes this file needs nothing else. It finds them in the layout of the project's .smith/
 // (lib/ and internal/, written by `smith build`) or of smith's own repository (../lib/).
+#include "package.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -50,22 +52,9 @@
 #include "../lib/trace.c"
 #endif
 
-constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
-constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the terminator
-constexpr size_t smith_package_error_size = 2048;
 constexpr size_t smith_package_read_size = 65536;
 
-// The one pruning rule of both caches, in seconds. clang gets them as -fmodules-prune-interval and
-// -fmodules-prune-after; smith applies them to packages itself.
-constexpr int smith_cache_prune_interval = 604800; // checked at most once a week (7 days)
-constexpr int smith_cache_prune_after = 2678400;   // an entry unused for 31 days is removed
 
-typedef struct {
-    uint32_t state[8];
-    uint64_t bytes;
-    uint8_t block[64];
-    size_t used;
-} SmithSha256;
 
 static constexpr uint32_t smith_sha256_k[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -82,7 +71,7 @@ static uint32_t smith_sha256_rotate(uint32_t value, unsigned count) {
     return (value >> count) | (value << (32U - count));
 }
 
-static void smith_sha256_init(SmithSha256 *sha) {
+void smith_sha256_init(SmithSha256 *sha) {
     static const uint32_t start[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                                       0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
     memcpy(sha->state, start, sizeof start);
@@ -118,7 +107,7 @@ static void smith_sha256_block(SmithSha256 *sha, const uint8_t *block) {
         sha->state[i] += v[i];
 }
 
-static void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t size) {
+void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t size) {
     SMITH_ASSERT(data != nullptr || size == 0);
     sha->bytes += size;
     for (size_t at = 0; at < size;) {
@@ -135,7 +124,7 @@ static void smith_sha256_update(SmithSha256 *sha, const uint8_t *data, size_t si
 }
 
 // The digest as 64 lowercase hex digits and a terminator.
-static void smith_sha256_final(SmithSha256 *sha, char hex[smith_sha256_hex_size]) {
+void smith_sha256_final(SmithSha256 *sha, char hex[smith_sha256_hex_size]) {
     uint64_t bits = sha->bytes * 8U;
     uint8_t pad[72] = {0x80};
     size_t zeros = (sha->used < 56 ? 56 : 120) - sha->used; // up to 56 bytes into a block, then the length
@@ -152,7 +141,7 @@ static void smith_sha256_final(SmithSha256 *sha, char hex[smith_sha256_hex_size]
 }
 
 // The SHA-256 of a file's bytes. False when it cannot be read.
-static bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
+bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return false;
     static uint8_t buffer[smith_package_read_size];
@@ -171,10 +160,6 @@ static bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size])
     return ok;
 }
 
-typedef struct {
-    char text[smith_package_error_size];
-    bool wrong_hash; // the archive's bytes are not the hash the caller named (the build library's PackageKind Hash)
-} SmithPackageFault;
 
 [[gnu::format(printf, 2, 3)]] static bool smith_package_fail(SmithPackageFault *error, const char *format, ...) {
     va_list args;
@@ -186,13 +171,13 @@ typedef struct {
     return false;
 }
 
-static bool smith_package_is_folder(const char *path) {
+bool smith_package_is_folder(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
 // mkdir -p. False when a part cannot be made.
-static bool smith_package_make_folders(const char *path) {
+bool smith_package_make_folders(const char *path) {
     char partial[PATH_MAX];
     int written = snprintf(partial, sizeof partial, "%s", path);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof partial);
@@ -213,7 +198,7 @@ static int smith_package_remove_entry(const char *path, const struct stat *info,
 }
 
 // rm -rf, best effort: a path that is not there is fine.
-static void smith_package_remove(const char *path) {
+void smith_package_remove(const char *path) {
     struct stat info;
     if (lstat(path, &info) != 0) return;
     if (nftw(path, smith_package_remove_entry, 64, FTW_DEPTH | FTW_PHYS) != 0) remove(path);
@@ -236,14 +221,8 @@ static bool smith_package_download(const char *url, const char *destination, Smi
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
 
-typedef enum {
-    SmithCache_Modules,
-    SmithCache_Packages,
-    SmithCache_Lint,
-    SmithCache_Steps,
-} SmithCacheKind;
 
-static const char *smith_cache_name(SmithCacheKind kind) {
+const char *smith_cache_name(SmithCacheKind kind) {
     return kind == SmithCache_Modules    ? "modules"
            : kind == SmithCache_Packages ? "packages"
            : kind == SmithCache_Steps    ? "steps"
@@ -257,10 +236,17 @@ static struct {
     const char *xdg;
     const char *home;
 } smith_core_environment;
+
+// Sets (or, with `given` false, clears) those two variables; runtime/cache.c calls it around a `smith cache`.
+void smith_core_package_environment(bool given, const char *xdg, const char *home) {
+    smith_core_environment.given = given;
+    smith_core_environment.xdg = xdg;
+    smith_core_environment.home = home;
+}
 #endif
 
 // $XDG_CACHE_HOME/smith, or ~/.cache/smith: the folder of every smith cache.
-static bool smith_cache_base(char *out, SmithPackageFault *error) {
+bool smith_cache_base(char *out, SmithPackageFault *error) {
     const char *xdg = getenv("XDG_CACHE_HOME");
     const char *home = getenv("HOME");
 #ifdef SMITH_CORE
@@ -283,7 +269,7 @@ static bool smith_cache_base(char *out, SmithPackageFault *error) {
 }
 
 // The folder of one cache: <base>/modules or <base>/packages.
-static bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageFault *error) {
+bool smith_cache_folder(SmithCacheKind kind, char *out, SmithPackageFault *error) {
     char base[PATH_MAX];
     if (!smith_cache_base(base, error)) return false;
     int written = snprintf(out, PATH_MAX, "%s/%s", base, smith_cache_name(kind));
@@ -296,7 +282,7 @@ static bool smith_package_root(char *out, SmithPackageFault *error) {
 }
 
 // Creates the file or sets its times to now. Best effort: a cache folder that cannot be written is not an error here.
-static bool smith_cache_touch(const char *path) {
+bool smith_cache_touch(const char *path) {
     int fd = open(path, O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
     if (fd < 0) return false;
     bool ok = futimens(fd, nullptr) == 0;
@@ -304,12 +290,12 @@ static bool smith_cache_touch(const char *path) {
     return ok;
 }
 
-static bool smith_cache_join(char *out, const char *folder, const char *name, const char *suffix) {
+bool smith_cache_join(char *out, const char *folder, const char *name, const char *suffix) {
     int written = snprintf(out, PATH_MAX, "%s/%s%s", folder, name, suffix);
     return written > 0 && written < PATH_MAX;
 }
 
-static bool smith_cache_older(const struct stat *info, time_t now, int seconds) {
+bool smith_cache_older(const struct stat *info, time_t now, int seconds) {
     return now - info->st_mtime > seconds;
 }
 
@@ -320,17 +306,12 @@ static bool smith_cache_older(const struct stat *info, time_t now, int seconds) 
 // cutoff is the age from which everything goes so that what is left fits.
 constexpr uint64_t smith_cache_max_default = (uint64_t)10 * 1000 * 1000 * 1000;
 constexpr time_t smith_cache_age_step = 1800;
-constexpr size_t smith_cache_age_steps = 2048; // 42 days; the older ones share the last step
 constexpr int smith_cache_walk_files = 64;
 
-typedef struct {
-    uint64_t bytes[smith_cache_age_steps];
-    uint64_t total;
-} SmithCacheAges;
 
-static SmithCacheAges smith_cache_ages;
+SmithCacheAges smith_cache_ages;
 static uint64_t smith_cache_walk_bytes;
-static uint64_t smith_cache_walk_regular; // the regular files under the path
+uint64_t smith_cache_walk_regular; // the regular files under the path
 static time_t smith_cache_walk_newest;
 
 static int smith_cache_walk_visit(const char *path, const struct stat *info, int type, struct FTW *where) {
@@ -344,7 +325,7 @@ static int smith_cache_walk_visit(const char *path, const struct stat *info, int
 }
 
 // The disk space of everything under path (itself included) and the newest modification time in it.
-static void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newest) {
+void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newest) {
     smith_cache_walk_bytes = 0;
     smith_cache_walk_regular = 0;
     smith_cache_walk_newest = 0;
@@ -354,7 +335,7 @@ static void smith_cache_measure(const char *path, uint64_t *bytes, time_t *newes
 }
 
 // The cap of one cache root, in bytes.
-static uint64_t smith_cache_limit(void) {
+uint64_t smith_cache_limit(void) {
     const char *text = getenv("SMITH_CACHE_MAX");
     if (text == nullptr || *text == '\0') return smith_cache_max_default;
     char *end = nullptr;
@@ -378,11 +359,11 @@ static uint64_t smith_cache_limit(void) {
     }
 }
 
-static void smith_cache_ages_reset(void) {
+void smith_cache_ages_reset(void) {
     memset(&smith_cache_ages, 0, sizeof smith_cache_ages);
 }
 
-static void smith_cache_ages_add(uint64_t bytes, time_t used, time_t now) {
+void smith_cache_ages_add(uint64_t bytes, time_t used, time_t now) {
     time_t age = now > used ? now - used : 0;
     size_t step = (size_t)(age / smith_cache_age_step);
     if (step >= smith_cache_age_steps) step = smith_cache_age_steps - 1;
@@ -392,7 +373,7 @@ static void smith_cache_ages_add(uint64_t bytes, time_t used, time_t now) {
 
 // The age in seconds from which the entries go (an entry at least that old) so that `excess` bytes are shed; -1 when
 // nothing needs to go. When even everything is not enough, 0: every entry that may go.
-static long smith_cache_cutoff(uint64_t excess) {
+long smith_cache_cutoff(uint64_t excess) {
     if (excess == 0) return -1;
     uint64_t shed = 0;
     for (size_t step = smith_cache_age_steps; step-- > 0;) {
@@ -403,7 +384,7 @@ static long smith_cache_cutoff(uint64_t excess) {
 }
 
 // Whether an entry last used at `used` goes at this cutoff.
-static bool smith_cache_goes(time_t used, time_t now, long cutoff) {
+bool smith_cache_goes(time_t used, time_t now, long cutoff) {
     return cutoff >= 0 && (long)(now > used ? now - used : 0) >= cutoff;
 }
 
@@ -666,7 +647,7 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
 // "sha256:<hex>" a build.c names) the download must match it, and a package already cached is not fetched again. With
 // nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
 // `offline` turns a missing package into an error that names the URL.
-static bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
+bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
                                  char hash[smith_package_hash_size], SmithPackageFault *error) {
     SmithPackageTemps temps;
     if (!smith_package_root(temps.packages, error)) return false;

@@ -4,6 +4,31 @@
 
 // The name of an enumeration constant, or of a declarator after an aggregate's closing brace: names the module
 // introduces. Returns false when this identifier is neither.
+#include "core.h"
+#include "lang.h"
+#include "lang_body.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_declare.h"
+#include "lang_enum.h"
+#include "lang_generic.h"
+#include "lang_head.h"
+#include "lang_import.h"
+#include "lang_lambda.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_private.h"
+#include "lang_rfor.h"
+#include "lang_slice.h"
+#include "lang_sparse.h"
+#include "lang_stream.h"
+#include "lang_target.h"
+#include "lang_trivia.h"
+#include "lang_try.h"
+#include "lang_tuple.h"
+#include "lang_type.h"
+#include "lang_unused.h"
+
 static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!lang->is_module || lang->in_function || lang->paren_depth != 0) return false;
     SmithLangNameKind kind = SmithLangName_Value;
@@ -30,13 +55,6 @@ static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, c
 }
 
 // runtime/lang_generic.c
-static void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-static void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host);
-static bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                            SmithLangWord word);
-static bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                             SmithLangWord word);
-static void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
 static void smith_lang_locals_write(SmithLang *lang, const SmithHost *host);
 
@@ -100,12 +118,12 @@ static void smith_lang_stream_identifier(SmithLang *lang, const SmithHost *host,
     smith_lang_track(lang, token, lowered.is_type);
 }
 
-static void smith_lang_stream_open(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_stream_open(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     smith_lang_open_state(lang, host, token);
     smith_lang_emit_kept(lang, host, token);
 }
 
-static void smith_lang_stream_close(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_stream_close(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     smith_lang_emit_kept(lang, host, token);
     smith_lang_close_state(lang);
 }
@@ -139,7 +157,7 @@ static void smith_lang_stream(SmithLang *lang, const SmithHost *host, const Smit
 // ---- The start of a declaration
 // ---------------------------------------------------------------------------------------------
 
-static void smith_lang_reset_declaration(SmithLang *lang) {
+void smith_lang_reset_declaration(SmithLang *lang) {
     lang->decl = (SmithLangDecl){};
     lang->decl.exported = lang->pending_export;
     lang->decl.checking = lang->pending_export;
@@ -675,7 +693,7 @@ static void smith_lang_start(SmithLang *lang, const SmithHost *host, const Smith
 // ---- The header, the end of the file and the entry points
 // ---------------------------------------------------------------------
 
-static size_t smith_lang_append(char *buffer, size_t capacity, size_t used, const char *format, ...) {
+size_t smith_lang_append(char *buffer, size_t capacity, size_t used, const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     int written = vsnprintf(buffer + used, capacity - used, format, arguments);
@@ -686,7 +704,7 @@ static size_t smith_lang_append(char *buffer, size_t capacity, size_t used, cons
 // The question to the compiler, answered by the program that runs the lowering when it can (smith.c, the header pass
 // of a smith with clang inside): for each C name an export uses (lang->c_uses), the import that declared it as the
 // module spells it (`<stdio.h>`), or null. False when it cannot be asked or the imports did not compile.
-static bool (*smith_lang_import_asker)(const SmithLang *lang, const char **spellings) = nullptr;
+bool (*smith_lang_import_asker)(const SmithLang *lang, const char **spellings) = nullptr;
 
 // ---- What the header includes
 //
@@ -861,7 +879,7 @@ static void smith_lang_relative_header(const char *from, const char *to, char *p
 
 // The `#include` lines a module's interface needs. For the header file, a module is included relative to the header
 // itself; for the preface an importer reads an interface in memory by, from the include path.
-static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t capacity, bool relative) {
+size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t capacity, bool relative) {
     size_t used = smith_lang_append(out, capacity, 0, "#include <stddef.h>\n#include <stdint.h>\n");
     for (size_t i = 0; i < lang->imports_count; i++) { // bounded by the table: the modules an export names
         const char *module = smith_lang_str(lang->smith_imports[i]);
@@ -884,7 +902,7 @@ static size_t smith_lang_assemble_includes(SmithLang *lang, char *out, size_t ca
 
 // What an importer reads of a module without reading its declarations: the module's name, the modules it imports
 // (which is how a cycle is found) and the names it exports (which is how they are written back), as comment lines.
-static size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t capacity) {
+size_t smith_lang_assemble_meta(const SmithLang *lang, char *out, size_t capacity) {
     size_t used = smith_lang_append(out, capacity, 0, "// smith-module: %s\n// smith-imports:", lang->module);
     for (size_t i = 0; i < lang->imports_count; i++) { // bounded by the table
         used = smith_lang_append(out, capacity, used, " %s", smith_lang_str(lang->smith_imports[i]));
@@ -941,7 +959,7 @@ static void smith_lang_assemble_header(SmithLang *lang, const char *main_file) {
 // The interface an importer reads when it finds the module by its source (runtime/lang_lex.c): the declarations on
 // the lines the module has them (the first line is `#pragma once`, or `#ifndef` of the guard), with no other line. The
 // includes it needs and the comment lines are the host's to use, apart from it.
-static void smith_lang_assemble_aligned(SmithLang *lang) {
+void smith_lang_assemble_aligned(SmithLang *lang) {
     // An exported inline function whose `if constexpr` asks the target needs the facts defined above its #if lines.
     // They take the blank lines before the first declaration (the comments and the imports of the module's top), so the
     // declarations stay on their lines.
@@ -970,7 +988,6 @@ static void smith_lang_write_file(const char *path, const char *bytes, size_t le
     fclose(file);
 }
 
-static void smith_lang_body_write(SmithLang *lang); // runtime/lang_body.c
 
 void smith_lang_finish(SmithLang *lang) {
     if (lang->finished) return;
@@ -1157,7 +1174,7 @@ static void smith_lang_ask(SmithLang *lang, const SmithHost *host) {
     (void)lang;
 }
 
-static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->state == SmithLangState_Head) {
         smith_lang_resolve(lang, host, token);
         smith_lang_emit_head(lang, host, true, false);

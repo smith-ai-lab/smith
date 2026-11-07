@@ -13,19 +13,22 @@
 // A statement expression keeps the `try` where it is written, so nothing before it has to be rewritten.
 // A generic's body is recorded as written; smith_lang_try_replay (runtime/lang_enum.c) writes the same for an instance.
 
-static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host);
 
-static constexpr char smith_lang_try_hint[] =
-    "`try` returns the failure to the caller as it is: the function must return the same kind as the call (a `result` "
-    "with the same error type, or an `option`); to change the error, write it out: `if (r == .error) return {.error = "
-    "...};`";
 
-typedef enum { SmithLangTryKind_None, SmithLangTryKind_Result, SmithLangTryKind_Option } SmithLangTryKind;
+
+#include "core.h"
+#include "lang.h"
+#include "lang_enum.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_sparse.h"
+#include "lang_try.h"
+#include "lang_tuple.h"
 
 typedef enum { SmithLangTryStep_Inside, SmithLangTryStep_Ends, SmithLangTryStep_Escapes } SmithLangTryStep;
 
 // The kind of the function being parsed, from its return type as the compiler prints it.
-static SmithLangTryKind smith_lang_try_kind(const char *type) {
+SmithLangTryKind smith_lang_try_kind(const char *type) {
     if (strncmp(type, "struct smith_enum_result_", 25) == 0) return SmithLangTryKind_Result;
     if (strncmp(type, "struct smith_enum_option_", 25) == 0) return SmithLangTryKind_Option;
     return SmithLangTryKind_None;
@@ -307,7 +310,7 @@ static bool smith_lang_try_member(SmithLang *lang, const SmithHost *host) {
 
 // What `try`, `errdefer` and a `return` after an `errdefer` do with a token of a module. True when the token is
 // consumed (its replacement is written).
-static bool smith_lang_try_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_try_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     SmithLangTry *tr = &lang->tr;
     if (token->foreign || !lang->is_module || host->previous == nullptr || host->return_type == nullptr ||
         smith_lang_capturing(lang)) {

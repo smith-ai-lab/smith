@@ -8,11 +8,18 @@
 // header (smith_lang_header_token), because an export's head is held and written later. Either way an entry is applied
 // once, in order, by the first call that reaches it.
 
+#include "core.h"
+#include "lang.h"
+#include "lang_lex.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_trivia.h"
+
 static void smith_lang_header_room_error(SmithLang *lang) {
     lang->broken = true;
 }
 
-static bool smith_lang_header_append(SmithLang *lang, const char *text, size_t length) {
+bool smith_lang_header_append(SmithLang *lang, const char *text, size_t length) {
     if (lang->header_used + length + 2 > smith_lang_header_max) {
         smith_lang_header_room_error(lang);
         return false;
@@ -37,7 +44,7 @@ static void smith_lang_header_separate(SmithLang *lang) {
 
 // A whole line of the header: a directive, or a comment above a declaration. In an interface read in memory the line is
 // the one the source has it on (so that a diagnostic points at the module), and a comment is not kept there.
-static void smith_lang_header_line(SmithLang *lang, const char *text, size_t length, uint32_t location) {
+void smith_lang_header_line(SmithLang *lang, const char *text, size_t length, uint32_t location) {
     if (lang->aligned) {
         size_t line = smith_lang_line_of(location);
         size_t newlines = line > lang->aligned_line ? line - lang->aligned_line : 0;
@@ -129,7 +136,7 @@ static void smith_lang_header_directive(SmithLang *lang, const SmithTrivia *entr
 }
 
 // The same, into the header's include lines.
-static void smith_lang_include_append(SmithLang *lang, const char *text, size_t length) {
+void smith_lang_include_append(SmithLang *lang, const char *text, size_t length) {
     if (lang->include_used + length + 2 > sizeof lang->include_body) {
         lang->broken = true;
         return;
@@ -232,7 +239,7 @@ static void smith_lang_cond_emit(SmithLang *lang) {
 // so that a module can choose between two spellings of a header. Whether the header keeps it is decided at the end
 // (smith_lang_resolve_imports): only an import that an exported declaration uses a name of reaches it. An `#include`
 // never does.
-static void smith_lang_add_include(SmithLang *lang, const char *text, size_t length, bool angled) {
+void smith_lang_add_include(SmithLang *lang, const char *text, size_t length, bool angled) {
     for (uint32_t i = 0; i < lang->cond_depth; i++) { // bounded by the table
         SmithLangCond *cond = &lang->conds[i];
         if (cond->inc_emitted || cond->transparent || cond->zero) continue;
@@ -256,7 +263,7 @@ static void smith_lang_add_include(SmithLang *lang, const char *text, size_t len
 // An exported declaration (an export's head, an exported inline function's body, an exported generic) uses a name
 // written through the binding `via` (1 + its index): `a::Name` of an imported module, which the header must include,
 // or `c::Name`, which it needs from one of the C headers imported (`struct c::Name` is a tag).
-static void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name, size_t length, bool tag) {
+void smith_lang_note_use(SmithLang *lang, uint16_t via, const char *name, size_t length, bool tag) {
     if (via == 0 || via > lang->bindings_count) return;
     SmithLangBinding *binding = &lang->bindings[via - 1];
     binding->in_header = true;
@@ -311,7 +318,7 @@ static void smith_lang_trivia_apply(SmithLang *lang, const SmithTrivia *entry) {
 }
 
 // Applies the entries before `location` that no call has applied yet.
-static void smith_lang_trivia_to(SmithLang *lang, uint32_t location) {
+void smith_lang_trivia_to(SmithLang *lang, uint32_t location) {
     const SmithTrivia *entry = lang->trivia_last != nullptr ? lang->trivia_last->next : lang->trivia_first;
     for (size_t guard = 0; entry != nullptr && entry->location < location && guard < ((size_t)1 << 24); guard++) {
         smith_lang_trivia_apply(lang, entry);
@@ -322,7 +329,7 @@ static void smith_lang_trivia_to(SmithLang *lang, uint32_t location) {
 
 // A token was taken: the entries before it are applied unless an export is being written (then its tokens do it as
 // they reach the header), and the comments just above it are kept in case it begins an export.
-static void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (lang->trivia_first == nullptr && lang->trivia_last == nullptr) {
         if (token->trivia == nullptr) return;
         lang->trivia_first = token->trivia;
@@ -342,7 +349,7 @@ static void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, cons
 }
 
 // The token taken last is `export` (or the attribute before it): the comments just above it are its doc comment.
-static void smith_lang_doc_capture(SmithLang *lang) {
+void smith_lang_doc_capture(SmithLang *lang) {
     if (lang->doc_pending || lang->doc_taken_to == nullptr) return;
     lang->doc_pending = true;
     lang->doc_export_from = lang->doc_taken_from;
@@ -350,7 +357,7 @@ static void smith_lang_doc_capture(SmithLang *lang) {
 }
 
 // An export begins: the conditionals around it, then its doc comment.
-static void smith_lang_trivia_export(SmithLang *lang) {
+void smith_lang_trivia_export(SmithLang *lang) {
     smith_lang_header_separate(lang);
     smith_lang_cond_emit(lang);
     if (lang->doc_pending) {
