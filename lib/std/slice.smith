@@ -47,7 +47,7 @@ export Bool ends_with(const auto xs[:], typeof(xs) suffix) {
 // The index of the first element equal to v, or `.none`.
 export Option(Usize) find(const auto xs[:], typeof(xs[0]) v) {
     for (Usize i = 0; i < countof(xs); i++) {
-        if (xs[i] == v) return {.some = i};
+        if (xs[i] == v) return i;
     }
     return .none;
 }
@@ -55,7 +55,7 @@ export Option(Usize) find(const auto xs[:], typeof(xs[0]) v) {
 // The index of the last element equal to v, or `.none`.
 export Option(Usize) find_last(const auto xs[:], typeof(xs[0]) v) {
     for (Usize i = countof(xs); i > 0; i--) {
-        if (xs[i - 1] == v) return {.some = i - 1};
+        if (xs[i - 1] == v) return i - 1;
     }
     return .none;
 }
@@ -130,7 +130,7 @@ export typeof((*xs)[0:0]) take_while(const auto (*xs)[:], constexpr auto pred) {
 // The index of the first element for which pred is true, or `.none`.
 export Option(Usize) find_if(const auto xs[:], constexpr auto pred) {
     for (Usize i = 0; i < countof(xs); i++) {
-        if (pred(xs[i])) return {.some = i};
+        if (pred(xs[i])) return i;
     }
     return .none;
 }
@@ -139,7 +139,7 @@ export Option(Usize) find_if(const auto xs[:], constexpr auto pred) {
 export Option(Usize) find_slice(const auto xs[:], typeof(xs) needle) {
     if (countof(needle) > countof(xs)) return .none;
     for (Usize i = 0; i + countof(needle) <= countof(xs); i++) {
-        if (equal(xs[i:i + countof(needle)], needle)) return {.some = i};
+        if (equal(xs[i:i + countof(needle)], needle)) return i;
     }
     return .none;
 }

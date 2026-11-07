@@ -38,10 +38,12 @@ static Bool same(Str a, Str b) {
 static Str stream_function(const types::Checked *r, const ast::Expr *e) {
     if (e->kind != .call) return "";
     const ast::Expr *callee = e->kind.call.callee;
-    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1) return "";
-    Str name = callee->kind.name.path.segments[0].text;
-    if (types::lookup(&r->scopes, name) != nullptr) return "";
-    if (same(name, "range") || same(name, "enumerate") || same(name, "zip") || same(name, "refs")) return name;
+    if (callee->kind != .name) return "";
+    if (countof(callee->kind.name.path.segments) != 1) return "";
+    Str function = callee->kind.name.path.segments[0].text;
+    if (types::lookup(&r->scopes, function) != nullptr) return "";
+    if (same(function, "range") || same(function, "enumerate") || same(function, "zip") || same(function, "refs"))
+        return function;
     return "";
 }
 
@@ -69,16 +71,17 @@ static types::TypeRef built_in(types::Checked *r, const ast::Expr *e, types::Typ
 
 // An integer literal with no suffix, which takes its type from the other arguments.
 static Bool plain_integer(const ast::Expr *e) {
-    return e->kind == .integer && countof(e->kind.integer.suffix) == 0;
+    if (e->kind != .integer) return false;
+    return countof(e->kind.integer.suffix) == 0;
 }
 
-static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
-    if (!(call->kind == .call)) {
+static types::TypeRef range_element(types::Checked *r, const ast::Expr *site) {
+    if (site->kind != .call) {
         return nullptr;
     }
-    ast::ExprRef args[:] = call->kind.call.args;
+    ast::ExprRef args[:] = site->kind.call.args;
     if (countof(args) < 1 || countof(args) > 3) {
-        types::failf(r, call->span, "`range` takes a count, `range(n)`, or `range(a, b)`, or `range(a, b, step)`");
+        types::failf(r, site->span, "`range` takes a count, `range(n)`, or `range(a, b)`, or `range(a, b, step)`");
         return nullptr;
     }
     // An integer literal takes the type of the non-literal arguments; with only literals the type is `i32`.
@@ -91,7 +94,7 @@ static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
     }
     types::TypeRef first = types_expr::infer(r, args[base]);
     for (Usize i = 0; i < countof(args); i++) {
-        if (i != base) types_expr::check(r, args[i], first);
+        if (i != base) (void)types_expr::check(r, args[i], first);
     }
     if (first == r->table.invalid) return nullptr;
     if (first->kind != .integer) {
@@ -103,17 +106,17 @@ static types::TypeRef range_element(types::Checked *r, const ast::Expr *call) {
 }
 
 // The elements of each argument of `zip` or `enumerate`; true when every one is iterable.
-static Bool arguments_iterable(types::Checked *r, const ast::Expr *call, Str name) {
-    if (!(call->kind == .call)) {
+static Bool arguments_iterable(types::Checked *r, const ast::Expr *site, Str name) {
+    if (site->kind != .call) {
         return false;
     }
-    ast::ExprRef args[:] = call->kind.call.args;
+    ast::ExprRef args[:] = site->kind.call.args;
     if (same(name, "zip") && countof(args) < 2) {
-        types::failf(r, call->span, "`zip` takes at least two iterables; for one, iterate it directly");
+        types::failf(r, site->span, "`zip` takes at least two iterables; for one, iterate it directly");
         return false;
     }
     if (same(name, "enumerate") && countof(args) != 1) {
-        types::failf(r, call->span, "`enumerate` takes one iterable");
+        types::failf(r, site->span, "`enumerate` takes one iterable");
         return false;
     }
     Bool ok = true;
@@ -124,14 +127,21 @@ static Bool arguments_iterable(types::Checked *r, const ast::Expr *call, Str nam
     return ok;
 }
 
+// The one argument of a call, or null when `e` is not a call of one argument.
+static const ast::Expr *only_argument(const ast::Expr *e) {
+    if (e->kind != .call) return nullptr;
+    if (countof(e->kind.call.args) != 1) return nullptr;
+    return e->kind.call.args[0];
+}
+
 // The type that `for names in iterable` binds, or null when an error was reported. `is_tuple` is the pattern
 // `(i, x)`, which needs the tuple type (#1557).
 export types::TypeRef element_type(types::Checked *r, const ast::Expr *iterable, Bool is_tuple) {
     Str fn_name = stream_function(r, iterable);
-    if (is_tuple && same(fn_name, "enumerate") && iterable->kind == .call && countof(iterable->kind.call.args) == 1) {
+    if (is_tuple && same(fn_name, "enumerate")) {
+        const ast::Expr *inner = only_argument(iterable);
         // `for (i, x) in enumerate(xs)`: `i` is a `Usize` and `x` the element (the caller binds both, #2456).
-        const ast::Expr *inner = iterable->kind.call.args[0];
-        return built_in(r, inner, types_expr::infer(r, inner));
+        if (inner != nullptr) return built_in(r, inner, types_expr::infer(r, inner));
     }
     if (is_tuple) {
         types::failf(r, iterable->span,
@@ -141,13 +151,13 @@ export types::TypeRef element_type(types::Checked *r, const ast::Expr *iterable,
         if (countof(fn_name) > 0) {
             arguments_iterable(r, iterable, fn_name);
         } else {
-            types_expr::infer(r, iterable);
+            (void)types_expr::infer(r, iterable);
         }
         return nullptr;
     }
     if (same(fn_name, "range")) return range_element(r, iterable);
     if (same(fn_name, "refs")) {
-        if (!(iterable->kind == .call)) {
+        if (iterable->kind != .call) {
             return nullptr;
         }
         ast::ExprRef args[:] = iterable->kind.call.args;

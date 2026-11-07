@@ -402,13 +402,13 @@ export state::Status if_let_branch(state::Emitter *e, const state::ThenGeneral *
         state::ThenBlocks end = {.run = branch_end, .span = s->span};
         end.blocks[0] = end_block;
         state::push_then_blocks(e, end);
-        state::push_statement(e, else_branch);
+        state::push_branch(e, w, else_branch);
     }
     state::ThenGeneral after = {.run = after_then, .flag = has_else, .span = s->span};
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
     state::push_then_general(e, after);
-    state::push_statement(e, s->kind.if_let.then_branch);
+    state::push_branch(e, w, s->kind.if_let.then_branch);
     return state::success();
 }
 

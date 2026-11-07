@@ -197,9 +197,9 @@ static Place indexed(Pass *p, Place place, const ast::Expr *index) {
         return place;
     }
     if (index->kind == .name && countof(index->kind.name.path.segments) == 1) {
-        Str name = index->kind.name.path.segments[0].text;
-        if (affine_loops::plain_counter(&p->loops, name, place.text)) {
-            place.text = text_of(format::push(place.text, "[", name, "]"));
+        Str counter = index->kind.name.path.segments[0].text;
+        if (affine_loops::plain_counter(&p->loops, counter, place.text)) {
+            place.text = text_of(format::push(place.text, "[", counter, "]"));
             return place;
         }
     }
@@ -212,20 +212,21 @@ static Place place_of(Pass *p, const ast::Expr *e) {
     const ast::Expr *steps[8] = {};
     Usize count = 0;
     while (e != nullptr && count < place_steps_max) {
-        if (e->kind == .member && !e->kind.member.arrow) {
-            steps[count] = e;
-            e = e->kind.member.base;
-        } else if (e->kind == .index && has_elements(types::type_of(p->r, e->kind.index.base))) {
-            steps[count] = e;
-            e = e->kind.index.base;
+        const ast::Expr *at = e; // not reassigned, so that the fixer can bind its payloads
+        if (at->kind == .member && !at->kind.member.arrow) {
+            steps[count] = at;
+            e = at->kind.member.base;
+        } else if (at->kind == .index && has_elements(types::type_of(p->r, at->kind.index.base))) {
+            steps[count] = at;
+            e = at->kind.index.base;
         } else {
             break;
         }
         count += 1;
     }
-    if (e == nullptr || !(e->kind == .name) || countof(e->kind.name.path.segments) != 1) {
-        return (Place){};
-    }
+    if (e == nullptr) return (Place){};
+    if (e->kind != .name) return (Place){};
+    if (countof(e->kind.name.path.segments) != 1) return (Place){};
     Place place = {.text = e->kind.name.path.segments[0].text, .ok = true};
     while (count > 0) {
         count -= 1;
@@ -288,13 +289,14 @@ static void push_stmts(Pass *p, ast::StmtRef list[:]) {
 // Whether `s` ends the function or the loop pass: `return`, `break`, `continue`, `goto`, or a block that does.
 static Bool ends(const ast::Stmt *s) {
     while (s != nullptr) {
-        if (s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt || s->kind == .goto_stmt) {
+        const ast::Stmt *at = s; // not reassigned, so that the fixer can bind its payloads
+        if (at->kind == .return_stmt || at->kind == .break_stmt || at->kind == .continue_stmt ||
+            at->kind == .goto_stmt) {
             return true;
         }
-        if (!(s->kind == .block) || countof(s->kind.block.items) == 0) {
-            return false;
-        }
-        s = s->kind.block.items[countof(s->kind.block.items) - 1];
+        if (at->kind != .block) return false;
+        if (countof(at->kind.block.items) == 0) return false;
+        s = at->kind.block.items[countof(at->kind.block.items) - 1];
     }
     return false;
 }
@@ -336,7 +338,8 @@ static void next_in_group(Pass *p) {
     }
     Item alternative = g->alternatives[g->next];
     g->next += 1;
-    g->last_ends = ends(alternative.stmt);
+    const ast::Stmt *alternative_stmt = alternative.stmt;
+    g->last_ends = alternative_stmt != nullptr && ends(alternative_stmt);
     p->used = copy_of(&g->base);
     push_item(p, (Item){.step = next_alternative});
     push_item(p, alternative);
@@ -372,7 +375,7 @@ static void path_expression(Pass *p, const ast::Expr *e, Str path) {
 
 // `target = value`: the value is read, then the target holds a new value.
 static void assignment(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .assign)) {
+    if (e->kind != .assign) {
         return;
     }
     const ast::Expr *target = e->kind.assign.target;
@@ -388,7 +391,7 @@ static void assignment(Pass *p, const ast::Expr *e) {
 
 // The conditional expression `c ? a : b` and `a && b`, `a || b`: the later operands are alternatives.
 static void conditional(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .conditional)) {
+    if (e->kind != .conditional) {
         return;
     }
     push_item(p, (Item){.step = begin_branches, .expr = e});
@@ -399,11 +402,11 @@ static void expression(Pass *p, const ast::Expr *e);
 
 // A call: its callee and arguments in order, or the call a method call stands for.
 static void call(Pass *p, const ast::Expr *e) {
-    if (!(e->kind == .call)) {
+    if (e->kind != .call) {
         return;
     }
     const ast::Expr *method = types::method_of(p->r, e);
-    if (!(e->kind == .call)) {
+    if (e->kind != .call) {
         return;
     }
     // An array or a slice of affine values passed to a call is filled by it: its elements are fresh afterwards.
@@ -486,9 +489,11 @@ static void element(Pass *p, const ast::Expr *e) {
 }
 
 static void expression(Pass *p, const ast::Expr *e) {
+    Bool place_like = e->kind == .name;
+    if (e->kind == .member && !e->kind.member.arrow) place_like = true;
     if (e->kind == .index && has_elements(types::type_of(p->r, e->kind.index.base))) {
         element(p, e);
-    } else if (e->kind == .name || (e->kind == .member && !e->kind.member.arrow)) {
+    } else if (place_like) {
         Str path = path_of(p, e);
         if (countof(path) > 0) {
             path_expression(p, e, path);
@@ -530,45 +535,62 @@ static void branches_of_if(Pass *p, const ast::Stmt *then_branch, const ast::Stm
     start_group(p, list, count, else_branch == nullptr);
 }
 
-static void begin(Pass *p, Item item) {
-    const ast::Stmt *s = item.stmt;
-    const ast::Expr *e = item.expr;
-    if (s != nullptr && s->kind == .if_stmt) {
+// The groups a statement opens: the branches of an `if`, of an `if let`, the arms of a `match`. False for any other.
+static Bool begin_statement(Pass *p, const ast::Stmt *s) {
+    if (s->kind == .if_stmt) {
         branches_of_if(p, s->kind.if_stmt.then_branch, s->kind.if_stmt.else_branch);
-    } else if (s != nullptr && s->kind == .if_let) {
+        return true;
+    }
+    if (s->kind == .if_let) {
         branches_of_if(p, s->kind.if_let.then_branch, s->kind.if_let.else_branch);
-    } else if (s != nullptr && s->kind == .match_stmt) {
+        return true;
+    }
+    if (s->kind == .match_stmt) {
         Usize count = countof(s->kind.match_stmt.arms);
         Item list[:] = mem::alloc_slice(Item, count + 1);
         for (Usize i = 0; i < count; i++) {
             list[i] = (Item){.expr = s->kind.match_stmt.arms[i].value, .step = visit};
         }
         start_group(p, list, count, false);
-    } else if (e != nullptr && e->kind == .conditional) {
+        return true;
+    }
+    return false;
+}
+
+static void begin_expression(Pass *p, const ast::Expr *e) {
+    if (e->kind == .conditional) {
         Item list[:] = two(nullptr, nullptr);
         list[0].expr = e->kind.conditional.then_value;
         list[1].expr = e->kind.conditional.else_value;
         start_group(p, list, 2, false);
-    } else if (e != nullptr && e->kind == .binary) {
+    } else if (e->kind == .binary) {
         Item list[:] = two(nullptr, nullptr);
         list[0].expr = e->kind.binary.right;
         start_group(p, list, 1, true);
     }
 }
 
+static void begin(Pass *p, Item item) {
+    if (item.stmt == nullptr && item.expr == nullptr) return; // an item holds a statement or an expression, or neither
+    const ast::Stmt *stmt = item.stmt;
+    if (stmt != nullptr && begin_statement(p, stmt)) return;
+    const ast::Expr *expr = item.expr;
+    if (expr != nullptr) begin_expression(p, expr);
+}
+
 // Whether `e` is `range(countof(xs))`: the counter of a loop over it is one element of `xs` per turn. Gives the place
 // of `xs`, else an empty text.
 static Str counted_array(Pass *p, const ast::Expr *e) {
-    if (e == nullptr || !(e->kind == .call) || countof(e->kind.call.args) != 1) {
+    if (e == nullptr || e->kind != .call || countof(e->kind.call.args) != 1) {
         return "";
     }
     const ast::Expr *callee = e->kind.call.callee;
     const ast::Expr *count = e->kind.call.args[0];
-    if (!(callee->kind == .name) || countof(callee->kind.name.path.segments) != 1 ||
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1 ||
         !same(callee->kind.name.path.segments[0].text, "range")) {
         return "";
     }
-    if (!(count->kind == .query) || count->kind.query.op != .count_of || count->kind.query.operand == nullptr) {
+    if (count->kind != .query || count->kind.query.op != .count_of || count->kind.query.operand == nullptr) {
         return "";
     }
     return path_of(p, count->kind.query.operand);
@@ -681,6 +703,8 @@ export void check_body(types::Checked *r, const ast::Stmt *root) {
     while (p.top > 0) {
         p.top -= 1;
         Item item = p.work[p.top];
+        const ast::Stmt *item_stmt = item.stmt;
+        const ast::Expr *item_expr = item.expr;
         if (item.step == next_alternative) {
             next_in_group(&p);
         } else if (item.step == begin_branches) {
@@ -692,13 +716,13 @@ export void check_body(types::Checked *r, const ast::Stmt *root) {
             forget(&p.used, item.name);
             affine_loops::declare(&p.loops, item.name);
         } else if (item.step == enter_loop) {
-            begin_loop(&p, item.stmt);
+            if (item_stmt != nullptr) begin_loop(&p, item_stmt);
         } else if (item.step == leave_loop) {
             end_loop(&p);
-        } else if (item.stmt != nullptr) {
-            statement(&p, item.stmt);
-        } else if (item.expr != nullptr) {
-            expression(&p, item.expr);
+        } else if (item_stmt != nullptr) {
+            statement(&p, item_stmt);
+        } else if (item_expr != nullptr) {
+            expression(&p, item_expr);
         }
     }
 }

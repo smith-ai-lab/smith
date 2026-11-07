@@ -774,10 +774,16 @@ jobs:
             exit 1
           fi
           # main's last count: the artifact of the newest commit on main's first-parent line that has one (a merge of
-          # documents only runs no count)
+          # documents only runs no count) from a run whose own count job passed. In a queue group the base is the entry
+          # ahead, whose run may have failed or not finished: its count is not main's (2026-11-07: #2660 fell to 551,
+          # failed, and still merged because #2670 behind it compared against that 551 and passed)
           before=
           for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
-            id=$(gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+            id=
+            for a in $(gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
+              ok=$(gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
+              [ "$ok" = 1 ] && { id=${a%%:*}; break; }
+            done
             [ -n "$id" ] || continue
             dir="$RUNNER_TEMP/before-$sha"; mkdir -p "$dir"
             gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
