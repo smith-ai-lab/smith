@@ -8,9 +8,12 @@ tags: [build, executor]
 
 `smith build` runs the manifest itself: no ninja is installed or run. The code is `runtime/executor.c` and the five files
 it includes (`executor_manifest.c`, `executor_state.c`, `executor_plan.c`, `executor_run.c`, `executor_tools.c`), which
-`smith.c` includes; it stands on smith's private io layer, compiled from `runtime/io.smith` and linked (until #888). It uses
-that layer (`<runtime/io.h>`, on kqueue on macOS and epoll on Linux): the manifest and the graph live in `io.arena`, the
-files are read and written through `io.files`, and one event loop waits for every job's process and pipe.
+`smith.c` includes. It calls the world directly (#2657): the manifest and the graph live in an arena of its own
+(`smith_world_arena`, address space reserved up front), the files are read, written, removed and made with the plain libc
+calls of `runtime/world.c` (`smith_world_read`, `smith_world_write`, ...), and the clock is `clock_gettime`. A test swaps
+them with the handler table, as for any C code. What is left of `runtime/io.smith` (linked, until #2662 lands) is the
+event loop (kqueue on macOS, epoll on Linux) that waits for every job's process and pipe; it goes when jobs are tasks of
+`std.task`.
 
 ## Who runs the graph
 

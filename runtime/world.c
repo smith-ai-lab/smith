@@ -14,11 +14,13 @@
 #include <limits.h>
 #include <smith/arena.h>
 #include <smith/handlers.h>
+#include <spawn.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -100,21 +102,41 @@ static SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
     return (SmithWorldRead){.data = data, .size = used};
 }
 
+// Deletes a file (not a folder: EPERM, as on macOS).
+static SmithWorldError smith_world_remove(const char *path) {
+    SmithFileHandler *handler = smith_handlers_files();
+    if (handler != nullptr && handler->remove != nullptr) {
+        if (handler->remove(handler, path) == 0) return (SmithWorldError){};
+        return smith_world_error(errno, "remove", path);
+    }
+    if (unlink(path) == 0) return (SmithWorldError){};
+    int code = errno == EISDIR ? EPERM : errno;
+    return smith_world_error(code, "remove", path);
+}
+
 static SmithWorldError smith_world_write_to(const char *path, const uint8_t *data, size_t size, int flags) {
-    int descriptor = open(path, flags | O_WRONLY | O_CREAT | O_CLOEXEC, smith_world_file_mode);
+    SmithFileHandler *handler = smith_handlers_files();
+    int mode = flags | O_WRONLY | O_CREAT;
+    int descriptor = handler != nullptr ? handler->open(handler, path, mode, smith_world_file_mode)
+                                        : open(path, mode | O_CLOEXEC, smith_world_file_mode);
     if (descriptor < 0) return smith_world_error(errno, "open", path);
     size_t done = 0;
     while (done < size) { // bounded by the size
-        ssize_t count = write(descriptor, data + done, size - done);
+        ssize_t count = handler != nullptr ? handler->write(handler, descriptor, data + done, size - done)
+                                           : write(descriptor, data + done, size - done);
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) {
             int code = count < 0 ? errno : EIO;
-            close(descriptor);
+            if (handler != nullptr)
+                (void)handler->close(handler, descriptor);
+            else
+                close(descriptor);
             return smith_world_error(code, "write", path);
         }
         done += (size_t)count;
     }
-    if (close(descriptor) != 0) return smith_world_error(errno, "close", path);
+    int closed = handler != nullptr ? handler->close(handler, descriptor) : close(descriptor);
+    if (closed != 0) return smith_world_error(errno, "close", path);
     return (SmithWorldError){};
 }
 
@@ -127,16 +149,14 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
     int length = snprintf(temporary, sizeof temporary, "%s.tmp", path);
     if (length <= 0 || (size_t)length >= sizeof temporary) return smith_world_error(ENAMETOOLONG, "write", path);
     SmithWorldError error = smith_world_write_to(temporary, data, size, O_TRUNC);
-    if (error.code == 0 && rename(temporary, path) != 0) error = smith_world_error(errno, "rename", temporary);
-    if (error.code != 0) (void)unlink(temporary);
+    SmithFileHandler *handler = smith_handlers_files();
+    if (error.code == 0) {
+        bool handled = handler != nullptr && handler->rename != nullptr;
+        if ((handled ? handler->rename(handler, temporary, path) : rename(temporary, path)) != 0)
+            error = smith_world_error(errno, "rename", temporary);
+    }
+    if (error.code != 0) (void)smith_world_remove(temporary);
     return error;
-}
-
-// Deletes a file (not a folder: EPERM, as on macOS).
-[[maybe_unused]] static SmithWorldError smith_world_remove(const char *path) {
-    if (unlink(path) == 0) return (SmithWorldError){};
-    int code = errno == EISDIR ? EPERM : errno;
-    return smith_world_error(code, "remove", path);
 }
 
 // Makes the folder and the ones above it that are missing; one that is there already is success.
@@ -154,8 +174,8 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
             return smith_world_error(errno, "mkdir", text);
         text[at] = kept;
     }
-    struct stat status;
-    if (stat(path, &status) != 0 || !S_ISDIR(status.st_mode)) return smith_world_error(EEXIST, "mkdir", path);
+    SmithWorldInfo info = smith_world_info(path);
+    if (info.error.code != 0 || !info.folder) return smith_world_error(EEXIST, "mkdir", path);
     return (SmithWorldError){};
 }
 
@@ -176,4 +196,47 @@ static SmithArena smith_world_arena(void) {
         _exit(1);
     }
     return smith_arena_fixed(memory, smith_world_reservation);
+}
+
+extern char **environ;
+
+// Runs the program (found on PATH) to its end with its stdout in buffer: the number of bytes, or -1 when it cannot
+// start, fails to read or exits with a status other than 0, and -2 when it prints a buffer's worth or more (the child
+// is then killed by the closed pipe, and its status is not asked). Its stderr is the
+// caller's own. One blocking run: waiting on many processes at once is the task runtime's.
+[[maybe_unused]] static ptrdiff_t smith_world_capture(const char *const *argv, char *buffer, size_t capacity) {
+    int pipes[2];
+    if (pipe(pipes) != 0) return -1;
+    posix_spawn_file_actions_t actions;
+    int setup = posix_spawn_file_actions_init(&actions);
+    if (setup == 0) setup = posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO);
+    if (setup == 0) setup = posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    if (setup == 0) setup = posix_spawn_file_actions_addclose(&actions, pipes[1]);
+    pid_t pid = 0;
+    if (setup == 0) setup = posix_spawnp(&pid, argv[0], &actions, nullptr, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    ptrdiff_t used = setup == 0 ? 0 : -1;
+    while (used >= 0) { // bounded by the capacity: every read moves at least a byte or ends the loop
+        if ((size_t)used >= capacity) {
+            close(pipes[0]);
+            (void)waitpid(pid, nullptr, 0);
+            return -2;
+        }
+        ssize_t count = read(pipes[0], buffer + used, capacity - (size_t)used);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            if (count < 0) used = -1;
+            break;
+        }
+        used += count;
+    }
+    close(pipes[0]);
+    if (setup != 0) return -1;
+    int status = 0;
+    pid_t waited = 0;
+    do
+        waited = waitpid(pid, &status, 0); // NOLINT(bugprone-signal-handler)
+    while (waited < 0 && errno == EINTR);
+    return waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? used : -1;
 }
