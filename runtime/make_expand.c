@@ -270,11 +270,13 @@ static const char *smith_make_c_name(const char *name) {
 // case, as smith's naming rules ask (CFLAGS is build_cflags), and the same name each time it is asked for. Two
 // variables whose names differ only in case, or a name another variable took, get a number.
 constexpr size_t smith_make_idents_max = 8192;
-static struct {
+typedef struct {
     const char *names[smith_make_idents_max]; // the Makefile's names
     const char *idents[smith_make_idents_max];
     size_t count;
-} smith_make_idents;
+} SmithMakeIdents;
+
+static SmithMakeIdents smith_make_idents;
 
 static const char *smith_make_ident(const char *name) {
     for (size_t i = 0; i < smith_make_idents.count; i++) {

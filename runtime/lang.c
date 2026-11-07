@@ -691,14 +691,16 @@ static SmithLang smith_lang_instance;
 constexpr unsigned smith_lang_counter_cut_start = 1000000;
 constexpr unsigned smith_lang_counter_convert_start = 3000000;
 
-static struct {
+typedef struct {
     unsigned rfor_pattern;
     unsigned slice_pattern;
     unsigned slice_subscript;
     unsigned slice_element;
     unsigned slice_cut;
     unsigned slice_convert;
-} smith_lang_counter = {.slice_cut = smith_lang_counter_cut_start, .slice_convert = smith_lang_counter_convert_start};
+} SmithLangCounter;
+
+static SmithLangCounter smith_lang_counter = {.slice_cut = smith_lang_counter_cut_start, .slice_convert = smith_lang_counter_convert_start};
 
 typedef struct {
     const char *text;

@@ -1331,7 +1331,7 @@ typedef struct {
     uint64_t nanoseconds;
 } SmithTimeStep;
 
-static struct {
+typedef struct {
     SmithTimePhase phases[smith_time_phases_max];
     size_t phase_count;
     SmithTimeStep slowest[smith_time_steps_max]; // longest first
@@ -1343,7 +1343,9 @@ static struct {
     uint64_t plan_nanoseconds; // the executor's, summed over the manifests it ran, until a build takes it
     uint64_t steps_run_nanoseconds;
     uint64_t front_nanoseconds; // `smith cc`: the new front end's share of the command
-} smith_time_state;
+} SmithTimeState;
+
+static SmithTimeState smith_time_state;
 
 static bool smith_time_on(void) {
     static int state = 0; // 0 not read, 1 off, 2 on
