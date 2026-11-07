@@ -290,13 +290,22 @@ static core::ParseError pointer_fix(Str source, const ast::Decl *d) {
     edits = push(edits, name_end, name_end, "[T]");
     edits = push(edits, params[found].span.end - 4, params[found].span.end, "T");
     Str name = params[found].name;
+    Str cut = types::message_of(format::push("(", name, ".*)[0:0]"));
+    Str one = types::message_of(format::push("(", name, ".*)[0]"));
+    Bool spelled = false;
+    for (Usize i = start; i + 8 < end; i++) {
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
+        Usize close = close_of(source, i + 6, end);
+        if (close == end) continue;
+        Str arg = source[i + 7:close];
+        if (mem::equal(arg, cut) || mem::equal(arg, one)) spelled = true;
+    }
+    if (!spelled) return none; // no `typeof` of the element: the pointer to a slice of `auto` stays as it is
     for (Usize i = params[found].span.end; i + 8 < end; i++) {
         if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
         Usize close = close_of(source, i + 6, end);
         if (close == end) continue;
         Str arg = source[i + 7:close];
-        Str cut = types::message_of(format::push("(", name, ".*)[0:0]"));
-        Str one = types::message_of(format::push("(", name, ".*)[0]"));
         if (mem::equal(arg, cut)) edits = push(edits, i, close + 1, "[]T");
         if (mem::equal(arg, one)) edits = push(edits, i, close + 1, "T");
     }
