@@ -13,7 +13,6 @@
 #include <sys/proc_info.h>
 
 constexpr uint32_t smith_platform_stopped = 4; // SSTOP of <sys/proc.h>, a kernel header
-constexpr size_t smith_platform_id_bytes = 16; // an LC_UUID, as an ELF build-id of smith's link is on Linux
 
 // The hex of the running executable's LC_UUID, which the linker derives from its contents: the same smith is the same
 // name, another build another.
