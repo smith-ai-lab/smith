@@ -1,0 +1,7 @@
+# A cycle of tail calls with no way out never ends, and outside `main` that is an error (#2709).
+
+fn spin(n: u64) -> u64:
+    return spin(n + 1)
+
+pub fn check() -> i32:
+    0

@@ -1,0 +1,1 @@
+<dir>/src/recursion_no_exit.smith:1:1: error: this recursion never ends: no path returns without the call: recursion_no_exit::spin -> recursion_no_exit::spin
