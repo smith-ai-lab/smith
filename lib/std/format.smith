@@ -203,7 +203,7 @@ void put_unfinite(Writer *writer, F64 value) {
             break;
         }
     }
-    U32 width = hex.width;
+    Usize width = hex.width;
     for (Usize pad = count; pad < width; pad++) {
         put_char(writer, '0');
     }
