@@ -82,6 +82,18 @@ const U8 *bytes_of(const char *text) {
     return (const U8 *)raw;
 }
 
+// Whether a write failed with the error.
+Bool count_failed_with(process::CountResult result, process::Error expected) {
+    if (result != .error) return false;
+    return result.error == expected;
+}
+
+// Whether a kill failed with the error.
+Bool done_failed_with(process::DoneResult result, process::Error expected) {
+    if (result != .error) return false;
+    return result.error == expected;
+}
+
 // Reads a piped child's stdout to its end.
 Usize read_all(process::Child *child, U8 buffer[:]) {
     Usize filled = 0;
@@ -363,18 +375,6 @@ export void test_process_usage_self_has_memory_and_time() {
     test::check_condition(measured == .ok);
     test::check_greater(value_usage(measured).peak_bytes, 0);
     test::check_greater(value_usage(measured).user_ns + value_usage(measured).system_ns, 0);
-}
-
-// Whether a write failed with the error.
-Bool count_failed_with(process::CountResult result, process::Error expected) {
-    if (result != .error) return false;
-    return result.error == expected;
-}
-
-// Whether a kill failed with the error.
-Bool done_failed_with(process::DoneResult result, process::Error expected) {
-    if (result != .error) return false;
-    return result.error == expected;
 }
 
 export void test_process_describe_names_every_error() {
