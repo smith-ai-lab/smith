@@ -20,7 +20,7 @@
 //   loops       A loop body is read once, as straight-line code (the loop rules are piece 2); `switch`, lambdas and
 //               `_Generic` are not read: when in doubt the pass allows.
 //
-// No recursion: statements and expressions are read with a work stack that grows.
+// The walk uses a work stack that grows: a deep tree needs no deep call stack, and the work list is simple to resume.
 module front::affine;
 
 import front::affine_loops;

@@ -21,14 +21,14 @@ static void expect_fixed(Str before, Str want) {
 
 export void test_front_fix_zero_gives_every_field() {
     expect_fixed("module m;\nstruct P {\n    int a;\n    char *p;\n};\nvoid f(void) {\n    P x = {};\n    g(&x);\n}\n",
-                 "struct P:\n    a: i32\n    p: *char\nfn f():\n    x: P = P(a = 0, p = nullptr)\n    g(&x)\n");
+                 "struct P:\n    a: i32\n    p: *char\nfn f():\n    mut x: P = P(a = 0, p = nullptr)\n    g(&x)\n");
 }
 
 export void test_front_fix_zero_goes_one_struct_and_an_array_down() {
     expect_fixed("module m;\nstruct Q {\n    int a;\n};\nstruct R {\n    int n;\n    Q q;\n    int xs[3];\n};\n"
                  "void f(void) {\n    R r = {};\n    g(&r);\n}\n",
                  "struct Q:\n    a: i32\nstruct R:\n    n: i32\n    q: Q\n    xs: [3]i32\nfn f():\n"
-                 "    r: R = R(n = 0, q = Q(a = 0), xs = [0, 0, 0])\n    g(&r)\n");
+                 "    mut r: R = R(n = 0, q = Q(a = 0), xs = [0, 0, 0])\n    g(&r)\n");
 }
 
 export void test_front_fix_zero_undefined_when_every_field_is_written_first() {
@@ -86,7 +86,7 @@ export void test_front_fix_a_struct_tag_in_a_field_and_after_const_is_the_name()
 
 export void test_front_fix_zero_fills_a_field_named_like_a_keyword() {
     expect_fixed("module m;\nstruct Q {\n    int in;\n};\nvoid f(void) {\n    Q z = {};\n    g(&z);\n}\n",
-                 "struct Q:\n    in_: i32\nfn f():\n    z: Q = Q(in_ = 0)\n    g(&z)\n");
+                 "struct Q:\n    in_: i32\nfn f():\n    mut z: Q = Q(in_ = 0)\n    g(&z)\n");
 }
 
 // #2385 (decided on #1406): `T xs[n] = {}` of a struct element is a `mut` array filled with the zero value of the

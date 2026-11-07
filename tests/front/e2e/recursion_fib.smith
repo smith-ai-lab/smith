@@ -1,9 +1,34 @@
-# Two calls, neither in tail position: still an error naming the cycle until #2710 lands.
+# A call that is not a tail call and closes a cycle runs on a stack segment from the runtime when the stack is nearly
+# full (#2710): recursion needs no annotation and never overflows.
 
 fn fib(n: u64) -> u64:
     if n < 2:
         return n
     return fib(n - 1) + fib(n - 2)
 
+fn is_odd(n: u32) -> bool:
+    if n == 0:
+        return false
+    return is_even(n - 1) or false
+
+fn is_even(n: u32) -> bool:
+    if n == 0:
+        return true
+    return is_odd(n - 1) or false
+
+# Not a tail call: the sum is still to be made. A million deep needs far more than the stack in use.
+fn depth(n: u64) -> u64:
+    if n == 0:
+        return 0
+    return depth(n - 1) + 1
+
 pub fn check() -> i32:
+    if fib(20) != 6765:
+        return 1
+    if not is_even(1000):
+        return 2
+    if is_odd(1001) == false:
+        return 3
+    if depth(1000000) != 1000000:
+        return 4
     0

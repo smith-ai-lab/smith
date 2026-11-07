@@ -1,0 +1,3 @@
+module chain::m73;
+
+export int f73() { return 73; }
