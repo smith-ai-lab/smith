@@ -412,3 +412,28 @@ export void test_front_emit_shift_takes_the_left_operands_type() {
     test::check_equal(shr(0x80000000U, 31), 1U);
     emit_jit::stop(&host);
 }
+
+typedef I32 (*TextFn)(const char *);
+typedef U32 (*BitFn)(Usize);
+
+// `p += 1` on a pointer moves it by one element; `x <<= n` with an amount of another width keeps x's type.
+export void test_front_emit_compound_assign_on_a_pointer_and_a_shift() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn digits(mut text: *char) -> i32:\n"
+                "    mut n: i32 = 0\n"
+                "    while text.* >= '0' && text.* <= '9':\n"
+                "        n += 1\n"
+                "        text += 1\n"
+                "    n\n"
+                "pub fn bit(i: usize) -> u32:\n"
+                "    mut x: u32 = 1\n"
+                "    x <<= i\n"
+                "    x\n",
+                &host, &s);
+    TextFn digits = (TextFn)symbol_of(&host, "digits");
+    BitFn bit = (BitFn)symbol_of(&host, "bit");
+    test::check_equal(digits("2026x"), (I32)4);
+    test::check_equal(bit(5), 32U);
+    emit_jit::stop(&host);
+}

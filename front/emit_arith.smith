@@ -626,11 +626,14 @@ static state::Status assign_finish(state::Emitter *e, const state::ThenExpr *w) 
     }
     state::Value value = state::pop_value(e);
     state::Value place = state::pop_value(e);
-    if (!state::same_type(place.ty, value.ty)) {
+    ast::AssignOp op = w->expr->kind.assign.op;
+    // `p += 1` on a pointer moves it by elements and `x <<= n` takes any amount: the value stays what it is.
+    Bool as_is = (place.ty.kind == .pointer && (op == .add || op == .subtract)) ||
+                 ((op == .shift_left || op == .shift_right) && value.ty.kind == .integer);
+    if (!as_is && !state::same_type(place.ty, value.ty)) {
         try state::convert(e, value, place.ty, w->span, .assign);
         value = state::pop_value(e);
     }
-    ast::AssignOp op = w->expr->kind.assign.op;
     if (op != .plain) {
         c::LLVMValueRef current = c::LLVMBuildLoad2(e->builder, place.ty.llvm, place.llvm, "");
         try apply_binary(e, binary_of(op), (state::Value){.llvm = current, .ty = place.ty}, value, w->span);
@@ -647,8 +650,15 @@ static state::Status assign_middle(state::Emitter *e, const state::ThenExpr *w) 
         return state::fail("not an assignment", w->span);
     }
     state::Value place = state::peek_value(e);
+    ast::AssignOp op = w->expr->kind.assign.op;
+    state::Hint hint = state::hint_of(place.ty);
+    if (place.ty.kind == .pointer && (op == .add || op == .subtract)) {
+        state::Ty count = {};
+        state::scalar_type(e, "usize", &count); // `text += 1`: an element count, not a pointer
+        hint = state::hint_of(count);
+    }
     state::push_then_expr(e, (state::ThenExpr){.run = assign_finish, .expr = w->expr, .span = w->span});
-    state::push_eval(e, w->expr->kind.assign.value, state::hint_of(place.ty));
+    state::push_eval(e, w->expr->kind.assign.value, hint);
     return state::success();
 }
 
