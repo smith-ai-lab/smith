@@ -245,8 +245,28 @@ export Bool is_position(Str name) {
     return countof(name) > 0 && name[0] >= '0' && name[0] <= '9';
 }
 
-// Whether two structural types are the same type (a record and an enumeration are compared by address, not here).
-static Bool same_shape(const Ty *a, const Ty *b) {
+export struct Members {
+    Slot items[:];
+};
+
+export Members slots_of(TypeRef t);
+export Str owner_of(TypeRef t);
+export Str c_name_of(TypeRef t);
+export Bool is_union_record(TypeRef t);
+export Bool is_affine_record(TypeRef t);
+export Bool is_payload_enum(TypeRef t);
+export Bool is_complete(TypeRef t);
+export Bool points_to_const(TypeRef t);
+export Bool is_variadic(TypeRef t);
+export TypeRef element_of(TypeRef t);
+export TypeRef error_of(TypeRef t);
+export U64 count_of(TypeRef t);
+export Str name_of(TypeRef t);
+export U32 bits_of(TypeRef t);
+export Bool signed_of(TypeRef t);
+
+// Whether two types are of the same kind (a payload enum has no `==` between two values).
+static Bool same_variant(const Ty *a, const Ty *b) {
     if (a->kind == .invalid) return b->kind == .invalid;
     if (a->kind == .automatic) return b->kind == .automatic;
     if (a->kind == .void_type) return b->kind == .void_type;
@@ -254,51 +274,40 @@ static Bool same_shape(const Ty *a, const Ty *b) {
     if (a->kind == .text) return b->kind == .text;
     if (a->kind == .null_type) return b->kind == .null_type;
     if (a->kind == .type_type) return b->kind == .type_type;
-    if (a->kind == .integer) {
-        return b->kind == .integer && a->kind.integer.bits == b->kind.integer.bits &&
-               a->kind.integer.is_signed == b->kind.integer.is_signed &&
-               same_text(a->kind.integer.name, b->kind.integer.name);
-    }
-    if (a->kind == .floating) {
-        return b->kind == .floating && a->kind.floating.bits == b->kind.floating.bits &&
-               same_text(a->kind.floating.name, b->kind.floating.name);
-    }
-    if (a->kind == .pointer) {
-        return b->kind == .pointer && a->kind.pointer.element == b->kind.pointer.element &&
-               a->kind.pointer.pointee_const == b->kind.pointer.pointee_const;
-    }
-    if (a->kind == .slice) {
-        return b->kind == .slice && a->kind.slice.element == b->kind.slice.element &&
-               a->kind.slice.pointee_const == b->kind.slice.pointee_const;
-    }
-    if (a->kind == .array) {
-        return b->kind == .array && a->kind.array.element == b->kind.array.element &&
-               a->kind.array.count == b->kind.array.count && a->kind.array.pointee_const == b->kind.array.pointee_const;
-    }
-    if (a->kind == .function) {
-        return b->kind == .function && a->kind.function.result == b->kind.function.result &&
-               a->kind.function.variadic == b->kind.function.variadic &&
-               same_slots(a->kind.function.slots, b->kind.function.slots);
-    }
-    if (a->kind == .option) return b->kind == .option && a->kind.option.element == b->kind.option.element;
-    if (a->kind == .result_type) {
-        return b->kind == .result_type && a->kind.result_type.element == b->kind.result_type.element &&
-               a->kind.result_type.error == b->kind.result_type.error;
-    }
-    if (a->kind == .fn_value) return b->kind == .fn_value && a->kind.fn_value.element == b->kind.fn_value.element;
-    if (a->kind == .concept_type)
-        return b->kind == .concept_type && same_text(a->kind.concept_type.name, b->kind.concept_type.name);
-    if (a->kind == .block) {
-        return b->kind == .block && a->kind.block.element == b->kind.block.element &&
-               a->kind.block.count == b->kind.block.count;
-    }
-    if (a->kind == .stream) return b->kind == .stream && a->kind.stream.element == b->kind.stream.element;
-    if (a->kind == .tuple) return b->kind == .tuple && same_slots(a->kind.tuple.slots, b->kind.tuple.slots);
-    if (a->kind == .vector) {
-        return b->kind == .vector && a->kind.vector.element == b->kind.vector.element &&
-               a->kind.vector.count == b->kind.vector.count;
-    }
-    return false; // a record and an enumeration are nominal
+    if (a->kind == .integer) return b->kind == .integer;
+    if (a->kind == .floating) return b->kind == .floating;
+    if (a->kind == .pointer) return b->kind == .pointer;
+    if (a->kind == .slice) return b->kind == .slice;
+    if (a->kind == .array) return b->kind == .array;
+    if (a->kind == .function) return b->kind == .function;
+    if (a->kind == .option) return b->kind == .option;
+    if (a->kind == .result_type) return b->kind == .result_type;
+    if (a->kind == .fn_value) return b->kind == .fn_value;
+    if (a->kind == .concept_type) return b->kind == .concept_type;
+    if (a->kind == .block) return b->kind == .block;
+    if (a->kind == .stream) return b->kind == .stream;
+    if (a->kind == .tuple) return b->kind == .tuple;
+    if (a->kind == .vector) return b->kind == .vector;
+    if (a->kind == .record) return b->kind == .record;
+    if (a->kind == .enumeration) return b->kind == .enumeration;
+    return false;
+}
+
+// Whether `a` and `b` have the same element (or error): the accessors answer the type itself for a kind with none.
+static Bool same_part(const Ty *a, TypeRef part_of_a, const Ty *b, TypeRef part_of_b) {
+    if (part_of_a == a) return part_of_b == b;
+    return part_of_a == part_of_b;
+}
+
+// Whether two structural types are the same type: the same kind with the same fields. The accessors answer the same
+// default for a field the kind has not, so comparing every one is comparing the fields the kind has.
+static Bool same_shape(const Ty *a, const Ty *b) {
+    if (!same_variant(a, b)) return false;
+    if (bits_of(a) != bits_of(b) || signed_of(a) != signed_of(b) || count_of(a) != count_of(b)) return false;
+    if (points_to_const(a) != points_to_const(b) || is_variadic(a) != is_variadic(b)) return false;
+    if (!same_part(a, element_of(a), b, element_of(b)) || !same_part(a, error_of(a), b, error_of(b))) return false;
+    if (!same_text(name_of(a), name_of(b))) return false;
+    return same_slots(slots_of(a).items, slots_of(b).items);
 }
 
 static Ty *add_entry(Table *t, Ty value) {
@@ -502,15 +511,70 @@ export Ty *new_record(Table *t, Str name, Bool is_union) {
     return add_entry(t, (Ty){.kind = made});
 }
 
+static void set_record_fields(Ty *record, Slot fields[:]) {
+    if (record->kind != .record) return;
+    TyKind made = {.record = {.name = name_of(record),
+                              .owner = owner_of(record),
+                              .c_name = c_name_of(record),
+                              .slots = fields,
+                              .is_union = is_union_record(record),
+                              .complete = true,
+                              .affine = is_affine_record(record)}};
+    record->kind = made;
+}
+
+static void set_enumeration_fields(Ty *enumeration, Slot fields[:]) {
+    if (enumeration->kind != .enumeration) return;
+    TyKind made = {.enumeration = {.name = name_of(enumeration),
+                                   .element = element_of(enumeration),
+                                   .slots = fields,
+                                   .complete = true,
+                                   .has_payload = is_payload_enum(enumeration)}};
+    enumeration->kind = made;
+}
+
+// The members of a record or an enumeration, which makes it complete. The kind is rebuilt in place: a payload is
+// replaced as a whole, never written field by field.
 export void set_fields(Ty *record, Slot fields[:]) {
-    if (record->kind == .record) {
-        record->kind.record.slots = fields;
-        record->kind.record.complete = true;
-    }
-    if (record->kind == .enumeration) {
-        record->kind.enumeration.slots = fields;
-        record->kind.enumeration.complete = true;
-    }
+    if (record->kind == .record) set_record_fields(record, fields);
+    if (record->kind == .enumeration) set_enumeration_fields(record, fields);
+}
+
+// The module prefix a record is declared in (`lib::math::`).
+export void set_owner(Ty *record, Str owner) {
+    if (record->kind != .record) return;
+    TyKind made = {.record = {.name = name_of(record),
+                              .owner = owner,
+                              .c_name = c_name_of(record),
+                              .slots = slots_of(record).items,
+                              .is_union = is_union_record(record),
+                              .complete = is_complete(record),
+                              .affine = is_affine_record(record)}};
+    record->kind = made;
+}
+
+// Whether a record is `@affine`, and the C struct it is.
+export void set_marks(Ty *record, Bool affine, Str c_name) {
+    if (record->kind != .record) return;
+    TyKind made = {.record = {.name = name_of(record),
+                              .owner = owner_of(record),
+                              .c_name = c_name,
+                              .slots = slots_of(record).items,
+                              .is_union = is_union_record(record),
+                              .complete = is_complete(record),
+                              .affine = affine}};
+    record->kind = made;
+}
+
+// Whether the enumerators of an enumeration carry values.
+export void set_payload(Ty *enumeration, Bool has_payload) {
+    if (enumeration->kind != .enumeration) return;
+    TyKind made = {.enumeration = {.name = name_of(enumeration),
+                                   .element = element_of(enumeration),
+                                   .slots = slots_of(enumeration).items,
+                                   .complete = is_complete(enumeration),
+                                   .has_payload = has_payload}};
+    enumeration->kind = made;
 }
 
 // An enumeration, nominal, over the integer type `underlying`.
@@ -536,10 +600,6 @@ static U64 most(U64 a, U64 b) {
     if (a > b) return a;
     return b;
 }
-
-export struct Members {
-    Slot items[:];
-};
 
 // The fields of a record, the enumerators of an enumeration, the parameters of a function or the slots of a tuple; none
 // for every other kind.
@@ -574,14 +634,28 @@ static TypeRef part(TypeRef t, Usize i) {
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
+// Whether the type is a record with its fields set.
+static Bool record_complete(TypeRef t) {
+    if (t->kind != .record) return false;
+    return t->kind.record.complete;
+}
+
+// Whether the type is a record whose fields are not set yet (its layout is not known).
+static Bool record_incomplete(TypeRef t) {
+    if (t->kind != .record) return false;
+    return !t->kind.record.complete;
+}
+
 // Whether the type is an enumeration whose enumerators carry values.
 export Bool is_payload_enum(TypeRef t) {
-    return t->kind == .enumeration && t->kind.enumeration.has_payload;
+    if (t->kind != .enumeration) return false;
+    return t->kind.enumeration.has_payload;
 }
 
 // Whether the type is a union record.
 export Bool is_union_record(TypeRef t) {
-    return t->kind == .record && t->kind.record.is_union;
+    if (t->kind != .record) return false;
+    return t->kind.record.is_union;
 }
 
 // Whether a record or an enumeration has its members; false for any other kind.
@@ -593,7 +667,8 @@ export Bool is_complete(TypeRef t) {
 
 // Whether the type is a record marked `@affine`.
 export Bool is_affine_record(TypeRef t) {
-    return t->kind == .record && t->kind.record.affine;
+    if (t->kind != .record) return false;
+    return t->kind.record.affine;
 }
 
 // Whether a pointer, array or slice has a `const` element; false for any other kind.
@@ -606,7 +681,8 @@ export Bool points_to_const(TypeRef t) {
 
 // Whether a function type takes C's `...`; false for any other kind.
 export Bool is_variadic(TypeRef t) {
-    return t->kind == .function && t->kind.function.variadic;
+    if (t->kind != .function) return false;
+    return t->kind.function.variadic;
 }
 
 // The element of a pointer, array, slice, option, stream, block or vector, the ok type of a result, the result of a
@@ -703,8 +779,7 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
     if (t->kind == .vector) return vector_layout(target, t);
-    if ((t->kind == .record && t->kind.record.complete) || t->kind == .tuple)
-        return (Layout){.size = 0, .align = 1, .known = true};
+    if (record_complete(t) || t->kind == .tuple) return (Layout){.size = 0, .align = 1, .known = true};
     return none;
 }
 
@@ -725,7 +800,7 @@ static void absorb(Frame *f, Layout part_layout) {
     } else if (f->type->kind == .enumeration) {
         f->size = part_layout.size;
         f->align = part_layout.align;
-    } else if (f->type->kind == .record && f->type->kind.record.is_union) {
+    } else if (is_union_record(f->type)) {
         f->size = most(f->size, part_layout.size);
         f->align = most(f->align, part_layout.align);
     } else {
@@ -744,7 +819,7 @@ export Layout layout(const Target *target, TypeRef t) {
     if (part_count(t) == 0) return leaf_layout(target, t);
     Frame stack[layout_depth];
     Usize top = 1;
-    stack[0] = (Frame){.type = t, .align = 1, .known = t->kind != .record || t->kind.record.complete};
+    stack[0] = (Frame){.type = t, .align = 1, .known = !record_incomplete(t)};
     Layout finished = {};
     Bool have_finished = false;
     while (top > 0) {
@@ -762,8 +837,7 @@ export Layout layout(const Target *target, TypeRef t) {
             } else if (top == layout_depth) {
                 return answer;
             } else {
-                stack[top] =
-                    (Frame){.type = child, .align = 1, .known = child->kind != .record || child->kind.record.complete};
+                stack[top] = (Frame){.type = child, .align = 1, .known = !record_incomplete(child)};
                 top += 1;
             }
             continue;
@@ -1601,8 +1675,8 @@ export Str written_concept(const ast::TypeExpr *t) {
 // `pointer` any pointer (#1821).
 export Bool concept_holds(Str concept, TypeRef t) {
     if (same_text(concept, "int")) return t->kind == .integer;
-    if (same_text(concept, "signed")) return t->kind == .integer && t->kind.integer.is_signed;
-    if (same_text(concept, "unsigned")) return t->kind == .integer && !t->kind.integer.is_signed;
+    if (same_text(concept, "signed")) return t->kind == .integer && signed_of(t);
+    if (same_text(concept, "unsigned")) return t->kind == .integer && !signed_of(t);
     if (same_text(concept, "float")) return t->kind == .floating;
     if (same_text(concept, "num")) return t->kind == .integer || t->kind == .floating;
     if (same_text(concept, "pointer")) return t->kind == .pointer;
@@ -1821,7 +1895,7 @@ static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w
     Str name = node->kind.record.is_union ? "(anonymous union)" : "(anonymous struct)";
     Ty *made = new_record(&r->table, name, node->kind.record.is_union);
     set_fields(made, fields);
-    if (made->kind == .record) made->kind.record.owner = r->prefix;
+    set_owner(made, r->prefix);
     return made;
 }
 
@@ -2017,7 +2091,7 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             const Symbol *pack = type_through_modules(r, e->kind.query.operand->kind.name.path);
             if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
                 return false;
-            values[have++] = countof(pack->type->kind.tuple.slots);
+            values[have++] = countof(slots_of(pack->type).items);
             continue;
         }
         if (names_a_constant(e, &path)) {
@@ -2356,9 +2430,9 @@ static Str record_c_name(const ast::Decl *d) {
 export Bool same_c_record(TypeRef a, TypeRef b) {
     if (a == b) return true;
     if (a->kind != .record || b->kind != .record) return false;
-    Str a_name = a->kind.record.c_name;
+    Str a_name = c_name_of(a);
     if (countof(a_name) == 0) return false;
-    return same_text(a_name, b->kind.record.c_name);
+    return same_text(a_name, c_name_of(b));
 }
 
 static void declare_nominal(Checked *r, const ast::Decl *d) {
@@ -2370,10 +2444,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         Str from_header = d->kind.record.name;
         Str name = qualified(r, from_c, d->kind.record.name);
         Ty *made = new_record(&r->table, name, d->kind.record.is_union);
-        if (made->kind == .record) {
-            made->kind.record.affine = marks_affine(d);
-            made->kind.record.c_name = from_c ? from_header : record_c_name(d);
-        }
+        set_marks(made, marks_affine(d), from_c ? from_header : record_c_name(d));
         // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
         Symbol *earlier = nullptr;
         for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
@@ -2598,7 +2669,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
     Ty *record = own(&r->table, symbol->type);
     if (record != nullptr) {
         set_fields(record, fields);
-        if (record->kind == .record) record->kind.record.owner = r->prefix;
+        set_owner(record, r->prefix);
     }
 }
 
@@ -2634,7 +2705,7 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     Ty *made = own(&r->table, symbol->type);
     if (made != nullptr) {
         set_fields(made, items);
-        if (made->kind == .enumeration) made->kind.enumeration.has_payload = has_payload;
+        set_payload(made, has_payload);
     }
 }
 
@@ -3169,11 +3240,11 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
                     if (!bind_generic(bound, set, i, false, nullptr, g->kind.array.count, strict, out)) return false;
                 }
             }
-        } else if (w->kind == .tuple && g->kind == .tuple &&
-                   countof(w->kind.tuple.elements) == countof(g->kind.tuple.slots)) {
+        } else if (w->kind == .tuple && g->kind == .tuple) {
             ast::TypeRef written_elements[:] = w->kind.tuple.elements;
-            Slot given_slots[:] = g->kind.tuple.slots;
-            for (Usize i = 0; i < countof(given_slots) && top < countof(stack); i++) {
+            Slot given_slots[:] = slots_of(g).items;
+            Usize pairs = countof(written_elements) == countof(given_slots) ? countof(given_slots) : 0;
+            for (Usize i = 0; i < pairs && top < countof(stack); i++) {
                 stack[top] = (UnifyPair){.written = written_elements[i], .given = given_slots[i].type};
                 top += 1;
             }
