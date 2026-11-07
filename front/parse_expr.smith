@@ -802,7 +802,7 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
     return offset;
 }
 
-// `[1, 2, 3]`: the position is at the bracket.
+// `[1, 2, 3]` and `[a..., b]`: the position is at the bracket.
 static ast::Expr *array_literal(parse::Parser *p) {
     // `[n]T` is an array type written as a value (`no_rule([n + 1]char)`): a type follows the closing bracket.
     Usize after = after_group(p, 0, lex::left_bracket, lex::right_bracket);
@@ -810,7 +810,8 @@ static ast::Expr *array_literal(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     ast::ExprRef items[:] = {};
     while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *next = parse::expression(p);
+        // `[a..., b]` splices a compile-time pack or a tuple, as `...` does in a call (owner, 2026-11-07).
+        ast::Expr *next = expansion(p, parse::expression(p));
         if (next == nullptr) return nullptr;
         items = parse_type::with_expr(items, next);
         if (!parse::accept(p, lex::comma)) break;
