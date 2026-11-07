@@ -39,9 +39,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `if constexpr (c)`, `for constexpr (auto x : rest)` | `if c:` with a compile-time `c`, `for x in rest:` |
 | `for constexpr (Usize i = 0; i < countof(rest); i++)` that reads `rest[i]`, or `fields(T)[i]` | `for x in rest:`, `for f in fields(T):` and `value.[f]`; a loop that needs the number `i` has no form yet (D20) |
 | `(typeof(a)){0}`, `(T){0}` with `constexpr Type T` | `mem.zeroed(typeof(a))`, `mem.zeroed(T)` after `import std.mem` (D10) |
-| `t[0]` over a tuple `struct { I32, F32 } t` | `t.0` (an index with a literal number) |
-| `typeof(x) == char *`, `== const char *`, `== struct smith_array_char_n` | `typeof(x) == *mut char`, `== *char`, `== []mut char` (`[]char` for the `const` struct) |
-| `Num xs[:]`, `Int *p`, `Float grid[:][:]` (a concept in a parameter's type) | `fn f[T: num](xs: []T)`, `[T: int](p: *mut T)`: an inferred parameter of that concept |
+| `typeof(x) == char *`, `== const char *`, `== struct smith_array_char_n` | `typeof(x) == *mut char`, `== *char`, `== []mut char` (`[]char` for the `const` struct); `Num xs[:]` (a concept in a parameter) is `fn f[T: num](xs: []T)`; `t[0]` over a tuple is `t.0` |
 | `auto... rest`, `rest...`, `countof(rest)` | `rest...` (or `nums: i32...`), `rest...`, `countof(rest)` |
 | `mem::alloc_slice(I32, n)` | `mem.alloc(i32, n)` after `import std.mem`: a type is an ordinary argument |
 | `T f(constexpr Usize n)` | `fn f(const n: usize) -> T:` |
