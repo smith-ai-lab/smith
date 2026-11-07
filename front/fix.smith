@@ -32,6 +32,7 @@ import front::fix_opaque;
 import front::fix_payload;
 import front::fix_array;
 import front::fix_bool;
+import front::fix_const;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
@@ -414,13 +415,15 @@ static core::Errors append(core::Errors out, core::Errors more) {
 
 // The fixes made from the checker's errors of the whole file, whatever else it still gets wrong (#2648): `Ty(kind =
 // (vector = (...)))` where `kind` is a payload enumeration is `.vector((...))`, an array given to a C pointer
-// parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, and `mem::equal(a, b)`
+// parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, `&x` of a constant local given to a `*mut`
+// parameter makes `x` `mut` (fix_const), and `mem::equal(a, b)`
 // is `==` (#2540: the call is found by its name).
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
-    return append(out, fix_bool::edits(source, checked));
+    out = append(out, fix_bool::edits(source, checked));
+    return append(out, fix_const::edits(source, checked));
 }
 
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).

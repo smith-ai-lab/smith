@@ -934,6 +934,7 @@ static const char *const build_front_modules[] = {
     "fix_payload",
     "fix_array",
     "fix_bool",
+    "fix_const",
     "fix_typeof",
     "lsp_server",
     "lsp_hover",

@@ -1,0 +1,23 @@
+// Tests of the fix-its for "this drops const" (#2648): `mut` for a local whose address goes to a `*mut` parameter.
+module front_fix_const_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_const_a_local_whose_address_goes_to_a_mut_parameter_is_mut() {
+    expect_fixed("module m;\ntypedef struct { int n; } T;\nstatic void fill(T *t) { t->n = 1; }\nint f(void) {\n    T t;\n    fill(&t);\n    return t.n;\n}\n",
+                 "pub struct T:\n    n: i32\n\nfn fill(t: *mut T):\n    t.n = 1\nfn f() -> i32:\n    mut t: T = undefined\n    fill(&t)\n    return t.n\n");
+}
