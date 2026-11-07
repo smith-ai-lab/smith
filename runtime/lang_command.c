@@ -116,6 +116,10 @@ int smith_lang_command(int argc, char **argv, int first, char **out, size_t capa
     for (int i = first; i < argc; i++) { // bounded by argc
         if (used + 7 > capacity) return -1;
         if (i == scan.dashes) return smith_lang_inputs_after(argc, argv, i, scan.language, out, used, capacity);
+        // A .smith file never takes clang's modules: the build gives them to C sources only (smith_modules), and a
+        // header as a module hides what the token hook shows a .smith file (a lint borrows the command of a C file,
+        // #2685).
+        if (strncmp(argv[i], "-fmodules", 9) == 0 || strncmp(argv[i], "-fmodule-map-file=", 18) == 0) continue;
         bool value = argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc;
         bool smith_input = argv[i][0] != '-' && smith_ends_with(argv[i], ".smith");
         if (value) {
