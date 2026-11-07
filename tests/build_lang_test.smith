@@ -12,8 +12,8 @@ module build_lang_test;
 
 import std::arena;
 import std::mem;
+import std::format;
 import std::test;
-import <stdio.h>;
 import scratch;
 
 constexpr char expected_output[_] =
@@ -29,7 +29,7 @@ static scratch::Project lang_project(const char *source) {
     (void)scratch::sh(
         &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
     char cases[256];
-    (void)c::snprintf(cases, sizeof cases, "tests/smith-lang/cases/%s/src", source);
+    (void)format::write(cases, sizeof cases, "tests/smith-lang/cases/", source, "/src");
     scratch::copy_tree(&p, cases, "src");
     return p;
 }

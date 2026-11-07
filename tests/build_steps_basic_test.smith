@@ -11,9 +11,9 @@
 module build_steps_basic_test;
 
 import std::arena;
+import std::format;
 import std::mem;
 import std::test;
-import <stdio.h>;
 import scratch;
 import <smith_core_plan.h>;
 
@@ -34,7 +34,7 @@ typedef struct {
 // The manifest of a project, as the head, `steps` and the tail make it.
 static void manifest(const char *dir, const char *steps) {
     char text[2048];
-    (void)c::snprintf(text, sizeof text, "%s%s%s", manifest_head, steps, manifest_tail);
+    (void)format::write(text, sizeof text, manifest_head, steps, manifest_tail);
     test::check_condition(c::smith_core_plan_write(dir, ".smith/build.ninja", text, 1));
 }
 

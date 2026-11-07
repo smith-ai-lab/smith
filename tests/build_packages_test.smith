@@ -13,7 +13,6 @@ import std::arena;
 import std::format;
 import std::test;
 import <smith_core_package.h>;
-import <stdio.h>;
 import <string.h>;
 import scratch;
 import std::mem;
@@ -27,16 +26,16 @@ typedef struct {
     arena::Arena *memory; // the test's, where the texts are
 } Fixture;
 
-static const char *const make_archives =
+constexpr char make_archives[_] =
     "mkdir -p pk/src/pkg-1.0/bin && printf 'hello package\\n' >pk/src/pkg-1.0/hello.txt && "
     "printf '#!/bin/sh\\necho tool ran\\n' >pk/src/pkg-1.0/bin/tool && chmod +x pk/src/pkg-1.0/bin/tool && "
     "cd pk/src && tar -czf ../pkg.tar.gz pkg-1.0 && tar -cJf ../pkg.tar.xz pkg-1.0 && zip -qr ../pkg.zip pkg-1.0";
 
 // A cache folder `name` in the project's scratch folder, allocated with mem:: as scratch::clean frees it.
 static const char *cache_in(const scratch::Project *p, const char *name) {
-    Usize length = (Usize)c::snprintf(nullptr, 0, "%s/%s", p->root, name) + 1;
+    Usize length = format::length(p->root, "/", name) + 1;
     char *path = mem::alloc_slice(char, length).data;
-    (void)c::snprintf(path, length, "%s/%s", p->root, name);
+    (void)format::write(path, length, p->root, "/", name);
     return path;
 }
 
