@@ -98,3 +98,24 @@ export void test_front_fix_typeof_a_declared_type_named_like_a_concept_is_not_on
         "module m;\nstruct Num {\n    I32 v;\n};\nexport Usize count(const Num xs[:]) {\n    return countof(xs);\n}\n",
         "struct Num:\n    v: i32\npub fn count(xs: []Num) -> usize:\n    return countof(xs)\n");
 }
+
+// A read-only `auto` slice (`const auto xs[:]`) is `xs: []T` with the function generic in `T`, and a later parameter
+// that spells the element, `typeof(xs[0]) v`, takes `T`.
+export void test_front_fix_typeof_a_read_only_auto_slice_makes_the_element_generic() {
+    expect_fixed("module m;\nexport Usize find(const auto xs[:], typeof(xs[0]) v) {\n"
+                 "    for (Usize i = 0; i < countof(xs); i++) {\n        if (xs[i] == v) return i;\n    }\n"
+                 "    return countof(xs);\n}\n",
+                 "pub fn find[T](xs: []T, v: T) -> usize:\n    for i in range(0, countof(xs)):\n"
+                 "        if xs[i] == v:\n            return i\n    return countof(xs)\n");
+}
+
+// The same for a pointer (`auto *p`, `const auto *p`) and a two-dimensional slice: `typeof(*p)` and `typeof(m[0][0])`
+// are `T`.
+export void test_front_fix_typeof_an_auto_pointer_and_a_grid_make_the_element_generic() {
+    expect_fixed("module m;\nexport void bump(auto *p, typeof(*p) by) {\n    *p += by;\n}\n"
+                 "export typeof(*p) read(const auto *p) {\n    return *p;\n}\n"
+                 "export typeof(m[0][0]) zero(const auto m[:][:]) {\n    return 0;\n}\n",
+                 "pub fn bump[T](p: *mut T, by: T):\n    p.* += by\n"
+                 "pub fn read[T](p: *T) -> T:\n    return p.*\n"
+                 "pub fn zero[T](m: [][]T) -> T:\n    return 0\n");
+}

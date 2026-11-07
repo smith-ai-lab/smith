@@ -60,6 +60,7 @@ static Str spelling(Str arg, Str name, Bool mutable) {
     if (is_use(arg, name, "")) return mutable ? "[]mut T" : "[]T";
     if (is_use(arg, name, ".data")) return mutable ? "*mut T" : "*T";
     if (is_use(arg, name, ".data.*") || is_use(arg, name, "[0]")) return "T";
+    if (is_use(arg, name, ".*") || is_use(arg, name, "[0][0]")) return "T";
     return "";
 }
 
@@ -143,6 +144,19 @@ static Bool dispatches(Str text, Str name) {
     return false;
 }
 
+static Bool ends_with(Str text, Str tail) {
+    return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):], tail);
+}
+
+// Whether `text` spells a type by `typeof(name` and does not pick what to do by it.
+static Bool used_typed(Str text, Str name) {
+    if (dispatches(text, name)) return false;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (at(text, i, "typeof(") && at(text, i + 7, name) && !in_literal(text, i)) return true;
+    }
+    return false;
+}
+
 // Whether `text` uses `typeof(name` and reads `name` as a slice.
 static Bool used_as_slice(Str text, Str name) {
     if (dispatches(text, name)) return false;
@@ -168,24 +182,47 @@ static core::Edits rewrite_uses(core::Edits edits, Str source, Usize from, Usize
     return edits;
 }
 
+// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer
+// to a slice of any element type, as `const auto (*xs)[:]` is mended.
+static Bool is_slice_pointer(Str param) {
+    Usize colon = 0;
+    while (colon < countof(param) && param[colon] != ':')
+        colon += 1;
+    if (colon + 3 >= countof(param) || !at(param, colon + 1, " *")) return false;
+    Usize n = countof(param);
+    return n >= 6 && at(param, n - 6, "[]auto");
+}
+
 // The fix of the generic function `d`: its `auto` parameter, its name's `[T]` and every `typeof` of the parameter.
 static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     core::ParseError none = {};
     if (d->kind != .function) return none;
     ast::Param params[:] = d->kind.function.params;
     Usize found = countof(params);
+    Bool slice_auto = false; // `xs: []auto`, a read-only slice (`const auto xs[:]`): only the element is generic
     for (Usize i = 0; i < countof(params); i++) {
         const ast::TypeExpr *type = params[i].type;
-        if (type == nullptr || type->kind != .auto_type) continue;
+        if (type == nullptr) continue;
+        Bool is_auto = type->kind == .auto_type;
+        Bool is_slice = false;
+        if (!is_auto && params[i].span.end <= countof(source) && params[i].span.start < params[i].span.end) {
+            Str param = source[params[i].span.start:params[i].span.end];
+            is_slice = !is_slice_pointer(param) && (ends_with(param, ": []auto") || ends_with(param, ": []mut auto") ||
+                                                    ends_with(param, ": *auto") || ends_with(param, ": *mut auto") ||
+                                                    ends_with(param, ": [][]auto"));
+        }
+        if (!is_auto && !is_slice) continue;
         if (found != countof(params) || params[i].is_rest) return none; // one `auto`, no pack
         found = i;
+        slice_auto = is_slice;
     }
     if (found == countof(params) || d->kind.function.body == nullptr) return none;
     Usize start = d->span.start;
     Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
     Str name = params[found].name;
     Str text = source[start:end];
-    if (!used_as_slice(text, name) || word_then(text, 0, "T", "")) return none;
+    if (slice_auto ? !used_typed(text, name) : !used_as_slice(text, name)) return none;
+    if (word_then(text, 0, "T", "")) return none;
     Usize param_end = params[found].span.end;
     if (param_end < 4 || param_end > end || !at(source, param_end - 4, "auto")) return none;
     // The name of the function: `fn <name>(`.
@@ -200,24 +237,16 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     Bool mutable = writes(text, name);
     core::Edits edits = {};
     edits = push(edits, name_end, name_end, "[T]");
-    edits = push(edits, param_end - 4, param_end, mutable ? "[]mut T" : "[]T");
+    Str element = "[]T";
+    if (mutable) element = "[]mut T";
+    if (slice_auto) element = "T";
+    edits = push(edits, param_end - 4, param_end, element);
     edits = rewrite_uses(edits, source, start, end, name, mutable);
     core::ParseError out = {};
     out.span = d->span;
     out.message = "an `auto` slice parameter is an inferred parameter: write `[T]` and `[]T`";
     out.fix = edits;
     return out;
-}
-
-// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer
-// to a slice of any element type, as `const auto (*xs)[:]` is mended.
-static Bool is_slice_pointer(Str param) {
-    Usize colon = 0;
-    while (colon < countof(param) && param[colon] != ':')
-        colon += 1;
-    if (colon + 3 >= countof(param) || !at(param, colon + 1, " *")) return false;
-    Usize n = countof(param);
-    return n >= 6 && at(param, n - 6, "[]auto");
 }
 
 // The element type of the pointer to a slice that `d` takes, written `typeof((xs.*)[0])` in the body and the result:
