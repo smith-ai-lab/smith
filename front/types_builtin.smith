@@ -154,7 +154,7 @@ static Bool answer(Str name, types::TypeRef t) {
     if (same(name, "is_pointer")) return t->kind == .pointer;
     if (same(name, "is_integer")) return t->kind == .integer;
     if (same(name, "is_float")) return t->kind == .floating;
-    if (same(name, "is_signed")) return t->kind == .integer && t->is_signed;
+    if (same(name, "is_signed")) return t->kind == .integer && types::signed_of(t);
     if (same(name, "is_bool")) return t->kind == .bool_type;
     return t->kind == .enumeration;
 }

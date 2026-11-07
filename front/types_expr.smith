@@ -760,11 +760,11 @@ static void finish(types::Checked *c, const ast::Expr *e, types::TypeRef found, 
 // Whether `value` (negated when `negated`) is a value of the integer type `t`.
 static Bool fits(types::TypeRef t, U64 value, Bool negated) {
     U64 one = 1;
-    if (t->bits > 64) {
-        return t->is_signed || !negated || value == 0; // a literal is a 64-bit value: 128 bits hold them all
+    if (types::bits_of(t) > 64) {
+        return types::signed_of(t) || !negated || value == 0; // a literal is a 64-bit value: 128 bits hold them all
     }
-    if (t->is_signed) {
-        U64 limit = one << (t->bits - 1);
+    if (types::signed_of(t)) {
+        U64 limit = one << (types::bits_of(t) - 1);
         if (negated) {
             return value <= limit;
         }
@@ -773,26 +773,26 @@ static Bool fits(types::TypeRef t, U64 value, Bool negated) {
     if (negated) {
         return value == 0;
     }
-    if (t->bits >= 64) {
+    if (types::bits_of(t) >= 64) {
         return true;
     }
-    return value < (one << t->bits);
+    return value < (one << types::bits_of(t));
 }
 
 static Str range_text(types::TypeRef t) {
     U64 one = 1;
-    if (t->bits > 64) {
-        if (t->is_signed)
+    if (types::bits_of(t) > 64) {
+        if (types::signed_of(t))
             return msg("-170141183460469231731687303715884105728 to 170141183460469231731687303715884105727");
         return msg("0 to 340282366920938463463374607431768211455");
     }
-    if (t->is_signed) {
-        U64 limit = one << (t->bits - 1);
+    if (types::signed_of(t)) {
+        U64 limit = one << (types::bits_of(t) - 1);
         return msg(format::push("-", limit, " to ", limit - 1));
     }
     U64 top = ~(U64)0;
-    if (t->bits < 64) {
-        top = (one << t->bits) - 1;
+    if (types::bits_of(t) < 64) {
+        top = (one << types::bits_of(t)) - 1;
     }
     return msg(format::push("0 to ", top));
 }
@@ -852,7 +852,7 @@ static void literal_integer(types::Checked *c, Frame f) {
 // Whether a float literal is in the range of the 16-bit float `t` (`F16` up to 65504, `BF16` up to about 3.39e38);
 // reports "70000 does not fit F16 ..." when it is not. `F32` and `F64` take every literal.
 static Bool float_fits(types::Checked *c, ast::Span span, F64 value, types::TypeRef t) {
-    if (t->bits != 16) {
+    if (types::bits_of(t) != 16) {
         return true;
     }
     Bool brain = t->name[0] == 'B';
@@ -2022,10 +2022,10 @@ static types::TypeRef c_common(types::TypeRef l, types::TypeRef r) {
     if (r->kind == .floating) {
         return r;
     }
-    if (l->bits != r->bits) {
-        return l->bits > r->bits ? l : r;
+    if (types::bits_of(l) != types::bits_of(r)) {
+        return types::bits_of(l) > types::bits_of(r) ? l : r;
     }
-    return l->is_signed && !r->is_signed ? r : l;
+    return types::signed_of(l) && !types::signed_of(r) ? r : l;
 }
 
 // Two numbers in `+`, `-`, a comparison or a bit operator that no implicit conversion joins (`i32` and `u32`, `u64`
@@ -2305,8 +2305,8 @@ static Bool widen_assigned(types::Checked *c, const ast::Expr *e, ast::BinaryOp 
         return false;
     }
     const ast::Expr *value = e->kind.assign.value;
-    if (is_shift(op) || !is_integer(tt) || !is_integer(vt) || tt->is_signed != vt->is_signed || vt->bits >= tt->bits ||
-        literal_like(value)) {
+    if (is_shift(op) || !is_integer(tt) || !is_integer(vt) || types::signed_of(tt) != types::signed_of(vt) ||
+        types::bits_of(vt) >= types::bits_of(tt) || literal_like(value)) {
         return false;
     }
     types::fail_fix(c, e->span,
@@ -5147,10 +5147,11 @@ static Bool leaf(types::Checked *c, Frame f) {
         // `?*char` (a C pointer that may be null) takes a literal too: it is never null (#2611)
         if (wanted != nullptr && wanted->kind == .option && wanted->element->kind == .pointer) wanted = wanted->element;
         Bool as_pointer = wanted != nullptr && wanted->kind == .pointer && wanted->element->kind == .integer &&
-                          wanted->element->bits == 8;
+                          types::bits_of(wanted->element) == 8;
         // A literal given to `[N]char`: the bytes and the zero byte start the array and the rest is zero (#2611).
         Bool as_array = f.expected != nullptr && f.expected->kind == .array && f.expected->element->kind == .integer &&
-                        f.expected->element->bits == 8 && f.expected->count >= countof(e->kind.string.bytes) + 1;
+                        types::bits_of(f.expected->element) == 8 &&
+                        f.expected->count >= countof(e->kind.string.bytes) + 1;
         finish(c, e, as_pointer ? wanted : (as_array ? f.expected : c->table.text), f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);
