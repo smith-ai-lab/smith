@@ -65,7 +65,7 @@ export void test_front_fix_bare_enumerator_in_a_comparison() {
     fix::Fixed fixed =
         fix::fix_text("t.smith", "module m;\ntypedef enum {\n    red,\n    green,\n    blue\n} Color;\nstatic Bool "
                                  "late(Color c) {\n    return c >= green && c != blue;\n}\n");
-    Str want = "return c >= .green && c != .blue";
+    Str want = "return c >= .green and c != .blue";
     test::check_equal(slice::find_slice(fixed.text, want) == .some, true);
     test::check_equal(errors_in(fixed.text), (Usize)0);
 }

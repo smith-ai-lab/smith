@@ -16,9 +16,9 @@ if .circle(c) := shape: area(c)      # any other enum: the general pattern
 ```
 
 A `?T` name is a `T` (a `?*T` a `*T`) where it is known not to be `.none`: the block of `if x != .none:`, the right
-side of `x != .none && ...`, the `else` of `if x == .none:`, and the lines after an `if x == .none:` whose block always
+side of `x != .none and ...`, the `else` of `if x == .none:`, and the lines after an `if x == .none:` whose block always
 leaves (`return`, `break`, `continue`). Only names that can't change narrow: parameters and locals without `mut`, not
 `mut` names and not fields (`p.child`); those keep the pattern form `if v := p.child:`. There is no `x.some`: after the
 test `x` is the value. `x == .some` is written `x != .none`, and `x != .some` is `x == .none` (the fixer rewrites both,
-and `x.some` to `x`). Results get no short form and no narrowing: use `try`, `match` or `if .ok(v) := r:`. `||` chains
+and `x.some` to `x`). Results get no short form and no narrowing: use `try`, `match` or `if .ok(v) := r:`. `or` chains
 do not narrow.

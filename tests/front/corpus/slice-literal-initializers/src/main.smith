@@ -29,7 +29,7 @@ pub fn main() -> i32:
         put("yes")
     else:
         put("no")
-    if !flag:
+    if not flag:
         put("yes")
     else:
         put("no")

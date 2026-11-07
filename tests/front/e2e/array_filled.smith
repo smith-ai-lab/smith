@@ -19,20 +19,20 @@ fn runtime_fill(v: i32) -> i32:
     xs[0] + xs[4]
 
 pub fn check() -> i32:
-    if bytes[0] != 0 || bytes[named - 1] != 0 || countof(bytes) != 8:
+    if bytes[0] != 0 or bytes[named - 1] != 0 or countof(bytes) != 8:
         return 1
-    if ones[0] != 1 || ones[15] != 1 || countof(ones) != 16:
+    if ones[0] != 1 or ones[15] != 1 or countof(ones) != 16:
         return 2
-    if big[1023] != 0 || countof(big) != 1024:
+    if big[1023] != 0 or countof(big) != 1024:
         return 3
     if letters[3] != 'x':
         return 4
     if weights[2] != 1.5:
         return 5
-    if cells[1].hits != 4 || cells[1].step != 3:
+    if cells[1].hits != 4 or cells[1].step != 3:
         return 6
     local := array.filled(f64, 4, 2.5)
-    if local[3] != 2.5 || countof(local) != 4:
+    if local[3] != 2.5 or countof(local) != 4:
         return 7
     if runtime_fill(7) != 14:
         return 8

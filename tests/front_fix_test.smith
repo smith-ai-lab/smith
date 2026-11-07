@@ -271,8 +271,8 @@ export void test_a_top_level_if_constexpr_becomes_when() {
                    "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
                    "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
     check_text(fixed.text, "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
-                           "mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nmut a: i32 = 2\n"
-                           "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
+                           "mut a: i32 = 1\n@when(target.os != .macos and target.os == .linux)\nmut a: i32 = 2\n"
+                           "@when(target.os != .macos and target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
 }
 
 // Two `else if` branches with `&&` conditions: the second chain frame used to share the first one's list of earlier
@@ -287,11 +287,11 @@ export void test_a_chain_of_two_else_if_constexpr_with_and_becomes_when() {
         "    int a = 3;\n} else {\n    int a = 4;\n}\nint after = 5;\n");
     check_text(fixed.text,
                "\n@when(target.os == .macos)\nmut a: i32 = 1\n"
-               "@when(target.os != .macos && target.arch == .aarch64 && target.os == .linux)\nmut a: i32 = 2\n"
-               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
-               "target.arch == .x86_64 && target.os == .linux)\nmut a: i32 = 3\n"
-               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
-               "!(target.arch == .x86_64 && target.os == .linux))\nmut a: i32 = 4\nmut after: i32 = 5\n");
+               "@when(target.os != .macos and target.arch == .aarch64 and target.os == .linux)\nmut a: i32 = 2\n"
+               "@when(target.os != .macos and not (target.arch == .aarch64 and target.os == .linux) and "
+               "target.arch == .x86_64 and target.os == .linux)\nmut a: i32 = 3\n"
+               "@when(target.os != .macos and not (target.arch == .aarch64 and target.os == .linux) and "
+               "not (target.arch == .x86_64 and target.os == .linux))\nmut a: i32 = 4\nmut after: i32 = 5\n");
 }
 
 // `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
@@ -315,7 +315,7 @@ export void test_a_top_level_if_constexpr_on_a_constant_becomes_when() {
     fix::Fixed fixed = fix::fix_text("t.smith", "constexpr bool wide = true;\n\nif constexpr (wide) {\n"
                                                 "    int a = 1;\n} else {\n    int a = 2;\n}\n");
     check_text(fixed.text, "const wide: bool = true\n\n@when(wide)\nmut a: i32 = 1\n"
-                           "@when(!(wide))\nmut a: i32 = 2\n");
+                           "@when(not (wide))\nmut a: i32 = 2\n");
 }
 
 // In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the

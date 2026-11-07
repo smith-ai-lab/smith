@@ -255,12 +255,12 @@ export void test_front_check_types_other_declaration_in_a_function_is_not_yet_ty
 
 export void test_front_check_types_plain_enum_is_ordered_in_declaration_order() {
     clean("enum Level:\n    low\n    mid\n    high\n\n"
-          "fn above(a: Level, b: Level) -> bool:\n    a < b || a <= b || a > b || a >= b\n");
+          "fn above(a: Level, b: Level) -> bool:\n    a < b or a <= b or a > b or a >= b\n");
 }
 
 export void test_front_check_types_leading_dot_takes_the_type_of_the_other_operand() {
     clean("enum Level:\n    low\n    mid\n    high\n\n"
-          "fn in_range(a: Level) -> bool:\n    a >= .mid && a != .high && .low <= a\n");
+          "fn in_range(a: Level) -> bool:\n    a >= .mid and a != .high and .low <= a\n");
 }
 
 export void test_front_check_types_payload_enum_is_not_ordered() {

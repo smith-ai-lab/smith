@@ -88,7 +88,8 @@ struct Writer {
     lex::TokenKind before;
     Usize depth;
     Bool bracket[32];
-    Bool header; // inside the `<...>` of `import c <stdio.h>`, written as it is
+    Bool word_not; // the last token is the word `not` (D19): a space follows it, where `!` takes none
+    Bool header;   // inside the `<...>` of `import c <stdio.h>`, written as it is
 };
 
 static Bool blank(char c) {
@@ -173,6 +174,7 @@ static Bool has_newline(Str text) {
 static Bool space_before(const Writer *w, lex::TokenKind next) {
     format_space::SpaceContext context = {.prev_unary = format_space::operand_expected(w->before),
                                           .in_brackets = w->depth > 0 && w->depth <= 32 && w->bracket[w->depth - 1]};
+    if (w->word_not && next != lex::right_brace) return !format_space::is_layout_kind(next);
     return format_space::space_between(w->prev, next, context);
 }
 
@@ -201,6 +203,7 @@ static void write_token(Writer *w, Str source, lex::Token token, Bool new_line) 
     track_brackets(w, token.kind);
     w->before = w->prev;
     w->prev = token.kind;
+    w->word_not = token.kind == lex::bang && lex::text(source, token)[0] == 'n';
 }
 
 // Handles one token that is not a layout token. gap is the source between it and the token before.

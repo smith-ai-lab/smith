@@ -132,10 +132,40 @@ export lex::Token peek(const Parser *p) {
     return peek_at(p, 0);
 }
 
+// `&&`, `||` and `!` in smith's own syntax (D19, 2026-11-07): `and`, `or` and `not` replace them, so there is one way
+// to write each. It is a warning with its fix, like the other old forms: `fix::parse_for_fix` reads a text with an
+// error as today's syntax, and one with only warnings as smith's own, so `smith lint --fix` mends `&&` in a text that
+// is already new. A token read again (the parser backs up) is reported once.
+static void symbolic_logic(Parser *p, lex::Token token) {
+    Str word = lex::text(p->source, token);
+    Str spelled = "";
+    Str and_sign = "&&";
+    Str or_sign = "||";
+    Str not_sign = "!";
+    if (mem::equal(word, and_sign)) spelled = "and";
+    if (mem::equal(word, or_sign)) spelled = "or";
+    if (mem::equal(word, not_sign)) spelled = "not ";
+    if (countof(spelled) == 0) return;
+    for (Usize i = countof(p->warnings); i > 0 && p->warnings[i - 1].span.start >= token.span.start; i--) {
+        if (p->warnings[i - 1].span.start == token.span.start) return;
+    }
+    Edit change = {.span = token.span, .text = spelled};
+    Edits edits = mem::alloc_slice(Edit, 1);
+    edits[0] = change;
+    p->warnings = mem::realloc(p->warnings, countof(p->warnings) + 1);
+    char text_of[:] = format::push("`", word, "` is written `", spelled, "` in smith's syntax: one way to write it");
+    Str message = text_of;
+    ParseError failure = {.span = token.span, .message = message, .fix = edits};
+    p->warnings[countof(p->warnings) - 1] = failure;
+}
+
 // Takes the token at the position and moves past it; at the end of the file the position stays.
 export lex::Token advance(Parser *p) {
     lex::Token token = peek(p);
     if (token.kind != lex::end_of_file) p->position += 1;
+    if (p->new_syntax &&
+        (token.kind == lex::ampersand_ampersand || token.kind == lex::pipe_pipe || token.kind == lex::bang))
+        symbolic_logic(p, token);
     return token;
 }
 

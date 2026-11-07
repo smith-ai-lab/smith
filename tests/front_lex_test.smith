@@ -821,3 +821,21 @@ export void test_lex_new_slash_comments_and_hash_words_are_errors() {
     lex::LexError fine = error_of_new("a # fine\n");
     test::check_equal(fine.span.end, (U32)0);
 }
+
+// D19: `and`, `or` and `not` are the kinds of `&&`, `||` and `!` in the new syntax, and plain names in the old one.
+export void test_lex_new_logic_words_have_the_kinds_of_the_signs() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Lexed words = lex::tokenize_new("not a and b or c\n");
+    test::check_equal(words == .ok, true);
+    if (words != .ok) return;
+    test::check_equal(words.ok[0].kind == lex::bang, true);
+    test::check_equal(words.ok[2].kind == lex::ampersand_ampersand, true);
+    test::check_equal(words.ok[4].kind == lex::pipe_pipe, true);
+    lex::Lexed old = lex::tokenize("not and or");
+    test::check_equal(old == .ok, true);
+    if (old != .ok) return;
+    test::check_equal(old.ok[0].kind == lex::name, true);
+}

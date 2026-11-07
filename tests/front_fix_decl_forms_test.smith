@@ -117,7 +117,7 @@ export void test_front_fix_restrict_slice_goes_with_an_apart_precondition() {
                  "    contract::requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
                  "&src[0] + countof(src) <= &dst[0]);\n    g(dst, src);\n}\n",
                  "import std.contract\nfn copy(dst: []u8, src: []u8):\n"
-                 "    contract.requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
+                 "    contract.requires(countof(dst) == 0 or &dst[0] + countof(dst) <= &src[0] or "
                  "&src[0] + countof(src) <= &dst[0])\n    g(dst, src)\n");
 }
 

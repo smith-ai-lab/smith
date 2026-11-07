@@ -12,6 +12,6 @@ fn size_of(n: Node) -> i32:
 
 pub fn check() -> i32:
     let mut it = Item(size = 7)
-    if size_of(.item(&it)) != 7 || size_of(.empty) != 0:
+    if size_of(.item(&it)) != 7 or size_of(.empty) != 0:
         return 1
     0

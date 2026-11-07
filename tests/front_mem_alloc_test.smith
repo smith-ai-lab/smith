@@ -127,9 +127,9 @@ export void test_front_mem_alloc_a_length_is_a_slice() {
                      "pub fn check() -> i32:\n"
                      "    n: usize = 4\n"
                      "    row := mem.alloc(u8, n)\n"
-                     "    if countof(row) != 4 || row[3] != 0:\n        return 1\n"
+                     "    if countof(row) != 4 or row[3] != 0:\n        return 1\n"
                      "    row[3] = 7\n"
-                     "    if row[3] != 7 || row[0] != 0:\n        return 2\n"
+                     "    if row[3] != 7 or row[0] != 0:\n        return 2\n"
                      "    0\n");
 }
 
@@ -141,10 +141,10 @@ export void test_front_mem_alloc_a_shape_is_one_block() {
                     "    grid := mem.alloc(f64, [rows.to(usize), 5])\n"
                     "    if grid[2, 4] != 0.0:\n        return 1\n"
                     "    grid[2, 4] = 1.5\n"
-                    "    if grid[2, 4] != 1.5 || grid[0, 0] != 0.0:\n        return 2\n"
+                    "    if grid[2, 4] != 1.5 or grid[0, 0] != 0.0:\n        return 2\n"
                     "    cube := mem.alloc(i32, [2, 3, 4])\n"
                     "    cube[1, 2, 3] = 9\n"
-                    "    if cube[1, 2, 3] != 9 || cube[0, 0, 0] != 0:\n        return 3\n"
+                    "    if cube[1, 2, 3] != 9 or cube[0, 0, 0] != 0:\n        return 3\n"
                     "    0\n");
 }
 
@@ -169,7 +169,7 @@ export void test_front_mem_alloc_in_a_generic() {
                       "    mem.alloc(T, n)\n\n"
                       "pub fn check() -> i32:\n"
                       "    words := sized(u16, 6)\n"
-                      "    if countof(words) != 6 || words[5] != 0:\n        return 1\n"
+                      "    if countof(words) != 6 or words[5] != 0:\n        return 1\n"
                       "    wide := sized(f64, 2)\n"
                       "    if countof(wide) != 2:\n        return 2\n"
                       "    0\n");
@@ -203,10 +203,10 @@ export void test_front_mem_alloc_arena_push_slice_takes_the_shape() {
                     "    mut a: arena.Arena = undefined\n"
                     "    a.pushes = 0\n"
                     "    row := arena.push_slice(&a, u32, 3)\n"
-                    "    if countof(row) != 3 || row[2] != 0:\n        return 1\n"
+                    "    if countof(row) != 3 or row[2] != 0:\n        return 1\n"
                     "    grid := arena.push_slice(&a, f32, [2, 4])\n"
                     "    grid[1, 3] = 2.0\n"
-                    "    if grid[1, 3] != 2.0 || grid[0, 0] != 0.0:\n        return 2\n"
+                    "    if grid[1, 3] != 2.0 or grid[0, 0] != 0.0:\n        return 2\n"
                     "    if a.pushes != 2:\n        return 3\n"
                     "    0\n");
 }

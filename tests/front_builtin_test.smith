@@ -116,7 +116,7 @@ export void test_front_builtin_add_overflow() {
                            "    let mut r: i32 = 0\n"
                            "    let a: i32 = 2147483647\n"
                            "    let one: i32 = 1\n"
-                           "    if !__builtin_add_overflow(a, one, &r):\n        return 1\n"
+                           "    if not __builtin_add_overflow(a, one, &r):\n        return 1\n"
                            "    if r != -2147483648:\n        return 2\n"
                            "    if __builtin_add_overflow(one, one, &r):\n        return 3\n"
                            "    if r != 2:\n        return 4\n"
@@ -128,7 +128,7 @@ export void test_front_builtin_sub_overflow() {
                            "    let mut r: u8 = 0\n"
                            "    let zero: u8 = 0\n"
                            "    let one: u8 = 1\n"
-                           "    if !__builtin_sub_overflow(zero, one, &r):\n        return 1\n"
+                           "    if not __builtin_sub_overflow(zero, one, &r):\n        return 1\n"
                            "    if r != 255:\n        return 2\n"
                            "    0\n");
 }
@@ -138,7 +138,7 @@ export void test_front_builtin_mul_overflow() {
                            "    let mut r: i64 = 0\n"
                            "    let big: i64 = 4611686018427387904\n"
                            "    let two: i64 = 2\n"
-                           "    if !__builtin_mul_overflow(big, two, &r):\n        return 1\n"
+                           "    if not __builtin_mul_overflow(big, two, &r):\n        return 1\n"
                            "    if r != -9223372036854775808:\n        return 2\n"
                            "    0\n");
 }
@@ -214,11 +214,11 @@ export void test_front_builtin_isnan_and_isfinite() {
                          "    let zero: f64 = 0.0\n"
                          "    let nan = zero / zero\n"
                          "    let inf = 1.0 / zero\n"
-                         "    if !__builtin_isnan(nan):\n        return 1\n"
+                         "    if not __builtin_isnan(nan):\n        return 1\n"
                          "    if __builtin_isnan(inf):\n        return 2\n"
                          "    if __builtin_isfinite(inf):\n        return 3\n"
                          "    if __builtin_isfinite(nan):\n        return 4\n"
-                         "    if !__builtin_isfinite(zero):\n        return 5\n"
+                         "    if not __builtin_isfinite(zero):\n        return 5\n"
                          "    0\n");
 }
 
@@ -262,7 +262,7 @@ export void test_front_builtin_libc_memory() {
                           "    __builtin_memcpy(&b[0], &a[0], 4)\n"
                           "    if __builtin_memcmp(&a[0], &b[0], 4) != 0:\n        return 1\n"
                           "    __builtin_memset(&b[0], 7, 2)\n"
-                          "    if b[0] != 7 || b[1] != 7 || b[2] != 3:\n        return 2\n"
+                          "    if b[0] != 7 or b[1] != 7 or b[2] != 3:\n        return 2\n"
                           "    __builtin_memmove(&b[1], &b[0], 2)\n"
                           "    if b[2] != 7:\n        return 3\n"
                           "    0\n");
