@@ -46,21 +46,23 @@ typedef struct {
 // The repository, committed on main: a module a, tests of it, a test of b that imports a, a test of c that imports
 // nothing, a test that runs smith and a test that lists the tree.
 constexpr Source base[_] = {
-    {"lib/a.smith", "module a;\nexport I32 one() { return 1; }\n"},
-    {"lib/a_test.smith", "module a_test;\nimport a;\nexport void test_one() {}\n"},
-    {"lib/b.smith", "module b;\nimport a;\nexport I32 two() { return 2; }\n"},
-    {"lib/b_test.smith", "module b_test;\nimport b;\nexport void test_two() {}\n"},
-    {"lib/c_test.smith", "module c_test;\nexport void test_three() {}\n"},
-    {"src/lone.smith", "module lone;\nexport I32 four() { return 4; }\n"},
-    {"tests/runs_test.smith", "module runs_test;\nimport scratch;\nexport void test_runs() { scratch::sh(); }\n"},
-    {"tests/scratch.smith", "module scratch;\n"},
-    {"tests/tree_test.smith", "module tree_test;\nexport void test_tree() { sh(\"find $SMITH_REPO -name x.c\"); }\n"},
-    {"tests/docs_test.smith",
-     "module docs_test;\nexport void test_docs() { read(\"README.md\"); read(\"docs/guide.txt\"); }\n"},
-    {"tests/old.c", "int main(void) { return 0; }\n"},
-    {"README.md", "text\n"},
-    {"docs/guide.txt", "text\n"},
-    {"runtime/docs.c", "int x;\n"},
+    {.path = "lib/a.smith", .text = "module a;\nexport I32 one() { return 1; }\n"},
+    {.path = "lib/a_test.smith", .text = "module a_test;\nimport a;\nexport void test_one() {}\n"},
+    {.path = "lib/b.smith", .text = "module b;\nimport a;\nexport I32 two() { return 2; }\n"},
+    {.path = "lib/b_test.smith", .text = "module b_test;\nimport b;\nexport void test_two() {}\n"},
+    {.path = "lib/c_test.smith", .text = "module c_test;\nexport void test_three() {}\n"},
+    {.path = "src/lone.smith", .text = "module lone;\nexport I32 four() { return 4; }\n"},
+    {.path = "tests/runs_test.smith",
+     .text = "module runs_test;\nimport scratch;\nexport void test_runs() { scratch::sh(); }\n"},
+    {.path = "tests/scratch.smith", .text = "module scratch;\n"},
+    {.path = "tests/tree_test.smith",
+     .text = "module tree_test;\nexport void test_tree() { sh(\"find $SMITH_REPO -name x.c\"); }\n"},
+    {.path = "tests/docs_test.smith",
+     .text = "module docs_test;\nexport void test_docs() { read(\"README.md\"); read(\"docs/guide.txt\"); }\n"},
+    {.path = "tests/old.c", .text = "int main(void) { return 0; }\n"},
+    {.path = "README.md", .text = "text\n"},
+    {.path = "docs/guide.txt", .text = "text\n"},
+    {.path = "runtime/docs.c", .text = "int x;\n"},
 };
 
 static void write(const char *folder, Source file) {
@@ -135,11 +137,11 @@ export void test_a_source_nothing_imports_selects_every_test() {
 export void test_a_file_the_graph_does_not_know_selects_every_test() {
     enter();
     defer leave();
-    const Source added[_] = {{"tests/new.c", "int y;\n"}};
+    const Source added[1] = {{.path = "tests/new.c", .text = "int y;\n"}};
     const char *out = changed(added, countof(added), "A\ttests/new.c");
     scratch::expect_contains("the path", out, "tests/new.c is an input of no test the graph knows, so every test runs");
     scratch::expect_contains("the dry run", out, "every test runs");
-    const Source unread[_] = {{"docs/unread.txt", "more\n"}};
+    const Source unread[_] = {{.path = "docs/unread.txt", .text = "more\n"}};
     out = changed(unread, countof(unread), "A\tdocs/unread.txt");
     scratch::expect_contains("a text file", out, "docs/unread.txt is an input of no test");
 }
@@ -149,8 +151,8 @@ export void test_a_file_the_graph_does_not_know_selects_every_test() {
 export void test_a_test_of_the_core_is_selected_by_a_source_of_smith() {
     enter();
     defer leave();
-    const Source core[_] = {
-        {"tests/core_test.smith", "module core_test;\nimport <smith_core.h>;\nexport void test_core() {}\n"}};
+    const Source core[_] = {{.path = "tests/core_test.smith",
+                             .text = "module core_test;\nimport <smith_core.h>;\nexport void test_core() {}\n"}};
     const char *out = changed(core, countof(core), "M\truntime/docs.c");
     scratch::expect_contains("the test of the core", out,
                              "tests/core_test.smith: it runs smith, and runtime/docs.c is part of smith");
@@ -167,8 +169,8 @@ export void test_a_data_file_selects_the_tests_that_name_it() {
     scratch::expect_lacks("not every test", out, "every test runs");
     scratch::expect_lacks("a pure test", out, "c_test");
     const Source workflow[_] = {
-        {".github/workflows/check.yml", "b\n"},
-        {"tests/ci_test.smith", "module ci_test;\nexport void test_ci() { read(\"check.yml\"); }\n"}};
+        {.path = ".github/workflows/check.yml", .text = "b\n"},
+        {.path = "tests/ci_test.smith", .text = "module ci_test;\nexport void test_ci() { read(\"check.yml\"); }\n"}};
     out = changed(workflow, countof(workflow), "M\t.github/workflows/check.yml");
     scratch::expect_contains("the workflow's reader", out, "tests/ci_test.smith: it names .github/workflows/check.yml");
     scratch::expect_lacks("not every test", out, "selects the whole suite");
@@ -179,7 +181,7 @@ export void test_a_data_file_selects_the_tests_that_name_it() {
 export void test_a_workflow_no_test_names_selects_no_test() {
     enter();
     defer leave();
-    const Source other[_] = {{".github/workflows/other.yml", "b\n"}};
+    const Source other[_] = {{.path = ".github/workflows/other.yml", .text = "b\n"}};
     const char *out = changed(other, countof(other), "A\t.github/workflows/other.yml");
     scratch::expect_contains("no test file", out, "0 of 6 test files selected");
     scratch::expect_lacks("not unknown", out, "an input of no test");
@@ -199,9 +201,9 @@ export void test_a_markdown_file_selects_the_tests_that_read_markdown() {
 export void test_a_header_selects_the_tests_that_include_it_transitively() {
     enter();
     defer leave();
-    const Source headers[_] = {{"tests/h_test.c", "#include <mid.h>\n"},
-                               {"tests/mid.h", "#include <base.h>\n"},
-                               {"tests/base.h", "int z;\nint w;\n"}};
+    const Source headers[_] = {{.path = "tests/h_test.c", .text = "#include <mid.h>\n"},
+                               {.path = "tests/mid.h", .text = "#include <base.h>\n"},
+                               {.path = "tests/base.h", .text = "int z;\nint w;\n"}};
     const char *out = changed(headers, countof(headers), "M\ttests/base.h");
     scratch::expect_contains("the test", out, "tests/h_test.c: it depends on tests/mid.h");
 }
@@ -220,7 +222,7 @@ export void test_a_change_to_smith_selects_the_tests_that_run_smith() {
 export void test_the_full_check_list_selects_the_whole_suite() {
     enter();
     defer leave();
-    const Source patch[_] = {{"patches/x.patch", "x\n"}};
+    const Source patch[_] = {{.path = "patches/x.patch", .text = "x\n"}};
     const char *out = changed(patch, countof(patch), "A\tpatches/x.patch");
     scratch::expect_contains("the list", out, "selects the whole suite");
 }
@@ -230,7 +232,8 @@ export void test_the_full_check_list_selects_the_whole_suite() {
 export void test_the_lowering_is_judged_like_the_rest_of_smith() {
     enter();
     defer leave();
-    const Source lowering[_] = {{"runtime/lang_x.c", "int y;\n"}, {"smith.c", "// x\n"}};
+    const Source lowering[_] = {{.path = "runtime/lang_x.c", .text = "int y;\n"},
+                                {.path = "smith.c", .text = "// x\n"}};
     const char *out = changed(lowering, countof(lowering), "A\truntime/lang_x.c\nA\tsmith.c");
     scratch::expect_lacks("not the whole suite", out, "selects the whole suite");
     scratch::expect_contains("the test that runs smith", out,
@@ -276,7 +279,7 @@ export void test_a_source_over_two_mebibytes_says_so_and_runs_everything() {
     char *text = mem::alloc_slice(char, size + 1).data;
     mem::fill(text[0:size], ' ');
     text[size] = '\0';
-    const Source big[_] = {{"lib/a.smith", text}};
+    const Source big[_] = {{.path = "lib/a.smith", .text = text}};
     const char *out = changed(big, 1, "M\tlib/a.smith");
     scratch::expect_contains("the limit", out, "a source file (2 MiB) crossed its limit, the whole suite runs");
 }

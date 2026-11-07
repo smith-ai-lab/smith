@@ -15,7 +15,7 @@ import <string.h>;
 import scratch;
 
 // The runner's output without the timings: the slowest list is dropped and the summary's seconds are masked.
-constexpr char plain_filter[_] = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
+static const char *const plain_filter = "sed -e '/^slowest:/,/^$/d' -e 's/ in [0-9.]* s$//' | sed '/./,$!d'";
 
 // The shell filter that drops the timings from the runner's output.
 export const char *plain_pipe() {
@@ -73,7 +73,7 @@ export scratch::Project project(const char *base, const char *files) {
 // copy of the project in the cache; the others wait for its mark (the 600 s hang backstop, and a builder that failed
 // removes the lock, which ends the wait); each test links `build/tests` (a copy would be a new program that macOS scans
 // before it runs, seconds on a loaded host) and keeps the rest of its own project.
-constexpr char shared_script[_] =
+static const char *const shared_script =
     "here=$SMITH_REPO; root=$SMITH_TEST_CACHE/runner; mkdir -p \"$root\"; "
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
     "key=$( { echo \"$ARGS\"; stat $sf \"$SMITH_SELF\" \"$here\"/lib/std/*.smith \"$here\"/lib/*.c \"$here\"/lib/*.h "
@@ -90,13 +90,13 @@ constexpr char shared_script[_] =
     "perl -e 'select(undef, undef, undef, 0.2)'; done; fi; fi; ";
 
 // The end of the script for a test that only runs `build/tests`: it links the runner of the shared build.
-constexpr char link_script[_] = "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
-                                "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
+static const char *const link_script = "mkdir -p build && ln -sf \"$c/proj/build/tests\" \"$c/proj/build/tests.stack\" "
+                                       "\"$c\"/proj/build/libsmith_handlers.dylib* build/";
 
 // The end of the script for a test that runs `smith test` or `smith build` in the project: it copies the whole built
 // project (times kept), so `smith build` there is a no-op that writes the copy's paths and not the 14 steps of a
 // build (3 s of CPU) that the runner is made of; the way tests/lsp_test.smith copies its built folders.
-constexpr char copy_script[_] = "cp -Rp \"$c/proj/.\" .";
+static const char *const copy_script = "cp -Rp \"$c/proj/.\" .";
 
 // A project whose runner is built (or taken from the one an earlier test built): `project` and `build` in one, for a
 // test that only runs `build/tests`; a test that builds again, or expects a failed build, uses those two.
@@ -213,8 +213,10 @@ export const char *squeezed(const char *text) {
 // The number a text starts with (digits only), 0 when it has none.
 export Usize number(const char *text) {
     Usize value = 0;
-    for (; *text >= '0' && *text <= '9'; text++)
+    while (*text >= '0' && *text <= '9') {
         value = value * 10 + (Usize)(*text - '0');
+        text = text + 1;
+    }
     return value;
 }
 
@@ -288,7 +290,7 @@ export void expect_lacks(const char *iso, const char *name, const scratch::Run *
 // The forks the run made: the runner's `forks: N` line of --stats.
 export Usize forks_of(const scratch::Run *run) {
     const char *at = c::strstr(run->out, "forks: ");
-    test::check_not_equal(at, nullptr);
+    test::check_condition(at != nullptr);
     Usize count = 0;
     for (at += 7; *at >= '0' && *at <= '9'; at++)
         count = count * 10 + (Usize)(*at - '0');

@@ -489,31 +489,31 @@ export void test_prove_write_note_a_callee_that_stores_to_a_global_says_so() {
 // 11g. A program that prints through console::print and a module with contracts (issue #508): the snapshot of a
 // modular function drops the branches to a trap, and a phi in the trap block (the file name a failure reports) must
 // lose its entry for the dropped edge, or the linked module does not verify.
-constexpr char printing_stats[_] = "module stats;\n"
-                                   "\n"
-                                   "import std::contract;\n"
-                                   "\n"
-                                   "export I32 largest(I32 xs[:]) {\n"
-                                   "    contract::requires(countof(xs) > 0);\n"
-                                   "    I32 best = xs[0];\n"
-                                   "    for (Usize i = 1; i < countof(xs); i++) {\n"
-                                   "        contract::invariant(1 <= i && i <= countof(xs));\n"
-                                   "        best = xs[i] > best ? xs[i] : best;\n"
-                                   "    }\n"
-                                   "    return best;\n"
-                                   "}\n";
+static const char *const printing_stats = "module stats;\n"
+                                          "\n"
+                                          "import std::contract;\n"
+                                          "\n"
+                                          "export I32 largest(I32 xs[:]) {\n"
+                                          "    contract::requires(countof(xs) > 0);\n"
+                                          "    I32 best = xs[0];\n"
+                                          "    for (Usize i = 1; i < countof(xs); i++) {\n"
+                                          "        contract::invariant(1 <= i && i <= countof(xs));\n"
+                                          "        best = xs[i] > best ? xs[i] : best;\n"
+                                          "    }\n"
+                                          "    return best;\n"
+                                          "}\n";
 
-constexpr char printing_main[_] = "module main;\n"
-                                  "\n"
-                                  "import std::console;\n"
-                                  "import stats;\n"
-                                  "\n"
-                                  "I32 main() {\n"
-                                  "    I32 raw[_] = {-3, 1, 9, 4};\n"
-                                  "    I32 readings[:] = raw;\n"
-                                  "    console::print(\"largest \", stats::largest(readings[1:]), \"\\n\");\n"
-                                  "    return 0;\n"
-                                  "}\n";
+static const char *const printing_main = "module main;\n"
+                                         "\n"
+                                         "import std::console;\n"
+                                         "import stats;\n"
+                                         "\n"
+                                         "I32 main() {\n"
+                                         "    I32 raw[_] = {-3, 1, 9, 4};\n"
+                                         "    I32 readings[:] = raw;\n"
+                                         "    console::print(\"largest \", stats::largest(readings[1:]), \"\\n\");\n"
+                                         "    return 0;\n"
+                                         "}\n";
 
 export void test_prove_a_program_that_prints_proves_a_module_with_contracts() {
     scratch::Project p = scratch::make("p", nullptr);

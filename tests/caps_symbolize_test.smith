@@ -11,7 +11,7 @@ import scratch;
 constexpr Usize memory_size = 1U << 22;
 
 // A trace of one block with 70 frames, 20 values, 60 details and 40 images: each count is past its limit.
-constexpr char trace[_] =
+static const char *const trace =
     "{ echo 'smith-trace begin check failed'; for i in $(seq 1 70); do echo \"smith-trace pc 0x$((4096 + i))\"; done; "
     "for i in $(seq 1 20); do echo \"smith-trace detail @ v$i = $i\"; done; "
     "for i in $(seq 1 60); do echo \"smith-trace detail a$i = $i   (u64)\"; done; "

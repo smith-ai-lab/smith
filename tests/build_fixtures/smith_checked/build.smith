@@ -3,5 +3,6 @@ module build;
 import std::build;
 
 export void build(build::Build *b) {
-    build::app(b, &(build::App){.entry = "prog.c"});
+    build::App app = {.entry = "prog.c"};
+    build::app(b, &app);
 }

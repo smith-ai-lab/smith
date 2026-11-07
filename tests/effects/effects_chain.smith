@@ -22,7 +22,7 @@ export [[std::effects(alloc)]] void *grab(U32 size) {
 }
 
 export [[std::effects(alloc)]] I32 too_much(const char *path) {
-    return c::fopen(path, "r") != nullptr;
+    return c::fopen(path, "r") != nullptr ? 1 : 0;
 }
 
 // A checked slice index is `fails`, which a ceiling lists.

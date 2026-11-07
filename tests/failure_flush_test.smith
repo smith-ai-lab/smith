@@ -9,26 +9,27 @@ import std::mem;
 import std::test;
 import scratch;
 
-constexpr char program[_] = "#include <pthread.h>\n"
-                            "#include <smith/trace.h>\n"
-                            "#include <stdio.h>\n"
-                            "#include <unistd.h>\n"
-                            "static void *reader(void *unused) {\n"
-                            "    (void)unused;\n"
-                            "    (void)getchar();\n"
-                            "    return nullptr;\n"
-                            "}\n"
-                            "int main(void) {\n"
-                            "    alarm(8);\n"
-                            "    pthread_t thread;\n"
-                            "    pthread_create(&thread, nullptr, reader, nullptr);\n"
-                            "    sleep(1);\n"
-                            "    printf(\"before\\n\");\n"
-                            "    smith_failure(SmithFailure_Check);\n"
-                            "}\n";
+static const char *const program = "#include <pthread.h>\n"
+                                   "#include <smith/trace.h>\n"
+                                   "#include <stdio.h>\n"
+                                   "#include <unistd.h>\n"
+                                   "static void *reader(void *unused) {\n"
+                                   "    (void)unused;\n"
+                                   "    (void)getchar();\n"
+                                   "    return nullptr;\n"
+                                   "}\n"
+                                   "int main(void) {\n"
+                                   "    alarm(8);\n"
+                                   "    pthread_t thread;\n"
+                                   "    pthread_create(&thread, nullptr, reader, nullptr);\n"
+                                   "    sleep(1);\n"
+                                   "    printf(\"before\\n\");\n"
+                                   "    smith_failure(SmithFailure_Check);\n"
+                                   "}\n";
 
-constexpr char build[_] = "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" app.c \"$SMITH_REPO/lib/trace.c\" "
-                          "-o app";
+static const char *const build =
+    "smith cc -std=gnu23 -I \"$SMITH_REPO/.smith/include\" app.c \"$SMITH_REPO/lib/trace.c\" "
+    "-o app";
 
 // The program's stdin is a pipe that stays open and silent for longer than the program's own 8 s alarm.
 export void test_failure_flush_a_failure_reports_while_another_thread_reads_stdin() {

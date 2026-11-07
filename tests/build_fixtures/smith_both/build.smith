@@ -1,5 +1,6 @@
 import std::build;
 
 void build(build::Build *b) {
-    build::app(b, &(build::App){});
+    build::App app = {};
+    build::app(b, &app);
 }

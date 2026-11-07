@@ -28,7 +28,7 @@ constexpr Usize memory_size = (Usize)16 << 20; // 16 MiB
 // cost 2.5 s and 6 s of CPU in each of the tests that used them (#638). The debug information names the shared folder,
 // where prog.c and main.smith are too, so the source lines are found and shown relative to it: the debugger runs from
 // the shared folder (`.dir-c`, `.dir-app` name it) and writes its output into the project. ONE is "c" or "app".
-constexpr char shared_script[_] =
+static const char *const shared_script =
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
     "key=$( { stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/tests/build_fixtures/dbg_crash/*; } | shasum -a "
     "256 | "

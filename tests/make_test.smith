@@ -249,7 +249,10 @@ static void add_command(Commands *commands, char *line) {
 
 // The canonical commands of the text of a build: only the lines of the compiler.
 static void canonical(const char *text, Commands *commands) {
-    *commands = (Commands){};
+    for (Usize i = 0; i < command_count; i++) {
+        commands->lines[i] = nullptr;
+    }
+    commands->count = 0;
     Usize start = 0;
     while (text[start] != '\0') {
         Usize end = start;
@@ -606,7 +609,6 @@ static void empty_build_file_is_none(const char *file) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    char text[256];
     char label[256];
     scratch::write(&p, "main.c", "int main(void) { return 0; }\n");
     scratch::write(&p, "Makefile", "prog: main.c\n\tcc main.c -o prog\n");
@@ -623,7 +625,6 @@ static void empty_build_file_is_none(const char *file) {
     scratch::Run again = run(&p, "smith build --dump-config");
     __builtin_snprintf(label, sizeof label, "empty %s: and with no Makefile the conventions are dumped", file);
     scratch::expect_contains(label, again.out, "smith_app");
-    (void)text;
 }
 
 // 18. An empty build file is none, for build.c and for build.smith, in the translator and in the conventions.

@@ -26,8 +26,8 @@ import <string.h>;
 
 // The tree-sitter runtime, pinned by the hash of its archive (v0.27.1, which reads parsers of ABI 15, the one
 // parser is generated with).
-constexpr char runtime_url[_] = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
-constexpr char runtime_hash[_] = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
+static const char *const runtime_url = "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz";
+static const char *const runtime_hash = "sha256:982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333";
 
 constexpr Usize memory_size = 1U << 22;
 
@@ -99,7 +99,7 @@ static void check_wrong_on_purpose(const scratch::Project *p) {
 // field's name goes after `short` (error-keyword-module), are expected to fail. The grammar is tree-sitter-c's, which
 // has neither C23's `auto` as a type nor C2y's `_Countof`: the three cases that use them are left out until the grammar
 // learns them.
-constexpr char lang_files[_] =
+static const char *const lang_files =
     "lang=${SMITH_LANG_CASES:-tests/smith-lang/cases}; "
     "bad='/error-import-eof/src/main\\.smith$|/error-tuple-field/src/main\\.smith$|/error-try-expression/src/"
     "main\\.smith$|"
@@ -140,7 +140,7 @@ export void test_tree_sitter_the_grammar_parses_its_corpus_and_samples() {
 
 // smith's own C: plain C stays C (the expected outputs of the language corpus are generated and not always C), with
 // the C23 and clang spellings smith uses.
-constexpr char own_c_files[_] =
+static const char *const own_c_files =
     "w=$PWD; cd own && find . \\( -path ./build -o -path ./shim -o -path ./tree-sitter -o -path ./.git -o "
     "-path ./.smith -o -path ./.cache -o -path ./.claude -o -path ./tests/build_fixtures -o -path "
     "'./tests/smith-lang/cases/*/expect' -o -path './tests/smith-lang/cases/*/expect-linux' -o -path "
@@ -152,7 +152,7 @@ constexpr char own_c_files[_] =
 // What the listing prunes (the generated, the vendored and the other worktrees) is not copied either.
 static Bool left_out(const char *name) {
     const char *skipped[_] = {"build", "shim", "tree-sitter", ".git", ".smith", ".cache", ".claude"};
-    for (Usize i = 0; i < _Countof(skipped); i++)
+    for (Usize i = 0; i < countof(skipped); i++)
         if (c::strcmp(name, skipped[i]) == 0) return true;
     return false;
 }
@@ -162,11 +162,17 @@ static void copy_own_files(const scratch::Project *p) {
     env::Value repo = env::get("SMITH_REPO");
     const char *base = repo == .some ? repo.some.data : ".";
     files::EntriesResult listed = files::list(base[0:c::strlen(base)]);
-    test::check_condition(listed == .ok);
-    if (listed != .ok) return;
-    for (Usize i = 0; i < countof(listed.ok); i++) {
-        const char *name = listed.ok[i].name.data;
-        if (!left_out(name)) scratch::copy_tree(p, name, format::push("own/", name).data);
+    switch (listed) {
+    case .error:
+        test::check_condition(false);
+        return;
+    case .ok:
+        files::Entries entries = listed.ok;
+        for (Usize i = 0; i < countof(entries); i++) {
+            const char *name = entries[i].name.data;
+            if (!left_out(name)) scratch::copy_tree(p, name, format::push("own/", name).data);
+        }
+        return;
     }
 }
 
@@ -192,13 +198,13 @@ export void test_tree_sitter_smiths_own_c_parses_without_error_nodes() {
 
 // The query the Neovim plugin asks (`smith cc --smith-tree-sitter`): the path of a library that exists, is the same on
 // every run, and loads with the grammar's entry point. It needs no network.
-constexpr char loader_source[_] = "#include <dlfcn.h>\n#include <stdio.h>\n"
-                                  "int main(int argc, char **argv) {\n"
-                                  "    void *handle = argc > 1 ? dlopen(argv[1], RTLD_NOW) : 0;\n"
-                                  "    void *entry = handle ? dlsym(handle, \"tree_sitter_smith\") : 0;\n"
-                                  "    puts(entry ? \"loaded\" : \"missing\");\n"
-                                  "    return entry ? 0 : 1;\n"
-                                  "}\n";
+static const char *const loader_source = "#include <dlfcn.h>\n#include <stdio.h>\n"
+                                         "int main(int argc, char **argv) {\n"
+                                         "    void *handle = argc > 1 ? dlopen(argv[1], RTLD_NOW) : 0;\n"
+                                         "    void *entry = handle ? dlsym(handle, \"tree_sitter_smith\") : 0;\n"
+                                         "    puts(entry ? \"loaded\" : \"missing\");\n"
+                                         "    return entry ? 0 : 1;\n"
+                                         "}\n";
 
 export void test_tree_sitter_smith_cc_prints_the_path_of_the_parser() {
     scratch::Project p = scratch::make("query", nullptr);

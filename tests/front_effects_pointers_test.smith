@@ -5,6 +5,7 @@
 module front_effects_pointers_test;
 
 import <llvm-c/Core.h>;
+import <string.h>;
 import <llvm-c/IRReader.h>;
 
 import front::effects_cache;

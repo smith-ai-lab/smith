@@ -13,8 +13,6 @@ import std::mem;
 import std::test;
 import <smith_core.h>;
 
-constexpr Usize modules_max = 8;
-
 // The wave of each module named, in the order given; `texts[i]` is the source of `names[i]`.
 static Usize waves_of(const char *names[:], const char *texts[:], Usize waves[:]) {
     return c::smith_core_header_waves(names.data, texts.data, countof(names), waves.data);
@@ -85,16 +83,19 @@ static const char *read_module(arena::Arena *memory, const char *name) {
     }
     const char *path = format::push(repo.some.data, "/lib/std/", name, ".smith").data;
     files::BytesResult file = files::read_file(path[0:c::strlen(path)]);
-    if (file != .ok) {
+    switch (file) {
+    case .error:
         test::check(false);
         return "";
+    case .ok:
+        files::Bytes bytes = file.ok;
+        Usize size = countof(bytes);
+        const char *view = (const char *)bytes.data;
+        char *text = arena::push_slice(memory, char, size + 1).data;
+        mem::copy(text[0:size], view[0:size]);
+        text[size] = '\0';
+        return text;
     }
-    Usize size = countof(file.ok);
-    const char *bytes = (const char *)file.ok.data;
-    char *text = arena::push_slice(memory, char, size + 1).data;
-    mem::copy(text[0:size], bytes[0:size]);
-    text[size] = '\0';
-    return text;
 }
 
 // The sources smith embeds: files imports arena, contract, env and mem, the modules whose names its header got wrong.
@@ -103,11 +104,11 @@ export void test_files_is_written_after_the_modules_it_imports() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    const char *names[modules_max] = {"files", "arena", "contract", "env", "mem"};
-    const char *texts[modules_max] = {};
+    const char *names[5] = {"files", "arena", "contract", "env", "mem"};
+    const char *texts[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
     for (Usize i = 0; i < 5; i++)
         texts[i] = read_module(&memory, names[i]);
-    Usize waves[modules_max] = {};
+    Usize waves[5] = {0, 0, 0, 0, 0};
     Usize count = c::smith_core_header_waves(names, texts, 5, waves);
     test::check(count >= 2);
     for (Usize i = 1; i < 5; i++)

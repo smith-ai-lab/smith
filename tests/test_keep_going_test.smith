@@ -6,9 +6,9 @@
 // smith-covers: include/smith/ tests/build_fixtures/test_keep_going/
 module test_keep_going_test;
 
-import smith::arena;
-import smith::mem;
-import smith::test;
+import std::arena;
+import std::mem;
+import std::test;
 import scratch;
 
 export void test_smith_test_builds_the_independent_task_after_one_fails() {
