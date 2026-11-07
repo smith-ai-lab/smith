@@ -407,7 +407,9 @@ export types::TypeRef libc_type(const types::Checked *c, U8 letter, types::TypeR
 
 // A pointer that may be null (`?*T`): C's libc functions take it where they take a pointer.
 static Bool is_pointer_option(types::TypeRef t) {
-    return t->kind == .option && t->element != nullptr && t->element->kind == .pointer;
+    if (t->kind != .option) return false;
+    types::TypeRef inner = t->element; // a local: a null test of the field would make `Ty.element` an option (#2669)
+    return inner != nullptr && inner->kind == .pointer;
 }
 
 static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {

@@ -1545,6 +1545,16 @@ static Str binary_text(ast::BinaryOp op) {
     return "||";
 }
 
+// A pointer that may be null (`?*T`). The element goes through a local: a null test of the field `element` itself
+// would make `Ty.element` an option in the fixed text (#2669).
+static Bool is_pointer_option(types::TypeRef t) {
+    if (t->kind != .option) {
+        return false;
+    }
+    types::TypeRef inner = t->element;
+    return inner != nullptr && inner->kind == .pointer;
+}
+
 static Bool is_shift(ast::BinaryOp op) {
     return op == .shift_left || op == .shift_right;
 }
@@ -1768,7 +1778,7 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
         return tuple_compare(c, span, op, l, r);
     }
     // Two `?*T` of one type compare as the pointers they are (null for `.none`, #2205): `a.element != b.element`.
-    if (is_equality(op) && l == r && l->kind == .option && l->element != nullptr && l->element->kind == .pointer) {
+    if (is_equality(op) && l == r && is_pointer_option(l)) {
         return c->table.bool_type;
     }
     if (!is_scalar(l)) {
@@ -1848,7 +1858,11 @@ export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true,
         if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) {
             continue;
         }
-        if (s->type->kind != .option || s->type->element == nullptr) {
+        if (s->type->kind != .option) {
+            continue;
+        }
+        types::TypeRef inner = s->type->element; // a local: a null test of the field would make `Ty.element` an option
+        if (inner == nullptr) {
             continue;
         }
         out[count] = *s;
