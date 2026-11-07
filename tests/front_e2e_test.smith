@@ -6,6 +6,7 @@ module front_e2e_test;
 
 import front::compile;
 import front::roots;
+import std::console;
 import std::files;
 import std::format;
 import std::mem;
@@ -141,11 +142,14 @@ static Str case_failure(Str name, Str folder, compile::Report report, Str errors
     return "";
 }
 
-// Fails the test with `text` printed under the failure (a check of two texts shows only their counts); "" passes.
+// Failures are collected so that every case runs: each prints at once and the test fails at the end, once, with the
+// number of failed cases (a failed check ends the test, so it is the last call).
+static Usize failed_cases = 0;
+
 static void fail_with(Str text) {
     if (countof(text) == 0) return;
-    test::note("%.*s", (I32)countof(text), text.data);
-    test::check_condition(false);
+    failed_cases += 1;
+    (void)console::print_error("FAILED CASE ", text, "\n");
 }
 
 static void run_case(Str name) {
@@ -171,6 +175,7 @@ export void test_front_e2e_every_case_of_the_corpus() {
         Str name = file[0:countof(file) - countof(suffix)];
         run_case(name);
     }
+    test::check_equal(failed_cases, 0);
 }
 
 // A cast to a narrower type is checked on the driver path (today's syntax, which has a `module` line): the object
