@@ -549,6 +549,8 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     out = append(out, fix_typeof::edits(source, module));
     out = append(out, typed_fixes(source, &checked));
     if (checked.error_count == 0 && loader != nullptr) out = append(out, fix_method::edits(source, &checked));
+    // `t[0]` over a tuple (#2679): the checker rejects the index, so this runs on a module that has errors.
+    out = append(out, fix_method::tuple_edits(&checked));
     return out;
 }
 
