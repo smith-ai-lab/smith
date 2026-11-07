@@ -822,7 +822,7 @@ export void test_text_f64_round_trips_the_edges() {
                     0x0010000000000001, 0x3ff0000000000000, 0x3fefffffffffffff, 0x3ff0000000000001, 0x4340000000000000,
                     0x433fffffffffffff, 0x7fe0000000000000, 0x7fefffffffffffff, 0x7feffffffffffffe};
     char decimal[64];
-    for (Usize i = 0; i < _Countof edges; i++) {
+    for (Usize i = 0; i < _Countof(edges); i++) {
         for (U64 sign = 0; sign < 2; sign++) {
             F64 d = test_text_f64_of(edges[i] | (sign << 63));
             for (I32 format = 0; format < 2; format++) {
