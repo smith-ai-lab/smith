@@ -856,6 +856,9 @@ class Collector {
         if (!sm.isInSystemHeader(callee->getLocation()) || !returnsObjectPointer(callee) ||
             llvm::StringRef(name).starts_with("__builtin_"))
             return;
+        // A project function whose body an importer carries to run at compile time (runtime/lang_body.c) sits in the
+        // `<smith-bodies>` buffer, which counts as a system header: it is not a libc function.
+        if (sm.getPresumedLoc(callee->getLocation()).getFilename() == llvm::StringRef("<smith-bodies>")) return;
         bool known = smith_effects::idiom(name, kind);
         if (!sm.isWrittenInMainFile(sm.getExpansionLoc(call->getBeginLoc()))) return;
         if (!known) {

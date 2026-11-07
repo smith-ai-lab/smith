@@ -310,3 +310,18 @@ export void test_front_emit_bind_a_payload_through_a_pointer() {
                                           "    measure(&shape) + first(&shape)\n");
     runs(source, "area", 0, 22, 1, 15);
 }
+
+// D21: `if .v(x) := &k` binds `x` as the address of the payload, with no load: a write through it changes `k`.
+export void test_front_emit_bind_a_payload_by_address_writes_in_place() {
+    char source[:] = format::push(shapes, "fn grow(p: *mut Shape):\n"
+                                          "    if .rect(rect) := p:\n"
+                                          "        rect.w = rect.w + 10\n"
+                                          "pub fn area(n: i32) -> i32:\n"
+                                          "    mut shape := make(n)\n"
+                                          "    grow(&shape)\n"
+                                          "    match shape:\n"
+                                          "        .circle(circle): circle.radius\n"
+                                          "        .rect(rect): rect.w * rect.h\n"
+                                          "        .empty: 0\n");
+    runs(source, "area", 0, 2, 1, 52);
+}

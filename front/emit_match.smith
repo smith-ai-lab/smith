@@ -314,6 +314,26 @@ static void bind_variant(state::Emitter *e, state::Value o, Str name, Str bindin
     state::add_local(e, (state::Local){.name = binding, .ty = inner.ty, .address = slot});
 }
 
+// D21: `.v(x) := &k` over a pointer to a payload enumeration binds `x` as a pointer to the payload, in place: no load,
+// so a write through `x` changes `k`. The pointer is `*Payload`.
+static void bind_variant_address(state::Emitter *e, state::Ty subject, c::LLVMValueRef address, Str name, Str binding) {
+    if (countof(binding) == 0 || state::same_text(binding, "_")) return;
+    Usize at = 0;
+    _ = find_enum(e, subject.name, &at);
+    state::Ty payload = e->enums[at].items[enumerator_index(e, at, name)].payload;
+    c::LLVMValueRef data = c::LLVMBuildStructGEP2(e->builder, subject.llvm, address, 1, "payload");
+    state::OwnedTy *block = mem::alloc(state::OwnedTy);
+    block->ty = payload;
+    block->next = e->owned;
+    e->owned = block;
+    state::Ty pointer = {.kind = {.pointer = {.element = &block->ty, .address_space = 0}},
+                         .llvm = state::pointer_type(e, 0),
+                         .name = "pointer"};
+    c::LLVMValueRef slot = state::new_alloca(e, pointer, binding);
+    c::LLVMBuildStore(e->builder, data, slot);
+    state::add_local(e, (state::Local){.name = binding, .ty = pointer, .address = slot});
+}
+
 // An arm starts: its block, a scope, the payload bound, then its value.
 static state::Status arm_start(state::Emitter *e, const state::ThenGeneral *w) {
     const ast::Stmt *s = w->stmt;
@@ -666,7 +686,14 @@ static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) 
     }
     _ = state::pop_value(e);
     Usize at = 0;
-    if (!(o.ty.kind == .integer || o.ty.kind == .variant_enum) || !find_enum(e, o.ty.name, &at))
+    Bool through = false;
+    state::Ty subject = o.ty;
+    if (o.ty.kind == .pointer && o.ty.kind.pointer.element != nullptr &&
+        o.ty.kind.pointer.element->kind == .variant_enum) {
+        through = true;
+        subject = *o.ty.kind.pointer.element;
+    }
+    if (!(subject.kind == .integer || subject.kind == .variant_enum) || !find_enum(e, subject.name, &at))
         return state::failf(s->span, "if let needs an enumeration or an option, not ", o.ty.name);
     ast::Pattern pattern = s->kind.if_let.pattern;
     U64 value = 0;
@@ -677,6 +704,11 @@ static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) 
     if (o.ty.kind == .variant_enum) {
         tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
         tag_type = c::LLVMInt32TypeInContext(e->context);
+    }
+    if (through) {
+        tag_type = c::LLVMInt32TypeInContext(e->context);
+        c::LLVMValueRef tag_address = c::LLVMBuildStructGEP2(e->builder, subject.llvm, o.llvm, 0, "tag_address");
+        tag = c::LLVMBuildLoad2(e->builder, tag_type, tag_address, "tag");
     }
     const ast::Stmt *else_branch = s->kind.if_let.else_branch;
     Bool has_else = else_branch != nullptr;
@@ -691,6 +723,7 @@ static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) 
     c::LLVMPositionBuilderAtEnd(e->builder, then_block);
     state::begin_scope(e);
     if (o.ty.kind == .variant_enum) bind_variant(e, o, pattern.name, pattern.binding);
+    if (through) bind_variant_address(e, subject, o.llvm, pattern.name, pattern.binding);
     if (has_else) {
         state::ThenBlocks end = {.run = let_branch_end, .span = s->span};
         end.blocks[0] = end_block;
