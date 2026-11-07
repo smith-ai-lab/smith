@@ -1,7 +1,12 @@
 // What package.c, gzip.c, xz.c and untar.c share with the rest of smith and with the build runtime, which embeds them.
 #pragma once
 
-// Include it after the system headers (stdint.h, stdio.h, limits.h...), as package.c does.
+// It includes the system headers it names, so package.c stands alone (tests/package.c, tests/untar.c).
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <time.h>
 
 constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
 

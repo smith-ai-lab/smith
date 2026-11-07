@@ -7,10 +7,12 @@
 #include <string.h>
 
 // On in every build. A failure is a bug: report where and stop.
+#ifndef SMITH_ASSERT // tests/mcp_fake.c brings its own
 #define SMITH_ASSERT(condition) \
     do { \
         if (!(condition)) smith_assert_fail(#condition, __FILE__, __LINE__); \
     } while (0)
+#endif
 
 // Exit statuses are values for exit() and main's return, not alternatives of one type, so they are not an enum.
 constexpr int smith_exit_usage = 2;
