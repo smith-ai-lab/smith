@@ -49,3 +49,30 @@ export void test_front_fix_generic_mut_a_pointer_handed_to_a_mut_field_in_a_pack
                  "pub fn write(buffer: *mut char, capacity: usize, args...) -> usize:\n"
                  "    writer := Writer(buffer, capacity)\n    put(&writer, 'a')\n    return writer.capacity\n");
 }
+
+export void test_front_fix_generic_mut_an_index_loop_over_a_pack_is_a_loop_over_its_elements() {
+    expect_fixed(
+        "module m;\nexport I32 total(auto... rest) {\n    I32 sum = 0;\n"
+        "    for constexpr (Usize i = 0; i < countof(rest); i++)\n        sum += (I32)rest[i];\n    return sum;\n}\n",
+        "pub fn total(rest...) -> i32:\n    mut sum: i32 = 0\n    for arg in rest:\n"
+        "        sum += arg.to(i32)\n    return sum\n");
+}
+
+export void test_front_fix_generic_mut_an_index_loop_over_fields_names_each_field() {
+    expect_fixed(
+        "module m;\nexport F64 add_all(auto value) {\n    F64 total = 0;\n"
+        "    for constexpr (Usize i = 0; i < countof(fields(typeof(value))); i++) {\n"
+        "        if constexpr (is_float(typeof(value.[fields(typeof(value))[i]]))) {\n"
+        "            total += (F64)value.[fields(typeof(value))[i]];\n        }\n    }\n    return total;\n}\n",
+        "pub fn add_all(value: auto) -> f64:\n    mut total: f64 = 0\n    for f in fields(typeof(value)):\n"
+        "        if is_float(typeof(value.[f])):\n            total += value.[f].to(f64)\n    return total\n");
+}
+
+export void test_front_fix_generic_mut_an_index_loop_that_uses_the_index_stays() {
+    expect_fixed(
+        "module m;\nexport I32 weighted(auto... rest) {\n    I32 weights[3] = {1, 2, 3};\n    I32 sum = 0;\n"
+        "    for constexpr (Usize i = 0; i < countof(rest); i++) {\n        sum += (I32)rest[i] * weights[i];\n"
+        "    }\n    return sum;\n}\n",
+        "pub fn weighted(rest...) -> i32:\n    weights: [3]i32 = [1, 2, 3]\n    mut sum: i32 = 0\n"
+        "    for i in range(0, countof(rest)):\n        sum += rest[i].to(i32) * weights[i]\n    return sum\n");
+}
