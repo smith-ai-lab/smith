@@ -3420,23 +3420,23 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
         TypeRef inner_given = nullptr;
         if (w->kind == .pointer && g->kind == .pointer) {
             inner = w->kind.pointer.pointee;
-            inner_given = g->kind.pointer.element;
+            inner_given = element_of(g);
         } else if (w->kind == .slice && g->kind == .slice) {
             inner = w->kind.slice.element;
-            inner_given = g->kind.slice.element;
+            inner_given = element_of(g);
         } else if (w->kind == .option && g->kind == .option) {
             inner = w->kind.option.inner;
-            inner_given = g->kind.option.element;
+            inner_given = element_of(g);
         } else if (w->kind == .array && g->kind == .array) {
             inner = w->kind.array.element;
-            inner_given = g->kind.array.element;
+            inner_given = element_of(g);
             const ast::Expr *count = w->kind.array.count;
             ast::Path count_path = {};
             if (name_path(count, &count_path)) {
                 Str name = path_text(count_path);
                 for (Usize i = 0; i < countof(generics); i++) {
                     if (is_generic_type(&generics[i]) || !same_text(generics[i].name, name)) continue;
-                    if (!bind_generic(bound, set, i, false, nullptr, g->kind.array.count, strict, out)) return false;
+                    if (!bind_generic(bound, set, i, false, nullptr, count_of(g), strict, out)) return false;
                 }
             }
         } else if (w->kind == .tuple && g->kind == .tuple) {
