@@ -81,6 +81,15 @@ struct SmithFileHandler {
     int (*ftruncate)(SmithFileHandler *self, int fd, off_t size);
     int (*fchmod)(SmithFileHandler *self, int fd, mode_t mode);
     int (*flock)(SmithFileHandler *self, int fd, int operation); // LOCK_EX, LOCK_SH, LOCK_UN, LOCK_NB
+    // The descriptor calls pread, readv and writev reach (pwrite is above, with the same reach), for a descriptor that
+    // is not a socket; each may be null, which is libc's own call.
+    ssize_t (*pread)(SmithFileHandler *self, int fd, void *buffer, size_t size, off_t offset);
+    ssize_t (*readv)(SmithFileHandler *self, int fd, const struct iovec *vectors, int count);
+    ssize_t (*writev)(SmithFileHandler *self, int fd, const struct iovec *vectors, int count);
+    // True for a handler that answers descriptor calls only (read, write, pread, pwrite, readv, writev): open, close,
+    // fopen and every other member are libc's, and smith_handlers_files() says none is set. std::task's scheduler
+    // installs such a handler to park the calling task; it never reaches the code that asked for the real files.
+    bool descriptors_only;
 };
 
 // Sets the files of the calling thread (null: libc's), returning the ones it had.
@@ -100,6 +109,9 @@ struct SmithConsoleHandler {
     // Whether fd (0, 1 or 2) is a terminal (std::console is_terminal); may be null, which is libc's own isatty. 1 for
     // a terminal, 0 for none.
     int (*isatty)(SmithConsoleHandler *self, int fd);
+    // True for a handler that answers the descriptor calls on 0, 1 and 2 only (read and write): printf, fwrite and the
+    // rest of stdio, and isatty, are libc's, and smith_handlers_console() says none is set (see SmithFileHandler).
+    bool descriptors_only;
 };
 
 // Sets the console of the calling thread (null: libc's), returning the one it had.
@@ -233,6 +245,17 @@ struct SmithNetHandler {
     // Like `read`, but gives up when nothing has arrived within timeout_ns: -1 with errno ETIMEDOUT. Null: the net
     // uses `read` (no deadline).
     ssize_t (*read_within)(SmithNetHandler *self, int connection, void *buffer, size_t size, int64_t timeout_ns);
+    // The libc calls on any socket, including one that C code smith did not write opened: read and write above (the
+    // connection is the descriptor), and these, with libc's own arguments and results. Each may be null, which is
+    // libc's own call. `accept_socket` and `connect_socket` are libc's accept and connect on a descriptor, not
+    // `accept` and `connect` above, which take a listener's id and a host.
+    ssize_t (*send)(SmithNetHandler *self, int fd, const void *buffer, size_t size, int flags);
+    ssize_t (*recv)(SmithNetHandler *self, int fd, void *buffer, size_t size, int flags);
+    int (*accept_socket)(SmithNetHandler *self, int fd, struct sockaddr *address, socklen_t *address_length);
+    int (*connect_socket)(SmithNetHandler *self, int fd, const struct sockaddr *peer, socklen_t peer_length);
+    // True for a handler that answers the calls on sockets only (see SmithFileHandler): smith_handlers_net() says none
+    // is set, so std::net still opens real sockets.
+    bool descriptors_only;
 };
 
 // Sets the network of the calling thread (null: the real one), returning the one it had.
@@ -256,58 +279,18 @@ SmithEntropyHandler *smith_handlers_set_entropy(SmithEntropyHandler *entropy);
 // The entropy of the calling thread, null when none is set.
 SmithEntropyHandler *smith_handlers_entropy(void);
 
-// The scheduler of the calling thread: whatever runs tasks (std::task, issue #241). A blocking call on a descriptor
-// (read, write, pread, pwrite, readv, writev, send, recv, accept, connect) that no files or console handler answers
-// becomes a SmithIoRequest handed to `io`, which does it and parks the calling task until it completes; the code that
-// called is written as a plain blocking call. No scheduler set (the default) is the real functions. `spawn`, `pause`
-// and `wait` are std::task's (a group is defined there); the runtime only stores the scheduler. This header is
-// C-level and internal. A call that `io` itself makes to one of those functions reaches the scheduler again: a
-// scheduler does its real calls with smith_handlers_set_table naming a table that has no scheduler. Issue #936;
-// knowledge/handlers.md.
+// The scheduler of the calling thread: whatever runs tasks (std::task, issue #241). `spawn`, `pause` and `wait` are
+// std::task's (a group is defined there); the runtime only stores the scheduler. A blocking call on a descriptor is not
+// the scheduler's: the handlers are the one way to replace a side effect (issue #2662). A scheduler that wants a task
+// to park on a descriptor installs handlers (files, net, console) in the table of the tasks it runs; the calls are
+// routed to them by what the descriptor is (knowledge/handlers.md). This header is C-level and internal.
 typedef struct SmithScheduler SmithScheduler;
 struct SmithTaskGroup;
-
-// What an I/O request asks for; the members of the request each operation reads are in the comments of SmithIoRequest.
-enum SmithIoOperation {
-    SmithIoOperation_Read = 1,
-    SmithIoOperation_Write = 2,
-    SmithIoOperation_Pread = 3,
-    SmithIoOperation_Pwrite = 4,
-    SmithIoOperation_Readv = 5,
-    SmithIoOperation_Writev = 6,
-    SmithIoOperation_Send = 7,
-    SmithIoOperation_Recv = 8,
-    SmithIoOperation_Accept = 9,
-    SmithIoOperation_Connect = 10
-};
-
-// One call, shaped as a completion ("do this, wake me when done"), so a backend may be readiness (kqueue, epoll), a
-// pool or a completion queue (io_uring, IOCP). `io` fills `result` (what the real call returns) and `error` (the errno
-// it would have set, meaningful when result is -1).
-typedef struct {
-    int operation; // a SmithIoOperation
-    int fd;
-    void *buffer;                // Read, Pread, Recv: where the bytes go
-    const void *source;          // Write, Pwrite, Send: the bytes
-    size_t size;                 // Read, Write, Pread, Pwrite, Send, Recv: how many
-    off_t offset;                // Pread, Pwrite
-    const struct iovec *vectors; // Readv, Writev
-    int count;                   // Readv, Writev: the number of vectors
-    int flags;                   // Send, Recv
-    struct sockaddr *address;    // Accept: where the peer's address goes (may be null)
-    socklen_t *address_length;   // Accept: its size in, its length out (null with a null address)
-    const struct sockaddr *peer; // Connect: where to
-    socklen_t peer_length;       // Connect
-    ssize_t result;
-    int error;
-} SmithIoRequest;
 
 struct SmithScheduler {
     void (*spawn)(SmithScheduler *self, struct SmithTaskGroup *group, void (*entry)(void *context), void *context);
     void (*pause)(SmithScheduler *self);
     void (*wait)(SmithScheduler *self, struct SmithTaskGroup *group);
-    // Does the request, parking the calling task until it completes. Null: the real calls.
-    void (*io)(SmithScheduler *self, SmithIoRequest *request);
 };
 
 // Sets the scheduler of the calling thread (null: none), returning the one it had.
