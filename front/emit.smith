@@ -1537,7 +1537,8 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     if (!known) {
         if (base->kind == .vector && depth == 0) {
             state::Ty lane = {};
-            if (scalar_of_checked(e, types::element_of(base), &lane)) return vectors::make(e, lane, types::count_of(base));
+            types::TypeRef lane_type = types::element_of(base);
+            if (scalar_of_checked(e, lane_type, &lane)) return vectors::make(e, lane, types::count_of(base));
         }
         if (base->kind == .option) {
             ensure_enum(e, types::element_of(base));

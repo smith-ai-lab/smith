@@ -489,9 +489,11 @@ export void test_front_types_a_type_function_and_a_value_parameter_have_signatur
     types::Checked r = types::check(&m, options());
     expect(r.error_count, 0);
     const types::Symbol *pair = types::lookup(&r.scopes, "Pair");
-    test::check_condition(pair != nullptr && types::slots_of(pair->type).items[0].type == types::builtin(&r.table, "type"));
+    test::check_condition(pair != nullptr &&
+                          types::slots_of(pair->type).items[0].type == types::builtin(&r.table, "type"));
     const types::Symbol *table = types::lookup(&r.scopes, "table");
-    test::check_condition(table != nullptr && types::slots_of(table->type).items[0].type == types::builtin(&r.table, "Usize"));
+    test::check_condition(table != nullptr &&
+                          types::slots_of(table->type).items[0].type == types::builtin(&r.table, "Usize"));
     // today's `Type T` still needs `constexpr`
     ast::Param old[1] = {ast::param("T", ast::named("Type"))};
     ast::DeclRef old_decls[1] = {ast::function("Old", old, ast::named("Type"), nullptr)};

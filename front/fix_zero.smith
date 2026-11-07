@@ -409,6 +409,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     if (t == nullptr || (t->kind != .record && t->kind != .array)) return none;
     Str name = d->kind.variable.name;
     Str text = "";
+    Str written_source = source[written->span.start:written->span.end];
     if (t->kind == .array) {
         Str written_text = source[written->span.start:written->span.end];
         Usize close = 0;
@@ -420,7 +421,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
                (written_first(source, items, at, name, t) || filled_by_call(source, items, at, name))) {
         text = "undefined";
-    } else if (same(types::owner_of(t), "c::") && tag_is_also_function(c, source[written->span.start:written->span.end])) {
+    } else if (same(types::owner_of(t), "c::") && tag_is_also_function(c, written_source)) {
         text = types::message_of(format::push("mem.zeroed(", source[written->span.start:written->span.end], ")"));
         zeroed_written = true;
     } else {

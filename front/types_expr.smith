@@ -3348,8 +3348,8 @@ static void vector_after(types::Checked *c, Frame f) {
     ast::ExprRef args[:] = e->kind.call.args;
     Bool ok = true;
     if (countof(args) != types::count_of(made)) {
-        types::failf(c, e->span, "`", types::show(made), "` is built from exactly ", types::count_of(made), " values, found ",
-                     countof(args), "; write one value for each lane");
+        types::failf(c, e->span, "`", types::show(made), "` is built from exactly ", types::count_of(made),
+                     " values, found ", countof(args), "; write one value for each lane");
         ok = false;
     }
     for (Usize i = 0; i < countof(args) && ok; i++) {
@@ -3376,7 +3376,8 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     if (base->kind == .array) {
         if (plain_integer(index) && integer_value(index) >= types::count_of(base)) {
             types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
-                         "`, which has ", types::count_of(base), " elements; write an index below ", types::count_of(base));
+                         "`, which has ", types::count_of(base), " elements; write an index below ",
+                         types::count_of(base));
             return invalid(c);
         }
         return types::element_of(base);
@@ -3384,7 +3385,8 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
     if (base->kind == .vector) {
         if (plain_integer(index) && integer_value(index) >= types::count_of(base)) {
             types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
-                         "`, which has ", types::count_of(base), " lanes; write an index below ", types::count_of(base));
+                         "`, which has ", types::count_of(base), " lanes; write an index below ",
+                         types::count_of(base));
             return invalid(c);
         }
         return types::element_of(base);
@@ -4168,8 +4170,9 @@ static void array_literal_after(types::Checked *c, Frame f) {
     }
     if (ok && expected != nullptr && (expected->kind == .array || expected->kind == .vector) &&
         types::count_of(expected) != countof(items)) {
-        types::failf(c, e->span, "`", types::show(expected), "` holds ", types::count_of(expected), " elements but this has ",
-                     countof(items), "; write exactly ", types::count_of(expected), " elements");
+        types::failf(c, e->span, "`", types::show(expected), "` holds ", types::count_of(expected),
+                     " elements but this has ", countof(items), "; write exactly ", types::count_of(expected),
+                     " elements");
         ok = false;
     }
     if (!ok) {
