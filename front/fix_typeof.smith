@@ -124,8 +124,22 @@ static Bool in_literal(Str s, Usize i) {
     return quote != 0;
 }
 
+// Whether `text` picks what to do by the type of the parameter itself, `typeof(name) == char *` (#2668): the function
+// takes more than slices (`std::format`'s `make_padded` tests a string, a slice and a number), so `auto` stays.
+static Bool dispatches(Str text, Str name) {
+    for (Usize i = 0; i < countof(text); i++) {
+        if (!at(text, i, "typeof(") || !at(text, i + 7, name) || !at(text, i + 7 + countof(name), ")")) continue;
+        Usize j = i + 8 + countof(name);
+        while (j < countof(text) && text[j] == ' ')
+            j += 1;
+        if (at(text, j, "==") || at(text, j, "!=")) return true;
+    }
+    return false;
+}
+
 // Whether `text` uses `typeof(name` and reads `name` as a slice.
 static Bool used_as_slice(Str text, Str name) {
+    if (dispatches(text, name)) return false;
     Bool typed = false;
     Bool sliced = false;
     for (Usize i = 0; i < countof(text); i++) {
