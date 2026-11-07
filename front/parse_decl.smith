@@ -1803,10 +1803,34 @@ static Bool hoist_record(parse::Parser *p, Head head, ast::TypeExpr *type) {
     return true;
 }
 
+// Where the `constexpr` written before a local's type starts (the type starts at `at`); `at` when there is none.
+static U32 constexpr_before(const parse::Parser *p, U32 at) {
+    Usize from = at;
+    while (from > 0 && p->source[from - 1] == ' ')
+        from -= 1;
+    Str word = "constexpr";
+    if (from < countof(word) || !mem::equal(p->source[from - countof(word):from], word)) return at;
+    return (U32)(from - countof(word));
+}
+
+// `constexpr Type one = slice_of(I32);` is `const one = slice_of(i32)`: a lower-case name is a compile-time value.
+static Bool lowercase_type(const Prefixes *pre, Head head, Str raw) {
+    return pre->is_constexpr && head.name.kind == lex::name && same_text(raw, "Type");
+}
+
+// The edits that delete a `constexpr`: a file's is recorded by the prefixes, a local one only for a `Type` value.
+static parse::Edits drop_constexpr(const parse::Parser *p, const Prefixes *pre, Head head, Str raw,
+                                   parse::Edits edits) {
+    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    if (lowercase_type(pre, head, raw) && !pre->top)
+        edits = with_edit(edits, edit(constexpr_before(p, head.type_start), head.type_start, ""));
+    return edits;
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
-// `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
-// the like are a warning with no edits.
+// `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
+// `extern` and the like are a warning with no edits.
 static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
                          Dims dims) {
     if (hoist_record(p, head, type)) return;
@@ -1856,7 +1880,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         list_edits = named_list_edits(p, written);
         if (p->named_list.positional) drop_array_fix(p, p->named_list.open.start);
     }
-    if (type_value || automatic) text = as_str(format::push(lead, name, untyped));
+    if (type_value || automatic || lowercase_type(pre, head, raw)) text = as_str(format::push(lead, name, untyped));
     if (bare_extern) {
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
@@ -1874,7 +1898,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     if (!separates_statements(p, last)) edits = with_edit(edits, edit(last.span.start, last.span.end, ""));
     for (Usize i = 0; i < countof(list_edits); i += 1)
         edits = with_edit(edits, list_edits[i]);
-    if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    edits = drop_constexpr(p, pre, head, raw, edits);
     edits = with_unused(pre, drop_local_static(pre, type, has_init, edits));
     char message[:] = format::push("a variable is written `", text, " ...`: the name comes first and the `;` goes");
     warn(p, head.type_start, last.span.end, message, edits);
