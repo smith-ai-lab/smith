@@ -166,8 +166,22 @@ static c::LLVMValueRef count_zeros(state::Emitter *e, state::Value x, state::Ty 
     return c::LLVMBuildTrunc(e->builder, counted, result.llvm, "clz");
 }
 
+// The ordering a call of `__atomic_exchange_n` or `__atomic_store_n` names in its third argument (the macro).
+static c::LLVMAtomicOrdering memory_order(const ast::Expr *x) {
+    if (x->kind != .call || countof(x->kind.call.args) != 3) return c::LLVMAtomicOrderingMonotonic;
+    const ast::Expr *order = x->kind.call.args[2];
+    if (order->kind != .name) return c::LLVMAtomicOrderingMonotonic;
+    Str name = order->kind.name.path.segments[0].text;
+    if (state::same_text(name, "__ATOMIC_ACQUIRE")) return c::LLVMAtomicOrderingAcquire;
+    if (state::same_text(name, "__ATOMIC_RELEASE")) return c::LLVMAtomicOrderingRelease;
+    if (state::same_text(name, "__ATOMIC_ACQ_REL")) return c::LLVMAtomicOrderingAcquireRelease;
+    if (state::same_text(name, "__ATOMIC_SEQ_CST")) return c::LLVMAtomicOrderingSequentiallyConsistent;
+    return c::LLVMAtomicOrderingMonotonic;
+}
+
 // The value of the call, from its entry and its arguments' values (the type argument has none).
-static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, Usize count, state::Ty result) {
+static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Value *v, Usize count, state::Ty result,
+                               c::LLVMAtomicOrdering order) {
     c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
     switch (entry.shape) {
     case .overflow:
@@ -208,6 +222,22 @@ static c::LLVMValueRef lowered(state::Emitter *e, table::Entry entry, state::Val
             e->builder, c::LLVMAtomicRMWBinOpAdd, v[0].llvm,
             c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, state::is_signed(v[1].ty) ? 1 : 0, ""),
             c::LLVMAtomicOrderingMonotonic, 0);
+    case .atomic_exchange:
+        return c::LLVMBuildAtomicRMW(
+            e->builder, c::LLVMAtomicRMWBinOpXchg, v[0].llvm,
+            c::LLVMBuildIntCast2(e->builder, v[1].llvm, result.llvm, state::is_signed(v[1].ty) ? 1 : 0, ""), order, 0);
+    case .atomic_store: {
+        state::Ty target = v[0].ty;
+        if (!(target.kind == .pointer)) return nullptr;
+        if (target.kind.pointer.element == nullptr) return nullptr;
+        c::LLVMTypeRef element = target.kind.pointer.element->llvm;
+        c::LLVMValueRef stored = c::LLVMBuildStore(
+            e->builder, c::LLVMBuildIntCast2(e->builder, v[1].llvm, element, state::is_signed(v[1].ty) ? 1 : 0, ""),
+            v[0].llvm);
+        c::LLVMSetOrdering(stored, order);
+        c::LLVMSetAlignment(stored, c::LLVMABIAlignmentOfType(e->target_data, element));
+        return stored;
+    }
     case .filled:
     case .alloc:
     case .type_query:
@@ -225,8 +255,9 @@ static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     table::Entry entry = {};
     if (!entry_of(x, &entry)) return state::fail("not a builtin", w->span);
     state::Ty result = {.kind = .record, .llvm = c::LLVMVoidTypeInContext(e->context), .name = "Void"};
-    Bool no_value = entry.shape == .assume || entry.shape == .trap || entry.shape == .va_start ||
-                    entry.shape == .va_end || (entry.shape == .libc && table::libc_result(entry) == 'v');
+    Bool no_value = entry.shape == .assume || entry.shape == .trap || entry.shape == .atomic_store ||
+                    entry.shape == .va_start || entry.shape == .va_end ||
+                    (entry.shape == .libc && table::libc_result(entry) == 'v');
     if (!no_value) {
         state::TyResult typed = state::type_of_node(e, x);
         if (typed == .error) return {.error = typed.error};
@@ -235,7 +266,7 @@ static state::Status finish(state::Emitter *e, const state::ThenGeneral *w) {
     state::Value values[max_values] = {};
     for (Usize i = (Usize)w->number; i > 0; i--)
         values[i - 1] = state::pop_value(e);
-    c::LLVMValueRef made = lowered(e, entry, values, (Usize)w->number, result);
+    c::LLVMValueRef made = lowered(e, entry, values, (Usize)w->number, result, memory_order(x));
     state::push_value(e, (state::Value){.llvm = made, .ty = result});
     return state::success();
 }
