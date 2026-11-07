@@ -2175,6 +2175,19 @@ static Bool fn_type_cast(const parse::Parser *p) {
     return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
 }
 
+// Whether `(i32)operand` is ahead, the `(` taken: a cast to a built-in type written in C's way, which a pass leaves
+// when it only renamed the type (`(Usize)n` became `(usize)n`). A built-in type is no value, so what follows the `)`
+// is the operand, never a subtraction or a call.
+static Bool builtin_cast(const parse::Parser *p) {
+    lex::Token word = parse::peek_at(p, 0);
+    if (word.kind != lex::name || !parse_type::is_builtin_name(parse::text(p, word))) return false;
+    if (parse::peek_at(p, 1).kind != lex::right_paren) return false;
+    lex::TokenKind next = parse::peek_at(p, 2).kind;
+    if (starts_bare_operand(next)) return true;
+    return next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
+           next == lex::kw_sizeof || next == lex::kw_alignof;
+}
+
 // Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax
 // never has before a `)`. A text a pass has half mended (the head of its function is new, the body is not) holds it.
 static Bool old_pointer_cast(const parse::Parser *p) {
@@ -2225,7 +2238,7 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
         push_value(st, initializer_list(p, type, start, close.span.start));
         return .value;
     }
-    if (fn_type_cast(p) || old_pointer_cast(p)) {
+    if (fn_type_cast(p) || old_pointer_cast(p) || builtin_cast(p)) {
         Bool was_new = p->new_syntax;
         p->new_syntax = !old_pointer_cast(p) && was_new;
         p->in_cast = true;

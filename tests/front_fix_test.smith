@@ -338,6 +338,17 @@ export void test_an_empty_compound_literal_in_the_indented_syntax_is_mended() {
     check_text(fixed.text, "fn f(task: *Task):\n    task.* = Task() # reset\n    x = P(1, 2)\n");
 }
 
+// A cast whose type only had its name lowered by an earlier pass, `(usize)c::f(n)`, is a cast to the new reader too:
+// the declaration around it stayed unmended (lib/std/task.smith `make_task`).
+export void test_a_cast_to_a_lowered_builtin_type_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "fn f(n: i32):\n    usize page = (usize)g(n); # a\n");
+    check_text(fixed.text, "fn f(n: i32):\n    page: usize = g(n).to(usize) # a\n");
+}
+
 // A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
 // the type was mended and the cast never (lib/std/net.smith `symbol`).
 export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
