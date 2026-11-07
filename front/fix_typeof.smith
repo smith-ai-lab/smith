@@ -205,6 +205,63 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     return out;
 }
 
+// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer to a
+// slice of any element type, as `const auto (*xs)[:]` is mended.
+static Bool is_slice_pointer(Str param) {
+    Usize colon = 0;
+    while (colon < countof(param) && param[colon] != ':') colon += 1;
+    if (colon + 3 >= countof(param) || !at(param, colon + 1, " *")) return false;
+    Usize n = countof(param);
+    return n >= 6 && at(param, n - 6, "[]auto");
+}
+
+// The element type of the pointer to a slice that `d` takes, written `typeof((xs.*)[0])` in the body and the result:
+// the function is generic in it, `fn name[T](xs: *mut []T, ...)`.
+static core::ParseError pointer_fix(Str source, const ast::Decl *d) {
+    core::ParseError none = {};
+    if (d->kind != .function || d->kind.function.body == nullptr) return none;
+    ast::Param params[:] = d->kind.function.params;
+    Usize found = countof(params);
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].span.end > countof(source) || params[i].span.start >= params[i].span.end) continue;
+        Str param = source[params[i].span.start:params[i].span.end];
+        if (!is_slice_pointer(param)) continue;
+        if (found != countof(params)) return none;
+        found = i;
+    }
+    if (found == countof(params)) return none;
+    Usize start = d->span.start;
+    Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    Str fname = d->kind.function.name;
+    Usize name_end = end;
+    for (Usize i = start; i + 3 + countof(fname) < end; i++) {
+        if (at(source, i, "fn ") && at(source, i + 3, fname) && source[i + 3 + countof(fname)] == '(') {
+            name_end = i + 3 + countof(fname);
+            break;
+        }
+    }
+    if (name_end == end) return none;
+    core::Edits edits = {};
+    edits = push(edits, name_end, name_end, "[T]");
+    edits = push(edits, params[found].span.end - 4, params[found].span.end, "T");
+    Str name = params[found].name;
+    for (Usize i = params[found].span.end; i + 8 < end; i++) {
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
+        Usize close = close_of(source, i + 6, end);
+        if (close == end) continue;
+        Str arg = source[i + 7:close];
+        Str cut = types::message_of(format::push("(", name, ".*)[0:0]"));
+        Str one = types::message_of(format::push("(", name, ".*)[0]"));
+        if (mem::equal(arg, cut)) edits = push(edits, i, close + 1, "[]T");
+        if (mem::equal(arg, one)) edits = push(edits, i, close + 1, "T");
+    }
+    core::ParseError out = {};
+    out.span = d->span;
+    out.message = "a pointer to a slice of `auto` is an inferred parameter: write `[T]` and `*mut []T`";
+    out.fix = edits;
+    return out;
+}
+
 // The fix of the `typeof([...])` that starts at `i`: the type inside, or none.
 static core::ParseError written_type(Str source, Usize i) {
     core::ParseError none = {};
@@ -315,6 +372,7 @@ export core::Errors edits(Str source, const ast::Module *module) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
         core::ParseError found = generic_fix(source, d);
+        if (countof(found.fix) == 0) found = pointer_fix(source, d);
         if (countof(found.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = found;

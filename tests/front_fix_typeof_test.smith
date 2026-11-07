@@ -69,3 +69,13 @@ export void test_front_fix_typeof_a_slice_struct_a_typeof_is_compared_with() {
                  "           typeof(p) == struct smith_array_const_char_n;\n}\n",
                  "pub fn text(p: auto) -> bool:\n    return typeof(p) == []mut char ||\n           typeof(p) == []char\n");
 }
+
+// A pointer to a slice of any element type, `const auto (*xs)[:]`, is generic in the element: `[T]`, and `typeof((*xs)[0])`
+// is `T` (`std.slice.take_until`).
+export void test_front_fix_typeof_a_pointer_to_a_slice_of_auto_is_generic_in_its_element() {
+    expect_fixed("module m;\nexport typeof((*xs)[0:0]) take_until(const auto (*xs)[:], typeof((*xs)[0]) v) {\n"
+                 "    Usize n = 0;\n    while (n < countof(*xs) && (*xs)[n] != v) {\n        n += 1;\n    }\n"
+                 "    return (*xs)[0:n];\n}\n",
+                 "pub fn take_until[T](xs: *[]T, v: T) -> []T:\n    mut n: usize = 0\n"
+                 "    while n < countof(xs.*) && (xs.*)[n] != v:\n        n += 1\n    return (xs.*)[0:n]\n");
+}
