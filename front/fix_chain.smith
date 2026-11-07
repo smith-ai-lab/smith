@@ -212,7 +212,7 @@ export core::Errors edits(Str source) {
         while (k < countof(line) && line[k] == ' ')
             k += 1;
         Usize from = value_start(line, k);
-        if (from < countof(line)) out = chain(out, source, line, at, from, 0);
+        if (from < countof(line)) out = chain(out, source, line, at, from);
         at = end + 1;
     }
     return out;
