@@ -952,10 +952,9 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type, Bool
             continue;
         }
         parse::advance(p);
-        if (parse::accept(p, lex::colon)) {
+        // `I32 xs[]` as a parameter is C's pointer: the head's fix writes `xs: []i32`
+        if (parse::accept(p, lex::colon) || (parameter && parse::at(p, lex::right_bracket))) {
             suffix.is_slice = true;
-        } else if (parameter && parse::at(p, lex::right_bracket)) {
-            suffix.is_slice = true; // `I32 xs[]` as a parameter is C's pointer: the head's fix writes `xs: []i32`
         } else if (parse::at(p, lex::right_bracket)) {
             Str message = "an array needs a size: write `[N]`, or `[:]` for a slice";
             parse::error(p, parse::peek(p).span, message);
