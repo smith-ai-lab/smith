@@ -1419,3 +1419,20 @@ export void test_front_types_expr_the_address_of_a_construction_is_a_mutable_poi
     test::check_condition(address == types::pointer_to(&r.table, pair, false));
     expect(r.error_count, 0);
 }
+
+export void test_front_types_expr_a_pack_indexed_by_a_constant_has_the_type_of_that_element() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Slot elements[:] = mem::alloc_slice(types::Slot, 2);
+    elements[0] = slot("0", ty(&r, "I32"));
+    elements[1] = slot("1", ty(&r, "F64"));
+    declare(&r, "pack", .variable, types::tuple_of(&r.table, elements), false);
+    ast::Expr *second = at(ast::name("pack"), num(1));
+    test::check_condition(types_expr::infer(&r, second) == ty(&r, "F64"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, at(ast::name("pack"), num(2)));
+    expect(r.error_count, 1);
+}
