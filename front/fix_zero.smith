@@ -528,7 +528,17 @@ struct Record {
     Str name;
     ast::FieldDecl fields[:];
     Bool exported;
+    Bool c_layout; // `@c_name("SmithApp")`: C owns the layout and reads null as unset (D2, lead on #2631)
 };
+
+// Whether the declaration is a C-layout struct: it carries `@c_name(...)` (or `[[std::c_name(...)]]`).
+static Bool has_c_name(const ast::Decl *d) {
+    for (Usize i = 0; i < countof(d->attributes); i++) {
+        ast::Identifier segments[:] = d->attributes[i].name.segments;
+        if (countof(segments) > 0 && same(segments[countof(segments) - 1].text, "c_name")) return true;
+    }
+    return false;
+}
 
 struct Wanted {
     Record records[records_max];
@@ -551,8 +561,10 @@ static Wanted records_of(const ast::Module *module) {
         if (d->kind == .record) {
             if (d->kind.record.is_union || d->kind.record.opaque) continue;
             if (countof(d->kind.record.fields) == 0 || countof(d->kind.record.fields) > fields_max) continue;
-            w.records[w.count] = (Record){
-                .name = d->kind.record.name, .fields = d->kind.record.fields, .exported = d->exported || d->is_pub};
+            w.records[w.count] = (Record){.name = d->kind.record.name,
+                                          .fields = d->kind.record.fields,
+                                          .exported = d->exported || d->is_pub,
+                                          .c_layout = has_c_name(d)};
             w.count += 1;
         } else if (d->kind == .type_alias) {
             // `typedef struct { ... } Node;`, today's spelling of a struct the fixer has not converted yet
@@ -560,8 +572,10 @@ static Wanted records_of(const ast::Module *module) {
             if (t == nullptr || !(t->kind == .record)) continue;
             if (t->kind.record.is_union || countof(t->kind.record.fields) == 0) continue;
             if (countof(t->kind.record.fields) > fields_max) continue;
-            w.records[w.count] = (Record){
-                .name = d->kind.type_alias.name, .fields = t->kind.record.fields, .exported = d->exported || d->is_pub};
+            w.records[w.count] = (Record){.name = d->kind.type_alias.name,
+                                          .fields = t->kind.record.fields,
+                                          .exported = d->exported || d->is_pub,
+                                          .c_layout = has_c_name(d)};
             w.count += 1;
         }
     }
@@ -740,6 +754,25 @@ static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[re
     }
 }
 
+// Whether the file has `from <path>.<base> import ...` and, with a `name`, whether that line imports `name` (D6: a
+// build file writes `from std.build import Build, App` and builds `App(...)` with no module in front of it). An empty
+// `name` asks only for the line.
+static Bool from_imported(Str source, lex::Tokens t, Str base, Str name) {
+    Usize n = countof(t);
+    for (Usize i = 0; i + 3 < n; i++) {
+        if (t[i].kind != lex::name || !same(lex::text(source, t[i]), "from")) continue;
+        Usize k = i + 1;
+        while (k + 2 < n && t[k].kind == lex::name && (t[k + 1].kind == lex::dot || t[k + 1].kind == lex::colon_colon))
+            k += 2;
+        if (k + 1 >= n || t[k].kind != lex::name || !same(lex::text(source, t[k]), base)) continue;
+        if (t[k + 1].kind != lex::kw_import) continue;
+        if (countof(name) == 0) return true;
+        for (Usize j = k + 2; j < n && !t[j].line_break; j++)
+            if (is_word(t[j].kind) && same(lex::text(source, t[j]), name)) return true;
+    }
+    return false;
+}
+
 // The fields left out by the constructions of the module's records in `source`: the module's own file (`own`), or a
 // file that imports it, where a record is reached through the name it gives the module. The fields it tests against
 // null too (#2557).
@@ -751,11 +784,13 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
     lex::Tokens t = lexed.ok;
     Str prefix = "";
     if (!own) prefix = local_name(source, t, base);
+    Bool bare = !own && countof(prefix) == 0 && from_imported(source, t, base, ""); // `from std.build import App`
     Bool named[records_max] = {}; // the records the file names: only a test in such a file counts (#2557)
-    for (Usize i = 0; i + 1 < countof(t) && (own || countof(prefix) > 0); i++) {
+    for (Usize i = 0; i + 1 < countof(t) && (own || countof(prefix) > 0 || bare); i++) {
         if (t[i].kind != lex::type_name && t[i].kind != lex::name) continue;
         Usize r = record_index(w, lex::text(source, t[i]));
         if (r == w->count || !prefixed(source, t, i, prefix)) continue;
+        if (bare && !from_imported(source, t, base, lex::text(source, t[i]))) continue;
         named[r] = true;
         Usize open = construction_at(t, i, countof(prefix) == 0 ? i : i - 2);
         Usize close = open < countof(t) ? closing(t, open) : countof(t);
@@ -768,7 +803,7 @@ static void scan_file(Wanted *w, Str source, Str base, Bool own) {
         for (Usize r = 0; r < w->count; r++)
             named[r] = true;
     }
-    if (own || countof(prefix) > 0) scan_tests(w, source, t, named);
+    if (own || countof(prefix) > 0 || bare) scan_tests(w, source, t, named);
     mem::free(t.data);
 }
 
@@ -968,6 +1003,9 @@ static U64 nullable(const ast::Module *module, const Wanted *w, Usize r) {
     U64 out = 0;
     ast::FieldDecl fields[:] = w->records[r].fields;
     U64 both = w->text_left[r] & w->tested[r];
+    // A C-layout struct is read by C, which takes null for unset: a pointer a construction leaves out is an option even
+    // when no smith read tests it (D2, lead on #2631: translating, not inventing).
+    if (w->records[r].c_layout) both = w->text_left[r];
     for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
         U64 bit = (U64)1 << k;
         if ((both & bit) == 0 || fields[k].default_value != nullptr || fields[k].bit_width != nullptr) continue;
