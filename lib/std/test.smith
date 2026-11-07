@@ -4219,7 +4219,10 @@ void cache_write_options(const Options *options) {
 
 // Leaves out of the plan the tests whose entry holds. `<folder>/hits` lists their names in the order of the plan.
 void cache_filter(Plan *plan, const Options *options) {
-    if (plan->count == 0 || !cache_wanted(options)) return;
+    if (plan->count == 0 || !cache_wanted(options)) {
+        c::putenv(&cache_off_entry[0]); // a smith a test starts runs what it is told, whatever this run did (a shard)
+        return;
+    }
     const char *temp = c::getenv("TMPDIR");
     __builtin_snprintf(cache_folder, sizeof cache_folder, "%s/smith-test-cache.XXXXXX",
                        temp != nullptr && temp[0] != '\0' ? temp : "/tmp");
