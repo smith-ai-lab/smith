@@ -91,3 +91,10 @@ export void test_front_fix_chain_a_while_and_an_else_if_chain_too() {
     expect("    else if e != nullptr && e.kind == .unary && e.kind.unary.op == .negate:\n",
            "    else if e != nullptr && .unary(unary) := e.kind && unary.op == .negate:\n");
 }
+
+export void test_front_fix_chain_a_chain_written_with_and_is_read_too() {
+    expect("    return e.kind == .binary and e.kind.binary.op == .add\n",
+           "    return .binary(binary) := e.kind and binary.op == .add\n");
+    expect("    return e.kind == .binary and e.kind.binary.op == .add or other\n",
+           "    return e.kind == .binary and e.kind.binary.op == .add or other\n");
+}

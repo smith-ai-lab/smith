@@ -76,6 +76,14 @@ static Bool pieces_of(Str line, Usize from, Piece parts[8], Usize *count) {
         if (depth != 0) continue;
         if (ch == ':' && i + 1 == countof(line)) return false; // a block follows: `x := if ...:`
         if (ch == '|' && i + 1 < countof(line) && line[i + 1] == '|') return false;
+        if (ch == ' ' && starts_with(line[i:countof(line)], " or ")) return false;
+        if (ch == ' ' && starts_with(line[i:countof(line)], " and ")) {
+            if (*count >= 8) return false;
+            parts[*count] = (Piece){.start = start, .stop = i};
+            *count += 1;
+            start = i + 5;
+            i += 4;
+        }
         if (ch == '&' && i + 1 < countof(line) && line[i + 1] == '&') {
             if (*count >= 8) return false;
             parts[*count] = (Piece){.start = start, .stop = i};
