@@ -2972,8 +2972,9 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
     Usize bound = countof(template->kind.function.generics);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
-            if (bound >= countof(given) || given[bound].type == nullptr) break;
+            if (bound >= countof(given)) break;
             TypeRef pack = given[bound].type;
+            if (pack == nullptr) break;
             if (pack->kind != .tuple) break;
             return ast_clone::clone_decl_unrolling(template, params[i].name, countof(pack->slots));
         }
@@ -3112,11 +3113,16 @@ static Usize generic_named(ast::Param generics[:], const ast::TypeExpr *written)
 static Bool bind_generic(Binding bound[:], Bool set[:], Usize at, Bool is_type, TypeRef type, U64 value, Bool strict,
                          Unified *out) {
     if (set[at]) {
-        Bool same = is_type ? bound[at].type == type : bound[at].value == value;
+        TypeRef prior = bound[at].type;
+        Bool same = bound[at].value == value;
+        if (is_type) {
+            same = false;
+            if (prior != nullptr) same = prior == type;
+        }
         if (same || !strict) return true;
         out->conflict = true;
         out->generic = at;
-        out->before = bound[at].type;
+        if (prior != nullptr) out->before = prior;
         out->now = type;
         return false;
     }
