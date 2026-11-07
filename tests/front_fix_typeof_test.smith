@@ -48,3 +48,10 @@ export void test_front_fix_typeof_a_typeof_in_a_string_or_comment_is_unchanged()
     expect_fixed("module m;\n// typeof([U8]) is U8\nstatic Bool g() {\n    return true;\n}\n",
                  "# typeof([U8]) is U8\nstatic fn g() -> bool:\n    return true\n");
 }
+
+export void test_front_fix_typeof_an_auto_the_body_tests_by_type_stays_auto() {
+    expect_fixed("module m;\nexport Usize size_of(auto piece) {\n    if constexpr (typeof(piece) == U8) {\n"
+                 "        return 1;\n    } else {\n        return countof(piece) + (Usize)piece.data[0];\n    }\n}\n",
+                 "pub fn size_of(piece: auto) -> usize:\n    if typeof(piece) == u8:\n        return 1\n    else:\n"
+                 "        return countof(piece) + piece.data[0].to(usize)\n");
+}
