@@ -3781,6 +3781,17 @@ static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::E
     return frame_edits(p, parent, fix);
 }
 
+// A declaration that is not a block head or close: null after an error, with the parser past it (a failed one inside a
+// block is noted for its `@when` line).
+static ast::Decl *read_leaf(parse::Parser *p, Bool at_top, FrameList stack, Usize depth) {
+    Usize before = p->position;
+    U32 start = parse::peek(p).span.start;
+    ast::Decl *done = parse_simple(p, at_top);
+    if (done == nullptr && p->position == before) parse::advance(p);
+    if (done == nullptr && depth > 0) note_failed(&stack[depth - 1], start);
+    return done;
+}
+
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
 // explicit stack, so a nest of them is no recursion. A top-level block of the old syntax carries one warning with the
 // edits that make it `@when` lines (#2142).
@@ -3798,7 +3809,8 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             parse::error(p, parse::peek(p).span, "expected `}` to close `if constexpr`, found the end of the file");
             done = finish_frame(p, &stack[depth - 1]);
             fixable = false;
-            depth -= 1, closed = true;
+            depth -= 1;
+            closed = true;
         } else if (depth > 0 && (kind == (p->layout ? lex::dedent : lex::right_brace))) {
             lex::Token brace = parse::advance(p);
             Frame *top = &stack[depth - 1];
@@ -3825,11 +3837,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             depth += 1;
             continue;
         } else {
-            Usize before = p->position;
-            U32 start = parse::peek(p).span.start;
-            done = parse_simple(p, at_top);
-            if (done == nullptr && p->position == before) parse::advance(p);
-            if (done == nullptr && depth > 0) note_failed(&stack[depth - 1], start);
+            done = read_leaf(p, at_top, stack, depth);
         }
         for (Usize level = 0; level <= countof(stack); level++) {
             if (depth == 0) {
