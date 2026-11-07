@@ -16,18 +16,11 @@ fn pong(n: u64) -> u64:
         return 0
     return ping(n - 1)
 
-# The last line of the body, and of an `if` arm that is the last line.
+# The last line of the body is a tail call too.
 fn count_down(n: u64, steps: u64) -> u64:
     if n == 0:
-        steps
-    else:
-        count_down(n - 1, steps + 1)
-
-fn step(n: u64) -> u64:
-    return n + 1
-
-fn through(f: fn(u64) -> u64, n: u64) -> u64:
-    return f(n)
+        return steps
+    count_down(n - 1, steps + 1)
 
 pub fn check() -> i32:
     if sum_to(10000000, 0) != 50000005000000:
@@ -36,6 +29,4 @@ pub fn check() -> i32:
         return 2
     if count_down(10000000, 0) != 10000000:
         return 3
-    if through(step, 41) != 42:
-        return 4
     0

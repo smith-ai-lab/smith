@@ -1028,3 +1028,248 @@ export state::Status prototype(state::Emitter *e, const ast::Decl *d) {
     release(sig);
     return state::success();
 }
+
+// ----------------------------------------
+// The recursion check of the new front end (#2709). A cycle of the module's call graph is allowed
+// when every call on it is a tail call, which the emitter marks `musttail` (front::emit_call::mark_tail_call: a call
+// whose result is the function's value, with nothing to run after it); any other cycle is an error naming the cycle.
+// Until non-tail recursion lands (#2710) the new front end cannot compile it.
+//
+//   check   Reads the module's IR: the calls between the functions it defines (a call through a pointer, and a call
+//           into code with no source, are not followed), the strongly connected components of that graph (Tarjan's
+//           algorithm with a stack of its own: nothing here is recursive), and reports the first call that is not a
+//           tail call and joins two functions of one component, with the way round: `a -> b -> a`.
+
+// The calls of function `from` are `to[first[from]]` to `to[first[from + 1] - 1]`; `tail[k]` is whether call `k` is a
+// guaranteed tail call.
+struct CallNode {
+    c::LLVMValueRef value;
+};
+
+struct CallGraph {
+    CallNode functions[:];
+    Usize slots[:]; // a table of function indexes plus one, keyed by the function's address (0 is empty)
+    Usize first[:];
+    Usize to[:];
+    Bool tail[:];
+};
+
+static Usize rec_slot_of(c::LLVMValueRef function, Usize size) {
+    Usize address = (Usize)function;
+    address = (address >> 4) * 0x9E3779B97F4A7C15ull;
+    return (address >> 20) & (size - 1);
+}
+
+static void rec_remember(CallGraph *g, Usize index) {
+    Usize size = countof(g->slots);
+    Usize at = rec_slot_of(g->functions[index].value, size);
+    while (g->slots[at] != 0) {
+        at = (at + 1) & (size - 1);
+    }
+    g->slots[at] = index + 1;
+}
+
+// The index of a function this module defines, or `~0`.
+static Usize rec_index_of(const CallGraph *g, c::LLVMValueRef function) {
+    Usize size = countof(g->slots);
+    Usize at = rec_slot_of(function, size);
+    while (g->slots[at] != 0) {
+        if (g->functions[g->slots[at] - 1].value == function) {
+            return g->slots[at] - 1;
+        }
+        at = (at + 1) & (size - 1);
+    }
+    return ~(Usize)0;
+}
+
+// The defined function a call instruction calls, as an index, or `~0`.
+static Usize rec_callee_of(const CallGraph *g, c::LLVMValueRef instruction) {
+    if (c::LLVMIsACallInst(instruction) == nullptr) {
+        return ~(Usize)0;
+    }
+    c::LLVMValueRef called = c::LLVMGetCalledValue(instruction);
+    if (called == nullptr || c::LLVMIsAFunction(called) == nullptr) {
+        return ~(Usize)0;
+    }
+    return rec_index_of(g, called);
+}
+
+// Visits every call of the module's defined functions: with `fill` false it counts them, with `fill` true it writes
+// them into `to` and `tail`.
+static void rec_walk_calls(CallGraph *g, Bool fill) {
+    Usize next = 0;
+    for (Usize i = 0; i < countof(g->functions); i++) {
+        if (fill) g->first[i] = next;
+        for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(g->functions[i].value); b != nullptr;
+             b = c::LLVMGetNextBasicBlock(b)) {
+            for (c::LLVMValueRef x = c::LLVMGetFirstInstruction(b); x != nullptr; x = c::LLVMGetNextInstruction(x)) {
+                Usize callee = rec_callee_of(g, x);
+                if (callee == ~(Usize)0) {
+                    continue;
+                }
+                if (fill) {
+                    g->to[next] = callee;
+                    g->tail[next] = c::LLVMGetTailCallKind(x) == c::LLVMTailCallKindMustTail;
+                }
+                next += 1;
+            }
+        }
+    }
+    if (fill) g->first[countof(g->functions)] = next;
+    if (!fill) {
+        Usize functions = countof(g->functions) + 1;
+        g->first = mem::alloc_slice(Usize, functions);
+        g->to = mem::alloc_slice(Usize, next);
+        g->tail = mem::alloc_slice(Bool, next);
+    }
+}
+
+// Tarjan's algorithm with a stack of its own: `component[i]` for each function.
+static void rec_components(const CallGraph *g, Usize component[:]) {
+    Usize n = countof(g->functions);
+    Usize order[:] = mem::alloc_slice(Usize, n);   // 1 + the visit number, 0 when not visited
+    Usize low[:] = mem::alloc_slice(Usize, n);
+    Usize pending[:] = mem::alloc_slice(Usize, n); // the nodes of rec_components not closed yet
+    Usize frame_node[:] = mem::alloc_slice(Usize, n);
+    Usize frame_edge[:] = mem::alloc_slice(Usize, n);
+    Bool open[:] = mem::alloc_slice(Bool, n);
+    Usize visits = 0;
+    Usize kept = 0;
+    Usize components_made = 0;
+    for (Usize root = 0; root < n; root++) {
+        if (order[root] != 0) {
+            continue;
+        }
+        Usize depth = 0;
+        frame_node[0] = root;
+        frame_edge[0] = g->first[root];
+        order[root] = low[root] = ++visits;
+        pending[kept++] = root;
+        open[root] = true;
+        depth = 1;
+        while (depth > 0) {
+            Usize u = frame_node[depth - 1];
+            if (frame_edge[depth - 1] < g->first[u + 1]) {
+                Usize v = g->to[frame_edge[depth - 1]++];
+                if (order[v] == 0) {
+                    order[v] = low[v] = ++visits;
+                    pending[kept++] = v;
+                    open[v] = true;
+                    frame_node[depth] = v;
+                    frame_edge[depth] = g->first[v];
+                    depth += 1;
+                } else if (open[v] && order[v] < low[u]) {
+                    low[u] = order[v];
+                }
+                continue;
+            }
+            if (low[u] == order[u]) {
+                Usize member = ~(Usize)0;
+                while (member != u) {
+                    member = pending[--kept];
+                    open[member] = false;
+                    component[member] = components_made;
+                }
+                components_made += 1;
+            }
+            depth -= 1;
+            if (depth > 0 && low[u] < low[frame_node[depth - 1]]) low[frame_node[depth - 1]] = low[u];
+        }
+    }
+    mem::free(order.data);
+    mem::free(low.data);
+    mem::free(pending.data);
+    mem::free(frame_node.data);
+    mem::free(frame_edge.data);
+    mem::free(open.data);
+}
+
+static const char *rec_name_of(const CallGraph *g, Usize index) {
+    return c::LLVMGetValueName(g->functions[index].value);
+}
+
+// The cycle a call closes: `caller -> callee -> ... -> caller`, the way from `callee` back to `caller` found breadth
+// first over the calls of the module.
+static Str rec_way_round(const CallGraph *g, Usize caller, Usize callee) {
+    Usize n = countof(g->functions);
+    Usize parent[:] = mem::alloc_slice(Usize, n);
+    Usize queue[:] = mem::alloc_slice(Usize, n);
+    Bool seen[:] = mem::alloc_slice(Bool, n);
+    Usize head = 0;
+    Usize last = 0;
+    queue[last++] = callee;
+    seen[callee] = true;
+    while (head < last && !seen[caller]) {
+        Usize u = queue[head++];
+        for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
+            Usize v = g->to[k];
+            if (seen[v]) {
+                continue;
+            }
+            seen[v] = true;
+            parent[v] = u;
+            queue[last++] = v;
+        }
+    }
+    Str way = state::msg(format::push(rec_name_of(g, caller)));
+    Usize at = caller;
+    while (at != callee) {
+        at = parent[at];
+        way = state::msg(format::push(rec_name_of(g, at), " -> ", way));
+    }
+    way = state::msg(format::push(rec_name_of(g, caller), " -> ", way));
+    mem::free(parent.data);
+    mem::free(queue.data);
+    mem::free(seen.data);
+    return way;
+}
+
+// The first call of a cycle that is not a tail call is an error; a cycle of tail calls only is fine.
+export state::Status check_recursion(c::LLVMModuleRef module) {
+    CallGraph g = {};
+    Usize n = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f))
+        if (c::LLVMCountBasicBlocks(f) > 0) n += 1;
+    if (n == 0) {
+        return state::success();
+    }
+    g.functions = mem::alloc_slice(CallNode, n);
+    Usize size = 16;
+    while (size < 2 * n) {
+        size *= 2;
+    }
+    g.slots = mem::alloc_slice(Usize, size);
+    Usize at = 0;
+    for (c::LLVMValueRef f = c::LLVMGetFirstFunction(module); f != nullptr; f = c::LLVMGetNextFunction(f)) {
+        if (c::LLVMCountBasicBlocks(f) == 0) {
+            continue;
+        }
+        g.functions[at].value = f;
+        rec_remember(&g, at);
+        at += 1;
+    }
+    rec_walk_calls(&g, false);
+    rec_walk_calls(&g, true);
+    Usize component[:] = mem::alloc_slice(Usize, n);
+    rec_components(&g, component);
+    state::Status result = state::success();
+    for (Usize u = 0; u < n && result == .ok; u++) {
+        for (Usize k = g.first[u]; k < g.first[u + 1]; k++) {
+            if (g.tail[k] || component[g.to[k]] != component[u]) {
+                continue;
+            }
+            ast::Span nowhere = {};
+            Str way = rec_way_round(&g, u, g.to[k]);
+            result = state::failf(nowhere, "recursion in a module: ", way,
+                                  " (write a loop; a call that ends the function is a tail call: `return f(...)`)");
+            break;
+        }
+    }
+    mem::free(component.data);
+    mem::free(g.functions.data);
+    mem::free(g.slots.data);
+    mem::free(g.first.data);
+    mem::free(g.to.data);
+    mem::free(g.tail.data);
+    return result;
+}

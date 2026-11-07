@@ -2022,6 +2022,7 @@ static state::Status emit_all(state::Emitter *e) {
     try check_static_asserts(e);
     append_module_asm(e);
     try debug::finish(e);
+    try call::check_recursion(e->module);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {
         ast::Span nowhere = {};

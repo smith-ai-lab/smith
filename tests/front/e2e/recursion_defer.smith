@@ -1,0 +1,13 @@
+# A `return f(x)` under a `defer` is not a tail call: the defer still runs after it.
+
+fn note(log: *mut u64):
+    log.* += 1
+
+fn count(n: u64, log: *mut u64) -> u64:
+    defer note(log)
+    if n == 0:
+        return 0
+    return count(n - 1, log)
+
+pub fn check() -> i32:
+    0
