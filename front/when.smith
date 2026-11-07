@@ -582,7 +582,11 @@ export const ast::Module *live_module(const ast::Module *m, Os os) {
                 fields[countof(fields) - 1] = d->kind.record.fields[k];
             }
             ast::Decl *fresh = ast::new_decl(*d);
-            if (fresh->kind == .record) fresh->kind.record.fields = fields;
+            ast::DeclKind replaced = {.record = {.name = d->kind.record.name,
+                                                 .is_union = d->kind.record.is_union,
+                                                 .opaque = d->kind.record.opaque,
+                                                 .fields = fields}};
+            fresh->kind = replaced;
             kept = fresh;
         }
         copy->decls = mem::realloc(copy->decls, countof(copy->decls) + 1);
