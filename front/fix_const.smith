@@ -5,8 +5,9 @@
 //
 // C's `T x = {};` followed by `f(&x)` is an out-parameter: `f` fills `x`. In smith a name is constant unless it is
 // `mut`, so `&x` is a `*T` and the checker says "this drops const" where `f` wants a `*mut T`. The fixer's own checker
-// does not report it for a callee in another module, so the rule reads the text: a local written `name: T = undefined`
-// (what `{}` of a struct that C fills becomes) whose address `&name` is taken later in the same function is `mut`.
+// does not report it for a callee in another module, so the rule reads the text: a local written `name: T = value`
+// (`= undefined` is what `{}` of a struct that C fills becomes) whose address `&name` or `&name.field` is taken later in
+// the same function is `mut`.
 //
 //   fix_const::edits(source)   one fix for each such local
 module front::fix_const;
@@ -38,9 +39,16 @@ static Usize line_end(Str source, Usize at) {
     return at;
 }
 
-// The name of the local that `line` declares as `name: T = undefined`, with no `mut`; empty when it is not one.
-static Str undefined_local(Str line) {
-    if (!ends_with(line, " = undefined")) return "";
+// Whether `text` holds ` = `, the initializer of a declaration.
+static Bool has_initializer(Str text) {
+    for (Usize i = 0; i + 3 <= countof(text); i++)
+        if (starts_with(text[i:countof(text)], " = ")) return true;
+    return false;
+}
+
+// The name of the local that `line` declares as `name: T = value`, with no `mut`; empty when it is not one.
+static Str initialized_local(Str line) {
+    if (!ends_with(line, " = undefined") && !has_initializer(line)) return "";
     Usize k = 0;
     while (k < countof(line) && line[k] == ' ')
         k += 1;
@@ -49,7 +57,8 @@ static Str undefined_local(Str line) {
         k += 1;
     if (k == from || k >= countof(line) || line[k] != ':') return "";
     Str name = line[from:k];
-    if (countof(name) == 3 && starts_with(name, "mut")) return "";
+    if (countof(name) == 3 && (starts_with(name, "mut") || starts_with(name, "pub"))) return "";
+    if (countof(name) == 5 && starts_with(name, "const")) return "";
     return name;
 }
 
@@ -68,7 +77,7 @@ export core::Errors edits(Str source) {
     Usize at = 0;
     while (at < countof(source)) {
         Usize end = line_end(source, at);
-        Str name = undefined_local(source[at:end]);
+        Str name = initialized_local(source[at:end]);
         if (countof(name) > 0) {
             // the rest of the function: up to the next line at column 0
             Usize stop = end + 1;
