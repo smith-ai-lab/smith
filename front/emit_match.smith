@@ -695,13 +695,26 @@ static state::Status let_branch(state::Emitter *e, const state::ThenGeneral *w) 
         state::ThenBlocks end = {.run = let_branch_end, .span = s->span};
         end.blocks[0] = end_block;
         state::push_then_blocks(e, end);
-        state::push_statement(e, else_branch);
+        state::push_branch(e, w, else_branch);
     }
     state::ThenGeneral after = {.run = let_after_then, .flag = has_else, .span = s->span};
     after.blocks[0] = else_block;
     after.blocks[1] = end_block;
     state::push_then_general(e, after);
-    state::push_statement(e, s->kind.if_let.then_branch);
+    state::push_branch(e, w, s->kind.if_let.then_branch);
+    return state::success();
+}
+
+// An `if let` used as a value: each branch is `branch` work that stores its last line in `slot`.
+export state::Status if_let_into(state::Emitter *e, const ast::Stmt *s, c::LLVMValueRef slot, state::Ty ty,
+                                 state::Continuation branch) {
+    if (s->kind != .if_let) {
+        return state::fail("not an if let", s->span);
+    }
+    if (s->kind.if_let.else_branch == nullptr) return state::fail("an `if` used as a value needs an `else`", s->span);
+    state::ThenGeneral item = {.run = let_branch, .branch = branch, .stmt = s, .ty = ty, .value = slot, .span = s->span};
+    state::push_then_general(e, item);
+    state::push_eval(e, s->kind.if_let.value, state::no_hint());
     return state::success();
 }
 

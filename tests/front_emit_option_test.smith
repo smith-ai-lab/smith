@@ -401,3 +401,23 @@ export void test_front_emit_option_a_narrowed_option_of_a_slice_reads_its_fields
     c::LLVMDisposeMessage(ir);
     emit_jit::stop(&host);
 }
+
+// `r := if v := make(n): v else: 5`: an `if` with a binding used as a value.
+export void test_front_emit_option_an_if_with_a_binding_as_a_value() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    char *ir = ir_of("fn make(n: i32) -> ?i32:\n"
+                     "    if n < 0:\n"
+                     "        return .none\n"
+                     "    return n * 2\n"
+                     "pub fn pick(n: i32) -> i32:\n"
+                     "    r := if v := make(n): v + 1 else: 5\n"
+                     "    r * 10\n",
+                     &host, &s);
+    test::check_equal(ir != nullptr, true);
+    Pick pick = (Pick)symbol_of(&host, "pick");
+    test::check_equal(pick(3), (I32)70);
+    test::check_equal(pick(-3), (I32)50);
+    c::LLVMDisposeMessage(ir);
+    emit_jit::stop(&host);
+}
