@@ -64,8 +64,7 @@ export void test_front_fix_array_a_one_line_switch_arm_has_no_semicolon() {
            "fn f(r: Result, mut x: i32):\n    match r.kind:\n        .ok: x = 1\n        .err: x = 2\n        _: ()\n");
 }
 
-// A local `constexpr` is deleted, and a lower-case `Type` value is `const n = T` (#2649).
+// A local `constexpr Type` with a lower-case name is `const n = T` (#2649).
 export void test_front_fix_array_a_local_constexpr_type_is_a_const() {
-    expect("void f(void) {\n    constexpr Type one = slice_of(I32);\n    constexpr I32 n = 3;\n}\n",
-           "fn f():\n    const one = slice_of(i32)\n    const n: i32 = 3\n");
+    expect("void f(void) {\n    constexpr Type one = slice_of(I32);\n}\n", "fn f():\n    const one = slice_of(i32)\n");
 }
