@@ -1303,6 +1303,14 @@ struct Head {
     lex::Token name;
 };
 
+// The dimensions in front of the element type: `[4]u8`. A volatile element of an array is the array's `volatile [4]u8`;
+// of a slice, `[]volatile u8`.
+static Str with_dims(Str dims, Str type) {
+    Bool volatile_element = countof(type) > 9 && same_text(type[0:9], "volatile ");
+    if (!volatile_element || countof(dims) == 0 || same_text(dims, "[]")) return as_str(format::push(dims, type));
+    return as_str(format::push("volatile ", dims, type[9:]));
+}
+
 // The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
 // comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as
 // smith writes them in front of the type, the first one outermost: `[3]`, `[][2]`.
@@ -1393,7 +1401,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
-    type = as_str(format::push(dims, type));
+    type = with_dims(dims, type);
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
@@ -1889,7 +1897,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str lead = variable_lead(pre, type_value);
     if (zero_later && !pre->is_constexpr) lead = "mut ";
     Str untyped = untyped_of(lead);
-    written = as_str(format::push(dims.text, written));
+    written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
@@ -2094,7 +2102,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ", dims.text, written);
+    char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");
