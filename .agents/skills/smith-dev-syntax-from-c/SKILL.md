@@ -10,10 +10,10 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | Today | New |
 |---|---|
 | `// comment`, `/* ... */` | `# comment`; `##` for a doc comment |
-| `a \`a && b`\`a && b` b`, `a \|\| b`, `!a` | `a and b`, `a or b`, `not a` (D19; the old signs are a warning with a fix) |
+| `a && b`, `a \|\| b`, `!a` | `a and b`, `a or b`, `not a` (D19; the old signs are a warning with a fix); `!=` stays. A `!a` followed by an operator (`!a == b`) is left for hand editing |
 | `module game::replay;` | nothing: the module is the file's path (`game/replay.smith` is `game.replay`) |
 | `import std::math;` then `math::sin(x)` | `import std.math` then `math.sin(x)` |
-| `import <stdio.h>;` then `c::printf(...)` | `import c <stdio.h>` then `stdio.printf(...)` |
+| `import <stdio.h>;` then `c::printf(...)` | `import c <stdio.h>` then `stdio.printf(...)`, the header's own name (also when a local named `c` hides `c`) |
 | `struct c::stat`, `c::EOF` | `stat.stat`, `stdio.EOF` through the header's name |
 | `export U32 next() { ... }` | `pub fn next() -> u32:` and an indented body |
 | `export typedef struct { ... } Replay;` | `pub struct Replay:` and indented fields |

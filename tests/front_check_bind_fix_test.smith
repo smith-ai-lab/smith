@@ -137,6 +137,7 @@ export void test_front_check_bind_fix_try_a_cleanup_becomes_an_errdefer() {
     expect(before, after);
 }
 
+// A guard that changes the error is not `try`: it is a binding with an else (fix_guard).
 export void test_front_check_bind_fix_try_an_error_changed_on_the_way_stays() {
     char site[:] =
         format::push(head_text(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
@@ -144,8 +145,8 @@ export void test_front_check_bind_fix_try_an_error_changed_on_the_way_stays() {
                                   "    {.ok = r.ok * 2}\n");
     char kept[:] =
         format::push(head_after(), "fn twice(n: i32) -> Result(i32, i32):\n    r: Result(i32, i32) = step(n)\n"
-                                   "    if r == .error:\n        return .error(0)\n"
-                                   "    .ok(r.ok * 2)\n");
+                                   "    .ok(ok) := r else:\n        return .error(0)\n"
+                                   "    .ok(ok * 2)\n");
     expect(site, kept);
 }
 

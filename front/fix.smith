@@ -32,6 +32,10 @@ import front::fix_opaque;
 import front::fix_payload;
 import front::fix_array;
 import front::fix_bool;
+import front::fix_chain;
+import front::fix_const;
+import front::fix_guard;
+import front::fix_place;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
@@ -311,6 +315,57 @@ static Str undeclared_c_name(Str message) {
     return message[countof(lead):end];
 }
 
+static Bool contains_text(Str text, Str needle);
+
+// The name in "`T` has no method `printf`; write a function ...": empty for another message.
+static Str no_method_name(Str message) {
+    Str lead = "` has no method `";
+    for (Usize i = 0; i + countof(lead) < countof(message); i++) {
+        if (!mem::equal(message[i:i + countof(lead)], lead)) continue;
+        Usize from = i + countof(lead);
+        Usize end = from;
+        while (end < countof(message) && message[end] != '`')
+            end += 1;
+        return message[from:end];
+    }
+    return "";
+}
+
+// A local named `c` hides the namespace `c` (#2648): `c.printf(...)` reads a method of the local. The header's own
+// name, `stdio.printf`, is the same function whatever the locals are called, so the `c` of the call becomes it.
+static core::Errors c_shadow_fixes(Str source, const types::Checked *checked) {
+    core::Errors out = {};
+    for (Usize i = 0; i < checked->error_count; i++) {
+        types::Error e = checked->errors[i];
+        Str name = no_method_name(e.message);
+        if (countof(name) == 0 || e.span.end <= e.span.start + 2) continue;
+        if (source[e.span.start] != 'c' || source[e.span.start + 1] != '.') continue;
+        for (Usize h = 0; h < countof(libc_headers); h++) {
+            Str header = libc_headers[h];
+            const ast::Module *found = load_header(header, true);
+            if (found == nullptr || !header_declares(found, name)) continue;
+            Str written = as_str(format::push("import c <", header, ">"));
+            if (!contains_text(source, written)) continue;
+            Usize stem = 0;
+            for (Usize k = 0; k < countof(header); k++)
+                if (header[k] == '/') stem = k + 1;
+            Str space = header[stem:countof(header) - 2];
+            ast::Span at = {.start = e.span.start, .end = e.span.start + 1};
+            core::Edits edits = {};
+            edits = mem::realloc(edits, 1);
+            edits[0] = (core::Edit){.span = at, .text = space};
+            out = mem::realloc(out, countof(out) + 1);
+            core::ParseError fix_error = {};
+            fix_error.span = at;
+            fix_error.message = "a local named `c` hides the C namespace";
+            fix_error.fix = edits;
+            out[countof(out) - 1] = fix_error;
+            break;
+        }
+    }
+    return out;
+}
+
 // One fix per header that declares a name the file reads as `c.name` without importing it: the line `import c <h>`.
 static core::Errors c_import_fixes(const ast::Module *module, const types::Checked *checked) {
     core::Errors out = {};
@@ -395,6 +450,7 @@ static Bool inserts_at_replaced_start(core::Errors parsed_errors, core::Errors p
     return false;
 }
 
+// Whether `needle` is in `text`.
 static Bool contains_text(Str text, Str needle) {
     Usize n = countof(needle);
     for (Usize i = 0; i + n <= countof(text); i++) {
@@ -415,12 +471,55 @@ static core::Errors append(core::Errors out, core::Errors more) {
 // The fixes made from the checker's errors of the whole file, whatever else it still gets wrong (#2648): `Ty(kind =
 // (vector = (...)))` where `kind` is a payload enumeration is `.vector((...))`, an array given to a C pointer
 // parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, and `mem::equal(a, b)`
-// is `==` (#2540: the call is found by its name).
+// is `==` (#2540: the call is found by its name). `fix_const` reads the text: a `= undefined` local whose address is
+// taken is `mut`, and `fix_chain` writes a pattern conjunct for a payload read after its test in a value (D16), once
+// the parser reads one.
+static Usize pattern_probe = 0; // 0: not tried, 1: the parser reads a pattern in a value, 2: it does not
+
+// Whether the parser reads a pattern conjunct in a value (D16: `return .v(v) := k && v.x`), tried once on a snippet.
+// `fix_chain` writes that form, so it waits for the parser that reads it: written before, it would turn a check error
+// into a parse error, and the module would still not pass.
+static Bool values_take_patterns() {
+    if (pattern_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K) -> bool:\n    return .v(v) := k and v.x\n");
+        pattern_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return pattern_probe == 1;
+}
+
+static Usize guard_probe = 0; // 0: not tried, 1: the parser reads a binding with an else, 2: it does not
+
+// Whether the parser reads `.ok(ok) := r else: return` (the binding of a guard that leaves), tried once on a snippet.
+static Bool bindings_take_else() {
+    if (guard_probe == 0) {
+        parser::Parsed probe =
+            parser::parse_new("probe.smith", "fn f(r: R) -> i32:\n    .ok(ok) := r else: return 0\n    return ok\n");
+        guard_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return guard_probe == 1;
+}
+
+static Usize place_probe = 0; // 0: not tried, 1: the parser reads a pattern on an address, 2: it does not
+
+// Whether the parser reads `.v(v) := &k` (D21).
+static Bool places_are_bound() {
+    if (place_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K):\n    if .v(v) := &k:\n        v.x = 1\n");
+        place_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return place_probe == 1;
+}
+
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
-    return append(out, fix_bool::edits(source, checked));
+    out = append(out, fix_bool::edits(source, checked));
+    out = append(out, fix_const::edits(source));
+    if (bindings_take_else()) out = append(out, fix_guard::edits(source));
+    if (places_are_bound()) out = append(out, fix_place::edits(source));
+    if (!values_take_patterns()) return out;
+    return append(out, fix_chain::edits(source));
 }
 
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
@@ -439,6 +538,7 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
     out = append(out, c_import_fixes(module, &checked));
+    out = append(out, c_shadow_fixes(source, &checked));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.

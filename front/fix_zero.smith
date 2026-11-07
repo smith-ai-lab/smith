@@ -437,6 +437,68 @@ static core::Errors add(core::Errors out, core::ParseError found) {
     return out;
 }
 
+// Whether the text at `at` starts with `prefix`.
+static Bool text_at(Str source, Usize at, Str prefix) {
+    if (at + countof(prefix) > countof(source)) return false;
+    return same(source[at:at + countof(prefix)], prefix);
+}
+
+// Whether the line holding `at` lies in a function already written `fn`: the column-0 line above it says so.
+static Bool in_new_function(Str source, Usize at) {
+    Usize start = at;
+    while (start > 0) {
+        Usize prev = start - 1;
+        while (prev > 0 && source[prev - 1] != '\n')
+            prev -= 1;
+        start = prev;
+        if (source[start] != ' ' && source[start] != '\n') break;
+    }
+    return text_at(source, start, "fn ") || text_at(source, start, "pub fn ") || text_at(source, start, "static fn ");
+}
+
+// `(T){0}` as a value (D10, #2627): C's zero of `T`, which may be a `typeof`
+// type or one the file cannot see, is `mem.zeroed(T)`. A struct named by a plain declaration `x: P = {}` is not this
+// (fix_of fills its fields); an array type `([3]I32){0}` is the parser's.
+static core::Errors zeroed_literals(core::Errors out, Str source) {
+    Usize at = 0;
+    while (at < countof(source)) {
+        if (source[at] != '(' ||
+            (at > 0 && (word_char(source[at - 1]) || source[at - 1] == ')' || source[at - 1] == ']'))) {
+            at += 1;
+            continue;
+        }
+        Usize depth = 0;
+        Usize close = at;
+        while (close < countof(source) && source[close] != '\n') {
+            if (source[close] == '(') depth += 1;
+            if (source[close] == ')') depth -= 1;
+            if (depth == 0) break;
+            close += 1;
+        }
+        Bool braces = close < countof(source) && source[close] == ')' && text_at(source, close + 1, "{");
+        Usize stop = close + 2;
+        if (!braces || !text_at(source, stop, "0}") || close <= at + 1 || source[at + 1] == '[') {
+            at += 1;
+            continue;
+        }
+        Str type_text = source[at + 1:close];
+        // an old-syntax function is mended later: its `mem::zeroed(T)` becomes `mem.zeroed(T)` with the rest
+        Str call = in_new_function(source, at) ? "mem.zeroed(" : "mem::zeroed(";
+        core::Edits edits = {};
+        edits = mem::realloc(edits, 1);
+        ast::Span whole = {.start = (U32)at, .end = (U32)(stop + 2)};
+        edits[0] = (core::Edit){.span = whole, .text = types::message_of(format::push(call, type_text, ")"))};
+        core::ParseError found = {};
+        found.span = whole;
+        found.message = "a compound literal of zero is `mem.zeroed(T)`";
+        found.fix = edits;
+        out = add(out, found);
+        zeroed_written = true;
+        at = stop + 2;
+    }
+    return out;
+}
+
 // Whether the module imports `std.array` (`import std.array`, `import std::array;`, with or without an alias).
 static Bool imports_std(const ast::Module *module, Str library) {
     for (Usize i = 0; i < countof(module->decls); i++) {
@@ -1306,6 +1368,11 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         }
         push_children(&w, s);
     }
+    out = zeroed_literals(out, source);
+    // the import waits when it starts where the function's own rewrite does: the next pass finds the call and adds it
+    for (Usize k = 0; k < countof(source) && !zeroed_written; k += 1)
+        if (source[k] == 'm' && text_at(source, k, "mem.zeroed(") && (k == 0 || !word_char(source[k - 1])))
+            zeroed_written = true;
     if (filled) out = add(out, import_std(module, "array"));
     if (zeroed_written) out = add(out, import_std(module, "mem"));
     zeroed_written = false;
