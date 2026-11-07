@@ -45,6 +45,7 @@ import <unistd.h>;
 constexpr I32 ebadf = c::EBADF;
 constexpr I32 eexist = c::EEXIST;
 constexpr I32 eintr = c::EINTR;
+constexpr I32 at_fdcwd = c::AT_FDCWD;
 constexpr I32 einval = c::EINVAL;
 constexpr I32 eisdir = c::EISDIR;
 constexpr I32 emfile = c::EMFILE;
@@ -281,8 +282,8 @@ I32 raw_stat(const char *path, c::SmithFileStatus *status) {
     if (handler != nullptr && handler->stat != nullptr)
         return handler->stat(handler, path, status) == 0 ? 0 : errno_now();
     struct c::stat info;
-    __builtin_memset(&info, 0, sizeof info);
-    if (c::fstatat(c::AT_FDCWD, path, &info, 0) != 0) return errno_now();
+    mem::zero(&info);
+    if (c::fstatat(at_fdcwd, path, &info, 0) != 0) return errno_now();
     status->folder = (info.st_mode & mode_kind_mask) == mode_folder;
     status->size = status->folder ? 0 : (Usize)info.st_size;
     status->writable = c::access(path, write_ok) == 0;
@@ -393,7 +394,7 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
         struct c::stat status;
-        __builtin_memset(&status, 0, sizeof status);
+        mem::zero(&status);
         Bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
         item->size = known && !item->folder ? (Usize)status.st_size : 0;
@@ -438,9 +439,8 @@ void reads_log_append(const char *log, const char *path) {
     Usize length = c::strlen(resolved);
     if (length + 3 >= path_max) return;
     struct c::stat status;
-    __builtin_memset(&status, 0, sizeof status);
-    Bool folder =
-        c::fstatat(c::AT_FDCWD, resolved, &status, 0) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
+    mem::zero(&status);
+    Bool folder = c::fstatat(at_fdcwd, resolved, &status, 0) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
     if (folder) resolved[length++] = '/';
     resolved[length++] = '\n';
     I32 descriptor = c::open(log, open_append, file_mode);
@@ -860,7 +860,7 @@ I32 entry_compare(const void *a, const void *b) {
     }
     reads_log(where.text);
     struct c::stat info_of;
-    __builtin_memset(&info_of, 0, sizeof info_of);
+    mem::zero(&info_of);
     I32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     Bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
     Usize size = code == 0 ? (Usize)info_of.st_size : 0;
@@ -958,7 +958,7 @@ Usize fake_new(Fake *fake, const char *path) {
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
-        __builtin_memset(&fake->files[i], 0, sizeof fake->files[i]);
+        mem::zero(&fake->files[i]);
         fake->files[i].used = true;
         put(fake->files[i].path, path, length);
         return i;
@@ -1125,7 +1125,7 @@ I32 fake_remove(c::SmithFileHandler *self, const char *path) {
         fake_fail(eperm);
         return -1;
     }
-    __builtin_memset(&fake->files[found], 0, sizeof fake->files[found]);
+    mem::zero(&fake->files[found]);
     return 0;
 }
 
@@ -1139,8 +1139,7 @@ I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
     Usize length = c::strlen(to);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     Usize target_found = fake_find(fake, to);
-    if (target_found != fake_files_max && target_found != found)
-        __builtin_memset(&fake->files[target_found], 0, sizeof fake->files[target_found]);
+    if (target_found != fake_files_max && target_found != found) mem::zero(&fake->files[target_found]);
     fake->files[found].path[0] = 0;
     put(fake->files[found].path, to, length);
     fake->files[found].path[length] = 0;
@@ -1282,7 +1281,7 @@ I32 fake_symlink(c::SmithFileHandler *self, const char *target, const char *path
 // An empty fake. Put it in force with `files::set_handler(&fake.base)`.
 [[std::c_name("smith_fs_fake")]] export [[nodiscard]] Fake fake() {
     Fake result = {};
-    __builtin_memset(&result.base, 0, sizeof result.base); // the fields not set below are null: libc's own call
+    mem::zero(&result.base); // the fields not set below are null: libc's own call
     result.base.open = fake_open;
     result.base.read = fake_read;
     result.base.write = fake_write;
