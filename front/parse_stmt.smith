@@ -1529,18 +1529,52 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
 
 // `(init; cond; step)` is `{ init; while cond { body step; } }`: C's three-part `for`, as the spec says, is `while`. No
 // comma in the init or the step (two names, two steps) and no empty header gets this form.
+// The tokens `first` to `stop - 1` cut at their depth-0 commas, each piece after the first written after `lead` and the
+// pieces joined by `glue`: `Usize a = 0, b = 0` with the lead `Usize ` is `Usize a = 0; Usize b = 0`.
+static Str comma_pieces(const parse::Parser *p, Usize first, Usize stop, Str lead, Str glue) {
+    char out[:] = {};
+    Usize from = first;
+    for (Usize pieces = 0; pieces <= stop - first; pieces += 1) {
+        Usize comma = find_at_depth_0(p, from, stop, lex::comma);
+        Str piece = tokens_text(p, from, comma - 1);
+        if (from != first) out = format::push(out, glue, lead);
+        out = format::push(out, piece);
+        if (comma == stop) break;
+        from = comma + 1;
+    }
+    return out;
+}
+
+// The declarator of `T a = 1, b = 2` starts after the type: the stars before the name that precedes the first `=` (or
+// the end). Gives the offset of its first token, or 0 when the init has no type in front.
+static Usize declarator_start(const parse::Parser *p, Usize first, Usize stop) {
+    Usize equal = find_at_depth_0(p, first, stop, lex::equal);
+    Usize name = equal - 1;
+    if (name <= first) return 0;
+    while (name > first + 1 && parse::peek_at(p, name - 1).kind == lex::star)
+        name -= 1;
+    return name;
+}
+
+// `(init; cond; step)` is `{ init; while cond { body step; } }`: C's three-part `for`, as the spec says, is `while`. An
+// init with several declarators and a step with several expressions are written one to a line; no empty header gets
+// this form.
 static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semicolon) {
     RangeText none = {};
     Usize second = find_at_depth_0(p, first_semicolon + 1, close, lex::semicolon);
     if (second == close) return none;
-    if (find_at_depth_0(p, 1, first_semicolon, lex::comma) != first_semicolon) return none;
-    if (find_at_depth_0(p, second + 1, close, lex::comma) != close) return none;
     Str init = "";
-    if (first_semicolon > 1) init = tokens_text(p, 1, first_semicolon - 1);
+    Usize comma = find_at_depth_0(p, 1, first_semicolon, lex::comma);
+    if (comma != first_semicolon) {
+        Usize name = declarator_start(p, 1, first_semicolon);
+        if (name <= 1) return none;
+        char lead[:] = format::push(tokens_text(p, 1, name - 1), " ");
+        init = comma_pieces(p, 1, first_semicolon, lead, "; ");
+    } else if (first_semicolon > 1) {
+        init = tokens_text(p, 1, first_semicolon - 1);
+    }
     Str condition = "true";
     if (second > first_semicolon + 1) condition = tokens_text(p, first_semicolon + 1, second - 1);
-    Str step = "";
-    if (close > second + 1) step = tokens_text(p, second + 1, close - 1);
     // The step goes on its own line, one level in; the `}` it is inserted before keeps the indentation it has.
     Usize at = parse::peek(p).span.start;
     while (at > 0 && p->source[at - 1] != '\n')
@@ -1549,6 +1583,9 @@ static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semic
     while (at + indent < countof(p->source) && p->source[at + indent] == ' ')
         indent += 1;
     Str margin = p->source[at:at + indent];
+    Str step = "";
+    char glue[:] = format::push(";\n", margin, "    ");
+    if (close > second + 1) step = comma_pieces(p, second + 1, close, "", glue);
     char head[:] = format::push("while ", condition);
     char tail[:] = format::push("");
     if (countof(step) > 0) tail = format::push("    ", step, ";\n", margin);
@@ -1689,6 +1726,10 @@ static Frame open_for(parse::Parser *p) {
     }
     if (!ranged && countof(p->errors) == before) {
         if (!parse::at(p, lex::right_paren)) frame.step = expression(p);
+        // Several steps, `i++, j++`: the first stands for the loop; the fix writes each on a line (`while_of`).
+        while (!frame.is_constexpr && frame.step != nullptr && countof(p->errors) == before &&
+               parse::accept(p, lex::comma))
+            expression(p);
         parse::expect(p, lex::right_paren, "`)`");
     }
     if (countof(p->errors) > before) skip_group(p, open);

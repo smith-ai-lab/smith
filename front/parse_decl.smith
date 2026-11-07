@@ -1018,6 +1018,17 @@ static void fn_pointer_error(parse::Parser *p, const ast::TypeExpr *type) {
 
 // `I32 a, b;`: the position is at the first `,`. Names the fix and skips the rest.
 static void several_names_error(parse::Parser *p, const ast::TypeExpr *type, Str first) {
+    if (p->for_init) {
+        // `for (Usize a = 0, b = 0; ...)`: the header's own fix writes one declaration to a line; read to its `;`.
+        Usize depth = 0;
+        while (!parse::at(p, lex::end_of_file) && (depth > 0 || !parse::at(p, lex::semicolon))) {
+            lex::TokenKind kind = parse::advance(p).kind;
+            if (kind == lex::left_paren || kind == lex::left_bracket || kind == lex::left_brace) depth += 1;
+            if ((kind == lex::right_paren || kind == lex::right_bracket || kind == lex::right_brace) && depth > 0)
+                depth -= 1;
+        }
+        return;
+    }
     U32 start = parse::peek(p).span.start;
     Str second = "b";
     if (is_name(parse::peek_at(p, 1).kind)) {
