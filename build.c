@@ -34,7 +34,7 @@ typedef struct {
     const char *cc;
     const char *const *cflags;
     const char *optimize; // the profile's level: -O0 for dev (the default), -O2 for release (-DPROFILE=release, #2684)
-    const char *binary; // the smith this build makes
+    const char *binary;   // the smith this build makes
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
@@ -612,7 +612,8 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
                                    nullptr};
     SmithStep program = {
         .command = smith_cat(
-            b, smith_list(b, config->cc, config->optimize, "-w", "-I", "include", "-I", ".smith/include", nullptr), sources,
+            b, smith_list(b, config->cc, config->optimize, "-w", "-I", "include", "-I", ".smith/include", nullptr),
+            sources,
             smith_cat(b, config->platform->pack_libraries,
                       smith_list(b, "-o", smith_fmt(b, "%s/pack", folder), nullptr), nullptr),
             nullptr),
@@ -1525,7 +1526,7 @@ static void build_release(SmithBuild *b, const BuildConfig *config, const char *
     const char *binary = build_release_binary(b, config, folder);
     const char *tool = smith_fmt(b, "%s/release", folder);
     const char *const *built = strcmp(binary, config->binary) == 0 ? (const char *[]){binary, nullptr}
-                                                                    : (const char *[]){"release-binary", nullptr};
+                                                                   : (const char *[]){"release-binary", nullptr};
     SmithStep compile = {
         .command = smith_list(b, binary, "cc", "-w", "-I", "include", "-I", ".smith/include", "release/publish.smith",
                               "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
@@ -3084,8 +3085,9 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .compiler = config->cc,
         .source = "tree-sitter/src/parser.c",
         .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
-        .flags = smith_cat(b, smith_list(b, "-std=gnu11", config->optimize, "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
-                           config->platform->deployment, nullptr),
+        .flags =
+            smith_cat(b, smith_list(b, "-std=gnu11", config->optimize, "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+                      config->platform->deployment, nullptr),
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
@@ -3606,9 +3608,11 @@ void build(SmithBuild *b) {
         build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the check that records)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
     config.optimize = build_profile_optimize(b);
-    config.cflags = smith_cat(
-        b, (const char *[]){smith_fmt(b, "-std=%s", std), config.optimize, "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
-        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), config.platform->deployment, nullptr);
+    config.cflags = smith_cat(b,
+                              (const char *[]){smith_fmt(b, "-std=%s", std), config.optimize, "-g", "-Wall", "-Wextra",
+                                               "-Wpedantic", nullptr},
+                              smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}),
+                              config.platform->deployment, nullptr);
 
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
