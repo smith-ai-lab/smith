@@ -161,6 +161,16 @@ export void test_front_types_module_constant_and_result_type() {
     fails("import lib.math as m\n\nfn run() -> str:\n    return m.tau\n", "F64", "Str");
 }
 
+// A function and the alias of an imported module may share a name (`import std.build` and `pub fn build(...)`): the
+// alias is read before `.`, the function as a value.
+export void test_front_types_module_a_function_and_an_alias_share_a_name() {
+    clean("import lib.math\n\nfn math() -> i32:\n    1\n\nfn run(p: math.Point) -> f64:\n    p.x + math().to(f64)\n");
+}
+
+export void test_front_types_module_two_aliases_of_one_name_are_still_an_error() {
+    fails("import lib.math\nimport lib.shapes as math\n\nfn run() -> i32:\n    1\n", "math", "declared twice");
+}
+
 // The body of a generic from another module is checked with that module's own names, public or not (#1902).
 export void test_front_types_module_generic_body_reads_its_own_modules_names() {
     clean("import lib.math as m\n\nfn run() -> f64:\n    m.wrap(1)\n");

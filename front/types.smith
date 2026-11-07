@@ -844,9 +844,15 @@ static Usize scope_start(const Scopes *s) {
 }
 
 // Adds `symbol` to the innermost scope; false, and nothing added, when that scope has the name already.
+// A module's alias and a function of that name live side by side (`import std.build` and `pub fn build(...)`): the
+// alias is the one read before `.` or `::`, the function the one read as a value.
 export Bool declare(Scopes *s, Symbol symbol) {
+    Bool is_module = false;
+    if (symbol.kind == .module_name) is_module = true;
     for (Usize i = scope_start(s); i < s->count; i++) {
-        if (same_text(s->symbols[i].name, symbol.name)) return false;
+        const Symbol *old = &s->symbols[i];
+        Bool was_module = old->kind == .module_name;
+        if (same_text(old->name, symbol.name) && was_module == is_module) return false;
     }
     if (s->count == countof(s->symbols)) {
         Usize capacity = countof(s->symbols) * 2;
@@ -1867,10 +1873,17 @@ static Bool declared_public(const Symbol *s) {
 }
 
 // Whether the symbol was declared in a C header.
-static Bool declared_in_c(const Symbol *s) {
+export Bool declared_in_c(const Symbol *s) {
     const ast::Decl *decl = s->decl;
     if (decl == nullptr) return false;
     return decl->from_c;
+}
+
+// The doc comment of the symbol's declaration; empty when it has none.
+export Str declared_doc(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    return decl->doc;
 }
 
 // Whether the symbol is the declaration `d`.
@@ -3440,10 +3453,25 @@ export Str c_binding_of(const Checked *r, Str name) {
     return "";
 }
 
+// The module alias called `name`, as the code being checked sees it, or null: a function of the same name does not hide
+// it.
+export const Symbol *scoped_module(const Checked *r, Str name) {
+    Str own = name;
+    if (countof(r->prefix) > 0) own = msg(format::push(r->prefix, name));
+    for (Usize i = r->scopes.count; i > 0; i--) {
+        const Symbol *found = &r->scopes.symbols[i - 1];
+        if (found->kind != .module_name) continue;
+        if (same_text(found->name, own) || same_text(found->name, name)) return found;
+    }
+    return nullptr;
+}
+
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
 // checked a name that is not `pub` is missing; inside an imported module it is not.
 export Through through_modules(const Checked *r, const Names *names) {
     Through out = {.symbol = scoped(r, names->items[0]), .module = nullptr};
+    if (names->count > 1 && scoped_module(r, names->items[0]) != nullptr)
+        out.symbol = scoped_module(r, names->items[0]);
     for (Usize i = 1; i < names->count; i++) {
         const Symbol *module = out.symbol;
         if (module == nullptr || module->kind != .module_name) {
@@ -3465,6 +3493,7 @@ export const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     Usize count = countof(path.segments);
     if (count > 1 && count <= 8) {
         const Symbol *first = scoped(r, path.segments[0].text);
+        if (scoped_module(r, path.segments[0].text) != nullptr) first = scoped_module(r, path.segments[0].text);
         if (first != nullptr && first->kind == .module_name) {
             Names names = {.count = count};
             for (Usize i = 0; i < count; i++)

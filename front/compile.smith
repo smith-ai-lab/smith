@@ -319,7 +319,7 @@ static const ast::Module *load_module(const char *dotted) {
         Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
         files::BytesResult loaded = load(path);
-        if (loaded == .error) return nullptr;
+        if (loaded != .ok) return nullptr;
         format::Chars chars = mem::view(loaded.ok, char);
         Str source = chars;
         parser::Parsed parsed =
@@ -372,7 +372,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
 static Str read_header_in(Str folder, Str header) {
     Str path = as_str(format::push(folder, "/", header));
     files::BytesResult loaded = files::read_file(path);
-    if (loaded == .error) return "";
+    if (loaded != .ok) return "";
     format::Chars chars = mem::view(loaded.ok, char);
     Str text = chars;
     return text;
@@ -477,7 +477,7 @@ static const types::Symbol *header_symbol(const types::Checked *checked, const a
     } else if (at->kind == .member && at->kind.member.base->kind == .name) {
         found = types::lookup(&checked->scopes, as_str(format::push("c::", at->kind.member.name)));
     }
-    if (found == nullptr || found->decl == nullptr || !found->decl->from_c) return nullptr;
+    if (found == nullptr || !types::declared_in_c(found)) return nullptr;
     return found;
 }
 
@@ -497,7 +497,7 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     if (type == nullptr && named != nullptr) type = named->type; // `c.f` before the checker binds `c` (#1961)
     if (type == nullptr) return (Hover){};
     Str doc = "";
-    if (named != nullptr) doc = named->decl->doc;
+    if (named != nullptr) doc = types::declared_doc(named);
     return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
 }
 
@@ -590,13 +590,14 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
         header_qualifier(m, base->kind.name.path.segments[0].text) && types::type_of(checked, base) == nullptr) {
         for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
             const types::Symbol *s = &checked->scopes.symbols[i];
-            if (s->decl == nullptr || !s->decl->from_c || !starts_with_text(s->name, "c::")) continue;
+            if (!types::declared_in_c(s) || !starts_with_text(s->name, "c::")) continue;
             Str label = s->name[3:countof(s->name)];
             if (!starts_with_text(label, prefix) || s->type == nullptr) continue;
             U32 kind = s->kind == .function_symbol ? 3 : 6;
             if (s->kind == .type_name) kind = 7;
             list = offer(
-                list, (Candidate){.label = label, .kind = kind, .detail = types::show(s->type), .doc = s->decl->doc});
+                list, (Candidate){
+                          .label = label, .kind = kind, .detail = types::show(s->type), .doc = types::declared_doc(s)});
         }
         return list;
     }
@@ -959,7 +960,7 @@ static Str wanted_triple(Str triple) {
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
     files::BytesResult loaded = load(path);
-    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
     format::Chars chars = mem::view(loaded.ok, char);
     Str source = chars;
 
@@ -1689,7 +1690,7 @@ static Str write_if_changed(Str output, Str text) {
 export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
     files::BytesResult loaded = load(path);
-    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
     format::Chars chars = mem::view(loaded.ok, char);
     Str source = chars;
     if (starts_with_module(source))
