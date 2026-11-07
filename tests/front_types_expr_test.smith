@@ -1385,3 +1385,37 @@ export void test_front_types_expr_a_field_of_an_anonymous_union_is_a_field_of_th
     test::check_condition(says(r.errors[before].message,
                                "`Value` has no field `unsigned_value`; write one of its fields, such as `kind`"));
 }
+
+export void test_front_types_expr_the_difference_of_pointers_ignores_const_and_an_array_decays() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    declare(&r, "p", .variable, types::pointer_to(&r.table, ty(&r, "Char"), true), false);
+    declare(&r, "q", .variable, types::pointer_to(&r.table, ty(&r, "Char"), false), false);
+    declare(&r, "xs", .variable, types::array_of(&r.table, ty(&r, "Char"), 16, false), false);
+    types::TypeRef from_const = types_expr::infer(&r, binary(.subtract, ast::name("q"), ast::name("p")));
+    test::check_condition(from_const == ty(&r, "Isize"));
+    types::TypeRef from_array = types_expr::infer(&r, binary(.subtract, ast::name("q"), ast::name("xs")));
+    test::check_condition(from_array == ty(&r, "Isize"));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_the_address_of_a_construction_is_a_mutable_pointer() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Ty *pair = types::new_record(&r.table, "Pair", false);
+    types::Slot fields[:] = mem::alloc_slice(types::Slot, 1);
+    fields[0] = slot("a", ty(&r, "I32"));
+    fields[0].is_pub = true;
+    types::set_fields(pair, fields);
+    declare(&r, "Pair", .type_name, pair, false);
+    ast::ExprRef given[1] = {named("a", num(2))};
+    types::TypeRef address = types_expr::infer(&r, unary(.address_of, ast::call(ast::name("Pair"), given)));
+    test::check_condition(address == types::pointer_to(&r.table, pair, false));
+    expect(r.error_count, 0);
+}
