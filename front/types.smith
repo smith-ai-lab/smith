@@ -563,8 +563,10 @@ export TypeRef builtin(const Table *t, Str name) {
 export TypeRef integer(const Table *t, U32 bits, Bool is_signed) {
     for (Usize i = 0; i < countof(t->builtins); i++) {
         const Ty *x = t->builtins[i].type;
-        if (x->kind == .integer && x->bits == bits && x->is_signed == is_signed && x->name[1] != 's' &&
-            x->name[1] != 'z')
+        if (x->shape != .integer) continue;
+        Str name = x->shape.integer.name;
+        if (x->shape.integer.bits == bits && x->shape.integer.is_signed == is_signed && name[1] != 's' &&
+            name[1] != 'z')
             return x;
     }
     return nullptr;
@@ -574,7 +576,8 @@ export TypeRef integer(const Table *t, U32 bits, Bool is_signed) {
 export TypeRef floating(const Table *t, U32 bits) {
     for (Usize i = 0; i < countof(t->builtins); i++) {
         const Ty *x = t->builtins[i].type;
-        if (x->kind == .floating && x->bits == bits && !same_text(x->name, "BF16")) return x;
+        if (x->shape != .floating) continue;
+        if (x->shape.floating.bits == bits && !same_text(x->shape.floating.name, "BF16")) return x;
     }
     return nullptr;
 }
@@ -810,7 +813,8 @@ export Layout layout(const Target *target, TypeRef t) {
             } else if (top == layout_depth) {
                 return answer;
             } else {
-                stack[top] = (Frame){.type = child, .align = 1, .known = child->kind != .record || child->complete};
+                stack[top] = (Frame){
+                    .type = child, .align = 1, .known = child->shape != .record || child->shape.record.complete};
                 top += 1;
             }
             continue;
@@ -1004,7 +1008,7 @@ export Str show(TypeRef t) {
     while (top > 0) {
         top -= 1;
         Piece piece = stack[top];
-        Usize pushes = piece.type == nullptr ? 0 : 2 * countof(piece.type->slots);
+        Usize pushes = piece.type == nullptr ? 0 : 2 * countof(slots_of(piece.type).items);
         while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
@@ -2073,9 +2077,9 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             e->kind.query.operand->kind == .name) {
             // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
             const Symbol *pack = type_through_modules(r, e->kind.query.operand->kind.name.path);
-            if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
+            if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->shape != .tuple)
                 return false;
-            values[have++] = countof(pack->type->slots);
+            values[have++] = countof(pack->type->shape.tuple.slots);
             continue;
         }
         if (names_a_constant(e, &path)) {
@@ -2681,7 +2685,8 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
         } else if (value != nullptr) {
             failf(r, value->span, "not yet typed: an enumerator value that is not an integer literal");
         }
-        TypeRef carried = symbol->type->element;
+        TypeRef carried = r->table.void_type;
+        if (symbol->type->shape == .enumeration) carried = symbol->type->shape.enumeration.element;
         if (has_payload) {
             // A payload struct the fixer converted holds types in smith's own spelling (`bool`, `*T`) (#2329).
             r->new_syntax = true;
@@ -2740,9 +2745,9 @@ export Bool is_auto_param(const ast::Param *p) {
 // `auto` its element with the parameter's `const` added; null when the argument is not a slice.
 export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
     if (!is_auto_slice(p->type) || !(p->type->kind == .slice)) return given;
-    if (given->kind != .slice) return nullptr;
-    Bool fixed = given->pointee_const || p->type->kind.slice.element->qualifiers.is_const;
-    return slice_of(&r->table, given->element, fixed);
+    if (given->shape != .slice) return nullptr;
+    Bool fixed = given->shape.slice.pointee_const || p->type->kind.slice.element->qualifiers.is_const;
+    return slice_of(&r->table, given->shape.slice.element, fixed);
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
