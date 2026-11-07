@@ -35,6 +35,7 @@ import front::fix_bool;
 import front::fix_chain;
 import front::fix_const;
 import front::fix_guard;
+import front::fix_place;
 import front::fix_words;
 import front::fix_alloc;
 import front::fix_build;
@@ -512,6 +513,17 @@ static Bool bindings_take_else() {
     return guard_probe == 1;
 }
 
+static Usize place_probe = 0; // 0: not tried, 1: the parser reads a pattern on an address, 2: it does not
+
+// Whether the parser reads `.v(v) := &k` (D21).
+static Bool places_are_bound() {
+    if (place_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K):\n    if .v(v) := &k:\n        v.x = 1\n");
+        place_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return place_probe == 1;
+}
+
 static Usize words_probe = 0; // 0: not tried, 1: the parser reads `and`, `or` and `not`, 2: it does not
 
 // Whether the parser reads the operators as words (D19, #2649), tried once on a snippet. `fix_words` writes them, so
@@ -532,6 +544,7 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));
+    if (places_are_bound()) out = append(out, fix_place::edits(source));
     if (operators_are_words()) out = append(out, fix_words::edits(source));
     Bool values = values_take_patterns();
     Bool conditions = conditions_take_patterns();
