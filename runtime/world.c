@@ -94,9 +94,10 @@ SmithWorldError smith_world_remove(const char *path) {
 
 static SmithWorldError smith_world_write_to(const char *path, const uint8_t *data, size_t size, int flags) {
     SmithFileHandler *handler = smith_handlers_files();
-    int mode = flags | O_WRONLY | O_CREAT;
-    int descriptor = handler != nullptr ? handler->open(handler, path, mode, smith_world_file_mode)
-                                        : open(path, mode | O_CLOEXEC, smith_world_file_mode);
+    int mode = (int)((unsigned)flags | (unsigned)(O_WRONLY | O_CREAT));
+    int descriptor = handler != nullptr
+                         ? handler->open(handler, path, mode, smith_world_file_mode)
+                         : open(path, (int)((unsigned)mode | (unsigned)O_CLOEXEC), smith_world_file_mode);
     if (descriptor < 0) return smith_world_error(errno, "open", path);
     size_t done = 0;
     while (done < size) { // bounded by the size

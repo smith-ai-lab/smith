@@ -81,6 +81,18 @@ static void smith_lang_enum_split(const SmithToken *span, size_t open, size_t cl
     }
 }
 
+// The attribute the plugin knows the enum's struct by, `__attribute__((annotate("std::enum")))`, after `used` tokens.
+static size_t smith_lang_enum_annotate(SmithToken *made, size_t used, const SmithToken *token) {
+    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
+    for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // bounded by the table
+        SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
+                              : at == 5          ? SmithTokenKind_String
+                                                 : SmithTokenKind_Punctuator;
+        made[used++] = smith_lang_tuple_made(kind, attribute[at], strlen(attribute[at]), token, at == 0);
+    }
+    return used;
+}
+
 // The tokens of a payload enum written as a struct, into `made`, for the name `name` (a token of the source). Returns
 // the count, or 0 with an error reported.
 static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, const SmithToken *token,
@@ -150,14 +162,7 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     }
     made[used] = span[close]; // the attribute that follows is placed before it in the source
     made[used++].synthetic = true;
-    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
-    for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it
-        SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
-                              : at == 5          ? SmithTokenKind_String
-                                                 : SmithTokenKind_Punctuator;
-        made[used++] = smith_lang_tuple_made(kind, attribute[at], strlen(attribute[at]), token, at == 0);
-    }
-    return used;
+    return smith_lang_enum_annotate(made, used, token);
 }
 
 // `enum Shape { Circle circle; empty; }`: the tag is the type's name, so its typedef (`m_Shape` for the struct
@@ -1315,6 +1320,13 @@ static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *ho
     return true;
 }
 
+// Drops the type function's `count` tokens, so that nothing else is said of it; what follows is a declaration.
+static bool smith_lang_eshape_drop(SmithLang *lang, size_t count) {
+    static SmithToken nothing[1];
+    smith_lang_eshape_start = true;
+    return smith_lang_tuple_replace(lang, count, nothing, 0);
+}
+
 static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     const SmithToken *name = smith_lang_eshape_at(lang, host, token, 1);
     if (name->kind != SmithTokenKind_Identifier || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, 2), "(")) {
@@ -1336,9 +1348,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         return false;
     }
     if (smith_lang_eshape_builtin_clash(lang, host, name)) {
-        smith_lang_eshape_start = true;
-        static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
-        return smith_lang_tuple_replace(lang, count, nothing, 0);
+        return smith_lang_eshape_drop(lang, count);
     }
     SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
     memset(shape, 0, sizeof *shape);
@@ -1355,9 +1365,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
                     shape->param_count < smith_lang_eshape_params_max;
         if (!good) {
             smith_lang_error(lang, host, word->location, "%s", smith_lang_eshape_gap);
-            smith_lang_eshape_start = true;
-            static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
-            return smith_lang_tuple_replace(lang, count, nothing, 0);
+            return smith_lang_eshape_drop(lang, count);
         }
         snprintf(shape->params[shape->param_count++], sizeof shape->params[0], "%.*s", (int)param->length, param->text);
     }
@@ -1383,9 +1391,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
     lang->tuples_seen = true;
     lang->slices_seen = true;
     lang->enums_seen = true;
-    static SmithToken none[1];
-    smith_lang_eshape_start = true; // what follows is a declaration
-    return smith_lang_tuple_replace(lang, count, none, 0);
+    return smith_lang_eshape_drop(lang, count); // what follows is a declaration
 }
 
 // The arguments of the call whose `(` is at `open`: each a run of tokens, `args` holding all of them, the index of the

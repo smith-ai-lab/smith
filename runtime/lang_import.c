@@ -1,8 +1,5 @@
 // The module line, imports and exports. Included by runtime/lang.c, after runtime/lang_decl.c.
 
-// runtime/lang_generic.c
-
-// Reads tokens up to the `;` that ends a line, for a line that is malformed.
 #include "lang_import.h"
 #include "core.h"
 #include "lang.h"
@@ -17,6 +14,7 @@
 #include "lang_trivia.h"
 #include "lang_type.h"
 
+// Reads tokens up to the `;` that ends a line, for a line that is malformed.
 static void smith_lang_skip_line(SmithLang *lang, const SmithHost *host) {
     for (size_t i = 0; i < smith_lang_batch_max; i++) { // bounded by the batch
         const SmithToken *next = smith_lang_peek(lang, host, 0, false);
@@ -167,7 +165,7 @@ static size_t smith_lang_header_imports(const char *text, size_t length, char na
 void smith_lang_module_to_path(const char *module, char *path, size_t capacity) {
     size_t used = 0;
     if (strncmp(module, "std::", 5) == 0) {
-        memcpy(path, "smith/", 6);
+        memcpy(path, "smith/", sizeof "smith/"); // with its terminator; the module path is appended after the slash
         used = 6;
         module += 5;
     }
@@ -321,9 +319,21 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
     return true;
 }
 
-// runtime/lang_type.c, which comes after this file: the import's functions over `type` are defined here (issue #107)
-
-// runtime/lang_body.c: the import's functions that this file runs at compile time are defined here (issue #107)
+// The module's header cannot be read: says why, and marks the binding as missing.
+static void smith_lang_import_missing(SmithLang *lang, const SmithHost *host, const SmithLangModuleName *name,
+                                      const char *bind, size_t bind_length, const char *header) {
+    SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
+    if (failed != nullptr) failed->missing = true;
+    const char *problem = host->read_problem != nullptr ? host->read_problem(host->context) : nullptr;
+    if (problem != nullptr) {
+        smith_lang_error(lang, host, name->location, "%s", problem);
+    } else {
+        smith_lang_error(
+            lang, host, name->location,
+            "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
+            name->colons, header);
+    }
+}
 
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
@@ -366,17 +376,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     const char *text = nullptr;
     uint32_t length = 0;
     if (host->read_header != nullptr && !host->read_header(host->context, header, &text, &length)) {
-        SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
-        if (failed != nullptr) failed->missing = true;
-        const char *problem = host->read_problem != nullptr ? host->read_problem(host->context) : nullptr;
-        if (problem != nullptr) {
-            smith_lang_error(lang, host, name.location, "%s", problem);
-        } else {
-            smith_lang_error(
-                lang, host, name.location,
-                "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
-                name.colons, header);
-        }
+        smith_lang_import_missing(lang, host, &name, bind, bind_length, header);
         return;
     }
     if (smith_lang_refuse_c_header(lang, host, &name, bind, bind_length, header, text, length)) return;

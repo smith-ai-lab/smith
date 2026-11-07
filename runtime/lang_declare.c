@@ -7,8 +7,6 @@
 // answers Slow, before it has changed anything, and the token goes through smith_lang_feed, which can look ahead.
 // Included by runtime/lang.c, after runtime/lang_sparse.c.
 
-// runtime/lang_generic.c
-
 // ---- The state a token changes in the stream (after a head), apart from writing it
 // ---------------------------------------
 

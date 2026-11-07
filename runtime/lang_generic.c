@@ -2687,8 +2687,6 @@ static bool smith_lang_infer_stage(const char *written, uint32_t location, uint3
     return *count > 0;
 }
 
-// runtime/lang_nested.c: a lambda passed to `Lambda(F)`
-
 // ---- Argument lists: `auto... rest`
 // ------------------------------------------------------------------------------------------------------
 

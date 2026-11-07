@@ -265,7 +265,7 @@ static bool smith_lc_add_generated_headers(SmithSha256 *sha) {
             at += length + 1;
         }
         if (fits) {
-            qsort(smith_lc_walk_headers, count, sizeof smith_lc_walk_headers[0], smith_lc_compare_names);
+            qsort((void *)smith_lc_walk_headers, count, sizeof smith_lc_walk_headers[0], smith_lc_compare_names);
             SmithSha256 all;
             smith_sha256_init(&all);
             for (size_t i = 0; i < count; i++) // bounded by the headers

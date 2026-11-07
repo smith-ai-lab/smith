@@ -782,8 +782,6 @@ static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) 
         smith_lang_emit_held(lang, host, i, true);
 }
 
-// runtime/lang_generic.c
-
 // An exported function with a body: an importer may run it (runtime/lang_body.c).
 static void smith_lang_body_listed_add(SmithLang *lang, bool is_main) {
     if (!lang->emit_synthetic || !lang->decl.exported || is_main) return;

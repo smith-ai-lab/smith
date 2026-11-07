@@ -5,10 +5,6 @@
 // stops or ends or the time is up. Every tool first takes in what the program did since the last call (its output, a
 // stop, an exit), so nothing is lost between calls.
 
-// --- arguments and sessions ----------------------------------------------------------------------------------------
-
-// The session the call means (its `session` argument, else the latest). False, with the reason in out, if there is
-// none.
 #include "mcp_tools.h"
 #include "core.h"
 #include "mcp_dap.h"
@@ -16,6 +12,11 @@
 #include "mcp_text.h"
 #include "mcp_unit.h"
 #include "world.h"
+
+// --- arguments and sessions ----------------------------------------------------------------------------------------
+
+// The session the call means (its `session` argument, else the latest). False, with the reason in out, if there is
+// none.
 #ifdef SMITH_MCP
 #include "dap.h"
 #endif

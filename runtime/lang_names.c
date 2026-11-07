@@ -8,7 +8,6 @@
 // else), those of the modules they import, and every `x::name` the file wrote (a name that is declared nowhere is
 // still written as it was).
 
-// Where the module's words start in a line: the words after `marker`, one at a time, as [start, end) in the text.
 #include "lang_names.h"
 #include "core.h"
 #include "lang.h"
@@ -18,6 +17,7 @@
 #include "lang_out.h"
 #include "lang_private.h"
 
+// Where the module's words start in a line: the words after `marker`, one at a time, as [start, end) in the text.
 bool smith_lang_header_word(const char *text, size_t length, const char *marker, size_t *cursor, size_t *start,
                             size_t *end) {
     size_t marker_length = strlen(marker);
@@ -160,7 +160,7 @@ static void smith_lang_written_from_header(SmithLang *lang, const char *text, si
             c_name + 1 > sizeof lowered) {
             continue;
         }
-        memcpy(lowered, prefix, prefix_length);
+        memcpy(lowered, prefix, prefix_length); // NOLINT(bugprone-not-null-terminated-result): joined with the member
         memcpy(lowered + prefix_length, text + start, member);
         int written_length = snprintf(written, sizeof written, "%s::%.*s", bound, (int)member, text + start);
         if (c_name == 0) {

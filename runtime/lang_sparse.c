@@ -5,7 +5,6 @@
 // the full path: its `module` line asks the host for every token. Included by runtime/lang.c, after
 // runtime/lang_head.c.
 
-// The names the host should offer from the start of any .smith file.
 #include "lang_sparse.h"
 #include "core.h"
 #include "lang.h"
@@ -17,6 +16,7 @@
 #include "lang_out.h"
 #include "lang_stream.h"
 
+// The names the host should offer from the start of any .smith file.
 void smith_lang_watch_basics(const SmithHost *host) {
     // `countof` is watched so that what the lowering leaves is C2y's, on a fixed array (the hook writes `_Countof`).
     static const char *const words[] = {"module", "import", "export", "countof", "defer"};

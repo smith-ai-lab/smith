@@ -1375,7 +1375,7 @@ static void smith_test_bare_names(SmithVerbArgs *split) {
         if (used >= smith_build_args_max) return;
         rewritten[used++] = split->own[i];
     }
-    memcpy(split->own, rewritten, used * sizeof rewritten[0]);
+    memcpy((void *)split->own, (const void *)rewritten, used * sizeof rewritten[0]);
     split->own_count = used;
 }
 

@@ -1035,7 +1035,7 @@ static void smith_docs_plugin(SmithDocs *docs) {
     from += 1;
     SmithDocsText *listed = SMITH_DOCS_PUSH(&docs->arena, SmithDocsText, smith_docs_plugin_skills_max);
     uint32_t count = 0;
-    for (;; count++) {
+    for (; count <= smith_docs_plugin_skills_max; count++) { // one past the limit reports it
         SmithDocsText entry = smith_docs_json_string(json, &from);
         if (entry.begin == nullptr) break;
         if (count == smith_docs_plugin_skills_max)

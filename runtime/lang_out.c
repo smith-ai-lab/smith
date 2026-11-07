@@ -118,8 +118,6 @@ bool smith_lang_capturing(const SmithLang *lang) {
     return lang->recording || lang->cap_frames > 0;
 }
 
-// runtime/lang_generic.c: the token is part of an exported generic's record
-
 // A token that would go to the parser is kept instead.
 static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
     if (token->via != 0) smith_lang_generic_note_capture(lang, token);
@@ -133,8 +131,6 @@ static void smith_lang_capture(SmithLang *lang, const SmithToken *token) {
         smith_lang_capture_fold(lang);
     }
 }
-
-// runtime/lang_lex.c: the next directive that `smith cc --smith-lower` keeps and that comes before `before`
 
 // Writes the directives before `before` (a place in the source) each on a line of its own, as written. Only the plain
 // lexer offers any; a compiler's run has preprocessed them.
@@ -170,8 +166,6 @@ static void smith_lang_dump_token(SmithLang *lang, const SmithToken *token) {
         lang->broken = true;
 }
 
-// runtime/lang_lex.c: the line and the column (from 1) of the source at a byte offset
-
 // Writes a token of the header body on the line the source has it on, a space after the token before where the source
 // had one, and a name where the source has it on its line (spaces before it, as far as the text before allows), so
 // that a diagnostic that points into the interface read in memory is at the declaration in the module, line and column.
@@ -198,8 +192,6 @@ static void smith_lang_put_aligned(SmithLang *lang, const SmithToken *token, con
     lang->aligned_column = base + gap + length;
 }
 
-// runtime/lang_trivia.c: an exported declaration uses a name written `x::name`
-
 // Whether the last word of `text` is struct, union or enum: the name that follows it is a tag.
 bool smith_lang_tag_before(const char *text, size_t used) {
     while (used > 0 && (text[used - 1] == ' ' || text[used - 1] == '\n' || text[used - 1] == '\t'))
@@ -213,8 +205,6 @@ bool smith_lang_tag_before(const char *text, size_t used) {
     return smith_lang_equals(text + used, length, "struct") || smith_lang_equals(text + used, length, "union") ||
            smith_lang_equals(text + used, length, "enum");
 }
-
-// runtime/lang_private.c
 
 static void smith_lang_header_token(SmithLang *lang, const SmithToken *token) {
     if (lang->private_active) { // a private declaration the header pass keeps, for the instance section

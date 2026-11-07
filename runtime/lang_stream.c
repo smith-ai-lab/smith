@@ -2,8 +2,6 @@
 // aggregate, plus the start of a declaration, the end of the file and the entry point. Included by runtime/lang.c,
 // after runtime/lang_head.c.
 
-// The name of an enumeration constant, or of a declarator after an aggregate's closing brace: names the module
-// introduces. Returns false when this identifier is neither.
 #include "lang_stream.h"
 #include "core.h"
 #include "lang.h"
@@ -29,6 +27,8 @@
 #include "lang_type.h"
 #include "lang_unused.h"
 
+// The name of an enumeration constant, or of a declarator after an aggregate's closing brace: names the module
+// introduces. Returns false when this identifier is neither.
 static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!lang->is_module || lang->in_function || lang->paren_depth != 0) return false;
     SmithLangNameKind kind = SmithLangName_Value;
@@ -53,8 +53,6 @@ static bool smith_lang_stream_declared(SmithLang *lang, const SmithHost *host, c
     }
     return true;
 }
-
-// runtime/lang_generic.c
 
 static void smith_lang_locals_write(SmithLang *lang, const SmithHost *host);
 

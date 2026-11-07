@@ -5,8 +5,6 @@
 
 // runtime/lang_names.c
 
-// runtime/lang_generic.c
-
 #include "lang_decl.h"
 #include "core.h"
 #include "lang.h"
@@ -385,10 +383,6 @@ void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
     if (smith_lang_ident(word, "import")) lang->own_words |= 2;
     if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
-
-// runtime/lang_target.c
-
-// runtime/lang_names.c: the export of an import (or a name written through one) with this C name, if the table has it
 
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------

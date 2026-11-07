@@ -125,8 +125,6 @@ uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
     return UINT32_MAX;
 }
 
-// runtime/lang_type.c, which comes after this file
-
 // ---- Types in a condition ------------------------------------------------------------------------------------------
 
 static bool smith_lang_cx_type_word(const SmithLangGenToken *token) {
