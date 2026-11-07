@@ -1678,6 +1678,12 @@ static I32 chain(const char results[:], const char *root, const char list[:]) {
     }
     console::print("frontend-coverage: ", passed, " of ", count,
                    " files pass (the files named and what they import)\n");
+    // The same fixed lines as a full run (#2731), over the rows the run measured.
+    group_failures();
+    sort_groups();
+    print_error_line();
+    print_cause_lines();
+    print_pair_lines();
     return 0;
 }
 
