@@ -55,3 +55,17 @@ export void test_front_fix_typeof_an_auto_the_body_tests_by_type_stays_auto() {
                  "pub fn size_of(piece: auto) -> usize:\n    if typeof(piece) == u8:\n        return 1\n    else:\n"
                  "        return countof(piece) + piece.data[0].to(usize)\n");
 }
+
+// `typeof(x) == char *` is a test of a pointer type: `*mut char`, and `*char` for `const char *` (decided on #1406). The
+// `*char` left to the parser would read as a dereference, `char.*`.
+export void test_front_fix_typeof_a_pointer_type_a_typeof_is_compared_with() {
+    expect_fixed("module m;\nexport Bool text(auto p) {\n    return typeof(p) == char * || typeof(p) != const char *;\n}\n",
+                 "pub fn text(p: auto) -> bool:\n    return typeof(p) == *mut char || typeof(p) != *char\n");
+}
+
+// A slice struct written out is a slice type, `[]mut char` and `[]char`.
+export void test_front_fix_typeof_a_slice_struct_a_typeof_is_compared_with() {
+    expect_fixed("module m;\nexport Bool text(auto p) {\n    return typeof(p) == struct smith_array_char_n ||\n"
+                 "           typeof(p) == struct smith_array_const_char_n;\n}\n",
+                 "pub fn text(p: auto) -> bool:\n    return typeof(p) == []mut char ||\n           typeof(p) == []char\n");
+}

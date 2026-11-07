@@ -13,6 +13,8 @@ module front::fix_typeof;
 
 import front::ast;
 import front::parse as core;
+import front::types;
+import std::format;
 import std::mem;
 
 static Bool at(Str s, Usize i, Str pattern) {
@@ -217,6 +219,95 @@ static core::ParseError written_type(Str source, Usize i) {
     return out;
 }
 
+// The new syntax's name of a C base type written in `typeof(x) == T *` (`U8` is `u8`); anything else is kept.
+static Bool same(Str a, Str b) {
+    return countof(a) == countof(b) && at(a, 0, b);
+}
+
+static Str base_name(Str word) {
+    if (same(word, "Char")) return "char";
+    if (same(word, "U8")) return "u8";
+    if (same(word, "I8")) return "i8";
+    if (same(word, "U16")) return "u16";
+    if (same(word, "I16")) return "i16";
+    if (same(word, "U32")) return "u32";
+    if (same(word, "I32")) return "i32";
+    if (same(word, "U64")) return "u64";
+    if (same(word, "I64")) return "i64";
+    if (same(word, "F32")) return "f32";
+    if (same(word, "F64")) return "f64";
+    if (same(word, "Usize")) return "usize";
+    if (same(word, "Isize")) return "isize";
+    if (same(word, "Bool")) return "bool";
+    if (same(word, "Void")) return "void";
+    return word;
+}
+
+static Usize skip_space(Str s, Usize i) {
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t')) i += 1;
+    return i;
+}
+
+static Usize word_end(Str s, Usize i) {
+    while (i < countof(s) && word_char(s[i])) i += 1;
+    return i;
+}
+
+// The slice struct `struct smith_array_char_n` / `struct smith_array_const_char_n` at `i`: `[]mut char` / `[]char`.
+static Str slice_type(Str s, Usize i, Usize *end) {
+    if (!at(s, i, "struct smith_array_")) return "";
+    Usize stop = word_end(s, i + 7);
+    Str tag = s[i + 19:stop];
+    if (countof(tag) < 3 || !at(tag, countof(tag) - 2, "_n")) return "";
+    tag = tag[:countof(tag) - 2];
+    Bool read_only = at(tag, 0, "const_");
+    if (read_only) tag = tag[6:];
+    if (countof(tag) == 0 || !word_char(tag[0])) return "";
+    *end = stop;
+    return types::message_of(format::push(read_only ? "[]" : "[]mut ", base_name(tag)));
+}
+
+// The pointer type `char *` / `const char *` at `i`: `*mut char` / `*char`. One star only.
+static Str pointer_type(Str s, Usize i, Usize *end) {
+    Bool read_only = false;
+    if (at(s, i, "const ")) {
+        read_only = true;
+        i = skip_space(s, i + 5);
+    }
+    Usize stop = word_end(s, i);
+    if (stop == i || same(s[i:stop], "struct")) return "";
+    Str base = s[i:stop];
+    Usize star = skip_space(s, stop);
+    if (at(s, star, "const")) {
+        read_only = true;
+        star = skip_space(s, star + 5);
+    }
+    if (!at(s, star, "*") || at(s, star + 1, "*") || at(s, star + 1, "=")) return "";
+    *end = star + 1;
+    return types::message_of(format::push(read_only ? "*" : "*mut ", base_name(base)));
+}
+
+// The fix of the `typeof(x) == T` or `!= T` that starts at `i` when `T` is a C pointer or slice struct written out.
+static core::ParseError compared_type(Str source, Usize i) {
+    core::ParseError none = {};
+    if (!at(source, i, "typeof(") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    if (in_literal(source, i)) return none;
+    Usize close = close_of(source, i + 6, countof(source));
+    if (close == countof(source)) return none;
+    Usize at_op = skip_space(source, close + 1);
+    if (!at(source, at_op, "==") && !at(source, at_op, "!=")) return none;
+    Usize from = skip_space(source, at_op + 2);
+    Usize end = from;
+    Str type = slice_type(source, from, &end);
+    if (countof(type) == 0) type = pointer_type(source, from, &end);
+    if (countof(type) == 0) return none;
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)from, .end = (U32)end};
+    out.message = "a C pointer or slice type tested with `typeof` is written `*mut T`, `*T`, `[]mut T` or `[]T`";
+    out.fix = push(out.fix, from, end, type);
+    return out;
+}
+
 // The fixes of the module: each generic function over a slice, and each `typeof` of a type written out.
 export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
@@ -230,6 +321,7 @@ export core::Errors edits(Str source, const ast::Module *module) {
     }
     for (Usize i = 0; i < countof(source); i++) {
         core::ParseError found = written_type(source, i);
+        if (countof(found.fix) == 0) found = compared_type(source, i);
         if (countof(found.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = found;
