@@ -41,12 +41,12 @@ static Str dump(const Header *h) {
 static Str run_line(const char *const argv[:]) {
     process::OutputResult done = process::run(argv);
     switch (done) {
-    case .ok: {
-        Usize n = countof(done.ok.output);
-        while (n > 0 && done.ok.output[n - 1] == '\n')
+    case .ok:
+        process::Output finished = done.ok;
+        Usize n = countof(finished.output);
+        while (n > 0 && finished.output[n - 1] == '\n')
             n -= 1;
-        return format::bytes((const char *)done.ok.output.data, n);
-    }
+        return format::bytes((const char *)finished.output.data, n);
     case .error:
         return "";
     }
@@ -68,7 +68,7 @@ static Str driver_flags() {
 // A folder of this test's own (named by the process and the test), with a cache folder in it that this process uses.
 static Str scratch(const char *name) {
     Str folder = str_of(format::push("/tmp/front_cimport_cache_", (I64)c::getpid(), "_", name));
-    const char *const clean[4] = {"rm", "-rf", folder.data};
+    const char *const clean[3] = {"rm", "-rf", folder.data};
     process::OutputResult cleaned = process::run(clean[0:3]);
     (void)cleaned;
     files::DoneResult made = files::make_folder(str_of(format::push(folder, "/cache")));
@@ -91,10 +91,13 @@ static void write_text(Str path, Str text) {
 
 static Str read_text(Str path) {
     files::BytesResult loaded = files::read_file(path);
-    if (loaded == .error) {
+    switch (loaded) {
+    case .error:
         return "";
+    case .ok:
+        files::Bytes bytes = loaded.ok;
+        return format::bytes((const char *)bytes.data, countof(bytes));
     }
-    return format::bytes((const char *)loaded.ok.data, countof(loaded.ok));
 }
 
 // Copies a fixture of tests/front/cimport_cache into `folder`.

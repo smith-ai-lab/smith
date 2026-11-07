@@ -305,15 +305,18 @@ export void test_front_fix_zero_an_importer_binds_the_reads_of_an_option_field()
     files::BytesResult back = files::read_file(user_path);
     (void)c::unlink(module_path.data);
     (void)c::unlink(user_path.data);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         test::check(false);
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        Str want = "import front_fix_zero_list\nfn second(n: *front_fix_zero_list.Node) -> i32:\n"
+                   "    next := n.next else:\n        return 0\n    return next.value\n";
+        test::check_equal(got, want);
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    Str want = "import front_fix_zero_list\nfn second(n: *front_fix_zero_list.Node) -> i32:\n"
-               "    next := n.next else:\n        return 0\n    return next.value\n";
-    test::check_equal(got, want);
 }
 
 // A field the old text calls `type` is `ty` once the file is renamed (#2458): the importer, read as it is on disk,
@@ -338,15 +341,18 @@ export void test_front_fix_zero_an_importer_finds_a_field_renamed_from_type() {
     files::BytesResult back = files::read_file(user_path);
     (void)c::unlink(module_path.data);
     (void)c::unlink(user_path.data);
-    if (back == .error) {
+    switch (back) {
+    case .error:
         test::check(false);
         return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        Str want = "import front_fix_zero_kind\nfn first(s: *front_fix_zero_kind.Sym) -> i32:\n"
+                   "    if s.ty == .none:\n        return 0\n    return 1\n";
+        test::check_equal(got, want);
     }
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    Str want = "import front_fix_zero_kind\nfn first(s: *front_fix_zero_kind.Sym) -> i32:\n"
-               "    if s.ty == .none:\n        return 0\n    return 1\n";
-    test::check_equal(got, want);
 }
 
 // A struct that a C call fills (#2610): `struct stat info = {}` then `stat(path, &info)` reads nothing before the call,

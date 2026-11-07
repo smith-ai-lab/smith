@@ -15,10 +15,15 @@ static Str fixed_beside(Str module_path, Str module_text, Str user_path, Str use
     const char *paths[1] = {user_path.data};
     (void)fix::fix_run(paths, 1);
     files::BytesResult back = files::read_file(user_path);
-    if (back == .error) return "cannot read back";
-    char chars[:] = mem::view(back.ok, char);
-    Str got = chars;
-    return got;
+    switch (back) {
+    case .error:
+        return "cannot read back";
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        return got;
+    }
 }
 
 export void test_front_types_import_typedef_list_alias_gets_mut_in_one_run() {

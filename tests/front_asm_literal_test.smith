@@ -27,10 +27,11 @@ export void test_asm_literal_is_one_token_across_lines() {
     lex::Lexed lexed = lex::tokenize_new(source);
     test::check_equal(lexed == .ok, true);
     if (lexed == .ok) {
-        test::check_equal(countof(lexed.ok), (Usize)2);
-        Bool is_tagged = lexed.ok[0].kind == lex::tagged;
+        lex::Tokens tokens = lexed.ok;
+        test::check_equal(countof(tokens), (Usize)2);
+        Bool is_tagged = tokens[0].kind == lex::tagged;
         test::check_equal(is_tagged, true);
-        test::check_equal(lexed.ok[0].span.end, (U32)(countof(source) - 1));
+        test::check_equal(tokens[0].span.end, (U32)(countof(source) - 1));
     }
 }
 
@@ -120,8 +121,8 @@ export void test_asm_each_branch_of_std_task_is_chosen_by_when() {
     const ast::Module *live = when::live_module(&parsed.module, when::host());
     Usize asms = 0;
     Usize asserts = 0;
-    for (Usize i = 0; i < countof(live->decls); i++) {
-        const ast::Decl *d = live->decls[i];
+    for (Usize j = 0; j < countof(live->decls); j++) {
+        const ast::Decl *d = live->decls[j];
         if (d->kind == .asm_decl) asms += 1;
         if (d->kind == .static_assert_decl) asserts += 1;
     }

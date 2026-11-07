@@ -15,9 +15,15 @@ import std::test;
 static Str text_of(Str path) {
     files::BytesResult loaded = files::read_file(path);
     test::check_equal(loaded == .ok, true);
-    if (loaded == .error) return "";
-    format::Text chars = mem::view(loaded.ok, char);
-    return chars;
+    switch (loaded) {
+    case .error:
+        return "";
+    case .ok:
+        files::Bytes bytes = loaded.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str text = chars;
+        return text;
+    }
 }
 
 static Usize copy_into(char path[:], Usize used, Str part) {
@@ -39,8 +45,13 @@ static Str join3(Str a, Str b, Str c) {
 // The source formatted; an error is shown as its message.
 static Str formatted(Str source) {
     format::Formatted done = format::format(source);
-    if (done == .error) return done.error.message;
-    return done.ok;
+    switch (done) {
+    case .error:
+        return done.error.message;
+    case .ok:
+        Str text = done.ok;
+        return text;
+    }
 }
 
 static void expect_format(Str source, Str expected) {
@@ -105,14 +116,19 @@ static Bool ends_with(Str text, Str suffix) {
 export void test_format_every_golden_pair() {
     files::EntriesResult listing = files::list("tests/front/format");
     test::check_equal(listing == .ok, true);
-    if (listing != .ok) return;
-    for (files::Entry entry : listing.ok) {
-        Str file = entry.name;
-        if (!ends_with(file, ".smith")) continue;
-        Str name = file[0:countof(file) - 6];
-        Str before_path = join3("tests/front/format/", name, ".smith");
-        Str after_path = join3("tests/front/format/", name, ".expected");
-        expect_format(text_of(before_path), text_of(after_path));
+    switch (listing) {
+    case .error:
+        return;
+    case .ok:
+        files::Entry entries[:] = listing.ok;
+        for (files::Entry entry : entries) {
+            Str file = entry.name;
+            if (!ends_with(file, ".smith")) continue;
+            Str name = file[0:countof(file) - 6];
+            Str before_path = join3("tests/front/format/", name, ".smith");
+            Str after_path = join3("tests/front/format/", name, ".expected");
+            expect_format(text_of(before_path), text_of(after_path));
+        }
     }
 }
 
@@ -124,14 +140,19 @@ export void test_format_twice_changes_nothing_over_the_e2e_programs() {
     defer mem::set_allocator(outside);
     files::EntriesResult listing = files::list("tests/front/e2e");
     test::check_equal(listing == .ok, true);
-    if (listing != .ok) return;
-    for (files::Entry entry : listing.ok) {
-        if (!ends_with(entry.name, ".smith")) continue;
-        Str path = join3("tests/front/e2e/", entry.name, "");
-        format::Formatted first = format::format(text_of(path));
-        if (first == .ok) {
-            Str once = first.ok;
-            test::check_equal(formatted(once), once);
+    switch (listing) {
+    case .error:
+        return;
+    case .ok:
+        files::Entry entries[:] = listing.ok;
+        for (files::Entry entry : entries) {
+            if (!ends_with(entry.name, ".smith")) continue;
+            Str path = join3("tests/front/e2e/", entry.name, "");
+            format::Formatted first = format::format(text_of(path));
+            if (first == .ok) {
+                Str once = first.ok;
+                test::check_equal(formatted(once), once);
+            }
         }
     }
 }
