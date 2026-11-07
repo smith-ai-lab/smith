@@ -886,7 +886,7 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             edits = with_edit(edits, edit(word.start, joined, joined > word.end ? "pub " : "pub"));
             warn(p, word.start, word.end, "`export` is written `pub`", edits);
         }
-        if (kind == lex::kw_constexpr) { // a local `constexpr` goes too
+        if (top && kind == lex::kw_constexpr) {
             ast::Span word = parse::peek(p).span;
             pre.constexpr_start = word.start;
             pre.constexpr_end = word.end;
@@ -1803,6 +1803,16 @@ static Bool hoist_record(parse::Parser *p, Head head, ast::TypeExpr *type) {
     return true;
 }
 
+// Where the `constexpr` written before a local's type starts (the type starts at `at`); `at` when there is none.
+static U32 constexpr_before(const parse::Parser *p, U32 at) {
+    Usize from = at;
+    while (from > 0 && p->source[from - 1] == ' ')
+        from -= 1;
+    Str word = "constexpr";
+    if (from < countof(word) || !mem::equal(p->source[from - countof(word):from], word)) return at;
+    return (U32)(from - countof(word));
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
@@ -1877,6 +1887,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     for (Usize i = 0; i < countof(list_edits); i += 1)
         edits = with_edit(edits, list_edits[i]);
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    if (const_type && !pre->top)
+        edits = with_edit(edits, edit(constexpr_before(p, head.type_start), head.type_start, ""));
     edits = with_unused(pre, drop_local_static(pre, type, has_init, edits));
     char message[:] = format::push("a variable is written `", text, " ...`: the name comes first and the `;` goes");
     warn(p, head.type_start, last.span.end, message, edits);
