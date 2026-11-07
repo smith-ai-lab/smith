@@ -25,6 +25,12 @@ inputs:
       set SMITH instead of fetching the previous smith and building (empty: build here)
     default: ""
 
+  profile:
+    description: >
+      the build profile of `smith build` (#2684): `dev` (-O0, the default) or `release` (-O2). The front-end coverage
+      shards measure a release smith, so the count is not slowed by the dev profile
+    default: dev
+
 outputs:
   llvm-key:
     description: the cache key of the LLVM pack
@@ -99,7 +105,7 @@ runs:
         SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
-        smith build
+        smith build -DPROFILE=${{ inputs.profile }}
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
