@@ -275,11 +275,44 @@ static void else_statement(Str source, lex::Tokens tokens, Brace brace, Cuts *cu
     add_cut(cuts, spaces_before(source, close.span.start), close.span.end, "");
 }
 
+// Whether a token that ends a line makes the next line continue it: a binary operator.
+static Bool operator_ends_line(lex::TokenKind kind) {
+    switch (kind) {
+    case lex::ampersand_ampersand:
+    case lex::pipe_pipe:
+    case lex::equal_equal:
+    case lex::bang_equal:
+    case lex::less:
+    case lex::greater:
+    case lex::less_equal:
+    case lex::greater_equal:
+    case lex::plus:
+    case lex::minus:
+    case lex::star:
+    case lex::slash:
+    case lex::percent:
+    case lex::ampersand:
+    case lex::pipe:
+    case lex::caret:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Whether the `{` closes a statement header (`while`, `for`, `if`, `else`) whose empty body needs a statement.
 static Bool does_nothing_body(lex::Tokens tokens, Usize open) {
     Usize i = open;
-    while (i > 0 && !tokens[i - 1].line_break)
-        i -= 1;
+    for (Usize lines = 0; lines < 64; lines++) {
+        while (i > 0 && !tokens[i - 1].line_break)
+            i -= 1;
+        // A condition that goes on over several lines (`while f() !=\n 0 {`) starts on the line before (#2643).
+        if (i > 0 && operator_ends_line(tokens[i - 1].kind)) {
+            i -= 1;
+            continue;
+        }
+        break;
+    }
     if (i < open && tokens[i].kind == lex::right_brace) i += 1;
     lex::TokenKind kind = tokens[i].kind;
     return kind == lex::kw_while || kind == lex::kw_for || kind == lex::kw_if || kind == lex::kw_else;

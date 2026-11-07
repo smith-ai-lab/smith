@@ -51,6 +51,7 @@ import <llvm-c/Target.h>;
 import <llvm-c/TargetMachine.h>;
 import <stdio.h>;
 import <stdlib.h>;
+import <string.h>;
 import <unistd.h>;
 
 static Str as_str(char chars[:]) {
@@ -185,6 +186,7 @@ static Str layout_of(Str triple) {
     c::LLVMInitializeAllTargets();
     c::LLVMInitializeAllTargetMCs();
     c::LLVMInitializeAllAsmPrinters();
+    c::LLVMInitializeAllAsmParsers();
     char *name = state::cstr(triple);
     defer mem::free(name);
     c::LLVMTargetRef target = nullptr;

@@ -363,7 +363,8 @@ export void check_when(types::Checked *r, const ast::Module *m) {
         const ast::Attribute *a = when::find(d->attributes);
         if (a != nullptr) {
             Bool is_import = d->kind == .import_c || d->kind == .import_module || d->kind == .import_from;
-            if (countof(when::name_of(d)) == 0 && !is_import) {
+            Bool is_unnamed = d->kind == .asm_decl || d->kind == .static_assert_decl; // chosen by `@when` too (#2636)
+            if (countof(when::name_of(d)) == 0 && !is_import && !is_unnamed) {
                 types::fail(r, a->span, when_place);
             } else {
                 check_when_one(r, a);
