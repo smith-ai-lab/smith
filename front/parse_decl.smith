@@ -3659,6 +3659,7 @@ static Str conjunction(Str outer, Str inner) {
 
 // The condition of the branch a block opened inside `parent` lives in, or "" when `parent`'s is not about the system.
 static Str enclosing_condition(const parse::Parser *p, const Frame *parent) {
+    if (parent->condition == nullptr) return ""; // its head did not parse
     Str own = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
     if (countof(own) == 0) return "";
     return conjunction(parent->outer, branch_condition(parent, parent->in_else, own));
@@ -3667,6 +3668,7 @@ static Str enclosing_condition(const parse::Parser *p, const Frame *parent) {
 // Sets the condition a block opened inside `parent` carries from the branches around it (#2643). False when no fix
 // can be written for it: an `else if` that could not be mended, or a parent whose condition is not about the system.
 static Bool nested_fixable(const parse::Parser *p, const Frame *parent, Bool chain, Bool mended, Frame *opened) {
+    if (opened->condition == nullptr) return false; // the head of the opened block did not parse
     if (chain) {
         opened->outer = parent->outer;
         return mended;
