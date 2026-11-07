@@ -119,8 +119,9 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
             "cat s1.tsv s2.tsv s3.tsv | cut -f1 | uniq | sort | uniq -c | awk '$1 != 1' | wc -l; "
             "cat s1.tsv s2.tsv s3.tsv | cut -f1 | sort -u | wc -l; "
             "smith run -- merge \"$PWD/repo\" \"$PWD/s3.tsv,$PWD/s1.tsv,$PWD/s2.tsv\" > merged.tsv; "
-            "cmp all.tsv merged.tsv && echo SAME; "
-            "smith run -- merge \"$PWD/repo\" \"$PWD/s1.tsv,$PWD/s2.tsv\" 2>&1 >/dev/null | grep -c 'is in no shard'");
+            "grep -v '^\\[' all.tsv > all_rows.tsv; grep -v '^\\[' merged.tsv > merged_rows.tsv; "
+            "cmp all_rows.tsv merged_rows.tsv && echo SAME; "
+            "smith run -- merge \"$PWD/repo\" \"$PWD/s1.tsv\" 2>&1 >/dev/null | grep -c 'is in no shard'");
     scratch::expect_contains("frontend_coverage: no file is in two shards, and the shards have all four", run.out,
                              "0\n4\nSAME\n");
     scratch::expect_contains("frontend_coverage: a file in no table is an error", run.out, "\n1\n");

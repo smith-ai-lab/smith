@@ -14,8 +14,8 @@
 //                                              rows of a full run
 //   frontend_coverage run SMITH ROOT SCRATCH shard:K/N
 //                                              shard K of N (#2697): the tracked .smith files whose path hashes to
-//                                              K - 1 modulo N, compiled as in a full run (every file is fixed first, as in
-//                                              one); only the rows of the shard's own files are written
+//                                              K - 1 modulo N, compiled as in a full run (every file is fixed first, as
+//                                              in one); only the rows of the shard's own files are written
 //   frontend_coverage merge ROOT TABLES          joins the tables of the shards into one, in the order of the tracked
 //                                              files; a file in no table or in two is an error
 //   frontend_coverage chain RESULTS ROOT FILES  reads the table of a filtered run and prints, for each file in it, its
@@ -1298,7 +1298,7 @@ static Usize mark_files(const char list[:]) {
 static Usize shard_of(const char path[:], Usize shards) {
     U64 h = 14695981039346656037ULL;
     for (Usize i = 0; i < countof(path); i++) {
-        h = (h ^ (U64)(unsigned char)path[i]) * 1099511628211ULL;
+        h = (h ^ (U64)(U8)path[i]) * 1099511628211ULL;
     }
     return (Usize)(h % shards);
 }
@@ -1413,6 +1413,36 @@ static void empty_folder(const char folder[:]) {
     }
 }
 
+// Marks what a run with a list measures: the files named and what they import, or a shard (#2697). `owned` is what it
+// reports. Returns false when the list names nothing.
+static Bool mark_selection(const char list[:]) {
+    Usize shard = 0;
+    Usize shards = 0;
+    Bool by_shard = parse_shard(list, &shard, &shards);
+    // a shard that owns no file is a shard like any other (a small tree has fewer files than shards)
+    if (by_shard) {
+        (void)mark_shard(shard, shards);
+    } else if (mark_files(list) == 0) {
+        return false;
+    }
+    for (Usize i = 0; i < tree_count; i++) {
+        if (is_smith(tree[i]) && !by_shard && wanted[i]) owned[i] = true;
+    }
+    return true;
+}
+
+// A module fixed only because a file of the shard imports it has its rows in the shard that owns it: drops the rows of
+// files that are not owned.
+static void keep_owned_rows() {
+    Usize kept = 0;
+    for (Usize i = 0; i < entry_count; i++) {
+        if (!owned[entries[i].file]) continue;
+        if (kept != i) entries[kept] = entries[i];
+        kept += 1;
+    }
+    entry_count = kept;
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1436,15 +1466,9 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     }
     // With a list, only these files and what they import (transitively) are measured.
     Bool all = countof(list) == 0;
-    Usize shard = 0;
-    Usize shards = 0;
-    if (!all && parse_shard(list, &shard, &shards)) {
-        if (mark_shard(shard, shards) == 0) return 2;
-    } else if (!all && mark_files(list) == 0) {
-        return 2;
-    }
+    if (!all && !mark_selection(list)) return 2;
     for (Usize i = 0; i < tree_count; i++) {
-        if (is_smith(tree[i]) && (all || (shards == 0 && wanted[i]))) owned[i] = true;
+        if (all && is_smith(tree[i])) owned[i] = true;
     }
     (void)c::setenv("SMITH_FRONT_STAGE", "1", 1);
     char imports[path_size * 2];
@@ -1478,14 +1502,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     jobs_drain();
     console::print_error("frontend_coverage: compile phase ", (clock::monotonic() - phase_start) / clock::millisecond,
                          " ms\n");
-    // a module fixed only because a file of the shard imports it has its rows in the shard that owns it
-    Usize kept = 0;
-    for (Usize i = 0; i < entry_count; i++) {
-        if (!owned[entries[i].file]) continue;
-        if (kept != i) entries[kept] = entries[i];
-        kept += 1;
-    }
-    entry_count = kept;
+    keep_owned_rows();
     sort_entries();
     for (Usize i = 0; i < entry_count; i++) {
         console::print((const char *)entries[i].path, "\t", (const char *)entries[i].stage, "\t",
@@ -1564,9 +1581,9 @@ static I32 chain(const char results[:], const char *root, const char list[:]) {
     return 0;
 }
 
-// `merge ROOT TABLES` (comma separated) (#2697): joins the tables of the shards. The rows come out in the order of the tracked files
-// (a file's rows stay together and in order), as one run writes them. A tracked .smith file that no table has, or that
-// two have, is an error (exit 1): the merged count is never a smaller one.
+// `merge ROOT TABLES` (comma separated) (#2697): joins the tables of the shards. The rows come out in the order of the
+// tracked files (a file's rows stay together and in order), as one run writes them. A tracked .smith file that no table
+// has, or that two have, is an error (exit 1): the merged count is never a smaller one.
 constexpr Usize list_count_max = 1U << 20;
 static I32 merge(const char *root, const char list[:]) {
     include_root = root;
@@ -1591,7 +1608,8 @@ static I32 merge(const char *root, const char list[:]) {
                 return 1;
             }
             if (owner[file] != list_count_max && owner[file] != t) {
-                console::print_error("frontend_coverage: error: ", (const char *)entries[i].path, " is in two shards\n");
+                console::print_error("frontend_coverage: error: ", (const char *)entries[i].path,
+                                     " is in two shards\n");
                 return 1;
             }
             owner[file] = t;
