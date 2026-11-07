@@ -1214,8 +1214,7 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
         builtin::Cells values[:] = mem::alloc_slice(builtin::Cells, shape.count + 1);
         for (Usize i = 0; i < shape.count; i++)
             values[i].item = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        c::LLVMValueRef whole =
-            c::LLVMConstArray2(shape.element->llvm, (c::LLVMValueRef *)values.data, shape.count);
+        c::LLVMValueRef whole = c::LLVMConstArray2(shape.element->llvm, (c::LLVMValueRef *)values.data, shape.count);
         mem::free(values.data);
         state::push_value(e, (state::Value){.llvm = whole, .ty = hint.ty});
         return state::success();

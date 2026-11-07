@@ -712,7 +712,8 @@ export state::Status if_let_into(state::Emitter *e, const ast::Stmt *s, c::LLVMV
         return state::fail("not an if let", s->span);
     }
     if (s->kind.if_let.else_branch == nullptr) return state::fail("an `if` used as a value needs an `else`", s->span);
-    state::ThenGeneral item = {.run = let_branch, .branch = branch, .stmt = s, .ty = ty, .value = slot, .span = s->span};
+    state::ThenGeneral item = {
+        .run = let_branch, .branch = branch, .stmt = s, .ty = ty, .value = slot, .span = s->span};
     state::push_then_general(e, item);
     state::push_eval(e, s->kind.if_let.value, state::no_hint());
     return state::success();

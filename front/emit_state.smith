@@ -474,7 +474,8 @@ export void push_then_general(Emitter *e, ThenGeneral item) {
     push_work(e, work);
 }
 
-// A branch of an `if let`: a statement, or (when `w` carries a `branch`) work that stores the branch's value in `w->value`.
+// A branch of an `if let`: a statement, or (when `w` carries a `branch`) work that stores the branch's value in
+// `w->value`.
 export void push_branch(Emitter *e, const ThenGeneral *w, const ast::Stmt *s) {
     if (w->branch == nullptr) {
         push_statement(e, s);
