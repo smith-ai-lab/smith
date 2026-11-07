@@ -1467,7 +1467,7 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     known = known || (element->kind == .record && find_record_by_name(e, types::name_of(element), &inner));
     known = known || (element->kind == .enumeration && matching::type_enum(e, types::name_of(element), &inner));
     if (!known) return false;
-    *ty = base->kind == .block ? emit_memory::block_type(e, inner, base->count)
+    *ty = base->kind == .block ? emit_memory::block_type(e, inner, types::count_of(base))
                                : emit_memory::slice_type(e, inner, "slice");
     return true;
 }
@@ -1521,7 +1521,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     if (!known) {
         if (base->kind == .vector && depth == 0) {
             state::Ty lane = {};
-            if (scalar_of_checked(e, types::element_of(base), &lane)) return vectors::make(e, lane, base->count);
+            if (scalar_of_checked(e, types::element_of(base), &lane)) return vectors::make(e, lane, types::count_of(base));
         }
         if (base->kind == .option) {
             ensure_enum(e, types::element_of(base));
@@ -1550,8 +1550,8 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         if (node->kind == .pointer) {
             ty = pointer_to(e, inner);
         } else {
-            state::Ty made = {.kind = {.array = {.element = inner, .count = node->count}},
-                              .llvm = c::LLVMArrayType2(inner->llvm, node->count),
+            state::Ty made = {.kind = {.array = {.element = inner, .count = types::count_of(node)}},
+                              .llvm = c::LLVMArrayType2(inner->llvm, types::count_of(node)),
                               .name = "array"};
             ty = made;
         }

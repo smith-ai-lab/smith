@@ -653,7 +653,7 @@ export void test_front_types_expr_a_lambda_takes_its_parameter_types_from_the_ex
     expect(bodies, 1);
     test::check_condition(body_type == expected);
     test::check_condition(types::type_of(&r, good) == expected);
-    types::TypeRef first = body_type->element->slots[0].type;
+    types::TypeRef first = types::slots_of(types::element_of(body_type)).items[0].type;
     test::check_condition(first == int32);
     expect(r.error_count, 4);
     types_expr::check(&r, ast::expr(one_name), expected);

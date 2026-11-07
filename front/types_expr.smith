@@ -484,7 +484,7 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member,
     if (owner != nullptr && owner->kind == .pointer) {
         owner = types::element_of(owner);
     }
-    if (owner == nullptr || owner->kind != .record || countof(owner->owner) != 0) {
+    if (owner == nullptr || owner->kind != .record || countof(types::owner_of(owner)) != 0) {
         return edits;
     }
     for (Usize i = 0; i < countof(types::slots_of(owner).items); i++) {
@@ -2170,7 +2170,7 @@ static void vector_binary(types::Checked *c, const ast::Expr *e, types::TypeRef 
         types::failf(c, e->span, "`%` needs integers, found `", types::show(v), "`; write a vector of integers");
         poison(c, e);
     } else if (is_ordering(op) || is_equality(op)) {
-        finish(c, e, types::vector_of(&c->table, c->table.bool_type, v->count), nullptr);
+        finish(c, e, types::vector_of(&c->table, c->table.bool_type, types::count_of(v)), nullptr);
     } else {
         finish(c, e, v, nullptr);
     }
@@ -2284,7 +2284,7 @@ static void assign_target_done(types::Checked *c, Work *w, Frame f) {
     types::TypeRef tt = typ(c, target);
     spoil_written(c, target);
     if (target->kind == .index && typ(c, target->kind.index.base)->kind == .vector &&
-        typ(c, target->kind.index.base)->element->kind == .bool_type) {
+        types::element_of(typ(c, target->kind.index.base))->kind == .bool_type) {
         types::failf(c, target->span, "a lane of `", types::show(typ(c, target->kind.index.base)),
                      "` cannot be assigned; it is the result of a comparison, so read it or build a new vector");
         tt = invalid(c);
@@ -3347,8 +3347,8 @@ static void vector_after(types::Checked *c, Frame f) {
     types::TypeRef made = typ(c, e->kind.call.callee);
     ast::ExprRef args[:] = e->kind.call.args;
     Bool ok = true;
-    if (countof(args) != made->count) {
-        types::failf(c, e->span, "`", types::show(made), "` is built from exactly ", made->count, " values, found ",
+    if (countof(args) != types::count_of(made)) {
+        types::failf(c, e->span, "`", types::show(made), "` is built from exactly ", types::count_of(made), " values, found ",
                      countof(args), "; write one value for each lane");
         ok = false;
     }
@@ -3374,17 +3374,17 @@ static void vector_after(types::Checked *c, Frame f) {
 static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const ast::Expr *index,
                                     types::TypeRef base) {
     if (base->kind == .array) {
-        if (plain_integer(index) && integer_value(index) >= base->count) {
+        if (plain_integer(index) && integer_value(index) >= types::count_of(base)) {
             types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
-                         "`, which has ", base->count, " elements; write an index below ", base->count);
+                         "`, which has ", types::count_of(base), " elements; write an index below ", types::count_of(base));
             return invalid(c);
         }
         return types::element_of(base);
     }
     if (base->kind == .vector) {
-        if (plain_integer(index) && integer_value(index) >= base->count) {
+        if (plain_integer(index) && integer_value(index) >= types::count_of(base)) {
             types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
-                         "`, which has ", base->count, " lanes; write an index below ", base->count);
+                         "`, which has ", types::count_of(base), " lanes; write an index below ", types::count_of(base));
             return invalid(c);
         }
         return types::element_of(base);
@@ -3393,8 +3393,8 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
         return types::element_of(base);
     }
     if (base->kind == .block) { // a row: a block of one dimension fewer, a slice for the last two
-        if (base->count == 2) return types::slice_of(&c->table, types::element_of(base), false);
-        return types::block_of(&c->table, types::element_of(base), base->count - 1);
+        if (types::count_of(base) == 2) return types::slice_of(&c->table, types::element_of(base), false);
+        return types::block_of(&c->table, types::element_of(base), types::count_of(base) - 1);
     }
     if (base->kind == .text) {
         return types::builtin(&c->table, "U8");
@@ -3949,8 +3949,8 @@ static types::TypeRef array_item(types::Checked *c, types::TypeRef t, const ast:
         }
         cursor->next = integer_value(index);
     }
-    if (cursor->next >= t->count) {
-        types::failf(c, span, "too many values for `", types::show(t), "`, which has ", t->count,
+    if (cursor->next >= types::count_of(t)) {
+        types::failf(c, span, "too many values for `", types::show(t), "`, which has ", types::count_of(t),
                      " elements; remove the extra value");
         return nullptr;
     }
@@ -4167,9 +4167,9 @@ static void array_literal_after(types::Checked *c, Frame f) {
         }
     }
     if (ok && expected != nullptr && (expected->kind == .array || expected->kind == .vector) &&
-        expected->count != countof(items)) {
-        types::failf(c, e->span, "`", types::show(expected), "` holds ", expected->count, " elements but this has ",
-                     countof(items), "; write exactly ", expected->count, " elements");
+        types::count_of(expected) != countof(items)) {
+        types::failf(c, e->span, "`", types::show(expected), "` holds ", types::count_of(expected), " elements but this has ",
+                     countof(items), "; write exactly ", types::count_of(expected), " elements");
         ok = false;
     }
     if (!ok) {
@@ -5163,7 +5163,7 @@ static Bool leaf(types::Checked *c, Frame f) {
         Bool as_array = f.expected != nullptr && f.expected->kind == .array &&
                         types::element_of(f.expected)->kind == .integer &&
                         types::bits_of(types::element_of(f.expected)) == 8 &&
-                        f.expected->count >= countof(e->kind.string.bytes) + 1;
+                        types::count_of(f.expected) >= countof(e->kind.string.bytes) + 1;
         finish(c, e, as_pointer ? wanted : (as_array ? f.expected : c->table.text), f.expected);
     } else if (e->kind == .boolean) {
         finish(c, e, c->table.bool_type, f.expected);

@@ -346,7 +346,7 @@ static Verdict to_slice(const Ctx *c) {
 static Verdict to_block(const Ctx *c) {
     if (c->from->kind != .array) return no_rule(c);
     types::TypeRef inner = c->from;
-    for (U64 i = 0; i < c->target_type->count; i++) {
+    for (U64 i = 0; i < types::count_of(c->target_type); i++) {
         if (inner->kind != .array) return needs_cast(c, "the array has fewer dimensions than the block");
         inner = types::element_of(inner);
     }

@@ -53,7 +53,7 @@ static types::TypeRef first_parameter(const types::Symbol *s) {
     if (s->type == nullptr || s->type->kind != .function || countof(types::slots_of(s->type).items) == 0)
         return nullptr;
     types::TypeRef t = types::slots_of(s->type).items[0].type;
-    if (t->kind == .pointer) return t->element;
+    if (t->kind == .pointer) return types::element_of(t);
     return t;
 }
 
@@ -97,7 +97,7 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
     types::TypeRef given = types::type_of(c, args[0]);
     if (given == nullptr) return none;
     types::TypeRef self_type = given;
-    if (given->kind == .pointer) self_type = given->element;
+    if (given->kind == .pointer) self_type = types::element_of(given);
     Str prefix = prefix_of(module);
     if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(types::name_of(self_type)), prefix))
         return none;

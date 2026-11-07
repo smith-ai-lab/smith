@@ -197,7 +197,7 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
     const ast::Decl *d = state.declaring;
     if (d == nullptr || d->kind != .variable || d->kind.variable.init != e) return edits;
     if (types::element_of(from)->kind != .pointer || types::element_of(to)->kind != .pointer) return edits;
-    if (types::element_of(from->element) != types::element_of(to->element)) return edits;
+    if (types::element_of(types::element_of(from)) != types::element_of(types::element_of(to))) return edits;
     if (types::points_to_const(types::element_of(from)) || !types::points_to_const(types::element_of(to))) return edits;
     const ast::TypeExpr *outer = d->kind.variable.type;
     if (outer->kind != .pointer) return edits;
