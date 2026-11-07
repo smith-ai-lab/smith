@@ -145,7 +145,11 @@ void build(SmithBuild *b) {
                                         "tests/corpus.smith", nullptr),
                              nullptr),
         .flags = flags,
-        .link_flags = smith_list(b, "-fsanitize=address,undefined", nullptr),
+        .link_flags = smith_cat(b, smith_list(b, "-fsanitize=address,undefined", nullptr),
+#ifdef __APPLE__
+                                smith_list(b, "-lcompression", nullptr), // runtime/platform_macos.c's decompress
+#endif
+                                nullptr),
     };
     smith_tests(b, &tests);
     smith_default(b, smith_list(b, "build/tests", nullptr));
