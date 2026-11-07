@@ -682,17 +682,40 @@ static U64 most(U64 a, U64 b) {
     return b;
 }
 
+export struct Members {
+    Slot items[:];
+};
+
+// The fields of a record, the enumerators of an enumeration, the parameters of a function or the slots of a tuple; none
+// for every other kind.
+export Members slots_of(TypeRef t) {
+    Members found = {};
+    if (t->shape == .record) found.items = t->shape.record.slots;
+    if (t->shape == .enumeration) found.items = t->shape.enumeration.slots;
+    if (t->shape == .function) found.items = t->shape.function.slots;
+    if (t->shape == .tuple) found.items = t->shape.tuple.slots;
+    return found;
+}
+
+// The prefix of the module that declares a record (`lib::math::`), empty for the module being checked.
+export Str owner_of(TypeRef t) {
+    if (t->shape == .record) return t->shape.record.owner;
+    return "";
+}
+
 // How many parts a type is measured from: the fields of a record, the element of an array, the underlying type of an
 // enumeration; none for a leaf.
 static Usize part_count(TypeRef t) {
-    if (t->kind == .record || t->kind == .tuple) return countof(t->slots);
+    if (t->kind == .record || t->kind == .tuple) return countof(slots_of(t).items);
     if (t->kind == .array || t->kind == .enumeration) return 1;
     return 0;
 }
 
 static TypeRef part(TypeRef t, Usize i) {
-    if (t->kind == .record || t->kind == .tuple) return t->slots[i].type;
-    return t->element;
+    if (t->kind == .record || t->kind == .tuple) return slots_of(t).items[i].type;
+    if (t->shape == .array) return t->shape.array.element;
+    if (t->shape == .enumeration) return t->shape.enumeration.element;
+    return t;
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
@@ -1327,7 +1350,7 @@ export void fail(Checked *r, ast::Span span, Str message) {
 // `given` (bit k for field k; a record of more than 64 fields is not recorded for the fixer).
 export void fail_left_out(Checked *r, ast::Span span, Str message, const ast::Expr *call, const Ty *record, U64 given) {
     fail(r, span, message);
-    if (countof(record->slots) <= 64) {
+    if (countof(slots_of(record).items) <= 64) {
         r->errors[r->error_count - 1].left_out_call = call;
         r->errors[r->error_count - 1].left_out_record = record;
         r->errors[r->error_count - 1].left_out_given = given;
@@ -1635,8 +1658,8 @@ export Str written_concept(const ast::TypeExpr *t) {
 // `pointer` any pointer (#1821).
 export Bool concept_holds(Str concept, TypeRef t) {
     if (same_text(concept, "int")) return t->kind == .integer;
-    if (same_text(concept, "signed")) return t->kind == .integer && t->is_signed;
-    if (same_text(concept, "unsigned")) return t->kind == .integer && !t->is_signed;
+    if (same_text(concept, "signed")) return t->shape == .integer && t->shape.integer.is_signed;
+    if (same_text(concept, "unsigned")) return t->shape == .integer && !t->shape.integer.is_signed;
     if (same_text(concept, "float")) return t->kind == .floating;
     if (same_text(concept, "num")) return t->kind == .integer || t->kind == .floating;
     if (same_text(concept, "pointer")) return t->kind == .pointer;
@@ -2248,14 +2271,16 @@ static Ty *own(Table *t, TypeRef x) {
 // The field `name` of an anonymous struct or union member of the record (`union { I64 signed_value; };`), whose
 // fields belong to the record itself; `at` is the slot of the anonymous member that holds it. Null when there is none.
 export const Slot *inner_member(TypeRef t, Str name, Usize *at) {
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        Str own_name = t->slots[i].name;
-        TypeRef inner = t->slots[i].type;
+    Slot members[:] = slots_of(t).items;
+    for (Usize i = 0; i < countof(members); i++) {
+        Str own_name = members[i].name;
+        TypeRef inner = members[i].type;
         if (countof(own_name) != 0 || inner == nullptr || inner->kind != .record) continue;
-        for (Usize k = 0; k < countof(inner->slots); k++) {
-            if (same_text(inner->slots[k].name, name)) {
+        Slot inside[:] = slots_of(inner).items;
+        for (Usize k = 0; k < countof(inside); k++) {
+            if (same_text(inside[k].name, name)) {
                 *at = i;
-                return &inner->slots[k];
+                return &inside[k];
             }
         }
     }
@@ -2264,8 +2289,9 @@ export const Slot *inner_member(TypeRef t, Str name, Usize *at) {
 
 // The field of a record, or the enumerator of an enumeration, called `name`; null when there is none.
 export const Slot *member(TypeRef t, Str name) {
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        if (same_text(t->slots[i].name, name)) return &t->slots[i];
+    Slot members[:] = slots_of(t).items;
+    for (Usize i = 0; i < countof(members); i++) {
+        if (same_text(members[i].name, name)) return &members[i];
     }
     if (t->kind == .record) {
         Usize at = 0;
@@ -2277,7 +2303,7 @@ export const Slot *member(TypeRef t, Str name) {
 // Whether the module being checked may name the field: it is `pub`, or the record is the module's own.
 // A message for the one that may not is `private_field`.
 export Bool field_visible(const Ty *record, const Slot *field) {
-    return field->is_pub || countof(record->owner) == 0;
+    return field->is_pub || countof(owner_of(record)) == 0;
 }
 
 static Bool starts_with(Str text, Str prefix) {
@@ -2290,7 +2316,8 @@ static Bool starts_with(Str text, Str prefix) {
 
 // The module that declares the record, as written: `lib.math`.
 static Str owner_dotted(const Ty *record) {
-    Str module = record->owner[0:countof(record->owner) - 2];
+    Str owner = owner_of(record);
+    Str module = owner[0:countof(owner) - 2];
     Str dotted = module;
     for (Usize i = 0; i + 1 < countof(module); i++) {
         if (module[i] == ':' && module[i + 1] == ':') {
@@ -2386,8 +2413,10 @@ static Str record_c_name(const ast::Decl *d) {
 // Whether `a` and `b` are the same C struct: a record of the module tagged `@c_name("X")` and the header's `struct X`.
 export Bool same_c_record(TypeRef a, TypeRef b) {
     if (a == b) return true;
-    if (a->kind != .record || b->kind != .record || countof(a->c_name) == 0) return false;
-    return same_text(a->c_name, b->c_name);
+    if (a->shape != .record || b->shape != .record) return false;
+    Str a_name = a->shape.record.c_name;
+    if (countof(a_name) == 0) return false;
+    return same_text(a_name, b->shape.record.c_name);
 }
 
 static void declare_nominal(Checked *r, const ast::Decl *d) {
@@ -2895,9 +2924,10 @@ static const Symbol *reflected_symbol(Str subject, Bool is_type) {
 // The fields the module being checked may name, in order.
 static Usize visible_fields(const Ty *record, Usize at, const Slot **found) {
     Usize seen = 0;
-    for (Usize i = 0; i < countof(record->slots); i++) {
-        if (!field_visible(record, &record->slots[i])) continue;
-        if (seen == at) *found = &record->slots[i];
+    Slot fields[:] = slots_of(record).items;
+    for (Usize i = 0; i < countof(fields); i++) {
+        if (!field_visible(record, &fields[i])) continue;
+        if (seen == at) *found = &fields[i];
         seen += 1;
     }
     return seen;
@@ -3180,29 +3210,32 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
         }
         const ast::TypeExpr *inner = nullptr;
         TypeRef inner_given = nullptr;
-        if (w->kind == .pointer && g->kind == .pointer) {
+        if (w->kind == .pointer && g->shape == .pointer) {
             inner = w->kind.pointer.pointee;
-            inner_given = g->element;
-        } else if (w->kind == .slice && g->kind == .slice) {
+            inner_given = g->shape.pointer.element;
+        } else if (w->kind == .slice && g->shape == .slice) {
             inner = w->kind.slice.element;
-            inner_given = g->element;
-        } else if (w->kind == .option && g->kind == .option) {
+            inner_given = g->shape.slice.element;
+        } else if (w->kind == .option && g->shape == .option) {
             inner = w->kind.option.inner;
-            inner_given = g->element;
-        } else if (w->kind == .array && g->kind == .array) {
+            inner_given = g->shape.option.element;
+        } else if (w->kind == .array && g->shape == .array) {
             inner = w->kind.array.element;
-            inner_given = g->element;
+            inner_given = g->shape.array.element;
             const ast::Expr *count = w->kind.array.count;
             if (count != nullptr && count->kind == .name) {
                 Str name = path_text(count->kind.name.path);
                 for (Usize i = 0; i < countof(generics); i++) {
                     if (is_generic_type(&generics[i]) || !same_text(generics[i].name, name)) continue;
-                    if (!bind_generic(bound, set, i, false, nullptr, g->count, strict, out)) return false;
+                    if (!bind_generic(bound, set, i, false, nullptr, g->shape.array.count, strict, out)) return false;
                 }
             }
-        } else if (w->kind == .tuple && g->kind == .tuple && countof(w->kind.tuple.elements) == countof(g->slots)) {
-            for (Usize i = 0; i < countof(g->slots) && top < countof(stack); i++) {
-                stack[top] = (UnifyPair){.written = w->kind.tuple.elements[i], .given = g->slots[i].type};
+        } else if (w->kind == .tuple && g->shape == .tuple &&
+                   countof(w->kind.tuple.elements) == countof(g->shape.tuple.slots)) {
+            ast::TypeRef written_elements[:] = w->kind.tuple.elements;
+            Slot given_slots[:] = g->shape.tuple.slots;
+            for (Usize i = 0; i < countof(given_slots) && top < countof(stack); i++) {
+                stack[top] = (UnifyPair){.written = written_elements[i], .given = given_slots[i].type};
                 top += 1;
             }
         }
