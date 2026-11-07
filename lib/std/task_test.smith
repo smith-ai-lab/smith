@@ -722,6 +722,86 @@ export void test_task_a_read_on_a_socketpair_parks_the_task_and_the_worker_runs_
     }
 }
 
+// The same with recv and send, which C code that opened its own socket calls: they reach the scheduler's net handler.
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    void run_blocked_receiver(Link *pair) {
+        log_mark(pair->log, 'a');
+        pair->got = c::recv(pair->reader, pair->buffer, 8, 0); // NOLINT(smith-effects)
+        log_mark(pair->log, 'r');
+    }
+
+    void run_sender(Link *pair) {
+        log_mark(pair->log, 'b');
+        c::send(pair->writer, "hi", 2, 0); // NOLINT(smith-effects)
+        log_mark(pair->log, 'w');
+    }
+
+    void run_receive_link(Link *pair) {
+        task::use(nullptr);
+        task::limit_workers(1);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_blocked_receiver, pair);
+            task::spawn(&group, run_sender, pair);
+        }
+        task::limit_workers(0);
+    }
+}
+
+export void test_task_a_recv_on_a_socket_parks_the_task_and_the_worker_runs_the_task_that_sends() {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
+        I32 fds[2] = {};
+        test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
+        Log log = {};
+        Link pair = {.reader = fds[0], .writer = fds[1], .log = &log};
+        run_receive_link(&pair);
+        check_marks(&log, "abwr");
+        test::check_equal((I32)pair.got, 2);
+        test::check_equal((I32)pair.buffer[0], (I32)'h');
+        c::close(fds[0]); // NOLINT(smith-effects)
+        c::close(fds[1]); // NOLINT(smith-effects)
+    }
+}
+
+// A net handler that is set wins: the scheduler installs its own only where the table has none, so a task spawned
+// under a fake sees the fake's recv, and the socket is never read.
+if constexpr (target::os == target::macos || target::os == target::linux) {
+    Isize fake_recv([[maybe_unused]] c::SmithNetHandler *self, [[maybe_unused]] I32 fd, void *buffer,
+                    [[maybe_unused]] Usize size, [[maybe_unused]] I32 flags) {
+        ((char *)buffer)[0] = 'F';
+        return 1;
+    }
+
+    void run_fake_receiver(Link *pair) {
+        pair->got = c::recv(pair->reader, pair->buffer, 8, 0); // NOLINT(smith-effects)
+    }
+}
+
+export void test_task_a_net_handler_that_is_set_answers_recv_in_a_task_instead_of_the_scheduler() {
+    if constexpr (target::os == target::macos || target::os == target::linux) {
+        I32 fds[2] = {};
+        test::check_equal(c::socketpair(unix_family, stream_socket, 0, fds), 0); // NOLINT(smith-effects)
+        Link pair = {.reader = fds[0], .writer = fds[1]};
+        c::SmithNetHandler fake = {};
+        fake.recv = fake_recv;
+        task::use(nullptr);
+        task::limit_workers(1);
+        c::SmithNetHandler *outside = c::smith_handlers_set_net(&fake);
+        {
+            task::Group group = {};
+            defer task::wait(&group);
+            task::spawn(&group, run_fake_receiver, &pair);
+        }
+        c::smith_handlers_set_net(outside);
+        task::limit_workers(0);
+        test::check_equal((I32)pair.got, 1);
+        test::check_equal((I32)pair.buffer[0], (I32)'F');
+        c::close(fds[0]); // NOLINT(smith-effects)
+        c::close(fds[1]); // NOLINT(smith-effects)
+    }
+}
+
 export void test_task_a_read_on_a_pipe_parks_the_task_and_the_worker_runs_another() {
     if constexpr (target::os == target::macos || target::os == target::linux) {
         I32 fds[2] = {};

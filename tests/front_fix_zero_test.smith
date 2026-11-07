@@ -379,3 +379,30 @@ export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
                  "struct Owner:\n    id: i32\n    step: Step = undefined\n"
                  "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
 }
+
+// A local that holds a pointer field the file tests against null is an option, and the `?` goes at its new type, not
+// before the whole declaration (#2648: `?e: *T = x`).
+export void test_front_fix_zero_a_local_of_an_option_field_gets_the_question_mark_at_its_type() {
+    expect_fixed("module m;\nstruct Node {\n    int value;\n    struct Node *next;\n};\n"
+                 "Node make(int v) {\n    return (Node){.value = v};\n}\n"
+                 "int first(const Node *n) {\n    if (n->next != nullptr) return n->next->value;\n    return 0;\n}\n"
+                 "int second(const Node *n) {\n    const Node *e = n->next;\n    if (e == nullptr) return 0;\n"
+                 "    return e->value;\n}\n",
+                 "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
+                 "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
+                 "fn first(n: *Node) -> i32:\n    if next := n.next:\n        return next.value\n    return 0\n"
+                 "fn second(n: *Node) -> i32:\n    e: ?*Node = n.next\n    if e == .none:\n        return 0\n"
+                 "    return e.value\n");
+}
+
+// A pointer of a C-layout struct (`@c_name`) that a construction leaves out is `?*T = .none`, with no read to test it:
+// C reads null as unset, and `?*T` is the same pointer (lead on #2631). A field that is set, and a list `?**char`, too.
+export void test_front_fix_zero_a_c_layout_struct_leaves_its_pointers_unset() {
+    expect_fixed("module m;\n[[std::c_name(\"SmithApp\")]] export typedef struct {\n    const char *entry;\n"
+                 "    const char *const *flags;\n    I32 n;\n} App;\n"
+                 "App plain(void) {\n    return (App){.n = 1};\n}\n"
+                 "App set(void) {\n    return (App){.entry = \"main\", .flags = nullptr, .n = 2};\n}\n",
+                 "@c_name(\"SmithApp\") pub struct App:\n    pub entry: ?*char = .none\n"
+                 "    pub flags: ?**char = .none\n    pub n: i32\nfn plain() -> App:\n    return App(n = 1)\n"
+                 "fn set() -> App:\n    return App(entry = \"main\", flags = .none, n = 2)\n");
+}

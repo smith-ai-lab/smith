@@ -1739,6 +1739,10 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     if (l->kind == .tuple && r->kind == .tuple) {
         return tuple_compare(c, span, op, l, r);
     }
+    // Two `?*T` of one type compare as the pointers they are (null for `.none`, #2205): `a.element != b.element`.
+    if (is_equality(op) && l == r && l->kind == .option && l->element != nullptr && l->element->kind == .pointer) {
+        return c->table.bool_type;
+    }
     if (!is_scalar(l)) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l),
                      "`; write numbers, Bools, enumerators or pointers");
