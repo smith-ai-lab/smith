@@ -8,8 +8,8 @@
 // process (a compile, a link, a verb, a test's own) that began while SMITH_START_LOG named a file: smith appends a
 // byte to it as main begins, so a count needs no parent to know the child. A test that clears the environment is not
 // counted, and neither is a start of a smith that is older than this one.
-#include "core.h"
 #include "account.h"
+#include "core.h"
 
 constexpr size_t smith_account_tasks_max = 1024;
 constexpr size_t smith_account_summary = 8;

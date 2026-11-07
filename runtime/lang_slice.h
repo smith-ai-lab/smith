@@ -33,7 +33,7 @@ typedef struct {
 SmithTokenKind smith_lang_slice_kind(const char *word);
 
 size_t smith_lang_slice_pattern(SmithToken *out, size_t used, size_t capacity, const char *pattern,
-                                       const SmithLangSliceSpan *spans, const SmithToken *like);
+                                const SmithLangSliceSpan *spans, const SmithToken *like);
 
 // `f32[:][2]` is two dimensions, the first of them run-time. The struct of a run-time array keeps its sizes in
 // `count[k]`, k the number of `:`; the fixed ones are in its name (`smith_array_f32_n_2`), and everything else (the
@@ -56,15 +56,14 @@ bool smith_lang_slice_dims_parse(const char *tag, SmithLangSliceDims *dims, size
 
 void smith_lang_slice_tag(const char *spelled, char *tag, size_t capacity);
 
-bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count,
-                                    const SmithLangSliceDims *dims, char *tag, size_t capacity, const char **problem,
-                                    uint32_t *where);
+bool smith_lang_slice_tag_of(SmithLang *lang, const SmithToken *elem, size_t count, const SmithLangSliceDims *dims,
+                             char *tag, size_t capacity, const char **problem, uint32_t *where);
 
 bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
 
-size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used,
-                                      size_t capacity, const char *tag, const SmithToken *elem, size_t count,
-                                      const SmithLangSliceDims *dims, const SmithToken *like);
+size_t smith_lang_slice_define(SmithLang *lang, const SmithHost *host, SmithToken *out, size_t used, size_t capacity,
+                               const char *tag, const SmithToken *elem, size_t count, const SmithLangSliceDims *dims,
+                               const SmithToken *like);
 
 bool smith_lang_slice_statement_word(const SmithToken *token);
 
@@ -120,13 +119,11 @@ typedef struct {
 SmithLangSliceShape smith_lang_slice_shape(const SmithToken *inner, size_t count);
 
 bool smith_lang_slice_cut_type(SmithLang *lang, const SmithHost *host, const SmithToken *expr, size_t count,
-                                      SmithLangSliceType *out);
+                               SmithLangSliceType *out);
 
-size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, size_t from, SmithToken *out,
-                                     size_t capacity);
+size_t smith_lang_slice_right(SmithLang *lang, const SmithHost *host, size_t from, SmithToken *out, size_t capacity);
 
-bool smith_lang_slice_declared_text(SmithLang *lang, const SmithHost *host, char *text, size_t capacity,
-                                           bool *pointer);
+bool smith_lang_slice_declared_text(SmithLang *lang, const SmithHost *host, char *text, size_t capacity, bool *pointer);
 
 bool smith_lang_slice_spelled(const SmithHost *host, const char *spelling, SmithExprType *found);
 
@@ -140,8 +137,8 @@ bool smith_lang_slice_chain(SmithLang *lang, const SmithHost *host, const SmithT
 
 void smith_lang_slice_return(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
-bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                     const char *tokens, const SmithToken *span, size_t close);
+bool smith_lang_slice_countof(SmithLang *lang, const SmithHost *host, const SmithToken *token, const char *tokens,
+                              const SmithToken *span, size_t close);
 
 typedef struct {
     const char *text; // words, or nullptr: the generic's tokens [first, last)
@@ -149,16 +146,12 @@ typedef struct {
     uint32_t last;
 } SmithLangSlicePart;
 
-void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, const SmithLangSlicePart *parts,
-                                   size_t count);
+void smith_lang_slice_parts(SmithLangReplay *replay, uint32_t place, const SmithLangSlicePart *parts, size_t count);
 
-void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                             uint32_t place, const char *from_tag, const char *to_tag, uint32_t first,
-                                             uint32_t last);
+void smith_lang_slice_replay_argument(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, uint32_t place,
+                                      const char *from_tag, const char *to_tag, uint32_t first, uint32_t last);
 
 void smith_lang_slice_replay_array(SmithLang *lang, SmithLangReplay *replay, uint32_t place, const char *to_tag,
-                                          bool literal, uint32_t first, uint32_t last);
+                                   bool literal, uint32_t first, uint32_t last);
 
-bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                    SmithLangFrame *frame);
-
+bool smith_lang_slice_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame);

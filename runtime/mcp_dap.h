@@ -32,8 +32,7 @@ typedef struct {
     char message[256];
 } SmithMcpReply;
 
-SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq,
-                                         int64_t timeout_ns);
+SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq, int64_t timeout_ns);
 
 SmithMcpReply smith_mcp_reply_dead(void);
 
@@ -67,10 +66,10 @@ typedef enum {
 SmithMcpTake smith_mcp_events_take(SmithMcpSession *session, SmithMcpText *notes, SmithMcpEvent *stop);
 
 SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession *session, int64_t timeout_ns,
-                                        SmithMcpText *notes, SmithMcpEvent *stop);
+                                 SmithMcpText *notes, SmithMcpEvent *stop);
 
 bool smith_mcp_wait_initialized(SmithMcpServer *server, SmithMcpSession *session, int64_t launch_seq,
-                                       int64_t timeout_ns);
+                                int64_t timeout_ns);
 
 SmithMcpSession *smith_mcp_session_find(SmithMcpServer *server, const char *id);
 
@@ -79,4 +78,3 @@ SmithMcpSession *smith_mcp_session_latest(SmithMcpServer *server);
 SmithMcpSession *smith_mcp_session_start(SmithMcpServer *server, SmithMcpText *out);
 
 void smith_mcp_session_close(SmithMcpServer *server, SmithMcpSession *session, bool polite);
-

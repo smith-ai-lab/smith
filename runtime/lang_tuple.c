@@ -11,6 +11,7 @@
 // f32 }` and `struct { f64, f32 }` are different types even when Meters is f64. The generated header hoists each
 // definition out of the signatures (smith_lang_tuple_hoist).
 
+#include "lang_tuple.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
@@ -19,7 +20,6 @@
 #include "lang_out.h"
 #include "lang_slice.h"
 #include "lang_sparse.h"
-#include "lang_tuple.h"
 
 constexpr size_t smith_lang_tuple_depth_max = 8;      // tuples inside tuples
 constexpr size_t smith_lang_tuple_fields_max = 128;   // fields of one tuple
@@ -138,7 +138,7 @@ static bool smith_lang_tuple_finish(SmithLangTupleReader *reader, uint32_t where
 // The name an identifier at span[i] is written with (`x::Name` takes three tokens), as the module resolves it. Returns
 // the tokens it took.
 size_t smith_lang_tuple_resolve(SmithLang *lang, const SmithToken *span, size_t i, size_t to, char *out,
-                                       size_t capacity) {
+                                size_t capacity) {
     const SmithToken *id = &span[i];
     if (i + 2 < to && smith_lang_punct(&span[i + 1], "::") && span[i + 2].kind == SmithTokenKind_Identifier &&
         lang->bindings_count > 0) {
@@ -296,8 +296,8 @@ static bool smith_lang_tuple_word(SmithLang *lang, SmithLangTupleReader *reader,
 }
 
 // The fields of the tuple span[from, to) as the spelling that names it, or false with the reason.
-bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out,
-                                   size_t capacity, const char **problem, uint32_t *where) {
+bool smith_lang_tuple_spell(SmithLang *lang, const SmithToken *span, size_t from, size_t to, char *out, size_t capacity,
+                            const char **problem, uint32_t *where) {
     static SmithLangTupleReader reader;
     reader = (SmithLangTupleReader){};
     for (size_t at = from; at < to; at++) { // each token of the fields
@@ -369,7 +369,7 @@ bool smith_lang_tuple_replace(SmithLang *lang, size_t count, const SmithToken *t
 }
 
 SmithToken smith_lang_tuple_made(SmithTokenKind kind, const char *text, size_t length, const SmithToken *like,
-                                        bool space) {
+                                 bool space) {
     SmithToken made = smith_lang_synth(kind, smith_lang_tuple_keep(text, length), length, like);
     made.line_start = false;
     made.space_before = space;
@@ -494,7 +494,6 @@ void smith_lang_tuple_in_generic(SmithLang *lang, const SmithHost *host, const S
                      "a tuple type cannot be written in a generic function yet: name it outside the generic with a "
                      "typedef (`typedef struct { I32, F32 } Pair;`)");
 }
-
 
 // ---- An expression that is a tuple: `t[0]` and `countof(t)`
 

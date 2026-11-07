@@ -26,4 +26,3 @@ bool smith_make_parse_cc(const SmithMakeArgv *argv, SmithMakeCc *cc);
 bool smith_make_is_compile(const SmithMakeCc *cc);
 
 bool smith_make_is_link(const SmithMakeCc *cc);
-

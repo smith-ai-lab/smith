@@ -8,8 +8,8 @@
 // everything compiled into smith). // A path the graph does not know (nothing imports it, no test is it, and it is not
 // part of smith) selects the whole suite: unknown means run it. A few files select the whole suite too (the full-check
 // list below).
-#include "core.h"
 #include "changed.h"
+#include "core.h"
 #include "coverage.h"
 #include "record.h"
 
@@ -57,7 +57,6 @@ static const char *const smith_changed_counted[] = {"shim/hook.cpp", nullptr};
 static const char *const smith_changed_smith[] = {"smith.c",      "runtime/", "shim/",      "patches/",
                                                   "include/",     "lib/",     "templates/", "scripts/",
                                                   "tree-sitter/", "plugin/",  "editors/",   nullptr};
-
 
 static void smith_changed_buffer_free(SmithChangedBuffer *buffer) {
     if (buffer->data != nullptr) munmap(buffer->data, buffer->capacity);
@@ -766,7 +765,6 @@ static const SmithRecResult *smith_changed_record_of(const char *name) {
     return nullptr;
 }
 
-
 // The rule by records, for a test file (any, not only a test that runs smith: a user's end-to-end test is as unseen by
 // the graph): its tests with a stale record, with a program built from a changed file no record names, and the ones
 // with none (a new test). True when the records decided, even for no test; false when none of its tests has a record.
@@ -1087,7 +1085,6 @@ bool smith_changed_write_costs(char *path, size_t size) {
     }
     return fclose(out) == 0;
 }
-
 
 static bool smith_changed_name_ok(const char *base) {
     for (const char *c = base; *c != '\0'; c++) {

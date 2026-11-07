@@ -19,15 +19,11 @@
 // defined before the functions; `x->[rest]...` and `x.[rest]...` are those members as the arguments of a call or an
 // initializer. Both lower to plain C.
 
-
-
-
-
+#include "lang_nested.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_generic.h"
 #include "lang_main.h"
-#include "lang_nested.h"
 #include "lang_out.h"
 
 SmithLangNestedState smith_lang_nested;
@@ -286,8 +282,7 @@ static void smith_lang_nested_define_pack(SmithLang *lang, const SmithHost *host
 
 // What the body's replay does with a lambda, the probe of an inferred type and `typeof(rest)`. True when it took
 // tokens.
-bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                     SmithLangFrame *frame) {
+bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame) {
     if (replay->instance == nullptr ||
         (smith_lang_nested.count == 0 && smith_lang_nested.pack_tag[0] == 0 && smith_lang_nested.probe_count == 0)) {
         return false;
@@ -478,7 +473,7 @@ static bool smith_lang_nested_write_one(const SmithLangNestedWriter *w, const Sm
 // The lambdas in the body of the replay's generic, written at file scope for the instance: the struct of the
 // arguments, then each function. False after an error.
 bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                    const SmithLangInstance *instance, uint32_t location, uint32_t id) {
+                             const SmithLangInstance *instance, uint32_t location, uint32_t id) {
     smith_lang_nested.pack_tag[0] = 0;
     smith_lang_nested.probe_count = 0;
     smith_lang_nested.failed = false;
@@ -660,7 +655,7 @@ static bool smith_lang_argl_from_f(const SmithLangPool *pool, uint32_t from, uin
 
 // The lambda at `span` of a call: checked against F at the call. False after the error.
 bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
-                                  SmithLangSpan span, uint32_t place) {
+                           SmithLangSpan span, uint32_t place) {
     uint32_t fa = 0;
     uint32_t fb = 0;
     char shown[256];
@@ -815,7 +810,7 @@ static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const Smit
 
 // The functions of the instance's lambdas, and the check of every `Lambda(F)` argument, before the instance.
 void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  const SmithLangInstance *instance, uint32_t location, uint32_t id) {
+                           const SmithLangInstance *instance, uint32_t location, uint32_t id) {
     const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];
     SmithLangNestedWriter writer = {lang, host, replay, instance, location, id};
     for (size_t slot = 0; slot < generic->type_count; slot++) { // the slots

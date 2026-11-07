@@ -14,10 +14,9 @@
 //   cov <file> <ranges>                       the lines some test ran
 //   test <name> <hex>                         the bits of the functions the test executed
 
-
-#include "core.h"
-#include "changed.h"
 #include "coverage.h"
+#include "changed.h"
+#include "core.h"
 #include "record.h"
 
 constexpr size_t smith_cov_tests_max = 6144;
@@ -25,7 +24,6 @@ constexpr size_t smith_cov_pool_max = 1U << 23;
 constexpr size_t smith_cov_text_max = 1U << 25;
 constexpr size_t smith_cov_bits_bytes = smith_cov_functions_max / 8;
 constexpr size_t smith_cov_line_bytes = smith_cov_lines_max / 8;
-
 
 static char smith_cov_pool[smith_cov_pool_max];
 size_t smith_cov_pool_used;

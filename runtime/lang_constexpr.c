@@ -12,14 +12,9 @@
 // and `is_slice`. A type is written as the tokens of C's type names: T, the sized types, `struct S`, a typedef,
 // qualifiers and `*`.
 
-
-
-
-
-
+#include "lang_constexpr.h"
 #include "core.h"
 #include "lang.h"
-#include "lang_constexpr.h"
 #include "lang_decl.h"
 #include "lang_declare.h"
 #include "lang_enum.h"
@@ -131,7 +126,6 @@ uint32_t smith_lang_cx_statement_end(uint32_t at, uint32_t limit) {
 }
 
 // runtime/lang_type.c, which comes after this file
-
 
 // ---- Types in a condition ------------------------------------------------------------------------------------------
 
@@ -674,7 +668,6 @@ static bool smith_lang_cx_type_argument(uint32_t first, uint32_t last, uint32_t 
 // The tokens [first, last) as the compiler is asked about them (separated by \x1f): the type arguments of the instance
 // for its T and the number of a `for constexpr` variable for its name.
 
-
 // `m::f` of a call kept as a group (CallBegin ... CallEnd), as the compiler reads it: the name `m_f`, which an import's
 // function over `type` is defined by (issue #107).
 static void smith_lang_cx_callee(const SmithLang *lang, const SmithLangGenToken *token, char *out, size_t capacity) {
@@ -778,8 +771,7 @@ bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t 
 
 // At an `if constexpr` of the replay: evaluates the condition for the instance, and the branch it chooses replaces the
 // whole statement. The other branch is skipped, never written.
-void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                 SmithLangFrame *frame) {
+void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame) {
     uint32_t at = frame->pos;
     uint32_t location = smith_lang_gen_place(host, replay->generic, smith_lang_cx_token(at), replay->location);
     frame->pos = frame->end; // after an error nothing more of this body is written
@@ -822,7 +814,7 @@ void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangRepla
 
 // In a generic's body, `if` followed by `constexpr`: one token of its own in the record. False when it is not that.
 bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                            SmithLangWord word) {
+                                     SmithLangWord word) {
     if (!lang->recording) return false;
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(next, "constexpr")) return false;
@@ -845,7 +837,7 @@ void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, co
 
 // `for` followed by `constexpr` in a generic's body: one token of its own in the record. False when it is not that.
 bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                             SmithLangWord word) {
+                                      SmithLangWord word) {
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     if (!smith_lang_ident(next, "constexpr")) return false;
     smith_lang_take(lang, host);
@@ -906,8 +898,8 @@ static bool smith_lang_result_text(SmithLangCx *cx, uint32_t first, uint32_t las
 // Asks the compiler for the type that the call in the generic's tokens `first` to `last` computes (`slice_of(T, 1)`)
 // for the instance: its spelling and handle. Null when it is a type, else why it is not.
 const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                            SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
-                                            size_t capacity, uint64_t *handle) {
+                                     SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
+                                     size_t capacity, uint64_t *handle) {
     static SmithLangReplay replay;
     static SmithLangCx cx;
     static SmithValue nodes[4];
@@ -968,7 +960,7 @@ static bool smith_lang_result_ask(SmithLang *lang, const SmithHost *host, const 
 // `T xs[:]` writes it, so the call's and the instance's types are one). The tokens are written to the parser as they
 // are, so a sized name is the compiler's own.
 void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uint64_t handle, uint32_t location,
-                                            uint32_t instance_id) {
+                                     uint32_t instance_id) {
     static SmithToken tokens[256];
     SmithToken like = {};
     like.location = location;
@@ -1003,7 +995,7 @@ void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uin
 
 // The instance's result type, written where the head has its call: the tokens of the spelling.
 void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                      const SmithLangInstance *instance, uint32_t location, uint32_t instance_id) {
+                               const SmithLangInstance *instance, uint32_t location, uint32_t instance_id) {
     SmithLangInstance *kept = &smith_lang_instances[instance - smith_lang_instances];
     if (kept->result_state == 0) kept->result_state = smith_lang_result_ask(lang, host, generic, kept) ? 1 : 2;
     const char *spelling = kept->result_state == 1 ? kept->result : "int"; // after an error, the build fails anyway

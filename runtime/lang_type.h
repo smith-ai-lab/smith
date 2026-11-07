@@ -15,7 +15,7 @@ const char *smith_lang_ty_spelling_of(SmithLang *lang, uint64_t handle);
 bool smith_lang_ty_stem_spelling(const char *stem, size_t length, char *out, size_t capacity);
 
 bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle);
+                          uint64_t *handle);
 
 const char *smith_lang_ty_second_level(void);
 
@@ -28,7 +28,7 @@ bool smith_lang_ty_literal(uint64_t handle, char *out, size_t capacity);
 extern SmithLang *smith_lang_ty_lang;
 
 size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity, bool bare);
+                                 size_t capacity, bool bare);
 
 void smith_lang_ty_attribute_taken(void);
 
@@ -39,4 +39,3 @@ void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t lo
 void smith_lang_field_after_imports(SmithLang *lang, const SmithHost *host);
 
 bool smith_lang_slice_tag_definition(const char *tag, char *data, size_t capacity, unsigned long *count);
-

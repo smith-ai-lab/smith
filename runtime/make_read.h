@@ -121,4 +121,3 @@ bool smith_make_exists(const char *path);
 bool smith_make_has_suffix(const char *text, const char *suffix);
 
 void smith_make_read(const char *path);
-

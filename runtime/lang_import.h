@@ -16,4 +16,3 @@ void smith_lang_imports_last(SmithLang *lang, const SmithHost *host, uint32_t lo
 void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword);
 
 bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword);
-

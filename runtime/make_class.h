@@ -42,4 +42,3 @@ void smith_make_classify(void);
 constexpr size_t smith_make_inputs_max = 65536;
 
 const char **smith_make_inputs(const char *const *names, size_t count, size_t *out_count);
-

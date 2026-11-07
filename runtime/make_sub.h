@@ -33,11 +33,10 @@ const char *smith_make_under(const char *dir, const char *name);
 typedef enum { SmithMakeCall_None, SmithMakeCall_Self, SmithMakeCall_Folder, SmithMakeCall_Other } SmithMakeCall;
 
 SmithMakeCall smith_make_parse_make(const SmithMakeCommand *command, const char **folder, const char ***goals,
-                                           size_t *count);
+                                    size_t *count);
 
 const char *smith_make_find_makefile(void);
 
 SmithMakeSub *smith_make_sub_find(const char *path, const char *const *goals, size_t goal_count);
 
 void smith_make_import_all(void);
-

@@ -29,8 +29,8 @@
 
 extern char **environ;
 
-#include "base.h"
 #include "../scripts/pack.h"
+#include "base.h"
 
 #include <dirent.h>
 #include <ftw.h>
@@ -81,7 +81,6 @@ constexpr bool smith_has_lldb = false;
 #include <fnmatch.h>
 #include <glob.h>
 #include <linux/fs.h>
-#include <strings.h>
 #include <runtime/io.h>
 #include <smith/arena.h>
 #include <smith/contract.h>
@@ -95,3 +94,4 @@ constexpr bool smith_has_lldb = false;
 #include <smith/process.h>
 #include <smith/random.h>
 #include <smith/text.h>
+#include <strings.h>

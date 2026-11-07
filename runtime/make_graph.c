@@ -1,18 +1,15 @@
 // The targets a Makefile builds: the explicit ones, the pattern rules and make's built-in C rules applied to what needs
 // them, with prerequisites and recipes. Included by smith.c after make_read.c.
 
+#include "make_graph.h"
 #include "core.h"
 #include "make.h"
 #include "make_expand.h"
-#include "make_graph.h"
 #include "make_read.h"
 #include "mcp_unit.h"
 
 constexpr size_t smith_make_nodes_max = 32768;
 constexpr size_t smith_make_commands_max = 512;
-
-
-
 
 SmithMakeGraph smith_make_graph;
 

@@ -34,4 +34,3 @@ int64_t smith_mcp_argument_integer(const SmithJsonValue *arguments, const char *
 bool smith_mcp_argument_bool(const SmithJsonValue *arguments, const char *name, bool fallback);
 
 int64_t smith_mcp_argument_timeout(const SmithJsonValue *arguments, int64_t fallback);
-

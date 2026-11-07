@@ -7,9 +7,8 @@
 // The read puts the bytes in the arena it is given, with a zero after them that the size does not count, so a caller
 // can hand the text to C. A user of this file takes what it needs: the rest is `maybe_unused`.
 
-#include "core.h"
 #include "world.h"
-
+#include "core.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,10 +29,6 @@ constexpr size_t smith_world_reservation = (size_t)64 << 30;
 constexpr uint64_t smith_world_second = 1'000'000'000;
 constexpr mode_t smith_world_file_mode = 0666; // the umask takes its share
 constexpr mode_t smith_world_folder_mode = 0777;
-
-
-
-
 
 static SmithWorldError smith_world_error(int code, const char *what, const char *path) {
     SmithWorldError error = {.code = code};
@@ -125,7 +120,7 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 
 // Writes the bytes to the file as the mode says. A failed atomic write leaves the old file as it was.
 [[maybe_unused]] SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size,
-                                                          SmithWorldWrite mode) {
+                                                   SmithWorldWrite mode) {
     if (mode == SmithWorld_Append) return smith_world_write_to(path, data, size, O_APPEND);
     if (mode == SmithWorld_Replace) return smith_world_write_to(path, data, size, O_TRUNC);
     char temporary[PATH_MAX];

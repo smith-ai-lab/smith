@@ -19,10 +19,10 @@
 // definition are lowered like any others when they are read again: a lambda inside a lambda is lifted from the
 // definition of the first.
 
+#include "lang_lambda.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
-#include "lang_lambda.h"
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_tuple.h"

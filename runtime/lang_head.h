@@ -21,7 +21,7 @@ SmithLangArray smith_lang_array_size(const SmithToken *token);
 void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t location);
 
 void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
-                                   SmithTokenKind kind, uint32_t before, uint32_t after);
+                            SmithTokenKind kind, uint32_t before, uint32_t after);
 
 void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static);
 
@@ -32,4 +32,3 @@ void smith_lang_push_brace(SmithLang *lang, const SmithHost *host, SmithLangBrac
 void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32_t location);
 
 void smith_lang_head(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-

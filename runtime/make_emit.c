@@ -2,16 +2,13 @@
 // smith_alias, a variable a recipe uses as whole words becomes a named array, and an option becomes
 // smith_option_value. Included by smith.c after make_graph.c.
 
+#include "make_emit.h"
 #include "core.h"
 #include "make.h"
-#include "make_emit.h"
 #include "make_expand.h"
 #include "mcp_unit.h"
 
 constexpr size_t smith_make_lex_depth = 32;
-
-
-
 
 // ---- Reading a command as the shell would
 
@@ -150,7 +147,6 @@ const char *smith_make_array_name(const SmithMakeVar *var) {
 
 // ---- Lists
 
-
 SmithMakeOutput smith_make_output;
 
 // A unit is a piece of build.c that stands alone: an option, an array or what one target makes. A build.c that does not
@@ -158,8 +154,6 @@ SmithMakeOutput smith_make_output;
 // of units, and a unit's variable (an option, an array, an object a program names) moves to the top of the file as a
 // `static`, where each function reaches it.
 constexpr size_t smith_make_units_max = 65536;
-
-
 
 SmithMakeUnits *smith_make_unit_list; // the list that units are being made in
 

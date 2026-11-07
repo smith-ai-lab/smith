@@ -1,12 +1,12 @@
 // The tools of `smith build -t <tool>`: the ones of ninja's that build.c's docs and tests rely on. Each reads the
 // manifest (and, for deps, the logs) and prints; none runs a command.
 
+#include "executor_tools.h"
 #include "core.h"
 #include "executor.h"
 #include "executor_manifest.h"
 #include "executor_plan.h"
 #include "executor_state.h"
-#include "executor_tools.h"
 #include "world.h"
 
 typedef void (*SmithToolVisit)(SmithExec *exec, uint32_t edge, void *context);

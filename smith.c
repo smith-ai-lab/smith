@@ -15,9 +15,9 @@
 // runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
 // shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
 // need.
-#include "runtime/core.h"
 #include "runtime/account.h"
 #include "runtime/cache.h"
+#include "runtime/core.h"
 #include "runtime/docs.h"
 #include "runtime/executor.h"
 #include "runtime/explain.h"
@@ -37,7 +37,6 @@
 #include "runtime/slots.h"
 #include "runtime/symbolize.h"
 #include "runtime/verbs.h"
-
 
 // Sizes. libc takes int, size_t and char *, so these are plain size_t and int, not the u32 and u64 of game's base.h.
 constexpr size_t smith_metal_args_max = 4096; // arguments the metal route can forward; the clang route has no limit
@@ -1178,7 +1177,6 @@ static constexpr unsigned char smith_trace_source[] = {
 #embed "lib/trace.c"
 };
 
-
 // One row per library, in order of name: SMITH_LIBRARY(name, lang) uses the arrays smith_<name>_header (a C library's
 // hand-written header; a .smith module has none, its header is written from its source) and smith_<name>_source.
 // SMITH_LIBRARY_FLAGS adds the flags the library declares (one string, a flag a line), which the build adds after the
@@ -1234,9 +1232,6 @@ const SmithLibrary smith_libraries[] = {
 // What a run costs: the wall and CPU time of each task, and the smith processes it started.
 // Quiet output: the logs, the excerpt of a failure and the line of a stage.
 // The host-wide slots that limit heavy jobs, so that local work cannot starve CI.
-
-
-
 
 SmithTimeState smith_time_state;
 
@@ -1335,15 +1330,6 @@ static void smith_time_flag(int *argc, char **argv, int first) {
 // The rule for the command of a .smith file, shared with `smith lsp`.
 // A Makefile read as GNU make reads it and written as a build.smith: `smith build --dump-config` (issue #44).
 // (memory and text, the expander, the reader, the targets, then build.c; blank lines keep clang-format from sorting)
-
-
-
-
-
-
-
-
-
 
 constexpr size_t smith_build_manifest_max = 8192;
 constexpr size_t smith_build_chunk = 4096;
@@ -3542,7 +3528,6 @@ static void smith_lint_host_note(int argc, char **argv) {
 #endif
 }
 
-
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 int32_t front_lsp_run(void); // front/lsp_server.smith, see runtime/front_flag.c
@@ -3634,7 +3619,6 @@ static int smith_headers_main(int count, char **args) {
     }
     return failed;
 }
-
 
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
@@ -3760,7 +3744,6 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 // The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
 // The tests a change can affect: `smith test --changed` (issue #441).
 // The coverage table it reads comes first (issue #456).
-
 
 // smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
 // kinds, a case in smith_dispatch. A verb whose row says Project, ProjectBare or ToolOrProject does one fixed thing to

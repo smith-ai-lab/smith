@@ -33,19 +33,17 @@ typedef struct {
 
 extern SmithLangNestedState smith_lang_nested;
 
-bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                     SmithLangFrame *frame);
+bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame);
 
 bool smith_lang_nested_member_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit);
 
 bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                    const SmithLangInstance *instance, uint32_t location, uint32_t id);
+                             const SmithLangInstance *instance, uint32_t location, uint32_t id);
 
 bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to);
 
 bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
-                                  SmithLangSpan span, uint32_t place);
+                           SmithLangSpan span, uint32_t place);
 
 void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  const SmithLangInstance *instance, uint32_t location, uint32_t id);
-
+                           const SmithLangInstance *instance, uint32_t location, uint32_t id);

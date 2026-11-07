@@ -15,4 +15,3 @@ typedef enum { SmithLangTryKind_None, SmithLangTryKind_Result, SmithLangTryKind_
 SmithLangTryKind smith_lang_try_kind(const char *type);
 
 bool smith_lang_try_token(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-

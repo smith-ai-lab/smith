@@ -27,9 +27,9 @@
 // `.smith` function is shown as written, `geometry::box::area` (the debug names of issue #27), and so is the name of a
 // module's test.
 
+#include "symbolize.h"
 #include "core.h"
 #include "platform_linux.h"
-#include "symbolize.h"
 
 [[maybe_unused]] constexpr int smith_sym_exit_unavailable = 3; // read when built as the core
 constexpr size_t smith_sym_frames_max = 64;

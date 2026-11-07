@@ -76,4 +76,3 @@ bool smith_rec_mentioned(const char *path);
 size_t smith_rec_check_folder(const char *folder);
 
 void smith_rec_reset(void);
-

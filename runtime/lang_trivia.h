@@ -22,4 +22,3 @@ void smith_lang_trivia_taken(SmithLang *lang, const SmithHost *host, const Smith
 void smith_lang_doc_capture(SmithLang *lang);
 
 void smith_lang_trivia_export(SmithLang *lang);
-

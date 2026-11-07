@@ -1,8 +1,7 @@
 // The text a tool result is built in, and the readers of a tool's arguments. Included by mcp.c.
 
-
-#include "core.h"
 #include "mcp_text.h"
+#include "core.h"
 #include "mcp_unit.h"
 
 SmithMcpText smith_mcp_text_make(SmithArena *arena, size_t capacity) {

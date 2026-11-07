@@ -26,10 +26,12 @@ static SmithObject build_core_object(SmithBuild *b, const char *root) {
 // of runtime/*.c but what a program does not link in the units runner (the build program's files, the embedded data,
 // the mcp family that -DSMITH_MCP turns on, the macOS ones, and package.c, which package_unit.c wraps).
 static const char *const core_skipped[] = {
-    "build_runtime.c", "commit.c",  "gzip.c",     "lint_identity.c", "mcp.c",         "mcp_dap.c",
-    "mcp_serve.c",     "mcp_show.c", "mcp_text.c", "mcp_tools.c",     "package.c",     "pack_data.c",
-    "platform_macos.c", "sdk_cache.c", "tree_sitter_data.c", "untar.c",     "xz.c",
-    nullptr,
+    "build_runtime.c",  "commit.c",    "gzip.c",
+    "lint_identity.c",  "mcp.c",       "mcp_dap.c",
+    "mcp_serve.c",      "mcp_show.c",  "mcp_text.c",
+    "mcp_tools.c",      "package.c",   "pack_data.c",
+    "platform_macos.c", "sdk_cache.c", "tree_sitter_data.c",
+    "untar.c",          "xz.c",        nullptr,
 };
 
 static bool core_is_skipped(const char *path) {
@@ -134,7 +136,8 @@ void build(SmithBuild *b) {
     // (tests/front_units/build.c): this one leaves them out.
     const char *const *kept = tests_without_front(b);
     SmithTests tests = {
-        .objects = core_runtime_objects(b, root, core_flags, (const SmithObject *[]){&http, &core, &build_core, &runtime_io}, 4),
+        .objects = core_runtime_objects(b, root, core_flags,
+                                        (const SmithObject *[]){&http, &core, &build_core, &runtime_io}, 4),
         .sources = smith_cat(b, smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", nullptr)), kept,
                              smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
                                         "tests/corpus.smith", nullptr),

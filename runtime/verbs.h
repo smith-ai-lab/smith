@@ -18,4 +18,3 @@ int smith_run_project(int count, char **args, const char *self);
 int smith_check_project(int count, char **args, const char *self);
 
 int smith_fmt_verb(int count, char **args, const char *self);
-

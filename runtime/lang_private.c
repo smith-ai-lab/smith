@@ -13,6 +13,7 @@
 //     variables the symbol (the label `_m::helper`), where every other private one is `static`.
 // A private name is still private to source: it is in no `// smith-names:` line, so an importer cannot write it.
 
+#include "lang_private.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
@@ -21,7 +22,6 @@
 #include "lang_main.h"
 #include "lang_names.h"
 #include "lang_out.h"
-#include "lang_private.h"
 #include "lang_stream.h"
 #include "lang_trivia.h"
 
@@ -89,8 +89,7 @@ void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
 }
 
 // A name the kept declaration declares: what the generics that name it find it by.
-void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
-                                 size_t cname_length) {
+void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname, size_t cname_length) {
     if (lang->priv_range == 0) return;
     if (lang->priv_names_count >= smith_lang_priv_names_max) {
         smith_lang_limit(lang, "names private declarations declare", smith_lang_priv_names_max);
@@ -307,7 +306,7 @@ size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capa
 
 // The names an imported header says it declares for instances only, as the lowering writes them.
 void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,
-                                   size_t prefix_length) {
+                            size_t prefix_length) {
     size_t cursor = 0;
     size_t start = 0;
     size_t end = 0;

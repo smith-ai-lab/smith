@@ -73,4 +73,3 @@ const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indices, si
 const char *smith_make_list_all(const SmithMakeArgv *argv);
 
 const char *smith_make_names(const char *const *names, size_t count);
-

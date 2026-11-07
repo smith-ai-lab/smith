@@ -5,8 +5,8 @@
 // The caches are $XDG_CACHE_HOME/smith/modules (clang's module cache, shared by every project and worktree) and
 // $XDG_CACHE_HOME/smith/packages (smith_package). Both are keyed by hash, so anything removed is simply built or
 // fetched again.
-#include "core.h"
 #include "cache.h"
+#include "core.h"
 #include "mcp_unit.h"
 #include "package.h"
 #ifdef SMITH_CORE

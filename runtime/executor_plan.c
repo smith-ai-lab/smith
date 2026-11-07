@@ -7,10 +7,10 @@
 // dirty order-only input. After a restat step runs, an output that did not change cleans the edges that were dirty
 // only because of it.
 
+#include "executor_plan.h"
 #include "core.h"
 #include "executor.h"
 #include "executor_manifest.h"
-#include "executor_plan.h"
 #include "executor_run.h"
 #include "executor_state.h"
 #include "mcp_unit.h"

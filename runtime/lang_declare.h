@@ -16,4 +16,3 @@ void smith_lang_semicolon_state(SmithLang *lang, char c);
 void smith_lang_word_state(SmithLang *lang, const SmithToken *token, SmithLangWord word);
 
 void smith_lang_declare_process(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-

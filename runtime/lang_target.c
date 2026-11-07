@@ -19,6 +19,7 @@
 
 // ---- The facts -----------------------------------------------------------------------------------------------------
 
+#include "lang_target.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_constexpr.h"
@@ -28,7 +29,6 @@
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_stream.h"
-#include "lang_target.h"
 #include "lang_trivia.h"
 #include "lang_type.h"
 #include "mcp_unit.h"
@@ -162,7 +162,7 @@ static bool smith_lang_target_value(const SmithLang *lang, const SmithHost *host
 }
 
 int smith_lang_target_macro_value(const SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                         int64_t *value) {
+                                  int64_t *value) {
     for (size_t i = 0; i < sizeof smith_lang_target_table / sizeof smith_lang_target_table[0]; i++) { // 15 facts
         const SmithLangTargetEntry *entry = &smith_lang_target_table[i];
         if (entry->macro != nullptr && smith_lang_equals(name, length, entry->macro)) {
@@ -198,8 +198,8 @@ static SmithToken smith_lang_target_value_token(const SmithToken *like, uint32_t
 
 // `target::member`, read by smith_lang_namespace: the token that stands where the access stood. `digits` holds its
 // text, and lives as long as the caller's use of it.
-void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                  const SmithToken *member, SmithToken *result, char *digits, size_t capacity) {
+void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name, const SmithToken *member,
+                           SmithToken *result, char *digits, size_t capacity) {
     const SmithLangTargetEntry *entry = smith_lang_target_find(member->text, member->length);
     *result = smith_lang_target_value_token(name, member->location, 0, false, digits, capacity);
     if (entry == nullptr) {
@@ -488,7 +488,6 @@ static bool smith_lang_ifc_drop(SmithLang *lang, const SmithHost *host, bool fil
 static bool smith_lang_ifc_file_scope(const SmithLang *lang) {
     return lang->is_module && !lang->in_function && lang->state == SmithLangState_Start;
 }
-
 
 // The `{` of a branch at file scope, which is dropped: the braces the frame counts begin inside it. What is defined
 // after the last import (`Field`) is defined here when the branch begins with no import.

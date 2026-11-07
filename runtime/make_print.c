@@ -1,5 +1,6 @@
 // Printing the declarations of build.c. Included by smith.c after make_class.c.
 
+#include "make_print.h"
 #include "core.h"
 #include "make.h"
 #include "make_cc.h"
@@ -7,11 +8,9 @@
 #include "make_emit.h"
 #include "make_expand.h"
 #include "make_graph.h"
-#include "make_print.h"
 #include "mcp_unit.h"
 
 #define SMITH_MAKE_BODY (smith_make_output.body)
-
 
 // A one-line summary of text for a comment: newlines and runs of blanks become one space, long text is cut.
 const char *smith_make_summary(const char *text, size_t width) {

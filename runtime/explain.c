@@ -15,8 +15,8 @@
 // attach, the symbols of the program and the reads, about a quarter of a second
 // (knowledge/failure-reports-and-tests.md).
 
-#include "core.h"
 #include "explain.h"
+#include "core.h"
 #include "platform_linux.h"
 #include "symbolize.h"
 

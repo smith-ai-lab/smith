@@ -4,16 +4,16 @@
 //
 // smith's identity on Linux is the ELF note NT_GNU_BUILD_ID, which build.c asks lld for as an MD5 of the output
 // (`--build-id=md5`): 16 bytes, the size of a Mach-O LC_UUID, so a programs folder has a name of the same length.
+#include "platform_linux.h"
 #include "core.h"
 #include "mcp_unit.h"
-#include "platform_linux.h"
 
 #include <elf.h>
 #include <linux/fs.h>
 #include <sys/ioctl.h>
 
 constexpr size_t smith_platform_elf_max = 1U << 16; // the headers and notes are in the first pages of an executable
-constexpr size_t smith_platform_notes_max = 4096; // notes in one PT_NOTE segment
+constexpr size_t smith_platform_notes_max = 4096;   // notes in one PT_NOTE segment
 
 static unsigned char smith_platform_elf[smith_platform_elf_max];
 

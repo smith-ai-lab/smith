@@ -15,22 +15,14 @@
 //
 // Nothing here recurses and nothing is freed: the memory is one mapped region, every loop is bounded, and an
 // expression is expanded by a machine with a stack of its own (make_expand.c).
-#include "core.h"
 #include "make.h"
+#include "core.h"
 #include "mcp_unit.h"
 
 #include <dirent.h>
 #include <glob.h>
 #include <stdint.h>
 #include <sys/mman.h>
-
-
-
-
-
-
-
-
 
 SmithMake smith_make;
 
@@ -225,7 +217,6 @@ const char *smith_make_unmark(const char *text) {
 
 // ---- Words
 
-
 // The words of text into a pool array; *count is how many.
 SmithMakeWord *smith_make_words(const char *text, size_t length, size_t *count) {
     size_t at = 0;
@@ -251,8 +242,8 @@ const char *smith_make_word_text(SmithMakeWord word) {
 // ---- Patterns
 
 // Whether text matches pattern (a `%` stands for any text, once). The stem is what `%` matched.
-bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length,
-                             const char **stem, size_t *stem_length) {
+bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length, const char **stem,
+                      size_t *stem_length) {
     const char *percent = memchr(pattern, '%', pattern_length);
     if (percent == nullptr) {
         if (pattern_length != length || memcmp(pattern, text, length) != 0) return false;
@@ -271,8 +262,7 @@ bool smith_make_match(const char *pattern, size_t pattern_length, const char *te
 }
 
 // pattern with its `%` replaced by stem, or the pattern when it has none.
-const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem,
-                                         size_t stem_length) {
+const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem, size_t stem_length) {
     const char *percent = memchr(pattern, '%', pattern_length);
     if (percent == nullptr) return smith_make_dup(pattern, pattern_length);
     size_t before = (size_t)(percent - pattern);

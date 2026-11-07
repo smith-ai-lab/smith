@@ -21,7 +21,7 @@ constexpr size_t smith_exec_variables_max = 1024;
 
 constexpr size_t smith_exec_text_max = (size_t)4 << 20; // one evaluated value, a command included
 
-constexpr size_t smith_exec_name_max = 4096;            // one path
+constexpr size_t smith_exec_name_max = 4096; // one path
 
 constexpr size_t smith_exec_jobs_max = 128;
 
@@ -311,4 +311,3 @@ SmithExec *smith_exec_open(SmithIo *io);
 [[maybe_unused]] void smith_exec_close(SmithExec *exec);
 
 int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOptions *options);
-

@@ -26,4 +26,3 @@ void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithToken *t
 bool smith_lang_type_name(SmithLang *lang, const char *name, size_t length);
 
 bool smith_lang_fast_brace(SmithLang *lang, const SmithHost *host, bool open);
-

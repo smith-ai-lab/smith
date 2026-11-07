@@ -58,26 +58,24 @@ bool smith_lang_cx_text(const SmithLangCx *cx, uint32_t first, uint32_t last, ch
 
 bool smith_lang_cx_eval(SmithLangCx *cx, uint32_t first, uint32_t last, int64_t *result);
 
-void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                 SmithLangFrame *frame);
+void smith_lang_replay_if(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame);
 
 bool smith_lang_generic_if_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                            SmithLangWord word);
+                                     SmithLangWord word);
 
 void smith_lang_for_constexpr_outside(SmithLang *lang, const SmithHost *host, const SmithToken *token);
 
 bool smith_lang_generic_for_constexpr(SmithLang *lang, const SmithHost *host, const SmithToken *token,
-                                             SmithLangWord word);
+                                      SmithLangWord word);
 
 bool smith_lang_result_call(const SmithLangGeneric *generic);
 
 const char *smith_lang_type_call_ask(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                            SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
-                                            size_t capacity, uint64_t *handle);
+                                     SmithLangInstance *instance, uint32_t first, uint32_t last, char *spelling,
+                                     size_t capacity, uint64_t *handle);
 
 void smith_lang_gen_put_slice_result(SmithLang *lang, const SmithHost *host, uint64_t handle, uint32_t location,
-                                            uint32_t instance_id);
+                                     uint32_t instance_id);
 
 void smith_lang_gen_put_result(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                      const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);
-
+                               const SmithLangInstance *instance, uint32_t location, uint32_t instance_id);

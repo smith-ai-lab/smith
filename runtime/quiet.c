@@ -1,5 +1,5 @@
-#include "core.h"
 #include "quiet.h"
+#include "core.h"
 
 constexpr size_t smith_quiet_text_max = (size_t)32 << 20;
 
@@ -145,8 +145,8 @@ bool smith_quiet_field(const char **at, size_t *value, const char *after) {
 // nothing).
 // A prove run also says, for each group, "N of M functions have contracts" (issue #51); the sums go to `coverage` as
 // "N of M functions" (empty when the log has no such line).
-void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity,
-                               char *coverage, size_t coverage_capacity) {
+void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity, char *coverage,
+                        size_t coverage_capacity) {
     out[0] = '\0';
     coverage[0] = '\0';
     bool prove = strcmp(verb, "prove") == 0;

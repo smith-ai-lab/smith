@@ -30,6 +30,7 @@
 // "regions": the initializer of a declaration whose type holds a type, the arguments of a call to a function that takes
 // a type, the `return` of a function that returns one, and either side of `==` and `!=`.
 
+#include "lang_type.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
@@ -39,7 +40,6 @@
 #include "lang_out.h"
 #include "lang_slice.h"
 #include "lang_tuple.h"
-#include "lang_type.h"
 
 constexpr size_t smith_lang_ty_types_max = 4096;
 constexpr size_t smith_lang_ty_spelling_max = 256;
@@ -509,7 +509,7 @@ static bool smith_lang_ty_entry(SmithLang *lang, const SmithHost *host, const ch
 }
 
 bool smith_lang_ty_handle(SmithLang *lang, const SmithHost *host, const char *spelling, uint32_t location,
-                                 uint64_t *handle) {
+                          uint64_t *handle) {
     char canonical[smith_lang_ty_spelling_max];
     if (!smith_lang_ty_entry(lang, host, spelling, location, handle, canonical, sizeof canonical)) return false;
     static const char slice_tag[] = "struct smith_array_";
@@ -1110,7 +1110,7 @@ static size_t smith_lang_ty_declared_tokens(const char *base, const SmithToken *
 }
 
 size_t smith_lang_ty_type_tokens(SmithLang *lang, uint64_t handle, const SmithToken *like, SmithToken *out,
-                                        size_t capacity, bool bare) {
+                                 size_t capacity, bool bare) {
     unsigned depth = 0;
     const char *base = smith_lang_ty_split(handle, &depth);
     if (base == nullptr) return 0;

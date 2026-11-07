@@ -8,13 +8,13 @@
 // as written, and reading a name that starts with `_` (one already declared when the token comes) is the error. The
 // names C reserves (`__x`, `_X`), a member (`p._x`, `p->_x`) and a name after `::` (`c::_exit`) are no module's.
 
+#include "lang_unused.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_sparse.h"
 #include "lang_tuple.h"
-#include "lang_unused.h"
 
 unsigned smith_lang_unused_serial;
 static SmithToken smith_lang_unused_last; // the token before, for a lowering with no host record (the raw one)

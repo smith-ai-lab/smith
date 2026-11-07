@@ -1,9 +1,9 @@
 // The translation as a whole: the options, the named arrays, the declarations in order, the default, the header and
 // what was not translated. Included by smith.c after make_print.c.
 
-
 // ---- Options
 
+#include "make_translate.h"
 #include "core.h"
 #include "main.h"
 #include "make.h"
@@ -14,7 +14,6 @@
 #include "make_print.h"
 #include "make_read.h"
 #include "make_sub.h"
-#include "make_translate.h"
 #include "mcp_unit.h"
 
 static void smith_make_emit_options(SmithMakeBuffer *out) {

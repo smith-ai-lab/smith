@@ -143,11 +143,10 @@ SmithMakeWord *smith_make_words(const char *text, size_t length, size_t *count);
 
 const char *smith_make_word_text(SmithMakeWord word);
 
-bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length,
-                             const char **stem, size_t *stem_length);
+bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length, const char **stem,
+                      size_t *stem_length);
 
-const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem,
-                                         size_t stem_length);
+const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem, size_t stem_length);
 
 const char *smith_make_hole_text(const char *expression);
 
@@ -164,4 +163,3 @@ size_t smith_make_var_index(const SmithMakeVar *var);
 void smith_make_var_set(SmithMakeVar *var, const char *value, const char *marked, bool simple);
 
 const char *smith_make_var_value(const char *name);
-

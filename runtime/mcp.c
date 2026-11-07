@@ -26,11 +26,11 @@
 #include "core.h"
 #include "mcp_unit.h"
 
-#include "mcp.h"
 #include <runtime/io.h>
 #include <smith/json.h>
 #include <smith/mem.h>
 #include "dap.h"
+#include "mcp.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -48,15 +48,4 @@
 #include <assert.h>
 #endif
 
-
-
-
-
-
-
-
 // One block each: clang-format sorts a block, and these depend on the order.
-
-
-
-

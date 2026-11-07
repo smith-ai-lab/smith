@@ -5,16 +5,15 @@
 // stops or ends or the time is up. Every tool first takes in what the program did since the last call (its output, a
 // stop, an exit), so nothing is lost between calls.
 
-
 // --- arguments and sessions ----------------------------------------------------------------------------------------
 
 // The session the call means (its `session` argument, else the latest). False, with the reason in out, if there is
 // none.
+#include "mcp_tools.h"
 #include "core.h"
 #include "mcp_dap.h"
 #include "mcp_show.h"
 #include "mcp_text.h"
-#include "mcp_tools.h"
 #include "mcp_unit.h"
 #include "world.h"
 #ifdef SMITH_MCP
@@ -782,8 +781,6 @@ bool smith_mcp_tool_stop(SmithMcpServer *server, const SmithJsonValue *arguments
 
 // --- the table ----------------------------------------------------------------------------------------------------
 
-
-
 const SmithMcpToolEntry smith_mcp_tool_table[] = {
     {"launch",
      "Start a program under the debugger and run it to its first stop. Give `program` (with `args`), or `test`: the "
@@ -865,4 +862,3 @@ const SmithMcpToolEntry smith_mcp_tool_table[] = {
     {"stop", "End the debug session: the program is killed and the debugger closed. Returns the program's last output.",
      "{\"type\":\"object\",\"properties\":{" SMITH_MCP_SESSION_PROPERTY "}}", false, smith_mcp_tool_stop},
 };
-

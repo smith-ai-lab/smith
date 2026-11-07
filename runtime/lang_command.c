@@ -3,9 +3,9 @@
 // accepts, and they cannot drift. Included by smith.c, which has smith_ends_with and smith_takes_value.
 
 // Whether an input is C++ or Objective-C++, which have no `_Defer`.
+#include "lang_command.h"
 #include "core.h"
 #include "lang.h"
-#include "lang_command.h"
 #include "main.h"
 
 static bool smith_lang_has_other_input(int argc, char **argv, int first) {

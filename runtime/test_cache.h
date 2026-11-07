@@ -4,4 +4,3 @@
 #include "core.h"
 
 int smith_tc_main(int count, char **args);
-

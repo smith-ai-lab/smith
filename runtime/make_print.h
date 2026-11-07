@@ -10,4 +10,3 @@ constexpr size_t smith_make_comment_width = 112;
 const char *smith_make_summary(const char *text, size_t width);
 
 void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo *info);
-

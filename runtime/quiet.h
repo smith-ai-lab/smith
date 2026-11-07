@@ -25,6 +25,5 @@ const char *smith_quiet_read(const char *path, size_t *size);
 
 bool smith_quiet_field(const char **at, size_t *value, const char *after);
 
-void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity,
-                               char *coverage, size_t coverage_capacity);
-
+void smith_quiet_detail(const char *verb, const char *text, size_t size, char *out, size_t capacity, char *coverage,
+                        size_t coverage_capacity);

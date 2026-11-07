@@ -1,6 +1,6 @@
+#include "record.h"
 #include "core.h"
 #include "coverage.h"
-#include "record.h"
 
 constexpr size_t smith_rec_seen_max = 1024;
 constexpr size_t smith_rec_mention_slots = 1U << 15;
@@ -388,8 +388,6 @@ bool smith_rec_write(const char *dir, const char *name, const char *clean, bool 
 }
 
 // ---- Reading records
-
-
 
 const char *smith_rec_named[smith_rec_named_max];
 static size_t smith_rec_named_used;

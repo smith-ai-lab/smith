@@ -1,10 +1,9 @@
 // Reading a recipe's command as a compile or a link: which words are the compiler's own and which are flags,
 // libraries, sources and objects. Included by smith.c after make_emit.c.
 
-
+#include "make_cc.h"
 #include "core.h"
 #include "make.h"
-#include "make_cc.h"
 #include "make_emit.h"
 #include "make_read.h"
 

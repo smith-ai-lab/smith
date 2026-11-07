@@ -11,10 +11,10 @@
 // test is never stored. A test the key cannot pin down is not cached: unknown means run it. That is a test with the
 // marker `// smith-test: uncached`, one that reads the clock, the network, entropy or a file without `files`, one that
 // asks git, and one whose source file is not found.
-#include "core.h"
-#include "changed.h"
-#include "package.h"
 #include "test_cache.h"
+#include "changed.h"
+#include "core.h"
+#include "package.h"
 
 #include <dirent.h>
 #include <ftw.h>

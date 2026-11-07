@@ -5,4 +5,3 @@
 #include "executor.h"
 
 int smith_tool_run(SmithExec *exec);
-

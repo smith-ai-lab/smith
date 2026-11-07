@@ -10,4 +10,3 @@ void smith_lang_body_note(SmithLang *lang);
 void smith_lang_body_write(SmithLang *lang);
 
 void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t location);
-

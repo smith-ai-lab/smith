@@ -6,17 +6,17 @@
 #include "lang_main.h"
 
 [[gnu::format(printf, 4, 5)]] void smith_lang_error(SmithLang *lang, const SmithHost *host, uint32_t location,
-                                                           const char *format, ...);
+                                                    const char *format, ...);
 
 void smith_lang_limit(SmithLang *lang, const char *table, size_t size);
 
-[[gnu::format(printf, 4, 5)]] void smith_lang_note(const SmithHost *host, uint32_t error_location,
-                                                          uint32_t location, const char *format, ...);
+[[gnu::format(printf, 4, 5)]] void smith_lang_note(const SmithHost *host, uint32_t error_location, uint32_t location,
+                                                   const char *format, ...);
 
 bool smith_lang_word_char(char c);
 
-bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
-                           bool line_start, bool space);
+bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length, bool line_start,
+                    bool space);
 
 // A pool of tokens with their text. `smith_lang_gt` is a stack: the tokens of the generics, which stay for the whole
 // file, and above them the calls being read, which are popped when they have been written. `smith_lang_it` only grows:
@@ -94,4 +94,3 @@ SmithLangText smith_lang_scratch_store(SmithLang *lang, const char *text, size_t
 const char *smith_lang_scratch_str(SmithLangText text);
 
 const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length);
-

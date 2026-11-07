@@ -36,4 +36,3 @@ const char *smith_lang_keyword_name_use(const char *text, size_t size, size_t st
 size_t smith_lang_keyword_message(char *out, size_t capacity, const char *keyword, size_t length, const char *noun);
 
 const char *smith_lang_module_name(const SmithLang *lang);
-

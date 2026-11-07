@@ -14,9 +14,9 @@
 // Both are appended to as jobs end, and written whole (through a temporary file) when more than two thirds of their
 // lines are dead. A line cut short by a crash is not read, and neither is a file of another version.
 
+#include "executor_state.h"
 #include "core.h"
 #include "executor.h"
-#include "executor_state.h"
 #include "mcp_unit.h"
 #include "world.h"
 
@@ -273,8 +273,7 @@ static void smith_state_append(SmithExec *exec, const char *path, const char *he
 }
 
 // Records that a command ran: for each output, its run and its mtime.
-void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms,
-                               int64_t mtime) {
+void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms, int64_t mtime) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     for (uint32_t i = 0; i < edge->output_count; i++) {
@@ -297,7 +296,7 @@ void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_m
 
 // Records what a command's depfile named, for each output of the edge.
 void smith_state_record_deps(SmithExec *exec, const SmithEdge *edge, int64_t mtime, const char *const *deps,
-                                    uint32_t count) {
+                             uint32_t count) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     char line[smith_exec_name_max + 64];

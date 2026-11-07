@@ -16,9 +16,9 @@
 // carried). What the header holds is left out. An importer that needs `fib` defines SMITH_BODY_calc_fib, with those
 // of what it needs in turn, and includes the file (the depfile then names it).
 
+#include "lang_body.h"
 #include "core.h"
 #include "lang.h"
-#include "lang_body.h"
 #include "lang_decl.h"
 #include "lang_import.h"
 #include "lang_main.h"

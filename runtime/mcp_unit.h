@@ -17,21 +17,21 @@ constexpr size_t smith_mcp_breakpoints_max = 64;
 
 constexpr size_t smith_mcp_frame_max = (size_t)256 << 10; // one DAP message
 
-constexpr size_t smith_mcp_line_max = (size_t)1 << 20;    // one MCP message
+constexpr size_t smith_mcp_line_max = (size_t)1 << 20; // one MCP message
 
-constexpr size_t smith_mcp_text_max = (size_t)96 << 10;   // one tool result, in characters
+constexpr size_t smith_mcp_text_max = (size_t)96 << 10; // one tool result, in characters
 
-constexpr size_t smith_mcp_scratch = (size_t)256 << 20;   // address space for the messages of one call
+constexpr size_t smith_mcp_scratch = (size_t)256 << 20; // address space for the messages of one call
 
-constexpr size_t smith_mcp_turns_max = (size_t)1 << 40;   // a bound for loops that end by their own condition
+constexpr size_t smith_mcp_turns_max = (size_t)1 << 40; // a bound for loops that end by their own condition
 
 constexpr int64_t smith_mcp_second = 1'000'000'000;
 
 constexpr int64_t smith_mcp_request_timeout = 15 * smith_mcp_second; // a DAP request that does not resume
 
-constexpr int64_t smith_mcp_start_timeout = 60 * smith_mcp_second;   // starting `smith dap`, the first time included
+constexpr int64_t smith_mcp_start_timeout = 60 * smith_mcp_second; // starting `smith dap`, the first time included
 
-constexpr int64_t smith_mcp_resume_timeout = 30 * smith_mcp_second;  // a resuming call, when the caller names none
+constexpr int64_t smith_mcp_resume_timeout = 30 * smith_mcp_second; // a resuming call, when the caller names none
 
 // A message of the adapter that is not a response to a request: what the next call reports. Output is kept as text, a
 // stop as its reason and place; nothing else of an event is.
@@ -121,4 +121,3 @@ typedef struct {
     size_t sessions_made; // how many sessions were ever started: the ids
     char cwd[PATH_MAX];
 } SmithMcpServer;
-

@@ -5,8 +5,8 @@
 // the full path: its `module` line asks the host for every token. Included by runtime/lang.c, after
 // runtime/lang_head.c.
 
-
 // The names the host should offer from the start of any .smith file.
+#include "lang_sparse.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
@@ -15,7 +15,6 @@
 #include "lang_import.h"
 #include "lang_main.h"
 #include "lang_out.h"
-#include "lang_sparse.h"
 #include "lang_stream.h"
 
 void smith_lang_watch_basics(const SmithHost *host) {

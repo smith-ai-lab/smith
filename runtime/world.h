@@ -33,7 +33,7 @@ SmithWorldRead smith_world_read(SmithArena *arena, const char *path);
 SmithWorldError smith_world_remove(const char *path);
 
 [[maybe_unused]] SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size,
-                                                          SmithWorldWrite mode);
+                                                   SmithWorldWrite mode);
 
 [[maybe_unused]] SmithWorldError smith_world_make_folder(const char *path);
 
@@ -42,4 +42,3 @@ SmithWorldError smith_world_remove(const char *path);
 SmithArena smith_world_arena(void);
 
 [[maybe_unused]] ptrdiff_t smith_world_capture(const char *const *argv, char *buffer, size_t capacity);
-

@@ -15,8 +15,8 @@
 //   executor_run.c       the progress line, the jobs and the loop that runs them
 //   executor_tools.c     -t clean, compdb, targets, deps, commands and cleandead
 
-#include "core.h"
 #include "executor.h"
+#include "core.h"
 #include "executor_cache.h"
 #include "executor_manifest.h"
 #include "executor_plan.h"
@@ -27,20 +27,7 @@
 #include "mcp_unit.h"
 #include "world.h"
 
-constexpr size_t smith_exec_reloads_max = 8;            // how many times a rebuilt manifest is read again
-
-
-
-
-
-
-
-
-
-
-
-
-
+constexpr size_t smith_exec_reloads_max = 8; // how many times a rebuilt manifest is read again
 
 // Makes room for at least `extra` more bytes and a NUL.
 static void smith_grow_reserve(SmithGrow *grow, size_t extra) {
@@ -61,14 +48,6 @@ void smith_grow_append(SmithGrow *grow, const void *bytes, size_t size) {
     grow->size += size;
     grow->data[grow->size] = 0;
 }
-
-
-
-
-
-
-
-
 
 // What a message calls the project's build file: build.c, build.smith, or "the build" when it runs by convention.
 const char *smith_project_build_file(void) {
@@ -156,7 +135,6 @@ size_t smith_exec_canonical(char *path, size_t length) {
 
 // Each file uses the ones before it, so they are blocks of one line: clang-format sorts only within a block.
 
-
 // A SmithExec in an arena of its own, with the scratch text carved from it. The memory is given back by
 // smith_exec_close.
 SmithExec *smith_exec_open(SmithIo *io) {
@@ -173,10 +151,6 @@ SmithExec *smith_exec_open(SmithIo *io) {
 [[maybe_unused]] void smith_exec_close(SmithExec *exec) { // used by the in-process entry points (SMITH_CORE)
     munmap(exec->own.memory, exec->own.capacity);
 }
-
-
-
-
 
 // Runs the manifest: a tool, or a build of the targets. A manifest that has a rule of its own (build.c's regeneration)
 // is built first and read again when that changed it. Returns the status of the build.

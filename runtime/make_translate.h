@@ -6,4 +6,3 @@
 bool smith_make_format_files(FILE *in, FILE *out);
 
 int smith_make_translate(const char *path, FILE *out, FILE *errors);
-

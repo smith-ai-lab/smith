@@ -77,4 +77,3 @@ bool smith_changed_lint_wants(const char *path);
 void smith_changed_lint_says_all(const char *why);
 
 void smith_changed_lint_says(size_t kept, size_t count, const char *base);
-

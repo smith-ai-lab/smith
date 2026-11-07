@@ -6,4 +6,3 @@
 #include "lang_main.h"
 
 bool smith_lang_lambda_token(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-

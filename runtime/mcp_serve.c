@@ -8,9 +8,9 @@
 // code has the 2026-07-28 messages; the `initialize` request and result are older and are not in its schema, so they
 // are read by name and written as a result with the extra members `protocolVersion`, `capabilities` and `serverInfo`.
 
+#include "mcp_serve.h"
 #include "core.h"
 #include "mcp_dap.h"
-#include "mcp_serve.h"
 #include "mcp_text.h"
 #include "mcp_tools.h"
 #include "mcp_unit.h"

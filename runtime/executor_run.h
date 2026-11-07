@@ -21,4 +21,3 @@ int smith_run_plan(SmithExec *exec);
 int smith_run_targets(SmithExec *exec, const uint32_t *targets, size_t count, bool say_done);
 
 uint32_t smith_run_manifest_node(SmithExec *exec);
-

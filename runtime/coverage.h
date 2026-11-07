@@ -53,4 +53,3 @@ extern double smith_cov_cpu_seconds;
 bool smith_cov_code_line(const char *text);
 
 int smith_coverage_main(int argc, char **argv);
-

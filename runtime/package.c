@@ -54,8 +54,6 @@
 
 constexpr size_t smith_package_read_size = 65536;
 
-
-
 static constexpr uint32_t smith_sha256_k[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -160,7 +158,6 @@ bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
     return ok;
 }
 
-
 [[gnu::format(printf, 2, 3)]] bool smith_package_fail(SmithPackageFault *error, const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -220,7 +217,6 @@ static bool smith_package_download(const char *url, const char *destination, Smi
     if (result.error.code == 0) return true;
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
-
 
 const char *smith_cache_name(SmithCacheKind kind) {
     return kind == SmithCache_Modules    ? "modules"
@@ -307,7 +303,6 @@ bool smith_cache_older(const struct stat *info, time_t now, int seconds) {
 constexpr uint64_t smith_cache_max_default = (uint64_t)10 * 1000 * 1000 * 1000;
 constexpr time_t smith_cache_age_step = 1800;
 constexpr int smith_cache_walk_files = 64;
-
 
 SmithCacheAges smith_cache_ages;
 static uint64_t smith_cache_walk_bytes;
@@ -648,7 +643,7 @@ static bool smith_package_install(const char *url, const char *wanted, const Smi
 // nullptr (`smith fetch`) the archive is always downloaded and its hash is the answer, put in `hash` either way.
 // `offline` turns a missing package into an error that names the URL.
 bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
-                                 char hash[smith_package_hash_size], SmithPackageFault *error) {
+                          char hash[smith_package_hash_size], SmithPackageFault *error) {
     SmithPackageTemps temps;
     if (!smith_package_root(temps.packages, error)) return false;
     char digits[smith_sha256_hex_size];

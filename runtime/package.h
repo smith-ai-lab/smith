@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-constexpr size_t smith_sha256_hex_size = 65;   // 64 digits and the terminator
+constexpr size_t smith_sha256_hex_size = 65; // 64 digits and the terminator
 
 constexpr size_t smith_package_hash_size = 72; // "sha256:", 64 digits and the terminator
 
@@ -18,7 +18,7 @@ constexpr size_t smith_package_error_size = 2048;
 // -fmodules-prune-after; smith applies them to packages itself.
 constexpr int smith_cache_prune_interval = 604800; // checked at most once a week (7 days)
 
-constexpr int smith_cache_prune_after = 2678400;   // an entry unused for 31 days is removed
+constexpr int smith_cache_prune_after = 2678400; // an entry unused for 31 days is removed
 
 typedef struct {
     uint32_t state[8];
@@ -91,5 +91,4 @@ long smith_cache_cutoff(uint64_t excess);
 bool smith_cache_goes(time_t used, time_t now, long cutoff);
 
 bool smith_package_ensure(const char *url, const char *wanted, bool offline, char *folder,
-                                 char hash[smith_package_hash_size], SmithPackageFault *error);
-
+                          char hash[smith_package_hash_size], SmithPackageFault *error);

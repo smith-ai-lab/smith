@@ -22,4 +22,3 @@ extern size_t smith_header_flag_count;
 extern const char *smith_header_source;
 
 int smith_lang_main(int count, char **args, bool header);
-

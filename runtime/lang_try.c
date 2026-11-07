@@ -13,16 +13,13 @@
 // A statement expression keeps the `try` where it is written, so nothing before it has to be rewritten.
 // A generic's body is recorded as written; smith_lang_try_replay (runtime/lang_enum.c) writes the same for an instance.
 
-
-
-
+#include "lang_try.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_enum.h"
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_sparse.h"
-#include "lang_try.h"
 #include "lang_tuple.h"
 
 typedef enum { SmithLangTryStep_Inside, SmithLangTryStep_Ends, SmithLangTryStep_Escapes } SmithLangTryStep;

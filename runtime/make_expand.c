@@ -3,12 +3,9 @@
 // meeting `$(` it pushes a call frame, which expands its arguments by pushing a text frame for each, then computes. The
 // buffer is a stack too: a call's result goes where its first argument began. Included by smith.c after make.c.
 
-
-
-
+#include "make_expand.h"
 #include "core.h"
 #include "make.h"
-#include "make_expand.h"
 #include "mcp_unit.h"
 
 typedef struct {
@@ -57,14 +54,9 @@ static const SmithMakeFunction smith_make_functions[] = {
     {"call", SmithMakeFn_Call, 1, smith_make_args_max, true},
 };
 
-
-
-
 SmithMakeMachine smith_make_machine;
 
-
 SmithMakeAuto smith_make_auto;
-
 
 // ---- C text
 
@@ -182,7 +174,6 @@ static const char *smith_make_c_name(const char *name) {
     out[length] = '\0';
     return out;
 }
-
 
 SmithMakeIdents smith_make_idents;
 

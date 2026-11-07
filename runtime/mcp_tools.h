@@ -49,4 +49,3 @@ typedef struct {
 extern const SmithMcpToolEntry smith_mcp_tool_table[11];
 
 constexpr size_t smith_mcp_tool_count = sizeof smith_mcp_tool_table / sizeof smith_mcp_tool_table[0];
-

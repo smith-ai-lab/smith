@@ -54,4 +54,3 @@ void smith_make_append(const char ***list, size_t *count, const char *const *mor
 void smith_make_graph_build(void);
 
 void smith_make_node_expand(SmithMakeNode *node);
-

@@ -4,6 +4,7 @@
 
 // The name of an enumeration constant, or of a declarator after an aggregate's closing brace: names the module
 // introduces. Returns false when this identifier is neither.
+#include "lang_stream.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_body.h"
@@ -21,7 +22,6 @@
 #include "lang_rfor.h"
 #include "lang_slice.h"
 #include "lang_sparse.h"
-#include "lang_stream.h"
 #include "lang_target.h"
 #include "lang_trivia.h"
 #include "lang_try.h"
@@ -987,7 +987,6 @@ static void smith_lang_write_file(const char *path, const char *bytes, size_t le
     fwrite(bytes, 1, length, file);
     fclose(file);
 }
-
 
 void smith_lang_finish(SmithLang *lang) {
     if (lang->finished) return;

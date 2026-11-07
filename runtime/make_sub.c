@@ -2,8 +2,7 @@
 // the graph of this one, named with the folder in front and run with `cd dir` first (the graph is flattened). Included
 // by smith.c after make_cc.c.
 
-
-
+#include "make_sub.h"
 #include "core.h"
 #include "make.h"
 #include "make_cc.h"
@@ -11,7 +10,6 @@
 #include "make_expand.h"
 #include "make_graph.h"
 #include "make_read.h"
-#include "make_sub.h"
 
 SmithMakeSub smith_make_subs[smith_make_subs_max];
 size_t smith_make_sub_count;
@@ -28,10 +26,9 @@ const char *smith_make_under(const char *dir, const char *name) {
     return smith_make_format("%s/%s", dir, name);
 }
 
-
 // A command that runs make: on this Makefile (its goals), in another folder (-C dir and its goals), or in another way.
 SmithMakeCall smith_make_parse_make(const SmithMakeCommand *command, const char **folder, const char ***goals,
-                                           size_t *count) {
+                                    size_t *count) {
     SmithMakeArgv argv;
     if (!smith_make_lex(smith_make_unmark(command->text), true, &argv) || argv.count == 0) return SmithMakeCall_None;
     if (strcmp(smith_make_basename(argv.args[0].text), "make") != 0) return SmithMakeCall_None;

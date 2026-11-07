@@ -21,9 +21,9 @@ constexpr size_t smith_lang_gen_uses_max = 8192;
 
 constexpr size_t smith_lang_hidden_max = 1024; // private names of imports an instance section declares
 
-constexpr size_t smith_lang_linked_max = 256;  // private names of a module that have a symbol (its header says which)
+constexpr size_t smith_lang_linked_max = 256; // private names of a module that have a symbol (its header says which)
 
-constexpr size_t smith_lang_slots = 131072;    // a power of two, twice the names
+constexpr size_t smith_lang_slots = 131072; // a power of two, twice the names
 
 constexpr size_t smith_lang_chars_max = (size_t)1 << 20;
 
@@ -37,7 +37,7 @@ constexpr size_t smith_lang_batch_max = 4096;
 
 constexpr size_t smith_lang_call_sites_max = 2048; // calls to generics the editor can be told of
 
-constexpr size_t smith_lang_call_frames_max = 16;  // generic calls inside generic calls' arguments
+constexpr size_t smith_lang_call_frames_max = 16; // generic calls inside generic calls' arguments
 
 constexpr size_t smith_lang_braces_max = 256;
 
@@ -87,50 +87,50 @@ constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the 
 
 constexpr size_t smith_lang_transitive_max = 64;
 
-constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
+constexpr size_t smith_lang_cond_depth_max = 64; // #if nested in a module the header pass reads
 
-constexpr size_t smith_lang_include_max = 16384;      // the header's include lines
+constexpr size_t smith_lang_include_max = 16384; // the header's include lines
 
-constexpr size_t smith_lang_cimports_max = 64;        // `import <h>;` lines of one module
+constexpr size_t smith_lang_cimports_max = 64; // `import <h>;` lines of one module
 
-constexpr size_t smith_lang_cuses_max = 512;          // the C names (`c::X`) that exported declarations use
+constexpr size_t smith_lang_cuses_max = 512; // the C names (`c::X`) that exported declarations use
 
-constexpr size_t smith_lang_cond_lines_max = 32;      // lines of one chain: #if, #elif..., #else
+constexpr size_t smith_lang_cond_lines_max = 32; // lines of one chain: #if, #elif..., #else
 
-constexpr size_t smith_lang_cnames_max = 8192;        // exports of imported modules that have a C name of their own
+constexpr size_t smith_lang_cnames_max = 8192; // exports of imported modules that have a C name of their own
 
 constexpr size_t smith_lang_gt_max = (size_t)1 << 17; // tokens of generics, and of the calls being read
 
 constexpr size_t smith_lang_gt_text_max = (size_t)1 << 21; // their text
 
-constexpr size_t smith_lang_it_max = (size_t)1 << 15;      // tokens of the types instances were asked for
+constexpr size_t smith_lang_it_max = (size_t)1 << 15; // tokens of the types instances were asked for
 
 constexpr size_t smith_lang_it_text_max = (size_t)1 << 19; // their text
 
-constexpr size_t smith_lang_body_names_max = 512;          // exported functions with a body that one module lists
+constexpr size_t smith_lang_body_names_max = 512; // exported functions with a body that one module lists
 
-constexpr size_t smith_lang_generics_max = 256;            // generics known: the module's own and the imports'
+constexpr size_t smith_lang_generics_max = 256; // generics known: the module's own and the imports'
 
-constexpr size_t smith_lang_instances_max = 4096;          // instances asked for in one file
+constexpr size_t smith_lang_instances_max = 4096; // instances asked for in one file
 
-constexpr size_t smith_lang_type_params_max = 32;          // `type T` parameters of one generic
+constexpr size_t smith_lang_type_params_max = 32; // `type T` parameters of one generic
 
-constexpr size_t smith_lang_call_params_max = 32;          // parameters of one generic
+constexpr size_t smith_lang_call_params_max = 32; // parameters of one generic
 
 constexpr size_t smith_lang_entries_max =
     smith_lang_type_params_max + smith_lang_call_params_max; // types of an instance
 
-constexpr size_t smith_lang_instance_depth_max = 32;         // generics asked for by the instances of generics
+constexpr size_t smith_lang_instance_depth_max = 32; // generics asked for by the instances of generics
 
-constexpr size_t smith_lang_generic_modules_max = 64;        // modules whose generics were read
+constexpr size_t smith_lang_generic_modules_max = 64; // modules whose generics were read
 
-constexpr size_t smith_lang_rfor_depth_max = 16;             // range `for` loops over slices open at once
+constexpr size_t smith_lang_rfor_depth_max = 16; // range `for` loops over slices open at once
 
-constexpr size_t smith_lang_if_depth_max = 32;               // `if constexpr` blocks open at once
+constexpr size_t smith_lang_if_depth_max = 32; // `if constexpr` blocks open at once
 
-constexpr size_t smith_lang_constants_max = 256;             // `constexpr` constants a condition may name
+constexpr size_t smith_lang_constants_max = 256; // `constexpr` constants a condition may name
 
-constexpr size_t smith_lang_condition_max = 200;             // tokens of one condition
+constexpr size_t smith_lang_condition_max = 200; // tokens of one condition
 
 constexpr size_t smith_lang_generic_scan_max = 200; // tokens read ahead to see whether a declaration is generic
 
@@ -788,4 +788,3 @@ const SmithLangSized *smith_lang_find_sized(const char *text, size_t length);
 SmithLangText smith_lang_store(SmithLang *lang, const char *text, size_t length);
 
 const char *smith_lang_str(SmithLangText text);
-

@@ -10,12 +10,12 @@
 // The declared type decides between a copy and a pointer: `T x` copies when T is the element type, anything else is
 // the address of the element (`T *p`), a choice of C's own (`__builtin_choose_expr`).
 
+#include "lang_rfor.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_generic.h"
 #include "lang_main.h"
 #include "lang_out.h"
-#include "lang_rfor.h"
 #include "lang_slice.h"
 #include "lang_tuple.h"
 

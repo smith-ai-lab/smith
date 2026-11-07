@@ -6,4 +6,3 @@
 void smith_cache_hold(void);
 
 int smith_cache_main(int count, char **args);
-

@@ -16,4 +16,3 @@ bool smith_sym_source(const char *file, uint32_t line, char *text, size_t capaci
 int smith_symbolize_main(int argc, char **argv);
 
 int smith_llvm_symbolizer_main(int argc, char **argv);
-

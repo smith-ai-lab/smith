@@ -4,9 +4,9 @@
 // their first heavy step (the base: the run's first worker rides on it); every further worker the run starts (an
 // executor job, a test runner worker) takes one more and gives it back when it ends, so a run grows as tokens free up.
 // knowledge/slots.md. Included by smith.c.
+#include "slots.h"
 #include "core.h"
 #include "mcp_unit.h"
-#include "slots.h"
 
 constexpr int smith_slots_max = 64;
 constexpr long smith_slots_poll_ms = 200;
@@ -15,7 +15,7 @@ constexpr long smith_slots_wait_max_ms = 4L * 60 * 60 * 1000; // a backstop: aft
 constexpr size_t smith_slots_text_max = 1024;
 
 static int smith_slots_fd = -1; // the base token this process holds; closed by the OS when the process ends
-[[maybe_unused]] static bool smith_slots_ci;     // this process runs for CI (SMITH_PRIORITY=ci)
+[[maybe_unused]] static bool smith_slots_ci; // this process runs for CI (SMITH_PRIORITY=ci)
 
 // What this run measured about the pool (issue #754), written to stderr when it ends, for a CI run or when
 // SMITH_SLOTS_LOG is set: how long the base token took, how often and for how long a worker found no token, and how

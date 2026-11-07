@@ -3,13 +3,13 @@
 // runtime/lang_generic.c
 
 // Reads tokens up to the `;` that ends a line, for a line that is malformed.
+#include "lang_import.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_body.h"
 #include "lang_decl.h"
 #include "lang_enum.h"
 #include "lang_generic.h"
-#include "lang_import.h"
 #include "lang_main.h"
 #include "lang_names.h"
 #include "lang_out.h"

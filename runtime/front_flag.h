@@ -26,4 +26,3 @@ int smith_lint_fix(int count, char **args, const char *self);
 #if !defined(SMITH_CORE)
 int smith_fmt_front(int *count, char **args, bool *only);
 #endif
-

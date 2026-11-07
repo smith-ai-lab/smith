@@ -9,9 +9,10 @@
 //   check  fmt, docs, lint, test and prove, each reported, the exit status 1 if any failed
 // What a verb needs from build.c it reads from .smith/build.info, which every run of build.c writes
 // (knowledge/verbs.md). Included by smith.c.
-#include "core.h"
+#include "verbs.h"
 #include "account.h"
 #include "changed.h"
+#include "core.h"
 #include "coverage.h"
 #include "docs.h"
 #include "executor.h"
@@ -21,7 +22,6 @@
 #include "quiet.h"
 #include "slots.h"
 #include "test_cache.h"
-#include "verbs.h"
 #include "world.h"
 
 #include <fnmatch.h>

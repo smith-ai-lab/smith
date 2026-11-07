@@ -24,8 +24,8 @@
 // each and as root/relative, every file it read or found to exist: the documents, the skills, and what each link
 // points at. A file that is not there is not named, since the check then has a problem and builds no stamp. A space is
 // written as "\ ", # as "\#" and $ as "$$". A build.c step reruns the check when one of them changes.
-#include "core.h"
 #include "docs.h"
+#include "core.h"
 #include "main.h"
 
 #include <dirent.h>

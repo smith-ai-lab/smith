@@ -3,12 +3,12 @@
 // (the lowered text, for reading). It has no macros and no parser: `#include` lines are noted for the header, other
 // directives are skipped, and the questions about names are answered with "unknown". Included by runtime/lang.c.
 
+#include "lang_lex.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_enum.h"
 #include "lang_fields.h"
 #include "lang_generic.h"
-#include "lang_lex.h"
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_slice.h"

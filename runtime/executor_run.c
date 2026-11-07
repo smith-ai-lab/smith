@@ -1,12 +1,12 @@
 // The progress line, the jobs and the loop that runs them. A job is a process; smith_io_run waits for all of them at
 // once on the io's kqueue, and each job's output is printed whole when it ends, as ninja does.
 
+#include "executor_run.h"
 #include "core.h"
 #include "executor.h"
 #include "executor_cache.h"
 #include "executor_manifest.h"
 #include "executor_plan.h"
-#include "executor_run.h"
 #include "executor_state.h"
 #include "main.h"
 #include "quiet.h"

@@ -12,4 +12,3 @@ extern bool smith_lang_unused_has_last;
 extern bool smith_lang_brackets_extern_seen;
 
 bool smith_lang_unused_token(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-

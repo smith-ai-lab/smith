@@ -1,22 +1,14 @@
 // Reading a Makefile: logical lines, assignments, `define`, `include`, conditionals (a test of the platform or an
 // option keeps both branches) and rules. Included by smith.c after make_expand.c.
 
+#include "make_read.h"
 #include "core.h"
 #include "make.h"
 #include "make_expand.h"
-#include "make_read.h"
 #include "mcp_unit.h"
 
 constexpr size_t smith_make_targets_max = 32768;
 constexpr size_t smith_make_refs_max = 65536;
-
-
-
-
-
-
-
-
 
 SmithMakeReader smith_make_reader;
 

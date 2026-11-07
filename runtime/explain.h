@@ -6,4 +6,3 @@
 int smith_explain_main(int argc, char **argv, const char *self);
 
 int smith_crash_main(int argc, char **argv, const char *self);
-

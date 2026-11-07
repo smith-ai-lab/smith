@@ -10,4 +10,3 @@ bool smith_lang_rfor(SmithLang *lang, const SmithHost *host, const SmithToken *t
 bool smith_lang_rfor_count(SmithLang *lang, const SmithToken *token);
 
 void smith_lang_rfor_close(SmithLang *lang, const SmithToken *token);
-

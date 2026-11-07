@@ -848,7 +848,7 @@ static const char *const build_runtime_sources[] = {
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
 // library and the protocol runtime, each an object of its own now that smith.c includes none of them.
 static const char *const build_runtime_sources_mcp[] = {".smith/protocol/dap.c", ".smith/protocol/mcp.c", "lib/json.c",
-                                                         "runtime/protocol/protocol.c", nullptr};
+                                                        "runtime/protocol/protocol.c", nullptr};
 static const char *const build_runtime_sources_linux[] = {"runtime/platform_linux.c", nullptr};
 static const char *const build_runtime_sources_macos[] = {"runtime/platform_macos.c", "runtime/sdk_cache.c", nullptr};
 
@@ -1154,9 +1154,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", nullptr},
-                                     build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
-                                     build_llvm_required(b, config), nullptr),
+        .implicit_inputs =
+            smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, build_library_sources(b),
+                      config->headers, config->protocol, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);

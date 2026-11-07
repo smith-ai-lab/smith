@@ -82,16 +82,16 @@ extern char smith_lang_gen_dump[(size_t)1 << 20];
 void smith_lang_gen_note_break(SmithLang *lang);
 
 void smith_lang_gen_put_expanding(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
-                                         uint32_t location, uint32_t instance, bool expand);
+                                  uint32_t location, uint32_t instance, bool expand);
 
 void smith_lang_gen_put(SmithLang *lang, const SmithHost *host, SmithTokenKind kind, const char *text,
-                               uint32_t location, uint32_t instance);
+                        uint32_t location, uint32_t instance);
 
 uint32_t smith_lang_gen_place(const SmithHost *host, const SmithLangGeneric *generic, SmithLangGenToken *token,
-                                     uint32_t fallback);
+                              uint32_t fallback);
 
 void smith_lang_gen_put_token(SmithLang *lang, const SmithHost *host, const SmithLangPool *pool,
-                                     const SmithLangGenToken *token, uint32_t location, uint32_t instance, bool real);
+                              const SmithLangGenToken *token, uint32_t location, uint32_t instance, bool real);
 
 size_t smith_lang_it_spelling(uint32_t first, uint32_t count, char *out, size_t capacity);
 
@@ -108,21 +108,21 @@ typedef struct {
     uint32_t end;
 } SmithLangSpan;
 
-void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
-                                   unsigned param, uint32_t instance_id);
+void smith_lang_gen_put_arg(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance, unsigned param,
+                            uint32_t instance_id);
 
 void smith_lang_gen_slice_tag_text(SmithLang *lang, const SmithHost *host, const SmithLangInstance *instance,
-                                          unsigned param, uint32_t location, char *tag, size_t capacity);
+                                   unsigned param, uint32_t location, char *tag, size_t capacity);
 
 uint32_t smith_lang_generic_skip_attributes(const SmithLangGeneric *generic);
 
 void smith_lang_gen_put_run(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                   const SmithLangInstance *instance, uint32_t from, uint32_t to, uint32_t location,
-                                   uint32_t instance_id);
+                            const SmithLangInstance *instance, uint32_t from, uint32_t to, uint32_t location,
+                            uint32_t instance_id);
 
 constexpr size_t smith_lang_pack_name_max = 64; // characters of the argument list's or a loop variable's name
 
-constexpr size_t smith_lang_vars_max = 40;      // `for constexpr` loops open at once, and the numbers of an instance
+constexpr size_t smith_lang_vars_max = 40; // `for constexpr` loops open at once, and the numbers of an instance
 
 // The variable of a `for constexpr`: a number while the loop is written out.
 typedef struct {
@@ -224,53 +224,51 @@ bool smith_lang_member_before(uint32_t at);
 
 bool smith_lang_pack_resolve(const SmithLangReplay *replay, uint32_t at, SmithLangPackRef *ref);
 
-bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit,
-                                       SmithLangPackRef *ref);
+bool smith_lang_pack_countof_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit, SmithLangPackRef *ref);
 
 bool smith_lang_var_value(const SmithLangReplay *replay, uint32_t at, int64_t *value);
 
 uint32_t smith_lang_group_end(uint32_t begin, uint32_t limit);
 
-bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *instance, uint32_t fallback,
-                                  uint32_t *first, uint32_t *count);
+bool smith_lang_stage_type(SmithLangSpan span, const SmithLangInstance *instance, uint32_t fallback, uint32_t *first,
+                           uint32_t *count);
 
 extern uint32_t smith_lang_written_used;
 
 void smith_lang_infer_written(SmithLangSpan span, char *out, size_t capacity);
 
 bool smith_lang_infer_text(SmithLangSpan span, const SmithLangInstance *instance, uint32_t location, char *out,
-                                  size_t capacity);
+                           size_t capacity);
 
-int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance,
-                                    SmithLangSpan span);
+int smith_lang_param_type_of(const SmithLangGeneric *generic, const SmithLangInstance *instance, SmithLangSpan span);
 
 int smith_lang_generic_of(SmithLang *lang, const SmithHost *host, const char *text, size_t length);
 
-void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location,
-                                   unsigned concept_id, const char *judged);
+void smith_lang_concept_why(const SmithLang *lang, const SmithHost *host, uint32_t error_location, unsigned concept_id,
+                            const char *judged);
 
 void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module);
 
 int smith_lang_generic_resolve(SmithLang *lang, const SmithHost *host, const char *module, size_t module_length,
-                                      const char *member, size_t member_length);
+                               const char *member, size_t member_length);
 
 void smith_lang_member_name(const char *module, size_t module_length, const char *member, size_t member_length,
-                                   char *out, size_t capacity);
+                            char *out, size_t capacity);
 
 void smith_lang_callee_name(const SmithLang *lang, const char *module, size_t module_length, const char *member,
-                                   size_t member_length, char *out, size_t capacity);
+                            size_t member_length, char *out, size_t capacity);
 
 extern bool smith_lang_replay_after_open;
 
 void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay);
 
 void smith_lang_replay_begin(SmithLangReplay *replay, const SmithLangGeneric *generic,
-                                    const SmithLangInstance *instance, uint32_t id, uint32_t location);
+                             const SmithLangInstance *instance, uint32_t id, uint32_t location);
 
 void smith_lang_generic_instances(SmithLang *lang, const SmithHost *host);
 
 void smith_lang_gen_mark(SmithLang *lang, SmithLangGenSpecial special, const char *text, size_t length,
-                                uint32_t location);
+                         uint32_t location);
 
 void smith_lang_generic_poison(SmithLang *lang, const SmithHost *host, uint32_t location);
 
@@ -279,15 +277,14 @@ void smith_lang_generic_advance(SmithLang *lang, const SmithHost *host, const Sm
 void smith_lang_generic_unclosed(SmithLang *lang, const SmithHost *host);
 
 bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                    const SmithLangBinding *binding, const SmithToken *member);
+                             const SmithLangBinding *binding, const SmithToken *member);
 
 bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                         const SmithLangName *known);
+                                  const SmithLangName *known);
 
-void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
-                                            const char *name, size_t length, uint32_t location);
+void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known, const char *name,
+                                     size_t length, uint32_t location);
 
 void smith_lang_generics_aside(bool save, const SmithLang *lang);
 
 void smith_lang_generics_reset(void);
-

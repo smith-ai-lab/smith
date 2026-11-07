@@ -2,12 +2,12 @@
 // module's prefix, `static` if it is private, and for an exported function a prototype carrying the symbol.
 // Included by runtime/lang.c, after runtime/lang_import.c.
 
+#include "lang_head.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_body.h"
 #include "lang_decl.h"
 #include "lang_generic.h"
-#include "lang_head.h"
 #include "lang_main.h"
 #include "lang_out.h"
 #include "lang_private.h"
@@ -257,7 +257,6 @@ static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
 // ---- Writing the head out
 // ------------------------------------------------------------------------------------------------
 
-
 static SmithToken smith_lang_punct_after(const char *text, const SmithToken *like) {
     SmithToken made = smith_lang_synth(SmithTokenKind_Punctuator, text, strlen(text), like);
     made.line_start = false;
@@ -340,7 +339,6 @@ static bool smith_lang_head_dropped(const SmithLang *lang, size_t index) {
 // that is not null and has N objects (`dereferenceable`), and which `smith prove` reads. The generated header keeps
 // the C declaration. The first dimension only; a parameter with no size is an error.
 
-
 // What the token after the `[` of an array parameter says of its size.
 SmithLangArray smith_lang_array_size(const SmithToken *token) {
     if (smith_lang_punct(token, "]")) return SmithLangArray_Unsized;
@@ -364,7 +362,7 @@ void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t l
 // list, with how deep in `[ ]` it is before and after. The tokens of each dimension are kept as the code wrote them.
 
 void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
-                                   SmithTokenKind kind, uint32_t before, uint32_t after) {
+                            SmithTokenKind kind, uint32_t before, uint32_t after) {
     bool open = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == '[';
     bool close = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == ']';
     SmithLangArrayParam *param =
@@ -410,7 +408,6 @@ void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *
         lang->array_pending[length] = 0;
     }
 }
-
 
 // The end of the braces that open at the held token `open`, or `head_count` when they do not close.
 static size_t smith_lang_head_close_brace(const SmithLang *lang, size_t open) {
@@ -602,7 +599,6 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
         smith_lang_variable_token(lang, host, pieces[i], in_code); // the five pieces
     lang->emit_synthetic = false;
 }
-
 
 // An exported `constexpr Type Y = X;` is `typedef X Y;` in the header, so C callers see the name. What was written to
 // the header after the `typedef` keyword is the initializer, as the lowering spelled it (`double;`, `uint8_t[16];`,

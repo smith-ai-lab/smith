@@ -12,4 +12,3 @@ size_t smith_lc_extra(size_t number, char **extra);
 void smith_lc_store(size_t number, int wait_status, FILE *log);
 
 bool smith_lc_open(void);
-

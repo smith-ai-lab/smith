@@ -5,4 +5,3 @@
 #include "lang.h"
 
 int smith_lang_command(int argc, char **argv, int first, char **out, size_t capacity);
-

@@ -121,12 +121,12 @@ static char smith_command_buffer[smith_command_max + 1];
     abort();
 }
 
-// The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file. The units runner
-// links runtime/package_unit.c beside this object (#2685), so there it takes the declarations only.
+// The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file. The units
+// runner links runtime/package_unit.c beside this object (#2685), so there it takes the declarations only.
 #ifdef SMITH_BUILD_CORE
-#include "package.h"
 #include <ftw.h>
 #include <time.h>
+#include "package.h"
 
 constexpr int smith_cache_walk_files = 64; // package.c's, which nftw gets as its open-descriptor limit
 #else

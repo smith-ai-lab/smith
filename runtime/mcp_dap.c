@@ -8,8 +8,8 @@
 
 // --- the loop -------------------------------------------------------------------------------------------------
 
-#include "core.h"
 #include "mcp_dap.h"
+#include "core.h"
 #include "mcp_text.h"
 #include "mcp_unit.h"
 #ifdef SMITH_MCP
@@ -385,11 +385,8 @@ bool smith_mcp_dap_transmit(SmithMcpServer *server, SmithMcpSession *session, Sm
     return !session->input_closed;
 }
 
-
-
 // Takes the response to the request with that seq, waiting for it up to the timeout.
-SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq,
-                                         int64_t timeout_ns) {
+SmithMcpReply smith_mcp_dap_await(SmithMcpServer *server, SmithMcpSession *session, int64_t seq, int64_t timeout_ns) {
     SmithMcpReply reply = {};
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
     SmithMcpResponse *found = smith_mcp_response_find(session, seq);
@@ -430,8 +427,6 @@ SmithMcpReply smith_mcp_reply_dead(void) {
     return (SmithMcpReply){.status = SmithMcpReply_Dead};
 }
 
-
-
 // Why a request did not succeed, as one line.
 void smith_mcp_reply_error(const SmithMcpReply *reply, const char *what, SmithMcpText *out) {
     switch (reply->status) {
@@ -454,7 +449,6 @@ void smith_mcp_reply_error(const SmithMcpReply *reply, const char *what, SmithMc
 }
 
 // --- taking events -------------------------------------------------------------------------------------------------
-
 
 static void smith_mcp_note_output(SmithMcpText *notes, const SmithMcpEvent *event) {
     if (notes == nullptr) return;
@@ -514,7 +508,7 @@ SmithMcpTake smith_mcp_events_take(SmithMcpSession *session, SmithMcpText *notes
 // Waits for the program to stop or finish, taking the events in order. Nothing means the time ran out with the
 // program still running.
 SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession *session, int64_t timeout_ns,
-                                        SmithMcpText *notes, SmithMcpEvent *stop) {
+                                 SmithMcpText *notes, SmithMcpEvent *stop) {
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
         SmithMcpTake taken = smith_mcp_events_take(session, notes, stop);
@@ -534,7 +528,7 @@ SmithMcpTake smith_mcp_wait_stop(SmithMcpServer *server, SmithMcpSession *sessio
 // Waits for the adapter's `initialized` event, which says it takes the configuration (breakpoints) now; the launch
 // request's own reply, if it comes first, is a refusal.
 bool smith_mcp_wait_initialized(SmithMcpServer *server, SmithMcpSession *session, int64_t launch_seq,
-                                       int64_t timeout_ns) {
+                                int64_t timeout_ns) {
     uint64_t deadline = smith_mcp_deadline(server, timeout_ns);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
         for (size_t i = 0; i < session->event_count; i++) { // bounded by the queue

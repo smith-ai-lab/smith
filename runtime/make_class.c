@@ -1,12 +1,10 @@
 // What each target of the Makefile becomes: dropped, an alias, an object, a program, a step or a task. Included by
 // smith.c after make_cc.c.
 
-
-
+#include "make_class.h"
 #include "core.h"
 #include "make.h"
 #include "make_cc.h"
-#include "make_class.h"
 #include "make_emit.h"
 #include "make_graph.h"
 #include "make_read.h"
@@ -279,7 +277,6 @@ void smith_make_classify(void) {
 }
 
 // ---- The names a step lists as inputs
-
 
 // Adds one input; past the limit it is reported (once per list), never dropped without a word.
 static void smith_make_input_add(const char **result, size_t *used, const char *name) {

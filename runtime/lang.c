@@ -19,38 +19,6 @@
 
 #include "lang.h"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 char smith_lang_chars[smith_lang_chars_max];
 char smith_lang_scratch[smith_lang_scratch_max];
 char smith_lang_header_body[smith_lang_header_max];
@@ -58,9 +26,8 @@ char smith_lang_header_full[smith_lang_header_max + 4096];
 char smith_lang_dump[smith_lang_dump_max];
 SmithLang smith_lang_instance;
 
-
-
-SmithLangCounter smith_lang_counter = {.slice_cut = smith_lang_counter_cut_start, .slice_convert = smith_lang_counter_convert_start};
+SmithLangCounter smith_lang_counter = {.slice_cut = smith_lang_counter_cut_start,
+                                       .slice_convert = smith_lang_counter_convert_start};
 
 typedef struct {
     const char *text;
@@ -158,7 +125,6 @@ static const SmithLangWordEntry smith_lang_words[] = {
     SMITH_LANG_WORD("volatile", SmithLangWord_Qualifier),
     SMITH_LANG_WORD("while", SmithLangWord_Keyword),
 };
-
 
 const SmithLangSized smith_lang_sized[] = {
     {"F16", "_Float16", "_Float16"},
@@ -270,7 +236,6 @@ const char *smith_lang_capital_name(const char *text, size_t length) {
     }
     return nullptr;
 }
-
 
 // Writes a source text into `out` (room for `length * 3 + 1`) with the lowercase names in place of the capitalized
 // ones: the same length for every type, a longer name for a concept when `concepts` is set. Comments and strings are

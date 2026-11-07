@@ -1,17 +1,15 @@
 // What names mean: the module's table, the import bindings, and the lowering of one identifier. Included by
 // runtime/lang.c, after runtime/lang_out.c.
 
-
-
 // runtime/lang_sparse.c
 
 // runtime/lang_names.c
 
 // runtime/lang_generic.c
 
+#include "lang_decl.h"
 #include "core.h"
 #include "lang.h"
-#include "lang_decl.h"
 #include "lang_generic.h"
 #include "lang_main.h"
 #include "lang_names.h"
@@ -316,7 +314,7 @@ static bool smith_lang_tag_clash(SmithLangNameKind first, SmithLangNameKind seco
 // A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one (or the
 // C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
 const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                      uint32_t location, SmithLangNameKind kind, bool exported) {
+                               uint32_t location, SmithLangNameKind kind, bool exported) {
     if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) {
         return nullptr;
     }
@@ -531,7 +529,7 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
 
 // smith_lang_namespace_read, remembering the name it made: a declaration `m::T x = ...` is typed from it at its `=`.
 bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                 const SmithLangBinding *binding, SmithToken *result) {
+                          const SmithLangBinding *binding, SmithToken *result) {
     bool read = smith_lang_namespace_read(lang, host, name, binding, result);
     if (read && !lang->namespace_done && result->length < sizeof lang->slice.qualified) {
         snprintf(lang->slice.qualified, sizeof lang->slice.qualified, "%.*s", (int)result->length, result->text);
@@ -604,8 +602,7 @@ static void smith_lang_check_c_tag(SmithLang *lang, const SmithHost *host, const
 // A module's tag is also a type name: `struct Point {...};` is `typedef struct m_Point m_Point;` too, written before
 // the next declaration (so the definition is complete when an enum is named; a struct's own body names itself through
 // `struct`, runtime/lang_stream.c). The typedef is due once, where the tag is first declared.
-void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char word, const char *spelling,
-                               bool late) {
+void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char word, const char *spelling, bool late) {
     SmithLangName *entry = smith_lang_name_find(lang, name, length);
     if (entry == nullptr || word == 0 || lang->due_count >= smith_lang_due_max || lang->recording ||
         lang->generated_name) {
@@ -623,7 +620,7 @@ void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char w
 }
 
 SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                             uint32_t location, const SmithToken **next, char word) {
+                                      uint32_t location, const SmithToken **next, char word) {
     char context_word = word;
     SmithLangLowered kept = smith_lang_keep();
     kept.is_type = true;
@@ -682,8 +679,8 @@ static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, co
 }
 
 // A name used in a module that a C header declared, with no `c.`.
-void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                    uint32_t location, bool *is_type) {
+void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length, uint32_t location,
+                             bool *is_type) {
     if (lang->generated_name || (length >= 2 && name[0] == '_' && name[1] == '_')) return;
     if (smith_lang_in_attribute(lang) || (host->previous != nullptr && smith_lang_sparse_in_attribute(lang, host))) {
         return; // [[gnu::format(printf, 1, 2)]]: printf is the attribute's word for a kind of format
@@ -703,7 +700,7 @@ void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char 
 
 // What a name that nothing special applies to becomes. `next` is the token after it.
 SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                         uint32_t location, const SmithLangContext *context, const SmithToken *next) {
+                                  uint32_t location, const SmithLangContext *context, const SmithToken *next) {
     if (smith_lang_word(name, length) != SmithLangWord_Other || context->after_member) return smith_lang_keep();
     if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next, context->tag_word);
     SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);

@@ -7,16 +7,15 @@
 // answers Slow, before it has changed anything, and the token goes through smith_lang_feed, which can look ahead.
 // Included by runtime/lang.c, after runtime/lang_sparse.c.
 
-
 // runtime/lang_generic.c
 
 // ---- The state a token changes in the stream (after a head), apart from writing it
 // ---------------------------------------
 
+#include "lang_declare.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
-#include "lang_declare.h"
 #include "lang_generic.h"
 #include "lang_head.h"
 #include "lang_main.h"

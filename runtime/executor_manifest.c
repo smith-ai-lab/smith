@@ -3,9 +3,9 @@
 // continuation lines. `include`, `subninja` and a variable that a rule's text takes from another rule's are not read
 // (they are errors): smith writes none of them, and SMITH_NINJA runs a manifest that has them through ninja itself.
 
+#include "executor_manifest.h"
 #include "core.h"
 #include "executor.h"
-#include "executor_manifest.h"
 #include "world.h"
 
 typedef struct {

@@ -34,16 +34,15 @@ uint32_t smith_lang_fields_countof_len(uint32_t at, uint32_t limit);
 bool smith_lang_fields_countof_at(uint32_t at, uint32_t limit);
 
 bool smith_lang_fields_stage_expression(uint32_t first, uint32_t last, const SmithLangInstance *instance,
-                                               uint32_t location, uint32_t *staged_first, uint32_t *staged_count);
+                                        uint32_t location, uint32_t *staged_first, uint32_t *staged_count);
 
 bool smith_lang_fields_expression_type(uint32_t first, uint32_t last);
 
-int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay,
-                                   uint32_t first, uint32_t last, uint32_t place, SmithLangFieldRef *ref);
+int smith_lang_fields_group(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, uint32_t first,
+                            uint32_t last, uint32_t place, SmithLangFieldRef *ref);
 
-bool smith_lang_fields_count(const SmithHost *host, const SmithLangGeneric *generic,
-                                    const SmithLangInstance *instance, uint32_t at, uint32_t location, int64_t *count,
-                                    char *message, size_t capacity);
+bool smith_lang_fields_count(const SmithHost *host, const SmithLangGeneric *generic, const SmithLangInstance *instance,
+                             uint32_t at, uint32_t location, int64_t *count, char *message, size_t capacity);
 
 uint32_t smith_lang_fields_typeof_end(uint32_t at, uint32_t limit);
 
@@ -65,25 +64,20 @@ typedef struct {
 extern SmithLangFieldArrays smith_lang_field_arrays;
 
 int smith_lang_fields_use(SmithLang *lang, const SmithHost *host, const SmithLangReplay *replay, uint32_t at,
-                                 uint32_t limit, SmithLangFieldPieces *pieces, uint32_t *consumed);
+                          uint32_t limit, SmithLangFieldPieces *pieces, uint32_t *consumed);
 
-void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                      SmithLangFrame *frame);
+void smith_lang_countof_finish(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame);
 
-bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                     SmithLangFrame *frame);
+bool smith_lang_fields_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame);
 
 void smith_lang_fields_define(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                     uint32_t location, uint32_t id);
+                              uint32_t location, uint32_t id);
 
 void smith_lang_fields_declare(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                      const SmithLangInstance *instance, uint32_t id, uint32_t location);
+                               const SmithLangInstance *instance, uint32_t id, uint32_t location);
 
-uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece,
-                                           size_t capacity);
+uint32_t smith_lang_fields_cx_piece(const SmithLangCx *cx, uint32_t at, uint32_t last, char *piece, size_t capacity);
 
 bool smith_lang_fields_valued(uint32_t first, uint32_t last);
 
-bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling,
-                                          size_t capacity);
-
+bool smith_lang_fields_valued_type(SmithLangCx *cx, uint32_t first, uint32_t last, char *spelling, size_t capacity);

@@ -7,4 +7,3 @@
 uint32_t smith_exec_node(SmithExec *exec, const char *path, size_t length, bool create, bool *created);
 
 void smith_manifest_read(SmithExec *exec);
-

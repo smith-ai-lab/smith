@@ -1,19 +1,19 @@
 // The lowering's output: what goes to the host, to the generated header and to the dump; the lookahead; errors.
 // Included by runtime/lang.c.
 
+#include "lang_out.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_decl.h"
 #include "lang_generic.h"
 #include "lang_lex.h"
 #include "lang_main.h"
-#include "lang_out.h"
 #include "lang_private.h"
 #include "lang_trivia.h"
 #include "mcp_unit.h"
 
 [[gnu::format(printf, 4, 5)]] void smith_lang_error(SmithLang *lang, const SmithHost *host, uint32_t location,
-                                                           const char *format, ...) {
+                                                    const char *format, ...) {
     char message[smith_lang_message_max];
     va_list arguments;
     va_start(arguments, format);
@@ -31,8 +31,8 @@ void smith_lang_limit(SmithLang *lang, const char *table, size_t size) {
 
 // A note for the error that is reported next at `error_location`, at `location` (0: no place, the note stands alone).
 // A host without notes says nothing of them: the error's own text stands.
-[[gnu::format(printf, 4, 5)]] void smith_lang_note(const SmithHost *host, uint32_t error_location,
-                                                          uint32_t location, const char *format, ...) {
+[[gnu::format(printf, 4, 5)]] void smith_lang_note(const SmithHost *host, uint32_t error_location, uint32_t location,
+                                                   const char *format, ...) {
     if (host->note == nullptr || location == UINT32_MAX) return;
     char message[smith_lang_message_max];
     va_list arguments;
@@ -48,8 +48,8 @@ bool smith_lang_word_char(char c) {
 
 // Writes a token in the layout of the source: a new line where it began one, a space where it had one.
 // Returns false, writing nothing, when the text does not fit: the caller sets `lang->broken`, which says so.
-bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length,
-                           bool line_start, bool space) {
+bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *text, size_t length, bool line_start,
+                    bool space) {
     size_t separator = *used > 0 && (line_start || space) ? 1 : 0;
     if (*used + separator + length + 2 > capacity) return false;
     if (separator == 1) buffer[(*used)++] = line_start ? '\n' : ' ';
@@ -61,15 +61,14 @@ bool smith_lang_put(char *buffer, size_t capacity, size_t *used, const char *tex
 // ---- Tokens kept for a later time: a generic's, and the call being read
 // ---------------------------------------------------
 
-
 SmithLangGenToken smith_lang_gt_tokens[smith_lang_gt_max];
 char smith_lang_gt_chars[smith_lang_gt_text_max];
 SmithLangGenToken smith_lang_it_tokens[smith_lang_it_max];
 char smith_lang_it_chars[smith_lang_it_text_max];
 SmithLangPool smith_lang_gt = {smith_lang_gt_tokens, smith_lang_gt_chars,    0, 0,
-                                      smith_lang_gt_max,    smith_lang_gt_text_max, 0, 0};
+                               smith_lang_gt_max,    smith_lang_gt_text_max, 0, 0};
 SmithLangPool smith_lang_it = {smith_lang_it_tokens, smith_lang_it_chars,    0, 0,
-                                      smith_lang_it_max,    smith_lang_it_text_max, 0, 0};
+                               smith_lang_it_max,    smith_lang_it_text_max, 0, 0};
 
 constexpr unsigned smith_lang_gen_flag_name = 8U;
 
@@ -118,7 +117,6 @@ SmithToken smith_lang_gt_token(const SmithLangPool *pool, const SmithLangGenToke
 bool smith_lang_capturing(const SmithLang *lang) {
     return lang->recording || lang->cap_frames > 0;
 }
-
 
 // runtime/lang_generic.c: the token is part of an exported generic's record
 
@@ -351,7 +349,6 @@ const SmithToken *smith_lang_peek(SmithLang *lang, const SmithHost *host, size_t
     return &lang->queue[(lang->queue_head + index) % smith_lang_queue_max];
 }
 
-
 // The host keeps a capitalized type name after `->` as written (a member is not a type), so the name that starts a
 // lambda's return type, `[](...) -> Bool`, is read here: after `) ->` it is the lowercase type (issue #1322).
 static void smith_lang_take_arrow(SmithLang *lang, SmithToken *token) {
@@ -397,7 +394,6 @@ SmithLangText smith_lang_scratch_store(SmithLang *lang, const char *text, size_t
 const char *smith_lang_scratch_str(SmithLangText text) {
     return smith_lang_scratch + text.offset;
 }
-
 
 // The module's prefix and a name, in lang->tmp; or the C name chosen for it, if it has one.
 const char *smith_lang_prefixed(SmithLang *lang, const char *name, size_t length) {

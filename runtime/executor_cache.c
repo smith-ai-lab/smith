@@ -15,9 +15,9 @@
 // is shared by every worktree like a release one.
 // A hit is only ever a compile with no output (a warning is not hidden), whose inputs were all older than the compile.
 
+#include "executor_cache.h"
 #include "core.h"
 #include "executor.h"
-#include "executor_cache.h"
 #include "executor_manifest.h"
 #include "executor_plan.h"
 #include "executor_run.h"
@@ -1032,8 +1032,8 @@ bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key
 
 // What the depfile names, for the graph. A compile with -MD names the system's headers too, for the cache's variant
 // alone: the graph tracks what -MMD would have named, so a no-op build stats no more files than it did.
-uint32_t smith_stepcache_graph_deps(SmithExec *exec, const SmithEdge *edge, const char *const *deps,
-                                           uint32_t count, const char ***kept) {
+uint32_t smith_stepcache_graph_deps(SmithExec *exec, const SmithEdge *edge, const char *const *deps, uint32_t count,
+                                    const char ***kept) {
     bool split = smith_stepcache_split(edge->command);
     bool has_md = false;
     for (size_t i = 0; split && i < smith_stepcache_scope.count; i++)

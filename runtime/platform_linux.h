@@ -20,4 +20,3 @@ struct timespec smith_platform_mtime(const struct stat *info);
 [[maybe_unused]] int smith_platform_process_stopped(long pid);
 
 size_t smith_platform_decompress(unsigned char *out, size_t capacity, const unsigned char *in, size_t size);
-

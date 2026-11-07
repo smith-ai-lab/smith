@@ -133,4 +133,3 @@ extern const char *smith_make_reported[smith_make_reported_max];
 extern size_t smith_make_reported_count;
 
 const char *smith_make_expand_text(const char *text, bool top);
-

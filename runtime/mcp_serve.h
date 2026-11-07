@@ -4,4 +4,3 @@
 #include "core.h"
 
 int smith_mcp_main(int argc, char **argv, const char *self);
-

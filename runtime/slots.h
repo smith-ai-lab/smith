@@ -3,7 +3,7 @@
 
 #include "core.h"
 
-constexpr int smith_slots_denied = -1;    // smith_slots_extra: no token is free for another worker
+constexpr int smith_slots_denied = -1; // smith_slots_extra: no token is free for another worker
 
 constexpr int smith_slots_unlimited = -2; // smith_slots_extra: there is no pool, the worker needs none
 
@@ -22,4 +22,3 @@ void smith_slots_need(void);
 bool smith_slots_verb(const char *name);
 
 int smith_slots_main(int count, char **args);
-

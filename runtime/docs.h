@@ -6,4 +6,3 @@
 int smith_docs_check(int count, char **args);
 
 int smith_docs_main(int count, char **args);
-

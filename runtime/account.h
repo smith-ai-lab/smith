@@ -12,4 +12,3 @@ uint64_t smith_account_now_ms(void);
 int smith_account_main(int count, char **args);
 
 void smith_account_report(const char *path, const char *what, bool all);
-

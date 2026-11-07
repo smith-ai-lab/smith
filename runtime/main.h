@@ -113,4 +113,3 @@ int smith_build_main(int count, char **args, const char *self, const char *verb)
 constexpr int smith_defaults_args_max = 262144; // arguments of smith fmt, lint and lsp; more is an error
 
 bool smith_only_options(int count, char **args);
-

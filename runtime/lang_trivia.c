@@ -8,12 +8,12 @@
 // header (smith_lang_header_token), because an export's head is held and written later. Either way an entry is applied
 // once, in order, by the first call that reaches it.
 
+#include "lang_trivia.h"
 #include "core.h"
 #include "lang.h"
 #include "lang_lex.h"
 #include "lang_main.h"
 #include "lang_out.h"
-#include "lang_trivia.h"
 
 static void smith_lang_header_room_error(SmithLang *lang) {
     lang->broken = true;

@@ -14,8 +14,8 @@
 // replaced by a fixed word in the command and the output, so a clone in another folder shares the entries. A result is
 // stored only when the run completed (exit status 0 or 1) and no file it read was changed during or just before the
 // run.
-#include "core.h"
 #include "lint_cache.h"
+#include "core.h"
 #include "mcp_unit.h"
 #include "package.h"
 #include "platform_linux.h"
