@@ -53,8 +53,9 @@ static const U8 *load(arena::Arena *store, const char *name, const char *extensi
     files::BytesResult file = files::read_file(path[0:written.length]);
     switch (file) {
     case .ok:
-        *size = countof(file.ok);
-        return file.ok.data;
+        typeof(file.ok) bytes = file.ok;
+        *size = countof(bytes);
+        return bytes.data;
     case .error:
         test::note("cannot read %s", path);
         test::check_condition(false); // ends the test

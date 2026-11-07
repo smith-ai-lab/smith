@@ -802,7 +802,7 @@ I32 entry_compare(const void *a, const void *b) {
     reads_log(where.text);
     Usize total = 0;
     c::SmithFileItem item = {};
-    for (Usize rounds = 0; rounds < ((Usize)1 << 20); rounds++) { // each round reads an entry or ends
+    for (Usize rounds = 0; rounds < 1048576U; rounds++) { // each round reads an entry or ends
         I32 found = lister_next(&counter, &item, &code);
         if (found <= 0) break;
         total++;

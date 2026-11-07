@@ -992,7 +992,11 @@ void check_slices(auto a, typeof(a) b) {
 // and then their elements (`a[1] = 5`, `b[1] = 6`).
 export void check_equal(auto a, typeof(a) b) {
     if constexpr (is_slice(typeof(a))) {
-        check_slices(a, b);
+        // what check_slices does, written here: an instance of a generic called from a generic has no `T` to infer
+        if (countof(a) != countof(b)) {
+            fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
+        }
+        check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
     } else if constexpr (is_record(typeof(a))) {
         check_part("", a, b, 0);
     } else if constexpr (target::static_analyzer) {
@@ -2587,7 +2591,7 @@ void print_detail(const Run *run) {
         Usize length = c::strcspn(at, "\n");
         Usize marker = at[0] == '@' && at[1] == ' ' ? 2 : (at[0] == '@' && at[1] == '!' && at[2] == ' ' ? 3 : 0);
         say("    %.*s\n", (I32)(length - marker), at + marker);
-        at += length + (at[length] == '\n' ? 1 : 0);
+        at = at + (length + (at[length] == '\n' ? 1U : 0U));
     }
 }
 
