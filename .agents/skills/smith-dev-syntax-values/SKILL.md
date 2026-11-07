@@ -56,5 +56,9 @@ bytes := q.cast(*mut u8)        # reinterpret a pointer: rare and unsafe
 - A conversion that cannot lose information is implicit (owner, 2026-11-06, #2531), in assignments, arguments, returns, comparisons and arithmetic (the narrower operand widens): `u8` to `u16`/`u32`/`u64`/`i16`, `i8` to `i16`/`i32`/`i64`, `u16` to `i32`, `u32` to `i64`, `f32` to `f64`, and an integer of 8, 16 or 32 bits to a float that holds it exactly (`u8`/`i8`/`u16`/`i16` to `f32`, any of them and `u32`/`i32` to `f64`). Everything else is written: narrowing, a sign change (`i32` to `u32`), `usize`/`isize` to or from a fixed width (32 bits on some targets, so `u64` to `usize` too), `i64`/`u64` to `f64`, a float to an integer. A literal keeps its rule: it takes the expected type if its value fits. `smith lint --fix` writes `.to(T)` where C converted implicitly and smith does not.
 - `to`, `wrap` and `cast` are built-in functions, so also method calls on any value. They are reserved as member names: no struct field is called `cast`, `to` or `wrap` (the tree's `Hooks.cast` is `cast_rule`, #2526); locals and parameters named `to` are fine. `as`, prefix `*p` and `(T)x` are errors whose fixes write these. There is no `&mut` and no `->`.
 
+## Strings
+
+- **Strings (D22, built by #2727 after the switch-over; until then a string has escapes but no holes):** `"..."` is the only string literal, with the usual escapes and holes: `console.println("x=${x}")`, `"addr=${format.hex(p)}"`. Only `${` opens a hole (`\${` writes it; a lone `$` is text). A string with holes is typed pieces, not a `str`: `format.string("id=${id}")` makes one, from the current allocator. `"""` writes a string over several lines, dropping the newline after it and the lines' common indentation.
+
 ## Not settled yet
 `[_]` lengths.

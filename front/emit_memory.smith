@@ -2000,6 +2000,7 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
         result = state::failf(d->span, name, " is declared twice");
     } else {
         c::LLVMValueRef global = c::LLVMAddGlobal(e->module, ty.llvm, label);
+        state::apply_align(d, global);
         // `extern` declares: the definition is in another module, so no initializer and external linkage.
         if (!d->is_extern) c::LLVMSetInitializer(global, initial);
         if (constant && !d->is_extern) c::LLVMSetGlobalConstant(global, 1);
@@ -2042,6 +2043,7 @@ export state::Status static_local(state::Emitter *e, const ast::Decl *d, state::
     c::LLVMValueRef global = c::LLVMAddGlobal(e->module, ty.llvm, symbol.data);
     state::free_text(symbol);
     c::LLVMSetInitializer(global, initial);
+    state::apply_align(d, global);
     if (constant) c::LLVMSetGlobalConstant(global, 1);
     c::LLVMSetLinkage(global, c::LLVMInternalLinkage);
     *ty_out = ty;
