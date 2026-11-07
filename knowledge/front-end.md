@@ -205,7 +205,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 ### front::types (`front/types.smith`, #1220 J1a)
 
 The types of the front end and the checker's entry point; the API is the top comment of the file.
-- `Ty` is interned in a `Table`: two types are the same exactly when their `TypeRef`s are equal. A record and an enumeration are nominal; every other type is equal by structure.
+- `Ty` is interned in a `Table`: two types are the same exactly when their `TypeRef`s are equal. A record and an enumeration are nominal; every other type is equal by structure. `Ty.kind` is a payload enum (`types::TyKind`, #2673): each kind holds only its own fields (`integer`: `bits`, `is_signed`, `name`; `pointer`, `slice`: `element`, `pointee_const`; `record`: `name`, `owner`, `c_name`, `slots`, `is_union`, `complete`, `affine`; ...), and a reader tests the kind first (`t->kind == .pointer && t->kind.pointer.element`). A read that is the same across kinds (`element_of`, `slots_of`, `bits_of`, `name_of`, `count_of`, ...) is one accessor in `front/types.smith` that has the guard once; it answers a null, an empty list or zero for a kind that has no such field, and a new reader that needs the difference tests the kind itself. A record's fields are set after it is made (`set_fields`, in place: `made->kind.record.owner = ...` under `if (made->kind == .record)`).
 - `const` on a pointee, array element or slice element is part of the type; `const` on a variable is `Symbol.is_const`.
 - Sizes belong to the target: `layout(&target, t)` takes a `Target`, never the host. `Usize` and `Isize` are the pointer's width.
 - `Scopes` is a stack of `Symbol`s (`declare`, `lookup`, `lookup_path`); a name from a C header is declared as `c::name`.

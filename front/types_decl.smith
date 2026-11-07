@@ -282,9 +282,9 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
     if (d == nullptr) return edits;
     if (d->kind != .variable) return edits;
     if (d->kind.variable.init != e) return edits;
-    if (from->element->kind != .pointer || to->element->kind != .pointer) return edits;
-    if (from->element->element != to->element->element) return edits;
-    if (from->element->pointee_const || !to->element->pointee_const) return edits;
+    if (types::element_of(from)->kind != .pointer || types::element_of(to)->kind != .pointer) return edits;
+    if (types::element_of(types::element_of(from)) != types::element_of(types::element_of(to))) return edits;
+    if (types::points_to_const(types::element_of(from)) || !types::points_to_const(types::element_of(to))) return edits;
     const ast::TypeExpr *inner = pointee_written(d->kind.variable.type);
     if (inner == nullptr || !is_plain_pointer(inner)) return edits;
     edits = mem::realloc(edits, 1);
@@ -299,8 +299,9 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
 static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e, types::TypeRef from,
                                      types::TypeRef to) {
     syntax::Edits edits = {};
-    if (from->kind != .pointer || to->kind != .pointer || from->element->kind != .pointer ||
-        to->element->kind != .pointer || !from->element->pointee_const || to->element->pointee_const)
+    if (from->kind != .pointer || to->kind != .pointer || types::element_of(from)->kind != .pointer ||
+        types::element_of(to)->kind != .pointer || !types::points_to_const(types::element_of(from)) ||
+        types::points_to_const(types::element_of(to)))
         return edits;
     const ast::Expr *array = address_of_element_base(e);
     if (array == nullptr) return edits;
@@ -325,17 +326,18 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         return true;
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
-    Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
-    drops_const =
-        drops_const || (from->kind == .slice && to->kind == .slice && from->pointee_const && !to->pointee_const);
+    Bool drops_const =
+        from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) && !types::points_to_const(to);
+    drops_const = drops_const || (from->kind == .slice && to->kind == .slice && types::points_to_const(from) &&
+                                  !types::points_to_const(to));
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
     const ast::Expr *source = pointer_source(e);
     syntax::Edits fix = mem::alloc_slice(syntax::Edit, 0);
     if (drops_const) fix = types_expr::pointer_fix(c, source);
     // `&bottom` handed where `const void **` is wanted: the local is `mut`, and its `*void` stays (#2643).
     const ast::Expr *addressed = address_operand(source);
-    if (drops_const && addressed != nullptr && to->kind == .pointer && to->element->kind == .pointer &&
-        to->element->pointee_const)
+    if (drops_const && addressed != nullptr && to->kind == .pointer && types::element_of(to)->kind == .pointer &&
+        types::points_to_const(types::element_of(to)))
         fix = types_expr::address_binding_fix(c, addressed);
     // `&p.f` handed where a `*mut` is wanted is as writable as `p`: the fix is the one for `p` (`&simulation.waiting`).
     if (drops_const && countof(fix) == 0 && addressed != nullptr) {
@@ -350,17 +352,18 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
             place = base;
         }
     }
-    if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
+    if (from->kind == .pointer && to->kind == .pointer && !types::points_to_const(from) && !types::points_to_const(to))
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
     // `&rest` where `*(*mut T)` is wanted (`strtol`'s end pointer): the local `rest: *T` becomes `*mut T`.
-    if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer && from->element->kind == .pointer &&
-        to->element->kind == .pointer && from->element->pointee_const && !to->element->pointee_const &&
+    if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer &&
+        types::element_of(from)->kind == .pointer && types::element_of(to)->kind == .pointer &&
+        types::points_to_const(types::element_of(from)) && !types::points_to_const(types::element_of(to)) &&
         address_operand(e) != nullptr)
         fix = types_expr::pointer_name_fix(c, address_operand(e));
     if (from->kind == .array && to->kind == .pointer &&
-        (from->element == to->element || to->element->kind == .void_type ||
-         (from->element->kind == .pointer && to->element->kind == .pointer))) // `execv(path, argv)`
+        (types::element_of(from) == types::element_of(to) || types::element_of(to)->kind == .void_type ||
+         (types::element_of(from)->kind == .pointer && types::element_of(to)->kind == .pointer))) // `execv(path, argv)`
         fix = types_builtin::element_address_fix(e);
     // An integer that needs `.to(T)` (a different width, a sign change, a narrowing): the message's own fix (#2506).
     if (from->kind == .integer && to->kind == .integer && countof(fix) == 0) fix = types_expr::convert_fix(e, to);
@@ -428,8 +431,8 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         // A `p.cast(*mut T)` of a `*T` drops const: the fix writes `*mut T` on the parameter or local `p` comes from
         // (std.mem's `self: *Allocator` cast to `*mut Checked`, #2427).
         syntax::Edits fix = discard_fix(e, to);
-        if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && from->pointee_const &&
-            !to->pointee_const) {
+        if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) &&
+            !types::points_to_const(to)) {
             // `(base + n).cast(*mut T)` points where `base` does: the fix is the one for `base` (#2643).
             const ast::Expr *source = e->kind.cast.operand;
             while (additive_left(source) != nullptr)
@@ -838,9 +841,9 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
                      types::show(found), "`; write a single name, or call something that returns a tuple");
         return;
     }
-    if (countof(found->slots) != countof(names)) {
+    if (countof(types::slots_of(found).items) != countof(names)) {
         types::failf(r, s->span, "this destructuring has ", countof(names), " names, but the tuple `",
-                     types::show(found), "` has ", countof(found->slots),
+                     types::show(found), "` has ", countof(types::slots_of(found).items),
                      " elements; write one name (or `_`) per element");
         return;
     }
@@ -855,7 +858,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
                          "assign with `=`, or choose another name");
             continue;
         }
-        types::TypeRef type = found->slots[i].type;
+        types::TypeRef type = types::slots_of(found).items[i].type;
         types::Symbol symbol = {
             .name = name, .kind = .variable, .type = type, .is_const = !(is_mut || names[i].is_mut), .is_new = true};
         if (!types::declare(&r->scopes, symbol)) {
@@ -1228,7 +1231,8 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     const types::Symbol *local = types::lookup(&r->scopes, name);
     types::TypeRef want = state.result;
     if (local == nullptr || local->type->kind != .result_type || want == nullptr || want->kind != .result_type ||
-        !types::same_text(types::show(local->type->error), types::show(want->error)) || name_taken(r, "ok"))
+        !types::same_text(types::show(types::error_of(local->type)), types::show(types::error_of(want))) ||
+        name_taken(r, "ok"))
         return false;
     U32 end = state.block_end;
     if (end == 0 || end < s->span.end || !only_ok_reads(fixed_source[s->span.end:end], name)) return false;
@@ -1473,8 +1477,8 @@ static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
 // The checks of `.v(x) := value else: ...` (#2494): the pattern can fail, the `else` leaves, the name is new.
 static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef t, ast::Pattern pattern,
                               const ast::Stmt *else_branch) {
-    Bool can_fail =
-        t != nullptr && (t->kind == .option || t->kind == .result_type || (t->kind == .enumeration && t->has_payload));
+    Bool can_fail = t != nullptr && (t->kind == .option || t->kind == .result_type ||
+                                     (t->kind == .enumeration && types::is_payload_enum(t)));
     if (t != nullptr && t != r->table.invalid && !can_fail) {
         types::failf(r, span, "this pattern always matches: remove `else`");
     }
@@ -1510,14 +1514,15 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
     Str binding = pattern.binding;
     types::TypeRef element = r->table.invalid;
-    if (t != nullptr && t->kind == .enumeration && t->has_payload) {
+    if (t != nullptr && t->kind == .enumeration && types::is_payload_enum(t)) {
         element = types_expr::pattern_payload(r, s->span, t, pattern);
     }
     if (countof(binding) == 0 || is_discard(binding)) {
         return;
     }
     if (t != nullptr && t->kind == .option) {
-        types::TypeRef inner = t->element; // tested as a local: a test of the field `element` would make it an option
+        types::TypeRef inner =
+            types::element_of(t); // tested as a local: a test of the field `element` would make it an option
         if (inner != nullptr) element = inner;
     }
     types::Symbol symbol = {
@@ -1714,7 +1719,7 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types::TypeRef t = types_expr::infer(r, s->kind.switch_stmt.value);
-    Bool variants = t != nullptr && t->kind == .enumeration && t->has_payload;
+    Bool variants = t != nullptr && t->kind == .enumeration && types::is_payload_enum(t);
     ast::SwitchCase cases[:] = s->kind.switch_stmt.cases;
     for (Usize i = countof(cases); i > 0; i--) {
         ast::SwitchCase *k = &cases[i - 1];
@@ -1938,19 +1943,20 @@ static void lambda_body(types::Checked *r, Pending p) {
     types::Scopes outer = r->scopes;
     r->scopes = p.scopes;
     types::push_scope(&r->scopes);
-    types::TypeRef shape = p.type->element;
+    types::TypeRef shape = types::element_of(p.type);
     Str outer_function = state.function;
     state.function = p.function;
-    for (Usize i = 0; i < countof(params) && i < countof(shape->slots); i++) {
-        types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = shape->slots[i].type};
+    for (Usize i = 0; i < countof(params) && i < countof(types::slots_of(shape).items); i++) {
+        types::Symbol symbol = {
+            .name = params[i].name, .kind = .variable, .type = types::slots_of(shape).items[i].type};
         if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
         } else {
-            note_local(params[i].name, shape->slots[i].type);
+            note_local(params[i].name, types::slots_of(shape).items[i].type);
         }
     }
-    walk(r, body, shape->element);
+    walk(r, body, types::element_of(shape));
     state.function = outer_function;
     types::pop_scope(&r->scopes);
     r->scopes = outer;
@@ -2037,7 +2043,7 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
     Str name = target->kind.function.name;
     ast::Param params[:] = target->kind.function.params;
     types::push_scope(&r->scopes);
-    for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
+    for (Usize i = 0; i < countof(params) && i < countof(types::slots_of(signature).items); i++) {
         Bool is_const = params[i].type != nullptr && params[i].type->qualifiers.is_const;
         if (params[i].is_new) {
             is_const = !params[i].is_mut;
@@ -2045,7 +2051,7 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
         ast::Attribute attributes[:] = params[i].attributes;
         types::Symbol parameter = {.name = params[i].name,
                                    .kind = .variable,
-                                   .type = signature->slots[i].type,
+                                   .type = types::slots_of(signature).items[i].type,
                                    .is_const = is_const,
                                    .is_new = params[i].is_new,
                                    .at = params[i].span,
@@ -2063,8 +2069,8 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
         r->new_body = r->new_body || params[p].is_new;
     }
     types::TypeRef outer_generator = state.generator;
-    state.generator = types_stream::generator_element(signature->element, target->kind.function.body);
-    types::TypeRef returned = signature->element;
+    state.generator = types_stream::generator_element(types::element_of(signature), target->kind.function.body);
+    types::TypeRef returned = types::element_of(signature);
     if (returns_type(target->kind.function.result))
         returned = types::builtin(&r->table, "type"); // a type function returns a type value
     walk(r, target->kind.function.body, state.generator != nullptr ? r->table.void_type : returned);

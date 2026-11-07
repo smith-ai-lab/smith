@@ -102,17 +102,17 @@ static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
     state::Ty ty = {};
     if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
     if (t->kind == .integer) {
-        if (state::scalar_type(e, t->name, &ty)) return ty;
+        if (state::scalar_type(e, types::name_of(t), &ty)) return ty;
         Str spelled = "u64";
-        if (t->bits == 8) spelled = t->is_signed ? "i8" : "u8";
-        if (t->bits == 16) spelled = t->is_signed ? "i16" : "u16";
-        if (t->bits == 32) spelled = t->is_signed ? "i32" : "u32";
-        if (t->bits == 64) spelled = t->is_signed ? "i64" : "u64";
+        if (types::bits_of(t) == 8) spelled = types::signed_of(t) ? "i8" : "u8";
+        if (types::bits_of(t) == 16) spelled = types::signed_of(t) ? "i16" : "u16";
+        if (types::bits_of(t) == 32) spelled = types::signed_of(t) ? "i32" : "u32";
+        if (types::bits_of(t) == 64) spelled = types::signed_of(t) ? "i64" : "u64";
         if (state::scalar_type(e, spelled, &ty)) return ty;
     }
     if (t->kind == .record) {
         for (Usize i = 0; i < e->record_count; i++) {
-            if (state::same_text(e->records[i].name, t->name)) {
+            if (state::same_text(e->records[i].name, types::name_of(t))) {
                 ty = e->records[i].ty;
                 return ty;
             }
@@ -152,13 +152,13 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
     Bool done = false;
     while (!done) {
         Frame *f = &frames[depth - 1];
-        Usize count = countof(f->node->slots);
+        Usize count = countof(types::slots_of(f->node).items);
         if (count > max_parts) {
             result = too_many((ast::Span){});
             break;
         }
         if (f->next < count) {
-            types::TypeRef slot = f->node->slots[f->next].type;
+            types::TypeRef slot = types::slots_of(f->node).items[f->next].type;
             if (slot->kind == .tuple) {
                 if (depth == max_depth) {
                     result = state::ty_fail("not emitted yet: a tuple nested more than 8 deep", (ast::Span){});
@@ -326,8 +326,8 @@ static Usize index_of_digits(Str name) {
 static Usize index_of(state::Emitter *e, Str name, const ast::Expr *base_node) {
     if (countof(name) > 0 && name[0] >= '0' && name[0] <= '9') return index_of_digits(name);
     types::TypeRef base = types::type_of(e->options.checked, base_node);
-    for (Usize i = 0; base != nullptr && i < countof(base->slots); i++) {
-        if (state::same_text(base->slots[i].name, name)) return i;
+    for (Usize i = 0; base != nullptr && i < countof(types::slots_of(base).items); i++) {
+        if (state::same_text(types::slots_of(base).items[i].name, name)) return i;
     }
     return 1000001;
 }

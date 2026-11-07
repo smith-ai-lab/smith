@@ -87,8 +87,10 @@ export void test_front_i128_satisfies_the_integer_concept() {
     types::Checked r = types::check(&m, (types::Options){.target = types::lp64()});
     types::TypeRef wide = types::builtin(&r.table, "I128");
     types::TypeRef unsigned_wide = types::builtin(&r.table, "U128");
-    test::check_condition(wide != nullptr && wide->kind == .integer && wide->bits == 128 && wide->is_signed);
-    test::check_condition(unsigned_wide != nullptr && unsigned_wide->kind == .integer && !unsigned_wide->is_signed);
+    test::check_condition(wide != nullptr && wide->kind == .integer && types::bits_of(wide) == 128 &&
+                          types::signed_of(wide));
+    test::check_condition(unsigned_wide != nullptr && unsigned_wide->kind == .integer &&
+                          !types::signed_of(unsigned_wide));
     test::check_condition(types::integer(&r.table, 128, true) == wide);
     test::check_condition(types::integer(&r.table, 128, false) == unsigned_wide);
 }

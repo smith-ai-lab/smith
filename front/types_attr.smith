@@ -287,9 +287,9 @@ static void check_field_defaults(types::Checked *r, const ast::Decl *d) {
     if (d->kind != .record) return;
     const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.record.name);
     if (symbol == nullptr || symbol->type == nullptr || symbol->type->kind != .record) return;
-    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(symbol->type->slots); k++) {
+    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(types::slots_of(symbol->type).items); k++) {
         const ast::Expr *given = d->kind.record.fields[k].default_value;
-        if (given != nullptr) check_default(r, given, symbol->type->slots[k].type);
+        if (given != nullptr) check_default(r, given, types::slots_of(symbol->type).items[k].type);
     }
 }
 
@@ -312,8 +312,8 @@ static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
         }
         had_default = true;
         types::TypeRef wanted = nullptr;
-        if (symbol != nullptr && symbol->type != nullptr && k < countof(symbol->type->slots))
-            wanted = symbol->type->slots[k].type;
+        if (symbol != nullptr && symbol->type != nullptr && k < countof(types::slots_of(symbol->type).items))
+            wanted = types::slots_of(symbol->type).items[k].type;
         check_default(r, given, wanted);
     }
 }

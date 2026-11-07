@@ -159,19 +159,19 @@ static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
     state::Ty ty = {};
     if (t == nullptr || t->kind == .void_type) return void_ty(e);
     if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
-    if (t->kind == .floating && arith::type_float(e, t->bits == 32 ? "f32" : "f64", &ty)) return ty;
+    if (t->kind == .floating && arith::type_float(e, types::bits_of(t) == 32 ? "f32" : "f64", &ty)) return ty;
     if (t->kind == .integer) {
-        if (state::scalar_type(e, t->name, &ty)) return ty;
+        if (state::scalar_type(e, types::name_of(t), &ty)) return ty;
         Str spelled = "u64";
-        if (t->bits == 8) spelled = t->is_signed ? "i8" : "u8";
-        if (t->bits == 16) spelled = t->is_signed ? "i16" : "u16";
-        if (t->bits == 32) spelled = t->is_signed ? "i32" : "u32";
-        if (t->bits == 64) spelled = t->is_signed ? "i64" : "u64";
+        if (types::bits_of(t) == 8) spelled = types::signed_of(t) ? "i8" : "u8";
+        if (types::bits_of(t) == 16) spelled = types::signed_of(t) ? "i16" : "u16";
+        if (types::bits_of(t) == 32) spelled = types::signed_of(t) ? "i32" : "u32";
+        if (types::bits_of(t) == 64) spelled = types::signed_of(t) ? "i64" : "u64";
         if (state::scalar_type(e, spelled, &ty)) return ty;
     }
     if (t->kind == .record) {
         for (Usize i = 0; i < e->record_count; i++) {
-            if (state::same_text(e->records[i].name, t->name)) {
+            if (state::same_text(e->records[i].name, types::name_of(t))) {
                 ty = e->records[i].ty;
                 return ty;
             }
@@ -195,18 +195,18 @@ static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
 }
 
 export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
-    types::TypeRef function = t->kind == .fn_value ? t->element : t;
+    types::TypeRef function = t->kind == .fn_value ? types::element_of(t) : t;
     if (function == nullptr || function->kind != .function)
         return state::ty_fail("not emitted yet: a fn that is not a function", (ast::Span){});
-    Usize n = countof(function->slots);
+    Usize n = countof(types::slots_of(function).items);
     if (n > max_parts) return state::ty_fail("not emitted yet: a fn of more than 64 parameters", (ast::Span){});
     state::Ty parts[max_parts];
     for (Usize i = 0; i < n; i++) {
-        state::TyResult made = of_checked(e, function->slots[i].type);
+        state::TyResult made = of_checked(e, types::slots_of(function).items[i].type);
         if (made == .error) return {.error = made.error};
         parts[i] = made.ok;
     }
-    state::TyResult result = of_checked(e, function->element);
+    state::TyResult result = of_checked(e, types::element_of(function));
     if (result == .error) return {.error = result.error};
     state::Ty made_fn = make_type(e, parts[0:n], result.ok);
     return made_fn;

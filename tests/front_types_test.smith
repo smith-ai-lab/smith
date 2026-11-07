@@ -418,7 +418,7 @@ export void test_front_types_concepts_stand_in_a_parameter_and_not_in_a_field_or
              "the field `x` has the concept `num` as its type; a struct field needs a concrete type such as `i32`"));
     const types::Symbol *larger = types::lookup(&r.scopes, "larger");
     test::check_condition(larger != nullptr);
-    types::TypeRef first = larger->type->slots[0].type;
+    types::TypeRef first = types::slots_of(larger->type).items[0].type;
     test::check_condition(first->kind == .concept_type);
     test::check_condition(says(types::show(first), "num"));
 }
@@ -439,13 +439,13 @@ export void test_front_types_arrays_and_blocks_are_one_type_however_they_are_wri
     ast::ExprRef two[2] = {nullptr, nullptr};
     ast::ExprRef three[3] = {nullptr, nullptr, nullptr};
     types::TypeRef grid = own(&r, ast::block_of(ast::named("u8"), two));
-    test::check_condition(grid->kind == .block && grid->count == 2 && grid->element == byte);
+    test::check_condition(grid->kind == .block && types::count_of(grid) == 2 && types::element_of(grid) == byte);
     test::check_condition(says(types::show(grid), "U8[,]"));
     types::TypeRef cube = own(&r, ast::block_of(ast::named("u8"), three));
-    test::check_condition(cube != grid && cube->count == 3);
+    test::check_condition(cube != grid && types::count_of(cube) == 3);
     // `[][]u8` is jagged: a slice of slices, not a block
     types::TypeRef jagged = own(&r, slice_type(slice_type(ast::named("u8"))));
-    test::check_condition(jagged != grid && jagged->kind == .slice && jagged->element->kind == .slice);
+    test::check_condition(jagged != grid && jagged->kind == .slice && types::element_of(jagged)->kind == .slice);
     expect(r.error_count, 0);
 }
 
@@ -489,9 +489,11 @@ export void test_front_types_a_type_function_and_a_value_parameter_have_signatur
     types::Checked r = types::check(&m, options());
     expect(r.error_count, 0);
     const types::Symbol *pair = types::lookup(&r.scopes, "Pair");
-    test::check_condition(pair != nullptr && pair->type->slots[0].type == types::builtin(&r.table, "type"));
+    test::check_condition(pair != nullptr &&
+                          types::slots_of(pair->type).items[0].type == types::builtin(&r.table, "type"));
     const types::Symbol *table = types::lookup(&r.scopes, "table");
-    test::check_condition(table != nullptr && table->type->slots[0].type == types::builtin(&r.table, "Usize"));
+    test::check_condition(table != nullptr &&
+                          types::slots_of(table->type).items[0].type == types::builtin(&r.table, "Usize"));
     // today's `Type T` still needs `constexpr`
     ast::Param old[1] = {ast::param("T", ast::named("Type"))};
     ast::DeclRef old_decls[1] = {ast::function("Old", old, ast::named("Type"), nullptr)};
@@ -527,4 +529,29 @@ export void test_front_types_a_module_variable_takes_its_literals_type() {
     test::check_condition(types::lookup(&r.scopes, "c")->type == types::builtin(&r.table, "I32"));
     // today's `Auto d = 3;` is not changed
     test::check_condition(types::lookup(&r.scopes, "d")->type == r.table.automatic);
+}
+
+// A type is its kind, a payload enum (#2673): each kind has its own fields, and a record is completed in place.
+export void test_front_types_kind_holds_the_fields_of_its_kind() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Table t = types::start(types::lp64());
+    types::TypeRef int32 = types::builtin(&t, "I32");
+    types::TypeRef pointer = types::pointer_to(&t, int32, true);
+    test::check_condition(int32->kind == .integer && int32->kind.integer.bits == 32 && int32->kind.integer.is_signed);
+    test::check_condition(pointer->kind == .pointer && pointer->kind.pointer.element == int32 &&
+                          pointer->kind.pointer.pointee_const);
+    test::check_condition(types::element_of(pointer) == int32 && types::bits_of(int32) == 32);
+    types::TypeRef array = types::array_of(&t, int32, 3, false);
+    test::check_condition(array->kind == .array && array->kind.array.count == 3 && types::count_of(array) == 3);
+    types::Ty *point = types::new_record(&t, "Point", false);
+    test::check_condition(point->kind == .record && !point->kind.record.complete && !types::is_complete(point));
+    types::Slot fields[2] = {slot("x", int32), slot("y", int32)};
+    types::set_fields(point, fields);
+    test::check_condition(types::is_complete(point) && countof(types::slots_of(point).items) == 2);
+    types::Ty *color = types::new_enumeration(&t, "Color", int32);
+    test::check_condition(color->kind == .enumeration && color->kind.enumeration.element == int32);
+    test::check_condition(says(types::name_of(point), "Point"));
 }

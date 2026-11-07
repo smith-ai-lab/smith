@@ -102,9 +102,10 @@ static Bool nameable(Str field) {
 // The zero value of an enumeration with no payloads: the variant whose value is 0, `.empty` (lead, 2026-11-05, #2488).
 // By value, not by position: with no such variant it is empty, and the error stays.
 static Str enum_zero(types::TypeRef t) {
-    if (t->kind != .enumeration || t->has_payload) return "";
-    for (Usize i = 0; i < countof(t->slots); i++)
-        if (t->slots[i].value == 0) return types::message_of(format::push(".", t->slots[i].name));
+    if (t->kind != .enumeration || types::is_payload_enum(t)) return "";
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++)
+        if (types::slots_of(t).items[i].value == 0)
+            return types::message_of(format::push(".", types::slots_of(t).items[i].name));
     return "";
 }
 
@@ -123,11 +124,11 @@ static Str scalar_zero(types::TypeRef t) {
 static Str flat_zero(types::TypeRef t) {
     Str one = scalar_zero(t);
     if (countof(one) > 0) return one;
-    if (t->kind != .array || t->count == 0 || t->count > array_limit) return "";
-    Str item = scalar_zero(t->element);
+    if (t->kind != .array || types::count_of(t) == 0 || types::count_of(t) > array_limit) return "";
+    Str item = scalar_zero(types::element_of(t));
     if (countof(item) == 0) return "";
     Str out = "[";
-    for (Usize i = 0; i < t->count; i++)
+    for (Usize i = 0; i < types::count_of(t); i++)
         out = types::message_of(format::push(out, i > 0 ? ", " : "", item));
     return types::message_of(format::push(out, "]"));
 }
@@ -136,40 +137,46 @@ static Str flat_zero(types::TypeRef t) {
 // the same, one, two or three structs deep (a C struct such as `LLVMOrcCSymbolMapPair` is three). No recursion is
 // allowed, so each level is a function that calls the one below it.
 static Str construct_one(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) ||
+        countof(types::slots_of(t).items) == 0)
+        return "";
     Str out = types::message_of(format::push(name, "("));
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        types::TypeRef field = t->slots[i].type;
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        types::TypeRef field = types::slots_of(t).items[i].type;
         Str zero = flat_zero(field);
         if (countof(zero) == 0) zero = "";
-        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
-        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+        if (countof(zero) == 0 || !nameable(types::slots_of(t).items[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", types::slots_of(t).items[i].name, " = ", zero));
     }
     return types::message_of(format::push(out, ")"));
 }
 
 static Str construct_two(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) ||
+        countof(types::slots_of(t).items) == 0)
+        return "";
     Str out = types::message_of(format::push(name, "("));
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        types::TypeRef field = t->slots[i].type;
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        types::TypeRef field = types::slots_of(t).items[i].type;
         Str zero = flat_zero(field);
         if (countof(zero) == 0) zero = construct_one(types::show(field), field);
-        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
-        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+        if (countof(zero) == 0 || !nameable(types::slots_of(t).items[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", types::slots_of(t).items[i].name, " = ", zero));
     }
     return types::message_of(format::push(out, ")"));
 }
 
 static Str construct_three(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) ||
+        countof(types::slots_of(t).items) == 0)
+        return "";
     Str out = types::message_of(format::push(name, "("));
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        types::TypeRef field = t->slots[i].type;
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        types::TypeRef field = types::slots_of(t).items[i].type;
         Str zero = flat_zero(field);
         if (countof(zero) == 0) zero = construct_two(types::show(field), field);
-        if (countof(zero) == 0 || !nameable(t->slots[i].name)) return "";
-        out = types::message_of(format::push(out, i > 0 ? ", " : "", t->slots[i].name, " = ", zero));
+        if (countof(zero) == 0 || !nameable(types::slots_of(t).items[i].name)) return "";
+        out = types::message_of(format::push(out, i > 0 ? ", " : "", types::slots_of(t).items[i].name, " = ", zero));
     }
     return types::message_of(format::push(out, ")"));
 }
@@ -196,15 +203,15 @@ static Str written_zero(Str element) {
 // has no zero value, so the one zero element is written out and `std.array` fills the rest. `element` is the element
 // type as the file writes it; empty for any other array, or a struct that cannot be filled.
 static Str construct_array(Str element, types::TypeRef t) {
-    if (t->kind != .array || t->count == 0) return "";
+    if (t->kind != .array || types::count_of(t) == 0) return "";
     // `T xs[a][b]` is `[a][b]T`: the shape `[a, b]` names every dimension (#2496).
-    Str shape = types::message_of(format::push(t->count));
-    types::TypeRef leaf = t->element;
+    Str shape = types::message_of(format::push(types::count_of(t)));
+    types::TypeRef leaf = types::element_of(t);
     Usize rank = 1;
     while (leaf->kind == .array && rank < 16) {
-        if (leaf->count == 0) return "";
-        shape = types::message_of(format::push(shape, ", ", leaf->count));
-        leaf = leaf->element;
+        if (types::count_of(leaf) == 0) return "";
+        shape = types::message_of(format::push(shape, ", ", types::count_of(leaf)));
+        leaf = types::element_of(leaf);
         rank += 1;
     }
     // a number, `Bool` or pointer element is its own zero: `static char buf[named_length]` (#1901)
@@ -219,15 +226,15 @@ static Str construct_array(Str element, types::TypeRef t) {
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
 static Str omitted(types::TypeRef record, U64 given) {
-    if (record->kind != .record || record->is_union || !record->complete) return "";
+    if (record->kind != .record || types::is_union_record(record) || !types::is_complete(record)) return "";
     Str out = "";
-    for (Usize k = 0; k < countof(record->slots); k++) {
-        if ((given & ((U64)1 << k)) != 0 || record->slots[k].default_value != nullptr) continue;
-        types::TypeRef field = record->slots[k].type;
+    for (Usize k = 0; k < countof(types::slots_of(record).items); k++) {
+        if ((given & ((U64)1 << k)) != 0 || types::slots_of(record).items[k].default_value != nullptr) continue;
+        types::TypeRef field = types::slots_of(record).items[k].type;
         Str zero = flat_zero(field);
         if (countof(zero) == 0) zero = construct_one(types::show(field), field);
-        if (countof(zero) == 0 || !nameable(record->slots[k].name)) return "";
-        out = types::message_of(format::push(out, ", ", record->slots[k].name, " = ", zero));
+        if (countof(zero) == 0 || !nameable(types::slots_of(record).items[k].name)) return "";
+        out = types::message_of(format::push(out, ", ", types::slots_of(record).items[k].name, " = ", zero));
     }
     return out;
 }
@@ -276,7 +283,7 @@ static Bool mentions(Str text, Str name) {
 // The index of the field that the statement `x.f = v` assigns, when it is one and `v` does not mention `x`; else the
 // number of fields.
 static Usize assigned_field(Str source, const ast::Stmt *s, Str name, types::TypeRef t) {
-    Usize none = countof(t->slots);
+    Usize none = countof(types::slots_of(t).items);
     if (s->kind != .expression) return none;
     const ast::Expr *e = s->kind.expression.value;
     if (e == nullptr || e->kind != .assign || e->kind.assign.op != .plain) return none;
@@ -287,15 +294,15 @@ static Usize assigned_field(Str source, const ast::Stmt *s, Str name, types::Typ
     if (!same(base->kind.name.path.segments[0].text, name)) return none;
     const ast::Expr *value = e->kind.assign.value;
     if (value == nullptr || mentions(source[value->span.start:value->span.end], name)) return none;
-    for (Usize i = 0; i < countof(t->slots); i++) {
-        if (same(t->slots[i].name, target->kind.member.name)) return i;
+    for (Usize i = 0; i < countof(types::slots_of(t).items); i++) {
+        if (same(types::slots_of(t).items[i].name, target->kind.member.name)) return i;
     }
     return none;
 }
 
 // Whether the statements after `items[at]` assign every field of `t` by name before anything else.
 static Bool written_first(Str source, ast::StmtRef items[:], Usize at, Str name, types::TypeRef t) {
-    Usize total = countof(t->slots);
+    Usize total = countof(types::slots_of(t).items);
     if (total > 64) return false;
     U64 seen = 0;
     Usize covered = 0;
@@ -402,6 +409,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     if (t == nullptr || (t->kind != .record && t->kind != .array)) return none;
     Str name = d->kind.variable.name;
     Str text = "";
+    Str written_source = source[written->span.start:written->span.end];
     if (t->kind == .array) {
         Str written_text = source[written->span.start:written->span.end];
         Usize close = 0;
@@ -413,7 +421,7 @@ static core::ParseError fix_of(Str source, types::Checked *c, const ast::Decl *d
     } else if (at != no_block && d->kind.variable.is_new && written->span.end > written->span.start &&
                (written_first(source, items, at, name, t) || filled_by_call(source, items, at, name))) {
         text = "undefined";
-    } else if (same(t->owner, "c::") && tag_is_also_function(c, source[written->span.start:written->span.end])) {
+    } else if (same(types::owner_of(t), "c::") && tag_is_also_function(c, written_source)) {
         text = types::message_of(format::push("mem.zeroed(", source[written->span.start:written->span.end], ")"));
         zeroed_written = true;
     } else {
@@ -665,12 +673,12 @@ static void from_checker(Wanted *w, const types::Checked *c) {
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error error = c->errors[i];
         types::TypeRef record = error.left_out_record;
-        if (error.left_out_call == nullptr || record == nullptr || countof(record->owner) > 0) continue;
-        Usize r = record_index(w, record->name);
+        if (error.left_out_call == nullptr || record == nullptr || countof(types::owner_of(record)) > 0) continue;
+        Usize r = record_index(w, types::name_of(record));
         if (r == w->count) continue;
-        for (Usize k = 0; k < countof(record->slots) && k < fields_max; k++) {
+        for (Usize k = 0; k < countof(types::slots_of(record).items) && k < fields_max; k++) {
             if ((error.left_out_given & ((U64)1 << k)) != 0) continue;
-            Usize f = field_index(&w->records[r], record->slots[k].name);
+            Usize f = field_index(&w->records[r], types::slots_of(record).items[k].name);
             if (f < fields_max) w->left[r] |= (U64)1 << f;
         }
     }
@@ -1026,8 +1034,8 @@ static void nest(Wanted *w, types::Checked *c) {
             for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
                 if ((w->left[r] & ((U64)1 << k)) == 0 || fields[k].type == nullptr) continue;
                 types::TypeRef t = field_type(c, &fields[k]);
-                if (t == nullptr || t->kind != .record || countof(t->owner) > 0) continue;
-                Usize e = record_index(w, t->name);
+                if (t == nullptr || t->kind != .record || countof(types::owner_of(t)) > 0) continue;
+                Usize e = record_index(w, types::name_of(t));
                 if (e < w->count) w->left[e] = all_fields(&w->records[e]);
             }
         }
@@ -1102,15 +1110,15 @@ static Str default_of(const ast::Module *module, Str source, types::Checked *c, 
     if (t->kind == .option) return ".none";
     if (t->kind == .pointer) return "";
     Str zero = "";
-    if (t->kind == .record && countof(t->owner) == 0 && record_index(w, t->name) < w->count) {
+    if (t->kind == .record && countof(types::owner_of(t)) == 0 && record_index(w, types::name_of(t)) < w->count) {
         // `R()` needs a default for every field of R, and a pointer that no read tests against null has none: C fills
         // it before use, so the member is `undefined` like a local (lead on #2613, as D2 option B)
-        zero = types::message_of(format::push(t->name, "()"));
-        if (has_plain_pointer(module, c, w, record_index(w, t->name))) zero = "undefined";
+        zero = types::message_of(format::push(types::name_of(t), "()"));
+        if (has_plain_pointer(module, c, w, record_index(w, types::name_of(t)))) zero = "undefined";
     } else if (t->kind == .record) {
-        Bool defaulted = countof(t->slots) > 0;
-        for (Usize k = 0; k < countof(t->slots); k++)
-            if (t->slots[k].default_value == nullptr) defaulted = false;
+        Bool defaulted = countof(types::slots_of(t).items) > 0;
+        for (Usize k = 0; k < countof(types::slots_of(t).items); k++)
+            if (types::slots_of(t).items[k].default_value == nullptr) defaulted = false;
         zero = defaulted ? types::message_of(format::push(types::show(t), "()")) : construct(types::show(t), t);
     } else if (t->kind == .array) {
         Str written = source[f->type->span.start:f->type->span.end];
@@ -1327,9 +1335,9 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         types::Error error = c->errors[i];
         types::TypeRef record = error.left_out_record;
         if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
-        Bool from_header = same(record->owner, "c::");
-        Usize own = record_index(&local, record->name);
-        if (!from_header && countof(record->owner) == 0 && own < local.count &&
+        Bool from_header = same(types::owner_of(record), "c::");
+        Usize own = record_index(&local, types::name_of(record));
+        if (!from_header && countof(types::owner_of(record)) == 0 && own < local.count &&
             global_zero(module, error.left_out_call) && has_plain_pointer(module, c, &local, own)) {
             // C zeroes a global and fills its pointers before use: `x: T = T()` has no value for them, `undefined` is
             // the storage C gave (#2643).
@@ -1337,7 +1345,7 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
             out = add(out, undefined_fix(error.left_out_call));
             continue;
         }
-        if (!from_header && (countof(record->owner) > 0 || own < local.count)) continue;
+        if (!from_header && (countof(types::owner_of(record)) > 0 || own < local.count)) continue;
         last = error.left_out_call;
         core::ParseError given_zero = left_out_fix(error.left_out_call, record, error.left_out_given);
         if (countof(given_zero.fix) == 0 && global_zero(module, error.left_out_call)) {
