@@ -308,9 +308,9 @@ static const ast::Module *load_module(const char *dotted) {
     // root that names `t::point` (#2041).
     Str folders[3 + ancestors_max] = {import_roots.source, import_roots.library, import_roots.local};
     Str above = import_roots.local;
-    for (Usize k = 3; k < 3 + ancestors_max && countof(above) > 0 && !roots::same(above, "."); k++) {
+    for (Usize level = 3; level < 3 + ancestors_max && countof(above) > 0 && !roots::same(above, "."); level++) {
         above = folder_of(above);
-        folders[k] = above;
+        folders[level] = above;
     }
     for (Usize k = 0; k < 3 + ancestors_max; k++) {
         if (countof(folders[k]) == 0) continue;
@@ -603,8 +603,8 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
     types::TypeRef self = type->kind == .pointer ? type->element : type;
     Str module = "";
     if (self->kind == .record) {
-        for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
-            if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
+        for (Usize cut = countof(self->name); cut >= 2 && countof(module) == 0; cut--)
+            if (self->name[cut - 1] == ':' && self->name[cut - 2] == ':') module = self->name[0:cut];
         for (Usize i = 0; i < countof(self->slots); i++) {
             if (!types::field_visible(self, &self->slots[i]) || !starts_with_text(self->slots[i].name, prefix))
                 continue;
