@@ -202,8 +202,8 @@ extern char **environ;
 
 // Runs the program (found on PATH) to its end with its stdout in buffer: the number of bytes, or -1 when it cannot
 // start, fails to read or exits with a status other than 0, and -2 when it prints a buffer's worth or more (the child
-// is then killed by the closed pipe, and its status is not asked). Its stderr is the
-// caller's own. One blocking run: waiting on many processes at once is the task runtime's.
+// is then killed by the closed pipe, and its status is not asked). Its stderr is discarded. One blocking run: waiting
+// on many processes at once is the task runtime's.
 [[maybe_unused]] static ptrdiff_t smith_world_capture(const char *const *argv, char *buffer, size_t capacity) {
     int pipes[2];
     if (pipe(pipes) != 0) return -1;
@@ -211,6 +211,7 @@ extern char **environ;
     int setup = posix_spawn_file_actions_init(&actions);
     if (setup == 0) setup = posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO);
     if (setup == 0) setup = posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    if (setup == 0) setup = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
     if (setup == 0) setup = posix_spawn_file_actions_addclose(&actions, pipes[1]);
     pid_t pid = 0;
     if (setup == 0) setup = posix_spawnp(&pid, argv[0], &actions, nullptr, (char *const *)argv, environ);
