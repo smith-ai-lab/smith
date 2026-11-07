@@ -93,7 +93,8 @@ static Bytes fixture(Case *t, const char *name) {
     case .error:
         test::note("cannot read %s", path);
         test::check_condition(false); // ends the test
-        return (Bytes){};
+        Bytes none = {};
+        return none;
     }
 }
 

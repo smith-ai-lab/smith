@@ -207,7 +207,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     Bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
-        const U8 *bytes = (const U8 *)report_text;
+        const U8 *bytes = (const U8 *)&report_text[0];
         const char *errors = format::push(p->dir, "/out/stderr").data;
         files::CountResult added =
             files::write_file(errors[0:c::strlen(errors)], bytes[0:c::strlen(report_text)], files::Append);
@@ -221,7 +221,7 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     folder[slash - path] = '\0';
     files::DoneResult folder_made = files::make_folder(folder[0:(Usize)(slash - path)]);
     test::check(folder_made == .ok);
-    const U8 *header = (const U8 *)header_text;
+    const U8 *header = (const U8 *)&header_text[0];
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], header[0:c::strlen(header_text)], files::Replace);
     test::check(written == .ok);
@@ -231,9 +231,10 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
 static Built build_sources(const Case *kase) {
     arena::Arena *memory_arena = kase->memory_arena;
     const scratch::Project *p = kase->project;
+    const char *no_flags = "";
     const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : no_flags)
                             .data;
     const char *sources = found(kase, "src", ".smith", nullptr, false);
     Built built = {.status = 0, .objects = ""};
@@ -280,9 +281,10 @@ static Built build_sources(const Case *kase) {
 static void build_others(const Case *kase, Built *built) {
     arena::Arena *memory_arena = kase->memory_arena;
     const scratch::Project *p = kase->project;
+    const char *no_flags = "";
     const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : no_flags)
                             .data;
     const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++

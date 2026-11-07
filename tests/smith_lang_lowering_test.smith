@@ -307,15 +307,18 @@ static void check_case(arena::Arena *store, const char *kase, Pass pass, const c
     // of both tests at once writes them side by side)
     Bool fresh = !exists(join3(folder, "/expect/lowered", "")) && !exists(join3(folder, "/expect/header", ""));
     Bool creates = test::updating() && fresh && selected(kase);
+    Pass pass_files = Pass_Files;
+    Pass pass_record = Pass_Record;
+    Pass pass_compare = Pass_Compare;
     for (Usize i = 0; i < count; i++) {
         if (is_chain_case(kase) && c::strcmp(sources[i], chain_checked_file) != 0) continue;
         const char *file = join3("src/", sources[i], "");
         const char *module = module_of(store, sources[i]);
         (void)c::smith_core_lower(folder, file, nullptr, lowered_text, lowered_capacity, report_text, report_capacity);
         error_count = add_errors(store, report_text, errors, error_count, lines_max);
-        if (pass == Pass_Record && i < slots_per_case) slots[i] = copy_text(store, lowered_text);
-        if (pass == Pass_Compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
-        if (pass != Pass_Files) continue;
+        if (pass == pass_record && i < slots_per_case) slots[i] = copy_text(store, lowered_text);
+        if (pass == pass_compare && i < slots_per_case) test::check_equal(c::strcmp(slots[i], lowered_text), 0);
+        if (pass != pass_files) continue;
         const char *golden = join3(folder, "/expect/lowered/", format::push(module, ".c").data);
         if (exists(golden) || (creates)) corpus::golden(store, differing, golden, lowered_text);
         // the header of the module, as `smith cc --smith-header` writes it
@@ -327,7 +330,7 @@ static void check_case(arena::Arena *store, const char *kase, Pass pass, const c
     }
     const char *error_golden = join3(folder, is_chain_case(kase) ? "/expect/error" : "/expect/lower-error", "");
     const char *joined = sorted_unique(errors, error_count);
-    if (pass == Pass_Files && (exists(error_golden) || (creates && joined[0] != '\0')))
+    if (pass == pass_files && (exists(error_golden) || (creates && joined[0] != '\0')))
         corpus::golden(store, differing, error_golden, joined);
 }
 
