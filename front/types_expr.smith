@@ -1760,6 +1760,9 @@ static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast:
 
 static types::TypeRef arith_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                  types::TypeRef r) {
+    // A value of a concept type (`a: num`) has its operator checked on the instance, where its type is known.
+    if (l->kind == .concept_type) return l;
+    if (r->kind == .concept_type) return r;
     if ((op == .add || op == .subtract) && (l->kind == .pointer || r->kind == .pointer)) {
         return pointer_arithmetic(c, span, op, l, r);
     }
@@ -1898,6 +1901,9 @@ static types::TypeRef slice_compare(types::Checked *c, ast::Span span, ast::Bina
 
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
+    // A value of an `auto` or a concept type (`a: num`) is not known until the instance: it is compared there.
+    if (l->kind == .automatic || l->kind == .concept_type) return c->table.bool_type;
+    if (r->kind == .automatic || r->kind == .concept_type) return c->table.bool_type;
     if (is_equality(op) && fn_against_function(l, r)) {
         return c->table.bool_type;
     }
