@@ -1,0 +1,1 @@
+<dir>/src/recursion_defer.smith:1:1: error: recursion in a module: count -> count (write a loop; a call that ends the function is a tail call: `return f(...)`)
