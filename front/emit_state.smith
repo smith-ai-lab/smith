@@ -229,6 +229,7 @@ export struct RecordType {
     Str name;
     Ty ty;
     FieldInfo fields[:];
+    Bool is_union; // a C union: its fields share the address of the record, whose body is the lanes that size it
 };
 
 // The state of a function whose lambda is being emitted in the middle of it (#1620, front/emit_lambda.smith):

@@ -797,16 +797,55 @@ static state::Status field_index(state::Emitter *e, state::Ty record, Str name, 
     return state::failf(span, "no field ", name, " in ", record.name);
 }
 
-// The place of a field of the record stored at `address`.
+// Whether the record at `at` has a field called `name`, and its index.
+static Bool has_field(state::Emitter *e, Usize at, Str name, Usize *found) {
+    for (Usize i = 0; i < field_count(e, at); i++) {
+        if (state::same_text(e->records[at].fields[i].name, name)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool is_anonymous(Str name) {
+    return countof(name) == 0; // the checker's mark of an anonymous member (`types::inner_member`)
+}
+
+// One step into `at`'s field `field` from `address`: a union's members share its address, a struct's are a GEP away.
+static c::LLVMValueRef step_into(state::Emitter *e, Usize at, Usize field, c::LLVMValueRef address) {
+    if (e->records[at].is_union) return address;
+    return c::LLVMBuildStructGEP2(e->builder, e->records[at].ty.llvm, address, (U32)field, "field");
+}
+
+// The place of a field of the record stored at `address`. A name no field has is looked for in the anonymous members
+// (`union { long ru_maxrss; };` of C's `struct rusage`: a member with no name), up to 4 deep.
 static state::Status push_field(state::Emitter *e, state::Ty record, c::LLVMValueRef address, Str name,
                                 ast::Span span) {
-    Usize field = 0;
-    try field_index(e, record, name, span, &field);
     Usize at = 0;
-    find_record_of(e, record, &at);
-    c::LLVMValueRef gep = c::LLVMBuildStructGEP2(e->builder, record.llvm, address, (U32)field, "field");
-    state::push_value(e, (state::Value){.llvm = gep, .ty = e->records[at].fields[field].ty});
-    return state::success();
+    if (record.kind != .record || !find_record_of(e, record, &at))
+        return state::failf(span, record.name, " is not a record");
+    for (Usize depth = 0; depth < 4; depth++) {
+        Usize field = 0;
+        if (has_field(e, at, name, &field)) {
+            c::LLVMValueRef place = step_into(e, at, field, address);
+            state::push_value(e, (state::Value){.llvm = place, .ty = e->records[at].fields[field].ty});
+            return state::success();
+        }
+        Bool entered = false;
+        for (Usize i = 0; i < field_count(e, at) && !entered; i++) {
+            state::Ty inner = e->records[at].fields[i].ty;
+            Usize inner_at = 0;
+            if (!is_anonymous(e->records[at].fields[i].name) || inner.kind != .record ||
+                !find_record_of(e, inner, &inner_at))
+                continue;
+            address = step_into(e, at, i, address);
+            at = inner_at;
+            entered = true;
+        }
+        if (!entered) break;
+    }
+    return state::failf(span, "no field ", name, " in ", record.name);
 }
 
 static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *w) {

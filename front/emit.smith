@@ -1563,6 +1563,28 @@ static void make_c_union(c::LLVMTypeRef named, types::TypeRef base) {
     c::LLVMStructSetBody(named, lanes, 1, 0);
 }
 
+// The members of a C union that have a type this emitter makes, named, so that `u.member` (and a member of an
+// anonymous union of a struct: `rusage.ru_maxrss`) reads the shared storage as the member's type.
+static void make_union_fields(state::Emitter *e, Usize at, types::TypeRef base) {
+    Usize count = countof(base->slots);
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
+    Usize kept = 0;
+    ast::Span nowhere = {};
+    for (Usize i = 0; i < count; i++) {
+        types::TypeRef held = base->slots[i].type;
+        if (held->kind == .fn_value) continue;
+        state::TyResult made = type_from_checked(e, held, nowhere);
+        if (made == .error) {
+            state::free_text(made.error.message);
+            continue;
+        }
+        infos[kept] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
+        kept += 1;
+    }
+    e->records[at].fields = infos[0:kept];
+    e->records[at].is_union = true;
+}
+
 // A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
 // first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
 // pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer
@@ -1577,6 +1599,7 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     Usize count = countof(base->slots);
     if (base->complete && base->is_union && count > 0) {
         make_c_union(named, base);
+        make_union_fields(e, at, base);
         return;
     }
     if (!base->complete || base->is_union || count == 0 || count > 64) {
