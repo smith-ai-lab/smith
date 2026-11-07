@@ -218,12 +218,18 @@ static state::Status declare_record(state::Emitter *e, const ast::Decl *d, Str n
     Usize count = countof(d->kind.record.fields);
     if (d->kind.record.is_union) return state::not_emitted("union", d->span);
     Usize at = 0;
-    if (find_record_named(e, name, &at)) return state::failf(d->span, name, " is declared twice");
-    const char *text = label.data;
-    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, text);
-    state::Ty ty = {.kind = .record, .llvm = named, .name = name};
-    at = e->record_count;
-    add_record(e, (state::RecordType){.name = name, .ty = ty});
+    c::LLVMTypeRef named = nullptr;
+    if (find_record_named(e, name, &at)) {
+        if (!e->records[at].shell) return state::failf(d->span, name, " is declared twice");
+        named = e->records[at].ty.llvm; // named ahead by `record_shell`: its fields are set now
+        e->records[at].shell = false;
+    } else {
+        const char *text = label.data;
+        named = c::LLVMStructCreateNamed(e->context, text);
+        state::Ty ty = {.kind = .record, .llvm = named, .name = name};
+        at = e->record_count;
+        add_record(e, (state::RecordType){.name = name, .ty = ty});
+    }
     if (opaque) {
         return state::success();
     }
@@ -313,6 +319,7 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     }
     types::TypeRef bound = nullptr;
     if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
+    if (countof(e->import_scope) > 0) return state::type_of(e, base);       // a record of the imported module (`*Tap`)
     return ty_failf(base->span, "unknown type ", name);
 }
 
@@ -804,7 +811,8 @@ static state::Status push_field(state::Emitter *e, state::Ty record, c::LLVMValu
     try field_index(e, record, name, span, &field);
     Usize at = 0;
     find_record_of(e, record, &at);
-    c::LLVMValueRef gep = c::LLVMBuildStructGEP2(e->builder, record.llvm, address, (U32)field, "field");
+    c::LLVMValueRef gep = address;
+    if (!e->records[at].overlay) gep = c::LLVMBuildStructGEP2(e->builder, record.llvm, address, (U32)field, "field");
     state::push_value(e, (state::Value){.llvm = gep, .ty = e->records[at].fields[field].ty});
     return state::success();
 }
@@ -820,9 +828,17 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
         if (base.ty.kind != .pointer || base.ty.kind.pointer.element == nullptr)
             return state::failf(w->span, "`->` on ", base.ty.name);
         record = *base.ty.kind.pointer.element;
-    } else if (base.ty.kind == .pointer) {
-        // `p.x` follows one pointer, as `p->x`: the base is the place of `p`, so load the pointer first.
-        state::Ty *pointee = base.ty.kind.pointer.element;
+    } else if (base.ty.kind == .pointer || (base.ty.kind == .option && base.ty.kind.option.element != nullptr &&
+                                            base.ty.kind.option.element->kind == .pointer)) {
+        // `p.x` follows one pointer, as `p->x`: the base is the place of `p`, so load the pointer first. A `?*T` name
+        // narrowed to `*T` (`if p != .none:`) is that pointer itself, the niche (#2643).
+        state::Ty *pointee = nullptr;
+        if (base.ty.kind == .option) {
+            state::Ty *payload = base.ty.kind.option.element;
+            if (payload->kind == .pointer) pointee = payload->kind.pointer.element;
+        } else if (base.ty.kind == .pointer) {
+            pointee = base.ty.kind.pointer.element;
+        }
         if (pointee == nullptr) return state::failf(w->span, "`.` on ", base.ty.name);
         if (pointee->kind == .pointer) return state::fail("`.` follows one pointer; write `pp.*.x`", w->span);
         base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
@@ -957,6 +973,14 @@ static state::Status cast_finish(state::Emitter *e, const state::ThenGeneral *w)
         if (from.ty.kind.pointer.address_space != to.kind.pointer.address_space)
             return state::not_emitted("cast between address spaces", w->span);
         state::push_value(e, (state::Value){.llvm = from.llvm, .ty = to});
+        return state::success();
+    }
+    if (to.kind == .pointer && (from.ty.kind == .fn_pointer || from.ty.kind == .fn_value)) {
+        // A function's address as a plain pointer: a C function pointer is one already; a `fn` value's is its code
+        // word.
+        c::LLVMValueRef code =
+            from.ty.kind == .fn_pointer ? from.llvm : c::LLVMBuildExtractValue(e->builder, from.llvm, 0, "code");
+        state::push_value(e, (state::Value){.llvm = code, .ty = to});
         return state::success();
     }
     if ((from.ty.kind == .pointer && to.kind == .integer) || (from.ty.kind == .integer && to.kind == .pointer))
@@ -1525,6 +1549,20 @@ export state::Status array_literal(state::Emitter *e, const ast::Expr *x, state:
 // ---------------------------------------------------------------------------------------------------------------
 // Declarations
 
+// The name of the record `d` in the table before any field is read, so a record declared earlier may point to it
+// (`worker: *mut Worker` in a struct above `Worker`). Its own declaration sets the fields.
+export void record_shell(state::Emitter *e, const ast::Decl *d) {
+    if (d->kind != .record || d->kind.record.is_union || d->kind.record.opaque) return;
+    Str name = d->kind.record.name;
+    Usize at = 0;
+    if (find_record_named(e, name, &at)) return;
+    Str label = qualified(e->tree, name);
+    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label.data);
+    state::Ty ty = {.kind = .record, .llvm = named, .name = name};
+    add_record(e, (state::RecordType){.name = name, .ty = ty, .shell = true});
+    state::free_text(label);
+}
+
 // `Decl.record` (file scope or a block).
 export state::Status record_decl(state::Emitter *e, const ast::Decl *d) {
     if (d->kind != .record) {
@@ -1658,7 +1696,7 @@ static Bool global_address(state::Emitter *e, const ast::Expr *x, c::LLVMValueRe
 
 // A scalar constant of type `ty`: an integer literal (negated or not), `true`/`false` or `null`.
 static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
-    if (x->kind == .null_pointer && ty.kind == .pointer) {
+    if (x->kind == .null_pointer && (ty.kind == .pointer || ty.kind == .fn_pointer)) {
         *out = c::LLVMConstNull(ty.llvm);
         return state::success();
     }
@@ -1691,6 +1729,15 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
         c::LLVMSetLinkage(global, c::LLVMPrivateLinkage);
         *out = global;
         return state::success();
+    }
+    if ((ty.kind == .fn_pointer || ty.kind == .pointer) && x->kind == .name &&
+        countof(x->kind.name.path.segments) == 1) {
+        // A function's name in a table of callbacks (`Scheduler(spawn = inline_spawn, ...)`): its address (#2643).
+        for (Usize i = 0; i < e->function_count; i++) {
+            if (!state::same_text(e->functions[i].name, x->kind.name.path.segments[0].text)) continue;
+            *out = e->functions[i].llvm;
+            return state::success();
+        }
     }
     F64 real = 0.0;
     if (ty.kind == .floating && float_constant(x, &real)) {
@@ -1788,6 +1835,11 @@ static state::Status filled_constant(state::Emitter *e, state::Ty ty, const ast:
 }
 
 static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out) {
+    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+        state::same_text(x->kind.name.path.segments[0].text, "undefined")) {
+        *out = c::LLVMConstNull(ty.llvm); // a global `= undefined` is the zeroed storage C gives (#2643)
+        return state::success();
+    }
     if (builtin::is_filled(e, x)) return filled_constant(e, ty, x, out);
     if (x->kind == .call && ty.kind == .record) return construction_constant(e, ty, x, out);
     if (ty.kind == .array) return array_constant(e, ty, ty.kind.array, x, out);

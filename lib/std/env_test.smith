@@ -20,8 +20,10 @@ typedef struct {
 char *fake_get(env::Handler *self, const char *name) {
     Fake *fake = (Fake *)self;
     fake->asked += 1;
-    if (c::strcmp(name, "HOME") == 0) return (char *)"/home/ada";
-    if (c::strcmp(name, "EMPTY") == 0) return (char *)"";
+    static char home[10] = "/home/ada";
+    static char empty[1] = "";
+    if (c::strcmp(name, "HOME") == 0) return &home[0];
+    if (c::strcmp(name, "EMPTY") == 0) return &empty[0];
     return nullptr;
 }
 
