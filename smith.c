@@ -4115,14 +4115,32 @@ static int smith_build_main_front(int count, char **args, const char *self) {
     return smith_build_main(used, rewritten, self, nullptr);
 }
 
+// When smith's own tree fails to build with a smith that is not .smith/stage0/bin/smith, says so (#2719): the tree
+// builds only with the newest release (smith-dev-build, the lag rule), and a stale smith's error does not say that. It
+// reads only this smith's own path and commit.
+static void smith_stale_hint(const char *self, const char *target) {
+    if (target != nullptr && strcmp(target, "stage0") == 0) return;
+    if (access("smith.c", R_OK) != 0 || access("build.c", R_OK) != 0 || access("runtime/executor_run.c", R_OK) != 0)
+        return;
+    char stage0[PATH_MAX];
+    if (realpath(".smith/stage0/bin/smith", stage0) != nullptr && strcmp(stage0, self) == 0) return;
+    fprintf(stderr,
+            "smith: built by %s (%s%s); smith's tree builds with the newest release: run smith build stage0 and put "
+            ".smith/stage0/bin first on PATH\n",
+            self, smith_commit[0] != '\0' ? "commit " : "no commit known", smith_commit);
+}
+
 static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
     switch (verb->kind) {
     case SmithVerb_Cc:
         return smith_compile_main(argc, argv, 1, false, self);
     case SmithVerb_Cxx:
         return smith_compile_main(argc, argv, 1, true, self);
-    case SmithVerb_Build:
-        return smith_build_main_front(argc - 2, argv + 2, self);
+    case SmithVerb_Build: {
+        int status = smith_build_main_front(argc - 2, argv + 2, self);
+        if (status != 0) smith_stale_hint(self, argc > 2 ? argv[2] : nullptr);
+        return status;
+    }
     case SmithVerb_New:
         return smith_new_main(argc - 2, argv + 2, self);
     case SmithVerb_Fetch:

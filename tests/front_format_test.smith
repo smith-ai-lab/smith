@@ -64,6 +64,18 @@ static void expect_format(Str source, Str expected) {
     test::check_equal(formatted(once), once);
 }
 
+// The same for a golden pair: a failure shows the pair's name under it.
+static void expect_format_case(Str name, Str source, Str expected) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::note("format pair %.*s", (I32)countof(name), name.data);
+    Str once = formatted(source);
+    test::check_equal(once, expected);
+    test::check_equal(formatted(once), once);
+}
+
 export void test_format_empty_and_blank_sources() {
     expect_format("", "");
     expect_format("\n\n", "");
@@ -139,7 +151,7 @@ export void test_format_every_golden_pair() {
             Str name = file[0:countof(file) - 6];
             Str before_path = join3("tests/front/format/", name, ".smith");
             Str after_path = join3("tests/front/format/", name, ".expected");
-            expect_format(text_of(before_path), text_of(after_path));
+            expect_format_case(name, text_of(before_path), text_of(after_path));
         }
     }
 }

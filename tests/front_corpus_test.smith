@@ -233,6 +233,12 @@ static void check_stdout(Str dir, Str folder, Built built) {
                       text_of(as_str(format::push(dir, "/expect/stdout"))));
 }
 
+// Fails the test with `text` printed under the failure (a check of two texts shows only their counts).
+static void fail_with(Str text) {
+    test::note("%.*s", (I32)countof(text), text.data);
+    test::check_condition(false);
+}
+
 static void remove_all(Str folder) {
     const char *const argv[4] = {"rm", "-rf", folder.data, nullptr};
     process::OutputResult done = process::run(argv[0:3]);
@@ -267,21 +273,22 @@ static void run_case(Str name) {
     Built built = add_c_sources(folder, c_sources_of(dir), build_case(folder, modules));
     Str errors_path = as_str(format::push(dir, "/expect/error"));
     if (files::exists(errors_path)) {
-        test::check_equal(built.ok, false);
         Str got = replace(built.text, as_str(format::push(folder, "/")), "");
         Str want = text_of(errors_path);
-        if (!roots::same(want, got)) test::check_equal(got, want);
+        if (built.ok) {
+            fail_with(as_str(format::push(name, ": compiled, but ", name, "/expect/error expects an error")));
+        } else if (!roots::same(want, got)) {
+            fail_with(as_str(format::push(name, ": wrong error, got:\n", got, "\nwant:\n", want)));
+        }
     } else {
-        if (!built.ok) (void)console::print_error(built.text, "\n");
-        if (!built.ok) test::check_equal(built.text, as_str(format::push("")));
-        test::check_equal(built.ok, true);
+        if (!built.ok) fail_with(as_str(format::push(name, ": ", built.text)));
         if (built.ok) check_headers(dir, folder, modules);
         if (built.ok && files::exists(as_str(format::push(dir, "/expect/stdout")))) check_stdout(dir, folder, built);
     }
     remove_all(folder);
 }
 
-// Every case of tests/front/corpus/, one check each (a failure's message is the case's name).
+// Every case of tests/front/corpus/, one check each (a failure's text starts with the case's name).
 export void test_front_corpus_every_case() {
     files::EntriesResult listing = files::list("tests/front/corpus");
     test::check_equal(listing == .ok, true);
