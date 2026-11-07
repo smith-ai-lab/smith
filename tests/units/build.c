@@ -22,6 +22,49 @@ static SmithObject build_core_object(SmithBuild *b, const char *root) {
     return object;
 }
 
+// The runtime files that smith.c used to include (#2685), each compiled as smith's core with the flags of smith.c: all
+// of runtime/*.c but what a program does not link in the units runner (the build program's files, the embedded data,
+// the mcp family that -DSMITH_MCP turns on, the macOS ones, and package.c, which package_unit.c wraps).
+static const char *const core_skipped[] = {
+    "build_runtime.c", "commit.c",  "gzip.c",     "lint_identity.c", "mcp.c",         "mcp_dap.c",
+    "mcp_serve.c",     "mcp_show.c", "mcp_text.c", "mcp_tools.c",     "package.c",     "pack_data.c",
+    "platform_macos.c", "sdk_cache.c", "tree_sitter_data.c", "untar.c",     "xz.c",
+    nullptr,
+};
+
+static bool core_is_skipped(const char *path) {
+    const char *name = strrchr(path, '/');
+    name = name != nullptr ? name + 1 : path;
+    for (size_t i = 0; core_skipped[i] != nullptr; i++) // bounded by the table
+        if (strcmp(name, core_skipped[i]) == 0) return true;
+    return false;
+}
+
+static const SmithObject *const *core_runtime_objects(SmithBuild *b, const char *root, const char *const *flags,
+                                                      const SmithObject *const *first, size_t first_count) {
+    static SmithObject objects[128];
+    static const SmithObject *list[140];
+    size_t count = 0;
+    for (; count < first_count; count++) // bounded by the caller's few
+        list[count] = first[count];
+    size_t made = 0;
+    const char *const *sources = smith_glob(b, smith_list(b, smith_fmt(b, "%s/runtime/*.c", root), nullptr));
+    for (size_t i = 0; sources[i] != nullptr && made < 128; i++) { // bounded by the tree
+        if (core_is_skipped(sources[i])) continue;
+        const char *name = strrchr(sources[i], '/') + 1;
+        objects[made] = (SmithObject){
+            .compiler = "smith-cc",
+            .source = sources[i],
+            .output = smith_fmt(b, "build/tests_objects/rt_%s.o", name),
+            .flags = flags,
+        };
+        smith_object(b, &objects[made]);
+        list[count++] = &objects[made++];
+    }
+    list[count] = nullptr;
+    return list;
+}
+
 // The integration tests of tests/ that this runner links: all but the front end's.
 static const char *const *tests_without_front(SmithBuild *b) {
     const char *const *all_tests = smith_glob(b, smith_list(b, "tests/*_test.smith", nullptr));
@@ -65,14 +108,16 @@ void build(SmithBuild *b) {
     // smith's own core (issue #646): smith.c compiled with -DSMITH_CORE has no main, so the tests call the runtime in
     // process (include/smith_core.h, which no library ships). It is built under smith's own
     // flags (gnu23), not the tests' stricter ones, and sees the libraries as their headers, as smith does.
+    const char *const *core_flags =
+        smith_list(b, "-std=gnu23", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wno-unused-function",
+                   "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-DSMITH_CORE",
+                   "-DSMITH_CLANG_ID=\"core\"", "-I", smith_fmt(b, "%s/include", root), "-I", ".smith/include", "-I",
+                   smith_fmt(b, "%s/runtime/protocol", root), nullptr);
     SmithObject core = {
         .compiler = "smith-cc",
         .source = smith_fmt(b, "%s/smith.c", root),
         .output = "build/tests_objects/core.o",
-        .flags = smith_list(b, "-std=gnu23", "-g", "-O0", "-Wall", "-Wextra", "-Wpedantic", "-Wno-unused-function",
-                            "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-DSMITH_CORE",
-                            "-DSMITH_CLANG_ID=\"core\"", "-I", smith_fmt(b, "%s/include", root), "-I", ".smith/include",
-                            "-I", smith_fmt(b, "%s/runtime/protocol", root), nullptr),
+        .flags = core_flags,
     };
     smith_object(b, &core);
     SmithObject build_core = build_core_object(b, root);
@@ -89,7 +134,7 @@ void build(SmithBuild *b) {
     // (tests/front_units/build.c): this one leaves them out.
     const char *const *kept = tests_without_front(b);
     SmithTests tests = {
-        .objects = (const SmithObject *[]){&http, &core, &build_core, &runtime_io, nullptr},
+        .objects = core_runtime_objects(b, root, core_flags, (const SmithObject *[]){&http, &core, &build_core, &runtime_io}, 4),
         .sources = smith_cat(b, smith_glob(b, smith_list(b, "lib/std/*_test.smith", "lib/*_test.smith", nullptr)), kept,
                              smith_list(b, "tests/scratch.smith", "tests/runner.smith", "tests/prove_cases.smith",
                                         "tests/corpus.smith", nullptr),

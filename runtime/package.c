@@ -161,7 +161,7 @@ bool smith_sha256_file(const char *path, char hex[smith_sha256_hex_size]) {
 }
 
 
-[[gnu::format(printf, 2, 3)]] static bool smith_package_fail(SmithPackageFault *error, const char *format, ...) {
+[[gnu::format(printf, 2, 3)]] bool smith_package_fail(SmithPackageFault *error, const char *format, ...) {
     va_list args;
     va_start(args, format);
     int written = vsnprintf(error->text, sizeof error->text, format, args);

@@ -35,6 +35,8 @@ typedef struct {
     bool wrong_hash; // the archive's bytes are not the hash the caller named (the build library's PackageKind Hash)
 } SmithPackageFault;
 
+[[gnu::format(printf, 2, 3)]] bool smith_package_fail(SmithPackageFault *error, const char *format, ...);
+
 bool smith_package_is_folder(const char *path);
 
 bool smith_package_make_folders(const char *path);
