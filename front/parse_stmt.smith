@@ -437,6 +437,13 @@ static Bool group_then_declarator(const parse::Parser *p, Usize offset) {
     return after == lex::name || after == lex::star;
 }
 
+// What can follow a capitalized name that is a value (`Block_Other` as the last of an `if` value) and never a declared
+// name: the end of the line, a closing bracket, a comma or a dot.
+static Bool ends_value(lex::TokenKind next) {
+    return next == lex::newline || next == lex::dedent || next == lex::end_of_file || next == lex::right_paren ||
+           next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot;
+}
+
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
@@ -446,6 +453,7 @@ static Bool starts_declaration(const parse::Parser *p) {
     if (kind == lex::type_name && p->new_syntax && parse::peek_at(p, 1).kind == lex::left_paren &&
         parse::peek_at(p, 2).kind != lex::star && !group_then_declarator(p, 1))
         return false;
+    if (kind == lex::type_name && p->new_syntax && ends_value(parse::peek_at(p, 1).kind)) return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
     if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);

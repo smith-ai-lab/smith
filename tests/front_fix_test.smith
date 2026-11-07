@@ -371,6 +371,19 @@ export void test_a_cast_to_a_named_or_function_type_is_mended_in_the_indented_sy
     check_text(named.text, "fn f(n: usize):\n    t: ToInt = g(n).to(ToInt) # a\n");
 }
 
+// A capitalized name that ends a line is a value, not the type of a declaration whose name never came: `else: Other`
+// as the last of a function (tests/skills_test.smith `block_of`).
+export void test_a_capitalized_value_ending_an_if_expression_is_no_declaration() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = fix::parse_for_fix(
+        "t.smith",
+        "fn f(a: i32) -> i32:\n    return if a == 0: 1 else: Other\n\nstatic fn g() -> i32:\n    return 2\n");
+    test::check_equal(countof(parsed.errors), 0);
+}
+
 // A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
 // the type was mended and the cast never (lib/std/net.smith `symbol`).
 export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
