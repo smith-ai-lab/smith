@@ -1232,6 +1232,28 @@ export void nullable_fields(ast::Module *module, Str source) {
 }
 
 // The fixes of the module's `{}` declarations, as errors that carry them (the driver applies them with the rest).
+// Whether `call` is the whole initializer of a variable the module declares at its top level, written with no
+// arguments (`first_task: Task = Task()`).
+static Bool global_zero(const ast::Module *module, const ast::Expr *call) {
+    if (call == nullptr || call->kind != .call || countof(call->kind.call.args) != 0) return false;
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .variable && d->kind.variable.init == call) return true;
+    }
+    return false;
+}
+
+static core::ParseError undefined_fix(const ast::Expr *call) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    fix[0] = (core::Edit){.span = call->span, .text = types::message_of(format::push("undefined"))};
+    core::ParseError found = {};
+    found.span = call->span;
+    found.message = "a global of a struct with pointers C fills before use is `undefined`";
+    found.fix = fix;
+    return found;
+}
+
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
     Bool filled = false;
@@ -1243,9 +1265,23 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         types::TypeRef record = error.left_out_record;
         if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
         Bool from_header = same(record->owner, "c::");
-        if (!from_header && (countof(record->owner) > 0 || record_index(&local, record->name) < local.count)) continue;
+        Usize own = record_index(&local, record->name);
+        if (!from_header && countof(record->owner) == 0 && own < local.count &&
+            global_zero(module, error.left_out_call) && has_plain_pointer(module, c, &local, own)) {
+            // C zeroes a global and fills its pointers before use: `x: T = T()` has no value for them, `undefined` is
+            // the storage C gave (#2643).
+            last = error.left_out_call;
+            out = add(out, undefined_fix(error.left_out_call));
+            continue;
+        }
+        if (!from_header && (countof(record->owner) > 0 || own < local.count)) continue;
         last = error.left_out_call;
-        out = add(out, left_out_fix(error.left_out_call, record, error.left_out_given));
+        core::ParseError given_zero = left_out_fix(error.left_out_call, record, error.left_out_given);
+        if (countof(given_zero.fix) == 0 && global_zero(module, error.left_out_call)) {
+            out = add(out, undefined_fix(error.left_out_call)); // a C union or struct of a global: C's zeroed storage
+            continue;
+        }
+        out = add(out, given_zero);
     }
     Work w = {};
     for (Usize i = 0; i < countof(module->decls); i++) {

@@ -323,7 +323,7 @@ void task_main(Task *task) {
         const void *bottom = nullptr;
         Usize size = 0;
         c::__sanitizer_finish_switch_fiber(task->fake_stack, &bottom, &size);
-        if (task->resumer->size == 0) {
+        if (task->resumer != nullptr && task->resumer->size == 0) {
             task->resumer->bottom = bottom;
             task->resumer->size = size;
         }
@@ -335,7 +335,7 @@ void task_main(Task *task) {
         finish_managed(task);
     else
         task->group->pending -= 1;
-    transfer(task, task->resumer);
+    if (task->resumer != nullptr) transfer(task, task->resumer);
     c::smith_failure_format(c::SmithFailure_Memory, "a finished task was entered again"); // unreachable
 }
 
@@ -399,12 +399,34 @@ void lay_frame(Task *task, U8 *end) {
 // The fields every task starts with.
 void init_task(Task *task, Group *group, void (*entry)(void *context), void *context) {
     contract::trusted(); // the handlers are copied from the runtime's table
-    *task = (Task){};
+    // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
+    task->sp = nullptr;
+    task->resumer = nullptr;
+    task->next = nullptr;
     task->group = group;
     task->entry = entry;
     task->context = context;
+    task->fake_stack = nullptr;
+    task->bottom = nullptr;
+    task->size = 0;
+    task->region = nullptr;
+    task->region_size = 0;
+    task->finished = false;
     task->handlers = *c::smith_handlers_table(); // the spawner's handlers, as of now
     task->table = &task->handlers;
+    task->saved_errno = 0;
+    task->keep_fake_stack = false;
+    task->managed = false;
+    task->worker = nullptr;
+    task->waiting_on = nullptr;
+    task->wait_next = nullptr;
+    task->in_wait = false;
+    task->parked = false;
+    task->woken = false;
+    task->io_waiting = false;
+    task->pool_next = nullptr;
+    task->pool_request = nullptr;
+    task->pool_worker = nullptr;
 }
 
 // A new task of the inline scheduler: one mapping holding a guard page, the stack and, at its top, the task's own
@@ -452,11 +474,12 @@ void unpoison(void *region, Usize size) {
 
 // An ended task of the inline scheduler: its mapping, which holds the record, is unmapped.
 void release_inline(Task *task) {
-    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
-    void *region = task->region;
+    contract::trusted();                 // the mapping is the task's own, and no one holds the task any more
+    if (task->region == nullptr) return; // a thread's first task has no mapping of its own
+    void *mapping = task->region;
     Usize size = task->region_size;
-    unpoison(region, size);
-    c::munmap(region, size); // NOLINT(smith-effects)
+    unpoison(mapping, size);
+    c::munmap(mapping, size); // NOLINT(smith-effects)
 }
 
 // The calling task gives the worker back to the one that resumed it, and returns when it is resumed.
@@ -696,9 +719,14 @@ void simulation_wait(Scheduler *self, Group *group) {
 // run. It installs no handlers, so a call reaches the real function.
 export Scheduler *simulation(random::Key key) {
     Simulation *simulation = mem::alloc(Simulation);
-    *simulation = (Simulation){};
+    // Every field is given, as the zeroed record of C had it: a pointer has no zero in smith (#2643).
     simulation->base = (Scheduler){.spawn = simulation_spawn, .pause = simulation_pause, .wait = simulation_wait};
     simulation->seed = random::key_bits(key);
+    simulation->decisions = 0;
+    simulation->ready_first = nullptr;
+    simulation->ready_count = 0;
+    simulation->live = 0;
+    simulation->waiting = nullptr;
     return &simulation->base;
 }
 
@@ -751,10 +779,10 @@ thread_local Worker *home; // the worker whose thread this is
 
 // The file pool: threads that do the file calls of tasks, started at the first one. The lock is the scheduler's.
 c::pthread_t pool_threads[pool_max];
-void *pool_stacks[pool_max];
-Usize pool_count;   // threads started (0: no pool)
-Bool pool_stopping; // they are to exit
-Task *pool_head;    // the calls waiting for a thread, in order
+Usize pool_stacks[pool_max]; // the addresses of the pool threads' stacks
+Usize pool_count;            // threads started (0: no pool)
+Bool pool_stopping;          // they are to exit
+Task *pool_head;             // the calls waiting for a thread, in order
 Task *pool_tail;
 c::pthread_cond_t pool_wake;
 
@@ -811,10 +839,11 @@ void wake_worker(Worker *worker); // below: a kevent on macOS, an eventfd on Lin
 
 void push_ready(Worker *worker, Task *task) {
     task->next = nullptr;
-    if (worker->tail == nullptr)
+    Task *last = worker->tail;
+    if (last == nullptr)
         worker->head = task;
     else
-        worker->tail->next = task;
+        last->next = task;
     worker->tail = task;
     worker->ready += 1;
     ready_total += 1;
@@ -823,8 +852,9 @@ void push_ready(Worker *worker, Task *task) {
 
 Task *pop_ready(Worker *worker) {
     Task *task = worker->head;
-    worker->head = task->next;
-    if (worker->head == nullptr) worker->tail = nullptr;
+    Task *after = task->next;
+    worker->head = after;
+    if (after == nullptr) worker->tail = nullptr;
     task->next = nullptr;
     worker->ready -= 1;
     ready_total -= 1;
@@ -874,10 +904,11 @@ void finish_done(Worker *worker, Task *ready) {
 }
 
 void drain_done(Worker *worker) {
-    while (worker->done != nullptr) { // NOLINT(smith-bounded-loop): the list is finite
-        Task *ready = worker->done;
+    Task *ready = worker->done;
+    while (ready != nullptr) { // NOLINT(smith-bounded-loop): the list is finite
         worker->done = ready->pool_next;
         finish_done(worker, ready);
+        ready = worker->done;
     }
 }
 
@@ -1030,8 +1061,9 @@ Bool stack_will_be_kept(Task *task) {
 // A task that has not run yet gets a stack: the worker's cache first.
 void start_managed(Task *task, Worker *worker) {
     contract::trusted(); // it lays out raw memory
-    U8 *region = (U8 *)worker->cache;
-    if (region != nullptr) {
+    U8 *region = nullptr;
+    if (worker->cached > 0) {
+        region = (U8 *)worker->cache;
         worker->cache = *(void **)(region + page_bytes);
         worker->cached -= 1;
         task->fake_stack = *(void **)(region + page_bytes + sizeof(void *));
@@ -1047,17 +1079,19 @@ void start_managed(Task *task, Worker *worker) {
 
 // An ended task gives its stack to its worker's cache, or back to the system, and its record to the pool.
 void release_managed(Task *task, Worker *worker) {
-    contract::trusted(); // the mapping is the task's own, and no one holds the task any more
-    U8 *region = (U8 *)task->region;
+    contract::trusted();                 // the mapping is the task's own, and no one holds the task any more
+    if (task->region == nullptr) return; // a managed task always has its stack; the test is for the type
+    void *mapping = task->region;
+    U8 *stack = (U8 *)mapping;
     Usize size = task->region_size;
-    unpoison(region, size);
+    unpoison(stack, size);
     if (task->keep_fake_stack) {
-        *(void **)(region + page_bytes) = worker->cache;
-        *(void **)(region + page_bytes + sizeof(void *)) = task->fake_stack;
-        worker->cache = region;
+        *(void **)(stack + page_bytes) = worker->cache;
+        *(void **)(stack + page_bytes + sizeof(void *)) = task->fake_stack;
+        worker->cache = stack;
         worker->cached += 1;
     } else {
-        c::munmap(region, size); // NOLINT(smith-effects)
+        c::munmap(stack, size); // NOLINT(smith-effects)
     }
     record_give(task);
 }
@@ -1069,7 +1103,7 @@ void run_ready(Worker *worker) {
     Task *task = pop_ready(worker);
     busy += 1;
     unlock_scheduler();
-    if (task->region == nullptr) start_managed(task, worker);
+    if (task->region_size == 0) start_managed(task, worker);
     Bool ended = resume(task);
     if (ended) release_managed(task, worker);
     lock_scheduler();
@@ -1193,7 +1227,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         contract::trusted(); // the system's queue is the edge
         if (self->resumer == nullptr) {
             while (self->io_waiting) { // NOLINT(smith-bounded-loop): ends when its descriptor is ready
-                if (worker->head != nullptr)
+                if (worker->ready > 0)
                     run_ready(worker);
                 else
                     poll_io(worker, true);
@@ -1260,7 +1294,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         for (Usize i = 0; i < count; i++) {
             c::pthread_attr_t attributes = {};
             c::pthread_attr_init(&attributes);
-            pool_stacks[i] = map_stack(thread_stack_size - stack_size);
+            pool_stacks[i] = (Usize)map_stack(thread_stack_size - stack_size);
             c::pthread_attr_setstack(&attributes, (U8 *)pool_stacks[i] + page_bytes, thread_stack_size);
             I32 failed = c::pthread_create(&pool_threads[i], &attributes, pool_main, nullptr);
             c::pthread_attr_destroy(&attributes);
@@ -1280,7 +1314,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         unlock_scheduler();
         for (Usize i = 0; i < pool_count; i++) {
             c::pthread_join(pool_threads[i], nullptr);
-            c::munmap(pool_stacks[i], page_bytes + thread_stack_size);
+            c::munmap((void *)pool_stacks[i], page_bytes + thread_stack_size);
         }
         if (pool_count != 0) c::pthread_cond_destroy(&pool_wake);
         pool_count = 0;
@@ -1321,7 +1355,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     void finish_connect(IoCall *request) {
         contract::trusted(); // the system's descriptor is the edge
         I32 error = 0;
-        c::socklen_t length = sizeof(error);
+        c::socklen_t length = (U32)sizeof(error);
         c::getsockopt(request->fd, socket_level, socket_error, &error, &length); // NOLINT(smith-effects)
         request->result = error == 0 ? 0 : -1;
         request->error = error;
@@ -1525,8 +1559,8 @@ void *worker_main(void *argument) {
     Worker *worker = (Worker *)argument;
     home = worker;
     lock_scheduler();
-    while (worker->head != nullptr || !stopping) {
-        if (worker->head != nullptr) {
+    while (worker->ready > 0 || !stopping) {
+        if (worker->ready > 0) {
             run_ready(worker);
         } else {
             poll_io(worker, true);
@@ -1549,7 +1583,17 @@ void start_workers() {
     stopping = false;
     worker_count = count;
     for (Usize i = 0; i < count; i++) {
-        workers[i] = (Worker){};
+        // Every field but `wake`, which pthread_cond_init sets: a condition variable has no value to write (#2643).
+        workers[i].head = nullptr;
+        workers[i].tail = nullptr;
+        workers[i].ready = 0;
+        workers[i].load = 0;
+        workers[i].thread = 0;
+        workers[i].thread_stack = nullptr;
+        workers[i].cache = nullptr;
+        workers[i].cached = 0;
+        workers[i].io_parked = 0;
+        workers[i].done = nullptr;
         workers[i].queue = -1;
         workers[i].wake_fd = -1;
         c::pthread_cond_init(&workers[i].wake, nullptr);
@@ -1581,9 +1625,10 @@ void stop_workers() {
     for (Usize i = 1; i < worker_count; i++)
         c::pthread_join(workers[i].thread, nullptr);
     for (Usize i = 0; i < worker_count; i++) {
-        while (workers[i].cache != nullptr) {
+        while (workers[i].cached > 0) {
             void *region = workers[i].cache;
             workers[i].cache = *(void **)((U8 *)region + page_bytes);
+            workers[i].cached -= 1;
             c::munmap(region, page_bytes + stack_size);
         }
         c::pthread_cond_destroy(&workers[i].wake);
@@ -1652,7 +1697,7 @@ void default_wait([[maybe_unused]] Scheduler *self, Group *group) {
     lock_scheduler();
     if (self_task->resumer == nullptr) { // `main`, on worker 0
         while (group->pending > 0) {
-            if (home->head != nullptr) {
+            if (home->ready > 0) {
                 run_ready(home);
             } else if (busy == 0 && ready_total == 0 && io_total == 0) {
                 unlock_scheduler();
@@ -1694,7 +1739,7 @@ void default_pause([[maybe_unused]] Scheduler *self) {
     if (!active) return;
     lock_scheduler();
     if (home->io_parked > 0) poll_io(home, false);
-    for (Usize round = home->ready; round > 0 && home->head != nullptr; round--)
+    for (Usize round = home->ready; round > 0 && home->ready > 0; round--)
         run_ready(home);
     unlock_scheduler();
 }
@@ -1781,7 +1826,8 @@ export void fiber_suspend() {
 // The last switch of the calling fiber: it is marked finished first, so AddressSanitizer destroys its fake stack as it
 // leaves (a fiber released while suspended would leak it). The reader must not resume it again, only release it.
 export void fiber_finish() {
-    current()->finished = true;
+    Task *self = current();
+    self->finished = true;
     suspend();
 }
 
