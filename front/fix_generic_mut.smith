@@ -5,20 +5,43 @@
 // `name = v`, `name += v` (or the other operators) is written `mut name`. A member or an index is assigned through
 // the name (`padded.width = w`) only when the declared type is a plain one: not a pointer, a slice, `auto` or `typeof`.
 //
-//   fix_generic_mut::edits(source, module)   one fix for each local of a generic function's body that is assigned
+// The same holds for a pointer parameter: `fn write(buffer: *char, args...)` whose body writes through `buffer`
+// (`buffer[i] = c`, `buffer.* = c`, `buffer.n = 1`) or passes it whole where a `*mut` is wanted (`Writer(buffer, ..)`
+// with a `*mut char` field, `put(buffer, ..)` with a `*mut` parameter, both of this module) is `*mut char` (#2668):
+// the checker's own fix for a write through a `*T` never sees the body of a template that no call of this module
+// instantiates, and an instance from another module carries no fix.
+//
+//   fix_generic_mut::edits(source, module)   one fix for each local of a generic function's body that is assigned,
+//                                            and for each pointer parameter that is written through
 module front::fix_generic_mut;
 
 import front::ast;
 import front::parse as core;
 import std::mem;
 
+// Whether the type is `auto` or a pointer, slice or array of it (`xs: []auto`, `const auto xs[:]`).
+static Bool has_auto(const ast::TypeExpr *type) {
+    while (type != nullptr) {
+        if (type->kind == .auto_type) return true;
+        if (type->kind == .pointer) {
+            type = type->kind.pointer.pointee;
+        } else if (type->kind == .slice) {
+            type = type->kind.slice.element;
+        } else if (type->kind == .array) {
+            type = type->kind.array.element;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
 static Bool is_generic(const ast::Decl *d) {
     if (d->kind != .function) return false;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].is_const || params[i].is_constexpr) return true;
-        const ast::TypeExpr *type = params[i].type;
-        if (type != nullptr && type->kind == .auto_type) return true;
+        if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
+        if (has_auto(params[i].type)) return true;
     }
     return false;
 }
@@ -81,6 +104,8 @@ static Usize skip_steps(Str source, Usize at, Usize end) {
     for (Usize step = 0; step < end - at; step++) {
         if (p < end && source[p] == '.' && p + 1 < end && starts_word(source[p + 1])) {
             p = word_end(source, p + 1, end);
+        } else if (p + 1 < end && source[p] == '.' && source[p + 1] == '*') {
+            p += 2;
         } else if (p < end && source[p] == '[') {
             Usize depth = 0;
             while (p < end) {
@@ -184,17 +209,307 @@ static core::Errors scan(Str source, Usize start, Usize end, core::Errors out) {
     return out;
 }
 
+// Whether the word at `at` (length `len`) is a whole word and not a member (`x.buffer`).
+static Bool is_whole_word(Str source, Usize at, Usize len, Usize floor) {
+    if (at > floor && (word_char(source[at - 1]) || source[at - 1] == '.')) return false;
+    return at + len >= countof(source) || !word_char(source[at + len]);
+}
+
+// The `*mut` of the parameter or field `type`: true when it is a pointer written `*mut T`.
+static Bool is_mut_pointer(const ast::TypeExpr *type) {
+    return type != nullptr && type->kind == .pointer && type->kind.pointer.is_mut;
+}
+
+// Whether the argument at `at` of a call or construction is wanted as a `*mut` by a function or a struct of this
+// module: the callee's name stands before the `(` that opens the list, and the argument is the n-th of it.
+static Bool wanted_mut(const ast::Module *module, Str source, Usize at, Usize floor) {
+    Usize depth = 0;
+    Usize index = 0;
+    Usize open = at;
+    while (open > floor) {
+        open -= 1;
+        char ch = source[open];
+        if (ch == ')' || ch == ']') {
+            depth += 1;
+        } else if (ch == '(' || ch == '[') {
+            if (depth > 0)
+                depth -= 1;
+            else if (ch == '(')
+                break;
+            else
+                return false;
+        } else if (ch == ',' && depth == 0) {
+            index += 1;
+        }
+    }
+    if (open <= floor || source[open] != '(') return false;
+    Usize stop = open;
+    Usize start = stop;
+    while (start > floor && word_char(source[start - 1]))
+        start -= 1;
+    if (start == stop || (start > floor && source[start - 1] == '.')) return false;
+    Str callee = source[start:stop];
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .function && same(d->kind.function.name, callee)) {
+            return index < countof(d->kind.function.params) && is_mut_pointer(d->kind.function.params[index].type);
+        }
+        if (d->kind == .record && same(d->kind.record.name, callee)) {
+            return index < countof(d->kind.record.fields) && is_mut_pointer(d->kind.record.fields[index].type);
+        }
+    }
+    return false;
+}
+
+// Whether the body (from `start` to `end`) writes through the pointer called `name`, or hands it whole to a `*mut`.
+static Bool pointer_written(const ast::Module *module, Str source, Usize start, Usize end, Str name) {
+    for (Usize at = start; at < end; at++) {
+        if (!starts_word(source[at]) || !is_whole_word(source, at, countof(name), start)) continue;
+        if (!same(source[at:at + countof(name)], name)) continue;
+        Usize after = at + countof(name);
+        Usize steps = skip_steps(source, after, end);
+        if (steps != after && is_assign_op(source, skip_space(source, steps, end), end)) return true;
+        Usize back = at;
+        while (back > start && (source[back - 1] == ' ' || source[back - 1] == '\t' || source[back - 1] == '\n'))
+            back -= 1;
+        Usize next = skip_space(source, after, end);
+        Bool opens = back > start && (source[back - 1] == '(' || source[back - 1] == ',');
+        Bool closes = next < end && (source[next] == ',' || source[next] == ')');
+        if (opens && closes && wanted_mut(module, source, at, start)) return true;
+    }
+    return false;
+}
+
+static core::ParseError mut_pointer_fix(Usize star) {
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    fix[0] = (core::Edit){};
+    fix[0].span.start = (U32)star + 1;
+    fix[0].span.end = (U32)star + 1;
+    fix[0].text = "mut ";
+    core::ParseError error = {};
+    error.span = fix[0].span;
+    error.message = "the pointer is written through: declare it `*mut`";
+    error.fix = fix;
+    return error;
+}
+
+static core::Errors pointer_params(const ast::Module *module, Str source, ast::Param params[:], Usize body, Usize end,
+                                   core::Errors out) {
+    for (Usize i = 0; i < countof(params); i++) {
+        const ast::TypeExpr *type = params[i].type;
+        if (type == nullptr || type->kind != .pointer || type->kind.pointer.is_mut) continue;
+        Usize star = type->span.start;
+        if (star >= countof(source) || source[star] != '*') continue;
+        if (!pointer_written(module, source, body, end, params[i].name)) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = mut_pointer_fix(star);
+    }
+    return out;
+}
+
+// A parameter of a generic function that the body assigns (`p += 1`, `n -= 1`) is `mut p: T`, as a local is.
+static core::Errors assigned_params(Str source, ast::Param params[:], Usize body, Usize end, core::Errors out) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_mut || params[i].is_pack || params[i].is_rest || !params[i].is_new) continue;
+        if (params[i].span.start >= countof(source) || !assigned_later(source, body, end, params[i].name, false, body))
+            continue;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = fix_at(params[i].span.start);
+    }
+    return out;
+}
+
+// front::fix_generic_mut also holds the fix-it for the index loop over a compile-time list (#2668): the old
+// `for constexpr (Usize i = 0; i < countof(args); i++)` reads each element as `args[i]`, which the new syntax has only
+// as an unrolled loop over the elements: an index is a run-time value, and a pack or `fields(T)` is indexed by a
+// constant. The counting loop that an earlier pass wrote, `for i in range(0, countof(P)):`, where `P` is a pack
+// parameter of the module or a `fields(...)` list, is written `for arg in P:` (`for f in fields(T):`), and each
+// `P[i]` of its body is that name. A loop whose body uses `i` any other way (`i > 0`, `weights[i]`, `count[i]`) is left
+// as it is: it needs the index, and the checker reports it.
+//
+
+static Bool text_at(Str s, Usize i, Str pattern) {
+    if (i + countof(pattern) > countof(s)) return false;
+    return mem::equal(s[i:i + countof(pattern)], pattern);
+}
+
+static Usize line_stop(Str s, Usize i) {
+    while (i < countof(s) && s[i] != '\n')
+        i += 1;
+    return i;
+}
+
+static Usize indent_at(Str s, Usize line_start) {
+    Usize n = 0;
+    while (line_start + n < countof(s) && s[line_start + n] == ' ')
+        n += 1;
+    return n;
+}
+
+// Whether `name` is the pack parameter of a function of the module.
+static Bool is_pack(const ast::Module *module, Str name) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .function) continue;
+        ast::Param params[:] = d->kind.function.params;
+        for (Usize k = 0; k < countof(params); k++) {
+            if ((params[k].is_pack || params[k].is_rest) && mem::equal(params[k].name, name)) return true;
+        }
+    }
+    return false;
+}
+
+// The offset of the `)` that closes the `(` at `open`, or `to` when there is none.
+static Usize paren_close(Str s, Usize open, Usize to) {
+    Usize depth = 0;
+    for (Usize i = open; i < to; i++) {
+        if (s[i] == '(') depth += 1;
+        if (s[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return to;
+}
+
+static Bool has_word(Str s, Usize from, Usize to, Str word) {
+    for (Usize i = from; i + countof(word) <= to; i++) {
+        if (!text_at(s, i, word)) continue;
+        if (i > 0 && (word_char(s[i - 1]) || s[i - 1] == '.')) continue;
+        if (i + countof(word) < countof(s) && word_char(s[i + countof(word)])) continue;
+        return true;
+    }
+    return false;
+}
+
+static core::Edits edit_push(core::Edits edits, Usize from, Usize to, Str text) {
+    edits = mem::realloc(edits, countof(edits) + 1);
+    edits[countof(edits) - 1] = (core::Edit){.span = {.start = (U32)from, .end = (U32)to}, .text = text};
+    return edits;
+}
+
+// The end of the loop's body: the first later line that is not blank and is indented no deeper than the header.
+static Usize body_end(Str s, Usize header_end, Usize indent) {
+    Usize at_line = header_end + 1;
+    Usize end = header_end;
+    while (at_line < countof(s)) {
+        Usize stop = line_stop(s, at_line);
+        Usize blank = at_line;
+        while (blank < stop && s[blank] == ' ')
+            blank += 1;
+        if (blank < stop && indent_at(s, at_line) <= indent) break;
+        if (blank < stop) end = stop;
+        at_line = stop + 1;
+    }
+    return end;
+}
+
+// The edits for the loop whose header starts at `p` (after its indent) and ends at `header_end`, or none.
+static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize header_end, Usize indent) {
+    core::Edits none = {};
+    Usize i = p + 4;
+    Usize name_start = i;
+    while (i < header_end && word_char(s[i]))
+        i += 1;
+    Str index = s[name_start:i];
+    if (countof(index) == 0 || !text_at(s, i, " in range(0, countof(")) return none;
+    Usize list_start = i + 21;
+    Usize close = paren_close(s, list_start - 1, header_end);
+    if (close >= header_end || !text_at(s, close, ")):") || close + 3 != header_end) return none;
+    Str list = s[list_start:close];
+    Bool fields = text_at(list, 0, "fields(");
+    if (!fields && !is_pack(module, list)) return none;
+    Str name = fields ? "f" : "arg";
+    Usize end = body_end(s, header_end, indent);
+    if (end == header_end) return none;
+    // `constexpr const f: Field = fields(T)[i]` on the first line of the body names the element: that name is the
+    // loop's, and the line goes.
+    Usize scan_from = header_end;
+    Usize bound_start = header_end + 1;
+    Usize bound_end = bound_start;
+    Bool bound = false;
+    Usize word = bound_start;
+    while (word < end && s[word] == ' ')
+        word += 1;
+    if (fields && text_at(s, word, "constexpr const ")) {
+        Usize n0 = word + 16;
+        Usize n1 = n0;
+        while (n1 < end && word_char(s[n1]))
+            n1 += 1;
+        Usize after = n1 + 10 + countof(list) + countof(index) + 2;
+        if (text_at(s, n1, ": Field = ") && text_at(s, n1 + 10, list) && text_at(s, n1 + 10 + countof(list), "[") &&
+            text_at(s, n1 + 11 + countof(list), index) && after <= end && s[after - 1] == ']' &&
+            line_stop(s, bound_start) == after) {
+            name = s[n0:n1];
+            bound = true;
+            bound_end = after + 1;
+            scan_from = bound_end;
+        }
+    }
+    if (!bound && has_word(s, header_end, end, name)) return none;
+    core::Edits out = {};
+    Usize uses = 0;
+    for (Usize k = scan_from; k + countof(index) <= end; k++) {
+        if (!text_at(s, k, index) || word_char(s[k - 1]) || s[k - 1] == '.') continue;
+        if (k + countof(index) < countof(s) && word_char(s[k + countof(index)])) continue;
+        Usize before = countof(list) + 1;
+        if (k < before || !text_at(s, k - before, list) || s[k - 1] != '[' || s[k + countof(index)] != ']') return none;
+        out = edit_push(out, k - before, k + countof(index) + 1, name);
+        uses += 1;
+    }
+    if (bound) {
+        uses += 1;
+        out = edit_push(out, bound_start, bound_end, "");
+    }
+    if (uses == 0) return none;
+    out = edit_push(out, name_start, name_start + countof(index), name);
+    out = edit_push(out, name_start + countof(index), list_start, " in ");
+    out = edit_push(out, close, header_end, ":");
+    return out;
+}
+
+static core::Errors loop_fixes(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    Usize line = 0;
+    while (line < countof(source)) {
+        Usize stop = line_stop(source, line);
+        Usize indent = indent_at(source, line);
+        if (text_at(source, line + indent, "for ")) {
+            core::Edits fix = loop_edits(module, source, line + indent, stop, indent);
+            if (countof(fix) > 0) {
+                core::ParseError error = {};
+                error.span = (ast::Span){.start = (U32)(line + indent), .end = (U32)stop};
+                error.message = "an index loop over a compile-time list is a loop over its elements";
+                error.fix = fix;
+                out = mem::realloc(out, countof(out) + 1);
+                out[countof(out) - 1] = error;
+            }
+        }
+        line = stop + 1;
+    }
+    return out;
+}
+
 export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
         const ast::Stmt *function_body = d->kind.function.body;
+        ast::Param params[:] = d->kind.function.params;
         if (function_body != nullptr && is_generic(d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
             if (body < end) out = scan(source, body, end, out);
+            if (body < end) out = assigned_params(source, params, body, end, out);
+            if (body < end) out = pointer_params(module, source, params, body, end, out);
         }
+    }
+    core::Errors loops = loop_fixes(source, module);
+    for (Usize i = 0; i < countof(loops); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = loops[i];
     }
     return out;
 }

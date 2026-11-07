@@ -194,6 +194,44 @@ export Bool same_text(Str a, Str b) {
     return true;
 }
 
+// Readers of the payloads that the checker reads in a condition. Each is one test and one read, so that the fixer binds
+// the payload (`.name(name) := e.kind`), and gives an empty value for any other kind.
+
+// The name `n` of an expression that is one plain name (a path of one segment), else an empty text.
+static Str single_name(const ast::Expr *e) {
+    if (e == nullptr) return "";
+    if (e->kind != .name) return "";
+    if (countof(e->kind.name.path.segments) != 1) return "";
+    return e->kind.name.path.segments[0].text;
+}
+
+// `k.f` with `k` a plain name and `.` (not `->`): the identifier `k` and the member `f`.
+export Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *field) {
+    if (e->kind != .member) return false;
+    if (e->kind.member.arrow) return false;
+    const ast::Expr *owner = e->kind.member.base;
+    if (owner->kind != .name) return false;
+    if (countof(owner->kind.name.path.segments) != 1) return false;
+    *base = owner->kind.name.path.segments[0];
+    *field = e->kind.member.name;
+    return true;
+}
+
+// The path of a written type that is a name, else an empty path.
+static Bool written_path(const ast::TypeExpr *t, ast::Path *path) {
+    if (t == nullptr) return false;
+    if (t->kind != .named) return false;
+    *path = t->kind.named.path;
+    return true;
+}
+
+// The expression of a type argument that is a value, else null.
+static const ast::Expr *value_argument(const ast::TypeArg *a) {
+    if (a == nullptr) return nullptr;
+    if (*a != .value) return nullptr;
+    return a->value.value;
+}
+
 static Bool same_slots(Slot a[:], Slot b[:]) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
@@ -305,7 +343,9 @@ static void add_builtin(Table *t, Str name, TypeRef type) {
 }
 
 static void add_number(Table *t, Str name, Kind kind, U32 bits, Bool is_signed) {
-    TypeRef type = intern(t, (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .name = name});
+    TypeRef type = intern(
+        t,
+        (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .name = name, .element = nullptr, .error = nullptr});
     add_builtin(t, name, type);
 }
 
@@ -313,15 +353,21 @@ static void add_va_list(Table *t);
 
 // A table with every builtin type made, for `target`.
 export Table start(Target target) {
-    Table t = {.target = target};
+    Table t = {.target = target,
+               .invalid = nullptr,
+               .automatic = nullptr,
+               .void_type = nullptr,
+               .bool_type = nullptr,
+               .text = nullptr,
+               .null_type = nullptr};
     U32 word = target.pointer_bytes * 8;
-    t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>"});
-    t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto"});
-    t.void_type = intern(&t, (Ty){.kind = .void_type, .name = "Void"});
-    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool"});
-    t.text = intern(&t, (Ty){.kind = .text, .name = "Str"});
-    t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null"});
-    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type"});
+    t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>", .element = nullptr, .error = nullptr});
+    t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto", .element = nullptr, .error = nullptr});
+    t.void_type = intern(&t, (Ty){.kind = .void_type, .name = "Void", .element = nullptr, .error = nullptr});
+    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool", .element = nullptr, .error = nullptr});
+    t.text = intern(&t, (Ty){.kind = .text, .name = "Str", .element = nullptr, .error = nullptr});
+    t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null", .element = nullptr, .error = nullptr});
+    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type", .element = nullptr, .error = nullptr});
     add_builtin(&t, "Auto", t.automatic);
     add_builtin(&t, "type", type_of_types);
     add_builtin(&t, "Void", t.void_type);
@@ -385,11 +431,12 @@ export TypeRef float_of_width(const Table *t, U32 bits) {
 }
 
 export TypeRef pointer_to(Table *t, TypeRef pointee, Bool pointee_const) {
-    return intern(t, (Ty){.kind = .pointer, .element = pointee, .pointee_const = pointee_const});
+    return intern(t, (Ty){.kind = .pointer, .element = pointee, .pointee_const = pointee_const, .error = nullptr});
 }
 
 export TypeRef array_of(Table *t, TypeRef element, U64 count, Bool element_const) {
-    return intern(t, (Ty){.kind = .array, .element = element, .count = count, .pointee_const = element_const});
+    return intern(
+        t, (Ty){.kind = .array, .element = element, .count = count, .pointee_const = element_const, .error = nullptr});
 }
 
 static void add_va_list(Table *t) {
@@ -397,25 +444,25 @@ static void add_va_list(Table *t) {
 }
 
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
-    return intern(t, (Ty){.kind = .slice, .element = element, .pointee_const = element_const});
+    return intern(t, (Ty){.kind = .slice, .element = element, .pointee_const = element_const, .error = nullptr});
 }
 
 // `[,]T` (count 2), `[,,]T` (count 3): a block whose sizes are known at run time.
 export TypeRef block_of(Table *t, TypeRef element, U64 dimensions) {
-    return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions});
+    return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions, .error = nullptr});
 }
 
 // `vec(T, N)`: `count` lanes of `element`.
 export TypeRef vector_of(Table *t, TypeRef element, U64 count) {
-    return intern(t, (Ty){.kind = .vector, .element = element, .count = count});
+    return intern(t, (Ty){.kind = .vector, .element = element, .count = count, .error = nullptr});
 }
 
 export TypeRef stream_of(Table *t, TypeRef element) {
-    return intern(t, (Ty){.kind = .stream, .element = element});
+    return intern(t, (Ty){.kind = .stream, .element = element, .error = nullptr});
 }
 
 export TypeRef option_of(Table *t, TypeRef some) {
-    return intern(t, (Ty){.kind = .option, .element = some});
+    return intern(t, (Ty){.kind = .option, .element = some, .error = nullptr});
 }
 
 export TypeRef result_of(Table *t, TypeRef ok, TypeRef error) {
@@ -431,11 +478,11 @@ export TypeRef tuple_of(Table *t, Slot elements[:]) {
         slots[i].name = countof(given) > 0 ? given : msg(format::push(i));
         slots[i].type = elements[i].type;
     }
-    return intern(t, (Ty){.kind = .tuple, .slots = slots});
+    return intern(t, (Ty){.kind = .tuple, .slots = slots, .element = nullptr, .error = nullptr});
 }
 
 export TypeRef fn_value_of(Table *t, TypeRef function) {
-    return intern(t, (Ty){.kind = .fn_value, .element = function});
+    return intern(t, (Ty){.kind = .fn_value, .element = function, .error = nullptr});
 }
 
 // `result (params...)`; the parameter names are dropped, they are not part of the type.
@@ -443,13 +490,14 @@ export TypeRef function_of(Table *t, Slot params[:], TypeRef result, Bool variad
     Slot copy[:] = mem::alloc_slice(Slot, countof(params));
     for (Usize i = 0; i < countof(params); i++)
         copy[i].type = params[i].type;
-    return intern(t, (Ty){.kind = .function, .element = result, .slots = copy, .variadic = variadic});
+    return intern(t, (Ty){.kind = .function, .element = result, .slots = copy, .variadic = variadic, .error = nullptr});
 }
 
 // A record, nominal: every call makes a new type. It is not `complete` (a pointer to it is fine, a value is not)
 // until `set_fields`. The pointer is the table's, to be given back to `set_fields`.
 export Ty *new_record(Table *t, Str name, Bool is_union) {
-    return add_entry(t, (Ty){.kind = .record, .name = name, .is_union = is_union});
+    return add_entry(t,
+                     (Ty){.kind = .record, .name = name, .is_union = is_union, .element = nullptr, .error = nullptr});
 }
 
 export void set_fields(Ty *record, Slot fields[:]) {
@@ -459,7 +507,8 @@ export void set_fields(Ty *record, Slot fields[:]) {
 
 // An enumeration, nominal, over the integer type `underlying`.
 export Ty *new_enumeration(Table *t, Str name, TypeRef underlying) {
-    return add_entry(t, (Ty){.kind = .enumeration, .name = name, .element = underlying, .complete = true});
+    return add_entry(
+        t, (Ty){.kind = .enumeration, .name = name, .element = underlying, .complete = true, .error = nullptr});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -488,15 +537,24 @@ static Usize part_count(TypeRef t) {
     return 0;
 }
 
+// The element of a pointer, array, slice, option, stream, vector or function type; `t` itself when it has none. The
+// field is optional, so it is read through a local the fixer can narrow.
+static TypeRef element_of(TypeRef t) {
+    TypeRef e = t->element;
+    if (e == nullptr) return t;
+    return e;
+}
+
 static TypeRef part(TypeRef t, Usize i) {
     if (t->kind == .record || t->kind == .tuple) return t->slots[i].type;
-    return t->element;
+    return element_of(t);
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
 static Layout vector_layout(const Target *target, TypeRef t) {
     U64 lane = 1;
-    if (t->element->kind != .bool_type) lane = t->element->bits / 8;
+    TypeRef lane_type = element_of(t);
+    if (lane_type->kind != .bool_type) lane = lane_type->bits / 8;
     U64 size = 1;
     while (size < lane * t->count)
         size *= 2;
@@ -647,36 +705,36 @@ static Piece of(TypeRef type) {
 static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
     if (t->kind == .pointer) {
         push_piece(stack, top, word(" *"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .array) {
         push_piece(stack, top, word(msg(format::push("[", t->count, "]"))));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .slice) {
         push_piece(stack, top, word("[:]"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .block) {
         push_piece(stack, top, word(t->count == 2 ? "[,]" : "[,,]"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
     } else if (t->kind == .vector) {
         push_piece(stack, top, word(msg(format::push(", ", t->count, ")"))));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "vec(");
     } else if (t->kind == .option) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Option(");
     } else if (t->kind == .stream) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "stream::Stream(");
     } else if (t->kind == .result_type) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->error));
         push_piece(stack, top, word(", "));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Result(");
     } else if (t->kind == .tuple) {
         if (countof(t->slots) == 1)
@@ -692,7 +750,7 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         put(text, "(");
     } else if (t->kind == .fn_value) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Fn(");
     } else if (t->kind == .function) {
         push_piece(stack, top, word(")"));
@@ -702,7 +760,7 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
             if (i > 1) push_piece(stack, top, word(", "));
         }
         push_piece(stack, top, word(" ("));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
     } else
         put(text, t->name);
 }
@@ -717,15 +775,18 @@ export Str show(TypeRef t) {
     while (top > 0) {
         top -= 1;
         Piece piece = stack[top];
-        Usize pushes = piece.type == nullptr ? 0 : 2 * countof(piece.type->slots);
+        TypeRef shown = piece.type;
+        Usize pushes = 0;
+        if (shown != nullptr) pushes = 2 * countof(shown->slots);
         while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
         }
-        if (piece.type == nullptr)
+        if (shown == nullptr) {
             put(&text, piece.word);
-        else
-            expand(stack, &top, &text, piece.type);
+            continue;
+        }
+        expand(stack, &top, &text, shown);
     }
     return text.data[0:text.length];
 }
@@ -1026,7 +1087,7 @@ export struct InstanceUse {
 
 export struct Checked {
     Options options;
-    HeaderBinding bindings[32];
+    HeaderBinding bindings[:]; // `max_header_bindings` of them
     Usize binding_count;
     Instance instances[:];
     Usize instance_count;
@@ -1055,7 +1116,8 @@ export void fail(Checked *r, ast::Span span, Str message) {
         if (capacity < 8) capacity = 8;
         r->errors = mem::realloc(r->errors, capacity);
     }
-    r->errors[r->error_count] = (Error){.message = msg(format::push(message)), .span = span};
+    r->errors[r->error_count] = (Error){
+        .message = msg(format::push(message)), .span = span, .left_out_call = nullptr, .left_out_record = nullptr};
     r->error_count += 1;
 }
 
@@ -1102,8 +1164,7 @@ export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix)
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
 export void failf(Checked *r, ast::Span span, auto... args) {
-    Error error = {.message = msg(format::push(args...)), .span = span};
-    fail(r, span, error.message);
+    fail(r, span, msg(format::push(args...)));
 }
 
 static Usize slot_of(const ast::Expr *node, Usize capacity) {
@@ -1233,17 +1294,17 @@ export void mark_cast_checked(Checked *r, const ast::Expr *node, TypeRef from) {
 // node and for a cast that cannot lose anything.
 export CastCheck cast_checked(const Checked *r, const ast::Expr *node) {
     Usize capacity = countof(r->nodes);
-    if (capacity == 0) return (CastCheck){};
+    if (capacity == 0) return (CastCheck){.target_type = nullptr};
     Usize at = slot_of(node, capacity);
     while (r->nodes[at].node != nullptr) {
         if (r->nodes[at].node == node) {
             const NodeType *entry = &r->nodes[at];
-            if (!entry->cast_checked) return (CastCheck){};
+            if (!entry->cast_checked) return (CastCheck){.target_type = nullptr};
             return (CastCheck){.needed = true, .from = entry->cast_from, .target_type = entry->type};
         }
         at = (at + 1) & (capacity - 1);
     }
-    return (CastCheck){};
+    return (CastCheck){.target_type = nullptr};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1288,7 +1349,7 @@ static void push_made(Walk *w, TypeRef type) {
 
 // A type path `a.T`, `a::T` or `a.b.T`: through the modules when its first name is one, else the whole path as a name
 // (`c::printf`); inside an imported module, that module's own names first.
-static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+export const Symbol *type_through_modules(const Checked *r, ast::Path path);
 export const HeaderBinding *header_binding(const Checked *r, Str name);
 
 static Str path_text(ast::Path path) {
@@ -1302,7 +1363,7 @@ static Str path_text(ast::Path path) {
 
 // A concept of smith's own syntax (`num`), in a type that is written in it: a family of types, never a field's type.
 export TypeRef concept_of(Table *t, Str name) {
-    return intern(t, (Ty){.kind = .concept_type, .name = name});
+    return intern(t, (Ty){.kind = .concept_type, .name = name, .element = nullptr, .error = nullptr});
 }
 
 static Bool is_own_concept(Str name) {
@@ -1515,26 +1576,32 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
 // `typeof(T)` is `T`; `typeof(x)` is the type of the variable or parameter `x` that is in scope. Another expression is
 // typed by `options.expression` (J1b's `infer`, which this file cannot import); without one it is reported.
 static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
-    if (!(node->kind == .type_of)) return r->table.invalid;
+    if (node->kind != .type_of) return r->table.invalid;
     const ast::Expr *operand = node->kind.type_of.operand;
     if (operand->kind == .type_value) {
         // (no recursion: only a named type, as `typeof(i32)`, is read here)
         const ast::TypeExpr *given = operand->kind.type_value.type;
-        if (given->kind == .named) return resolve_name(r, given->span, given->kind.named.path);
+        ast::Path given_path = {};
+        if (written_path(given, &given_path)) return resolve_name(r, given->span, given_path);
         // `typeof(Edit[:])`, the alias of a list (`Edits`, `Errors`): one slice of a plain name, with no recursion
         // (#2602)
-        const ast::TypeExpr *element = given->kind == .slice ? given->kind.slice.element : nullptr;
-        if (element != nullptr && element->kind == .named) {
-            TypeRef of = resolve_name(r, element->span, element->kind.named.path);
+        const ast::TypeExpr *element = nullptr;
+        if (given->kind == .slice) element = given->kind.slice.element;
+        ast::Path element_path = {};
+        if (written_path(element, &element_path)) {
+            TypeRef of = resolve_name(r, element->span, element_path);
             return slice_of(&r->table, of, false);
         }
         failf(r, node->span, "not yet typed: `typeof` of a type that is not a plain name; write the type itself");
         return r->table.invalid;
     }
-    if (operand->kind == .name && countof(operand->kind.name.path.segments) == 1) {
-        const Symbol *found = lookup(&r->scopes, operand->kind.name.path.segments[0].text);
+    Str operand_name = single_name(operand);
+    if (countof(operand_name) > 0) {
+        const Symbol *found = lookup(&r->scopes, operand_name);
         if (found != nullptr && found->kind == .variable) return found->type;
-        return resolve_name(r, operand->span, operand->kind.name.path); // a type written as a name; else unknown
+        if (operand->kind == .name) {
+            return resolve_name(r, operand->span, operand->kind.name.path); // a type written as a name; else unknown
+        }
     }
     if (r->options.expression != nullptr) return r->options.expression(r, operand);
     failf(r, node->span,
@@ -1544,8 +1611,8 @@ static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
 
 static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     if (node->kind == .named) {
-        ast::Path named = node->kind.named.path;
-        return resolve_name(r, node->span, named);
+        ast::Path named_path = node->kind.named.path;
+        return resolve_name(r, node->span, named_path);
     }
     if (node->kind == .auto_type) return r->table.automatic;
     if (node->kind == .type_of) {
@@ -1573,7 +1640,7 @@ static void reject_conversion_name(Checked *r, ast::Span span, Str name, Str wha
 // An anonymous struct or union used as a type (a payload variant `struct { I32 a; } one;`): a nominal record of its
 // own, one per place it is written, whose fields are the children's types.
 static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
-    if (!(node->kind == .record)) return r->table.invalid;
+    if (node->kind != .record) return r->table.invalid;
     ast::FieldDecl members[:] = node->kind.record.fields;
     Slot fields[:] = mem::alloc_slice(Slot, n);
     for (Usize i = 0; i < n; i++) {
@@ -1604,7 +1671,7 @@ static Bool any_invalid(const Checked *r, const Walk *w, Usize base, Usize n) {
 
 // `vec(T, N)`: `T` is a number type and `N` an integer literal of 1 or more.
 static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef element) {
-    if (!(node->kind == .applied)) {
+    if (node->kind != .applied) {
         return r->table.invalid;
     }
     ast::TypeArg args[:] = node->kind.applied.args;
@@ -1618,7 +1685,7 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
         failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
         return r->table.invalid;
     }
-    const ast::Expr *count = second->value.value;
+    const ast::Expr *count = value_argument(second);
     if (count->kind != .integer) {
         failf(r, count->span, "not yet typed: a lane count that is not an integer literal; write `vec(f32, 4)`");
         return r->table.invalid;
@@ -1640,11 +1707,12 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out);
 // `arena::slice_of(T, count)`: `count` nested slices of `T` (a block when 2 or more), where `count` is a literal, a
 // constant, or `countof` of a pack.
 static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef element) {
-    if (!(node->kind == .applied)) return r->table.invalid;
+    if (node->kind != .applied) return r->table.invalid;
     ast::TypeArg args[:] = node->kind.applied.args;
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
-    if (second == nullptr || !(*second == .value) || !constant_length(r, second->value.value, &count) || count < 1) {
+    const ast::Expr *count_expr = value_argument(second);
+    if (count_expr == nullptr || !constant_length(r, count_expr, &count) || count < 1) {
         failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
         return r->table.invalid;
     }
@@ -1665,7 +1733,7 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
     Bool is_lambda = same_text(name, "Lambda");
     if ((same_text(name, "Fn") || is_lambda) && args == 1 && n == 1) {
         TypeRef argument = w->values[base].type;
-        if (!(argument->kind == .function)) {
+        if (argument->kind != .function) {
             Str written = is_lambda ? "Lambda" : "Fn";
             failf(r, span, "`", written, "` takes a function type; write `", written, "(R (P1, P2))`, for example `",
                   written, "(Bool (I32, I32))`");
@@ -1732,18 +1800,18 @@ static Bool apply_length(ast::BinaryOp op, U64 a, U64 b, U64 *out) {
     return true;
 }
 
-static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+export const Symbol *type_through_modules(const Checked *r, ast::Path path);
 
 // Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
 // written as a value.
-static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
-    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
-        countof(e->kind.member.base->kind.name.path.segments) == 1) {
+export Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
+    ast::Identifier header = {};
+    Str header_member = "";
+    if (member_of_name(e, &header, &header_member)) {
         // `k.depth`: a name of a C header's constant, `k` the header's binding (the path of `k.SIDE` is a type_value)
-        ast::Identifier second = {.text = e->kind.member.name, .span = e->span};
-        Usize first_at = 0;
+        ast::Identifier second = {.text = header_member, .span = e->span};
         ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
-        segments[first_at] = e->kind.member.base->kind.name.path.segments[0];
+        segments[0] = header;
         segments[1] = second;
         *path = (ast::Path){.segments = segments, .span = e->span};
         return true;
@@ -1752,14 +1820,143 @@ static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
         *path = e->kind.name.path;
         return true;
     }
-    if (e->kind == .type_value) {
-        const ast::TypeExpr *t = e->kind.type_value.type;
-        if (t != nullptr && t->kind == .named) {
-            *path = t->kind.named.path;
-            return true;
-        }
-    }
+    if (e->kind == .type_value) return written_path(e->kind.type_value.type, path);
     return false;
+}
+
+// Whether a declaration is a function written in the new syntax.
+static Bool is_new_function(const ast::Decl *d) {
+    if (d->kind != .function) return false;
+    return d->kind.function.is_new;
+}
+
+// `k.f` with `.` (not `->`): the base `k` and the member `f`.
+static Bool is_dot_member(const ast::Expr *e) {
+    if (e->kind != .member) return false;
+    return !e->kind.member.arrow;
+}
+
+static const ast::Expr *member_base(const ast::Expr *e) {
+    if (e->kind != .member) return nullptr;
+    return e->kind.member.base;
+}
+
+static Str member_field(const ast::Expr *e) {
+    if (e->kind != .member) return "";
+    return e->kind.member.name;
+}
+
+// The value of an expression that is an integer literal, false for anything else.
+export Bool integer_of(const ast::Expr *e, U64 *out) {
+    if (e == nullptr) return false;
+    if (e->kind != .integer) return false;
+    *out = e->kind.integer.value;
+    return true;
+}
+
+// What the declaration of a symbol says. A symbol has none when it is a builtin, so each reader below tests for it once
+// and gives an empty answer.
+
+// The initializer of a symbol that is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); null
+// when it is not one or has none.
+export const ast::Expr *constant_initializer(const Symbol *s) {
+    if (s == nullptr) return nullptr;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return nullptr;
+    if (decl->kind != .variable) return nullptr;
+    Bool fixed = s->is_const;
+    Bool is_new = decl->kind.variable.is_new;
+    if (is_new) fixed = !decl->kind.variable.is_mut || decl->kind.variable.is_constexpr;
+    if (!fixed || s->kind != .variable) return nullptr;
+    return decl->kind.variable.init;
+}
+
+// Whether the symbol's declaration is `pub` or `export`.
+static Bool declared_public(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->is_pub || decl->exported;
+}
+
+// Whether the symbol was declared in a C header.
+export Bool declared_in_c(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->from_c;
+}
+
+// The doc comment of the symbol's declaration; empty when it has none.
+export Str declared_doc(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    return decl->doc;
+}
+
+// Whether the symbol is the declaration `d`.
+export Bool declared_by(const Symbol *s, const ast::Decl *d) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl == d;
+}
+
+// Whether the symbol is declared by a record.
+static Bool declared_by_record(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    return decl->kind == .record;
+}
+
+// Whether the symbol is declared by a record that is only named (`struct Expr;`), with no fields.
+static Bool declared_opaque(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .record) return false;
+    return decl->kind.record.opaque;
+}
+
+// The number of parameters of a symbol that is a function with a declaration that is not generic.
+static Bool declared_arity(const Symbol *s, Usize *count) {
+    if (s == nullptr) return false;
+    if (s->generic) return false;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .function) return false;
+    *count = countof(decl->kind.function.params);
+    return true;
+}
+
+// The `at`th parameter of a symbol that is a function with a declaration, else null.
+static const ast::Param *declared_param(const Symbol *s, Usize at) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return nullptr;
+    if (decl->kind != .function) return nullptr;
+    return &decl->kind.function.params[at];
+}
+
+// The prefix an import symbol stands for, else an empty text.
+static Str prefix_of_symbol(const Symbol *s);
+
+// The operand of a negation `-x`, else null.
+static const ast::Expr *negated_operand(const ast::Expr *e) {
+    if (e == nullptr) return nullptr;
+    if (e->kind != .unary) return nullptr;
+    if (e->kind.unary.op != .negate) return nullptr;
+    return e->kind.unary.operand;
+}
+
+// The path of an expression that is a name, false for anything else.
+export Bool name_path(const ast::Expr *e, ast::Path *path) {
+    if (e == nullptr) return false;
+    if (e->kind != .name) return false;
+    *path = e->kind.name.path;
+    return true;
+}
+
+// The operand of `countof(x)`, else null.
+static const ast::Expr *counted_operand(const ast::Expr *e) {
+    if (e->kind != .query) return nullptr;
+    if (e->kind.query.op != .count_of) return nullptr;
+    return e->kind.query.operand;
 }
 
 // The value of an array length that is known at compile time: an integer literal, a name of a constant (`constexpr`,
@@ -1781,23 +1978,19 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             continue;
         }
         ast::Path path = {};
-        if (e->kind == .query && e->kind.query.op == .count_of && e->kind.query.operand != nullptr &&
-            e->kind.query.operand->kind == .name) {
+        ast::Path counted_path = {};
+        if (name_path(counted_operand(e), &counted_path)) {
             // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
-            const Symbol *pack = type_through_modules(r, e->kind.query.operand->kind.name.path);
+            const Symbol *pack = type_through_modules(r, counted_path);
             if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
                 return false;
-            values[have++] = countof(pack->type->slots);
+            values[have++] = (U64)countof(pack->type->slots);
             continue;
         }
         if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
-            const ast::Expr *init = s->decl->kind.variable.init;
-            Bool fixed = s->is_const;
-            if (s->decl->kind.variable.is_new)
-                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
-            if (!fixed || init == nullptr || top == 32) return false;
+            const ast::Expr *init = constant_initializer(s);
+            if (init == nullptr || top == 32) return false;
             steps[top++] = length_step(init, false);
             continue;
         }
@@ -1846,24 +2039,24 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
         U64 value = 0;
         Bool known = true;
         ast::Path path = {};
-        if (e->kind == .integer) {
-            value = e->kind.integer.value;
-        } else if (e->kind == .character) {
-            value = e->kind.character.value;
-        } else if (e->kind == .boolean) {
-            value = e->kind.boolean.value ? 1 : 0;
-        } else if (e->kind == .unary && e->kind.unary.op == .negate) {
+        const ast::Expr *inner = negated_operand(e);
+        if (inner != nullptr) {
             negated = !negated;
-            e = e->kind.unary.operand;
+            e = inner;
             continue;
+        }
+        const ast::Expr *at = e;
+        if (at->kind == .integer) {
+            value = at->kind.integer.value;
+        } else if (at->kind == .character) {
+            value = at->kind.character.value;
+        } else if (at->kind == .boolean) {
+            value = at->kind.boolean.value ? 1 : 0;
         } else if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return false;
-            Bool fixed = s->is_const;
-            if (s->decl->kind.variable.is_new)
-                fixed = !s->decl->kind.variable.is_mut || s->decl->kind.variable.is_constexpr;
-            if (!fixed) return false;
-            e = s->decl->kind.variable.init;
+            const ast::Expr *init = constant_initializer(s);
+            if (init == nullptr) return false;
+            e = init;
             continue;
         } else {
             known = constant_length(r, e, &value);
@@ -1890,8 +2083,9 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
-        if (count != nullptr && count->kind == .name && countof(count->kind.name.path.segments) == 1) {
-            const Symbol *bound = lookup(&r->scopes, count->kind.name.path.segments[0].text); // `n` of an instance
+        Str count_name = single_name(count);
+        if (countof(count_name) > 0) {
+            const Symbol *bound = lookup(&r->scopes, count_name); // `n` of an instance
             if (bound != nullptr && bound->has_value) {
                 Bool bound_const = node->kind.array.element->qualifiers.is_const;
                 return array_of(&r->table, w->values[base].type, bound->value, bound_const);
@@ -2053,7 +2247,7 @@ export void private_build(Checked *r, ast::Span span, const Ty *record) {
     for (Usize i = 0; i < r->scopes.count; i++) {
         const Symbol *s = &r->scopes.symbols[i];
         if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
-        Bool public = s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+        Bool public = s->exported || declared_public(s);
         if (s->type->element != record || !public) continue;
         if (countof(s->name) <= countof(record->owner) || !starts_with(s->name, record->owner)) continue;
         Str name = s->name[countof(record->owner):countof(s->name)];
@@ -2142,10 +2336,9 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
             if (same_text(r->scopes.symbols[i - 1].name, name)) earlier = &r->scopes.symbols[i - 1];
         }
-        if (earlier != nullptr && earlier->kind == .type_name && earlier->decl != nullptr &&
-            earlier->decl->kind == .record) {
+        if (earlier != nullptr && earlier->kind == .type_name && declared_by_record(earlier)) {
             if (forward) return;
-            if (earlier->decl->kind.record.opaque) {
+            if (declared_opaque(earlier)) {
                 *earlier = type_symbol(name, made, d, exported);
                 return;
             }
@@ -2157,7 +2350,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         TypeRef underlying = builtin(&r->table, "I32");
         if (over != nullptr) {
             underlying = resolve(r, over);
-            if (!(underlying->kind == .integer)) {
+            if (underlying->kind != .integer) {
                 if (underlying != r->table.invalid) {
                     failf(r, span, "an enumeration is over an integer type, not `", show(underlying), "`; write `enum ",
                           name, " : U8`");
@@ -2237,14 +2430,16 @@ static Bool looks_like_type_name(Str name) {
 // else.
 static ast::TypeExpr *header_type_alias(Checked *r, const ast::Expr *init) {
     ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
-    if (init->kind == .member && !init->kind.member.arrow && init->kind.member.base->kind == .name &&
-        countof(init->kind.member.base->kind.name.path.segments) == 1) {
-        segments[0] = init->kind.member.base->kind.name.path.segments[0];
-        segments[1] = (ast::Identifier){.text = init->kind.member.name, .span = init->span};
-    } else if (init->kind == .name && countof(init->kind.name.path.segments) == 2) {
+    ast::Identifier header = {};
+    Str thing = "";
+    ast::Path pair = {};
+    if (member_of_name(init, &header, &thing)) {
+        segments[0] = header;
+        segments[1] = (ast::Identifier){.text = thing, .span = init->span};
+    } else if (name_path(init, &pair) && countof(pair.segments) == 2) {
         // a capitalized `c.Thing` is read as one qualified name
-        segments[0] = init->kind.name.path.segments[0];
-        segments[1] = init->kind.name.path.segments[1];
+        segments[0] = pair.segments[0];
+        segments[1] = pair.segments[1];
     } else {
         return nullptr;
     }
@@ -2321,7 +2516,7 @@ static void declare_alias(Checked *r, const ast::Decl *d) {
 }
 
 static void fill_record(Checked *r, const ast::Decl *d, Str name) {
-    if (!(d->kind == .record)) return;
+    if (d->kind != .record) return;
     Bool opaque = d->kind.record.opaque;
     ast::FieldDecl members[:] = d->kind.record.fields;
     const Symbol *symbol = lookup_as(&r->scopes, name, true); // a function of the tag's name may be declared (#2610)
@@ -2359,10 +2554,10 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
             }
         }
     }
-    Ty *record = own(&r->table, symbol->type);
-    if (record != nullptr) {
-        set_fields(record, fields);
-        record->owner = r->prefix;
+    Ty *made = own(&r->table, symbol->type);
+    if (made != nullptr) {
+        set_fields(made, fields);
+        made->owner = r->prefix;
     }
 }
 
@@ -2379,9 +2574,8 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     for (Usize i = 0; i < n; i++) {
         const ast::Enumerator *item = &members[i];
         const ast::Expr *value = item->value;
-        if (value != nullptr && value->kind == .integer) {
-            next = value->kind.integer.value;
-        } else if (value != nullptr) {
+        Bool literal = integer_of(value, &next);
+        if (!literal && value != nullptr) {
             failf(r, value->span, "not yet typed: an enumerator value that is not an integer literal");
         }
         TypeRef carried = symbol->type->element;
@@ -2422,8 +2616,9 @@ export Bool is_type_parameter(const ast::Param *p) {
 // Whether a written type is a slice of `auto` (`const auto xs[:]`): the call's argument must be a slice, and the
 // instance keeps its element type and the parameter's `const` (#2070).
 export Bool is_auto_slice(const ast::TypeExpr *t) {
-    if (t == nullptr || !(t->kind == .slice)) return false;
-    return t->kind.slice.element != nullptr && t->kind.slice.element->kind == .auto_type;
+    if (t == nullptr || t->kind != .slice) return false;
+    const ast::TypeExpr *inner = t->kind.slice.element;
+    return inner != nullptr && inner->kind == .auto_type;
 }
 
 // Whether a parameter is written `auto x` (today's syntax) or `x: auto` (smith's own): its type is the type each call
@@ -2441,7 +2636,7 @@ export Bool is_auto_param(const ast::Param *p) {
 // The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
 // `auto` its element with the parameter's `const` added; null when the argument is not a slice.
 export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
-    if (!is_auto_slice(p->type) || !(p->type->kind == .slice)) return given;
+    if (!is_auto_slice(p->type) || p->type->kind != .slice) return given;
     if (given->kind != .slice) return nullptr;
     Bool fixed = given->pointee_const || p->type->kind.slice.element->qualifiers.is_const;
     return slice_of(&r->table, given->element, fixed);
@@ -2473,7 +2668,7 @@ static void declare_template(Checked *r, const ast::Decl *d, Str name, ast::Para
 static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Param list[:],
                              const ast::TypeExpr *result_type, Bool variadic) {
     // a function whose first parameter is a value is reached as `x.name(...)`, which these names never mean
-    if (d->kind == .function && d->kind.function.is_new && countof(list) > 0 && !is_type_name(list[0].type)) {
+    if (is_new_function(d) && countof(list) > 0 && !is_type_name(list[0].type)) {
         reject_conversion_name(r, d->span, name, "function");
     }
     if (is_template(d, list, result_type)) {
@@ -2521,7 +2716,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     }
     TypeRef result = r->table.void_type;
     if (result_type != nullptr && !is_type_name(result_type)) {
-        r->new_syntax = (countof(list) > 0 && list[0].is_new) || (d->kind == .function && d->kind.function.is_new);
+        r->new_syntax = (countof(list) > 0 && list[0].is_new) || is_new_function(d);
         result = resolve(r, result_type); // (`Type`: a type function)
         r->new_syntax = false;
     }
@@ -2581,8 +2776,9 @@ static Str instance_name(Str base, Binding bindings[:]) {
 export void bind_instance(Checked *r, const Instance *x) {
     for (Usize i = 0; i < countof(x->bindings); i++) {
         const Binding *b = &x->bindings[i];
-        Symbol symbol = {.name = b->name, .kind = .variable, .type = b->type};
-        if (b->is_type) symbol.kind = .type_name;
+        SymbolKind kind = .variable;
+        if (b->is_type) kind = .type_name;
+        Symbol symbol = {.name = b->name, .kind = kind, .type = b->type};
         symbol.is_new = true;
         symbol.is_const = true;
         symbol.has_value = !b->is_type;
@@ -2623,15 +2819,23 @@ static const Symbol *reflected_symbol(Str subject, Bool is_type) {
     return s->kind == .function_symbol ? s : nullptr;
 }
 
-// The fields the module being checked may name, in order.
-static Usize visible_fields(const Ty *record, Usize at, const Slot **found) {
+// How many fields the module being checked may name.
+static Usize visible_count(const Ty *record) {
+    Usize seen = 0;
+    for (Usize i = 0; i < countof(record->slots); i++)
+        if (field_visible(record, &record->slots[i])) seen += 1;
+    return seen;
+}
+
+// The `at`-th field the module being checked may name, in order; null when there are fewer.
+static const Slot *visible_at(const Ty *record, Usize at) {
     Usize seen = 0;
     for (Usize i = 0; i < countof(record->slots); i++) {
         if (!field_visible(record, &record->slots[i])) continue;
-        if (seen == at) *found = &record->slots[i];
+        if (seen == at) return &record->slots[i];
         seen += 1;
     }
-    return seen;
+    return nullptr;
 }
 
 // The type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
@@ -2651,35 +2855,30 @@ static Bool reflect_count(Str kind, Str subject, Usize *count) {
     if (same_text(kind, "fields")) {
         const Symbol *s = reflected_symbol(subject, true);
         if (s == nullptr || s->type->kind != .record || !s->type->complete) return false;
-        const Slot *none = nullptr;
-        *count = visible_fields(s->type, 0, &none);
+        *count = visible_count(s->type);
         return true;
     }
     const Symbol *s = reflected_symbol(subject, false);
-    if (s == nullptr || s->decl == nullptr || s->decl->kind != .function || s->generic) return false;
-    *count = countof(s->decl->kind.function.params);
-    return true;
+    return declared_arity(s, count);
 }
 
 static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
-    ast_clone::Entry entry = {};
     if (same_text(kind, "fields")) {
-        const Slot *slot = nullptr;
-        visible_fields(reflected_symbol(subject, true)->type, at, &slot);
-        entry = (ast_clone::Entry){.name = slot->name,
-                                   .type_name = written_name(slot->type),
-                                   .doc = slot->doc,
-                                   .attributes = slot->attributes,
-                                   .default_value = slot->default_value};
-        return entry;
+        const Symbol *owner = reflected_symbol(subject, true);
+        const Slot *slot = visible_at(owner->type, at);
+        return (ast_clone::Entry){.name = slot->name,
+                                  .type_name = written_name(slot->type),
+                                  .doc = slot->doc,
+                                  .attributes = slot->attributes,
+                                  .default_value = slot->default_value};
     }
     const Symbol *s = reflected_symbol(subject, false);
-    if (s->decl->kind != .function) return entry;
-    const ast::Param *param = &s->decl->kind.function.params[at];
-    Str shown = {};
+    const ast::Param *param = declared_param(s, at);
+    if (param == nullptr) return (ast_clone::Entry){};
+    Str shown = "";
     if (at < countof(s->type->slots)) shown = written_name(s->type->slots[at].type);
-    entry = (ast_clone::Entry){.name = param->name, .type_name = shown, .attributes = param->attributes};
-    return entry;
+    return (ast_clone::Entry){
+        .name = param->name, .type_name = shown, .attributes = param->attributes, .default_value = nullptr};
 }
 
 static void reflect_fail(ast::Span span, Str message) {
@@ -2773,14 +2972,37 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
     Usize bound = countof(template->kind.function.generics);
     for (Usize i = 0; i < countof(params); i++) {
         if (params[i].is_pack && !params[i].is_gather && params[i].is_new) {
-            if (bound >= countof(given) || given[bound].type == nullptr) break;
+            if (bound >= countof(given)) break;
             TypeRef pack = given[bound].type;
-            if (!(pack->kind == .tuple)) break;
+            if (pack == nullptr) break;
+            if (pack->kind != .tuple) break;
             return ast_clone::clone_decl_unrolling(template, params[i].name, countof(pack->slots));
         }
         if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
     }
     return ast_clone::clone_decl(template);
+}
+
+// What a function declaration says of itself apart from its parameters; `ok` is false for any other declaration.
+struct Shape {
+    ast::TypeExpr *result;
+    Str name;
+    ast::Stmt *body;
+    Bool variadic;
+    Bool is_new;
+    Bool ok;
+};
+
+static Shape shape_of(const ast::Decl *d) {
+    Shape s = {.result = nullptr, .name = "", .body = nullptr, .variadic = false, .is_new = false, .ok = false};
+    if (d->kind != .function) return s;
+    s.result = d->kind.function.result;
+    s.name = d->kind.function.name;
+    s.body = d->kind.function.body;
+    s.variadic = d->kind.function.variadic;
+    s.is_new = d->kind.function.is_new;
+    s.ok = true;
+    return s;
 }
 
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
@@ -2789,25 +3011,32 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
 export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
-    if (template->kind != .function) return max_instances;
+    if (!shape_of(template).ok) return max_instances;
     if (r->instance_count == max_instances) {
-        failf(r, template->span, "`", template->kind.function.name, "` has more than ", max_instances,
+        failf(r, template->span, "`", shape_of(template).name, "` has more than ", max_instances,
               " instances; a generic function that calls itself with ever larger types never ends");
         return max_instances;
     }
     ast::Decl *copy = clone_instance(template, given);
-    if (copy->kind != .function) return max_instances;
-    ast::Param all[:] = copy->kind.function.params;
+    const ast::Decl *first = copy;
+    if (first->kind != .function) return max_instances;
+    ast::Param all[:] = first->kind.function.params;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
     Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     push_scope(&r->scopes);
-    ast::Param generics[:] = copy->kind.function.generics;
+    ast::Param generics[:] = first->kind.function.generics;
     Usize generic_count = countof(generics);
     Usize kept_count = bind_given(r, generics, all, given, bindings, &auto_syntax);
-    Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix};
+    Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix, .signature = nullptr};
     bind_instance(r, &made);
     expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
-    if (copy->kind != .function) return max_instances;
+    Shape shape = shape_of(copy);
+    if (!shape.ok) return max_instances;
+    ast::TypeExpr *result_type = shape.result;
+    Str function_name = shape.name;
+    ast::Stmt *function_body = shape.body;
+    Bool is_variadic = shape.variadic;
+    Bool is_new = shape.is_new;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     // The signature is written in the template's module: `Chars` in `format::push`'s result is `format::Chars`.
@@ -2821,18 +3050,24 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
         declare(&r->scopes, parameter);
     }
     TypeRef result = r->table.void_type;
-    if (copy->kind.function.result != nullptr) {
+    if (result_type != nullptr) {
         r->new_syntax = !auto_syntax;
-        result = resolve(r, copy->kind.function.result);
+        result = resolve(r, result_type);
         r->new_syntax = false;
     }
     r->prefix = outer;
     r->scopes.prefix = outer_scopes;
     pop_scope(&r->scopes);
-    copy->kind.function.params = kept;
-    copy->kind.function.generics = copy->kind.function.generics[0:0]; // the instance has none: they are bound
-    copy->kind.function.name = instance_name(copy->kind.function.name, bindings);
-    made.signature = function_of(&r->table, slots, result, copy->kind.function.variadic);
+    // the instance has no generics: they are bound
+    ast::DeclKind instance_kind = {.function = {.name = instance_name(function_name, bindings),
+                                                .params = kept,
+                                                .generics = generics[0:0],
+                                                .result = result_type,
+                                                .body = function_body,
+                                                .variadic = is_variadic,
+                                                .is_new = is_new}};
+    copy->kind = instance_kind;
+    made.signature = function_of(&r->table, slots, result, is_variadic);
     if (r->instance_count == countof(r->instances)) {
         Usize capacity = countof(r->instances) * 2;
         if (capacity < 8) capacity = 8;
@@ -2865,7 +3100,7 @@ struct UnifyPair {
 
 // The index of the generic a written type names (`T`), or the count when it names none.
 static Usize generic_named(ast::Param generics[:], const ast::TypeExpr *written) {
-    if (!(written->kind == .named)) return countof(generics);
+    if (written->kind != .named) return countof(generics);
     Str name = path_text(written->kind.named.path);
     for (Usize i = 0; i < countof(generics); i++) {
         if (is_generic_type(&generics[i]) && same_text(generics[i].name, name)) return i;
@@ -2878,11 +3113,16 @@ static Usize generic_named(ast::Param generics[:], const ast::TypeExpr *written)
 static Bool bind_generic(Binding bound[:], Bool set[:], Usize at, Bool is_type, TypeRef type, U64 value, Bool strict,
                          Unified *out) {
     if (set[at]) {
-        Bool same = is_type ? bound[at].type == type : bound[at].value == value;
+        TypeRef prior = bound[at].type;
+        Bool same = bound[at].value == value;
+        if (is_type) {
+            same = false;
+            if (prior != nullptr) same = prior == type;
+        }
         if (same || !strict) return true;
         out->conflict = true;
         out->generic = at;
-        out->before = bound[at].type;
+        if (prior != nullptr) out->before = prior;
         out->now = type;
         return false;
     }
@@ -2924,8 +3164,9 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
             inner = w->kind.array.element;
             inner_given = g->element;
             const ast::Expr *count = w->kind.array.count;
-            if (count != nullptr && count->kind == .name) {
-                Str name = path_text(count->kind.name.path);
+            ast::Path count_path = {};
+            if (name_path(count, &count_path)) {
+                Str name = path_text(count_path);
                 for (Usize i = 0; i < countof(generics); i++) {
                     if (is_generic_type(&generics[i]) || !same_text(generics[i].name, name)) continue;
                     if (!bind_generic(bound, set, i, false, nullptr, g->count, strict, out)) return false;
@@ -2948,12 +3189,16 @@ export Bool unify_generics(ast::Param generics[:], const ast::TypeExpr *written,
 // The type a literal initializer gives `let a = 3` (smith's own syntax: `i32` for an integer, `f64` for a float, the
 // suffix and `-` considered), or null when the initializer is not a literal; a name or an expression is typed with the
 // bodies.
-static TypeRef literal_type(Checked *r, const ast::Expr *init) {
+static TypeRef literal_type(Checked *r, const ast::Expr *given) {
     Bool negated = false;
-    while (init != nullptr && init->kind == .unary && init->kind.unary.op == .negate) {
-        init = init->kind.unary.operand;
+    const ast::Expr *at = given;
+    for (Usize steps = 0; steps < 64; steps++) {
+        const ast::Expr *inner = negated_operand(at);
+        if (inner == nullptr) break;
+        at = inner;
         negated = true;
     }
+    const ast::Expr *init = at;
     if (init == nullptr) return nullptr;
     if (init->kind == .integer) {
         Str suffix = init->kind.integer.suffix;
@@ -3036,7 +3281,7 @@ static void declare_member(Checked *r, const ast::Decl *d) {
 
 // Whether other modules may name the symbol: `pub` or `export` on its declaration.
 export Bool is_public(const Symbol *s) {
-    return s->exported || (s->decl != nullptr && (s->decl->is_pub || s->decl->exported));
+    return s->exported || declared_public(s);
 }
 
 static Str joined(ast::Path path, Str separator) {
@@ -3054,6 +3299,12 @@ static Str prefix_of_import(const ast::Decl *imported) {
     return msg(format::push(joined(imported->kind.import_module.path, "::"), "::"));
 }
 
+static Str prefix_of_symbol(const Symbol *s) {
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    return prefix_of_import(decl);
+}
+
 // The prefix a declaration's table name carries: `util::` for `util::apply`, empty for a name of the module being
 // checked.
 export Str module_prefix(Str name) {
@@ -3065,8 +3316,10 @@ export Str module_prefix(Str name) {
 
 // The module's path as written, `std.math`.
 export Str module_dotted(const Symbol *s) {
-    if (s->decl->kind != .import_module) return "";
-    return joined(s->decl->kind.import_module.path, ".");
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return "";
+    if (decl->kind != .import_module) return "";
+    return joined(decl->kind.import_module.path, ".");
 }
 
 // The names of `m.a.b`, the root first.
@@ -3078,21 +3331,21 @@ export struct Names {
 // The names of a chain of `.` that starts at a plain name; none (count 0) for anything else.
 export Names member_names(const ast::Expr *e) {
     Names out = {};
-    Names reversed = {};
+    Usize depth = 0;
     const ast::Expr *at = e;
-    while (at->kind == .member && !at->kind.member.arrow) {
-        if (reversed.count == 7) return out;
-        reversed.items[reversed.count] = at->kind.member.name;
-        reversed.count += 1;
-        at = at->kind.member.base;
+    while (is_dot_member(at)) {
+        depth += 1;
+        if (depth == 8) return out;
+        at = member_base(at);
     }
-    if (at->kind != .name || countof(at->kind.name.path.segments) != 1) return out;
-    out.items[0] = at->kind.name.path.segments[0].text;
-    out.count = 1;
-    while (reversed.count > 0) {
-        reversed.count -= 1;
-        out.items[out.count] = reversed.items[reversed.count];
-        out.count += 1;
+    Str root = single_name(at);
+    if (countof(root) == 0) return out;
+    out.items[0] = root;
+    out.count = depth + 1;
+    at = e;
+    for (Usize k = depth; k > 0; k--) {
+        out.items[k] = member_field(at);
+        at = member_base(at);
     }
     return out;
 }
@@ -3214,25 +3467,25 @@ export Str c_binding_of(const Checked *r, Str name) {
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
 // checked a name that is not `pub` is missing; inside an imported module it is not.
 export Through through_modules(const Checked *r, const Names *names) {
-    Through out = {.symbol = scoped(r, names->items[0])};
+    Through out = {.symbol = scoped(r, names->items[0]), .module = nullptr};
     for (Usize i = 1; i < names->count; i++) {
         const Symbol *module = out.symbol;
         if (module == nullptr || module->kind != .module_name) {
             out.stopped = true;
             return out;
         }
-        Str prefix = prefix_of_import(module->decl);
+        Str prefix = prefix_of_symbol(module);
         Str full = msg(format::push(prefix, names->items[i]));
         const Symbol *next = lookup(&r->scopes, full);
         if (next == nullptr || (countof(r->prefix) == 0 && !is_public(next))) {
-            return (Through){.module = module, .missing = names->items[i]};
+            return (Through){.symbol = nullptr, .module = module, .missing = names->items[i]};
         }
         out.symbol = next;
     }
     return out;
 }
 
-static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
+export const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     Usize count = countof(path.segments);
     if (count > 1 && count <= 8) {
         const Symbol *first = scoped(r, path.segments[0].text);
@@ -3253,7 +3506,7 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     const Symbol *found = nullptr;
     if (countof(r->prefix) > 0) found = lookup(&r->scopes, msg(format::push(r->prefix, path_text(path))));
     if (found == nullptr) found = lookup_path(&r->scopes, path);
-    if (found != nullptr && found->kind != .type_name && found->decl != nullptr && found->decl->from_c) {
+    if (found != nullptr && found->kind != .type_name && declared_in_c(found)) {
         const Symbol *tag = lookup_as(&r->scopes, found->name, true); // `c::stat` in a type is the struct (#2610)
         if (tag != nullptr && tag->kind == .type_name) found = tag;
     }
@@ -3304,10 +3557,10 @@ export Str enumeration_of(const Checked *r, Str prefix, Str name) {
 
 // Reports `std.math has no public sinn`, with the closest public name when one is near.
 export void report_missing(Checked *r, ast::Span span, Through t) {
-    Str prefix = prefix_of_import(t.module->decl);
+    Str prefix = prefix_of_symbol(t.module);
     Str owner = enumeration_of(r, prefix, t.missing);
     if (countof(owner) > 0) {
-        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        syntax::Edits fix = mem::alloc_slice(syntax::Edit, 1);
         fix[0] = (syntax::Edit){.span = span, .text = msg(format::push(".", t.missing))};
         fail_fix(r, span,
                  msg(format::push("`", t.missing, "` is an enumerator of `", owner, "`: write `.", t.missing,
@@ -3549,10 +3802,11 @@ static void declare_imported(Checked *r, Pending list[:], Usize count) {
 // whose initializer is the value the header gave it.
 static void declare_enumerators(Checked *r, const ast::Decl *d) {
     if (d->kind != .enumeration) return;
+    ast::Enumerator items[:] = d->kind.enumeration.items;
     const Symbol *named = lookup(&r->scopes, qualified(r, true, d->kind.enumeration.name));
-    if (named == nullptr || named->decl != d) return;
-    for (Usize i = 0; i < countof(d->kind.enumeration.items); i++) {
-        ast::Enumerator item = d->kind.enumeration.items[i];
+    if (named == nullptr || !declared_by(named, d)) return;
+    for (Usize i = 0; i < countof(items); i++) {
+        ast::Enumerator item = items[i];
         if (item.value == nullptr) continue;
         ast::Decl *constant = ast::variable(item.name, ast::named("I32"), item.value);
         constant->from_c = true;
@@ -3591,7 +3845,7 @@ static Str default_binding(Checked *r, const ast::Module *m, const ast::Decl *im
     Str binding = header_stem(header);
     if (!declares_function(m, binding)) return binding;
     Str renamed = msg(format::push(binding, "_h"));
-    syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+    syntax::Edits fix = mem::alloc_slice(syntax::Edit, 1);
     fix[0] = (syntax::Edit){.span = {.start = imported->span.end, .end = imported->span.end},
                             .text = msg(format::push(" as ", renamed))};
     Str prefix = r->prefix; // the previous header left `c::`, which would drop the fix
@@ -3637,7 +3891,9 @@ static void declare_headers(Checked *r, const ast::Module *m) {
         if (imported->kind == .import_c && countof(imported->kind.import_c.language) > 0 &&
             r->binding_count < max_header_bindings) {
             Str binding = imported->kind.import_c.alias;
-            if (countof(binding) == 0) binding = default_binding(r, m, imported, name);
+            if (countof(binding) == 0) {
+                binding = default_binding(r, m, imported, name);
+            }
             r->bindings[r->binding_count] = (HeaderBinding){.name = binding, .header = header};
             r->binding_count++;
         }
@@ -3702,7 +3958,10 @@ static void declare_from_names(Checked *r, const ast::Module *m) {
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
 // Errors are in the result, never an abort.
 export Checked check(const ast::Module *m, Options o) {
-    Checked r = {.options = o, .table = start(o.target)};
+    Checked r = {.options = o,
+                 .table = start(o.target),
+                 .bindings = mem::alloc_slice(HeaderBinding, max_header_bindings),
+                 .module = nullptr};
     if (o.target.pointer_bytes == 0) {
         fail(&r, (ast::Span){}, "the target has no pointer width; pass a target such as types::lp64() in the options");
         return r;
