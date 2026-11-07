@@ -315,6 +315,57 @@ static Str undeclared_c_name(Str message) {
     return message[countof(lead):end];
 }
 
+static Bool contains_text(Str text, Str needle);
+
+// The name in "`T` has no method `printf`; write a function ...": empty for another message.
+static Str no_method_name(Str message) {
+    Str lead = "` has no method `";
+    for (Usize i = 0; i + countof(lead) < countof(message); i++) {
+        if (!mem::equal(message[i:i + countof(lead)], lead)) continue;
+        Usize from = i + countof(lead);
+        Usize end = from;
+        while (end < countof(message) && message[end] != '`')
+            end += 1;
+        return message[from:end];
+    }
+    return "";
+}
+
+// A local named `c` hides the namespace `c` (#2648): `c.printf(...)` reads a method of the local. The header's own
+// name, `stdio.printf`, is the same function whatever the locals are called, so the `c` of the call becomes it.
+static core::Errors c_shadow_fixes(Str source, const types::Checked *checked) {
+    core::Errors out = {};
+    for (Usize i = 0; i < checked->error_count; i++) {
+        types::Error e = checked->errors[i];
+        Str name = no_method_name(e.message);
+        if (countof(name) == 0 || e.span.end <= e.span.start + 2) continue;
+        if (source[e.span.start] != 'c' || source[e.span.start + 1] != '.') continue;
+        for (Usize h = 0; h < countof(libc_headers); h++) {
+            Str header = libc_headers[h];
+            const ast::Module *found = load_header(header, true);
+            if (found == nullptr || !header_declares(found, name)) continue;
+            Str written = as_str(format::push("import c <", header, ">"));
+            if (!contains_text(source, written)) continue;
+            Usize stem = 0;
+            for (Usize k = 0; k < countof(header); k++)
+                if (header[k] == '/') stem = k + 1;
+            Str space = header[stem:countof(header) - 2];
+            ast::Span at = {.start = e.span.start, .end = e.span.start + 1};
+            core::Edits edits = {};
+            edits = mem::realloc(edits, 1);
+            edits[0] = (core::Edit){.span = at, .text = space};
+            out = mem::realloc(out, countof(out) + 1);
+            core::ParseError fix_error = {};
+            fix_error.span = at;
+            fix_error.message = "a local named `c` hides the C namespace";
+            fix_error.fix = edits;
+            out[countof(out) - 1] = fix_error;
+            break;
+        }
+    }
+    return out;
+}
+
 // One fix per header that declares a name the file reads as `c.name` without importing it: the line `import c <h>`.
 static core::Errors c_import_fixes(const ast::Module *module, const types::Checked *checked) {
     core::Errors out = {};
@@ -500,6 +551,7 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
     out = append(out, c_import_fixes(module, &checked));
+    out = append(out, c_shadow_fixes(source, &checked));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
     out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
