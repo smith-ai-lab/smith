@@ -277,6 +277,8 @@ static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg, Str
     if (arg->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
         if (s != nullptr && s->kind == .type_name) return s->type;
+        // `t: type` of a type function (`is_pointer(t)`): a type not known until the instance, like an `auto` one
+        if (s != nullptr && s->type != nullptr && s->type->kind == .type_type) return c->table.automatic;
         if (s == nullptr) {
             ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
             written->span = arg->span;
