@@ -146,6 +146,15 @@ static void symbolic_logic(Parser *p, lex::Token token) {
     if (mem::equal(word, or_sign)) spelled = "or";
     if (mem::equal(word, not_sign)) spelled = "not ";
     if (countof(spelled) == 0) return;
+    if (spelled[0] != 'n') {
+        // `a&&b` is `a and b`: the word needs a blank on each side where the sign had none.
+        Bool glued_before = token.span.start > 0 && p->source[token.span.start - 1] != ' ' &&
+                            p->source[token.span.start - 1] != '\n' && p->source[token.span.start - 1] != '(';
+        Bool glued_after = token.span.end < countof(p->source) && p->source[token.span.end] != ' ' &&
+                           p->source[token.span.end] != '\n' && p->source[token.span.end] != '(';
+        char padded[:] = format::push(glued_before ? " " : "", spelled, glued_after ? " " : "");
+        spelled = padded;
+    }
     for (Usize i = countof(p->warnings); i > 0 && p->warnings[i - 1].span.start >= token.span.start; i--) {
         if (p->warnings[i - 1].span.start == token.span.start) return;
     }

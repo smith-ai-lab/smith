@@ -830,3 +830,13 @@ export void test_a_nested_if_constexpr_is_mended_with_both_conditions() {
     test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch == .aarch64)"));
     test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch != .aarch64)"));
 }
+
+// `&&` written with no blank after it is `and` with one: `andarena` is not a word the lexer reads as two.
+export void test_logical_and_glued_to_its_operand_keeps_a_blank() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Bool f(Bool a, Bool b) {\n    return a &&b;\n}\n");
+    test::check_condition(contains_text(fixed.text, "a and b"));
+}
