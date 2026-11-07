@@ -14,6 +14,7 @@ module front::fix_typeof;
 import front::ast;
 import front::parse as core;
 import front::types;
+import std::ascii;
 import std::format;
 import std::mem;
 
@@ -131,11 +132,21 @@ static Bool in_literal(Str s, Usize i) {
     return quote != 0;
 }
 
+// Whether the `typeof(` at `i` is the argument of a type predicate, `is_slice(typeof(x))`, `is_pointer(typeof(x))`.
+static Bool predicate_before(Str text, Usize i) {
+    if (i == 0 || text[i - 1] != '(') return false;
+    Usize start = i - 1;
+    while (start > 0 && (ascii::alpha(text[start - 1]) || text[start - 1] == '_'))
+        start -= 1;
+    return at(text, start, "is_");
+}
+
 // Whether `text` picks what to do by the type of the parameter itself, `typeof(name) == char *` (#2668): the function
 // takes more than slices (`std::format`'s `make_padded` tests a string, a slice and a number), so `auto` stays.
 static Bool dispatches(Str text, Str name) {
     for (Usize i = 0; i < countof(text); i++) {
         if (!at(text, i, "typeof(") || !at(text, i + 7, name) || !at(text, i + 7 + countof(name), ")")) continue;
+        if (predicate_before(text, i)) return true;
         Usize j = i + 8 + countof(name);
         while (j < countof(text) && text[j] == ' ')
             j += 1;

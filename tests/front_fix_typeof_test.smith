@@ -119,3 +119,11 @@ export void test_front_fix_typeof_an_auto_pointer_and_a_grid_make_the_element_ge
                  "pub fn read[T](p: *T) -> T:\n    return p.*\n"
                  "pub fn zero[T](m: [][]T) -> T:\n    return 0\n");
 }
+
+// A function that asks what its parameter is (`is_slice(typeof(x))`) takes more than slices: `auto` stays.
+export void test_front_fix_typeof_a_type_predicate_on_the_parameter_keeps_auto() {
+    expect_fixed("module m;\nexport void zero(auto x) {\n    if constexpr (is_slice(typeof(x))) {\n"
+                 "        if (x.count[0] > 0) c::puts(\"a\");\n    } else {\n        c::puts(\"b\");\n    }\n}\n",
+                 "pub fn zero(x: auto):\n    if is_slice(typeof(x)):\n        if x.count[0] > 0:\n"
+                 "            c.puts(\"a\")\n    else:\n        c.puts(\"b\")\n");
+}
