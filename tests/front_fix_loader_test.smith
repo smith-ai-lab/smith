@@ -32,7 +32,7 @@ export void test_front_fix_loader_type_after_a_conditional_is_a_value() {
     Str got =
         fixed_text("module m;\nstatic Ref f(Ref *type) {\n    Ref self = type->kind == 1 ? type->element : type;\n"
                    "    return self;\n}\n");
-    check_text(got, "static fn f(ty: *Ref) -> Ref:\n    self: Ref = if ty.kind == 1: ty.element else: ty\n"
+    check_text(got, "fn f(ty: *Ref) -> Ref:\n    self: Ref = if ty.kind == 1: ty.element else: ty\n"
                     "    return self\n");
 }
 
@@ -44,7 +44,7 @@ export void test_front_fix_loader_target_systems_are_variants() {
     Str got =
         fixed_text("module m;\nstatic void f() {\n    if constexpr (target::os == target::macos) {\n        g();\n"
                    "    }\n}\n");
-    check_text(got, "static fn f():\n    if target.os == .macos:\n        g()\n");
+    check_text(got, "fn f():\n    if target.os == .macos:\n        g()\n");
 }
 
 // D14, #2647: clang's `__FINITE_MATH_ONLY__` is the fact `target.fast_math`.
@@ -54,7 +54,7 @@ export void test_front_fix_loader_finite_math_only_is_target_fast_math() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Str got = fixed_text("module m;\nstatic void f() {\n    if (__FINITE_MATH_ONLY__) {\n        g();\n    }\n}\n");
-    check_text(got, "static fn f():\n    if target.fast_math:\n        g()\n");
+    check_text(got, "fn f():\n    if target.fast_math:\n        g()\n");
 }
 
 export void test_front_fix_loader_finds_a_module_beside_the_file() {
@@ -82,9 +82,8 @@ export void test_front_fix_loader_finds_a_module_beside_the_file() {
         files::Bytes bytes = back.ok;
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
-        check_text(got,
-                   "import front_fix_loader_scratch\nstatic fn f():\n    mut p: front_fix_loader_scratch.Project = "
-                   "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
+        check_text(got, "import front_fix_loader_scratch\nfn f():\n    mut p: front_fix_loader_scratch.Project = "
+                        "front_fix_loader_scratch.Project(n = 0)\n    front_fix_loader_scratch.clean(&p)\n");
     }
 }
 
@@ -130,7 +129,7 @@ export void test_front_fix_loader_import_in_todays_syntax_asks_for_mut() {
         files::Bytes bytes = back.ok;
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
-        check_text(got, "import front_fix_loader_reader\nstatic fn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
+        check_text(got, "import front_fix_loader_reader\nfn f(w: []char) -> bool:\n    mut v: f32 = 0\n"
                         "    return front_fix_loader_reader.read(w, &v)\n");
     }
 }
@@ -162,9 +161,8 @@ export void test_front_fix_loader_a_rest_import_result_is_discarded() {
         files::Bytes bytes = back.ok;
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
-        check_text(got,
-                   "import front_fix_loader_rest\nstatic fn f(n: u64):\n    _ := front_fix_loader_rest.put(\"x\", n)\n"
-                   "    m: u64 = n\n");
+        check_text(got, "import front_fix_loader_rest\nfn f(n: u64):\n    _ := front_fix_loader_rest.put(\"x\", n)\n"
+                        "    m: u64 = n\n");
     }
 }
 
@@ -197,7 +195,7 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
         Str got = chars;
         check_text(got,
                    "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place = "
-                   "front_fix_zero_place.Place(file = \"\", line = 0)\nstatic fn f() -> u32:\n    "
+                   "front_fix_zero_place.Place(file = \"\", line = 0)\nfn f() -> u32:\n    "
                    "row := Row(kind = 1)\n    return row.kind\n");
     }
 }

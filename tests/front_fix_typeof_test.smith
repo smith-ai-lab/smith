@@ -38,15 +38,15 @@ export void test_front_fix_typeof_a_slice_that_is_only_read_is_not_mut() {
 
 export void test_front_fix_typeof_a_type_written_out_is_that_type() {
     expect_fixed("module m;\nstatic typeof(U8[:]) view(U8 *p) {\n    return p[0:1];\n}\n",
-                 "static fn view(p: *u8) -> []u8:\n    return p[0:1]\n");
+                 "fn view(p: *u8) -> []u8:\n    return p[0:1]\n");
 }
 
 // A `typeof([` inside a string or a comment is text: the fixer leaves it (#2520).
 export void test_front_fix_typeof_a_typeof_in_a_string_or_comment_is_unchanged() {
     expect_fixed("module m;\nstatic Bool f(Str s) {\n    return at(s, 0, \"typeof([\");\n}\n",
-                 "static fn f(s: str) -> bool:\n    return at(s, 0, \"typeof([\")\n");
+                 "fn f(s: str) -> bool:\n    return at(s, 0, \"typeof([\")\n");
     expect_fixed("module m;\n// typeof([U8]) is U8\nstatic Bool g() {\n    return true;\n}\n",
-                 "# typeof([U8]) is U8\nstatic fn g() -> bool:\n    return true\n");
+                 "# typeof([U8]) is U8\nfn g() -> bool:\n    return true\n");
 }
 
 export void test_front_fix_typeof_an_auto_the_body_tests_by_type_stays_auto() {
