@@ -89,7 +89,7 @@ static ast::Expr *at(ast::Expr *base, ast::Expr *index) {
     return ast::expr(kind);
 }
 
-static ast::Expr *cast(Str type, ast::Expr *operand) {
+static ast::Expr *cast_expr(Str type, ast::Expr *operand) {
     ast::ExprKind kind = {.cast = {.type = ast::named(type), .operand = operand}};
     return ast::expr(kind);
 }
@@ -502,14 +502,14 @@ export void test_front_types_expr_casts_and_queries() {
     types::Checked r = fresh();
     declare(&r, "xs", .variable, types::array_of(&r.table, ty(&r, "I32"), 3, false), false);
     var(&r, "x", "U8");
-    test::check_condition(types_expr::infer(&r, cast("I64", ast::name("x"))) == ty(&r, "I64"));
+    test::check_condition(types_expr::infer(&r, cast_expr("I64", ast::name("x"))) == ty(&r, "I64"));
     test::check_condition(types_expr::infer(&r, query(.size_of, ast::name("x"))) == ty(&r, "Usize"));
     test::check_condition(types_expr::infer(&r, query(.count_of, ast::name("xs"))) == ty(&r, "Usize"));
     expect(r.error_count, 0);
     types_expr::infer(&r, query(.count_of, ast::name("x")));
     test::check_condition(
         says(last(&r), "countof takes an array or a slice, found `U8`; write the name of an array or a slice"));
-    types_expr::infer(&r, cast("Nope", ast::name("x")));
+    types_expr::infer(&r, cast_expr("Nope", ast::name("x")));
     test::check_condition(says(
         last(&r), "unknown type `Nope`; declare it before it is used, and write a type name with a capital letter"));
     expect(r.error_count, 2);

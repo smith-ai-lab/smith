@@ -142,9 +142,9 @@ static Usize names_of(arena::Arena *store, const char *folder, Bool folders, con
     for (Usize i = 0; i < countof(entries) && count < capacity; i++) {
         if (entries[i].folder == folders) names[count++] = copy_text(store, entries[i].name.data);
     }
-    for (Usize i = 1; i < count; i++) { // an insertion sort: the folders are small
-        const char *held = names[i];
-        Usize at = i;
+    for (Usize next = 1; next < count; next++) { // an insertion sort: the folders are small
+        const char *held = names[next];
+        Usize at = next;
         while (at > 0 && c::strcmp(names[at - 1], held) > 0) {
             names[at] = names[at - 1];
             at -= 1;
@@ -164,8 +164,8 @@ static Usize sources_of(arena::Arena *store, const char *kase, const char **sour
     const char *top[files_max];
     Usize count = 0;
     Usize tops = names_of(store, src, false, top, files_max);
-    for (Usize i = 0; i < tops && count < capacity; i++) {
-        if (ends_with(top[i], ".smith")) sources[count++] = top[i];
+    for (Usize t = 0; t < tops && count < capacity; t++) {
+        if (ends_with(top[t], ".smith")) sources[count++] = top[t];
     }
     const char *folders[files_max];
     Usize nested = names_of(store, src, true, folders, files_max);
@@ -173,13 +173,13 @@ static Usize sources_of(arena::Arena *store, const char *kase, const char **sour
         const char *inside[files_max];
         const char *folder = join3(src, "/", folders[f]);
         Usize found = names_of(store, folder, false, inside, files_max);
-        for (Usize i = 0; i < found && count < capacity; i++) {
-            if (ends_with(inside[i], ".smith")) sources[count++] = join3(folders[f], "/", inside[i]);
+        for (Usize k = 0; k < found && count < capacity; k++) {
+            if (ends_with(inside[k], ".smith")) sources[count++] = join3(folders[f], "/", inside[k]);
         }
     }
-    for (Usize i = 1; i < count; i++) { // sorted as a whole, as `find | sort` gives them
-        const char *held = sources[i];
-        Usize at = i;
+    for (Usize next = 1; next < count; next++) { // sorted as a whole, as `find | sort` gives them
+        const char *held = sources[next];
+        Usize at = next;
         while (at > 0 && c::strcmp(sources[at - 1], held) > 0) {
             sources[at] = sources[at - 1];
             at -= 1;
