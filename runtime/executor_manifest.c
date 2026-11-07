@@ -557,16 +557,15 @@ static void smith_manifest_allocate(SmithExec *exec) {
 
 // Reads the manifest into exec->graph. Any problem is a message and the end of the build.
 static void smith_manifest_read(SmithExec *exec) {
-    SmithRead file = smith_files_read(&exec->io->files, exec->arena, exec->manifest);
+    SmithWorldRead file = smith_world_read(exec->arena, exec->manifest);
     if (file.error.code != 0) smith_exec_fail("loading '%s': %s", exec->manifest, strerror(file.error.code));
     smith_manifest_allocate(exec);
-    SmithLexer lexer = {.cursor = (char *)(uintptr_t)file.data.data,
-                        .end = (char *)(uintptr_t)file.data.data + file.data.count[0]};
+    SmithLexer lexer = {.cursor = (char *)(uintptr_t)file.data, .end = (char *)(uintptr_t)file.data + file.size};
     SmithBlock block = {};
     size_t indent = 0;
     char *text = nullptr;
     for (size_t statements = 0; smith_manifest_next(&lexer, &indent, &text); statements++) {
-        if (statements > file.data.count[0]) smith_exec_fail("%s: the reader did not advance", exec->manifest);
+        if (statements > file.size) smith_exec_fail("%s: the reader did not advance", exec->manifest);
         if (indent > 0) {
             smith_manifest_binding_line(exec, &lexer, &block, text);
             continue;

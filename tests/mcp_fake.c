@@ -184,6 +184,93 @@ static constexpr char test_source[] = "#include <stdio.h>\n"                  //
                                       "    return total;\n"                   // 12
                                       "}\n";
 
+// --- the world the server calls directly: files and console, swapped with the handler table
+// ---------------------------
+
+// The files of the case: the program's source and the programs to launch (empty files). The handler answers stat, open,
+// read and close of these paths and no others.
+typedef struct {
+    const char *path;
+    const char *text;
+} TestFile;
+
+static const TestFile test_files[] = {{"/p/prog.c", test_source}, {"/p/prog", "x"}, {"/p/build/tests", "x"}};
+constexpr size_t test_file_count = sizeof test_files / sizeof test_files[0];
+constexpr int test_first_descriptor = 3;
+static size_t test_offsets[test_file_count];
+
+static int test_file_find(const char *path) {
+    for (size_t i = 0; i < test_file_count; i++) { // bounded by the table
+        if (strcmp(test_files[i].path, path) == 0) return (int)i;
+    }
+    return -1;
+}
+
+static int test_files_stat(SmithFileHandler *self, const char *path, SmithFileStatus *status) {
+    (void)self;
+    int found = test_file_find(path);
+    if (found < 0) {
+        errno = ENOENT;
+        return -1;
+    }
+    *status = (SmithFileStatus){.writable = true, .size = strlen(test_files[found].text)};
+    return 0;
+}
+
+static int test_files_open(SmithFileHandler *self, const char *path, int flags, int mode) {
+    (void)self;
+    (void)flags;
+    (void)mode;
+    int found = test_file_find(path);
+    if (found < 0) {
+        errno = ENOENT;
+        return -1;
+    }
+    test_offsets[found] = 0;
+    return test_first_descriptor + found;
+}
+
+static ssize_t test_files_read(SmithFileHandler *self, int descriptor, void *buffer, size_t size) {
+    (void)self;
+    size_t index = (size_t)(descriptor - test_first_descriptor);
+    SMITH_ASSERT(index < test_file_count);
+    size_t left = strlen(test_files[index].text) - test_offsets[index];
+    size_t count = size < left ? size : left;
+    memcpy(buffer, test_files[index].text + test_offsets[index], count);
+    test_offsets[index] += count;
+    return (ssize_t)count;
+}
+
+static int test_files_close(SmithFileHandler *self, int descriptor) {
+    (void)self;
+    (void)descriptor;
+    return 0;
+}
+
+static TestBuffer test_errors_text; // what the server wrote on stderr
+static size_t test_output_size;
+static size_t test_errors_size;
+
+// The console: what the server writes on stdout is the transcript, on stderr the errors. Nothing is read from it (the
+// input is the fake io's).
+static ssize_t test_console_write(SmithConsoleHandler *self, int descriptor, const void *buffer, size_t size) {
+    (void)self;
+    TestBuffer *into = descriptor == STDERR_FILENO ? &test_errors_text : &test_output;
+    size_t *used = descriptor == STDERR_FILENO ? &test_errors_size : &test_output_size;
+    SMITH_ASSERT(*used + size < test_buffer);
+    memcpy(into->data + *used, buffer, size);
+    *used += size;
+    into->data[*used] = '\0';
+    return (ssize_t)size;
+}
+
+static ssize_t test_console_read(SmithConsoleHandler *self, void *buffer, size_t size) {
+    (void)self;
+    (void)buffer;
+    (void)size;
+    return 0;
+}
+
 // Runs the server on the case; the transcript is test_output, and the requests it sent the adapter test_sent. The
 // alarm (a wall backstop, large: a blocked test spends no CPU time) ends a test that hangs, which a wrong script can
 // make the server do (it waits for a reply that never comes).
@@ -193,29 +280,29 @@ static void test_run(TestCase *test) {
     SMITH_ASSERT(memory != MAP_FAILED);
     SmithIo io =
         smith_io_make_test((SmithIoTest){.memory = memory, .capacity = test_memory, .input = test->input.data});
-    SmithError error = smith_io_test_add_file(&io, "/p/prog.c", test_source);
-    SMITH_ASSERT(error.code == 0);
-    static const char *const programs[] = {"/p/prog", "/p/build/tests"}; // programs to launch: empty files
-    for (size_t i = 0; i < 2; i++) {
-        error = smith_io_test_add_file(&io, programs[i], "x");
-        SMITH_ASSERT(error.code == 0);
-    }
     if (test->has_adapter) {
-        error = smith_io_test_add_child(
+        SmithError error = smith_io_test_add_child(
             &io, (SmithChildScript){
                      .program = "smith", .output = test->dap.data, .chunk = test->chunk, .exit_on = test->exit_on});
         SMITH_ASSERT(error.code == 0);
     }
+    SmithFileHandler files = {
+        .open = test_files_open, .read = test_files_read, .close = test_files_close, .stat = test_files_stat};
+    SmithConsoleHandler console = {.write = test_console_write, .read = test_console_read};
+    test_output_size = 0;
+    test_errors_size = 0;
+    test_output.data[0] = '\0';
+    test_errors_text.data[0] = '\0';
+    SmithFileHandler *files_before = smith_handlers_set_files(&files);
+    SmithConsoleHandler *console_before = smith_handlers_set_console(&console);
     const char *const dap_argv[] = {"smith", "dap", nullptr};
     int status = smith_mcp_serve(&io, dap_argv);
+    (void)smith_handlers_set_files(files_before);
+    (void)smith_handlers_set_console(console_before);
     test_equal("the server's exit status", "0", status == 0 ? "0" : "not 0");
-    const char *output = smith_io_test_output(&io);
-    SMITH_ASSERT(strlen(output) < test_buffer);
-    memcpy(test_output.data, output, strlen(output) + 1);
     const char *sent = smith_io_test_child_input(&io, 0);
     snprintf(test_sent.data, test_buffer, "%s", sent != nullptr ? sent : "");
-    const char *errors = smith_io_test_errors(&io);
-    test_equal("nothing on stderr", "", errors);
+    test_equal("nothing on stderr", "", test_errors_text.data);
     munmap(memory, test_memory);
     test_buffer_free(&test->input);
     test_buffer_free(&test->dap);
@@ -624,6 +711,7 @@ static void test_running_program(void) {
 
 int main(void) {
     test_output = test_buffer_make();
+    test_errors_text = test_buffer_make();
     test_sent = test_buffer_make();
     void *memory = mmap(nullptr, (size_t)64 << 20, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     SMITH_ASSERT(memory != MAP_FAILED);

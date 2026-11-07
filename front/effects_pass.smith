@@ -357,7 +357,8 @@ static void scan_call(c::LLVMValueRef function, c::LLVMValueRef instruction, Sum
     Str name = "";
     if (callee != nullptr && c::LLVMIsAFunction(callee) != nullptr) {
         name = symbol_of(callee);
-        effects_cache::push_call(summary, (Call){.callee = name, .line = line});
+        effects_cache::push_call(summary,
+                                 (Call){.callee = name, .line = line, .kind = 0, .slot = 0, .arg = 0, .target = ""});
     } else if (callee != nullptr && c::LLVMIsAInlineAsm(callee) != nullptr) {
         summary->own |= effects_table::unknown;
         return;
@@ -365,17 +366,26 @@ static void scan_call(c::LLVMValueRef function, c::LLVMValueRef instruction, Sum
         Str type = type_text(c::LLVMGetCalledFunctionType(instruction));
         Usize slot = callee == nullptr ? none : param_slot(function, callee);
         if (slot != none && slot < max_params)
-            effects_cache::push_call(
-                summary, (Call){.callee = type, .line = line, .kind = effects_cache::call_param, .slot = (U32)slot});
+            effects_cache::push_call(summary, (Call){.callee = type,
+                                                     .line = line,
+                                                     .kind = effects_cache::call_param,
+                                                     .slot = (U32)slot,
+                                                     .arg = 0,
+                                                     .target = ""});
         else
-            effects_cache::push_call(summary, (Call){.callee = type, .line = line, .kind = effects_cache::call_memory});
+            effects_cache::push_call(summary, (Call){.callee = type,
+                                                     .line = line,
+                                                     .kind = effects_cache::call_memory,
+                                                     .slot = 0,
+                                                     .arg = 0,
+                                                     .target = ""});
         effects_cache::free_text(type);
         return;
     }
     U32 n = c::LLVMGetNumArgOperands(instruction);
     for (U32 k = 0; k < n && k < max_params; k++) {
         c::LLVMValueRef arg = c::LLVMGetOperand(instruction, k);
-        Call pass = {.callee = name, .line = line, .slot = k};
+        Call pass = {.callee = name, .line = line, .kind = 0, .slot = k, .arg = 0, .target = ""};
         if (c::LLVMIsAFunction(arg) != nullptr) {
             pass.kind = effects_cache::pass_function;
             pass.target = symbol_of(arg);
@@ -398,8 +408,12 @@ static void scan(c::LLVMValueRef function, Summary *summary) {
     for (U32 p = 0; p < c::LLVMCountParams(function) && p < max_params; p++) {
         U32 mask = 0;
         if (param_ceiling(function, p, &mask))
-            effects_cache::push_call(
-                summary, (Call){.callee = "", .kind = effects_cache::param_ceiling, .slot = p, .arg = mask});
+            effects_cache::push_call(summary, (Call){.callee = "",
+                                                     .line = 0,
+                                                     .kind = effects_cache::param_ceiling,
+                                                     .slot = p,
+                                                     .arg = mask,
+                                                     .target = ""});
     }
     for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(function); b != nullptr; b = c::LLVMGetNextBasicBlock(b)) {
         for (c::LLVMValueRef i = c::LLVMGetFirstInstruction(b); i != nullptr; i = c::LLVMGetNextInstruction(i)) {

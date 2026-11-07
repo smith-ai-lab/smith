@@ -37,18 +37,32 @@ static SmithJsonWriter smith_mcp_message_writer(SmithMcpServer *server) {
     return smith_json_writer_make(buffer, smith_mcp_message_max, 0);
 }
 
+// Writes the text to stdout or stderr whole. A failure (a closed pipe) is not reported: the client is gone, and the
+// next read of the input ends the server.
+static void smith_mcp_write(int descriptor, const char *text) {
+    size_t length = strlen(text);
+    for (size_t done = 0; done < length;) { // bounded by the length
+        SmithConsoleHandler *console = smith_handlers_console();
+        ssize_t count = console != nullptr ? console->write(console, descriptor, text + done, length - done)
+                                           : write(descriptor, text + done, length - done);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return;
+        done += (size_t)count;
+    }
+}
+
 // Sends the finished message and a newline. A message that did not fit or is not valid cannot be sent: it is reported
 // on stderr (stdout carries only protocol) and the client times out, which only a bug of ours can cause.
-static void smith_mcp_emit(SmithMcpServer *server, SmithJsonWriter *writer) {
+static void smith_mcp_emit(SmithJsonWriter *writer) {
     struct smith_array_const_char_n text;
     if (!smith_json_writer_finish(writer, &text)) {
-        (void)smith_console_print_error(&server->io->console, "smith mcp: a message could not be written\n");
+        smith_mcp_write(STDERR_FILENO, "smith mcp: a message could not be written\n");
         return;
     }
     char *end = (char *)text.data + text.count[0];
     end[0] = '\n';
     end[1] = '\0';
-    (void)smith_console_print(&server->io->console, text.data);
+    smith_mcp_write(STDOUT_FILENO, (const char *)text.data);
 }
 
 static void smith_mcp_send_error(SmithMcpServer *server, const SmithMcpRequestId *id, int64_t code,
@@ -60,7 +74,7 @@ static void smith_mcp_send_error(SmithMcpServer *server, const SmithMcpRequestId
     }
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_error_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 // Writes a value of the generated code to a tree, to put as a member of a result that has no type for it.
@@ -95,14 +109,14 @@ static void smith_mcp_send_initialize(SmithMcpServer *server, const SmithMcpRequ
         .id = *id, .result = {.resultType = smith_text_make("complete"), .additionalProperties = {keys, values, 4}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_result_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 static void smith_mcp_send_ping(SmithMcpServer *server, const SmithMcpRequestId *id) {
     SmithMcpJSONRPCResultResponse response = {.id = *id, .result = {.resultType = smith_text_make("complete")}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_jsonrpc_result_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 static void smith_mcp_send_discover(SmithMcpServer *server, const SmithMcpRequestId *id) {
@@ -120,7 +134,7 @@ static void smith_mcp_send_discover(SmithMcpServer *server, const SmithMcpReques
                    .supportedVersions = {versions, 1}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_discover_result_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 // A tool's input schema is JSON Schema, a document of the tool's own: it is read as a tree and its members become the
@@ -167,7 +181,7 @@ static void smith_mcp_send_tools(SmithMcpServer *server, const SmithMcpRequestId
         .id = *id, .result = {.resultType = smith_text_make("complete"), .tools = {tools, smith_mcp_tool_count}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_list_tools_result_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 static void smith_mcp_send_tool_result(SmithMcpServer *server, const SmithMcpRequestId *id, const SmithMcpText *text,
@@ -183,7 +197,7 @@ static void smith_mcp_send_tool_result(SmithMcpServer *server, const SmithMcpReq
                                                .resultType = smith_text_make("complete")}}}};
     SmithJsonWriter writer = smith_mcp_message_writer(server);
     smith_mcp_call_tool_result_response_write(&writer, &response);
-    smith_mcp_emit(server, &writer);
+    smith_mcp_emit(&writer);
 }
 
 // --- handling requests ----------------------------------------------------------------------------------------------
@@ -273,8 +287,8 @@ static bool smith_mcp_next_line(SmithMcpServer *server, struct smith_array_const
 // The folder the server runs in, as the shell that started it names it: $PWD when that is the same folder as the
 // working one, else the working folder. A compile writes the shell's spelling into its debug info (/var/folders/... for
 // /private/var/folders/... on macOS), and the debugger matches a breakpoint's file against that spelling.
-static void smith_mcp_folder(const SmithIo *io, char *out, size_t size) {
-    const char *shell = smith_args_env(&io->args, "PWD");
+static void smith_mcp_folder(char *out, size_t size) {
+    const char *shell = getenv("PWD");
     struct stat named;
     struct stat actual;
     if (shell != nullptr && shell[0] == '/' && strlen(shell) < size && stat(shell, &named) == 0 &&
@@ -289,19 +303,18 @@ static void smith_mcp_folder(const SmithIo *io, char *out, size_t size) {
 // command (smith dap). The exit status is 0.
 int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
     SMITH_ASSERT(io != nullptr && dap_argv != nullptr && dap_argv[0] != nullptr);
-    size_t remaining = io->arena.capacity - io->arena.used;
-    size_t scratch = remaining / 4 < smith_mcp_scratch ? remaining / 4 : smith_mcp_scratch;
+    SmithArena arena = smith_world_arena();
     SmithMcpServer server = {.io = io, .dap_argv = dap_argv};
-    server.scratch = smith_arena_carve(&io->arena, scratch);
-    server.input_arena = smith_arena_carve(&io->arena, (size_t)1 << 17);
-    server.line = smith_arena_push(&io->arena, smith_mcp_line_max + ((size_t)1 << 16) + 1, 1);
-    server.request = smith_arena_push(&io->arena, smith_mcp_line_max + 1, 1);
+    server.scratch = smith_arena_carve(&arena, smith_mcp_scratch);
+    server.input_arena = smith_arena_carve(&arena, (size_t)1 << 17);
+    server.line = smith_arena_push(&arena, smith_mcp_line_max + ((size_t)1 << 16) + 1, 1);
+    server.request = smith_arena_push(&arena, smith_mcp_line_max + 1, 1);
     server.sessions =
-        smith_arena_push_array(&io->arena, sizeof(SmithMcpSession), smith_mcp_sessions_max, alignof(SmithMcpSession));
+        smith_arena_push_array(&arena, sizeof(SmithMcpSession), smith_mcp_sessions_max, alignof(SmithMcpSession));
     SMITH_ASSERT(server.line != nullptr && server.request != nullptr && server.sessions != nullptr);
     for (size_t i = 0; i < smith_mcp_sessions_max; i++)
         server.sessions[i].used = false;
-    smith_mcp_folder(io, server.cwd, sizeof server.cwd);
+    smith_mcp_folder(server.cwd, sizeof server.cwd);
     smith_mcp_input_submit(&server);
     for (size_t turn = 0; turn < smith_mcp_turns_max; turn++) {
         struct smith_array_const_char_n line;
@@ -318,6 +331,7 @@ int smith_mcp_serve(SmithIo *io, const char *const *dap_argv) {
     for (size_t i = 0; i < smith_mcp_sessions_max; i++) { // bounded by the table
         if (server.sessions[i].used) smith_mcp_session_close(&server, &server.sessions[i], true);
     }
+    munmap(arena.memory, arena.capacity);
     return 0;
 }
 

@@ -1312,6 +1312,8 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/quiet.c"
 // The host-wide slots that limit heavy jobs, so that local work cannot starve CI.
 #include "runtime/slots.c"
+// The files, the clock and the memory the executor and `smith mcp` use: plain libc calls.
+#include "runtime/world.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.
