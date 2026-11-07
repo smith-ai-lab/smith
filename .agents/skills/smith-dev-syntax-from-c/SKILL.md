@@ -13,6 +13,8 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `module game::replay;` | nothing: the module is the file's path (`game/replay.smith` is `game.replay`) |
 | `import std::math;` then `math::sin(x)` | `import std.math` then `math.sin(x)` |
 | `import <stdio.h>;` then `c::printf(...)` | `import c <stdio.h>` then `stdio.printf(...)` |
+| `a && b`, `a \|\| b`, `!a` (D19) | `a and b`, `a or b`, `not a`; `!=` stays. A `!a` followed by an operator (`!a == b`) is left for hand editing |
+| a local named `c` with `c::printf(...)` | `stdio.printf(...)`: the header's own name, since the local hides `c` |
 | `struct c::stat`, `c::EOF` | `stat.stat`, `stdio.EOF` through the header's name |
 | `export U32 next() { ... }` | `pub fn next() -> u32:` and an indented body |
 | `export typedef struct { ... } Replay;` | `pub struct Replay:` and indented fields |
