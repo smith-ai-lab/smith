@@ -2172,7 +2172,18 @@ static Bool fn_type_cast(const parse::Parser *p) {
     Bool is_fn = word.kind == lex::kw_fn || (word.kind == lex::name && text::is(parse::text(p, word), "fn"));
     if (!is_fn || parse::peek_at(p, 1).kind != lex::left_paren) return false;
     Usize after = after_group(p, 1, lex::left_paren, lex::right_paren);
-    return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
+    // `fn(A) -> R`: the result type runs to the `)` that closes the cast.
+    if (parse::peek_at(p, after).kind == lex::arrow) {
+        Usize depth = 0;
+        for (after += 1; parse::peek_at(p, after).kind != lex::end_of_file; after += 1) {
+            lex::TokenKind inner = parse::peek_at(p, after).kind;
+            if (inner == lex::left_paren || inner == lex::left_bracket) depth += 1;
+            if ((inner == lex::right_paren || inner == lex::right_bracket) && depth-- == 0) break;
+        }
+    }
+    lex::TokenKind operand = parse::peek_at(p, after + 1).kind;
+    return parse::peek_at(p, after).kind == lex::right_paren &&
+           (starts_bare_operand(operand) || operand == lex::left_paren);
 }
 
 // Whether `(i32)operand` is ahead, the `(` taken: a cast to a built-in type written in C's way, which a pass leaves
@@ -2180,12 +2191,14 @@ static Bool fn_type_cast(const parse::Parser *p) {
 // is the operand, never a subtraction or a call.
 static Bool builtin_cast(const parse::Parser *p) {
     lex::Token word = parse::peek_at(p, 0);
-    if (word.kind != lex::name || !parse_type::is_builtin_name(parse::text(p, word))) return false;
+    Bool builtin = word.kind == lex::name && parse_type::is_builtin_name(parse::text(p, word));
+    if (!builtin && word.kind != lex::type_name) return false;
     if (parse::peek_at(p, 1).kind != lex::right_paren) return false;
     lex::TokenKind next = parse::peek_at(p, 2).kind;
     if (starts_bare_operand(next)) return true;
-    return next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
-           next == lex::kw_sizeof || next == lex::kw_alignof;
+    // A capitalized name may be a constant: `(MAX) - 1` and `(F)(x)` are no casts, a built-in type's are.
+    return builtin && (next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
+                       next == lex::kw_sizeof || next == lex::kw_alignof);
 }
 
 // Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax

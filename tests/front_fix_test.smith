@@ -360,6 +360,17 @@ export void test_a_declaration_followed_by_a_statement_on_its_line_keeps_the_sep
     check_text(fixed.text, "fn f() -> i32:\n    x: u32 = 1; return x.to(i32)\n");
 }
 
+// A cast to a named type, and one to a function type with a result, `(fn() -> i32)(usize)address`, left by a pass that
+// only mended the types around them (tests/front_emit_float_test.smith, tests/front_emit_test.smith).
+export void test_a_cast_to_a_named_or_function_type_is_mended_in_the_indented_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed named = fix::fix_text("t.smith", "fn f(n: usize):\n    t: ToInt = (ToInt)g(n) # a\n");
+    check_text(named.text, "fn f(n: usize):\n    t: ToInt = g(n).to(ToInt) # a\n");
+}
+
 // A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
 // the type was mended and the cast never (lib/std/net.smith `symbol`).
 export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
