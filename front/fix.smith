@@ -472,14 +472,14 @@ static core::Errors append(core::Errors out, core::Errors more) {
 // (vector = (...)))` where `kind` is a payload enumeration is `.vector((...))`, an array given to a C pointer
 // parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, and `mem::equal(a, b)`
 // is `==` (#2540: the call is found by its name). `fix_const` reads the text: a `= undefined` local whose address is
-// taken is `mut`, and `fix_chain` writes a pattern conjunct for a payload read after its test in a value (D16), once the parser
-// reads one.
+// taken is `mut`, and `fix_chain` writes a pattern conjunct for a payload read after its test in a value (D16), once
+// the parser reads one.
 static Usize pattern_probe = 0; // 0: not tried, 1: the parser reads a pattern in a value, 2: it does not
 
 // Whether the parser reads a pattern conjunct in a value (D16: `return .v(v) := k && v.x`), tried once on a snippet.
 // `fix_chain` writes that form, so it waits for the parser that reads it: written before, it would turn a check error
 // into a parse error, and the module would still not pass.
-static Bool values_take_patterns(void) {
+static Bool values_take_patterns() {
     if (pattern_probe == 0) {
         parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K) -> bool:\n    return .v(v) := k && v.x\n");
         pattern_probe = countof(probe.errors) == 0 ? 1 : 2;
@@ -490,9 +490,11 @@ static Bool values_take_patterns(void) {
 static Usize condition_probe = 0; // 0: not tried, 1: the parser reads a pattern after a test in an `if`, 2: it does not
 
 // Whether the parser reads a pattern that does not start the chain of an `if` (D12: `if a && .v(v) := k && v.x:`).
-static Bool conditions_take_patterns(void) {
+static Bool conditions_take_patterns() {
     if (condition_probe == 0) {
-        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(a: bool, k: K) -> bool:\n    if a && .v(v) := k && v.x:\n        return true\n    return false\n");
+        parser::Parsed probe = parser::parse_new(
+            "probe.smith",
+            "fn f(a: bool, k: K) -> bool:\n    if a && .v(v) := k && v.x:\n        return true\n    return false\n");
         condition_probe = countof(probe.errors) == 0 ? 1 : 2;
     }
     return condition_probe == 1;
@@ -501,9 +503,10 @@ static Bool conditions_take_patterns(void) {
 static Usize guard_probe = 0; // 0: not tried, 1: the parser reads a binding with an else, 2: it does not
 
 // Whether the parser reads `.ok(ok) := r else: return` (the binding of a guard that leaves), tried once on a snippet.
-static Bool bindings_take_else(void) {
+static Bool bindings_take_else() {
     if (guard_probe == 0) {
-        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(r: R) -> i32:\n    .ok(ok) := r else: return 0\n    return ok\n");
+        parser::Parsed probe =
+            parser::parse_new("probe.smith", "fn f(r: R) -> i32:\n    .ok(ok) := r else: return 0\n    return ok\n");
         guard_probe = countof(probe.errors) == 0 ? 1 : 2;
     }
     return guard_probe == 1;
@@ -513,9 +516,10 @@ static Usize words_probe = 0; // 0: not tried, 1: the parser reads `and`, `or` a
 
 // Whether the parser reads the operators as words (D19, #2649), tried once on a snippet. `fix_words` writes them, so
 // it waits: written before, they would turn a parsed file into a parse error.
-static Bool operators_are_words(void) {
+static Bool operators_are_words() {
     if (words_probe == 0) {
-        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(a: bool, b: bool) -> bool:\n    return a and not b or a\n");
+        parser::Parsed probe =
+            parser::parse_new("probe.smith", "fn f(a: bool, b: bool) -> bool:\n    return a and not b or a\n");
         words_probe = countof(probe.errors) == 0 ? 1 : 2;
     }
     return words_probe == 1;

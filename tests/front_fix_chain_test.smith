@@ -68,7 +68,8 @@ export void test_front_fix_chain_an_if_is_the_checkers() {
 }
 
 export void test_front_fix_chain_a_longer_variant_is_not_the_read() {
-    expect("    return e.kind == .binary && e.kind.binary_op.x\n", "    return e.kind == .binary && e.kind.binary_op.x\n");
+    expect("    return e.kind == .binary && e.kind.binary_op.x\n",
+           "    return e.kind == .binary && e.kind.binary_op.x\n");
 }
 
 export void test_front_fix_chain_a_local_of_the_variants_name_keeps_the_chain() {
