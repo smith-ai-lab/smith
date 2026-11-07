@@ -2390,8 +2390,13 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         .implicit_inputs =
             smith_cat(b, copy.implicit_inputs, smith_one(smith_compiler_file(copy.compiler)), proved_inputs, nullptr),
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
+        // The new front end writes no effect summary (`smith cc --front-end=new` leaves `.fx` alone), so a declared one
+        // is older than its source after the first build: the next build restores the object, rewrites its outputs
+        // and relinks (#2744). Only the old front end declares it.
         .outputs = smith_cat(b, smith_one(copy.output),
-                             smith_effects_outputs(b, copy.compiler, copy.source, copy.output), nullptr),
+                             front_end[0] == nullptr ? smith_effects_outputs(b, copy.compiler, copy.source, copy.output)
+                                                     : smith_list(b, nullptr),
+                             nullptr),
         .description = smith_text("compile %s", copy.source),
         .depfile = depfile,
     };
