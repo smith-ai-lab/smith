@@ -394,6 +394,7 @@ static Bool inserts_at_replaced_start(core::Errors parsed_errors, core::Errors p
     return false;
 }
 
+// Whether `needle` is in `text`.
 static Bool contains_text(Str text, Str needle) {
     Usize n = countof(needle);
     for (Usize i = 0; i + n <= countof(text); i++) {
