@@ -2649,7 +2649,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     }
     reject_gnu_spelling(p);
     lex::Token semi = parse::expect(p, lex::semicolon, "`;` after the type");
-    if (pre->top && !failed_since(p, errors_before)) {
+    if (!failed_since(p, errors_before)) { // a typedef in a block is mended like one of the file
         Head head = {.type_start = type_start, .name = alias};
         fix_typedef_alias(p, p->tokens[typedef_index].span.start, head, semi, dims);
     }

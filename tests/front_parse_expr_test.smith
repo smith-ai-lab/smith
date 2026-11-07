@@ -525,4 +525,7 @@ export void test_parse_expr_a_type_is_an_operand_of_a_comparison() {
     test::check_condition(!contains(two, "error "));
     test::check_condition(!contains(two, "left over"));
     test::check_condition(contains(one, "mut"));
+    Str slices = dump_one("typeof(x) == []mut char || typeof(x) == []char", true);
+    test::check_condition(!contains(slices, "error "));
+    test::check_condition(!contains(slices, "left over"));
 }
