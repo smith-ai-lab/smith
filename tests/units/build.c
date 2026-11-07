@@ -137,6 +137,11 @@ void build(SmithBuild *b) {
     // The front end's tests (tests/front_*_test.smith) link LLVM, so they have a runner of their own
     // (tests/front_units/build.c): this one leaves them out.
     const char *const *kept = tests_without_front(b);
+#ifdef __APPLE__
+    const char *const *platform_libraries = smith_list(b, "-lcompression", nullptr); // platform_macos.c's decompress
+#else
+    const char *const *platform_libraries = nullptr;
+#endif
     SmithTests tests = {
         .objects = core_runtime_objects(b, root, core_flags,
                                         (const SmithObject *[]){&http, &core, &build_core, &runtime_io}, 4),
@@ -145,11 +150,7 @@ void build(SmithBuild *b) {
                                         "tests/corpus.smith", nullptr),
                              nullptr),
         .flags = flags,
-        .link_flags = smith_cat(b, smith_list(b, "-fsanitize=address,undefined", nullptr),
-#ifdef __APPLE__
-                                smith_list(b, "-lcompression", nullptr), // runtime/platform_macos.c's decompress
-#endif
-                                nullptr),
+        .link_flags = smith_cat(b, smith_list(b, "-fsanitize=address,undefined", nullptr), platform_libraries, nullptr),
     };
     smith_tests(b, &tests);
     smith_default(b, smith_list(b, "build/tests", nullptr));
