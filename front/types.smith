@@ -537,15 +537,24 @@ static Usize part_count(TypeRef t) {
     return 0;
 }
 
+// The element of a pointer, array, slice, option, stream, vector or function type; `t` itself when it has none. The
+// field is optional, so it is read through a local the fixer can narrow.
+static TypeRef element_of(TypeRef t) {
+    TypeRef e = t->element;
+    if (e == nullptr) return t;
+    return e;
+}
+
 static TypeRef part(TypeRef t, Usize i) {
     if (t->kind == .record || t->kind == .tuple) return t->slots[i].type;
-    return t->element;
+    return element_of(t);
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
 static Layout vector_layout(const Target *target, TypeRef t) {
     U64 lane = 1;
-    if (t->element->kind != .bool_type) lane = t->element->bits / 8;
+    TypeRef lane_type = element_of(t);
+    if (lane_type->kind != .bool_type) lane = lane_type->bits / 8;
     U64 size = 1;
     while (size < lane * t->count)
         size *= 2;
@@ -696,36 +705,36 @@ static Piece of(TypeRef type) {
 static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
     if (t->kind == .pointer) {
         push_piece(stack, top, word(" *"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .array) {
         push_piece(stack, top, word(msg(format::push("[", t->count, "]"))));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .slice) {
         push_piece(stack, top, word("[:]"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         if (t->pointee_const) put(text, "const ");
     } else if (t->kind == .block) {
         push_piece(stack, top, word(t->count == 2 ? "[,]" : "[,,]"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
     } else if (t->kind == .vector) {
         push_piece(stack, top, word(msg(format::push(", ", t->count, ")"))));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "vec(");
     } else if (t->kind == .option) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Option(");
     } else if (t->kind == .stream) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "stream::Stream(");
     } else if (t->kind == .result_type) {
         push_piece(stack, top, word(")"));
         push_piece(stack, top, of(t->error));
         push_piece(stack, top, word(", "));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Result(");
     } else if (t->kind == .tuple) {
         if (countof(t->slots) == 1)
@@ -741,7 +750,7 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         put(text, "(");
     } else if (t->kind == .fn_value) {
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
         put(text, "Fn(");
     } else if (t->kind == .function) {
         push_piece(stack, top, word(")"));
@@ -751,7 +760,7 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
             if (i > 1) push_piece(stack, top, word(", "));
         }
         push_piece(stack, top, word(" ("));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(element_of(t)));
     } else
         put(text, t->name);
 }
