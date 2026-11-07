@@ -1,0 +1,9 @@
+# Two calls, neither in tail position: still an error naming the cycle until #2710 lands.
+
+fn fib(n: u64) -> u64:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+pub fn check() -> i32:
+    0

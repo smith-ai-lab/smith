@@ -109,6 +109,7 @@ struct Frame {
     Bool braced;          // the new form of `if` and `while`: the body is a block
     Bool layout;          // a block that ends at its `dedent`, not at a `}`
     Bool is_let;          // `if let pattern = value`: `condition` is the value
+    ast::Expr *lead;      // `if ok && .v(x) := value:`: the tests before the first pattern, run before it (D12)
     Bool value_tail;      // a refutable binding at the end of a function body: the last line of the rest is the value
     ast::Pattern pattern; // and its pattern
     Link links[:]; // `if .v(x) := value && a && .w(y) := other:`: the rest of the `&&` chain, left to right (D12)
@@ -436,16 +437,56 @@ static Bool group_then_declarator(const parse::Parser *p, Usize offset) {
     return after == lex::name || after == lex::star;
 }
 
+// What can follow a capitalized name that is a value (`Block_Other` as the last of an `if` value) and never a declared
+// name: the end of the line, a closing bracket, a comma or a dot.
+static Bool ends_value(lex::TokenKind next) {
+    return next == lex::newline || next == lex::dedent || next == lex::end_of_file || next == lex::right_paren ||
+           next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot;
+}
+
+// `[[clang::musttail]] return f(x);` (#2709): a call in tail position is always a guaranteed tail call in smith's own
+// syntax, so the attribute is deleted and the `return` is read as any other.
+static Bool is_word(Str text, Str word) {
+    if (countof(text) != countof(word)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(word); i++) {
+        if (text[i] != word[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void drop_musttail(parse::Parser *p) {
+    if (parse::peek(p).kind != lex::left_bracket || parse::peek_at(p, 1).kind != lex::left_bracket) return;
+    if (parse::peek_at(p, 3).kind != lex::colon_colon || parse::peek_at(p, 5).kind != lex::right_bracket) return;
+    if (parse::peek_at(p, 6).kind != lex::right_bracket || parse::peek_at(p, 7).kind != lex::kw_return) return;
+    if (!is_word(parse::text(p, parse::peek_at(p, 2)), "clang") ||
+        !is_word(parse::text(p, parse::peek_at(p, 4)), "musttail"))
+        return;
+    ast::Span group = {.start = parse::peek(p).span.start, .end = parse::peek_at(p, 6).span.end};
+    parse::Edits fix = edit_list(1);
+    fix[0] = edit((ast::Span){.start = group.start, .end = parse::peek_at(p, 7).span.start}, "");
+    parse::warning_fix(p, group, "`[[clang::musttail]]` is deleted: a call in tail position is always a tail call",
+                       fix);
+    for (Usize i = 0; i < 7; i++)
+        parse::advance(p);
+}
+
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
+    if (parse_type::fn_type_declaration(p)) return true;
     // In smith's own syntax a type name and `(` is a construction, `T(1)`, not a declarator; `T (*f)(A)` is one
     // (#2145).
     if (kind == lex::type_name && p->new_syntax && parse::peek_at(p, 1).kind == lex::left_paren &&
         parse::peek_at(p, 2).kind != lex::star && !group_then_declarator(p, 1))
         return false;
+    if (kind == lex::type_name && p->new_syntax && ends_value(parse::peek_at(p, 1).kind)) return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
+    if (kind == lex::at) return p->new_syntax; // `@align(16)` on the line before a local (D18)
     if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);
     return false;
 }
@@ -952,7 +993,7 @@ static Frame open_refutable(parse::Parser *p, Bool parent_layout, Bool tail) {
     frame.pattern = head_pattern(p);
     frame.pattern.refutable = true;
     frame.layout = parent_layout;
-    frame.value_tail = tail;
+    frame.value_tail = tail && !p->void_body; // a function with no result has no value line (#2669)
     parse::expect(p, lex::colon_equal, "`:=` after the pattern");
     frame.condition = expression(p);
     parse::expect(p, lex::kw_else, "`else`");
@@ -987,11 +1028,57 @@ static void read_chain(parse::Parser *p, Frame *frame, Usize before) {
     }
 }
 
+// Whether the head is plain tests and then a pattern, `ok && .v(x) := value` (D12): a top-level `&&` followed by a
+// binding before the head ends. A top-level `||` makes it no chain, so that `a || .v(x) := k` stays an error.
+static Bool lead_ahead(const parse::Parser *p) {
+    Usize depth = 0;
+    for (Usize i = 0; i < countof(p->tokens); i++) {
+        lex::TokenKind kind = parse::peek_at(p, i).kind;
+        if (kind == lex::end_of_file || kind == lex::newline || kind == lex::semicolon || kind == lex::dedent)
+            return false;
+        if (depth == 0 && (kind == lex::colon || kind == lex::left_brace || kind == lex::kw_else)) return false;
+        if (opens(kind)) depth += 1;
+        if (closes(kind) && depth > 0) depth -= 1;
+        if (depth != 0) continue;
+        if (kind == lex::pipe_pipe) return false;
+        if (kind != lex::ampersand_ampersand) continue;
+        parse::Parser ahead = *p;
+        ahead.position = p->position + i + 1;
+        if (binding_head(&ahead)) return true;
+    }
+    return false;
+}
+
+// The tests of `ok && a && .v(x) := value` before its first pattern, `&&` between them, the position at the pattern.
+static ast::Expr *read_lead(parse::Parser *p, Usize before) {
+    ast::Expr *lead = nullptr;
+    while (countof(p->errors) == before) {
+        p->head = true;
+        p->stop_and = true;
+        ast::Expr *test = expression(p);
+        p->stop_and = false;
+        if (test == nullptr) return nullptr;
+        if (lead == nullptr) {
+            lead = test;
+        } else {
+            ast::Expr *joined = ast::binary(.logical_and, lead, test);
+            joined->span = (ast::Span){.start = lead->span.start, .end = test->span.end};
+            lead = joined;
+        }
+        if (!parse::accept(p, lex::ampersand_ampersand) || binding_head(p)) break;
+    }
+    return lead;
+}
+
 // `if c {` and `while c {`, without parentheses. `if x := opt:` and `while item := it.next():` bind (#2316); a
 // `while` that binds is `while true:` around `if PATTERN := value: body else: break` (close_one).
 static Frame open_bare(parse::Parser *p, FrameKind kind) {
     Frame frame = {.kind = kind, .start = parse::advance(p).span.start, .braced = true};
     Usize before = countof(p->errors);
+    if (!binding_head(p) && !old_let_head(p) && lead_ahead(p)) {
+        frame.lead = read_lead(p, before);
+        if (frame.lead == nullptr) return frame;
+    }
     if (binding_head(p) || old_let_head(p)) open_binding_head(p, &frame);
     p->head = true;
     p->stop_and = frame.is_let; // the value of a pattern ends at `&&`, the rest of the chain is read after it (D12)
@@ -1473,18 +1560,52 @@ static RangeText range_of_count(const parse::Parser *p, Usize close, Usize first
 
 // `(init; cond; step)` is `{ init; while cond { body step; } }`: C's three-part `for`, as the spec says, is `while`. No
 // comma in the init or the step (two names, two steps) and no empty header gets this form.
+// The tokens `first` to `stop - 1` cut at their depth-0 commas, each piece after the first written after `lead` and the
+// pieces joined by `glue`: `Usize a = 0, b = 0` with the lead `Usize ` is `Usize a = 0; Usize b = 0`.
+static Str comma_pieces(const parse::Parser *p, Usize first, Usize stop, Str lead, Str glue) {
+    char out[:] = {};
+    Usize from = first;
+    for (Usize pieces = 0; pieces <= stop - first; pieces += 1) {
+        Usize comma = find_at_depth_0(p, from, stop, lex::comma);
+        Str piece = tokens_text(p, from, comma - 1);
+        if (from != first) out = format::push(out, glue, lead);
+        out = format::push(out, piece);
+        if (comma == stop) break;
+        from = comma + 1;
+    }
+    return out;
+}
+
+// The declarator of `T a = 1, b = 2` starts after the type: the stars before the name that precedes the first `=` (or
+// the end). Gives the offset of its first token, or 0 when the init has no type in front.
+static Usize declarator_start(const parse::Parser *p, Usize first, Usize stop) {
+    Usize equal = find_at_depth_0(p, first, stop, lex::equal);
+    Usize name = equal - 1;
+    if (name <= first) return 0;
+    while (name > first + 1 && parse::peek_at(p, name - 1).kind == lex::star)
+        name -= 1;
+    return name;
+}
+
+// `(init; cond; step)` is `{ init; while cond { body step; } }`: C's three-part `for`, as the spec says, is `while`. An
+// init with several declarators and a step with several expressions are written one to a line; no empty header gets
+// this form.
 static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semicolon) {
     RangeText none = {};
     Usize second = find_at_depth_0(p, first_semicolon + 1, close, lex::semicolon);
     if (second == close) return none;
-    if (find_at_depth_0(p, 1, first_semicolon, lex::comma) != first_semicolon) return none;
-    if (find_at_depth_0(p, second + 1, close, lex::comma) != close) return none;
     Str init = "";
-    if (first_semicolon > 1) init = tokens_text(p, 1, first_semicolon - 1);
+    Usize comma = find_at_depth_0(p, 1, first_semicolon, lex::comma);
+    if (comma != first_semicolon) {
+        Usize name = declarator_start(p, 1, first_semicolon);
+        if (name <= 1) return none;
+        char lead[:] = format::push(tokens_text(p, 1, name - 1), " ");
+        init = comma_pieces(p, 1, first_semicolon, lead, "; ");
+    } else if (first_semicolon > 1) {
+        init = tokens_text(p, 1, first_semicolon - 1);
+    }
     Str condition = "true";
     if (second > first_semicolon + 1) condition = tokens_text(p, first_semicolon + 1, second - 1);
-    Str step = "";
-    if (close > second + 1) step = tokens_text(p, second + 1, close - 1);
     // The step goes on its own line, one level in; the `}` it is inserted before keeps the indentation it has.
     Usize at = parse::peek(p).span.start;
     while (at > 0 && p->source[at - 1] != '\n')
@@ -1493,6 +1614,9 @@ static RangeText while_of(const parse::Parser *p, Usize close, Usize first_semic
     while (at + indent < countof(p->source) && p->source[at + indent] == ' ')
         indent += 1;
     Str margin = p->source[at:at + indent];
+    Str step = "";
+    char glue[:] = format::push(";\n", margin, "    ");
+    if (close > second + 1) step = comma_pieces(p, second + 1, close, "", glue);
     char head[:] = format::push("while ", condition);
     char tail[:] = format::push("");
     if (countof(step) > 0) tail = format::push("    ", step, ";\n", margin);
@@ -1633,6 +1757,10 @@ static Frame open_for(parse::Parser *p) {
     }
     if (!ranged && countof(p->errors) == before) {
         if (!parse::at(p, lex::right_paren)) frame.step = expression(p);
+        // Several steps, `i++, j++`: the first stands for the loop; the fix writes each on a line (`while_of`).
+        while (!frame.is_constexpr && frame.step != nullptr && countof(p->errors) == before &&
+               parse::accept(p, lex::comma))
+            expression(p);
         parse::expect(p, lex::right_paren, "`)`");
     }
     if (countof(p->errors) > before) skip_group(p, open);
@@ -1774,6 +1902,7 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         return nullptr;
     }
     if (extended_asm(p)) return asm_statement(p);
+    drop_musttail(p);
     if (starts_declaration(p)) return declaration_statement(p);
     if (new_pointer_init(p)) return pointer_statement(p);
     habit_warning(p);
@@ -1863,7 +1992,10 @@ static void case_fix(const parse::Parser *p, Frame *frame, Bool closing) {
         frame->switch_edits[frame->last_label].text = arm;
         ast::Span gone = {.start = first->span.end, .end = first->span.end};
         if (plain) gone.end = last->span.end;
+        // the arm's `;` and the `break;` go together: `case .ok: f(); break;` is `.ok => f()`
+        if (plain && gone.end < countof(p->source) && p->source[gone.end] == ';') gone.end += 1;
         if (single && gone.end < countof(p->source) && p->source[gone.end] == ';') gone.end += 1;
+        if (plain && gone.start > 0 && p->source[gone.start - 1] == ';') gone.start -= 1; // the span took the `;`
         add_switch_edit(frame, edit(gone, nothing));
         return;
     }
@@ -2083,6 +2215,11 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
         done = chain_if(p, frame, done, spanned(p, frame.start, new_stmt(break_kind())));
     }
     ast::Stmt *test = spanned(p, frame.start, ast::if_let(frame.pattern, frame.condition, done, stop));
+    if (frame.lead != nullptr) { // `while ok && .v(x) := value:` stops when `ok` fails
+        ast::Stmt *leave = spanned(p, frame.start, new_stmt(break_kind()));
+        test = spanned(p, frame.start,
+                       new_stmt({.if_stmt = {.condition = frame.lead, .then_branch = test, .else_branch = leave}}));
+    }
     return new_stmt({.while_stmt = {.condition = always, .body = test, .binds = true}});
 }
 
@@ -2091,7 +2228,10 @@ static ast::Stmt *binding_loop(const parse::Parser *p, Frame frame, ast::Stmt *d
 // in `rest` and in `then`, not in `otherwise`, which is the same statement in both places, run by one path.
 static ast::Stmt *pattern_if(const parse::Parser *p, Frame frame, ast::Stmt *then, ast::Stmt *otherwise) {
     then = chain_if(p, frame, then, otherwise);
-    return ast::if_let(frame.pattern, frame.condition, then, otherwise);
+    ast::Stmt *bound = ast::if_let(frame.pattern, frame.condition, then, otherwise);
+    if (frame.lead == nullptr) return bound;
+    return spanned(p, frame.start,
+                   new_stmt({.if_stmt = {.condition = frame.lead, .then_branch = bound, .else_branch = otherwise}}));
 }
 
 // A frame that holds one statement is complete with it; the statement it makes. (Not blocks and switches, `else`.)

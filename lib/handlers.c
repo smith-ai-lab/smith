@@ -7,8 +7,10 @@
 // ASan allocate before).
 #ifdef __linux__
 // What glibc hides from C23 and macOS does not: fopencookie, RTLD_NEXT, O_TMPFILE (knowledge/platform-layer.md).
+#ifndef _GNU_SOURCE // the build may pass it on the command line (Clang modules)
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
 #define _GNU_SOURCE
+#endif
 #endif
 #include "smith/handlers.h"
 

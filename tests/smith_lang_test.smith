@@ -44,7 +44,7 @@ import target;
 import <smith_core.h>;
 
 typedef struct {
-    arena::Arena *arena;
+    arena::Arena *memory_arena;
     const char *name;
     const scratch::Project *project;
 } Case;
@@ -81,11 +81,11 @@ static const char *join(const char *a, const char *b, const char *c, const char 
 }
 
 // The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
-static const char *next_line(arena::Arena *arena, const char **at) {
+static const char *next_line(arena::Arena *memory_arena, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
     Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory_arena, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
     *at += length + (end != nullptr ? 1 : 0);
@@ -93,28 +93,28 @@ static const char *next_line(arena::Arena *arena, const char **at) {
 }
 
 // `a/b.smith` as the module `a.b`, `a/b` the stem.
-static const char *module_of(arena::Arena *arena, const char *file) {
+static const char *module_of(arena::Arena *memory_arena, const char *file) {
     Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory_arena, char, length + 1).data;
     for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
     return copy;
 }
 
-static const char *stem_of(arena::Arena *arena, const char *file) {
+static const char *stem_of(arena::Arena *memory_arena, const char *file) {
     Usize length = c::strlen(file);
     if (length > 6 && c::strcmp(file + length - 6, ".smith") == 0) length -= 6;
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory_arena, char, length + 1).data;
     mem::copy(copy[0:length], file[0:length]);
     return copy;
 }
 
 // The object of a file that is not a module: its path with the dots for slashes.
-static const char *object_of(arena::Arena *arena, const char *file) {
+static const char *object_of(arena::Arena *memory_arena, const char *file) {
     Usize length = c::strlen(file);
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory_arena, char, length + 1).data;
     for (Usize i = 0; i < length; i++) {
         copy[i] = file[i] == '/' ? '.' : file[i];
     }
@@ -132,7 +132,7 @@ static const char *text_of(const Case *kase, const char *name) {
     Usize length = c::strlen(text);
     while (length > 0 && text[length - 1] == '\n')
         length--;
-    char *copy = arena::push_slice(kase->arena, char, length + 1).data;
+    char *copy = arena::push_slice(kase->memory_arena, char, length + 1).data;
     mem::copy(copy[0:length], text[0:length]);
     copy[length] = '\0';
     return copy;
@@ -152,7 +152,7 @@ static Bool ends_with(const char *text, const char *suffix) {
 // `cd src && find . -name '*.smith' | LC_ALL=C sort` did, through std::files, in place of a process for each.
 static const char *found(const Case *kase, const char *from, const char *suffix_a, const char *suffix_b,
                          Bool files_only_here) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const char *names[found_max];
     Usize count = 0;
     const char *folders[found_folders_max]; // relative to `from`; "" is `from` itself
@@ -201,13 +201,13 @@ static const char *include_stem(const char *stem) {
 
 // The header of a module, made in process into out/include, with the errors it reports added to out/stderr.
 static void write_header(const Case *kase, const char *file, const char *stem) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const scratch::Project *p = kase->project;
     const char *source = format::push("src/", file).data;
     Bool made =
         c::smith_core_header(p->dir, source, nullptr, header_text, header_capacity, report_text, report_capacity);
     if (report_text[0] != '\0') {
-        const U8 *bytes = (const U8 *)report_text;
+        const U8 *bytes = (const U8 *)&report_text[0];
         const char *errors = format::push(p->dir, "/out/stderr").data;
         files::CountResult added =
             files::write_file(errors[0:c::strlen(errors)], bytes[0:c::strlen(report_text)], files::Append);
@@ -216,12 +216,12 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
     if (!made) return;
     const char *path = format::push(p->dir, "/out/include/", include_stem(stem), ".h").data;
     const char *slash = c::strrchr(path, '/');
-    char *folder = arena::push_slice(arena, char, (Usize)(slash - path) + 1).data;
+    char *folder = arena::push_slice(memory_arena, char, (Usize)(slash - path) + 1).data;
     mem::copy(folder[0:(Usize)(slash - path)], path[0:(Usize)(slash - path)]);
     folder[slash - path] = '\0';
     files::DoneResult folder_made = files::make_folder(folder[0:(Usize)(slash - path)]);
     test::check(folder_made == .ok);
-    const U8 *header = (const U8 *)header_text;
+    const U8 *header = (const U8 *)&header_text[0];
     files::CountResult written =
         files::write_file(path[0:c::strlen(path)], header[0:c::strlen(header_text)], files::Replace);
     test::check(written == .ok);
@@ -229,63 +229,81 @@ static void write_header(const Case *kase, const char *file, const char *stem) {
 
 // Every compile of the case, into out/.
 static Built build_sources(const Case *kase) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const scratch::Project *p = kase->project;
+    const char *no_flags = "";
     const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : no_flags)
                             .data;
     const char *sources = found(kase, "src", ".smith", nullptr, false);
     Built built = {.status = 0, .objects = ""};
-    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        // the headers first, as the build will: no compile waits on another
-        const char *stem = stem_of(arena, file);
-        const char *place = include_stem(stem);
-        if (header_by_command(kase->name)) {
-            const char *command =
-                format::push("mkdir -p \"out/include/$(dirname ", place, ".h)\" && smith cc --smith-header src/", file,
-                             " -o out/include/", place, ".h 2>>out/stderr; [ -f out/include/", place,
-                             ".h ] && cp out/include/", place, ".h out/header/", module_of(arena, file), ".h")
-                    .data;
-            (void)scratch::sh(p, command);
-        } else {
-            write_header(kase, file, stem);
+    {
+        const char *at = sources;
+        const char *file = next_line(memory_arena, &at);
+        while (file != nullptr) {
+            // the headers first, as the build will: no compile waits on another
+            const char *stem = stem_of(memory_arena, file);
+            const char *place = include_stem(stem);
+            if (header_by_command(kase->name)) {
+                const char *command =
+                    format::push("mkdir -p \"out/include/$(dirname ", place, ".h)\" && smith cc --smith-header src/",
+                                 file, " -o out/include/", place, ".h 2>>out/stderr; [ -f out/include/", place,
+                                 ".h ] && cp out/include/", place, ".h out/header/", module_of(memory_arena, file),
+                                 ".h")
+                        .data;
+                (void)scratch::sh(p, command);
+            } else {
+                write_header(kase, file, stem);
+            }
+            file = next_line(memory_arena, &at);
         }
     }
     const char *ask = scratch::exists(p, "ask") ? text_of(kase, "ask") : "";
-    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        const char *module = module_of(arena, file);
-        const char *compile =
-            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ", flags,
-                         " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
-                .data;
-        if (scratch::sh(p, compile).status != 0) built.status = 1;
-        built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
+    {
+        const char *at = sources;
+        const char *file = next_line(memory_arena, &at);
+        while (file != nullptr) {
+            const char *module = module_of(memory_arena, file);
+            const char *compile =
+                format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ",
+                             flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
+                    .data;
+            if (scratch::sh(p, compile).status != 0) built.status = 1;
+            built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
+            file = next_line(memory_arena, &at);
+        }
     }
     return built;
 }
 
 // The sources that are not modules (C and C++), compiled beside them, and the link and the run.
 static void build_others(const Case *kase, Built *built) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const scratch::Project *p = kase->project;
+    const char *no_flags = "";
     const char *flags = format::push(scratch::exists(p, "nostd") ? "" : "-std=gnu23",
                                      " -g0 -fno-color-diagnostics -Wno-unused-function -I out/include ",
-                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : "")
+                                     scratch::exists(p, "flags") ? text_of(kase, "flags") : no_flags)
                             .data;
     const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
-    for (const char *at = others, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
-        Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
-        const char *compile =
-            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
-                               object, " 2>>out/stderr")
-                      .data
-                : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
-        if (scratch::sh(p, compile).status != 0) built->status = 1;
-        if (cpp) linker = "c++";
-        built->objects = format::push(built->objects, " ", object).data;
+    {
+        const char *at = others;
+        const char *file = next_line(memory_arena, &at);
+        while (file != nullptr) {
+            const char *object = format::push("out/obj/", object_of(memory_arena, file), ".o").data;
+            Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
+            const char *compile =
+                cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file,
+                                   " -o ", object, " 2>>out/stderr")
+                          .data
+                    : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
+            if (scratch::sh(p, compile).status != 0) built->status = 1;
+            if (cpp) linker = "c++";
+            built->objects = format::push(built->objects, " ", object).data;
+            file = next_line(memory_arena, &at);
+        }
     }
     scratch::write(p, "out/stdout", "");
     Bool has_main =
@@ -357,27 +375,29 @@ constexpr Usize errors_max = 512;
 // without duplicates: what `sed -n 's/^\([^ :]*:[0-9]*:[0-9]*\): error: \(.*\)$/\1: \2/p' | LC_ALL=C sort -u` made of
 // the file, read here in place of a process.
 static const char *errors_of(const Case *kase, const char *file) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const char *text = scratch::read(kase->project, file);
     const char *lines[errors_max];
     Usize count = 0;
-    for (const char *at = text, *line = next_line(arena, &at); line != nullptr; line = next_line(arena, &at)) {
+    const char *at = text;
+    const char *line = next_line(memory_arena, &at);
+    while (line != nullptr) {
         Usize position = error_position(line);
-        if (position == 0) {
-            continue;
+        if (position != 0) {
+            const char *error = format::push(line[0:position], ": ", line + position + 9).data;
+            Usize place = 0;
+            while (place < count && c::strcmp(lines[place], error) < 0)
+                place++;
+            Bool duplicate = place < count && c::strcmp(lines[place], error) == 0;
+            if (!duplicate) {
+                test::check_less(count, errors_max);
+                for (Usize k = count; k > place; k--)
+                    lines[k] = lines[k - 1];
+                lines[place] = error;
+                count++;
+            }
         }
-        const char *error = format::push(line[0:position], ": ", line + position + 9).data;
-        Usize place = 0;
-        while (place < count && c::strcmp(lines[place], error) < 0)
-            place++;
-        if (place < count && c::strcmp(lines[place], error) == 0) {
-            continue;
-        }
-        test::check_less(count, errors_max);
-        for (Usize k = count; k > place; k--)
-            lines[k] = lines[k - 1];
-        lines[place] = error;
-        count++;
+        line = next_line(memory_arena, &at);
     }
     const char *sorted = "";
     for (Usize k = 0; k < count; k++)
@@ -420,18 +440,22 @@ static void check_outputs(const Case *kase, Bool update) {
 
 // The files the case holds in expect/<folder>, as `<folder>/<name>` one a line.
 static const char *held(const Case *kase, const char *folder) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const char *names = found(kase, join("expect/", folder, "", ""), nullptr, nullptr, true);
     const char *lines = "";
-    for (const char *at = names, *name = next_line(arena, &at); name != nullptr; name = next_line(arena, &at))
+    const char *at = names;
+    const char *name = next_line(memory_arena, &at);
+    while (name != nullptr) {
         lines = join(lines, folder, "/", join(name, "\n", "", ""));
+        name = next_line(memory_arena, &at);
+    }
     return lines;
 }
 
 // The generated headers of the cases in `header_by_command` and what the compile wrote for generics, as the case holds
 // them. A run to update takes the files a successful build made as the expectation.
 static void check_files(const Case *kase, const Built *built, Bool update) {
-    arena::Arena *arena = kase->arena;
+    arena::Arena *memory_arena = kase->memory_arena;
     const char *files;
     if (update && built->status != 0) return;
     if (update && fresh(kase->project)) { // a new case: what the build made, each file that is not empty
@@ -443,8 +467,13 @@ static void check_files(const Case *kase, const Built *built, Bool update) {
         const char *generics = held(kase, "generics");
         files = header_by_command(kase->name) ? join(held(kase, "header"), generics, "", "") : generics;
     }
-    for (const char *at = files, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
+    {
+        const char *at = files;
+        const char *file = next_line(memory_arena, &at);
+        while (file != nullptr) {
+            golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
+            file = next_line(memory_arena, &at);
+        }
     }
 }
 
@@ -478,7 +507,7 @@ static void corpus_case(const char *name) {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Case kase = {.arena = &memory, .name = name, .project = &p};
+    Case kase = {.memory_arena = &memory, .name = name, .project = &p};
     scratch::copy_tree(&p, join("tests/smith-lang/cases/", name, "", ""), "");
     // A case that names the files of another (../../target-facts/src/main.smith) finds them beside its own folder.
     if (c::strncmp(name, "target-facts-", 13) == 0) {

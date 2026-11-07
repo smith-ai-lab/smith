@@ -25,6 +25,12 @@ inputs:
       set SMITH instead of fetching the previous smith and building (empty: build here)
     default: ""
 
+  profile:
+    description: >
+      the build profile of `smith build` (#2684): `dev` (-O0, the default) or `release` (-O2). The front-end coverage
+      shards measure a release smith, so the count is not slowed by the dev profile
+    default: dev
+
 outputs:
   llvm-key:
     description: the cache key of the LLVM pack
@@ -99,7 +105,7 @@ runs:
         SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
-        smith build
+        smith build -DPROFILE=${{ inputs.profile }}
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -117,12 +123,19 @@ runs:
         if ! SMITH_OUTPUT=full "$SMITH" test --list ${{ inputs.test-flags }} >"$RUNNER_TEMP/list.out" 2>&1; then
           tail -n 300 "$RUNNER_TEMP/list.out"
           for runner in build/*/front-project/build/tests; do
-            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
+            [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100 || true; echo "::endgroup::"; }
           done
-          # the compiler's `file:line:col: error:` lines with their source lines, and the command that failed (the
-          # nested build's full output is also in `.smith/log/.smith_task_*.log`, a hidden file a `*` glob misses)
-          cat .smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
-            grep -hE -A3 '^[^ :]+:[0-9]+:[0-9]+: (fatal )?error|^FAILED:|^smith: build stopped' | grep -vE '^--$' | awk '!seen[$0]++' |
+          for nested in .smith/log build/*/*-project/.smith/log; do
+            [ -d "$nested" ] || continue
+            echo "::group::$nested"
+            ls -la "$nested" | tail -n 20
+            for log in "$nested"/.smith_task_*.log; do [ -f "$log" ] && { echo "--- $log"; tail -n 60 "$log"; }; done
+            echo "::endgroup::"
+          done
+          # the compiler's `file:line:col: error:` lines with their source lines, the linker's errors, and the command that failed (the
+          # nested build's full output is also in `.smith/log/.smith_task_*.log`, and a nested project's (units, front) in its own, a hidden file a `*` glob misses)
+          cat .smith/log/.smith_task_*.log build/*/*-project/.smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
+            grep -hE -A3 '^[^ :]+:[0-9]+:[0-9]+: (fatal )?error|^FAILED:|^smith: build stopped|^Undefined symbols|^duplicate symbol|^ld[0-9.a-z]*: error|^clang(\+\+)?: error|^smith: build\.c' | grep -vE '^--$' | awk '!seen[$0]++' |
             tail -n 60 >"$RUNNER_TEMP/build-failed.txt" || true
           [ -s "$RUNNER_TEMP/build-failed.txt" ] || tail -n 60 "$RUNNER_TEMP/list.out" >"$RUNNER_TEMP/build-failed.txt"
           { echo '### The tests did not build'; echo '```'; cat "$RUNNER_TEMP/build-failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"

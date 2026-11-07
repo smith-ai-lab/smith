@@ -58,10 +58,15 @@ static const char *bytes_text(process::Bytes bytes) {
 }
 
 // A text of its own: the pieces one after another.
-static const char *join_free(const char *a, const char *b, const char *c) {
-    Usize length = format::length(a, b, c);
-    char *text = mem::alloc_slice(char, length + 1).data;
-    (void)format::write(text, length + 1, a, b, c);
+static const char *join_free(const char *first, const char *second, const char *third) {
+    Usize one = c::strlen(first);
+    Usize two = c::strlen(second);
+    Usize three = c::strlen(third);
+    char *text = mem::alloc_slice(char, one + two + three + 1).data;
+    mem::copy(text[0:one], first[0:one]);
+    mem::copy(text[one:one + two], second[0:two]);
+    mem::copy(text[one + two:one + two + three], third[0:three]);
+    text[one + two + three] = '\0';
     return text;
 }
 
@@ -70,24 +75,23 @@ static const char *join_free(const char *a, const char *b, const char *c) {
 static Run run_free(const char *const argv[:]) {
     process::OutputResult done = process::run(argv);
     if (done == .ok) {
-        process::Output output = done.ok;
         Run run = {
-            .status = output.exit.signal != 0 ? 128 + output.exit.signal : output.exit.status,
-            .out = bytes_text(output.output),
-            .err = bytes_text(output.errors),
+            .status = done.ok.exit.signal != 0 ? 128 + done.ok.exit.signal : done.ok.exit.status,
+            .out = bytes_text(done.ok.output),
+            .err = bytes_text(done.ok.errors),
         };
-        if (output.output.data != nullptr) mem::free(output.output.data);
-        if (output.errors.data != nullptr) mem::free(output.errors.data);
+        if (done.ok.output.data != nullptr) mem::free(done.ok.output.data);
+        if (done.ok.errors.data != nullptr) mem::free(done.ok.errors.data);
         return run;
     }
     test::note("the command could not start");
     test::check_equal(0, 1);
-    return (Run){};
+    return (Run){.status = 0, .out = nullptr, .err = nullptr};
 }
 
 // Runs `sh -c script arg0 arg1` and returns what it printed, to free; the status must be 0.
 static const char *script_free(const char *script, const char *arg0, const char *arg1) {
-    const char *const argv[_] = {"sh", "-c", script, arg0, arg1, nullptr};
+    const char *const argv[6] = {"sh", "-c", script, arg0, arg1, nullptr};
     Run run = run_free(argv[0:5]);
     if (run.status != 0) {
         test::note("%s failed: %s", script, run.err);
@@ -113,7 +117,7 @@ static const char *script_free(const char *script, const char *arg0, const char 
 // compiled once for the run, in the shared cache above, not again in every project. A test that counts or compares the
 // compiles of its own fixture calls scratch::uncached(&p), which gives its commands SMITH_STEP_CACHE=0 ($4);
 // tests/build_step_cache_test.smith sets its own and has a cache of its own.
-constexpr char run_script[_] =
+static const char *const run_script =
     "unset SMITH_ACCOUNT_FILE; export SMITH_SLOTS=0; here=$PWD; repo=${SMITH_REPO:-$PWD}; cd \"$0\" "
     "|| exit 97; "
     "export SMITH_STEP_CACHE=\"${4:-${SMITH_STEP_CACHE:-1}}\"; "
@@ -124,7 +128,7 @@ constexpr char run_script[_] =
     "SMITH_HEADERS_FROM=\"${SMITH_HEADERS_FROM:-$here/.smith/include/smith}\" "
     "SMITH_TEST_CACHE=\"${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}\"; "
     "case $1 in *[!A-Za-z0-9_./:=@%+,\\ -]*) eval \"$1\" ;; *) exec $1 ;; esac";
-constexpr char setup_script[_] =
+static const char *const setup_script =
     "mkdir -p \"$0/tested\" \"$1\" && for n in smith smith-cc smith-c++; do ln -sf "
     "\"$SMITH_SELF\" \"$0/tested/$n\"; done; "
     "if [ \"$(uname -s)\" != Darwin ]; then printf '#!/bin/sh\\nunset SMITH_CLANG\\nexec smith-cc \"$@\"\\n' "
@@ -134,7 +138,7 @@ constexpr char setup_script[_] =
 // (never the real one) and the repository as $SMITH_REPO (where the runner was started). Nothing is set in this
 // process: the environment is made by the shell that runs the command.
 static Run run_in(const Project *p, const char *command) {
-    const char *const argv[_] = {"sh",   "-c", run_script, p->dir, command, p->tested, p->cache, p->uncached ? "0" : "",
+    const char *const argv[9] = {"sh",   "-c", run_script, p->dir, command, p->tested, p->cache, p->uncached ? "0" : "",
                                  nullptr};
     return run_free(argv[0:8]);
 }
@@ -153,7 +157,7 @@ static const char *path_in(const Project *p, const char *name) {
 }
 
 // The copy: the source is a folder (its contents) or a file; a link stays a link.
-constexpr char copy_script[_] =
+static const char *const copy_script =
     "src=\"${SMITH_REPO:-.}/$1\"; if [ -d \"$src\" ]; then mkdir -p \"$0\" && cp -PR \"$src/.\" \"$0\"; "
     "else mkdir -p \"$(dirname \"$0\")\" && cp -PR \"$src\" \"$0\"; fi";
 
@@ -163,7 +167,7 @@ constexpr char copy_script[_] =
 // first and gives the process the copy; no command reads the repository in place.
 export void copy_tree(const Project *p, const char *source, const char *name) {
     const char *to = name[0] == '\0' ? join_free(p->dir, "", "") : path_in(p, name);
-    const char *const argv[_] = {"sh", "-c", copy_script, to, source, nullptr};
+    const char *const argv[6] = {"sh", "-c", copy_script, to, source, nullptr};
     Run run = run_free(argv[0:5]);
     if (run.status != 0) {
         test::note("%s could not be copied: %s", source, run.err);
@@ -254,9 +258,12 @@ export Project make(const char *name, const char *fixture) {
     mem::copy(folder[0:length], made[0:length]);
     folder[length] = '\0';
     release(made);
-    Project p = {
-        .root = folder, .dir = join_free(folder, "/", name), .tested = join_free(folder, "/", "tested"), .cache = ""};
-    const char *const argv[_] = {"sh", "-c", setup_script, folder, p.dir, nullptr};
+    Project p = {.root = folder,
+                 .dir = join_free(folder, "/", name),
+                 .tested = join_free(folder, "/", "tested"),
+                 .cache = "",
+                 .uncached = false};
+    const char *const argv[6] = {"sh", "-c", setup_script, folder, p.dir, nullptr};
     Run set_up = run_free(argv[0:5]);
     test::check_equal(set_up.status, 0);
     release(set_up.out);
@@ -274,7 +281,7 @@ export void clean(Project *p) {
     release(p->dir);
     release(p->tested);
     if (p->cache[0] != '\0') release(p->cache);
-    *p = (Project){};
+    *p = (Project){.root = nullptr, .dir = nullptr, .tested = nullptr, .cache = nullptr, .uncached = false};
 }
 
 // The project gets a cache of its own, empty, for a test of the cache or of what a cold one does.
@@ -352,7 +359,7 @@ export void write_lowered(const Project *p, const char *source, const char *name
     Bool done = c::smith_core_lower(repo, source, nullptr, lowered_text, lowered_capacity, lowered_errors,
                                     lowered_errors_capacity);
     if (!done) {
-        test::note("%s could not be lowered:\n%s", source, lowered_errors);
+        test::note("%s could not be lowered:\n%s", source, &lowered_errors[0]);
     }
     test::check_equal(done, true);
     write_in_new_folder(p, name, lowered_text);
@@ -365,7 +372,7 @@ static void header_to(const Project *p, const char *folder, const char *source, 
     Bool done = c::smith_core_header(folder, source, nullptr, header_buffer, sizeof header_buffer, lowered_errors,
                                      lowered_errors_capacity);
     if (!done) {
-        test::note("%s has no header:\n%s", source, lowered_errors);
+        test::note("%s has no header:\n%s", source, &lowered_errors[0]);
     }
     test::check_equal(done, true);
     write_in_new_folder(p, name, header_buffer);
@@ -391,7 +398,7 @@ export void write_header_of(const Project *p, const char *source, const char *na
 export const char *read(const Project *p, const char *name) {
     // always a text of its own, "" when the file is absent; the caller frees it
     const char *path = path_in(p, name);
-    const char *const argv[_] = {"sh", "-c", "cat \"$0\" 2>/dev/null; exit 0", path, nullptr};
+    const char *const argv[5] = {"sh", "-c", "cat \"$0\" 2>/dev/null; exit 0", path, nullptr};
     Run run = run_free(argv[0:4]);
     release(run.err);
     release(path);
@@ -400,7 +407,7 @@ export const char *read(const Project *p, const char *name) {
 
 export Bool exists(const Project *p, const char *name) {
     const char *path = path_in(p, name);
-    const char *const argv[_] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
+    const char *const argv[5] = {"sh", "-c", "test -e \"$0\"", path, nullptr};
     Run run = run_free(argv[0:4]);
     release(run.out);
     release(run.err);

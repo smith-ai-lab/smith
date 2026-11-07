@@ -1,11 +1,19 @@
-// Printing the declarations of build.c. Included by smith.c after make_class.c.
+// Printing the declarations of build.c. Linked into smith.
+
+#include "make_print.h"
+#include "core.h"
+#include "make.h"
+#include "make_cc.h"
+#include "make_class.h"
+#include "make_emit.h"
+#include "make_expand.h"
+#include "make_graph.h"
+#include "mcp_unit.h"
 
 #define SMITH_MAKE_BODY (smith_make_output.body)
 
-constexpr size_t smith_make_comment_width = 112;
-
 // A one-line summary of text for a comment: newlines and runs of blanks become one space, long text is cut.
-static const char *smith_make_summary(const char *text, size_t width) {
+const char *smith_make_summary(const char *text, size_t width) {
     const char *clean = smith_make_unmark(text);
     size_t length = strlen(clean);
     char *out = smith_make_alloc(length + 8);
@@ -217,7 +225,7 @@ static void smith_make_emit_program(const SmithMakeNode *node, const SmithMakeIn
     smith_make_put_format(out, "    };\n    build::program(b, &%s);\n", info->c_name);
 }
 
-static void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo *info) {
+void smith_make_emit_node(const SmithMakeNode *node, const SmithMakeInfo *info) {
     smith_make_unit_begin(smith_make_unit_list);
     switch (info->kind) {
     case SmithMakeKind_Object:

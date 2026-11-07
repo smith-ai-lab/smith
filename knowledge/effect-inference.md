@@ -57,7 +57,7 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   compile time (no effect, no error) where a system function the table does not know is `unknown`.
 - **No recursion in a module** (207c): `checkRecursion` finds the strongly connected components of the call graph of the
   functions the module's file defines (a work list, no recursion) and reports a call that sits on a cycle, once for each
-  cycle, with the way round (`a -> b (a.smith:4) -> a (b.smith:9)`); a call of `[[clang::musttail]] return f(...)` (an
+  cycle, with the way round (`a -> b (a.smith:4) -> a (b.smith:9)`); a call of `[[clang::musttail]] return f(...)` (in the new front end every call in tail position is a `musttail` call with no attribute, and `front/emit_call.smith` `check_recursion` reports the cycles that are not all tail calls, #2709; in the old front end an
   AttributedStmt with MustTailAttr over a return of the call) is a jump and does not count, so a cycle of jumps is a
   loop. Imports are acyclic, so a cycle is always inside one file; calls through a pointer and into code with no body are
   not followed. Only a file with a `module` line (it begins a line), so plain `.smith` and C say nothing. A survey on

@@ -1,105 +1,16 @@
 // Reading a Makefile: logical lines, assignments, `define`, `include`, conditionals (a test of the platform or an
-// option keeps both branches) and rules. Included by smith.c after make_expand.c.
+// option keeps both branches) and rules. Linked into smith.
 
-constexpr size_t smith_make_includes_max = 16;
-constexpr size_t smith_make_conds_max = 64;
-constexpr size_t smith_make_rules_max = 16384;
+#include "make_read.h"
+#include "core.h"
+#include "make.h"
+#include "make_expand.h"
+#include "mcp_unit.h"
+
 constexpr size_t smith_make_targets_max = 32768;
 constexpr size_t smith_make_refs_max = 65536;
-constexpr size_t smith_make_recipe_lines_max = 262144;
-constexpr size_t smith_make_log_max = 8192;
 
-typedef struct {
-    const char *name;
-    char *text;
-    size_t length;
-    size_t pos;
-    uint32_t line;
-    bool eval; // the text of an $(eval), not a file
-} SmithMakeSource;
-
-typedef struct {
-    const char *text;
-    SmithMakeWhere where;
-} SmithMakeRecipeLine;
-
-typedef struct {
-    SmithMakeWhere where;
-    const char **targets;
-    size_t target_count;
-    const char **prerequisites;
-    size_t prerequisite_count;
-    const char **order_only;
-    size_t order_only_count;
-    size_t recipe_first;
-    size_t recipe_count;
-    const char *guard; // a C condition, or nullptr: the rule is under a test of the platform or an option
-    bool pattern;
-    bool from_eval;      // made by an $(eval): the names of its variables were made by an expansion
-    const char *stem;    // a static pattern rule's stem for its one target
-    int64_t recipe_from; // the rule whose recipe lines these are, when a line made several rules; else -1
-} SmithMakeRule;
-
-typedef struct {
-    uint32_t rule;
-    uint32_t next; // index + 1 of the next reference, 0 for none
-} SmithMakeRef;
-
-typedef struct {
-    const char *name;
-    uint32_t first; // index + 1 into refs
-    uint32_t last;
-    bool phony;
-    SmithMakeWhere where;
-} SmithMakeTarget;
-
-typedef struct {
-    SmithMakeVar *var;
-    SmithMakeVar state;
-} SmithMakeLogEntry;
-
-typedef struct {
-    bool outer;   // the region around the conditional is read
-    bool active;  // the branch being read is read
-    bool taken;   // a branch was read already
-    bool dynamic; // build.c decides
-    bool chained; // an `else ifeq`: its endif is the parent's too
-    bool in_else;
-    const char *test;
-    size_t log_start;
-    size_t results_start;
-    size_t results_end;
-} SmithMakeCond;
-
-typedef struct {
-    SmithMakeSource sources[smith_make_includes_max];
-    size_t source_count;
-    SmithMakeCond conds[smith_make_conds_max];
-    size_t cond_count;
-    size_t dynamic_count;
-    SmithMakeLogEntry log[smith_make_log_max];
-    size_t log_count;
-    SmithMakeLogEntry results[smith_make_log_max];
-    size_t result_count;
-    SmithMakeRule *rules;
-    size_t rule_count;
-    SmithMakeRef *refs;
-    size_t ref_count;
-    SmithMakeTarget *targets;
-    size_t target_count;
-    uint32_t *target_slots;
-    uint32_t *patterns; // rules that are pattern rules, in order
-    size_t pattern_count;
-    SmithMakeRecipeLine *recipe_lines;
-    size_t recipe_line_count;
-    bool in_rule;
-    int64_t current_rule; // -1 for none
-    const char *default_goal;
-    const char **generated_includes;
-    size_t generated_count;
-} SmithMakeReader;
-
-static SmithMakeReader smith_make_reader;
+SmithMakeReader smith_make_reader;
 
 static void smith_make_reader_init(void) {
     SmithMakeReader *r = &smith_make_reader;
@@ -158,8 +69,8 @@ typedef struct {
 } SmithMakeLine;
 
 // The buffers of the reader, made on first use in the pool (smith_make_reset forgets them).
-static SmithMakeBuffer smith_make_joined;
-static SmithMakeBuffer smith_make_define_body;
+SmithMakeBuffer smith_make_joined;
+SmithMakeBuffer smith_make_define_body;
 
 // The next logical line: a backslash and the newline join the next line (kept in a recipe line, one space otherwise).
 static bool smith_make_next_line(SmithMakeSource *source, bool in_rule, SmithMakeLine *out) {
@@ -691,7 +602,7 @@ static uint32_t smith_make_target_hash(const char *name) {
     return smith_make_hash(name, strlen(name)) & (uint32_t)(smith_make_targets_max * 2 - 1);
 }
 
-static SmithMakeTarget *smith_make_target_find(const char *name) {
+SmithMakeTarget *smith_make_target_find(const char *name) {
     SmithMakeReader *r = &smith_make_reader;
     uint32_t at = smith_make_target_hash(name);
     for (size_t probes = 0; probes < smith_make_targets_max * 2; probes++) {
@@ -766,12 +677,12 @@ static void smith_make_add_recipe(size_t rule_index, const char *text, SmithMake
     rule->recipe_count++;
 }
 
-static bool smith_make_is_special(const char *name) {
+bool smith_make_is_special(const char *name) {
     return name[0] == '.' && name[1] >= 'A' && name[1] <= 'Z';
 }
 
 // `.c.o`: an old-style suffix rule.
-static bool smith_make_is_suffix_rule(const char *name) {
+bool smith_make_is_suffix_rule(const char *name) {
     if (name[0] != '.' || name[1] < 'a' || name[1] > 'z') return false;
     size_t dots = 0;
     for (const char *c = name; *c != '\0'; c++) {
@@ -918,12 +829,12 @@ static void smith_make_rule_line(const char *text) {
 
 // ---- Includes
 
-static bool smith_make_exists(const char *path) {
+bool smith_make_exists(const char *path) {
     struct stat info;
     return stat(path, &info) == 0;
 }
 
-static bool smith_make_has_suffix(const char *text, const char *suffix) {
+bool smith_make_has_suffix(const char *text, const char *suffix) {
     size_t length = strlen(text);
     size_t tail = strlen(suffix);
     return length >= tail && strcmp(text + length - tail, suffix) == 0;
@@ -1088,7 +999,7 @@ static void smith_make_define_defaults(void) {
 }
 
 // Reads the Makefile and everything it includes.
-static void smith_make_read(const char *path) {
+void smith_make_read(const char *path) {
     SmithMakeReader *r = &smith_make_reader;
     smith_make_reader_init();
     smith_make_define_defaults();

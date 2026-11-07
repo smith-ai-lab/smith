@@ -7,8 +7,8 @@ tags: [mcp, debugger]
 # smith mcp
 
 **`smith mcp` is the debugger as an MCP server over stdio** (issue #22; `runtime/mcp*.c`, [smith mcp](mcp-server.md), skill smith-debug): eleven tools
-(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, on smith's private io layer (`runtime/io.smith`, `<runtime/io.h>`, until #888) and the
-generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp_test.smith` runs it on the
+(`launch`, `breakpoint`, `continue`, the steps, `pause`, `stack`, `variables`, `evaluate`, `stop`) over `smith dap` children, calling the world directly (`runtime/world.c`: files, the console, memory; the stdin, the children and the clock are still
+ops of `runtime/io.smith`'s loop, until #2662) and the generated protocol types, no malloc. Only the full smith has it (`-DSMITH_MCP`); the smith plugin declares it (`mcpServers`). `tests/mcp_test.smith` runs it on the
 fake io and end to end.
 
 `smith mcp` is a Model Context Protocol server over stdio that gives an agent a debugger (issue #22). It holds debug
@@ -26,12 +26,12 @@ so a project that enables the plugin has the tools; by hand: `claude mcp add smi
 The server is `runtime/mcp.c` and the files it includes, in order: `mcp_text.c` (the text a result is built in, the
 readers of a tool's arguments), `mcp_dap.c` (a session: the child, DAP's framing, requests and replies, the queue of
 events), `mcp_show.c` (what a stop, a stack and variables look like), `mcp_tools.c` (the tools and their table) and
-`mcp_serve.c` (MCP: the messages, the versions, the loop). smith.c includes it after the JSON, text and protocol code.
+`mcp_serve.c` (MCP: the messages, the versions, the loop). each is an object of its own since #2685.
 
-- **On `<runtime/io.h>` and in one thread.** The server's stdin, every session's pipes and exit, and the clock are ops on
+- **On the event loop of `<runtime/io.h>` and in one thread, until #2662.** The server's stdin, every session's pipes and exit, and the clock are ops on
   one event loop. A tool call is a function that runs the loop (`smith_mcp_pump`) until what it waits for has happened or
   its time is up; input that arrives meanwhile is buffered, so a client that pipelines requests is answered in order.
-  Nothing is allocated but in arenas (the io's), nothing recurses, every loop has a bound.
+  Nothing is allocated but in arenas, nothing recurses, every loop has a bound.
 - **No protocol is written by hand.** Every message is a type of the code generated from the official schemas
   (`.smith/protocol/dap.[ch]` and `mcp.[ch]`, build outputs; [the protocol code](protocol-generation.md)). What is read from a tree by name is what the
   schemas do not have: the `initialize` request and result of the MCP revisions before 2026-07-28, and a tool's

@@ -27,10 +27,11 @@ export void test_asm_literal_is_one_token_across_lines() {
     lex::Lexed lexed = lex::tokenize_new(source);
     test::check_equal(lexed == .ok, true);
     if (lexed == .ok) {
-        test::check_equal(countof(lexed.ok), (Usize)2);
-        Bool is_tagged = lexed.ok[0].kind == lex::tagged;
+        lex::Tokens tokens = lexed.ok;
+        test::check_equal(countof(tokens), (Usize)2);
+        Bool is_tagged = tokens[0].kind == lex::tagged;
         test::check_equal(is_tagged, true);
-        test::check_equal(lexed.ok[0].span.end, (U32)(countof(source) - 1));
+        test::check_equal(tokens[0].span.end, (U32)(countof(source) - 1));
     }
 }
 
@@ -86,11 +87,12 @@ export void test_asm_old_module_asm_is_fixed_to_a_literal() {
 
 // The four branches of std.task, as the fixer writes them: each carries the `@when` that chooses it.
 static Str branches() {
-    return "@when(target.arch == .aarch64 && target.os == .macos)\nasm`a`\n"
-           "@when(target.arch == .aarch64 && target.os == .linux)\nasm`b`\n"
-           "@when(target.arch == .x86_64 && target.os == .linux)\nasm`c`\n"
-           "@when(!(target.arch == .aarch64 && target.os == .macos) && !(target.arch == .aarch64 && target.os == "
-           ".linux) && !(target.arch == .x86_64 && target.os == .linux))\nstatic_assert(false, \"no switch\");\n";
+    return "@when(target.arch == .aarch64 and target.os == .macos)\nasm`a`\n"
+           "@when(target.arch == .aarch64 and target.os == .linux)\nasm`b`\n"
+           "@when(target.arch == .x86_64 and target.os == .linux)\nasm`c`\n"
+           "@when(not (target.arch == .aarch64 and target.os == .macos) and not (target.arch == .aarch64 and target.os "
+           "== "
+           ".linux) and not (target.arch == .x86_64 and target.os == .linux))\nstatic_assert(false, \"no switch\");\n";
 }
 
 export void test_asm_each_branch_of_std_task_is_chosen_by_when() {
@@ -120,8 +122,8 @@ export void test_asm_each_branch_of_std_task_is_chosen_by_when() {
     const ast::Module *live = when::live_module(&parsed.module, when::host());
     Usize asms = 0;
     Usize asserts = 0;
-    for (Usize i = 0; i < countof(live->decls); i++) {
-        const ast::Decl *d = live->decls[i];
+    for (Usize j = 0; j < countof(live->decls); j++) {
+        const ast::Decl *d = live->decls[j];
         if (d->kind == .asm_decl) asms += 1;
         if (d->kind == .static_assert_decl) asserts += 1;
     }

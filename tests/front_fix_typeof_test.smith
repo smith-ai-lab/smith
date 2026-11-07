@@ -48,3 +48,82 @@ export void test_front_fix_typeof_a_typeof_in_a_string_or_comment_is_unchanged()
     expect_fixed("module m;\n// typeof([U8]) is U8\nstatic Bool g() {\n    return true;\n}\n",
                  "# typeof([U8]) is U8\nstatic fn g() -> bool:\n    return true\n");
 }
+
+export void test_front_fix_typeof_an_auto_the_body_tests_by_type_stays_auto() {
+    expect_fixed("module m;\nexport Usize size_of(auto piece) {\n    if constexpr (typeof(piece) == U8) {\n"
+                 "        return 1;\n    } else {\n        return countof(piece) + (Usize)piece.data[0];\n    }\n}\n",
+                 "pub fn size_of(piece: auto) -> usize:\n    if typeof(piece) == u8:\n        return 1\n    else:\n"
+                 "        return countof(piece) + piece.data[0].to(usize)\n");
+}
+
+// `typeof(x) == char *` is a test of a pointer type: `*mut char`, and `*char` for `const char *` (decided on #1406).
+// The
+// `*char` left to the parser would read as a dereference, `char.*`.
+export void test_front_fix_typeof_a_pointer_type_a_typeof_is_compared_with() {
+    expect_fixed(
+        "module m;\nexport Bool text(auto p) {\n    return typeof(p) == char * || typeof(p) != const char *;\n}\n",
+        "pub fn text(p: auto) -> bool:\n    return typeof(p) == *mut char or typeof(p) != *char\n");
+}
+
+// A slice struct written out is a slice type, `[]mut char` and `[]char`.
+export void test_front_fix_typeof_a_slice_struct_a_typeof_is_compared_with() {
+    expect_fixed(
+        "module m;\nexport Bool text(auto p) {\n    return typeof(p) == struct smith_array_char_n ||\n"
+        "           typeof(p) == struct smith_array_const_char_n;\n}\n",
+        "pub fn text(p: auto) -> bool:\n    return typeof(p) == []mut char or\n           typeof(p) == []char\n");
+}
+
+// A pointer to a slice of any element type, `const auto (*xs)[:]`, is generic in the element: `[T]`, and
+// `typeof((*xs)[0])` is `T` (`std.slice.take_until`).
+export void test_front_fix_typeof_a_pointer_to_a_slice_of_auto_is_generic_in_its_element() {
+    expect_fixed("module m;\nexport typeof((*xs)[0:0]) take_until(const auto (*xs)[:], typeof((*xs)[0]) v) {\n"
+                 "    Usize n = 0;\n    while (n < countof(*xs) && (*xs)[n] != v) {\n        n += 1;\n    }\n"
+                 "    return (*xs)[0:n];\n}\n",
+                 "pub fn take_until[T](xs: *[]T, v: T) -> []T:\n    mut n: usize = 0\n"
+                 "    while n < countof(xs.*) and (xs.*)[n] != v:\n        n += 1\n    return (xs.*)[0:n]\n");
+}
+
+// A built-in concept as the element of a parameter's type (`Num xs[:]`, `Num *p`) is an inferred parameter of that
+// concept.
+export void test_front_fix_typeof_a_concept_in_a_parameter_is_an_inferred_parameter() {
+    expect_fixed("module m;\nexport Usize find(const Num xs[:], typeof(xs[0]) v) {\n    return countof(xs);\n}\n"
+                 "export void bump(Num *p, typeof(*p) by) {\n    *p += by;\n}\n",
+                 "pub fn find[T: num](xs: []T, v: typeof(xs[0])) -> usize:\n    return countof(xs)\n"
+                 "pub fn bump[T: num](p: *mut T, by: typeof(p.*)):\n    p.* += by\n");
+}
+
+// A module that declares its own `Num` has no concept of that name.
+export void test_front_fix_typeof_a_declared_type_named_like_a_concept_is_not_one() {
+    expect_fixed(
+        "module m;\nstruct Num {\n    I32 v;\n};\nexport Usize count(const Num xs[:]) {\n    return countof(xs);\n}\n",
+        "struct Num:\n    v: i32\npub fn count(xs: []Num) -> usize:\n    return countof(xs)\n");
+}
+
+// A read-only `auto` slice (`const auto xs[:]`) is `xs: []T` with the function generic in `T`, and a later parameter
+// that spells the element, `typeof(xs[0]) v`, takes `T`.
+export void test_front_fix_typeof_a_read_only_auto_slice_makes_the_element_generic() {
+    expect_fixed("module m;\nexport Usize find(const auto xs[:], typeof(xs[0]) v) {\n"
+                 "    for (Usize i = 0; i < countof(xs); i++) {\n        if (xs[i] == v) return i;\n    }\n"
+                 "    return countof(xs);\n}\n",
+                 "pub fn find[T](xs: []T, v: T) -> usize:\n    for i in range(0, countof(xs)):\n"
+                 "        if xs[i] == v:\n            return i\n    return countof(xs)\n");
+}
+
+// The same for a pointer (`auto *p`, `const auto *p`) and a two-dimensional slice: `typeof(*p)` and `typeof(m[0][0])`
+// are `T`.
+export void test_front_fix_typeof_an_auto_pointer_and_a_grid_make_the_element_generic() {
+    expect_fixed("module m;\nexport void bump(auto *p, typeof(*p) by) {\n    *p += by;\n}\n"
+                 "export typeof(*p) read(const auto *p) {\n    return *p;\n}\n"
+                 "export typeof(m[0][0]) zero(const auto m[:][:]) {\n    return 0;\n}\n",
+                 "pub fn bump[T](p: *mut T, by: T):\n    p.* += by\n"
+                 "pub fn read[T](p: *T) -> T:\n    return p.*\n"
+                 "pub fn zero[T](m: [][]T) -> T:\n    return 0\n");
+}
+
+// A function that asks what its parameter is (`is_slice(typeof(x))`) takes more than slices: `auto` stays.
+export void test_front_fix_typeof_a_type_predicate_on_the_parameter_keeps_auto() {
+    expect_fixed("module m;\nexport void zero(auto x) {\n    if constexpr (is_slice(typeof(x))) {\n"
+                 "        if (x.count[0] > 0) c::puts(\"a\");\n    } else {\n        c::puts(\"b\");\n    }\n}\n",
+                 "pub fn zero(x: auto):\n    if is_slice(typeof(x)):\n        if x.count[0] > 0:\n"
+                 "            c.puts(\"a\")\n    else:\n        c.puts(\"b\")\n");
+}

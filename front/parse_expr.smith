@@ -602,6 +602,14 @@ static void list_warning(parse::Parser *p, ast::TypeExpr *type, U32 start, U32 r
                                edits);
             return;
         }
+        if (plain && fix->designated == 0 && fix->positional >= 2 && type->kind == .tuple) {
+            // `(struct { I32, F32 }){1, 2.0f}` is the tuple `(1, 2.0f)`: the type is the tuple's own.
+            parse::Edits edits = fix->edits;
+            edits = with_edit(edits, from_to(start, open.span.end), "(");
+            edits = with_edit(edits, close.span, ")");
+            parse::warning_fix(p, whole, "a compound literal of a tuple type `(T){a, b}` is written `(a, b)`", edits);
+            return;
+        }
         if ((plain || empty) && unmixed && type->kind == .named) {
             parse::Edits edits = fix->edits;
             edits = with_edit(edits, from_to(start, start + 1), "");
@@ -733,6 +741,8 @@ static Bool at_old_lambda(const parse::Parser *p) {
     return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
 }
 
+static ast::Stmt *layout_body(parse::Parser *p);
+
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
@@ -759,11 +769,17 @@ static ast::Expr *lambda(parse::Parser *p) {
     }
     if (countof(p->errors) == errors_before) lambda_warning(p, start, bracket_end, params, has_parens);
     ast::TypeExpr *result = parse::accept(p, lex::arrow) ? parse::type(p) : nullptr;
-    if (!parse::at(p, lex::left_brace)) {
+    // A pass that mended the body before the header leaves `[](I32 a): a`: the `:` and the layout body of the new form.
+    Bool mended_body = p->layout && parse::at(p, lex::colon);
+    if (!mended_body && !parse::at(p, lex::left_brace)) {
         parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
         return nullptr;
     }
-    ast::Stmt *body = parse::statement(p);
+    if (mended_body) parse::advance(p);
+    Bool outer = p->void_body;
+    p->void_body = false; // a lambda's last line is its value, whatever the function around it returns
+    ast::Stmt *body = mended_body ? layout_body(p) : parse::statement(p);
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
@@ -786,7 +802,7 @@ static Usize after_group(const parse::Parser *p, Usize offset, lex::TokenKind op
     return offset;
 }
 
-// `[1, 2, 3]`: the position is at the bracket.
+// `[1, 2, 3]` and `[a..., b]`: the position is at the bracket.
 static ast::Expr *array_literal(parse::Parser *p) {
     // `[n]T` is an array type written as a value (`no_rule([n + 1]char)`): a type follows the closing bracket.
     Usize after = after_group(p, 0, lex::left_bracket, lex::right_bracket);
@@ -794,7 +810,8 @@ static ast::Expr *array_literal(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
     ast::ExprRef items[:] = {};
     while (!parse::at(p, lex::right_bracket) && !parse::at(p, lex::end_of_file)) {
-        ast::Expr *next = parse::expression(p);
+        // `[a..., b]` splices a compile-time pack or a tuple, as `...` does in a call (owner, 2026-11-07).
+        ast::Expr *next = expansion(p, parse::expression(p));
         if (next == nullptr) return nullptr;
         items = parse_type::with_expr(items, next);
         if (!parse::accept(p, lex::comma)) break;
@@ -899,12 +916,18 @@ static ast::Expr *fn_lambda(parse::Parser *p) {
         if (result == nullptr) return nullptr;
     }
     ast::Stmt *body = nullptr;
+    Bool outer = p->void_body;
+    p->void_body = false;
     if (p->layout) {
-        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) return nullptr;
+        if (!expect_ok(p, lex::colon, "`:` to start the lambda's body")) {
+            p->void_body = outer;
+            return nullptr;
+        }
         body = layout_body(p);
     } else {
         body = parse::statement(p);
     }
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = result, .body = body}});
@@ -1087,6 +1110,7 @@ struct Pending {
     ast::Expr *middle;
     ast::Span head;  // a cast's `(T)`, a prefix operator's token, the `?` of a conditional
     ast::Span colon; // the `:` of a conditional
+    Bool legacy;     // a query written `_Countof` (C2y)
 };
 
 // A `++` or `--` seen in an expression: it is a statement in Smith, so the end of the expression decides its warning.
@@ -1263,6 +1287,20 @@ static void deref_warning(Stack *st, const Pending *op, const ast::Expr *operand
     edits = with_edit(edits, from_to(op->head.start, operand->span.start), plain ? "" : "(");
     tail_warning(st, from_to(op->head.start, operand->span.end), "`*p` reads through a pointer as `p.*`", edits,
                  operand->span.end, plain ? ".*" : ").*");
+}
+
+// `_Countof x` and `_Countof(x)` (C2y) are `countof(x)`.
+static void countof_warning(Stack *st, const Pending *op, const ast::Expr *operand) {
+    parse::Edits edits = {};
+    Bool wrapped = st->parser->source[operand->span.start] == '(';
+    if (wrapped) {
+        edits = with_edit(edits, op->head, "countof");
+        parse::warning_fix(st->parser, from_to(op->head.start, operand->span.end), "`_Countof` is `countof`", edits);
+        return;
+    }
+    edits = with_edit(edits, from_to(op->head.start, operand->span.start), "countof(");
+    tail_warning(st, from_to(op->head.start, operand->span.end), "`_Countof x` is `countof(x)`", edits,
+                 operand->span.end, ")");
 }
 
 // Puts `if ` in front of the condition: into the edit of an inner fix that already replaces the text from there (a cast
@@ -1528,6 +1566,7 @@ static void reduce(Stack *st) {
         push_value(st, make(between(op.start, right), {.cast = {.type = op.type, .operand = right}}));
         break;
     case .query_form:
+        if (op.legacy) countof_warning(st, &op, right);
         push_value(st, make(between(op.start, right), {.query = {.op = op.query, .type = nullptr, .operand = right}}));
         break;
     case .try_form:
@@ -1774,7 +1813,10 @@ static ast::Expr *trailing_block(parse::Parser *p) {
     ast::Identifier captures[:] = {};
     ast::Param params[:] = {};
     if (p->layout) parse::advance(p);
+    Bool outer = p->void_body;
+    p->void_body = false;
     ast::Stmt *body = parse::statement(p);
+    p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
                 {.lambda = {.captures = captures, .params = params, .result = nullptr, .body = body}});
@@ -2064,7 +2106,12 @@ static Step query(parse::Parser *p, Stack *st) {
             st, make(parse::span_from(p, keyword.span.start), {.query = {.op = op, .type = type, .operand = nullptr}}));
         return .value;
     }
-    Pending pending = {.form = .query_form, .prec = prefix_prec, .start = keyword.span.start, .query = op};
+    Pending pending = {.form = .query_form,
+                       .prec = prefix_prec,
+                       .start = keyword.span.start,
+                       .head = keyword.span,
+                       .query = op,
+                       .legacy = parse::text(p, keyword)[0] == '_'};
     push_op(st, pending);
     return .more;
 }
@@ -2134,14 +2181,43 @@ static Bool fn_type_cast(const parse::Parser *p) {
     Bool is_fn = word.kind == lex::kw_fn || (word.kind == lex::name && text::is(parse::text(p, word), "fn"));
     if (!is_fn || parse::peek_at(p, 1).kind != lex::left_paren) return false;
     Usize after = after_group(p, 1, lex::left_paren, lex::right_paren);
-    return parse::peek_at(p, after).kind == lex::right_paren && starts_bare_operand(parse::peek_at(p, after + 1).kind);
+    // `fn(A) -> R`: the result type runs to the `)` that closes the cast.
+    if (parse::peek_at(p, after).kind == lex::arrow) {
+        Usize depth = 0;
+        for (after += 1; parse::peek_at(p, after).kind != lex::end_of_file; after += 1) {
+            lex::TokenKind inner = parse::peek_at(p, after).kind;
+            if (inner == lex::left_paren || inner == lex::left_bracket) depth += 1;
+            if ((inner == lex::right_paren || inner == lex::right_bracket) && depth-- == 0) break;
+        }
+    }
+    lex::TokenKind operand = parse::peek_at(p, after + 1).kind;
+    return parse::peek_at(p, after).kind == lex::right_paren &&
+           (starts_bare_operand(operand) || operand == lex::left_paren);
+}
+
+// Whether `(i32)operand` is ahead, the `(` taken: a cast to a built-in type written in C's way, which a pass leaves
+// when it only renamed the type (`(Usize)n` became `(usize)n`). A built-in type is no value, so what follows the `)`
+// is the operand, never a subtraction or a call.
+static Bool builtin_cast(const parse::Parser *p) {
+    lex::Token word = parse::peek_at(p, 0);
+    Bool builtin = word.kind == lex::name && parse_type::is_builtin_name(parse::text(p, word));
+    if (!builtin && word.kind != lex::type_name) return false;
+    if (parse::peek_at(p, 1).kind != lex::right_paren) return false;
+    lex::TokenKind next = parse::peek_at(p, 2).kind;
+    if (starts_bare_operand(next)) return true;
+    // A capitalized name may be a constant: `(MAX) - 1` and `(F)(x)` are no casts, a built-in type's are.
+    return builtin && (next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
+                       next == lex::kw_sizeof || next == lex::kw_alignof);
 }
 
 // Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax
 // never has before a `)`. A text a pass has half mended (the head of its function is new, the body is not) holds it.
 static Bool old_pointer_cast(const parse::Parser *p) {
     Usize at = 0;
-    lex::TokenKind first = parse::peek_at(p, 0).kind;
+    // `(const char *)&x`: the qualifiers in front of the type are no part of its words.
+    while (parse_type::is_qualifier(parse::peek_at(p, at).kind))
+        at += 1;
+    lex::TokenKind first = parse::peek_at(p, at).kind;
     if (parse_type::is_keyword_type(first)) {
         while (parse_type::is_keyword_type(parse::peek_at(p, at + 1).kind))
             at += 1;
@@ -2170,7 +2246,10 @@ static Bool old_literal_ahead(const parse::Parser *p) {
         at += 2;
     if (parse::peek_at(p, at + 1).kind != lex::right_paren || parse::peek_at(p, at + 2).kind != lex::left_brace)
         return false;
-    return parse::peek_at(p, at + 3).kind == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
+    lex::TokenKind inside = parse::peek_at(p, at + 3).kind;
+    // `(P){}` and, in the indented syntax where no block follows a `)`, `(P){1, 2}` are list values a pass left over.
+    if (inside == lex::right_brace || p->layout) return true;
+    return inside == lex::dot && parse::peek_at(p, at + 5).kind == lex::equal;
 }
 
 static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
@@ -2181,7 +2260,7 @@ static Step group_or_tuple(parse::Parser *p, Stack *st, U32 start) {
         push_value(st, initializer_list(p, type, start, close.span.start));
         return .value;
     }
-    if (fn_type_cast(p) || old_pointer_cast(p)) {
+    if (fn_type_cast(p) || old_pointer_cast(p) || builtin_cast(p)) {
         Bool was_new = p->new_syntax;
         p->new_syntax = !old_pointer_cast(p) && was_new;
         p->in_cast = true;
@@ -2264,9 +2343,24 @@ static Step paren(parse::Parser *p, Stack *st) {
     return .value;
 }
 
+// A type written as a value in the new syntax (`typeof(x) == *mut char`, `== *u8`, `== *Point`): a `*` before `mut`, a
+// built-in type or a capitalised name cannot be a dereference, which is written `p.*`. Other `*name` is read as the
+// old dereference with its fix.
+static Bool pointer_type_ahead(const parse::Parser *p) {
+    if (!p->new_syntax || parse::peek(p).kind != lex::star) return false;
+    lex::TokenKind next = parse::peek_at(p, 1).kind;
+    return next == lex::kw_mut || next == lex::type_name || parse_type::is_keyword_type(next);
+}
+
 // One operand position: a prefix operator (more to come), or a value.
 static Step operand_step(parse::Parser *p, Stack *st) {
     lex::Token token = parse::peek(p);
+    if (pointer_type_ahead(p)) {
+        ast::Expr *type = type_value(p);
+        if (type == nullptr) return .failed;
+        push_value(st, type);
+        return .value;
+    }
     if (is_prefix(token.kind) || token.kind == lex::kw_try) {
         parse::advance(p);
         Pending op = {.form = .prefix, .prec = prefix_prec, .start = token.span.start, .head = token.span};

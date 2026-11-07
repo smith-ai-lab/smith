@@ -3,20 +3,6 @@ module recursion;
 // No recursion in a module: a call on a cycle of the file's functions is an error naming the cycle, unless every call
 // of the cycle is a `[[clang::musttail]]` return (issue #207).
 
-export U64 fib(U64 n) {
-    return n < 2 ? n : fib(n - 1) + fib(n - 2);
-}
-
-export Bool is_even(U32 n);
-
-export Bool is_odd(U32 n) {
-    return n != 0 && is_even(n - 1);
-}
-
-export Bool is_even(U32 n) {
-    return n == 0 || is_odd(n - 1);
-}
-
 export U64 sum_to(U64 n, U64 total) {
     if (n == 0) return total;
     [[clang::musttail]] return sum_to(n - 1, total + n);
@@ -32,19 +18,6 @@ export U64 pong(U64 n) {
 export U64 ping(U64 n) {
     if (n == 0) return 1;
     [[clang::musttail]] return pong(n - 1);
-}
-
-// One call that is not a jump on a cycle of jumps is enough.
-export U64 mixed(U64 n);
-
-export U64 mixed_back(U64 n) {
-    if (n == 0) return 0;
-    [[clang::musttail]] return mixed(n - 1);
-}
-
-export U64 mixed(U64 n) {
-    if (n == 0) return 1;
-    return mixed_back(n - 1) + 1;
 }
 
 // A call through a pointer is not followed, and nor is a call into code with no source.

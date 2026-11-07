@@ -10,6 +10,21 @@
 // literal. The generated struct carries `__attribute__((annotate("std::enum")))` so a tool can tell it from other
 // structs. Included by runtime/lang.c after runtime/lang_slice.c.
 
+#include "lang_enum.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_constexpr.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_slice.h"
+#include "lang_sparse.h"
+#include "lang_stream.h"
+#include "lang_try.h"
+#include "lang_tuple.h"
+#include "lang_type.h"
+
 constexpr size_t smith_lang_enum_variants_max = 64;
 
 // A payload enum's variants as the declaration wrote them: the tokens [start, end) of each member and its name.
@@ -64,6 +79,18 @@ static void smith_lang_enum_split(const SmithToken *span, size_t open, size_t cl
             start = at + 1;
         }
     }
+}
+
+// The attribute the plugin knows the enum's struct by, `__attribute__((annotate("std::enum")))`, after `used` tokens.
+static size_t smith_lang_enum_annotate(SmithToken *made, size_t used, const SmithToken *token) {
+    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
+    for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // bounded by the table
+        SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
+                              : at == 5          ? SmithTokenKind_String
+                                                 : SmithTokenKind_Punctuator;
+        made[used++] = smith_lang_tuple_made(kind, attribute[at], strlen(attribute[at]), token, at == 0);
+    }
+    return used;
 }
 
 // The tokens of a payload enum written as a struct, into `made`, for the name `name` (a token of the source). Returns
@@ -135,14 +162,7 @@ static size_t smith_lang_enum_build(SmithLang *lang, const SmithHost *host, cons
     }
     made[used] = span[close]; // the attribute that follows is placed before it in the source
     made[used++].synthetic = true;
-    static const char *const attribute[] = {"__attribute__", "(", "(", "annotate", "(", "\"std::enum\"", ")", ")", ")"};
-    for (size_t at = 0; at < sizeof attribute / sizeof attribute[0]; at++) { // the plugin knows the struct by it
-        SmithTokenKind kind = at == 0 || at == 3 ? SmithTokenKind_Identifier
-                              : at == 5          ? SmithTokenKind_String
-                                                 : SmithTokenKind_Punctuator;
-        made[used++] = smith_lang_tuple_made(kind, attribute[at], strlen(attribute[at]), token, at == 0);
-    }
-    return used;
+    return smith_lang_enum_annotate(made, used, token);
 }
 
 // `enum Shape { Circle circle; empty; }`: the tag is the type's name, so its typedef (`m_Shape` for the struct
@@ -164,7 +184,7 @@ static void smith_lang_enum_tag_name(SmithLang *lang, const SmithHost *host, con
 
 // `enum` is being processed: if its braces hold variants (a `;` among them), the tokens up to the `}` are written as
 // the struct above, and the `enum` itself is dropped. True when it was.
-static bool smith_lang_enum_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_enum_begin(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     size_t open = 0;
     size_t close = 0;
     if (!smith_lang_enum_extent(lang, host, &open, &close)) return false;
@@ -454,7 +474,7 @@ static bool smith_lang_enum_designator(SmithLang *lang, const SmithHost *host) {
 
 // `T x = .v;`, `T x = {.v = ...};` (a declaration: the initializer is C's) and `x = .v;`, `x = {.v = ...};` (an
 // assignment: a compound literal). Called at the `=`. True when the right side was written again.
-static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
+bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
     const SmithToken *first = smith_lang_peek(lang, host, 0, false);
     bool dotted = smith_lang_punct(first, ".") || smith_lang_punct(first, "{");
     if (!dotted && (smith_lang_ident(first, "try") || smith_lang_enum_designator(lang, host))) return false;
@@ -485,8 +505,8 @@ static bool smith_lang_enum_equals(SmithLang *lang, const SmithHost *host) {
 
 // The value of a member of a struct's initializer (`{.v = 5, .w = .none}`) whose type is a payload enum: the tokens of
 // the value, written as the member's initializer. False (nothing written) when the member is no such enum.
-static bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const char *spelling,
-                                   const SmithToken *tokens, size_t count, SmithLangSliceCur *cur) {
+bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const char *spelling, const SmithToken *tokens,
+                            size_t count, SmithLangSliceCur *cur) {
     SmithExprType found = {};
     SmithLangEnumType type;
     if (count == 0 || !smith_lang_slice_spelled(host, spelling, &found) ||
@@ -497,7 +517,7 @@ static bool smith_lang_enum_member(SmithLang *lang, const SmithHost *host, const
 }
 
 // `return .v;` and `return {.v = ...};`: the type is the function's result.
-static bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host) {
+bool smith_lang_enum_return(SmithLang *lang, const SmithHost *host) {
     const SmithToken *first = smith_lang_peek(lang, host, 0, false);
     bool dotted = smith_lang_punct(first, ".") || smith_lang_punct(first, "{");
     if (host->return_type == nullptr || (!dotted && (smith_lang_ident(first, "try") || smith_lang_punct(first, ";")))) {
@@ -695,7 +715,7 @@ static uint32_t smith_lang_enum_braces; // `{` minus `}` of the tokens seen in s
 
 static void smith_lang_enum_shapes_reset(void);
 
-static void smith_lang_enum_reset(void) {
+void smith_lang_enum_reset(void) {
     smith_lang_enum_switch_count = 0;
     smith_lang_enum_braces = 0;
     smith_lang_enum_shapes_reset();
@@ -852,8 +872,7 @@ static bool smith_lang_enum_replay_wrap(SmithLang *lang, const SmithHost *host, 
 
 // At `return` in an instance's body: `return .name ;` and `return { .name = payload }` are written as the compound
 // literal of the function's payload enum. True when the frame's tokens were taken.
-static bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                   SmithLangFrame *frame) {
+bool smith_lang_enum_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame) {
     uint32_t at = frame->pos;
     if (replay->instance == nullptr || replay->typing || at + 3 >= frame->end) return false;
     SmithLangGenToken *keyword = &smith_lang_gt.tokens[at];
@@ -1085,8 +1104,7 @@ static bool smith_lang_try_replay_return(SmithLang *lang, const SmithHost *host,
 }
 
 // What an instance's body does with `try`, `errdefer` and a `return` after an `errdefer`.
-static bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  SmithLangFrame *frame) {
+bool smith_lang_try_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame) {
     if (replay->instance == nullptr || replay->typing || frame->pos >= frame->end) return false;
     const SmithLangGenToken *token = &smith_lang_gt.tokens[frame->pos];
     if (token->special != SmithLangGen_Plain || token->param != 0 || token->kind != SmithTokenKind_Identifier ||
@@ -1146,7 +1164,7 @@ static size_t smith_lang_eshape_pool_used;
 static SmithLangEnumDefined smith_lang_edefined[smith_lang_eshape_defined_max];
 static size_t smith_lang_edefined_count;
 static uint32_t smith_lang_eshape_depth; // `{` minus `}` of the source's tokens
-static bool smith_lang_eshape_start;     // the next token begins a statement or a declaration
+bool smith_lang_eshape_start;            // the next token begins a statement or a declaration
 static int
     smith_lang_eshape_head; // inside the head of an `if`, `for`, `while` or `switch`: 1 before its `(`, then 1 + depth
 
@@ -1166,7 +1184,7 @@ static SmithLangEnumSwitch smith_lang_saved_enum_switches[smith_lang_enum_switch
 static size_t smith_lang_saved_enum_switch_count;
 static uint32_t smith_lang_saved_enum_braces;
 
-static void smith_lang_enum_aside(bool save) {
+void smith_lang_enum_aside(bool save) {
     if (save) {
         memcpy(smith_lang_saved_eshapes, smith_lang_eshapes, sizeof smith_lang_eshapes);
         memcpy(smith_lang_saved_eshape_pool, smith_lang_eshape_pool, sizeof smith_lang_eshape_pool);
@@ -1266,7 +1284,7 @@ static bool smith_lang_eshape_other(SmithLang *lang, const SmithHost *host, cons
 
 // A `.name` (a variant by itself) in a generic's body other than after `return`: the instance's body is written without
 // the compiler, so the type it stands for is unknown there. Said where the generic is recorded, with the fix.
-static uint32_t smith_lang_enum_return_dot; // where the `.` after the last `return` of a generic's body is
+uint32_t smith_lang_enum_return_dot; // where the `.` after the last `return` of a generic's body is
 
 static void smith_lang_enum_generic_dot(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (smith_lang_ident(token, "return")) {
@@ -1302,6 +1320,13 @@ static bool smith_lang_eshape_builtin_clash(SmithLang *lang, const SmithHost *ho
     return true;
 }
 
+// Drops the type function's `count` tokens, so that nothing else is said of it; what follows is a declaration.
+static bool smith_lang_eshape_drop(SmithLang *lang, size_t count) {
+    static SmithToken nothing[1];
+    smith_lang_eshape_start = true;
+    return smith_lang_tuple_replace(lang, count, nothing, 0);
+}
+
 static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     const SmithToken *name = smith_lang_eshape_at(lang, host, token, 1);
     if (name->kind != SmithTokenKind_Identifier || !smith_lang_punct(smith_lang_eshape_at(lang, host, token, 2), "(")) {
@@ -1323,9 +1348,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
         return false;
     }
     if (smith_lang_eshape_builtin_clash(lang, host, name)) {
-        smith_lang_eshape_start = true;
-        static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
-        return smith_lang_tuple_replace(lang, count, nothing, 0);
+        return smith_lang_eshape_drop(lang, count);
     }
     SmithLangEnumShape *shape = &smith_lang_eshapes[smith_lang_eshape_count];
     memset(shape, 0, sizeof *shape);
@@ -1342,9 +1365,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
                     shape->param_count < smith_lang_eshape_params_max;
         if (!good) {
             smith_lang_error(lang, host, word->location, "%s", smith_lang_eshape_gap);
-            smith_lang_eshape_start = true;
-            static SmithToken nothing[1]; // the function is dropped, so that nothing else is said of it
-            return smith_lang_tuple_replace(lang, count, nothing, 0);
+            return smith_lang_eshape_drop(lang, count);
         }
         snprintf(shape->params[shape->param_count++], sizeof shape->params[0], "%.*s", (int)param->length, param->text);
     }
@@ -1370,9 +1391,7 @@ static bool smith_lang_eshape_declare(SmithLang *lang, const SmithHost *host, co
     lang->tuples_seen = true;
     lang->slices_seen = true;
     lang->enums_seen = true;
-    static SmithToken none[1];
-    smith_lang_eshape_start = true; // what follows is a declaration
-    return smith_lang_tuple_replace(lang, count, none, 0);
+    return smith_lang_eshape_drop(lang, count); // what follows is a declaration
 }
 
 // The arguments of the call whose `(` is at `open`: each a run of tokens, `args` holding all of them, the index of the
@@ -2166,8 +2185,8 @@ static void smith_lang_eshape_put_slices(SmithLang *lang, const SmithHost *host,
 
 // Before an instance's definition is written at file scope: the struct of each shape call in the generic's tokens that
 // no scope defines.
-static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                             const SmithLangInstance *instance, uint32_t place, uint32_t instance_id) {
+void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                      const SmithLangInstance *instance, uint32_t place, uint32_t instance_id) {
     uint32_t end = generic->first + generic->count;
     for (uint32_t at = generic->first; at < end; at++) {
         const SmithLangEnumShape *shape = nullptr;
@@ -2187,9 +2206,9 @@ static void smith_lang_instance_define_enums(SmithLang *lang, const SmithHost *h
 
 // A token of an instance's head or body: when it begins a shape call, `struct tag` is written (an error when no scope
 // has defined the struct, which a call site cannot do for itself). The number of generic tokens taken, or 0.
-static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
-                                           const SmithLangInstance *instance, uint32_t at, uint32_t end, uint32_t place,
-                                           uint32_t instance_id, bool define) {
+uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic,
+                                    const SmithLangInstance *instance, uint32_t at, uint32_t end, uint32_t place,
+                                    uint32_t instance_id, bool define) {
     const SmithLangEnumShape *shape = nullptr;
     static SmithLangEnumCall call;
     char tag[smith_lang_tuple_name_max];
@@ -2220,7 +2239,7 @@ static uint32_t smith_lang_eshape_put_call(SmithLang *lang, const SmithHost *hos
 // reads the interface (smith_lang_eshape_import) and keeps as a shape of its own whose `module` is the import's name:
 // `opt::option(usize)` is the struct `smith_enum_option_usize`, the one a write of `option(usize)` in the module is.
 
-static size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     (void)lang;
     for (size_t i = 0; i < smith_lang_eshape_count; i++) { // at most 16
         const SmithLangEnumShape *shape = &smith_lang_eshapes[i];
@@ -2237,7 +2256,7 @@ static size_t smith_lang_eshape_lines(const SmithLang *lang, char *out, size_t c
 }
 
 // The shapes a header's `// smith-eshape:` lines hold, kept for the import named `bind`.
-static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length) {
+void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length) {
     static const char marker[] = "// smith-eshape: ";
     for (const char *at = memmem(text, length, marker, sizeof marker - 1); at != nullptr;
          at = memmem(at + 1, (size_t)(text + length - at - 1), marker, sizeof marker - 1)) { // one pass per line
@@ -2297,7 +2316,7 @@ static void smith_lang_eshape_import(const char *text, uint32_t length, const ch
 static constexpr char smith_option_header[] = "// smith-eshape: Option(T) { T some ; none ; }\n";
 static constexpr char smith_result_header[] = "// smith-eshape: Result(T,E) { T ok ; E error ; }\n";
 
-static void smith_lang_eshape_builtins(SmithLang *lang) {
+void smith_lang_eshape_builtins(SmithLang *lang) {
     if (smith_lang_eshape_builtins_done || !lang->is_module) return;
     smith_lang_eshape_builtins_done = true;
     size_t before = smith_lang_eshape_count;
@@ -2310,7 +2329,7 @@ static void smith_lang_eshape_builtins(SmithLang *lang) {
 }
 
 // Whether the token names a type function that returns an enum.
-static bool smith_lang_eshape_named(const SmithToken *name) {
+bool smith_lang_eshape_named(const SmithToken *name) {
     return smith_lang_eshape_count > 0 && name->kind == SmithTokenKind_Identifier &&
            smith_lang_eshape_find(name) != nullptr;
 }
@@ -2482,7 +2501,7 @@ static void smith_lang_eshape_track_head(const SmithToken *token) {
 // A token of a file that has type functions returning enums, before any other reading of it: the declaration of one,
 // the definitions a declaration needs and a use (`option(usize)` is `struct smith_enum_option_usize`). True when the
 // token was consumed.
-static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if ((host->maybe_shape || host->expr_type == nullptr) && !smith_lang_eshape_builtins_done)
         smith_lang_eshape_builtins(lang); // the raw passes have no text to ask
     bool start = smith_lang_eshape_start;
@@ -2534,7 +2553,7 @@ static bool smith_lang_enum_function(SmithLang *lang, const SmithHost *host, con
 }
 
 // `_Pragma ( "text" )` as tokens, after `used` (the text is a string literal's spelling, quotes included).
-static size_t smith_lang_enum_pragma(SmithToken *out, size_t used, const SmithToken *like, const char *literal) {
+size_t smith_lang_enum_pragma(SmithToken *out, size_t used, const SmithToken *like, const char *literal) {
     out[used] = smith_lang_tuple_made(SmithTokenKind_Identifier, "_Pragma", 7, like, used > 0);
     out[used++].expand = true; // the compiler's own macro
     out[used++] = smith_lang_tuple_made(SmithTokenKind_Punctuator, "(", 1, like, false);
@@ -2643,7 +2662,7 @@ static void smith_lang_enum_untyped(SmithLang *lang, const SmithHost *host, cons
 
 // A token of a file that has enums with payloads: the contexts, in the order a token can begin one. True when the token
 // was replaced.
-static bool smith_lang_enum_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+bool smith_lang_enum_token(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (token->foreign || lang->recording || lang->in_attribute || host->expr_type == nullptr) return false;
     smith_lang_enum_brace(lang, token);
     if (token->kind == SmithTokenKind_Identifier && smith_lang_ident(token, "switch")) {
@@ -2663,8 +2682,8 @@ static bool smith_lang_enum_token(SmithLang *lang, const SmithHost *host, const 
 
 // An argument `.v` or `{.v = ...}` for the parameter number `index` of the function whose type the compiler printed as
 // `callee`, when that parameter is a payload enum: written as a compound literal. False when it is not one.
-static bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, const char *callee, size_t index,
-                                     const SmithToken *tokens, size_t count, SmithLangSliceCur *cur) {
+bool smith_lang_enum_argument(SmithLang *lang, const SmithHost *host, const char *callee, size_t index,
+                              const SmithToken *tokens, size_t count, SmithLangSliceCur *cur) {
     SmithLangEnumType type;
     return smith_lang_enum_param(host, callee, index, &type) &&
            smith_lang_enum_value(lang, host, &type, tokens, count, true, cur);

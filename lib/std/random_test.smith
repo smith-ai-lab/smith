@@ -63,7 +63,7 @@ static random::Key take(random::Key *stream) {
     return next[1];
 }
 
-static random::UniformInt64 range(I64 low, I64 high) {
+static random::UniformInt64 uniform_range(I64 low, I64 high) {
     return (random::UniformInt64){.low = low, .high = high};
 }
 
@@ -106,7 +106,7 @@ export void test_random_uniform_int64_is_uniform_and_in_range(random::Key key) {
     random::Key *stream = &key;
     Usize observed[10] = {};
     for (U64 i = 0; i < draws; i++) {
-        I64 value = random::uniform_int64_sample(take(stream), range(-3, 6));
+        I64 value = random::uniform_int64_sample(take(stream), uniform_range(-3, 6));
         test::check(value >= -3 && value <= 6);
         observed[value + 3]++;
     }
@@ -116,14 +116,14 @@ export void test_random_uniform_int64_is_uniform_and_in_range(random::Key key) {
     }
     test::check_less(chi_square(observed, expected, 10), chi_limit(9));
     for (U64 i = 0; i < 100; i++) {
-        test::check_equal(random::uniform_int64_sample(take(stream), range(5, 5)), 5);
-        test::check_equal(random::uniform_int64_sample(take(stream), range(i64_min, i64_min)), i64_min);
-        test::check_equal(random::uniform_int64_sample(take(stream), range(i64_max, i64_max)), i64_max);
+        test::check_equal(random::uniform_int64_sample(take(stream), uniform_range(5, 5)), 5);
+        test::check_equal(random::uniform_int64_sample(take(stream), uniform_range(i64_min, i64_min)), i64_min);
+        test::check_equal(random::uniform_int64_sample(take(stream), uniform_range(i64_max, i64_max)), i64_max);
     }
     // The full range has both signs.
     Usize negative = 0;
     for (U64 i = 0; i < draws; i++) {
-        negative += random::uniform_int64_sample(take(stream), range(i64_min, i64_max)) < 0 ? 1 : 0;
+        negative += random::uniform_int64_sample(take(stream), uniform_range(i64_min, i64_max)) < 0 ? 1 : 0;
     }
     test::check(negative > draws * 47 / 100 && negative < draws * 53 / 100);
 }
@@ -139,7 +139,7 @@ export void test_random_uniform_int64_wide_span() {
     Usize retried = 0;
     for (U64 i = 0; i < count; i++) {
         U64 word = random::key_bits(take(stream)); // two keys of the same seed: the draw and the check of its word
-        I64 value = random::uniform_int64_sample(random::key_make(word), range(i64_min, high));
+        I64 value = random::uniform_int64_sample(random::key_make(word), uniform_range(i64_min, high));
         test::check(value <= high);
         upper += (U64)value - (U64)i64_min >= ((U64)1 << 62) ? 1 : 0;
         unsigned _BitInt(128) product =
@@ -271,7 +271,7 @@ export void test_random_permutations_are_permutations(random::Key key) {
     test::check_equal(out[0], 0);
     for (U64 i = 0; i < 100; i++) {
         random::permutation_sample(take(stream), (random::Permutation){16}, out);
-        Bool seen[16] = {false};
+        Bool seen[16] = {};
         for (Usize j = 0; j < 16; j++) {
             test::check(out[j] < 16 && !seen[out[j]]);
             seen[out[j]] = true;
@@ -515,7 +515,7 @@ export void test_random_pinned_values() {
             float_bits(random::uniform_float_sample(random::key_make(word), (random::UniformFloat){-2.0F, 3.0F})));
         pin(&pins,
             double_bits(random::uniform_double_sample(random::key_make(word), (random::UniformDouble){-2.0, 3.0})));
-        pin(&pins, (U64)random::uniform_int64_sample(random::key_make(word), range(-3, 6)));
+        pin(&pins, (U64)random::uniform_int64_sample(random::key_make(word), uniform_range(-3, 6)));
         pin(&pins, float_bits(random::normal_float_sample(random::key_make(word), (random::NormalFloat){1.0F, 2.0F})));
         pin(&pins, double_bits(random::normal_double_sample(random::key_make(word), (random::NormalDouble){1.0, 2.0})));
         pin(&pins, random::bernoulli_sample(random::key_make(word), (random::Bernoulli){0.3}) ? 1 : 0);
@@ -559,13 +559,15 @@ static U64 word_for_index(U64 index, U64 span) {
 }
 
 export void test_random_zero_word_gives_the_simplest_value() {
-    ConstantTap zero = {.tap = {tap_constant}, .word = 0};
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-3, 6)), 0);
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(5, 9)), 5);
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-9, -5)), -5);
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_min, i64_max)), 0);
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_min, 1)), 0);
-    test::check_equal(random::uniform_int64_sample(tapped(&zero), range(i64_max - 1, i64_max)), i64_max - 1);
+    ConstantTap zero;
+    zero.tap.word = tap_constant;
+    zero.word = 0;
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(-3, 6)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(5, 9)), 5);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(-9, -5)), -5);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(i64_min, i64_max)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(i64_min, 1)), 0);
+    test::check_equal(random::uniform_int64_sample(tapped(&zero), uniform_range(i64_max - 1, i64_max)), i64_max - 1);
     test::check_equal(random::uniform_double_sample(tapped(&zero), (random::UniformDouble){2.0, 5.0}), 2.0);
     test::check_equal(random::uniform_float_sample(tapped(&zero), (random::UniformFloat){2.0F, 5.0F}), 2.0F);
     test::check_equal(random::uniform_double_sample(tapped(&zero), (random::UniformDouble){0.0, 5.0}), 0.0);
@@ -594,7 +596,9 @@ export void test_random_zero_word_gives_the_simplest_value() {
 }
 
 export void test_random_one_step_off_the_identity_moves_a_position() {
-    ConstantTap step = {.tap = {tap_constant}, .word = word_for_index(1, 4)};
+    ConstantTap step;
+    step.tap.word = tap_constant;
+    step.word = word_for_index(1, 4);
     Usize out[4];
     random::permutation_sample(tapped(&step), (random::Permutation){4}, out);
     Usize moved = 0;
@@ -609,10 +613,14 @@ export void test_random_small_words_walk_out_from_zero() {
     const U64 words[_] = {0, 1, 2, 3, 4};
     const I64 full[_] = {0, -1, 1, -2, 2};
     for (Usize i = 0; i < 5; i++) {
-        ConstantTap full_tap = {.tap = {tap_constant}, .word = words[i]};
-        test::check_equal(random::uniform_int64_sample(tapped(&full_tap), range(i64_min, i64_max)), full[i]);
-        ConstantTap span_tap = {.tap = {tap_constant}, .word = word_for_index(i, 10)}; // indices 0 to 4 of [-3, 6]
-        test::check_equal(random::uniform_int64_sample(tapped(&span_tap), range(-3, 6)), full[i]);
+        ConstantTap full_tap;
+        full_tap.tap.word = tap_constant;
+        full_tap.word = words[i];
+        test::check_equal(random::uniform_int64_sample(tapped(&full_tap), uniform_range(i64_min, i64_max)), full[i]);
+        ConstantTap span_tap;
+        span_tap.tap.word = tap_constant;
+        span_tap.word = word_for_index(i, 10); // indices 0 to 4 of [-3, 6]
+        test::check_equal(random::uniform_int64_sample(tapped(&span_tap), uniform_range(-3, 6)), full[i]);
     }
 }
 
@@ -620,7 +628,9 @@ export void test_random_small_words_walk_out_from_zero() {
 export void test_random_small_words_walk_the_real_grid() {
     F64 previous = -1.0;
     for (U64 w = 0; w < 5; w++) {
-        ConstantTap tap = {.tap = {tap_constant}, .word = w << 11};
+        ConstantTap tap;
+        tap.tap.word = tap_constant;
+        tap.word = w << 11;
         F64 d = random::uniform_double_sample(tapped(&tap), (random::UniformDouble){0.0, 1.0});
         test::check_equal(d, (F64)w * 0x1p-53);
         test::check_greater(d, previous);
@@ -630,9 +640,13 @@ export void test_random_small_words_walk_the_real_grid() {
 
 // The Bernoulli: only the last grid index is true, at probability 1 - 2^-53.
 export void test_random_bernoulli_under_a_tap() {
-    ConstantTap low = {.tap = {tap_constant}, .word = (U64)1 << 11};
+    ConstantTap low;
+    low.tap.word = tap_constant;
+    low.word = (U64)1 << 11;
     test::check(!random::bernoulli_sample(tapped(&low), (random::Bernoulli){0.5}));
     test::check(random::bernoulli_sample(tapped(&low), (random::Bernoulli){1.0}));
-    ConstantTap high = {.tap = {tap_constant}, .word = 18446744073709551615ULL};
+    ConstantTap high;
+    high.tap.word = tap_constant;
+    high.word = 18446744073709551615ULL;
     test::check(random::bernoulli_sample(tapped(&high), (random::Bernoulli){0.5}));
 }

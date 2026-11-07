@@ -1,0 +1,96 @@
+// Tests of the fix-it for a payload read after its variant test in a value (D16, #2648): the test becomes a pattern
+// conjunct and the reads become the binding.
+module front_fix_chain_test;
+
+import front::fix_chain;
+import front::parse as core;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// Applies the fixes of `fix_chain::edits(source)` from the back, so the offsets hold.
+static Str applied(Str source) {
+    core::Errors found = fix_chain::edits(source);
+    Str text = source;
+    for (Usize k = 0; k < countof(found); k++) {
+        Usize best = k;
+        for (Usize j = k + 1; j < countof(found); j++)
+            if (found[j].fix[0].span.start > found[best].fix[0].span.start) best = j;
+        core::ParseError pick = found[best];
+        found[best] = found[k];
+        found[k] = pick;
+    }
+    for (Usize k = 0; k < countof(found); k++) {
+        core::Edit edit = found[k].fix[0];
+        Str before = text[0:edit.span.start];
+        Str after = text[edit.span.end:countof(text)];
+        text = as_str(format::push(before, edit.text, after));
+    }
+    return text;
+}
+
+static void expect(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(applied(before), want);
+}
+
+export void test_front_fix_chain_a_return_of_a_test_and_a_read_is_a_pattern() {
+    expect("fn f(e: *Expr) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n",
+           "fn f(e: *Expr) -> bool:\n    return .binary(binary) := e.kind && binary.op == .add\n");
+}
+
+export void test_front_fix_chain_every_read_to_the_right_is_the_binding() {
+    expect("    z := a.kind == .v && a.kind.v.f == 1 && (a.kind.v.g || b)\n",
+           "    z := .v(v) := a.kind && v.f == 1 && (v.g || b)\n");
+}
+
+export void test_front_fix_chain_an_or_at_the_top_level_is_left() {
+    expect("    return e.kind == .binary && e.kind.binary.op == .add || other\n",
+           "    return e.kind == .binary && e.kind.binary.op == .add || other\n");
+}
+
+export void test_front_fix_chain_a_read_before_the_test_is_left() {
+    expect("    return e.kind.binary.op == .add && e.kind == .binary\n",
+           "    return e.kind.binary.op == .add && e.kind == .binary\n");
+}
+
+export void test_front_fix_chain_an_if_is_the_checkers() {
+    expect("    if e.kind == .binary && e.kind.binary.op == .add:\n",
+           "    if e.kind == .binary && e.kind.binary.op == .add:\n");
+}
+
+export void test_front_fix_chain_a_longer_variant_is_not_the_read() {
+    expect("    return e.kind == .binary && e.kind.binary_op.x\n",
+           "    return e.kind == .binary && e.kind.binary_op.x\n");
+}
+
+export void test_front_fix_chain_a_local_of_the_variants_name_keeps_the_chain() {
+    expect("fn f(e: *Expr, binary: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n",
+           "fn f(e: *Expr, binary: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n");
+}
+
+export void test_front_fix_chain_a_test_after_another_conjunct_of_an_if_stays() {
+    expect("    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n",
+           "    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n");
+    expect("    while n != nullptr && n.kind == .member && !n.kind.member.arrow:\n",
+           "    while n != nullptr && n.kind == .member && !n.kind.member.arrow:\n");
+}
+
+export void test_front_fix_chain_the_first_test_of_an_if_is_the_checkers() {
+    expect("    if k == .v && k.v.f == 1:\n", "    if k == .v && k.v.f == 1:\n");
+}
+
+export void test_front_fix_chain_a_chain_written_with_and_is_read_too() {
+    expect("    return e.kind == .binary and e.kind.binary.op == .add\n",
+           "    return .binary(binary) := e.kind and binary.op == .add\n");
+    expect("    return e.kind == .binary and e.kind.binary.op == .add or other\n",
+           "    return e.kind == .binary and e.kind.binary.op == .add or other\n");
+}

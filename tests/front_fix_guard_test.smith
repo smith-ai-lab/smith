@@ -1,0 +1,75 @@
+// Tests of the fix-it for a Result read after a guard that leaves (#2648): `if r == .error:` becomes the binding
+// `.ok(ok) := r else:` and the reads `r.ok` become `ok`.
+module front_fix_guard_test;
+
+import front::fix_guard;
+import front::parse as core;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// Applies the fixes of `fix_guard::edits(source)` from the back, so the offsets hold.
+static Str applied(Str source) {
+    core::Errors found = fix_guard::edits(source);
+    Str text = source;
+    for (Usize k = 0; k < countof(found); k++) {
+        Usize best = k;
+        for (Usize j = k + 1; j < countof(found); j++)
+            if (found[j].fix[0].span.start > found[best].fix[0].span.start) best = j;
+        core::ParseError pick = found[best];
+        found[best] = found[k];
+        found[k] = pick;
+    }
+    for (Usize k = 0; k < countof(found); k++) {
+        core::Edit edit = found[k].fix[0];
+        Str before = text[0:edit.span.start];
+        Str after = text[edit.span.end:countof(text)];
+        text = as_str(format::push(before, edit.text, after));
+    }
+    return text;
+}
+
+static void expect(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(applied(before), want);
+}
+
+export void test_front_fix_guard_a_return_after_the_error_test_is_a_binding_with_an_else() {
+    expect("fn f(s: Str) -> Str:\n    lexed: Lexed = tokenize(s)\n    if lexed == .error:\n        return s\n"
+           "    tokens: Tokens = lexed.ok\n    return s\n",
+           "fn f(s: Str) -> Str:\n    lexed: Lexed = tokenize(s)\n    .ok(ok) := lexed else:\n        return s\n"
+           "    tokens: Tokens = ok\n    return s\n");
+}
+
+export void test_front_fix_guard_a_one_line_body_stays_on_the_line() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    .ok(ok) := r else: return\n    use(ok)\n");
+}
+
+export void test_front_fix_guard_a_body_that_mentions_the_result_is_left() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        return r.error\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        return r.error\n    use(r.ok)\n");
+}
+
+export void test_front_fix_guard_a_body_that_does_not_leave_is_left() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    if r == .error:\n        log(s)\n    use(r.ok)\n");
+}
+
+export void test_front_fix_guard_a_name_ok_in_the_function_leaves_the_site() {
+    expect("fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n",
+           "fn f(s: Str):\n    ok := 1\n    r := g(s)\n    if r == .error: return\n    use(r.ok)\n");
+}
+
+export void test_front_fix_guard_a_call_named_like_return_is_not_a_leave() {
+    expect("fn f(s: Str):\n    r := g(s)\n    if r == .error: returned(s)\n    use(r.ok)\n",
+           "fn f(s: Str):\n    r := g(s)\n    if r == .error: returned(s)\n    use(r.ok)\n");
+}

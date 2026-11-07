@@ -14,8 +14,13 @@
 // Both are appended to as jobs end, and written whole (through a temporary file) when more than two thirds of their
 // lines are dead. A line cut short by a crash is not read, and neither is a file of another version.
 
+#include "executor_state.h"
+#include "core.h"
+#include "executor.h"
+#include "mcp_unit.h"
+#include "world.h"
+
 constexpr size_t smith_state_entries_max = (size_t)1 << 20;
-constexpr size_t smith_state_deps_max = (size_t)1 << 23;
 constexpr size_t smith_state_compact_ratio = 3;
 constexpr size_t smith_state_compact_floor = 100;
 
@@ -85,7 +90,7 @@ static bool smith_state_deps_set(SmithExec *exec, const SmithDepsEntry *entry) {
     return false;
 }
 
-static const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *path) {
+const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *path) {
     const SmithState *state = &exec->state;
     if (state->log_count == 0) return nullptr;
     size_t slot =
@@ -93,7 +98,7 @@ static const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *pa
     return state->log_table[slot] != 0 ? &state->log[state->log_table[slot] - 1] : nullptr;
 }
 
-static const SmithDepsEntry *smith_state_deps_find(SmithExec *exec, const char *path) {
+const SmithDepsEntry *smith_state_deps_find(SmithExec *exec, const char *path) {
     const SmithState *state = &exec->state;
     if (state->deps_count == 0) return nullptr;
     size_t slot = smith_state_slot(state->deps_table, state->deps_capacity, state->deps, sizeof(SmithDepsEntry), path,
@@ -176,9 +181,9 @@ static void smith_state_load_deps(SmithExec *exec, char *text, const char *end) 
     }
 }
 
-static bool smith_state_has_header(const SmithRead *file, const char *header) {
+static bool smith_state_has_header(const SmithWorldRead *file, const char *header) {
     size_t length = strlen(header);
-    return file->error.code == 0 && file->data.count[0] >= length && memcmp(file->data.data, header, length) == 0;
+    return file->error.code == 0 && file->size >= length && memcmp(file->data, header, length) == 0;
 }
 
 // Writes the log as it is in memory, with only live lines.
@@ -194,9 +199,8 @@ static void smith_state_compact_log(SmithExec *exec) {
         SMITH_ASSERT(length > 0 && (size_t)length < sizeof line);
         smith_grow_append(&grow, line, (size_t)length);
     }
-    SmithError error = smith_files_write(
-        &exec->io->files, state->log_path,
-        (struct smith_array_const_u8_n){.data = (const uint8_t *)(grow.data), .count = {grow.size}}, SmithWrite_Atomic);
+    SmithWorldError error =
+        smith_world_write(state->log_path, (const uint8_t *)(grow.data), grow.size, SmithWorld_Atomic);
     if (error.code != 0) smith_exec_fail("%s", error.message);
     state->log_lines = state->log_count;
 }
@@ -217,9 +221,8 @@ static void smith_state_compact_deps(SmithExec *exec) {
             smith_grow_append(&grow, "\n", 1);
         }
     }
-    SmithError error = smith_files_write(
-        &exec->io->files, state->deps_path,
-        (struct smith_array_const_u8_n){.data = (const uint8_t *)(grow.data), .count = {grow.size}}, SmithWrite_Atomic);
+    SmithWorldError error =
+        smith_world_write(state->deps_path, (const uint8_t *)(grow.data), grow.size, SmithWorld_Atomic);
     if (error.code != 0) smith_exec_fail("%s", error.message);
     state->deps_records = state->deps_count;
 }
@@ -229,10 +232,10 @@ static bool smith_state_wasteful(size_t lines, size_t live) {
 }
 
 // Loads both logs from the builddir, making the folder if it is missing.
-static void smith_state_open(SmithExec *exec) {
+void smith_state_open(SmithExec *exec) {
     SmithState *state = &exec->state;
     const char *builddir = exec->graph.builddir;
-    (void)smith_files_make_folder(&exec->io->files, builddir);
+    (void)smith_world_make_folder(builddir);
     size_t length = strlen(builddir) + 32;
     char *log_path = smith_exec_push(exec, length, 1);
     char *deps_path = smith_exec_push(exec, length, 1);
@@ -241,49 +244,36 @@ static void smith_state_open(SmithExec *exec) {
     *state = (SmithState){.log_path = log_path, .deps_path = deps_path, .ready = true};
     state->log = smith_exec_carve(exec, smith_state_entries_max * sizeof(SmithLogEntry));
     state->deps = smith_exec_carve(exec, smith_state_entries_max * sizeof(SmithDepsEntry));
-    SmithRead log = smith_files_read(&exec->io->files, exec->arena, log_path);
+    SmithWorldRead log = smith_world_read(exec->arena, log_path);
     if (smith_state_has_header(&log, "# smith log 1\n")) {
-        smith_state_load_log(exec, (char *)(uintptr_t)log.data.data, (const char *)log.data.data + log.data.count[0]);
+        smith_state_load_log(exec, (char *)(uintptr_t)log.data, (const char *)log.data + log.size);
         if (smith_state_wasteful(state->log_lines, state->log_count) && !exec->options.dry_run)
             smith_state_compact_log(exec);
     } else if (log.error.code == 0 && !exec->options.dry_run) {
-        (void)smith_files_write(
-            &exec->io->files, log_path,
-            (struct smith_array_const_u8_n){.data = (const uint8_t *)("# smith log 1\n"), .count = {14}},
-            SmithWrite_Atomic);
+        (void)smith_world_write(log_path, (const uint8_t *)("# smith log 1\n"), 14, SmithWorld_Atomic);
     }
-    SmithRead deps = smith_files_read(&exec->io->files, exec->arena, deps_path);
+    SmithWorldRead deps = smith_world_read(exec->arena, deps_path);
     if (smith_state_has_header(&deps, "# smith deps 1\n")) {
-        smith_state_load_deps(exec, (char *)(uintptr_t)deps.data.data,
-                              (const char *)deps.data.data + deps.data.count[0]);
+        smith_state_load_deps(exec, (char *)(uintptr_t)deps.data, (const char *)deps.data + deps.size);
         if (smith_state_wasteful(state->deps_records, state->deps_count) && !exec->options.dry_run)
             smith_state_compact_deps(exec);
     } else if (deps.error.code == 0 && !exec->options.dry_run) {
-        (void)smith_files_write(
-            &exec->io->files, deps_path,
-            (struct smith_array_const_u8_n){.data = (const uint8_t *)("# smith deps 1\n"), .count = {15}},
-            SmithWrite_Atomic);
+        (void)smith_world_write(deps_path, (const uint8_t *)("# smith deps 1\n"), 15, SmithWorld_Atomic);
     }
 }
 
 // Appends a line of text to a state file, making it with its header when it is not there.
 static void smith_state_append(SmithExec *exec, const char *path, const char *header, const char *text, size_t length) {
     if (exec->options.dry_run) return;
-    SmithFileInfo info = smith_files_info(&exec->io->files, path);
+    SmithWorldInfo info = smith_world_info(path);
     if (info.error.code != 0)
-        (void)smith_files_write(
-            &exec->io->files, path,
-            (struct smith_array_const_u8_n){.data = (const uint8_t *)(header), .count = {strlen(header)}},
-            SmithWrite_Append);
-    SmithError error = smith_files_write(
-        &exec->io->files, path, (struct smith_array_const_u8_n){.data = (const uint8_t *)(text), .count = {length}},
-        SmithWrite_Append);
+        (void)smith_world_write(path, (const uint8_t *)(header), strlen(header), SmithWorld_Append);
+    SmithWorldError error = smith_world_write(path, (const uint8_t *)(text), length, SmithWorld_Append);
     if (error.code != 0) smith_exec_fail("%s", error.message);
 }
 
 // Records that a command ran: for each output, its run and its mtime.
-static void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms,
-                               int64_t mtime) {
+void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms, int64_t mtime) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     for (uint32_t i = 0; i < edge->output_count; i++) {
@@ -305,8 +295,8 @@ static void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t 
 }
 
 // Records what a command's depfile named, for each output of the edge.
-static void smith_state_record_deps(SmithExec *exec, const SmithEdge *edge, int64_t mtime, const char *const *deps,
-                                    uint32_t count) {
+void smith_state_record_deps(SmithExec *exec, const SmithEdge *edge, int64_t mtime, const char *const *deps,
+                             uint32_t count) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     char line[smith_exec_name_max + 64];

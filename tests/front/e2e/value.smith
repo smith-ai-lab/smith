@@ -21,10 +21,10 @@ fn pick(c: bool, small: i32) -> i64:
     x + 1
 
 pub fn check() -> i32:
-    if sign(-5) != -1 || sign(0) != 0 || sign(9) != 1:
+    if sign(-5) != -1 or sign(0) != 0 or sign(9) != 1:
         return 1
-    if clamp(7, 5) != 5 || clamp(3, 5) != 3:
+    if clamp(7, 5) != 5 or clamp(3, 5) != 3:
         return 2
-    if pick(true, 4) != 5 || pick(false, 4) != 101:
+    if pick(true, 4) != 5 or pick(false, 4) != 101:
         return 3
     0

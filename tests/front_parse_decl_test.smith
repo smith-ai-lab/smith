@@ -1028,3 +1028,32 @@ export void test_parse_decl_locals_are_fixed_too() {
     expect_fixed("void f(I32 n) {\n    I32 a = (I32)n;\n}\n", "fn f(n: i32):\n    a: i32 = n.to(i32)\n", 3);
     expect_fixed("void f(Point *p) {\n}\n", "fn f(p: *Point):\n", 1);
 }
+
+// `alignas(N)` before a declaration is the attribute `@align(N)` on the line before it (D18, #1406): a global, a
+// field and a local.
+export void test_parse_decl_alignas_is_an_attribute() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("alignas(64) static U8 memory[4096];\n",
+                 "import std.array\n@align(64)\nstatic mut memory: [4096]u8 = array.filled(u8, 4096, 0)\n", 4);
+    expect_fixed("struct S {\n    alignas(16) U8 bytes[32];\n};\n", "struct S:\n    @align(16)\n    bytes: [32]u8\n",
+                 4);
+    expect_fixed("void f(void) {\n    alignas(16) U8 b[16];\n}\n",
+                 "fn f():\n    @align(16)\n    mut b: [16]u8 = undefined\n", 3);
+}
+
+// A variable of an anonymous struct type gets a struct of its own at the end of the file, named from the variable (the
+// checker types no struct declared inside a function), and `alignas` on a field is kept as `@align`.
+export void test_parse_decl_anonymous_struct_variable_is_hoisted() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    expect_fixed("static struct {\n    alignas(16) U8 bytes[8];\n} scratch_area;\n",
+                 "import std.array\nstatic mut scratch_area: ScratchArea = ScratchArea()\n\nstruct ScratchArea:\n    "
+                 "@align(16)\n"
+                 "    bytes: [8]u8 = array.filled(u8, 8, 0)\n",
+                 9);
+}

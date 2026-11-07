@@ -1,0 +1,69 @@
+// Tests of the fix-it for a write through a payload (D21, #2648): `if k == .v:` becomes `if .v(v) := &k:` and the
+// `k.v.f` of its body become `v.f`.
+module front_fix_place_test;
+
+import front::fix_place;
+import front::parse as core;
+import std::arena;
+import std::format;
+import std::mem;
+import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static Str applied(Str source) {
+    core::Errors found = fix_place::edits(source);
+    Str text = source;
+    for (Usize k = 0; k < countof(found); k++) {
+        core::Edits fix = found[k].fix;
+        for (Usize m = 0; m < countof(fix); m++) {
+            Usize best = m;
+            for (Usize j = m + 1; j < countof(fix); j++)
+                if (fix[j].span.start > fix[best].span.start) best = j;
+            core::Edit pick = fix[best];
+            fix[best] = fix[m];
+            fix[m] = pick;
+        }
+        for (Usize m = 0; m < countof(fix); m++) {
+            Str before = text[0:fix[m].span.start];
+            Str after = text[fix[m].span.end:countof(text)];
+            text = as_str(format::push(before, fix[m].text, after));
+        }
+    }
+    return text;
+}
+
+static void expect(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(applied(before), want);
+}
+
+export void test_front_fix_place_a_write_through_the_payload_binds_a_pointer() {
+    expect("fn f(one: mut E):\n    if one == .index:\n        one.index.index = take(one.index.index)\n",
+           "fn f(one: mut E):\n    if .index(index) := &one:\n        index.index = take(index.index)\n");
+}
+
+export void test_front_fix_place_a_compound_write_counts() {
+    expect("fn f(k: mut E):\n    if k == .count:\n        k.count.n += 1\n",
+           "fn f(k: mut E):\n    if .count(count) := &k:\n        count.n += 1\n");
+}
+
+export void test_front_fix_place_reads_only_are_left() {
+    expect("fn f(k: E):\n    if k == .count:\n        use(k.count.n)\n",
+           "fn f(k: E):\n    if k == .count:\n        use(k.count.n)\n");
+}
+
+export void test_front_fix_place_a_payload_used_whole_is_left() {
+    expect("fn f(k: mut E):\n    if k == .count:\n        k.count = 3\n",
+           "fn f(k: mut E):\n    if k == .count:\n        k.count = 3\n");
+}
+
+export void test_front_fix_place_a_name_of_the_variant_in_the_function_is_left() {
+    expect("fn f(k: mut E, count: i32):\n    if k == .count:\n        k.count.n = count\n",
+           "fn f(k: mut E, count: i32):\n    if k == .count:\n        k.count.n = count\n");
+}

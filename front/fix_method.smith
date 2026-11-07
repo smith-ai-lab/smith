@@ -50,9 +50,10 @@ static Str prefix_of(const types::Symbol *module) {
 
 // The type a function's first parameter takes, seen through one pointer; null when it has no parameter.
 static types::TypeRef first_parameter(const types::Symbol *s) {
-    if (s->type == nullptr || s->type->kind != .function || countof(s->type->slots) == 0) return nullptr;
-    types::TypeRef t = s->type->slots[0].type;
-    if (t->kind == .pointer) return t->element;
+    if (s->type == nullptr || s->type->kind != .function || countof(types::slots_of(s->type).items) == 0)
+        return nullptr;
+    types::TypeRef t = types::slots_of(s->type).items[0].type;
+    if (t->kind == .pointer) return types::element_of(t);
     return t;
 }
 
@@ -66,7 +67,7 @@ static Bool is_simple(const ast::Expr *e) {
 // passed to a function that takes the value.
 static const ast::Expr *receiver(const ast::Expr *first, types::TypeRef given, const types::Symbol *function_sym) {
     Bool takes_pointer = false;
-    types::TypeRef takes = function_sym->type->slots[0].type;
+    types::TypeRef takes = types::slots_of(function_sym->type).items[0].type;
     if (takes->kind == .pointer) takes_pointer = true;
     if (first->kind == .unary && first->kind.unary.op == .address_of) {
         if (!takes_pointer) return nullptr;
@@ -96,9 +97,9 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
     types::TypeRef given = types::type_of(c, args[0]);
     if (given == nullptr) return none;
     types::TypeRef self_type = given;
-    if (given->kind == .pointer) self_type = given->element;
+    if (given->kind == .pointer) self_type = types::element_of(given);
     Str prefix = prefix_of(module);
-    if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(self_type->name), prefix))
+    if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(types::name_of(self_type)), prefix))
         return none;
     const types::Symbol *function_sym =
         types::lookup(&c->scopes, types::message_of(format::push(prefix, names.items[1])));
@@ -119,6 +120,39 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
     core::Edits out = {};
     out = mem::realloc(out, 1);
     out[0] = (core::Edit){.span = whole, .text = head};
+    return out;
+}
+
+// The fix of `t[0]` over a tuple: a tuple's elements are read as `t.0`, `t.1` (an index with a literal number only).
+static core::Edits tuple_index_of(const types::Checked *c, const ast::Expr *e) {
+    core::Edits none = {};
+    if (e->kind != .index || e->kind.index.index->kind != .integer) return none;
+    types::TypeRef base = types::type_of(c, e->kind.index.base);
+    if (base == nullptr || base->kind != .tuple) return none;
+    ast::Span whole = {.start = e->kind.index.base->span.end, .end = e->span.end};
+    core::Edits out = {};
+    out = mem::realloc(out, 1);
+    Str element = types::message_of(format::push(".", e->kind.index.index->kind.integer.value));
+    out[0] = (core::Edit){.span = whole, .text = element};
+    return out;
+}
+
+// The fixes of `module`'s tuple indexes `t[0]`, as errors that carry them. The checker rejects the index, so these are
+// read from a module that has errors (`edits` below needs none).
+export core::Errors tuple_edits(const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (e == nullptr || e->kind != .index) continue;
+        core::Edits element = tuple_index_of(c, e);
+        if (countof(element) == 0) continue;
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError found = {};
+        found.span = e->span;
+        found.message = "write a tuple's element as `t.0`";
+        found.fix = element;
+        out[countof(out) - 1] = found;
+    }
     return out;
 }
 

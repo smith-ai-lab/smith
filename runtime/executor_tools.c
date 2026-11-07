@@ -1,6 +1,14 @@
 // The tools of `smith build -t <tool>`: the ones of ninja's that build.c's docs and tests rely on. Each reads the
 // manifest (and, for deps, the logs) and prints; none runs a command.
 
+#include "executor_tools.h"
+#include "core.h"
+#include "executor.h"
+#include "executor_manifest.h"
+#include "executor_plan.h"
+#include "executor_state.h"
+#include "world.h"
+
 typedef void (*SmithToolVisit)(SmithExec *exec, uint32_t edge, void *context);
 
 // Calls visit for every edge that the targets need, each once, the inputs' edges first. With no targets: all of them.
@@ -91,9 +99,9 @@ typedef struct {
     size_t removed;
 } SmithToolClean;
 
-static void smith_tool_remove(SmithExec *exec, const char *path, SmithToolClean *clean) {
-    if (smith_files_info(&exec->io->files, path).error.code != 0) return;
-    if (smith_files_remove(&exec->io->files, path).code == 0) clean->removed += 1;
+static void smith_tool_remove(const char *path, SmithToolClean *clean) {
+    if (smith_world_info(path).error.code != 0) return;
+    if (smith_world_remove(path).code == 0) clean->removed += 1;
 }
 
 static void smith_tool_clean_edge(SmithExec *exec, uint32_t number, void *context) {
@@ -102,8 +110,8 @@ static void smith_tool_clean_edge(SmithExec *exec, uint32_t number, void *contex
     if (edge->phony || (edge->generator && !clean->generators)) return;
     if (clean->rule != nullptr && strcmp(edge->rule, clean->rule) != 0) return;
     for (uint32_t k = 0; k < edge->output_count; k++)
-        smith_tool_remove(exec, exec->graph.nodes[smith_plan_output(exec, edge, k)].path, clean);
-    if (edge->depfile != nullptr) smith_tool_remove(exec, edge->depfile, clean);
+        smith_tool_remove(exec->graph.nodes[smith_plan_output(exec, edge, k)].path, clean);
+    if (edge->depfile != nullptr) smith_tool_remove(edge->depfile, clean);
 }
 
 // -t clean [-g] [-r rule] [targets]: removes what the build made (the manifest's own rule only with -g).
@@ -245,13 +253,13 @@ static int smith_tool_cleandead(SmithExec *exec) {
         const char *path = exec->state.log[i].path;
         uint32_t node = smith_exec_node(exec, path, strlen(path), false, nullptr);
         if (node != UINT32_MAX) continue;
-        smith_tool_remove(exec, path, &clean);
+        smith_tool_remove(path, &clean);
     }
     printf(" %zu files.\n", clean.removed);
     return 0;
 }
 
-static int smith_tool_run(SmithExec *exec) {
+int smith_tool_run(SmithExec *exec) {
     const char *tool = exec->options.tool;
     if (strcmp(tool, "targets") == 0) return smith_tool_targets(exec);
     if (strcmp(tool, "clean") == 0) return smith_tool_clean(exec);

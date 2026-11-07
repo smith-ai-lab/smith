@@ -1,6 +1,11 @@
 // The rule for the command of a compile that names .smith inputs, shared by `smith cc` (smith.c) and `smith lsp`
 // (shim/clangd.cpp, which applies it to every command clangd compiles with), so that what the CLI accepts the editor
-// accepts, and they cannot drift. Included by smith.c, which has smith_ends_with and smith_takes_value.
+// accepts, and they cannot drift. Linked into smith, which has smith_ends_with and smith_takes_value.
+
+#include "lang_command.h"
+#include "core.h"
+#include "lang.h"
+#include "main.h"
 
 // Whether an input is C++ or Objective-C++, which have no `_Defer`.
 static bool smith_lang_has_other_input(int argc, char **argv, int first) {
@@ -111,6 +116,10 @@ int smith_lang_command(int argc, char **argv, int first, char **out, size_t capa
     for (int i = first; i < argc; i++) { // bounded by argc
         if (used + 7 > capacity) return -1;
         if (i == scan.dashes) return smith_lang_inputs_after(argc, argv, i, scan.language, out, used, capacity);
+        // A .smith file never takes clang's modules: the build gives them to C sources only (smith_modules), and a
+        // header as a module hides what the token hook shows a .smith file (a lint borrows the command of a C file,
+        // #2685).
+        if (strncmp(argv[i], "-fmodules", 9) == 0 || strncmp(argv[i], "-fmodule-map-file=", 18) == 0) continue;
         bool value = argv[i][0] == '-' && smith_takes_value(argv[i]) && i + 1 < argc;
         bool smith_input = argv[i][0] != '-' && smith_ends_with(argv[i], ".smith");
         if (value) {

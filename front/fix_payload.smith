@@ -1,0 +1,104 @@
+// front::fix_payload, the fix-it for a payload enumeration built with a named tuple (#2648).
+//
+//   Ty(kind = (vector = (element = e, count = n)))     Ty(kind = .vector((element = e, count = n)))
+//
+// C's `{.kind = {.vector = {...}}}` is read as a named tuple with one field, since the parser does not know that `kind`
+// holds a payload enumeration. The checker does: it reports `expected TyKind, found (vector: ...)` at the tuple. When
+// the tuple has one named field and the expected type is no tuple, its head `(vector = ` is written `.vector(`; the
+// payload (a named tuple for a struct payload) and the closing `)` stay.
+//
+//   fix_payload::edits(source, checked)   one fix for each such error
+module front::fix_payload;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+static Bool same(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    return same(text[0:countof(prefix)], prefix);
+}
+
+static Bool is_word(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+// The only field of a one-field named tuple, or null.
+static const ast::Expr *one_field(const ast::Expr *e) {
+    if (!(e->kind == .tuple_lit)) return nullptr;
+    ast::ExprRef items[:] = e->kind.tuple_lit.items;
+    if (countof(items) != 1) return nullptr;
+    const ast::Expr *field = items[0];
+    if (!(field->kind == .named_arg)) return nullptr;
+    return field;
+}
+
+// The only field of the one-field named tuple at `span`, or null.
+static const ast::Expr *field_at(const types::Checked *c, ast::Span span) {
+    for (Usize i = 0; i < countof(c->nodes); i++) {
+        const ast::Expr *e = c->nodes[i].node;
+        if (e == nullptr || e->span.start != span.start || e->span.end != span.end) continue;
+        const ast::Expr *field = one_field(e);
+        if (field != nullptr) return field;
+    }
+    return nullptr;
+}
+
+// Whether the type a message says is expected (`expected T, found ...`) is a payload enumeration with an enumerator
+// `name`: a one-field named tuple is a struct's value otherwise (`it_value = (tv_sec = t)`).
+static Bool is_variant_of(const types::Checked *c, Str message, Str name) {
+    Str rest = message[9:countof(message)];
+    Str stop = ", found ";
+    for (Usize i = 0; i + countof(stop) <= countof(rest); i++) {
+        if (!same(rest[i:i + countof(stop)], stop)) continue;
+        const types::Symbol *symbol = types::lookup(&c->scopes, rest[0:i]);
+        if (symbol == nullptr || symbol->type == nullptr) return false;
+        types::TypeRef wanted = symbol->type;
+        return wanted->kind == .enumeration && types::is_payload_enum(wanted) && types::member(wanted, name) != nullptr;
+    }
+    return false;
+}
+
+export core::Errors edits(Str source, const types::Checked *c) {
+    core::Errors out = {};
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.fix) > 0 || !starts_with(found.message, "expected ")) continue;
+        // The expected type is not a tuple: `expected (a: i32), found (b: ...)` is another mistake.
+        if (starts_with(found.message[9:countof(found.message)], "(")) continue;
+        const ast::Expr *field = field_at(c, found.span);
+        if (field == nullptr) continue;
+        if (!(field->kind == .named_arg)) continue;
+        Str name = field->kind.named_arg.name;
+        if (!is_variant_of(c, found.message, name)) continue;
+        // `(name = ` as written: the name, then ` = `.
+        Usize at = found.span.start;
+        Usize head = at + 1 + countof(name) + 3;
+        if (head > countof(source) || source[at] != '(') continue;
+        if (!same(source[at + 1:at + 1 + countof(name)], name) || is_word(source[at + 1 + countof(name)])) continue;
+        if (!same(source[at + 1 + countof(name):head], " = ")) continue;
+        core::Edits fix = {};
+        fix = mem::realloc(fix, 1);
+        Str text = ".";
+        fix[0] = (core::Edit){.span = {.start = (U32)at, .end = (U32)head}, .text = text};
+        Str opened = "(";
+        fix[0].text = types::message_of(format::push(text, name, opened));
+        out = mem::realloc(out, countof(out) + 1);
+        core::ParseError made = {};
+        made.span = found.span;
+        made.message = "write the payload enumeration's value as `.variant(payload)`";
+        made.fix = fix;
+        out[countof(out) - 1] = made;
+    }
+    return out;
+}

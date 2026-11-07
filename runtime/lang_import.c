@@ -1,7 +1,18 @@
 // The module line, imports and exports. Included by runtime/lang.c, after runtime/lang_decl.c.
 
-// runtime/lang_generic.c
-static void smith_lang_generics_load(SmithLang *lang, const SmithHost *host, const char *module);
+#include "lang_import.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_body.h"
+#include "lang_decl.h"
+#include "lang_enum.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_private.h"
+#include "lang_trivia.h"
+#include "lang_type.h"
 
 // Reads tokens up to the `;` that ends a line, for a line that is malformed.
 static void smith_lang_skip_line(SmithLang *lang, const SmithHost *host) {
@@ -85,7 +96,7 @@ static bool smith_lang_path_matches(const char *file, const char *path) {
 static bool smith_lang_add_binding(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
                                    uint32_t location, const SmithLangModuleName *module, bool is_c);
 
-static void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
+void smith_lang_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
     bool good = smith_lang_read_module_name(lang, host, &name);
     if (!good) {
@@ -151,10 +162,10 @@ static size_t smith_lang_header_imports(const char *text, size_t length, char na
 }
 
 // a::b::c into a/b/c.h; the standard library's headers are in smith/ (C has no namespaces): std::arena is smith/arena.h
-static void smith_lang_module_to_path(const char *module, char *path, size_t capacity) {
+void smith_lang_module_to_path(const char *module, char *path, size_t capacity) {
     size_t used = 0;
     if (strncmp(module, "std::", 5) == 0) {
-        memcpy(path, "smith/", 6);
+        memcpy(path, "smith/", sizeof "smith/"); // with its terminator; the module path is appended after the slash
         used = 6;
         module += 5;
     }
@@ -264,8 +275,6 @@ static bool smith_lang_import_reflects(const char *text, uint32_t length) {
 
 // A module whose exports use tuples says so in its header (`// smith-tuples`): this file indexes the tuples it gets, so
 // the host offers it every token.
-static void smith_lang_eshape_import(const char *text, uint32_t length, const char *bind, size_t bind_length);
-static void smith_lang_eshape_builtins(SmithLang *lang);
 
 static void smith_lang_import_tuples(SmithLang *lang, const SmithHost *host, const char *text, uint32_t length,
                                      const char *bind, size_t bind_length) {
@@ -310,11 +319,21 @@ static bool smith_lang_refuse_c_header(SmithLang *lang, const SmithHost *host, c
     return true;
 }
 
-// runtime/lang_type.c, which comes after this file: the import's functions over `type` are defined here (issue #107)
-static void smith_lang_types_define(SmithLang *lang, const SmithHost *host, uint32_t location);
-
-// runtime/lang_body.c: the import's functions that this file runs at compile time are defined here (issue #107)
-static void smith_lang_body_use(SmithLang *lang, const SmithHost *host, uint32_t location);
+// The module's header cannot be read: says why, and marks the binding as missing.
+static void smith_lang_import_missing(SmithLang *lang, const SmithHost *host, const SmithLangModuleName *name,
+                                      const char *bind, size_t bind_length, const char *header) {
+    SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
+    if (failed != nullptr) failed->missing = true;
+    const char *problem = host->read_problem != nullptr ? host->read_problem(host->context) : nullptr;
+    if (problem != nullptr) {
+        smith_lang_error(lang, host, name->location, "%s", problem);
+    } else {
+        smith_lang_error(
+            lang, host, name->location,
+            "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
+            name->colons, header);
+    }
+}
 
 static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     SmithLangModuleName name = {};
@@ -357,17 +376,7 @@ static void smith_lang_import_smith(SmithLang *lang, const SmithHost *host, cons
     const char *text = nullptr;
     uint32_t length = 0;
     if (host->read_header != nullptr && !host->read_header(host->context, header, &text, &length)) {
-        SmithLangBinding *failed = smith_lang_binding_find(lang, bind, bind_length);
-        if (failed != nullptr) failed->missing = true;
-        const char *problem = host->read_problem != nullptr ? host->read_problem(host->context) : nullptr;
-        if (problem != nullptr) {
-            smith_lang_error(lang, host, name.location, "%s", problem);
-        } else {
-            smith_lang_error(
-                lang, host, name.location,
-                "cannot find module `%s`: no `%s` in the include paths (smith writes it from the module's source)",
-                name.colons, header);
-        }
+        smith_lang_import_missing(lang, host, &name, bind, bind_length, header);
         return;
     }
     if (smith_lang_refuse_c_header(lang, host, &name, bind, bind_length, header, text, length)) return;
@@ -430,7 +439,7 @@ static void smith_lang_import_c(SmithLang *lang, const SmithHost *host, const Sm
 }
 
 // Whether `import` here starts an import line, rather than a C declaration that happens to use the name.
-static bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
+bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     bool shaped = smith_lang_punct(next, "<") || next->kind == SmithTokenKind_String ||
                   (next->kind == SmithTokenKind_Identifier && !smith_lang_is_word(next));
@@ -441,12 +450,12 @@ static bool smith_lang_is_import(SmithLang *lang, const SmithHost *host, const S
 // The import lines the hook counted are every line that begins with `import`, those of a file-scope `if constexpr`'s
 // branch included (issue #335): the last one seen is where the imports' functions over `type` and their bodies are
 // used. An import line of a branch that is dropped is counted as if it were seen (runtime/lang_target.c).
-static void smith_lang_imports_last(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_imports_last(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (lang->type_import && lang->imports_seen == host->import_lines) smith_lang_types_define(lang, host, location);
     if (lang->imports_seen == host->import_lines) smith_lang_body_use(lang, host, location);
 }
 
-static void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
+void smith_lang_import(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     if (lang->seen_declaration || (host->declared != nullptr && host->declared(host->context))) {
         smith_lang_error(lang, host, keyword->location, "imports come before any declaration");
     }
@@ -461,7 +470,7 @@ static void smith_lang_import(SmithLang *lang, const SmithHost *host, const Smit
     smith_lang_imports_last(lang, host, keyword->location);
 }
 
-static bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
+bool smith_lang_is_module_line(SmithLang *lang, const SmithHost *host, const SmithToken *keyword) {
     const SmithToken *next = smith_lang_peek(lang, host, 0, false);
     bool shaped = smith_lang_punct(next, ";") || (next->kind == SmithTokenKind_Identifier && !smith_lang_is_word(next));
     if (!shaped) return false;

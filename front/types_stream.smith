@@ -79,29 +79,29 @@ export Bool has_yield(const ast::Stmt *body) {
 // The element `T` of a generator with this written result and body, else null.
 export types::TypeRef generator_element(types::TypeRef result, const ast::Stmt *body) {
     if (result == nullptr || result->kind != .stream || !has_yield(body)) return nullptr;
-    return result->element;
+    return types::element_of(result);
 }
 
 // `yield x` in a function whose generator element is `element` (null outside a generator).
 export void check_yield(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
-    if (!(s->kind == .yield_stmt)) return;
+    if (s->kind != .yield_stmt) return;
     const ast::Expr *value = s->kind.yield_stmt.value;
     if (element == nullptr) {
-        if (value != nullptr) types_expr::infer(r, value);
+        if (value != nullptr) (void)types_expr::infer(r, value);
         types::failf(r, s->span,
                      "yield is valid only in a function that returns `stream::Stream(T)`: return a stream, or remove "
                      "the yield");
         return;
     }
-    if (value != nullptr) types_expr::check(r, value, element);
+    if (value != nullptr) (void)types_expr::check(r, value, element);
 }
 
 // `return` in a generator: true when it was handled here (a plain `return` is fine, `return v` is refused).
 export Bool check_return(types::Checked *r, const ast::Stmt *s, types::TypeRef element) {
-    if (element == nullptr || !(s->kind == .return_stmt)) return false;
+    if (element == nullptr || s->kind != .return_stmt) return false;
     const ast::Expr *value = s->kind.return_stmt.value;
     if (value != nullptr) {
-        types_expr::infer(r, value);
+        (void)types_expr::infer(r, value);
         types::failf(r, s->span, "a generator ends with a plain `return`: hand the value out with `yield v` first");
     }
     return true;

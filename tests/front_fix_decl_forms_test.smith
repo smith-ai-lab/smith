@@ -117,7 +117,7 @@ export void test_front_fix_restrict_slice_goes_with_an_apart_precondition() {
                  "    contract::requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
                  "&src[0] + countof(src) <= &dst[0]);\n    g(dst, src);\n}\n",
                  "import std.contract\nfn copy(dst: []u8, src: []u8):\n"
-                 "    contract.requires(countof(dst) == 0 || &dst[0] + countof(dst) <= &src[0] || "
+                 "    contract.requires(countof(dst) == 0 or &dst[0] + countof(dst) <= &src[0] or "
                  "&src[0] + countof(src) <= &dst[0])\n    g(dst, src)\n");
 }
 
@@ -149,4 +149,40 @@ export void test_front_fix_exported_prototype_is_a_pub_extern_fn() {
 export void test_front_fix_private_prototype_with_an_ownership_attribute() {
     expect_fixed("module m;\n[[std::returns_internal]] const char *message(I32 code);\n",
                  "@returns_internal extern fn message(code: i32) -> *char\n");
+}
+
+// #2648: a `Result` declared in today's form and tested at once is `ok := try ...`, not the guard `if .error(error)
+// := e:` the checker wrote in the same pass, which left `ok` unreachable in big files (lex.smith's `exponent`).
+export void test_front_fix_old_result_declaration_is_a_try() {
+    expect_fixed("module m;\nstatic Result(Usize, Usize) f(Usize a) {\n    return {.ok = a};\n}\n"
+                 "static Result(Usize, Usize) g(Usize a) {\n    Result(Usize, Usize) e = f(a);\n"
+                 "    if (e == .error) return {.error = e.error};\n    Usize after = e.ok;\n"
+                 "    return {.ok = after + 1};\n}\n",
+                 "static fn f(a: usize) -> Result(usize, usize):\n    return .ok(a)\n"
+                 "static fn g(a: usize) -> Result(usize, usize):\n    ok := try f(a)\n"
+                 "    after: usize = ok\n    return .ok(after + 1)\n");
+}
+
+// #2648: holding the `try` guard back in the first pass must not hold back the other guards: a file with old forms
+// still gets `.v(v) := k else:` for a test that leaves (front/fix_opaque.smith, fix_typeof.smith).
+export void test_front_fix_leaving_variant_test_is_a_binding_in_a_file_with_old_forms() {
+    expect_fixed("module m;\nexport struct Func { Usize params; };\nexport typedef enum {\n    Func function;\n    "
+                 "leaf;\n} Kind;\n"
+                 "static Usize c(Kind k) {\n    if (k != .function) return 0;\n    return k.function.params;\n}\n",
+                 "pub struct Func:\n    pub params: usize\npub enum Kind:\n    function: Func\n    leaf\n"
+                 "static fn c(k: Kind) -> usize:\n    .function(function) := k else:\n        return 0\n"
+                 "    return function.params\n");
+}
+
+// #2648: the reads after `k != .v || k.v.f` all name the binding (`member.name`), whatever else the file mends first.
+export void test_front_fix_leaving_or_chain_binds_every_later_read() {
+    expect_fixed(
+        "module m;\nexport struct Mem { Bool arrow; Usize name; };\nexport typedef enum {\n    Mem member;\n    "
+        "leaf;\n} Kind;\n"
+        "static Bool a(Kind k) {\n    if (k != .member || k.member.arrow) return false;\n"
+        "    if (k.member.name == 3) return false;\n    return true;\n}\n",
+        "pub struct Mem:\n    pub arrow: bool\n    pub name: usize\npub enum Kind:\n    member: Mem\n    leaf\n"
+        "static fn a(k: Kind) -> bool:\n    .member(member) := k else:\n        return false\n    \n"
+        "    if member.arrow:\n        return false\n    if member.name == 3:\n        return false\n    return "
+        "true\n");
 }

@@ -15,80 +15,28 @@
 // runs ninja. See knowledge/build-conventions.md. `smith fetch <url>` puts a package in the cache and `smith cache`
 // shows and cleans the caches. `smith new` writes a ready project: main.smith (or main.c), a test, and what agents
 // need.
-#ifdef __linux__
-// What glibc hides from C23 and macOS does not: nftw's FTW_PHYS, wait4 (knowledge/platform-layer.md).
-// NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
-#define _GNU_SOURCE
-#endif
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <signal.h>
-#include <spawn.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/file.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
-#ifdef __APPLE__
-#include <sys/sysctl.h> // runtime/slots.c reads a process through sysctl on macOS
-#endif
-#include <sys/wait.h>
-#include <unistd.h>
-
-extern char **environ;
-
-#include "runtime/base.h"
-#include "scripts/pack.h"
-
-#include <dirent.h>
-#include <ftw.h>
-#include <inttypes.h>
-#include <sys/time.h>
-#include <time.h>
-
-// SMITH_CLANG_ID is the version of the clang linked in and a hash of what is linked (build_llvm_run_macos), compiled in
-// by build.c; --smith-which prints it, so that what depends on the compiler is rebuilt for a new LLVM and for nothing
-// else. shim/clang.cpp, the only C++ in smith: clang's own main, run as `program` (a clang or clang++ in the folder
-// that smith_resource_ensure fills with clang's resource directory) on argv[1 .. argc). argv[0] is ignored.
-int smith_clang_main(const char *program, int argc, char **argv, bool lld, const char *resource);
-#ifdef SMITH_PROVE
-// shim/prove.cpp: `smith prove`, on argv[0 .. argc), compiling with the clang that smith_clang_main runs as `program`
-// (with `resource` as its resource directory).
-int smith_prove_main(const char *program, const char *resource, int argc, char **argv);
-#endif
-// shim/lld.cpp: lld's Mach-O linker, run as ld on argv[1 .. argc). Exits the process when it is done.
-int smith_lld_main(int argc, char **argv);
-// shim/format.cpp, shim/tidy.cpp and shim/clangd.cpp: the mains of clang-format, clang-tidy and clangd, each run on
-// argv[1 .. argc), as argv[0], a path in this smith's programs folder (smith_programs_folder, beside clang's), whose
-// resource directory clang-tidy and clangd use.
-int smith_format_main(int argc, char **argv);
-int smith_tidy_main(int argc, char **argv);
-int smith_clangd_main(int argc, char **argv);
-// shim/clangd.cpp: the files clangd formats and runs its checks by in a project that has none (smith's defaults).
-void smith_clangd_defaults(const char *style, const char *tidy);
-#ifdef SMITH_LLDB
-constexpr bool smith_has_lldb = true;
-// shim/lldb.cpp and shim/lldb_dap.cpp: the mains of lldb and lldb-dap (`smith dbg`, `smith dap`), run the same way. A
-// smith built against an LLVM install without lldb (build_llvm_run_macos, the lldb step) runs an external lldb instead.
-int smith_lldb_main(int argc, char **argv);
-int smith_lldb_dap_main(int argc, char **argv);
-#ifdef __linux__
-int smith_lldb_server_main(int argc, char **argv); // shim/lldb_server.cpp: lldb's debug server on Linux
-#endif
-#else
-constexpr bool smith_has_lldb = false;
-#endif
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#include <stdint.h>
-#endif
+#include "runtime/account.h"
+#include "runtime/cache.h"
+#include "runtime/core.h"
+#include "runtime/docs.h"
+#include "runtime/executor.h"
+#include "runtime/explain.h"
+#include "runtime/front_flag.h"
+#include "runtime/lang.h"
+#include "runtime/lang_command.h"
+#include "runtime/lang_lex.h"
+#include "runtime/lang_main.h"
+#include "runtime/lang_target.h"
+#include "runtime/main.h"
+#include "runtime/make_sub.h"
+#include "runtime/make_translate.h"
+#include "runtime/mcp_serve.h"
+#include "runtime/mcp_unit.h"
+#include "runtime/package.h"
+#include "runtime/platform_linux.h"
+#include "runtime/slots.h"
+#include "runtime/symbolize.h"
+#include "runtime/verbs.h"
 
 // Sizes. libc takes int, size_t and char *, so these are plain size_t and int, not the u32 and u64 of game's base.h.
 constexpr size_t smith_metal_args_max = 4096; // arguments the metal route can forward; the clang route has no limit
@@ -108,7 +56,7 @@ typedef enum {
     SmithRoute_Mixed,
 } SmithRoute;
 
-static bool smith_ends_with(const char *text, const char *suffix) {
+bool smith_ends_with(const char *text, const char *suffix) {
     SMITH_ASSERT(text != nullptr && suffix != nullptr);
     size_t text_length = strlen(text);
     size_t suffix_length = strlen(suffix);
@@ -117,7 +65,7 @@ static bool smith_ends_with(const char *text, const char *suffix) {
 
 // Flags whose value is the next argument, so that the value is not mistaken for an input file (as in `-I
 // shaders.metal`).
-static bool smith_takes_value(const char *arg) {
+bool smith_takes_value(const char *arg) {
     static const char *const flags[] = {
         "-o",         "-I",
         "-isystem",   "-iquote",
@@ -174,7 +122,7 @@ static SmithRoute smith_classify(int count, char **args) {
 }
 
 // The real path of this executable, so a candidate compiler that is smith under another name can be skipped.
-static bool smith_self_path(char *out) {
+bool smith_self_path(char *out) {
     SMITH_ASSERT(out != nullptr);
     char raw[PATH_MAX];
 #ifdef __APPLE__
@@ -249,7 +197,7 @@ static void smith_find_clang(const char *tool, const char *override_name, const 
 }
 
 #ifdef __APPLE__
-#include "runtime/sdk_cache.c"
+#include "runtime/sdk_cache.h"
 
 // Runs `xcrun --show-sdk-path` and writes its one line to out. False when xcrun is missing or fails.
 static bool smith_xcrun_run(const char *xcrun, char *out) {
@@ -298,7 +246,7 @@ static bool smith_xcrun_sdk(const char *self, char *out) {
 //   - CLANG_NO_DEFAULT_CONFIG=1 turns that config off, so SDKROOT and -isysroot decide;
 //   - SDKROOT is what `xcrun --show-sdk-path` says, which is what Apple's clang used.
 // The caller's own SDKROOT, -isysroot and --config are never touched. No flag is added.
-static void smith_sdk_environment(const char *self) {
+void smith_sdk_environment(const char *self) {
     if (getenv("CLANG_NO_DEFAULT_CONFIG") == nullptr) setenv("CLANG_NO_DEFAULT_CONFIG", "1", 0);
     if (getenv("SDKROOT") != nullptr) return;
     char sdk[PATH_MAX];
@@ -333,7 +281,7 @@ static void smith_route_record(const char *kind, const char *program, int count,
 }
 #endif
 
-static void smith_run(const char *program, char *const *args) {
+void smith_run(const char *program, char *const *args) {
     SMITH_ASSERT(program != nullptr && args != nullptr);
     SMITH_ASSERT(args[0] == program); // the compiler is handed its own full path as argv[0]
     if (getenv("SMITH_VERBOSE") != nullptr) smith_show_command("exec", program, args);
@@ -414,9 +362,7 @@ static int smith_route_metal(int count, char **args, bool which, const char *sel
 // the resource pack's codec
 // (knowledge/platform-layer.md).
 #ifdef __APPLE__
-#include "runtime/platform_macos.c"
 #else
-#include "runtime/platform_linux.c"
 #endif
 
 #ifdef SMITH_CORE // the units runner embeds no pack (runtime/pack_data.c is the program's): a route ends before it
@@ -436,7 +382,7 @@ static SmithPackHeader smith_resource_header(void) {
 }
 
 // <data>/smith/clang/llvm-<version>-<key>, where <data> is $XDG_DATA_HOME or $HOME/.local/share.
-static void smith_resource_folder(char *folder) {
+void smith_resource_folder(char *folder) {
     const char *data = getenv("XDG_DATA_HOME");
     const char *home = getenv("HOME");
     char base[PATH_MAX];
@@ -567,7 +513,7 @@ constexpr time_t smith_programs_touch_seconds = 24L * 3600;
 constexpr time_t smith_programs_temporary_seconds = 3600;
 
 // <data>/smith/programs/<uuid>, from the runtime folder <data>/smith/clang/<name>.
-static void smith_programs_folder(const char *runtime, char *programs) {
+void smith_programs_folder(const char *runtime, char *programs) {
     char uuid[33];
     smith_platform_self_id(uuid, sizeof uuid);
     const char *clang = strstr(runtime, "/smith/clang/");
@@ -715,7 +661,7 @@ static void smith_programs_make(const char *runtime, const char *programs, const
 // this process takes the folder's shared lock for its life, so no prune removes it from under a running smith (a
 // long-running `smith lsp` of a worktree that is gone). A prune may remove the folder between the two, which the
 // refused lock tells: the folder is made again.
-static void smith_resource_ensure(const char *runtime, const char *programs, const char *self) {
+void smith_resource_ensure(const char *runtime, const char *programs, const char *self) {
     static bool locked = false;
     if (!smith_is_folder(runtime)) smith_resource_unpack(runtime);
     for (int attempt = 0; attempt < 8 && !locked; attempt++) { // a prune racing us, each time a new folder
@@ -736,7 +682,7 @@ static void smith_resource_ensure(const char *runtime, const char *programs, con
 }
 
 // The compiler's resource directory in the runtime folder: lib/clang/<major>, the one folder in lib/clang.
-static void smith_resource_directory(const char *runtime, char *out) {
+void smith_resource_directory(const char *runtime, char *out) {
     char parent[PATH_MAX];
     snprintf(parent, sizeof parent, "%s/lib/clang", runtime);
     DIR *directory = opendir(parent);
@@ -1084,6 +1030,9 @@ static constexpr unsigned char smith_build_runtime[] = {
 static constexpr unsigned char smith_build_package[] = {
 #embed "runtime/package.c"
 };
+static constexpr unsigned char smith_build_package_header[] = {
+#embed "runtime/package.h"
+};
 static constexpr unsigned char smith_build_gzip[] = {
 #embed "runtime/gzip.c"
 };
@@ -1229,16 +1178,6 @@ static constexpr unsigned char smith_trace_source[] = {
 #embed "lib/trace.c"
 };
 
-typedef struct {
-    const char *name;
-    const unsigned char *header;
-    size_t header_size;
-    const unsigned char *source;
-    size_t source_size;
-    bool lang;         // the source is a .smith module, not C
-    const char *flags; // the flags the library declares, which `smith build` adds when it compiles it, or nullptr
-} SmithLibrary;
-
 // One row per library, in order of name: SMITH_LIBRARY(name, lang) uses the arrays smith_<name>_header (a C library's
 // hand-written header; a .smith module has none, its header is written from its source) and smith_<name>_source.
 // SMITH_LIBRARY_FLAGS adds the flags the library declares (one string, a flag a line), which the build adds after the
@@ -1247,20 +1186,9 @@ typedef struct {
 #define SMITH_HEADER_SIZE_true(library) 0
 #define SMITH_HEADER_false(library) smith_##library##_header
 #define SMITH_HEADER_SIZE_false(library) sizeof smith_##library##_header
-#define SMITH_HEADER(library, is_lang) SMITH_HEADER_##is_lang(library)
-#define SMITH_HEADER_SIZE(library, is_lang) SMITH_HEADER_SIZE_##is_lang(library)
-#define SMITH_LIBRARY_FLAGS(library, is_lang, declared) \
-    {#library, \
-     SMITH_HEADER(library, is_lang), \
-     SMITH_HEADER_SIZE(library, is_lang), \
-     smith_##library##_source, \
-     sizeof smith_##library##_source, \
-     is_lang, \
-     declared}
-#define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
 // clang-format off
-static const SmithLibrary smith_libraries[] = {
+const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(arena, true),
     SMITH_LIBRARY(array, true),
     SMITH_LIBRARY(ascii, true),
@@ -1297,51 +1225,113 @@ static const SmithLibrary smith_libraries[] = {
 // clang-format on
 
 // `smith symbolize` and smith as llvm-symbolizer: stack traces turned into lines.
-#include "runtime/symbolize.c"
 // `smith --smith-explain`: the values of a failed check, read from the stopped test with lldb.
-#include "runtime/explain.c"
 // Packages, shared with the build runtime: the cache, the download and SHA-256.
 #include <runtime/io.h>
 
-#include "runtime/package.c"
 // `smith cache`, and the lock a build holds on the caches.
-#include "runtime/cache.c"
 // What a run costs: the wall and CPU time of each task, and the smith processes it started.
-#include "runtime/account.c"
 // Quiet output: the logs, the excerpt of a failure and the line of a stage.
-#include "runtime/quiet.c"
 // The host-wide slots that limit heavy jobs, so that local work cannot starve CI.
-#include "runtime/slots.c"
+
+SmithTimeState smith_time_state;
+
+bool smith_time_on(void) {
+    static int state = 0; // 0 not read, 1 off, 2 on
+    if (state == 0) {
+        const char *value = getenv("SMITH_TIME");
+        state = value != nullptr && *value != '\0' && strcmp(value, "0") != 0 ? 2 : 1;
+    }
+    return state == 2;
+}
+
+// The monotonic clock in nanoseconds; 0 when timing is off, so a phase costs nothing then.
+uint64_t smith_time_now(void) {
+    if (!smith_time_on()) return 0;
+    struct timespec now = {};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1'000'000'000 + (uint64_t)now.tv_nsec;
+}
+
+uint64_t smith_time_since(uint64_t start) {
+    return smith_time_on() ? smith_time_now() - start : 0;
+}
+
+static void smith_time_phase(const char *name, int depth, uint64_t nanoseconds) {
+    if (!smith_time_on() || smith_time_state.phase_count >= smith_time_phases_max) return;
+    smith_time_state.phases[smith_time_state.phase_count++] = (SmithTimePhase){name, depth, nanoseconds};
+}
+
+// One step of the executor: the slowest are kept, longest first, and the steps the step cache served are counted apart.
+void smith_time_step(const char *kind, const char *what, uint64_t nanoseconds, bool cached) {
+    if (!smith_time_on()) return;
+    smith_time_state.steps += 1;
+    if (cached) {
+        smith_time_state.cached += 1;
+        smith_time_state.cached_nanoseconds += nanoseconds;
+        return;
+    }
+    smith_time_state.steps_nanoseconds += nanoseconds;
+    size_t at = smith_time_state.slowest_count;
+    while (at > 0 && smith_time_state.slowest[at - 1].nanoseconds < nanoseconds) // bounded by the list
+        at -= 1;
+    if (at >= smith_time_steps_max) return;
+    size_t last = smith_time_state.slowest_count < smith_time_steps_max ? smith_time_state.slowest_count
+                                                                        : smith_time_steps_max - 1;
+    for (size_t i = last; i > at; i--) // bounded by the list
+        smith_time_state.slowest[i] = smith_time_state.slowest[i - 1];
+    SmithTimeStep *step = &smith_time_state.slowest[at];
+    step->nanoseconds = nanoseconds;
+    snprintf(step->text, sizeof step->text, "%s: %s", kind, what);
+    if (smith_time_state.slowest_count < smith_time_steps_max) smith_time_state.slowest_count += 1;
+}
+
+static void smith_time_line(FILE *out, int depth, const char *name, uint64_t nanoseconds) {
+    fprintf(out, "time: %*s%s %.1f ms\n", depth * 2, "", name, (double)nanoseconds / (double)smith_time_ns_per_ms);
+}
+
+// The report: each phase, the slowest steps, the steps the cache served, then the total.
+static void smith_time_report(uint64_t total_nanoseconds) {
+    if (!smith_time_on()) return;
+    fflush(stdout);
+    for (size_t i = 0; i < smith_time_state.phase_count; i++) // bounded by the table
+        smith_time_line(stderr, smith_time_state.phases[i].depth, smith_time_state.phases[i].name,
+                        smith_time_state.phases[i].nanoseconds);
+    for (size_t i = 0; i < smith_time_state.slowest_count; i++) { // bounded by the list
+        char name[smith_time_text_max + 8];
+        snprintf(name, sizeof name, "step %s", smith_time_state.slowest[i].text);
+        smith_time_line(stderr, 2, name, smith_time_state.slowest[i].nanoseconds);
+    }
+    if (smith_time_state.steps > 0)
+        fprintf(stderr,
+                "time: %zu steps ran for %.1f ms in all (the %zu slowest above), %zu served from the step cache\n",
+                smith_time_state.steps - smith_time_state.cached,
+                (double)smith_time_state.steps_nanoseconds / (double)smith_time_ns_per_ms,
+                smith_time_state.slowest_count, smith_time_state.cached);
+    smith_time_line(stderr, 0, "total", total_nanoseconds);
+}
+
+// `--time` on cc, c++, build and test (and the compiler links): drop it and set SMITH_TIME, which every compile of the
+// build inherits. Only the verb's own arguments are read, up to a `--`.
+static void smith_time_flag(int *argc, char **argv, int first) {
+    for (int i = first; i < *argc; i++) { // bounded by argc
+        if (strcmp(argv[i], "--") == 0) return;
+        if (strcmp(argv[i], "--time") != 0) continue;
+        setenv("SMITH_TIME", "1", 1);
+        for (int j = i; j < *argc; j++) // bounded by argc
+            argv[j] = argv[j + 1];
+        *argc -= 1;
+        i -= 1;
+    }
+}
+
+// The files, the clock and the memory the executor and `smith mcp` use: plain libc calls.
 // The executor that runs the build graph, in place of ninja.
-#include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.
-#include "runtime/lang.c"
-#include "runtime/lang_lex.c"
 // The rule for the command of a .smith file, shared with `smith lsp`.
-#include "runtime/lang_command.c"
 // A Makefile read as GNU make reads it and written as a build.smith: `smith build --dump-config` (issue #44).
 // (memory and text, the expander, the reader, the targets, then build.c; blank lines keep clang-format from sorting)
-#include "runtime/make.c"
 
-#include "runtime/make_expand.c"
-
-#include "runtime/make_read.c"
-
-#include "runtime/make_graph.c"
-
-#include "runtime/make_emit.c"
-
-#include "runtime/make_cc.c"
-
-#include "runtime/make_sub.c"
-
-#include "runtime/make_class.c"
-
-#include "runtime/make_print.c"
-
-#include "runtime/make_translate.c"
-
-constexpr size_t smith_build_args_max = 4096;
 constexpr size_t smith_build_manifest_max = 8192;
 constexpr size_t smith_build_chunk = 4096;
 constexpr size_t smith_build_ninja_prefix = 3; // ninja -f .smith/build.ninja
@@ -1726,7 +1716,7 @@ static bool smith_lang_read_answers(const SmithLang *lang, const char *answers, 
     return index == lang->c_uses_count;
 }
 
-static bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings) {
+bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings) {
     const char *temporary = getenv("TMPDIR");
     char folder[PATH_MAX];
     snprintf(folder, sizeof folder, "%s/smith-imports-XXXXXX",
@@ -1949,6 +1939,9 @@ static void smith_write_lang_headers(const char *self) {
     bool named = smith_binary_identity(self, identity, sizeof identity);
     bool current =
         named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
+    // The stamp names the smith whose headers these are. Drop it before another smith rewrites them: a build killed
+    // halfway then leaves no stamp, and no smith takes the half-rewritten headers for its own (#2594).
+    if (!current) unlink(smith_headers_stamp);
     bool copied = named && !current && smith_headers_copy(jobs, count, identity);
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
@@ -2009,7 +2002,7 @@ static void smith_build_write_libraries(void) {
 
 // Writes the libraries' sources and headers, and std::build's header, into the project's .smith/ (the editor's
 // `smith lsp` does the same, so a header is there on first use).
-static void smith_write_embedded_headers(const char *self) {
+void smith_write_embedded_headers(const char *self) {
     smith_make_folder(".smith");
     smith_make_folder(".smith/include");
     smith_make_folder(".smith/include/smith");
@@ -2047,6 +2040,7 @@ static void smith_build_prepare(const char *self, const char *clang, bool in_pro
                                sizeof smith_conventions_source - 1);
     smith_write_if_changed(".smith/runtime.c", smith_build_runtime, sizeof smith_build_runtime);
     smith_write_if_changed(".smith/package.c", smith_build_package, sizeof smith_build_package);
+    smith_write_if_changed(".smith/package.h", smith_build_package_header, sizeof smith_build_package_header);
     smith_write_if_changed(".smith/gzip.c", smith_build_gzip, sizeof smith_build_gzip);
     smith_write_if_changed(".smith/xz.c", smith_build_xz, sizeof smith_build_xz);
     smith_write_if_changed(".smith/untar.c", smith_build_untar, sizeof smith_build_untar);
@@ -2316,8 +2310,29 @@ static void smith_build_effects_argument(const char *self, char *out, size_t cap
 
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
 // nullptr: its targets are smith's own, smith_needs, smith_tests and smith_info, and the files a lint needs).
-static int smith_build_main(int count, char **args, const char *self, const char *verb) {
+// The build program's two runs: compile build.c and run it (it writes the manifest), then the project's manifest.
+static int smith_build_run_manifests(const SmithExecOptions *options, char **program_argv) {
+    SmithIo io = smith_io_make(0, nullptr);
+    SmithExecOptions program_options = {.jobs = options->jobs, .failures_allowed = 1, .quiet = true};
+    uint64_t mark = smith_time_now();
+    int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
+    smith_time_phase("compile the build file (or served from the cache)", 0, smith_time_since(mark));
+    smith_time_state.plan_nanoseconds = 0; // what follows is the project's own manifest
+    smith_time_state.steps_run_nanoseconds = 0;
+    mark = smith_time_now();
+    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
+    smith_time_phase("run the build file and write the manifest", 0, smith_time_since(mark));
+    if (status != 0) return status;
+    status = smith_exec_run(&io, ".smith/build.ninja", options);
+    smith_time_phase("plan (read the logs, stat the files, decide what is dirty)", 0,
+                     smith_time_state.plan_nanoseconds);
+    smith_time_phase("run the steps", 0, smith_time_state.steps_run_nanoseconds);
+    return status;
+}
+
+static int smith_build_main_timed(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
+    uint64_t mark = smith_time_now();
     if (verb == nullptr && count == 1 && strcmp(args[0], "--dump-config") == 0) return smith_build_dump_config();
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     SmithBuildFile file = smith_build_file();
@@ -2368,12 +2383,16 @@ static int smith_build_main(int count, char **args, const char *self, const char
 #endif
     smith_build_prepare(self, clang, in_process, file);
     if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExecOptions program_options = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
-    int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
-    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
-    if (status != 0) return status;
-    return smith_exec_run(&io, ".smith/build.ninja", &options);
+    smith_time_phase("prepare (find the build file, write the files the build needs)", 0, smith_time_since(mark));
+    return smith_build_run_manifests(&options, program_argv);
+}
+
+// `smith build`, with `--time`'s report after it (#2681).
+int smith_build_main(int count, char **args, const char *self, const char *verb) {
+    uint64_t begin = smith_time_now();
+    int status = smith_build_main_timed(count, args, self, verb);
+    smith_time_report(smith_time_since(begin));
+    return status;
 }
 
 // `smith --smith-exec <manifest> [flags and targets]` runs any manifest the executor reads, as ninja would, in the
@@ -2969,15 +2988,6 @@ static int smith_tool_in_process(const SmithTool *tool, int argc, char **argv, c
 }
 #endif
 
-// ---- smith's defaults for a project with no config file (issue #43, part 1)
-//
-// `smith fmt` and `smith lint` use smith's own .clang-format and .clang-tidy (templates/defaults, embedded) for a file
-// the tool would find none for: clang-format's lookup (`.clang-format` or `_clang-format`, in the file's folder and
-// each folder above) and clang-tidy's (`.clang-tidy`, the same walk). They are written to <data>/smith/defaults/ (named
-// by their content) and passed as `--style=file:<path>` and `--config-file=<path>`. A project's file replaces smith's
-// whole, and an explicit option of the tool wins. `--dump-config` is the tool's own, so it prints the effective one.
-// `smith lsp` points clangd at `.smith/compile_commands.json` when the project has no root one.
-constexpr int smith_defaults_args_max = 262144; // arguments of smith fmt, lint and lsp; more is an error
 constexpr int smith_defaults_depth_max = 256;
 
 // Whether the folder or one above it holds a file of one of the names (null-terminated list). A path that cannot be
@@ -3522,14 +3532,11 @@ static void smith_lint_host_note(int argc, char **argv) {
 #endif
 }
 
-static bool smith_lint_expand_dirs(int *argc, char ***argv); // runtime/verbs.c
-
 // The tool, after smith's defaults: its arguments with smith's style or tidy config where the project has none
 // (`smith fmt`, `smith lint`), or with the compile commands of .smith/ (`smith lsp`).
 int32_t front_lsp_run(void); // front/lsp_server.smith, see runtime/front_flag.c
 
 #ifndef SMITH_CORE
-static int smith_fmt_front(int *count, char **args, bool *only); // runtime/front_flag.c
 #endif
 
 static int smith_tool_main(const SmithTool *tool, int argc, char **argv, const char *self) {
@@ -3617,12 +3624,10 @@ static int smith_headers_main(int count, char **args) {
     return failed;
 }
 
-#include "runtime/front_flag.c"
-
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
 // and --smith-header, --smith-lower and --smith-tree-sitter are the .smith helpers.
-static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
+static int smith_compile_run(int argc, char **argv, int at, bool plus, const char *self) {
     SMITH_ASSERT(at >= 0 && at < argc);
     int first = at + 1;
     // The .smith helpers that need no compiler run: --smith-header writes a module's header, --smith-lower prints a
@@ -3644,7 +3649,9 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     char **args = argv + first;
 #ifndef SMITH_CORE
     if (!which && smith_front_requested(count, args)) { // experimental, off by default (runtime/front_flag.c)
+        uint64_t front_mark = smith_time_now();
         int forwarded = smith_front_rewrite(argv, first, count, args, self);
+        smith_time_state.front_nanoseconds = smith_time_since(front_mark);
         if (forwarded <= 0) return forwarded < 0 ? 1 : 0;
         argv = smith_front_arguments;
         argc = forwarded;
@@ -3673,8 +3680,27 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     return smith_exit_missing;
 }
 
+// `smith cc`, with `--time`'s report after it (#2681). Through the new front end the front end printed its own stages;
+// the rest of the command is clang's. Through the old path the whole compile is one phase. A compile that hands the
+// process to an external clang (SMITH_CLANG) never comes back to print.
+static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
+    uint64_t begin = smith_time_now();
+    int status = smith_compile_run(argc, argv, at, plus, self);
+    uint64_t total = smith_time_since(begin);
+    if (!smith_time_on()) return status;
+    if (smith_time_state.front_nanoseconds > 0) {
+        smith_time_line(stderr, 0, "front end with its setup (the stages above, and the std sources)",
+                        smith_time_state.front_nanoseconds);
+        smith_time_line(stderr, 0, "clang (the rest of the command)", total - smith_time_state.front_nanoseconds);
+    } else {
+        smith_time_line(stderr, 0, "compile (the old path: one phase)", total);
+    }
+    smith_time_line(stderr, 0, "total", total);
+    return status;
+}
+
 // Whether every argument is a -D option of the build, which neither clang-format nor clang-tidy has (none is true).
-static bool smith_only_options(int count, char **args) {
+bool smith_only_options(int count, char **args) {
     for (int i = 0; i < count; i++) { // bounded by count
         if (strncmp(args[i], "-D", 2) != 0) return false;
     }
@@ -3711,29 +3737,17 @@ static bool smith_project_arguments(const char *verb, int count, char **args) {
 }
 
 // `smith docs`: the check of knowledge/ and the skills, with the types knowledge/index.md declares.
-#include "runtime/docs.c"
 
 // `smith mcp`: the debugger server of issue #22. A feature of the full smith (-DSMITH_MCP, which `smith build` passes
 // with clang inside), as the prover and the debugger are: a smith built without it has the verb and says so. It stands
 // on the JSON, text and protocol code (knowledge/protocol-generation.md; text is the module std::text, linked as its
 // own object), and on the io module.
 #ifdef SMITH_MCP
-#include "dap.c"
-#include "lib/json.c"
-#include "mcp.c"
-#include "runtime/mcp.c"
-#include "runtime/protocol/protocol.c"
 #endif
 
 // The verbs that act on a project by what it declares (fmt, lint, prove, test, run, check).
 // The tests a change can affect: `smith test --changed` (issue #441).
 // The coverage table it reads comes first (issue #456).
-#include "runtime/coverage.c"
-#include "runtime/record.c"
-
-#include "runtime/changed.c"
-#include "runtime/lint_cache.c"
-#include "runtime/verbs.c"
 
 // smith's top level is only verbs. This table is where they are: a new verb is a row and, when it is none of these
 // kinds, a case in smith_dispatch. A verb whose row says Project, ProjectBare or ToolOrProject does one fixed thing to
@@ -3945,14 +3959,32 @@ static int smith_build_main_front(int count, char **args, const char *self) {
     return smith_build_main(used, rewritten, self, nullptr);
 }
 
+// When smith's own tree fails to build with a smith that is not .smith/stage0/bin/smith, says so (#2719): the tree
+// builds only with the newest release (smith-dev-build, the lag rule), and a stale smith's error does not say that. It
+// reads only this smith's own path and commit.
+static void smith_stale_hint(const char *self, const char *target) {
+    if (target != nullptr && strcmp(target, "stage0") == 0) return;
+    if (access("smith.c", R_OK) != 0 || access("build.c", R_OK) != 0 || access("runtime/executor_run.c", R_OK) != 0)
+        return;
+    char stage0[PATH_MAX];
+    if (realpath(".smith/stage0/bin/smith", stage0) != nullptr && strcmp(stage0, self) == 0) return;
+    fprintf(stderr,
+            "smith: built by %s (%s%s); smith's tree builds with the newest release: run smith build stage0 and put "
+            ".smith/stage0/bin first on PATH\n",
+            self, smith_commit[0] != '\0' ? "commit " : "no commit known", smith_commit);
+}
+
 static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
     switch (verb->kind) {
     case SmithVerb_Cc:
         return smith_compile_main(argc, argv, 1, false, self);
     case SmithVerb_Cxx:
         return smith_compile_main(argc, argv, 1, true, self);
-    case SmithVerb_Build:
-        return smith_build_main_front(argc - 2, argv + 2, self);
+    case SmithVerb_Build: {
+        int status = smith_build_main_front(argc - 2, argv + 2, self);
+        if (status != 0) smith_stale_hint(self, argc > 2 ? argv[2] : nullptr);
+        return status;
+    }
     case SmithVerb_New:
         return smith_new_main(argc - 2, argv + 2, self);
     case SmithVerb_Fetch:
@@ -4161,10 +4193,14 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs
     // again with -cc1.
     if (strcmp(name, "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
-    if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0)
+    if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0) {
+        smith_time_flag(&argc, argv, 1);
         return smith_compile_main(argc, argv, 0, false, self);
-    if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
+    }
+    if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0) {
+        smith_time_flag(&argc, argv, 1);
         return smith_compile_main(argc, argv, 0, true, self);
+    }
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
         smith_help_list(stdout);
         return 0;
@@ -4187,6 +4223,9 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
+    if (strcmp(verb->name, "cc") == 0 || strcmp(verb->name, "c++") == 0 || strcmp(verb->name, "build") == 0 ||
+        strcmp(verb->name, "test") == 0)
+        smith_time_flag(&argc, argv, 2);
     if (smith_help_requested(verb, argc - 2, argv + 2)) {
         smith_help_page(verb, stdout); // before anything builds or runs
         return 0;

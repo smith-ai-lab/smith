@@ -1,26 +1,19 @@
 // Reading a recipe's command as a compile or a link: which words are the compiler's own and which are flags,
-// libraries, sources and objects. Included by smith.c after make_emit.c.
+// libraries, sources and objects. Linked into smith.
 
-typedef struct {
-    const char *compiler;
-    size_t *others; // flags, libraries and other words that are not the compile's own, in order
-    size_t other_count;
-    size_t *objects;
-    size_t object_count;
-    int64_t source;
-    int64_t output;
-    bool has_c;
-    bool dropped_dependency_flags;
-    size_t source_count;
-} SmithMakeCc;
+#include "make_cc.h"
+#include "core.h"
+#include "make.h"
+#include "make_emit.h"
+#include "make_read.h"
 
-static const char *smith_make_basename(const char *path) {
+const char *smith_make_basename(const char *path) {
     const char *slash = strrchr(path, '/');
     return slash != nullptr ? slash + 1 : path;
 }
 
 // "smith-cc" or "smith-c++" for a C or C++ compiler by whatever name, else nullptr.
-static const char *smith_make_compiler_name(const char *text) {
+const char *smith_make_compiler_name(const char *text) {
     static const char *const c_names[] = {"cc", "gcc", "clang", "smith", "smith-cc"};
     static const char *const cxx_names[] = {"c++", "g++", "clang++", "smith++", "smith-c++"};
     const char *name = smith_make_basename(text);
@@ -121,7 +114,7 @@ static bool smith_make_cc_word(const SmithMakeArgv *argv, SmithMakeCc *cc, size_
 }
 
 // Reads a command as a compiler's: false when it is not one, or has words that this reading does not know.
-static bool smith_make_parse_cc(const SmithMakeArgv *argv, SmithMakeCc *cc) {
+bool smith_make_parse_cc(const SmithMakeArgv *argv, SmithMakeCc *cc) {
     *cc = (SmithMakeCc){.source = -1, .output = -1};
     if (argv->count == 0) return false;
     cc->compiler = smith_make_compiler_name(argv->args[0].text);
@@ -134,12 +127,12 @@ static bool smith_make_parse_cc(const SmithMakeArgv *argv, SmithMakeCc *cc) {
     return true;
 }
 
-static bool smith_make_is_compile(const SmithMakeCc *cc) {
+bool smith_make_is_compile(const SmithMakeCc *cc) {
     return cc->has_c && cc->source_count == 1 && cc->output >= 0 && cc->object_count == 0;
 }
 
 // A link: objects side by side. The words before them are flags, the words after are libraries.
-static bool smith_make_is_link(const SmithMakeCc *cc) {
+bool smith_make_is_link(const SmithMakeCc *cc) {
     if (cc->has_c || cc->source_count != 0 || cc->output < 0 || cc->object_count == 0) return false;
     for (size_t i = 1; i < cc->object_count; i++) {
         if (cc->objects[i] != cc->objects[i - 1] + 1) return false;

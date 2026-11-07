@@ -20,6 +20,6 @@ pub fn check() -> i32:
         return 3
     if let .some(_) = half(7):
         return 4
-    if or_zero(12) != 12 || or_zero(.none) != 0:
+    if or_zero(12) != 12 or or_zero(.none) != 0:
         return 5
     0

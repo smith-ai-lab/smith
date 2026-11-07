@@ -5,12 +5,25 @@
 // stops or ends or the time is up. Every tool first takes in what the program did since the last call (its output, a
 // stop, an exit), so nothing is lost between calls.
 
-typedef bool (*SmithMcpToolFunction)(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out);
+#include "mcp_tools.h"
+#include "core.h"
+#include "mcp_dap.h"
+#include "mcp_show.h"
+#include "mcp_text.h"
+#include "mcp_unit.h"
+#include "world.h"
 
 // --- arguments and sessions ----------------------------------------------------------------------------------------
 
 // The session the call means (its `session` argument, else the latest). False, with the reason in out, if there is
 // none.
+#ifdef SMITH_MCP
+#include "dap.h"
+#endif
+#ifdef SMITH_MCP
+#include "protocol/protocol.h"
+#endif
+
 static SmithMcpSession *smith_mcp_tool_session(SmithMcpServer *server, const SmithJsonValue *arguments,
                                                SmithMcpText *out) {
     const char *id = smith_mcp_argument_string(&server->scratch, arguments, "session");
@@ -65,7 +78,7 @@ static const char *smith_mcp_absolute(SmithArena *arena, const char *folder, con
     return joined;
 }
 
-static const SmithJsonValue *smith_mcp_json_string(SmithArena *arena, struct smith_array_const_char_n text) {
+const SmithJsonValue *smith_mcp_json_string(SmithArena *arena, struct smith_array_const_char_n text) {
     SmithJsonValue *value = smith_arena_push(arena, sizeof(SmithJsonValue), alignof(SmithJsonValue));
     SMITH_ASSERT(value != nullptr);
     *value = (SmithJsonValue){.kind = SmithJsonKind_String, .text = text, .span = 1};
@@ -169,7 +182,7 @@ static void smith_mcp_breakpoint_show(const SmithMcpSession *session, const Smit
                            breakpoint->message);
 }
 
-static bool smith_mcp_tool_breakpoint(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_breakpoint(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     const char *file = smith_mcp_argument_string(&server->scratch, arguments, "file");
@@ -220,11 +233,11 @@ static const char *const smith_mcp_runners[] = {"build/tests", "build/debug/test
 // nullptr when there is no build.info or it names none.
 static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char *folder) {
     const char *info_path = smith_mcp_absolute(&server->scratch, folder, ".smith/build.info");
-    if (smith_files_info(&server->io->files, info_path).error.code != 0) return nullptr;
-    SmithRead read = smith_files_read(&server->io->files, &server->scratch, info_path);
-    if (read.error.code != 0 || read.data.data == nullptr) return nullptr;
-    const char *cursor = (const char *)read.data.data;
-    const char *end = cursor + read.data.count[0];
+    if (smith_world_info(info_path).error.code != 0) return nullptr;
+    SmithWorldRead read = smith_world_read(&server->scratch, info_path);
+    if (read.error.code != 0 || read.data == nullptr) return nullptr;
+    const char *cursor = (const char *)read.data;
+    const char *end = cursor + read.size;
     while (cursor < end) { // bounded by the file
         const char *newline = memchr(cursor, '\n', (size_t)(end - cursor));
         const char *stop = newline != nullptr ? newline : end;
@@ -234,7 +247,7 @@ static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char 
                 (struct smith_array_const_char_n){.data = cursor + sizeof "runner\t" - 1,
                                                   .count = {(size_t)(stop - cursor) - (sizeof "runner\t" - 1)}});
             const char *absolute = smith_mcp_absolute(&server->scratch, folder, path);
-            SmithFileInfo info = smith_files_info(&server->io->files, absolute);
+            SmithWorldInfo info = smith_world_info(absolute);
             if (info.error.code == 0 && !info.folder) return absolute;
         }
         cursor = stop + 1;
@@ -252,7 +265,7 @@ static const char *smith_mcp_runner(SmithMcpServer *server, const SmithJsonValue
     if (built != nullptr) return built;
     for (size_t i = 0; i < sizeof smith_mcp_runners / sizeof smith_mcp_runners[0]; i++) {
         const char *path = smith_mcp_absolute(&server->scratch, folder, smith_mcp_runners[i]);
-        SmithFileInfo info = smith_files_info(&server->io->files, path);
+        SmithWorldInfo info = smith_world_info(path);
         if (info.error.code == 0 && !info.folder) return path;
     }
     smith_mcp_text_add(out,
@@ -397,7 +410,7 @@ static bool smith_mcp_launch_within_limits(const SmithJsonValue *arguments, bool
     return true;
 }
 
-static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     const char *program = smith_mcp_argument_string(&server->scratch, arguments, "program");
     const char *test = smith_mcp_argument_string(&server->scratch, arguments, "test");
     const char *folder = smith_mcp_argument_string(&server->scratch, arguments, "cwd");
@@ -411,7 +424,7 @@ static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *
     program = test != nullptr ? smith_mcp_runner(server, arguments, folder, out)
                               : smith_mcp_absolute(&server->scratch, folder, program);
     if (program == nullptr) return false;
-    SmithFileInfo info = smith_files_info(&server->io->files, program);
+    SmithWorldInfo info = smith_world_info(program);
     if (info.error.code != 0 || info.folder) {
         smith_mcp_text_add(out, "launch: %s is not a file; build the program first (with -g)\n", program);
         return false;
@@ -516,23 +529,23 @@ static bool smith_mcp_resume(SmithMcpServer *server, const SmithJsonValue *argum
     return true;
 }
 
-static bool smith_mcp_tool_continue(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_continue(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     return smith_mcp_resume(server, arguments, out, SmithMcpResume_Continue);
 }
 
-static bool smith_mcp_tool_step_over(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_step_over(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     return smith_mcp_resume(server, arguments, out, SmithMcpResume_Over);
 }
 
-static bool smith_mcp_tool_step_in(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_step_in(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     return smith_mcp_resume(server, arguments, out, SmithMcpResume_In);
 }
 
-static bool smith_mcp_tool_step_out(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_step_out(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     return smith_mcp_resume(server, arguments, out, SmithMcpResume_Out);
 }
 
-static bool smith_mcp_tool_pause(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_pause(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     smith_mcp_tool_begin(server, session, out);
@@ -558,7 +571,7 @@ static bool smith_mcp_tool_pause(SmithMcpServer *server, const SmithJsonValue *a
 
 // --- looking ------------------------------------------------------------------------------------------------------
 
-static bool smith_mcp_tool_stack(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_stack(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     smith_mcp_tool_begin(server, session, out);
@@ -625,7 +638,7 @@ static bool smith_mcp_scope(SmithMcpServer *server, SmithMcpSession *session, in
     return false;
 }
 
-static bool smith_mcp_tool_variables(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_variables(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     smith_mcp_tool_begin(server, session, out);
@@ -693,7 +706,7 @@ static bool smith_mcp_expression_mutates(const char *text) {
     return false;
 }
 
-static bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     const char *expression = smith_mcp_argument_string(&server->scratch, arguments, "expression");
@@ -750,7 +763,7 @@ static bool smith_mcp_tool_evaluate(SmithMcpServer *server, const SmithJsonValue
     return true;
 }
 
-static bool smith_mcp_tool_stop(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
+bool smith_mcp_tool_stop(SmithMcpServer *server, const SmithJsonValue *arguments, SmithMcpText *out) {
     SmithMcpSession *session = smith_mcp_tool_session(server, arguments, out);
     if (session == nullptr) return false;
     smith_mcp_pump(server, 1);
@@ -769,21 +782,7 @@ static bool smith_mcp_tool_stop(SmithMcpServer *server, const SmithJsonValue *ar
 
 // --- the table ----------------------------------------------------------------------------------------------------
 
-typedef struct {
-    const char *name;
-    const char *description;
-    const char *schema; // the tool's input, as JSON Schema
-    bool read_only;
-    SmithMcpToolFunction run;
-} SmithMcpToolEntry;
-
-#define SMITH_MCP_SESSION_PROPERTY \
-    "\"session\":{\"type\":\"string\",\"description\":\"The session id (s1, s2...). Default: the latest.\"}"
-#define SMITH_MCP_TIMEOUT_PROPERTY \
-    "\"timeout_ms\":{\"type\":\"integer\",\"description\":\"How long to wait for the program to stop or end, in ms. " \
-    "Default 30000.\"}"
-
-static const SmithMcpToolEntry smith_mcp_tool_table[] = {
+const SmithMcpToolEntry smith_mcp_tool_table[] = {
     {"launch",
      "Start a program under the debugger and run it to its first stop. Give `program` (with `args`), or `test`: the "
      "name of a "
@@ -864,5 +863,3 @@ static const SmithMcpToolEntry smith_mcp_tool_table[] = {
     {"stop", "End the debug session: the program is killed and the debugger closed. Returns the program's last output.",
      "{\"type\":\"object\",\"properties\":{" SMITH_MCP_SESSION_PROPERTY "}}", false, smith_mcp_tool_stop},
 };
-
-constexpr size_t smith_mcp_tool_count = sizeof smith_mcp_tool_table / sizeof smith_mcp_tool_table[0];

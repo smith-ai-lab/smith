@@ -21,7 +21,7 @@ constexpr Usize memory_size = (Usize)1 << 20; // 1 MiB
 
 // The commands of every case: `w FILE` waits for a file, `ww FILE TEXT` waits for a text in a file, `hold` is a job
 // that keeps its slot until the file `free` exists.
-constexpr char prelude[_] =
+static const char *const prelude =
     "unset SMITH_SLOT_HELD SMITH_PRIORITY SMITH_SLOTS; export SMITH_CORES=1 SMITH_SLOTS_DIR=\"$PWD/slots\"; "
     "w() { while [ ! -e \"$1\" ]; do sleep 0.05; done; }; "
     "ww() { until grep -q \"$2\" \"$1\" 2>/dev/null; do sleep 0.05; done; }; "
@@ -146,11 +146,12 @@ export void test_a_run_starts_while_all_but_one_token_are_held() {
 }
 
 // The manifest of three steps that each say they started (r1 to r3) and wait for the file `go`.
-constexpr char three_steps[_] = "printf 'rule step\n  command = $cmd\n"
-                                "build o1: step\n  cmd = touch r1; while [ ! -e go ]; do sleep 0.05; done; touch o1\n"
-                                "build o2: step\n  cmd = touch r2; while [ ! -e go ]; do sleep 0.05; done; touch o2\n"
-                                "build o3: step\n  cmd = touch r3; while [ ! -e go ]; do sleep 0.05; done; touch o3\n"
-                                "default o1 o2 o3\n' >m.ninja; ";
+static const char *const three_steps =
+    "printf 'rule step\n  command = $cmd\n"
+    "build o1: step\n  cmd = touch r1; while [ ! -e go ]; do sleep 0.05; done; touch o1\n"
+    "build o2: step\n  cmd = touch r2; while [ ! -e go ]; do sleep 0.05; done; touch o2\n"
+    "build o3: step\n  cmd = touch r3; while [ ! -e go ]; do sleep 0.05; done; touch o3\n"
+    "default o1 o2 o3\n' >m.ninja; ";
 
 // A case in a pool of four with the three steps written.
 static const char *three_steps_case(const char *script) {

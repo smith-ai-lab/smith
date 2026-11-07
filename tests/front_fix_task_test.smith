@@ -1,0 +1,40 @@
+// Fix-its and checks that `lib/std/task.smith` needs (#2643): the last line of a body that calls a `Void` function is
+// not a value to return. The text must check with no error.
+module front_fix_task_test;
+
+import front::fix;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    if (countof(parsed.errors) != 0) return 1000;
+    types::Checked checked = types_decl::check_module(&parsed.module, types::lp64());
+    return checked.error_count;
+}
+
+export void test_front_fix_task_the_last_line_of_a_void_body_may_call_a_void_function() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn take(n: i32):\n    _ := n\n\nfn f(a: ?i32):\n    n := a else:\n        return\n    take(n)\n";
+    test::check_equal(errors_in(source), (Usize)0);
+}
+
+// A global may be `= undefined`, a file-scope `static_assert` is checked as a `bool`, and `@when` may stand on module
+// asm, which has no name.
+export void test_front_fix_task_globals_may_be_undefined_and_static_asserts_and_asm_check() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    test::check_equal(errors_in("mut slots: [4]i32 = undefined\n"), (Usize)0);
+    test::check_equal(errors_in("static_assert(sizeof(i64) == 8, \"words\");\n"), (Usize)0);
+    test::check_equal(errors_in("static_assert(sizeof(i64), \"not a bool\");\n") > 0, true);
+    test::check_equal(errors_in("@when(target.os == .linux)\nasm`nop`\n"), (Usize)0);
+}

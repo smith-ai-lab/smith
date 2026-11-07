@@ -95,11 +95,11 @@ export void test_tuple_types_and_slice_declarators_stay_as_written() {
 // --- the same as C -------------------------------------------------------------------------------------------------
 
 // The next line of text, copied (a zero ends it), or nullptr at the end. `*at` moves past it.
-static const char *next_line(arena::Arena *arena, const char **at) {
+static const char *next_line(arena::Arena *memory, const char **at) {
     if (**at == '\0') return nullptr;
     const char *end = c::strchr(*at, '\n');
     Usize length = end != nullptr ? (Usize)(end - *at) : c::strlen(*at);
-    char *copy = arena::push_slice(arena, char, length + 1).data;
+    char *copy = arena::push_slice(memory, char, length + 1).data;
     const char *line = *at;
     mem::copy(copy[0:length], line[0:length]);
     *at += length + (end != nullptr ? 1 : 0);

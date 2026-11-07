@@ -1,0 +1,210 @@
+// front::fix_guard, the fix-it for a Result read after a guard that leaves (#2648).
+//
+//   lexed: lex.Lexed = lex.tokenize(source)       lexed: lex.Lexed = lex.tokenize(source)
+//   if lexed == .error:                           .ok(ok) := lexed else:
+//       return source                                 return source
+//   tokens: lex.Tokens = lexed.ok                 tokens: lex.Tokens = ok
+//
+// A `Result` is read with `.ok` only after a test, and the test that leaves the block is a binding with an `else`
+// (smith-dev-syntax-bindings). `try` is for a guard that passes the error up unchanged, which the checker writes
+// (`note_try_guard`); this pass is for the other guards: a body that leaves (`return`, `continue`, `break`) and never
+// mentions the result. The binding takes the variant's name, `ok`; a name `ok` in the function leaves the site as it
+// is, and so does a second guard in the same function (the next pass finds `ok` in scope). Tests:
+// `tests/front_fix_guard_test.smith`.
+//
+//   fix_guard::edits(source)   the fixes for the guards of `source`
+module front::fix_guard;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::format;
+import std::mem;
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static Bool starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    for (Usize i = 0; i < countof(prefix); i++)
+        if (text[i] != prefix[i]) return false;
+    return true;
+}
+
+static Usize line_end(Str source, Usize at) {
+    while (at < countof(source) && source[at] != '\n')
+        at += 1;
+    return at;
+}
+
+// The blanks at the start of the line at `at`.
+static Usize indent_of(Str source, Usize at) {
+    Usize k = at;
+    while (k < countof(source) && source[k] == ' ')
+        k += 1;
+    return k - at;
+}
+
+// Whether the line at `at` is blank.
+static Bool blank(Str source, Usize at) {
+    return at >= countof(source) || line_end(source, at) == at + indent_of(source, at);
+}
+
+// The start of the line after the one at `at`.
+static Usize next_line(Str source, Usize at) {
+    return line_end(source, at) + 1;
+}
+
+// The place of `name` as a whole word (not `x.name`, not `name2`) in `text` from `from`, or `countof(text)`.
+static Usize word_at(Str text, Usize from, Str name) {
+    for (Usize i = from; i + countof(name) <= countof(text); i++) {
+        if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) continue;
+        if (!starts_with(text[i:countof(text)], name)) continue;
+        if (i + countof(name) < countof(text) && word_char(text[i + countof(name)])) continue;
+        return i;
+    }
+    return countof(text);
+}
+
+// The place of the read `name.ok` in `text` from `from`, or `countof(text)`.
+static Usize read_at(Str text, Usize from, Str name) {
+    for (Usize i = from; i + countof(name) + 3 <= countof(text); i++) {
+        if (i > 0 && (word_char(text[i - 1]) || text[i - 1] == '.')) continue;
+        if (!starts_with(text[i:countof(text)], name)) continue;
+        if (!starts_with(text[i + countof(name):countof(text)], ".ok")) continue;
+        Usize after = i + countof(name) + 3;
+        if (after < countof(text) && word_char(text[after])) continue;
+        return i;
+    }
+    return countof(text);
+}
+
+// The first byte of the function that holds the byte `at`: the nearest line at column 0 above it.
+static Usize function_start(Str source, Usize at) {
+    Usize start = at;
+    while (start > 0) {
+        Usize prev = start - 1;
+        while (prev > 0 && source[prev - 1] != '\n')
+            prev -= 1;
+        start = prev;
+        if (source[start] != ' ' && source[start] != '\n') break;
+    }
+    return start;
+}
+
+// The end of the function that starts at `start`: the next line at column 0.
+static Usize function_end(Str source, Usize start) {
+    Usize stop = next_line(source, start);
+    while (stop < countof(source) && (source[stop] == ' ' || source[stop] == '\n'))
+        stop = next_line(source, stop);
+    return stop < countof(source) ? stop : countof(source);
+}
+
+static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
+    out = mem::realloc(out, countof(out) + 1);
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    ast::Span at = {.start = (U32)start, .end = (U32)stop};
+    fix[0] = (core::Edit){.span = at, .text = text};
+    core::ParseError made = {};
+    made.span = at;
+    Str why = "a Result read after a guard that leaves is a binding with an else";
+    made.message = why;
+    made.fix = fix;
+    out[countof(out) - 1] = made;
+    return out;
+}
+
+// The name `R` of `if R == .error:` in the trimmed `line`, and where the text after the colon starts.
+static Bool guard_of(Str line, Str *name, Usize *after) {
+    if (!starts_with(line, "if ")) return false;
+    Usize k = 3;
+    while (k < countof(line) && word_char(line[k]))
+        k += 1;
+    if (k == 3 || !starts_with(line[k:countof(line)], " == .error:")) return false;
+    *name = line[3:k];
+    *after = k + 11;
+    return true;
+}
+
+// Whether `text` starts with the keyword `word` as a whole word.
+static Bool keyword(Str text, Str word) {
+    if (!starts_with(text, word)) return false;
+    return countof(text) == countof(word) || !word_char(text[countof(word)]);
+}
+
+// Whether `text` ends a block by leaving it.
+static Bool leaves(Str text) {
+    Str ret = "return";
+    Str next = "continue";
+    Str stop = "break";
+    return keyword(text, ret) || keyword(text, next) || keyword(text, stop);
+}
+
+export core::Errors edits(Str source) {
+    core::Errors out = {};
+    Usize last_function = countof(source);
+    Usize at = 0;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Usize indent = indent_of(source, at);
+        Str name = "";
+        Usize after = 0;
+        if (!guard_of(source[at + indent:end], &name, &after)) {
+            at = end + 1;
+            continue;
+        }
+        Usize head = at + indent;
+        // the body: the rest of the line, or the deeper lines below
+        Usize body_end = end + 1;
+        Bool left = false;
+        Str inline_body = source[head + after:end];
+        while (countof(inline_body) > 0 && inline_body[0] == ' ')
+            inline_body = inline_body[1:countof(inline_body)];
+        if (countof(inline_body) > 0) {
+            left = leaves(inline_body);
+        } else {
+            Usize last = countof(source);
+            while (body_end < countof(source) && (blank(source, body_end) || indent_of(source, body_end) > indent)) {
+                if (!blank(source, body_end)) last = body_end;
+                body_end = next_line(source, body_end);
+            }
+            if (last < countof(source)) left = leaves(source[last + indent_of(source, last):line_end(source, last)]);
+        }
+        // the body, from the colon on, must not mention the result
+        Usize mention_from = countof(inline_body) > 0 ? head + after : end + 1;
+        Str body_text = source[mention_from:body_end];
+        if (!left || word_at(body_text, 0, name) < countof(body_text)) {
+            at = end + 1;
+            continue;
+        }
+        // the rest of the block: up to the first line shallower than the guard
+        Usize rest_end = body_end;
+        while (rest_end < countof(source) && (blank(source, rest_end) || indent_of(source, rest_end) >= indent))
+            rest_end = next_line(source, rest_end);
+        if (rest_end > countof(source)) rest_end = countof(source);
+        if (body_end >= rest_end || read_at(source[body_end:rest_end], 0, name) >= rest_end - body_end) {
+            at = end + 1;
+            continue;
+        }
+        Usize start = function_start(source, at);
+        Usize stop = function_end(source, start);
+        if (start == last_function || word_at(source[start:stop], 0, "ok") < stop - start) {
+            at = end + 1;
+            continue;
+        }
+        last_function = start;
+        Str binding = types::message_of(format::push(".ok(ok) := ", name, " else:"));
+        out = add(out, head, head + after, binding);
+        Usize from = 0;
+        Usize found = read_at(source[body_end:rest_end], from, name);
+        while (found < rest_end - body_end) {
+            out = add(out, body_end + found, body_end + found + countof(name) + 3, "ok");
+            from = found + countof(name) + 3;
+            found = read_at(source[body_end:rest_end], from, name);
+        }
+        at = end + 1;
+    }
+    return out;
+}

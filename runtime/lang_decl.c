@@ -1,51 +1,22 @@
 // What names mean: the module's table, the import bindings, and the lowering of one identifier. Included by
 // runtime/lang.c, after runtime/lang_out.c.
 
-// What came before a token, as far as lowering it is concerned.
-typedef struct {
-    bool after_member; // after . or ->: a field, never a name in scope
-    bool after_tag;    // after struct, union or enum
-    char tag_word;     // 's', 'u' or 'e': which, after a tag word
-    bool typeish;      // the tokens before end a type, so a name now is a declarator
-    bool lazy;         // typeish is not known yet: ask when it matters (it can take a lookup)
-    char before;       // the first character of the token before, if it was a punctuator
-} SmithLangContext;
-
-typedef struct {
-    bool replaced;
-    bool is_type;
-    bool expand; // the text is a macro of the compiler's (__UINT32_TYPE__): let it expand
-    const char *text;
-    size_t length;
-    const char *header;
-    size_t header_length;
-} SmithLangLowered;
-
 // runtime/lang_sparse.c
-static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host);
 
 // runtime/lang_names.c
-static void smith_lang_written_add(SmithLang *lang, const char *lowered, size_t lowered_length, const char *written,
-                                   size_t written_length, size_t prefix_length, SmithLangText module, bool direct,
-                                   const char *member, size_t member_length);
-static const SmithLangCName *smith_lang_cname_find(const SmithLang *lang, const char *fallback, size_t length);
-static void smith_lang_written_access(SmithLang *lang, const SmithLangBinding *binding, size_t lowered_length,
-                                      const char *member, size_t member_length);
-static void smith_lang_written_read(SmithLang *lang, const SmithHost *host, const char *header, const char *module,
-                                    const char *bind, size_t bind_length);
-static void smith_lang_note_qualifier(SmithLang *lang, const SmithLangBinding *binding, const SmithToken *cursor);
 
-// runtime/lang_generic.c
-static void smith_lang_generic_note_binding(SmithLang *lang, uint16_t via);
-static bool smith_lang_is_type_param(const SmithLang *lang, const char *name, size_t length);
-static bool smith_lang_generic_call(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                    const SmithLangBinding *binding, const SmithToken *member);
-static bool smith_lang_generic_call_here(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                         const SmithLangName *known);
-static void smith_lang_generic_private_name(SmithLang *lang, const SmithHost *host, SmithLangName *known,
-                                            const char *name, size_t length, uint32_t location);
+#include "lang_decl.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_private.h"
+#include "lang_sparse.h"
+#include "lang_target.h"
 
-static uint32_t smith_lang_hash(const char *text, size_t length) {
+uint32_t smith_lang_hash(const char *text, size_t length) {
     uint32_t hash = 2166136261U;
     for (size_t i = 0; i < length; i++) { // bounded by the name
         hash ^= (uint8_t)text[i];
@@ -54,7 +25,7 @@ static uint32_t smith_lang_hash(const char *text, size_t length) {
     return hash;
 }
 
-static SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, size_t length) {
+SmithLangName *smith_lang_name_find(SmithLang *lang, const char *text, size_t length) {
     uint32_t slot = smith_lang_hash(text, length) & (smith_lang_slots - 1);
     for (size_t probe = 0; probe < smith_lang_slots; probe++) { // the table is half empty at most
         uint32_t entry = lang->slots[slot];
@@ -89,7 +60,7 @@ static SmithLangName *smith_lang_name_add(SmithLang *lang, const char *text, siz
 // A parameter is not the export that has its name: `void step(Step *step)` keeps `step` in the header, and the body of
 // the function reads it as the parameter (C's own scope), so the parameter is kept as written wherever it is used.
 
-static bool smith_lang_is_param(const SmithLang *lang, const char *name, size_t length) {
+bool smith_lang_is_param(const SmithLang *lang, const char *name, size_t length) {
     for (uint32_t i = 0; i < lang->params_count; i++) { // at most 16
         if (strlen(lang->params[i]) == length && memcmp(lang->params[i], name, length) == 0) return true;
     }
@@ -98,7 +69,7 @@ static bool smith_lang_is_param(const SmithLang *lang, const char *name, size_t 
 
 // A name of the module in a function's parameter list, outside brackets (`char a[N]` uses N), that is no type: the
 // parameter's own name (a function pointer's, `int (*width)(Box *box)`, too). Remembered, so that the body keeps it.
-static bool smith_lang_param_here(SmithLang *lang, const SmithLangName *known, const char *name, size_t length) {
+bool smith_lang_param_here(SmithLang *lang, const SmithLangName *known, const char *name, size_t length) {
     if (!lang->decl.in_params || lang->paren_depth == 0 || lang->bracket_depth != 0) return false;
     if (known->kind == SmithLangName_Type || known->kind == SmithLangName_Tag) return false;
     if (length < smith_lang_param_max && lang->params_count < smith_lang_params_max &&
@@ -110,7 +81,7 @@ static bool smith_lang_param_here(SmithLang *lang, const SmithLangName *known, c
     return true;
 }
 
-static SmithLangBinding *smith_lang_binding_find(SmithLang *lang, const char *text, size_t length) {
+SmithLangBinding *smith_lang_binding_find(SmithLang *lang, const char *text, size_t length) {
     for (size_t i = 0; i < lang->bindings_count; i++) { // bounded by the table
         SmithLangBinding *binding = &lang->bindings[i];
         if (binding->name.length == length && memcmp(smith_lang_str(binding->name), text, length) == 0) return binding;
@@ -118,7 +89,7 @@ static SmithLangBinding *smith_lang_binding_find(SmithLang *lang, const char *te
     return nullptr;
 }
 
-static bool smith_lang_follows_declarator(const SmithToken *next) {
+bool smith_lang_follows_declarator(const SmithToken *next) {
     if (next->kind == SmithTokenKind_Eof) return true;
     if (next->kind != SmithTokenKind_Punctuator) return false;
     static const char *const punctuators[] = {"=", ";", ",", "[", ")", ":"};
@@ -138,7 +109,7 @@ static bool smith_lang_enum_constant_declared(const SmithLang *lang, const Smith
 
 // Whether the name being read is declared here, so it keeps its meaning: a declarator after a type (`int u16 =`), a
 // function at file scope (`int u16(`) or an enumeration constant.
-static bool smith_lang_declares_name(const SmithLang *lang, const SmithToken *next, bool typeish) {
+bool smith_lang_declares_name(const SmithLang *lang, const SmithToken *next, bool typeish) {
     if (typeish && smith_lang_follows_declarator(next)) return true;
     if (typeish && lang->brace_depth == 0 && lang->paren_depth == 0 && smith_lang_punct(next, "(")) return true;
     return smith_lang_enum_constant_declared(lang, next);
@@ -156,7 +127,7 @@ static bool smith_lang_typeish(SmithLang *lang, const SmithHost *host) {
            SmithLookup_Type;
 }
 
-static SmithLangContext smith_lang_context(SmithLang *lang, const SmithHost *host, bool lazy) {
+SmithLangContext smith_lang_context(SmithLang *lang, const SmithHost *host, bool lazy) {
     SmithLangContext context = {
         .after_member = lang->prev_member,
         .after_tag = lang->prev_tag,
@@ -192,7 +163,7 @@ static void smith_lang_track_attribute(SmithLang *lang, const SmithToken *token)
 }
 
 // Remembers what a token was, for the one after it.
-static void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
+void smith_lang_track(SmithLang *lang, const SmithToken *token, bool is_type) {
     smith_lang_track_attribute(lang, token);
     lang->prev_member = false;
     lang->prev_tag = false;
@@ -340,8 +311,8 @@ static bool smith_lang_tag_clash(SmithLangNameKind first, SmithLangNameKind seco
 
 // A name the module introduces at file scope: the table learns it, and the declaration gets the prefixed one (or the
 // C name chosen for it). Returns null when the name is kept as written (main, and the C symbol an `extern` declares).
-static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                      uint32_t location, SmithLangNameKind kind, bool exported) {
+const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                               uint32_t location, SmithLangNameKind kind, bool exported) {
     if (kind == SmithLangName_Function && smith_lang_equals(name, length, "main")) {
         return nullptr;
     }
@@ -400,25 +371,18 @@ static const char *smith_lang_declare(SmithLang *lang, const SmithHost *host, co
 }
 
 // Whether `module`, `import` or `export` is the file's own name for something, which the parser or a typedef says.
-static bool smith_lang_is_own_word(SmithLang *lang, const SmithHost *host, const SmithToken *word) {
+bool smith_lang_is_own_word(SmithLang *lang, const SmithHost *host, const SmithToken *word) {
     uint8_t bit = smith_lang_ident(word, "module") ? 1 : smith_lang_ident(word, "import") ? 2 : 4;
     return (lang->own_words & bit) != 0 ||
            host->lookup(host->context, word->text, word->length, SmithLookup_Type).kind != SmithLookup_None;
 }
 
 // A typedef of one of those words (`typedef int import;`) makes it the file's own for good.
-static void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
+void smith_lang_note_own_word(SmithLang *lang, const SmithToken *word) {
     if (smith_lang_ident(word, "module")) lang->own_words |= 1;
     if (smith_lang_ident(word, "import")) lang->own_words |= 2;
     if (smith_lang_ident(word, "export")) lang->own_words |= 4;
 }
-
-// runtime/lang_target.c
-static void smith_lang_target_use(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                  const SmithToken *member, SmithToken *result, char *digits, size_t capacity);
-
-// runtime/lang_names.c: the export of an import (or a name written through one) with this C name, if the table has it
-static SmithLangWritten *smith_lang_written_lookup(const SmithLang *lang, const char *text, size_t length);
 
 // ---- Namespace accesses: rp::open and c::sinf
 // -------------------------------------------------------------------------
@@ -558,8 +522,8 @@ static bool smith_lang_namespace_read(SmithLang *lang, const SmithHost *host, co
 }
 
 // smith_lang_namespace_read, remembering the name it made: a declaration `m::T x = ...` is typed from it at its `=`.
-static bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
-                                 const SmithLangBinding *binding, SmithToken *result) {
+bool smith_lang_namespace(SmithLang *lang, const SmithHost *host, const SmithToken *name,
+                          const SmithLangBinding *binding, SmithToken *result) {
     bool read = smith_lang_namespace_read(lang, host, name, binding, result);
     if (read && !lang->namespace_done && result->length < sizeof lang->slice.qualified) {
         snprintf(lang->slice.qualified, sizeof lang->slice.qualified, "%.*s", (int)result->length, result->text);
@@ -632,8 +596,7 @@ static void smith_lang_check_c_tag(SmithLang *lang, const SmithHost *host, const
 // A module's tag is also a type name: `struct Point {...};` is `typedef struct m_Point m_Point;` too, written before
 // the next declaration (so the definition is complete when an enum is named; a struct's own body names itself through
 // `struct`, runtime/lang_stream.c). The typedef is due once, where the tag is first declared.
-static void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char word, const char *spelling,
-                               bool late) {
+void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length, char word, const char *spelling, bool late) {
     SmithLangName *entry = smith_lang_name_find(lang, name, length);
     if (entry == nullptr || word == 0 || lang->due_count >= smith_lang_due_max || lang->recording ||
         lang->generated_name) {
@@ -650,8 +613,8 @@ static void smith_lang_tag_due(SmithLang *lang, const char *name, size_t length,
     }
 }
 
-static SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                             uint32_t location, const SmithToken **next, char word) {
+SmithLangLowered smith_lang_lower_tag(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                      uint32_t location, const SmithToken **next, char word) {
     char context_word = word;
     SmithLangLowered kept = smith_lang_keep();
     kept.is_type = true;
@@ -710,8 +673,8 @@ static bool smith_lang_is_member_name(SmithLang *lang, const SmithHost *host, co
 }
 
 // A name used in a module that a C header declared, with no `c.`.
-static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                    uint32_t location, bool *is_type) {
+void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, const char *name, size_t length, uint32_t location,
+                             bool *is_type) {
     if (lang->generated_name || (length >= 2 && name[0] == '_' && name[1] == '_')) return;
     if (smith_lang_in_attribute(lang) || (host->previous != nullptr && smith_lang_sparse_in_attribute(lang, host))) {
         return; // [[gnu::format(printf, 1, 2)]]: printf is the attribute's word for a kind of format
@@ -730,8 +693,8 @@ static void smith_lang_check_c_name(SmithLang *lang, const SmithHost *host, cons
 }
 
 // What a name that nothing special applies to becomes. `next` is the token after it.
-static SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
-                                         uint32_t location, const SmithLangContext *context, const SmithToken *next) {
+SmithLangLowered smith_lang_lower(SmithLang *lang, const SmithHost *host, const char *name, size_t length,
+                                  uint32_t location, const SmithLangContext *context, const SmithToken *next) {
     if (smith_lang_word(name, length) != SmithLangWord_Other || context->after_member) return smith_lang_keep();
     if (context->after_tag) return smith_lang_lower_tag(lang, host, name, length, location, &next, context->tag_word);
     SmithLangLowered sized = smith_lang_lower_sized(lang, host, name, length, context, &next);

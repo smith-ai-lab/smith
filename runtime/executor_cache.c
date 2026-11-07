@@ -15,6 +15,17 @@
 // is shared by every worktree like a release one.
 // A hit is only ever a compile with no output (a warning is not hidden), whose inputs were all older than the compile.
 
+#include "executor_cache.h"
+#include "core.h"
+#include "executor.h"
+#include "executor_manifest.h"
+#include "executor_plan.h"
+#include "executor_run.h"
+#include "executor_state.h"
+#include "main.h"
+#include "package.h"
+#include "platform_linux.h"
+
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
 constexpr size_t smith_stepcache_output_max = (size_t)16 << 20; // a text output (.fx), read whole
@@ -991,7 +1002,7 @@ static bool smith_stepcache_apply(SmithExec *exec, const SmithEdge *edge, const 
 
 // Looks for a result of the edge, and when there is one puts its outputs in place. *key says how the edge was keyed
 // (for the store after a miss). True for a hit: the edge's outputs and its depfile are as a compile leaves them.
-static bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key, int64_t now) {
+bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepKey *key, int64_t now) {
     SmithEdge *edge = &exec->graph.edges[number];
     key->valid = false;
     if (!smith_stepcache_open(exec) || !smith_stepcache_eligible(exec, edge)) return false;
@@ -1021,8 +1032,8 @@ static bool smith_stepcache_restore(SmithExec *exec, uint32_t number, SmithStepK
 
 // What the depfile names, for the graph. A compile with -MD names the system's headers too, for the cache's variant
 // alone: the graph tracks what -MMD would have named, so a no-op build stats no more files than it did.
-static uint32_t smith_stepcache_graph_deps(SmithExec *exec, const SmithEdge *edge, const char *const *deps,
-                                           uint32_t count, const char ***kept) {
+uint32_t smith_stepcache_graph_deps(SmithExec *exec, const SmithEdge *edge, const char *const *deps, uint32_t count,
+                                    const char ***kept) {
     bool split = smith_stepcache_split(edge->command);
     bool has_md = false;
     for (size_t i = 0; split && i < smith_stepcache_scope.count; i++)
@@ -1137,7 +1148,7 @@ static void smith_stepcache_add_variant(const char *key, const SmithStepText *va
 
 // After a compile that ran and passed: stores its outputs for the inputs it read. Nothing is stored when the compile
 // printed anything (a warning is not hidden), a file it read was written after it began, or a key cannot be made.
-static void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now) {
+void smith_stepcache_store(SmithExec *exec, SmithEdge *edge, const SmithJob *job, int64_t now) {
     if (!job->key.valid || job->output_size > 0 || job->truncated || job->step_deps == nullptr ||
         job->depfile_text == nullptr || !smith_stepcache_eligible(exec, edge))
         return;
@@ -1229,19 +1240,13 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
         smith_stepcache_pass_shard(temporary, now, -1, false);
 }
 
-static void smith_stepcache_prune(SmithExec *exec) {
+void smith_stepcache_prune(SmithExec *exec) {
     if (!smith_stepcache_open(exec) || exec->options.dry_run) return;
     smith_stepcache_prune_at(time(nullptr), smith_cache_limit());
 }
 
 #ifdef SMITH_CORE
 #include "smith_core_step_cache.h"
-
-// Defined in executor_run.c, which this file comes before.
-static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack);
-static void smith_run_make_parents(SmithExec *exec, const char *path);
-static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, SmithJob *job);
-static int64_t smith_run_wall_ns(void);
 
 // The depfile of a compile as the build gave it ("output: dep dep"), written where the compile would leave it.
 static void smith_stepcache_core_depfile(SmithExec *exec, const SmithCorePlan *build, const SmithEdge *edge) {
@@ -1250,7 +1255,7 @@ static void smith_stepcache_core_depfile(SmithExec *exec, const SmithCorePlan *b
     for (size_t i = 0; build->depends != nullptr && build->depends[i] != nullptr; i++) { // bounded by the list
         const char *line = build->depends[i];
         if (strncmp(line, first, length) != 0 || line[length] != ':') continue;
-        smith_run_make_parents(exec, edge->depfile);
+        smith_run_make_parents(edge->depfile);
         FILE *file = fopen(edge->depfile, "wb");
         if (file == nullptr) return;
         fprintf(file, "%s\n", line);
@@ -1308,14 +1313,9 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
         if (home >= 0) close(home);
         return false;
     }
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = &io;
-    exec->arena = &io.arena;
+    SmithExec *exec = smith_exec_open(nullptr);
     exec->options.explain = true;
     exec->manifest = build->plan.manifest;
-    SmithArena scratch = smith_arena_carve(&io.arena, smith_exec_text_max);
-    exec->scratch = (char *)scratch.memory;
     smith_plan_core_stream = out;
     smith_manifest_read(exec);
     smith_state_open(exec);
@@ -1338,7 +1338,7 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
     smith_stepcache = (SmithStepCache){};
     smith_plan_core_stream = nullptr;
     fclose(out);
-    smith_io_close(&io);
+    smith_exec_close(exec);
     bool back = fchdir(home) == 0;
     close(home);
     *ran = commands;
@@ -1347,15 +1347,12 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
 
 // include/smith_core_step_cache.h: the prune a build starts with, with the cap and the time given.
 bool smith_core_step_cache_prune(const char *cache, uint64_t cap, int64_t now) {
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = &io;
-    exec->arena = &io.arena;
+    SmithExec *exec = smith_exec_open(nullptr);
     smith_stepcache = (SmithStepCache){};
     bool on = smith_stepcache_start(exec, cache);
     if (on) smith_stepcache_prune_at((time_t)now, cap);
     smith_stepcache = (SmithStepCache){};
-    smith_io_close(&io);
+    smith_exec_close(exec);
     return on;
 }
 #endif

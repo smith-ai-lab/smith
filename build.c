@@ -12,6 +12,7 @@
 // -DPREFIX=...), release (CI only), llvm and clean.
 #include <smith/build.h>
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -22,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -33,7 +35,8 @@ typedef struct {
     const BuildPlatform *platform; // what differs between macOS and Linux
     const char *cc;
     const char *const *cflags;
-    const char *binary; // the smith this build makes
+    const char *optimize; // the profile's level: -O0 for dev (the default), -O2 for release (-DPROFILE=release, #2684)
+    const char *binary;   // the smith this build makes
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
@@ -164,6 +167,18 @@ static bool build_is_arm(SmithBuild *b) {
 
 static const BuildPlatform *build_platform(SmithBuild *b) {
     return build_is_linux(b) ? &build_platform_linux : &build_platform_macos;
+}
+
+// The build's profile (#2684): -DPROFILE=dev (the default) compiles smith's own C, C++ and .smith with -O0 -g, so an
+// edit-and-rebuild loop and CI's tests do not pay for the optimizer; -DPROFILE=release compiles everything with -O2 -g.
+// `smith build release` builds the release profile (build_release). The level is part of every compile's flags, so
+// the step cache never mixes the two. A step that is unusable unoptimized keeps its own level, with a comment.
+static const char *build_profile_optimize(SmithBuild *b) {
+    const char *profile = smith_option_value(b, "PROFILE", "dev", "dev (-O0, the default) or release (-O2)");
+    if (strcmp(profile, "release") == 0) return "-O2";
+    if (strcmp(profile, "dev") == 0) return "-O0";
+    fprintf(stderr, "smith: -DPROFILE=%s: the profiles are dev and release\n", profile);
+    exit(2);
 }
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -410,7 +425,7 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
 static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
     return smith_cat(
         b,
-        (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+        (const char *[]){"-std=c++17", config->optimize, "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
                          "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
                          smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
         smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
@@ -526,7 +541,7 @@ typedef struct {
 
 static void build_prover(SmithBuild *b, const BuildConfig *config, const char *folder, BuildProver *prover) {
     const char *const flags_head[] = {"-std=c++20",
-                                      "-O1",
+                                      config->optimize,
                                       "-g",
                                       "-Wall",
                                       "-Wextra",
@@ -599,7 +614,8 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
                                    nullptr};
     SmithStep program = {
         .command = smith_cat(
-            b, smith_list(b, config->cc, "-O1", "-w", "-I", "include", "-I", ".smith/include", nullptr), sources,
+            b, smith_list(b, config->cc, config->optimize, "-w", "-I", "include", "-I", ".smith/include", nullptr),
+            sources,
             smith_cat(b, config->platform->pack_libraries,
                       smith_list(b, "-o", smith_fmt(b, "%s/pack", folder), nullptr), nullptr),
             nullptr),
@@ -759,26 +775,94 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
     return outputs;
 }
 
+// smith.c used to include these files (#2685, one translation unit of 60,000 lines); each is an object of its own now,
+// compiled with smith.c's flags, so an edit of one recompiles one file. gzip, xz and untar stay in package.c, which the
+// build runtime embeds and includes as one file.
+static const char *const build_runtime_sources[] = {
+    "runtime/account.c",
+    "runtime/cache.c",
+    "runtime/changed.c",
+    "runtime/coverage.c",
+    "runtime/docs.c",
+    "runtime/executor.c",
+    "runtime/executor_cache.c",
+    "runtime/executor_manifest.c",
+    "runtime/executor_plan.c",
+    "runtime/executor_run.c",
+    "runtime/executor_state.c",
+    "runtime/executor_tools.c",
+    "runtime/explain.c",
+    "runtime/front_flag.c",
+    "runtime/lang.c",
+    "runtime/lang_body.c",
+    "runtime/lang_command.c",
+    "runtime/lang_constexpr.c",
+    "runtime/lang_decl.c",
+    "runtime/lang_declare.c",
+    "runtime/lang_enum.c",
+    "runtime/lang_fields.c",
+    "runtime/lang_generic.c",
+    "runtime/lang_head.c",
+    "runtime/lang_import.c",
+    "runtime/lang_lambda.c",
+    "runtime/lang_lex.c",
+    "runtime/lang_names.c",
+    "runtime/lang_nested.c",
+    "runtime/lang_out.c",
+    "runtime/lang_private.c",
+    "runtime/lang_rfor.c",
+    "runtime/lang_slice.c",
+    "runtime/lang_sparse.c",
+    "runtime/lang_stream.c",
+    "runtime/lang_target.c",
+    "runtime/lang_trivia.c",
+    "runtime/lang_try.c",
+    "runtime/lang_tuple.c",
+    "runtime/lang_type.c",
+    "runtime/lang_unused.c",
+    "runtime/lint_cache.c",
+    "runtime/make.c",
+    "runtime/make_cc.c",
+    "runtime/make_class.c",
+    "runtime/make_emit.c",
+    "runtime/make_expand.c",
+    "runtime/make_graph.c",
+    "runtime/make_print.c",
+    "runtime/make_read.c",
+    "runtime/make_sub.c",
+    "runtime/make_translate.c",
+    "runtime/mcp.c",
+    "runtime/mcp_dap.c",
+    "runtime/mcp_serve.c",
+    "runtime/mcp_show.c",
+    "runtime/mcp_text.c",
+    "runtime/mcp_tools.c",
+    "runtime/package_unit.c",
+    "runtime/quiet.c",
+    "runtime/record.c",
+    "runtime/slots.c",
+    "runtime/symbolize.c",
+    "runtime/test_cache.c",
+    "runtime/verbs.c",
+    "runtime/world.c",
+    nullptr,
+};
+// The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
+// library and the protocol runtime, each an object of its own now that smith.c includes none of them.
+static const char *const build_runtime_sources_mcp[] = {".smith/protocol/dap.c", ".smith/protocol/mcp.c", "lib/json.c",
+                                                        "runtime/protocol/protocol.c", nullptr};
+static const char *const build_runtime_sources_linux[] = {"runtime/platform_linux.c", nullptr};
+static const char *const build_runtime_sources_macos[] = {"runtime/platform_macos.c", "runtime/sdk_cache.c", nullptr};
+
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
     "runtime/base.h",
     "runtime/build_runtime.c",
     "runtime/package.c",
+    "runtime/package.h",
     "runtime/gzip.c",
     "runtime/xz.c",
     "runtime/untar.c",
-    "runtime/cache.c",
-    "runtime/symbolize.c",
-    "runtime/explain.c",
-    "runtime/platform_macos.c",
-    "runtime/platform_linux.c",
-    "shim/lldb_explain.h",
-    "runtime/mcp.c",
-    "runtime/mcp_text.c",
-    "runtime/mcp_dap.c",
-    "runtime/mcp_show.c",
-    "runtime/mcp_tools.c",
-    "runtime/mcp_serve.c",
     "runtime/protocol/protocol.h",
     "runtime/protocol/protocol.c",
     "runtime/io.smith",
@@ -794,25 +878,6 @@ static const char *const build_smith_inputs[] = {
     "templates/defaults/clang-tidy",
     "templates/new/claude-settings.json",
     "runtime/lang.h",
-    "runtime/lang.c",
-    "runtime/lang_out.c",
-    "runtime/lang_trivia.c",
-    "runtime/lang_decl.c",
-    "runtime/lang_names.c",
-    "runtime/lang_import.c",
-    "runtime/lang_head.c",
-    "runtime/lang_generic.c",
-    "runtime/lang_constexpr.c",
-    "runtime/lang_fields.c",
-    "runtime/lang_rfor.c",
-    "runtime/lang_sparse.c",
-    "runtime/lang_declare.c",
-    "runtime/lang_tuple.c",
-    "runtime/lang_unused.c",
-    "runtime/lang_type.c",
-    "runtime/lang_stream.c",
-    "runtime/lang_lex.c",
-    "runtime/lang_command.c",
     nullptr,
 };
 
@@ -931,6 +996,13 @@ static const char *const build_front_modules[] = {
     "fix_method",
     "fix_zero",
     "fix_opaque",
+    "fix_payload",
+    "fix_array",
+    "fix_bool",
+    "fix_const",
+    "fix_chain",
+    "fix_guard",
+    "fix_place",
     "fix_typeof",
     "lsp_server",
     "lsp_hover",
@@ -1027,6 +1099,42 @@ static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *
     return objects;
 }
 
+// build/<OS>-<arch>/rt_<path with / as _>.o, so that runtime/mcp.c and the generated .smith/protocol/mcp.c differ.
+static const char *build_runtime_object_path(SmithBuild *b, const char *folder, const char *source) {
+    char flat[512];
+    size_t length = 0;
+    for (const char *at = source + (source[0] == '.' ? 1 : 0); *at != '\0' && length + 1 < sizeof flat; at++) // bounded
+        flat[length++] = *at == '/' ? '_' : *at;
+    flat[length] = '\0';
+    return smith_fmt(b, "%s/rt_%s.o", folder, smith_replace_extension(b, flat, ""));
+}
+
+// One object for each runtime source; returns how many it added to `list`.
+static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                    const char *const *flags, SmithObject *objects, const SmithObject **list) {
+    const char *const *platform = build_is_linux(b) ? build_runtime_sources_linux : build_runtime_sources_macos;
+    const char *const *inputs =
+        smith_cat(b, smith_list(b, "scripts/pack.h", nullptr), config->headers, config->protocol, nullptr);
+    size_t count = 0;
+    const char *const *tables[] = {build_runtime_sources, build_runtime_sources_mcp, platform};
+    for (size_t pass = 0; pass < 3; pass++) { // the three tables
+        const char *const *table = tables[pass];
+        for (size_t i = 0; table[i] != nullptr; i++) { // bounded by the tables
+            objects[count] = (SmithObject){
+                .compiler = config->cc,
+                .source = table[i],
+                .output = build_runtime_object_path(b, folder, table[i]),
+                .flags = flags,
+                .implicit_inputs = inputs,
+            };
+            smith_object(b, &objects[count]);
+            list[count] = &objects[count];
+            count++;
+        }
+    }
+    return count;
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
@@ -1048,9 +1156,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", "runtime/front_flag.c", nullptr},
-                                     build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
-                                     build_llvm_required(b, config), nullptr),
+        .implicit_inputs =
+            smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, build_library_sources(b),
+                      config->headers, config->protocol, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -1065,7 +1173,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     build_io_object(b, config, folder, flags, &runtime_io);
     // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 19, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + 1];
+    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2;
+    SmithObject runtime_objects[runtime_max];
+    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + runtime_max + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
@@ -1074,6 +1184,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     objects[3] = &lint_identity;
     size_t count = 4;
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
+    count += build_runtime_objects(b, config, folder, flags, runtime_objects, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
         .linker = config->cc,
@@ -1446,6 +1557,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "sh", "-c",
                 "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
+                // -O2 on purpose: the exhaustive search is only usable optimized (#2684)
                 "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
                 "\"$1\" -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
@@ -1488,9 +1600,27 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 // `stage0-<commit>` and prunes the old ones. release/publish.smith (module release::publish, which replaced
 // scripts/release.sh, #1674) refuses unless HEAD is main's tip (or CI's push to main); the smith just built compiles it
 // first (`release-tool`, a program until the build can run a module itself, #1667). No test or install is an input:
-// CI's check and install jobs come first, and a failure here breaks neither.
-static void build_release(SmithBuild *b, const char *binary, const char *folder) {
+// CI's check and install jobs come first, and a failure here breaks neither. What it publishes is the release profile
+// (#2684, -O2): under the default dev profile the `release-binary` task builds it first, by a build of its own with
+// -DPROFILE=release in a folder of its own (`<build folder>-release`), so dev and release objects never mix.
+static const char *build_release_binary(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    if (strcmp(config->optimize, "-O2") == 0) return config->binary;
+    const char *release_folder = smith_fmt(b, "%s-release", folder);
+    const char *binary = smith_fmt(b, "%s/smith", release_folder);
+    SmithStep build = {
+        .command = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "-DPROFILE=release",
+                              smith_fmt(b, "-DBUILD=%s", release_folder), binary, nullptr),
+        .description = "building the release profile (-O2)",
+    };
+    smith_task(b, "release-binary", &build);
+    return binary;
+}
+
+static void build_release(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *binary = build_release_binary(b, config, folder);
     const char *tool = smith_fmt(b, "%s/release", folder);
+    const char *const *built = strcmp(binary, config->binary) == 0 ? (const char *[]){binary, nullptr}
+                                                                   : (const char *[]){"release-binary", nullptr};
     SmithStep compile = {
         .command = smith_list(b, binary, "cc", "-w", "-I", "include", "-I", ".smith/include", "release/publish.smith",
                               "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
@@ -1498,13 +1628,13 @@ static void build_release(SmithBuild *b, const char *binary, const char *folder)
                               "lib/std/text.smith", "lib/std/process.smith", "lib/std/clock.smith", "lib/handlers.c",
                               "lib/trace.c", "lib/optimize_asm.c", "-o", tool, nullptr),
         .description = "compiling the release tool",
-        .inputs = (const char *[]){binary, nullptr},
+        .inputs = built,
     };
     smith_task(b, "release-tool", &compile);
     SmithStep release = {
         .command = (const char *[]){tool, "publish", binary, nullptr},
         .description = "publishing the stage0 release",
-        .inputs = (const char *[]){binary, "release-tool", nullptr},
+        .inputs = smith_cat(b, built, (const char *[]){"release-tool", nullptr}, nullptr),
     };
     smith_task(b, "release", &release);
 }
@@ -3049,8 +3179,9 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .compiler = config->cc,
         .source = "tree-sitter/src/parser.c",
         .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
-        .flags = smith_cat(b, smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
-                           config->platform->deployment, nullptr),
+        .flags =
+            smith_cat(b, smith_list(b, "-std=gnu11", config->optimize, "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+                      config->platform->deployment, nullptr),
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
@@ -3350,6 +3481,45 @@ static int build_ci_times(SmithRun *run) {
     return build_exec(smith_cat(b, smith_list(b, build_defer_tool(b, tool_folder), root, nullptr), ids, nullptr));
 }
 
+// `smith build stage0` (#2719): downloads the newest release into .smith/stage0/ and checks its .sha256, as the
+// README's Install section describes (curl over plain HTTPS, the checksum tool of the system, tar). It is written in C
+// and uses no `.smith` module of the tree: the tree builds only with the newest release (smith-dev-build, the lag
+// rule), so a clone with an older smith runs this first and cannot build anything else. Running it again replaces the
+// folder.
+static int build_stage0(SmithRun *run) {
+    SmithBuild *b = run->b;
+    struct utsname system = {};
+    if (uname(&system) != 0) return 1;
+    char os[sizeof system.sysname];
+    size_t length = strlen(system.sysname);
+    for (size_t i = 0; i <= length; i++)
+        os[i] = (char)tolower((unsigned char)system.sysname[i]);
+    const char *name = smith_fmt(b, "smith-%s-%s.tar.xz", os, system.machine);
+    const char *base = "https://github.com/smith-ai-lab/smith/releases/latest/download";
+    if (build_make_folder(b, ".smith") != 0) return 1;
+    for (int which = 0; which < 2; which++) {
+        const char *file = which == 0 ? name : smith_fmt(b, "%s.sha256", name);
+        int status = build_exec(smith_list(b, "curl", "-fsSL", "--retry", "3", "-o", smith_fmt(b, ".smith/%s", file),
+                                           smith_fmt(b, "%s/%s", base, file), nullptr));
+        if (status != 0) return status;
+    }
+#ifdef __APPLE__
+    const char *const *check = smith_list(b, "shasum", "-a", "256", "-c", smith_fmt(b, "%s.sha256", name), nullptr);
+#else
+    const char *const *check = smith_list(b, "sha256sum", "-c", smith_fmt(b, "%s.sha256", name), nullptr);
+#endif
+    int status = build_spawn(&(BuildSpawn){.argv = check, .folder = build_absolute(b, ".smith"), .tail = 5});
+    if (status != 0) return status;
+    status = build_exec(smith_list(b, "/bin/rm", "-rf", ".smith/stage0", nullptr));
+    if (status == 0) status = build_make_folder(b, ".smith/stage0");
+    if (status == 0)
+        status =
+            build_exec(smith_list(b, "tar", "-C", ".smith/stage0", "-xJf", smith_fmt(b, ".smith/%s", name), nullptr));
+    if (status == 0)
+        fprintf(stderr, "smith: the newest release is in .smith/stage0; put .smith/stage0/bin first on PATH\n");
+    return status;
+}
+
 // `smith build bench [-Dfull=1] [-Dsmith=<path>]` (issue #639): measures each budget line of the speed
 // table (no-op build, one-file build, fresh worktree, fmt, lint, a .smith module's compile, optionally the full test
 // suite's CPU) with the smith this build made, prints the table and writes it to .smith/bench.tsv.
@@ -3423,8 +3593,18 @@ static int build_frontend_coverage(SmithRun *run) {
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
-    const char *files = run->args[1];
+    // -Dshard=<k>/<n> (#2697): shard k of n, the files whose path hashes to k - 1 modulo n and what they import; only
+    // their rows are written. -Dmerge=<table>,<table>... joins the tables of the shards and summarizes the result.
+    const char *shard = run->args[4];
+    const char *merge = run->args[5];
+    const char *files = shard[0] != '\0' ? smith_fmt(b, "shard:%s", shard) : run->args[1];
     const char *tree = smith_fmt(b, "%s/tree", work);
+    if (merge[0] != '\0') {
+        status = build_spawn(&(BuildSpawn){.argv = smith_list(b, tool, "merge", build_absolute(b, "."), merge, nullptr),
+                                           .log = results,
+                                           .stdout_only = true});
+        return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
@@ -3433,6 +3613,11 @@ static int build_frontend_coverage(SmithRun *run) {
         status = status != 0 ? status
                              : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
                                                      smith_fmt(b, "%s/tree/compile_commands.json", work), nullptr));
+        // The fixer runs in the pristine copy beside the tree (#2521), so its database is there too (#2648).
+        status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/pristine", work));
+        status = status != 0 ? status
+                             : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
+                                                     smith_fmt(b, "%s/pristine/compile_commands.json", work), nullptr));
         if (status != 0) return status;
     }
     status = build_spawn(&(BuildSpawn){
@@ -3441,8 +3626,9 @@ static int build_frontend_coverage(SmithRun *run) {
         .log = results,
         .stdout_only = true});
     if (status != 0) return status;
-    return files[0] != '\0' ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
-                            : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    return files[0] != '\0' && shard[0] == '\0'
+               ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
+               : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
@@ -3470,10 +3656,16 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
             smith_option_value(b, "files", "", "frontend-coverage: only these files and what they import (#2309)"),
             smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"),
             smith_option_value(b, "jobs", "", "frontend-coverage: files compiled at once (default: the cores, #2420)"),
+            smith_option_value(b, "shard", "",
+                               "frontend-coverage: shard <k>/<n> of the files and what they import (#2697)"),
+            smith_option_value(b, "merge", "",
+                               "frontend-coverage: join the shards' results.tsv, comma separated (#2697)"),
             nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
     smith_task(b, "frontend-coverage", &frontend_coverage);
+    SmithStep stage0 = {.run = build_stage0, .description = "downloading the newest release into .smith/stage0"};
+    smith_task(b, "stage0", &stage0);
     SmithStep bench = {
         .run = build_bench,
         .args = smith_list(b, smith_option_value(b, "smith", binary, "bench: the smith to measure"),
@@ -3544,6 +3736,9 @@ static const char *build_enzyme_install(SmithBuild *b) {
 }
 
 void build(SmithBuild *b) {
+    // smith's own C follows the conventions it gives a project (#2685): Clang modules for the system and smith headers.
+    // runtime/*.h stay textual: core.h defines _GNU_SOURCE and includes the libc headers, which a module cannot see.
+    smith_modules(b, &(SmithModules){});
     const char *std = build_variable(b, "STD", "gnu23", "the C standard");
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
     const char *folder = build_variable(b, "BUILD", smith_fmt(b, "build/%s-%s", b->os, b->arch), "the build folder");
@@ -3565,9 +3760,15 @@ void build(SmithBuild *b) {
     config.coverage =
         build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the check that records)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
-    config.cflags = smith_cat(
-        b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
-        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), config.platform->deployment, nullptr);
+    config.optimize = build_profile_optimize(b);
+    config.cflags = smith_cat(b,
+                              (const char *[]){smith_fmt(b, "-std=%s", std), config.optimize, "-g", "-Wall", "-Wextra",
+                                               "-Wpedantic", nullptr},
+                              // glibc hides nftw, O_TMPFILE and the like from C23; a module of libc takes the macro
+                              // from the command line, not from a #define in the file (#2685)
+                              smith_when(b, build_is_linux(b), (const char *[]){"-D_GNU_SOURCE", nullptr}),
+                              smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}),
+                              config.platform->deployment, nullptr);
 
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
@@ -3580,7 +3781,7 @@ void build(SmithBuild *b) {
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);
-    build_release(b, config.binary, folder);
+    build_release(b, &config, folder);
     build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);

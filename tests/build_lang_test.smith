@@ -12,8 +12,8 @@ module build_lang_test;
 
 import std::arena;
 import std::mem;
-import std::format;
 import std::test;
+import <stdio.h>;
 import scratch;
 
 constexpr char expected_output[_] =
@@ -29,7 +29,7 @@ static scratch::Project lang_project(const char *source) {
     (void)scratch::sh(
         &p, "mkdir bin && { cp -c \"$SMITH_SELF\" bin/smith-cc 2>/dev/null || cp \"$SMITH_SELF\" bin/smith-cc; }");
     char cases[256];
-    (void)format::write(cases, sizeof cases, "tests/smith-lang/cases/", source, "/src");
+    (void)__builtin_snprintf(cases, sizeof cases, "tests/smith-lang/cases/%s/src", source);
     scratch::copy_tree(&p, cases, "src");
     return p;
 }
@@ -286,6 +286,26 @@ export void test_build_lang_headers_are_generated_without_the_folder() {
                        "grep -c marker .smith/include/smith/arena.h",
                        headers_marked);
     scratch::expect_text("headers: generated without it", "0", scratch::sh(&p, command).out);
+}
+
+// Headers belong to the smith that wrote them (#2594): a build by another smith writes them again, with no error and no
+// hand `rm`, and the stamp names the smith that finished. Two copies of smith stand in for a release and a build from
+// main; the copy has a mtime of its own, so its identity differs.
+export void test_build_lang_headers_follow_the_smith_that_builds() {
+    arena::Arena memory = test::memory(1 << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project p = lang_project("module-three");
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p, "unset SMITH_HEADERS_FROM; real=$(command -v smith); cp \"$real\" ./smith-b && touch ./smith-b && "
+            "smith build >/dev/null 2>&1; a=$?; one=$(cat .smith/include/smith/.written-by); "
+            "PATH=$PWD:$PATH; ./smith-b build >/dev/null 2>&1; b=$?; two=$(cat .smith/include/smith/.written-by); "
+            "smith build >/dev/null 2>&1; c=$?; three=$(cat .smith/include/smith/.written-by); "
+            "echo \"$a $b $c $([ \"$one\" != \"$two\" ] && echo moved) $([ \"$one\" = \"$three\" ] && echo back)\"");
+    scratch::expect_text("headers: three builds by two smiths pass, and the stamp follows", "0 0 0 moved back",
+                         run.out);
 }
 
 // The helpers are under the compiler; the top level is only verbs.

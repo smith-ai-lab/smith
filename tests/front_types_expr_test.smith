@@ -89,7 +89,7 @@ static ast::Expr *at(ast::Expr *base, ast::Expr *index) {
     return ast::expr(kind);
 }
 
-static ast::Expr *cast(Str type, ast::Expr *operand) {
+static ast::Expr *cast_expr(Str type, ast::Expr *operand) {
     ast::ExprKind kind = {.cast = {.type = ast::named(type), .operand = operand}};
     return ast::expr(kind);
 }
@@ -502,14 +502,14 @@ export void test_front_types_expr_casts_and_queries() {
     types::Checked r = fresh();
     declare(&r, "xs", .variable, types::array_of(&r.table, ty(&r, "I32"), 3, false), false);
     var(&r, "x", "U8");
-    test::check_condition(types_expr::infer(&r, cast("I64", ast::name("x"))) == ty(&r, "I64"));
+    test::check_condition(types_expr::infer(&r, cast_expr("I64", ast::name("x"))) == ty(&r, "I64"));
     test::check_condition(types_expr::infer(&r, query(.size_of, ast::name("x"))) == ty(&r, "Usize"));
     test::check_condition(types_expr::infer(&r, query(.count_of, ast::name("xs"))) == ty(&r, "Usize"));
     expect(r.error_count, 0);
     types_expr::infer(&r, query(.count_of, ast::name("x")));
     test::check_condition(
         says(last(&r), "countof takes an array or a slice, found `U8`; write the name of an array or a slice"));
-    types_expr::infer(&r, cast("Nope", ast::name("x")));
+    types_expr::infer(&r, cast_expr("Nope", ast::name("x")));
     test::check_condition(says(
         last(&r), "unknown type `Nope`; declare it before it is used, and write a type name with a capital letter"));
     expect(r.error_count, 2);
@@ -653,7 +653,7 @@ export void test_front_types_expr_a_lambda_takes_its_parameter_types_from_the_ex
     expect(bodies, 1);
     test::check_condition(body_type == expected);
     test::check_condition(types::type_of(&r, good) == expected);
-    types::TypeRef first = body_type->element->slots[0].type;
+    types::TypeRef first = types::slots_of(types::element_of(body_type)).items[0].type;
     test::check_condition(first == int32);
     expect(r.error_count, 4);
     types_expr::check(&r, ast::expr(one_name), expected);
@@ -1384,4 +1384,55 @@ export void test_front_types_expr_a_field_of_an_anonymous_union_is_a_field_of_th
     types_expr::infer(&r, ast::call(ast::name("Value"), misspelt));
     test::check_condition(says(r.errors[before].message,
                                "`Value` has no field `unsigned_value`; write one of its fields, such as `kind`"));
+}
+
+export void test_front_types_expr_the_difference_of_pointers_ignores_const_and_an_array_decays() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    declare(&r, "p", .variable, types::pointer_to(&r.table, ty(&r, "Char"), true), false);
+    declare(&r, "q", .variable, types::pointer_to(&r.table, ty(&r, "Char"), false), false);
+    declare(&r, "xs", .variable, types::array_of(&r.table, ty(&r, "Char"), 16, false), false);
+    types::TypeRef from_const = types_expr::infer(&r, binary(.subtract, ast::name("q"), ast::name("p")));
+    test::check_condition(from_const == ty(&r, "Isize"));
+    types::TypeRef from_array = types_expr::infer(&r, binary(.subtract, ast::name("q"), ast::name("xs")));
+    test::check_condition(from_array == ty(&r, "Isize"));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_the_address_of_a_construction_is_a_mutable_pointer() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Ty *pair = types::new_record(&r.table, "Pair", false);
+    types::Slot fields[:] = mem::alloc_slice(types::Slot, 1);
+    fields[0] = slot("a", ty(&r, "I32"));
+    fields[0].is_pub = true;
+    types::set_fields(pair, fields);
+    declare(&r, "Pair", .type_name, pair, false);
+    ast::ExprRef given[1] = {named("a", num(2))};
+    types::TypeRef address = types_expr::infer(&r, unary(.address_of, ast::call(ast::name("Pair"), given)));
+    test::check_condition(address == types::pointer_to(&r.table, pair, false));
+    expect(r.error_count, 0);
+}
+
+export void test_front_types_expr_a_pack_indexed_by_a_constant_has_the_type_of_that_element() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Slot elements[:] = mem::alloc_slice(types::Slot, 2);
+    elements[0] = slot("0", ty(&r, "I32"));
+    elements[1] = slot("1", ty(&r, "F64"));
+    declare(&r, "pack", .variable, types::tuple_of(&r.table, elements), false);
+    ast::Expr *second = at(ast::name("pack"), num(1));
+    test::check_condition(types_expr::infer(&r, second) == ty(&r, "F64"));
+    expect(r.error_count, 0);
+    types_expr::infer(&r, at(ast::name("pack"), num(2)));
+    expect(r.error_count, 1);
 }

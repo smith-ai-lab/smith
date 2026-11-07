@@ -181,7 +181,7 @@ static state::TyResult imported_enum(state::Emitter *e, const types::Symbol *tar
     state::Ty ty = {};
     if (!matching::type_enum(e, bare, &ty)) {
         Str outer = e->import_scope;
-        e->import_scope = emit_memory::record_module_prefix(target->type->name);
+        e->import_scope = emit_memory::record_module_prefix(types::name_of(target->type));
         state::Status declared = matching::enum_decl(e, target->decl);
         e->import_scope = outer;
         if (declared == .error) return {.error = declared.error};
@@ -221,7 +221,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     if (is_enum_symbol(target)) return imported_enum(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
-    return emit_memory::imported_record(e, target->decl, target->type->name);
+    return emit_memory::imported_record(e, target->decl, types::name_of(target->type));
 }
 
 // A record named by its bare name inside an imported function's signature (`fn dot(a: Vec, ...)` of `geom::vec`): the
@@ -240,7 +240,7 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return false;
-    *made = emit_memory::imported_record(e, target->decl, target->type->name);
+    *made = emit_memory::imported_record(e, target->decl, types::name_of(target->type));
     return true;
 }
 
@@ -772,10 +772,18 @@ static state::Status ret_void(state::Emitter *e, const state::ThenNone *_) {
 
 static state::Status return_finish(state::Emitter *e, const state::ThenNone *w) {
     state::Value value = state::pop_value(e);
+    if (state::same_type(e->result, void_type(e)) && state::same_type(value.ty, e->result)) {
+        // `return f()` where `f` has no result: nothing to return but the end of the function.
+        try control::before_return(e, w->span);
+        c::LLVMBuildRetVoid(e->builder);
+        return state::success();
+    }
     if (!state::same_type(value.ty, e->result)) {
         try state::convert(e, value, e->result, w->span, .return_value);
         value = state::pop_value(e);
     }
+    // With no `defer` to run after the call, the call is the last thing the function does: a guaranteed tail call.
+    if (e->defer_count == 0) call::mark_tail_call(e, value.llvm);
     state::push_then_general(
         e, (state::ThenGeneral){.run = ret_value, .value = value.llvm, .ty = value.ty, .span = w->span});
     try control::before_return(e, w->span);
@@ -1109,12 +1117,12 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
     }
     Str name = d->kind.function.name;
     types::TypeRef signature = instance->signature;
-    Usize count = countof(signature->slots);
+    Usize count = countof(types::slots_of(signature).items);
     if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
     state::Ty params[:] = mem::alloc_slice(state::Ty, count + 1);
     c::LLVMTypeRef llvm_types[64];
     for (Usize i = 0; i < count; i++) {
-        state::TyResult made = type_of_checked(e, signature->slots[i].type, d->span);
+        state::TyResult made = type_of_checked(e, types::slots_of(signature).items[i].type, d->span);
         if (made == .error) {
             return {.error = made.error};
         }
@@ -1122,8 +1130,9 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
         llvm_types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
-    if (signature->element != nullptr && signature->element != e->options.checked->table.void_type) {
-        state::TyResult made_result = type_of_checked(e, signature->element, d->span);
+    if (types::element_of(signature) != nullptr &&
+        types::element_of(signature) != e->options.checked->table.void_type) {
+        state::TyResult made_result = type_of_checked(e, types::element_of(signature), d->span);
         if (made_result == .error) {
             return {.error = made_result.error};
         }
@@ -1302,6 +1311,89 @@ static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w)
     return blockval::value_of(e, s, w->hint);
 }
 
+// A block whose last line is an expression, with that line written as `return <expression>` (#2709), or null.
+static ast::Stmt *returning_block(const ast::Stmt *b) {
+    if (b->kind != .block || countof(b->kind.block.items) == 0) return nullptr;
+    ast::StmtRef items[:] = b->kind.block.items;
+    Usize count = countof(items);
+    const ast::Stmt *last = items[count - 1];
+    if (last->kind != .expression) return nullptr;
+    ast::StmtRef *room = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), count, alignof(ast::StmtRef));
+    for (Usize i = 0; i + 1 < count; i++)
+        room[i] = items[i];
+    room[count - 1] = ast::return_value(last->kind.expression.value);
+    room[count - 1]->span = last->span;
+    ast::StmtRef list[:] = room[0:count];
+    ast::Stmt *made = ast::block(list);
+    made->span = b->span;
+    mem::free((void *)room);
+    return made;
+}
+
+// An `if` (with `else if` and `else`) whose every branch ends in an expression, with each branch's last line
+// written as `return <expression>`, so a call there is in tail position (#2709). Null for anything else: a branch that
+// is not such a block, no `else`, or a chain of more than 32. The chain is read with a loop, not recursion.
+static ast::Stmt *returning_if(const ast::Stmt *s) {
+    const ast::Stmt *chain[32];
+    Usize count = 0;
+    const ast::Stmt *current = s;
+    ast::Stmt *tail = nullptr;
+    while (tail == nullptr) {
+        if (current->kind != .if_stmt || current->kind.if_stmt.is_constexpr || count == 32) return nullptr;
+        const ast::Stmt *otherwise = current->kind.if_stmt.else_branch;
+        if (otherwise == nullptr || current->kind.if_stmt.then_branch->kind != .block) return nullptr;
+        chain[count++] = current;
+        if (otherwise->kind == .if_stmt)
+            current = otherwise;
+        else if (otherwise->kind == .block) {
+            tail = returning_block(otherwise);
+            if (tail == nullptr) return nullptr;
+        } else
+            return nullptr;
+    }
+    for (Usize i = count; i > 0; i--) {
+        const ast::Stmt *node = chain[i - 1];
+        if (node->kind != .if_stmt) return nullptr;
+        ast::Stmt *then_branch = returning_block(node->kind.if_stmt.then_branch);
+        if (then_branch == nullptr) return nullptr;
+        ast::Stmt copy = *node;
+        if (copy.kind != .if_stmt) return nullptr;
+        copy.kind.if_stmt.then_branch = then_branch;
+        copy.kind.if_stmt.else_branch = tail;
+        tail = ast::new_stmt(copy);
+    }
+    return tail;
+}
+
+// A `match` whose every arm is an expression (or already a `return`), with each arm written as `return <expression>`,
+// so a call that ends an arm is in tail position (#2709). Null when an arm is a block or another statement.
+static ast::Stmt *returning_match(const ast::Stmt *s) {
+    if (s->kind != .match_stmt) return nullptr;
+    ast::MatchArm arms[:] = s->kind.match_stmt.arms;
+    Usize count = countof(arms);
+    if (count == 0 || count > 64) return nullptr;
+    for (Usize i = 0; i < count; i++) {
+        const ast::Expr *value = arms[i].value;
+        if (value->kind == .stmt_expr && value->kind.stmt_expr.stmt->kind != .return_stmt) return nullptr;
+    }
+    ast::MatchArm *room = (ast::MatchArm *)mem::alloc_array_raw(sizeof(ast::MatchArm), count, alignof(ast::MatchArm));
+    for (Usize i = 0; i < count; i++) {
+        room[i] = arms[i];
+        const ast::Expr *given = arms[i].value;
+        if (given->kind != .stmt_expr) {
+            ast::Stmt *made = ast::return_value(arms[i].value);
+            made->span = arms[i].span;
+            room[i].value = ast::stmt_expr(made);
+            room[i].value->span = arms[i].value->span;
+        }
+    }
+    ast::MatchArm list[:] = room[0:count];
+    ast::Stmt *made = ast::match_stmt(s->kind.match_stmt.value, list);
+    made->span = s->span;
+    mem::free((void *)room);
+    return made;
+}
+
 // The body with its last `if`, `match` or block returned: as `value_block`, through the same continuation.
 static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *body) {
     try debug::stmt_location(e, body);
@@ -1310,6 +1402,19 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     }
     ast::StmtRef items[:] = body->kind.block.items;
     const ast::Stmt *last = items[countof(items) - 1];
+    ast::Stmt *returning = nullptr;
+    if (last->kind == .if_stmt) returning = returning_if(last);
+    if (last->kind == .match_stmt) returning = returning_match(last);
+    if (returning != nullptr) {
+        // Each branch returns its own value, so a call that ends a branch is a tail call (#2709).
+        state::begin_scope(e);
+        state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
+        state::push_statement(e, returning);
+        state::push_then_general(e, (state::ThenGeneral){.run = value_after_end, .span = last->span});
+        for (Usize i = countof(items) - 1; i > 0; i--)
+            state::push_statement(e, items[i - 1]);
+        return state::success();
+    }
     state::begin_scope(e);
     state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
     state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = last->span});
@@ -1439,16 +1544,16 @@ static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty
     if (t->kind == .bool_type) return state::scalar_type(e, "bool", ty);
     if (t->kind == .floating) {
         Str spelled = "F64";
-        if (t->bits == 16) spelled = t->name;
-        if (t->bits == 32) spelled = "F32";
+        if (types::bits_of(t) == 16) spelled = types::name_of(t);
+        if (types::bits_of(t) == 32) spelled = "F32";
         return arith::type_float(e, spelled, ty);
     }
     if (t->kind != .integer) return false;
-    if (state::scalar_type(e, t->name, ty)) return true;
-    Bool is_signed = t->is_signed;
-    if (t->bits == 8) return state::scalar_type(e, is_signed ? "i8" : "u8", ty);
-    if (t->bits == 16) return state::scalar_type(e, is_signed ? "i16" : "u16", ty);
-    if (t->bits == 32) return state::scalar_type(e, is_signed ? "i32" : "u32", ty);
+    if (state::scalar_type(e, types::name_of(t), ty)) return true;
+    Bool is_signed = types::signed_of(t);
+    if (types::bits_of(t) == 8) return state::scalar_type(e, is_signed ? "i8" : "u8", ty);
+    if (types::bits_of(t) == 16) return state::scalar_type(e, is_signed ? "i16" : "u16", ty);
+    if (types::bits_of(t) == 32) return state::scalar_type(e, is_signed ? "i32" : "u32", ty);
     return state::scalar_type(e, is_signed ? "i64" : "u64", ty);
 }
 
@@ -1470,13 +1575,13 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
         return true;
     }
     if (base->kind != .slice && base->kind != .block) return false;
-    types::TypeRef element = base->element;
+    types::TypeRef element = types::element_of(base);
     state::Ty inner = {};
     Bool known = scalar_of_checked(e, element, &inner);
-    known = known || (element->kind == .record && find_record_by_name(e, element->name, &inner));
-    known = known || (element->kind == .enumeration && matching::type_enum(e, element->name, &inner));
+    known = known || (element->kind == .record && find_record_by_name(e, types::name_of(element), &inner));
+    known = known || (element->kind == .enumeration && matching::type_enum(e, types::name_of(element), &inner));
     if (!known) return false;
-    *ty = base->kind == .block ? emit_memory::block_type(e, inner, base->count)
+    *ty = base->kind == .block ? emit_memory::block_type(e, inner, types::count_of(base))
                                : emit_memory::slice_type(e, inner, "slice");
     return true;
 }
@@ -1493,8 +1598,10 @@ static Str bare_name(Str name) {
 static void ensure_enum(state::Emitter *e, types::TypeRef t) {
     if (t == nullptr || t->kind != .enumeration || e->options.checked == nullptr) return;
     state::Ty known = {};
-    if (matching::type_enum(e, t->name, &known) || matching::type_enum(e, bare_name(t->name), &known)) return;
-    const types::Symbol *target = types::lookup(&e->options.checked->scopes, t->name);
+    if (matching::type_enum(e, types::name_of(t), &known) ||
+        matching::type_enum(e, bare_name(types::name_of(t)), &known))
+        return;
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, types::name_of(t));
     if (is_enum_symbol(target)) imported_enum(e, target);
 }
 
@@ -1508,17 +1615,18 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         if (depth == countof(chain)) return state::ty_fail("a type nested more than 16 deep", span);
         chain[depth] = base;
         depth += 1;
-        types::TypeRef next = base->element;
+        types::TypeRef next = types::element_of(base);
         base = next;
     }
     state::Ty ty = {};
     Bool known = scalar_of_checked(e, base, &ty);
-    known = known || (base->kind == .record && find_record_by_name(e, base->name, &ty));
-    known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
-    known = known || (base->kind == .enumeration && matching::type_enum(e, bare_name(base->name), &ty)); // imported
+    known = known || (base->kind == .record && find_record_by_name(e, types::name_of(base), &ty));
+    known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
+    known = known ||
+            (base->kind == .enumeration && matching::type_enum(e, bare_name(types::name_of(base)), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
-    known =
-        known || (base->kind == .enumeration && from_header(base->name) && scalar_of_checked(e, base->element, &ty));
+    known = known || (base->kind == .enumeration && from_header(types::name_of(base)) &&
+                      scalar_of_checked(e, types::element_of(base), &ty));
     known = known || slice_of_checked(e, base, &ty);
     if (!known && base->kind == .void_type) {
         ty = void_type(e);
@@ -1527,18 +1635,19 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     if (!known) {
         if (base->kind == .vector && depth == 0) {
             state::Ty lane = {};
-            if (scalar_of_checked(e, base->element, &lane)) return vectors::make(e, lane, base->count);
+            types::TypeRef lane_type = types::element_of(base);
+            if (scalar_of_checked(e, lane_type, &lane)) return vectors::make(e, lane, types::count_of(base));
         }
         if (base->kind == .option) {
-            ensure_enum(e, base->element);
+            ensure_enum(e, types::element_of(base));
             return optional::from_checked(e, base);
         }
         if (base->kind == .result_type) {
-            ensure_enum(e, base->element);
-            ensure_enum(e, base->error);
-            state::TyResult ok = optional::payload_of_checked(e, base->element);
+            ensure_enum(e, types::element_of(base));
+            ensure_enum(e, types::error_of(base));
+            state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
             if (ok == .error) return {.error = ok.error};
-            state::TyResult bad = optional::payload_of_checked(e, base->error);
+            state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
             if (bad == .error) return {.error = bad.error};
             return optional::build_result(e, ok.ok, bad.ok);
         }
@@ -1556,8 +1665,8 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         if (node->kind == .pointer) {
             ty = pointer_to(e, inner);
         } else {
-            state::Ty made = {.kind = {.array = {.element = inner, .count = node->count}},
-                              .llvm = c::LLVMArrayType2(inner->llvm, node->count),
+            state::Ty made = {.kind = {.array = {.element = inner, .count = types::count_of(node)}},
+                              .llvm = c::LLVMArrayType2(inner->llvm, types::count_of(node)),
                               .name = "array"};
             ty = made;
         }
@@ -1579,54 +1688,32 @@ static void make_c_union(c::LLVMTypeRef named, types::TypeRef base) {
     c::LLVMStructSetBody(named, lanes, 1, 0);
 }
 
-// The members of a C union that have a type this emitter makes, named, so that `u.member` (and a member of an
-// anonymous union of a struct: `rusage.ru_maxrss`) reads the shared storage as the member's type.
-static void make_union_fields(state::Emitter *e, Usize at, types::TypeRef base) {
-    Usize count = countof(base->slots);
-    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
-    Usize kept = 0;
-    ast::Span nowhere = {};
-    for (Usize i = 0; i < count; i++) {
-        types::TypeRef held = base->slots[i].type;
-        if (held->kind == .fn_value) continue;
-        state::TyResult made = type_from_checked(e, held, nowhere);
-        if (made == .error) {
-            state::free_text(made.error.message);
-            continue;
-        }
-        infos[kept] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
-        kept += 1;
+static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool through_pointers);
+
+// Names (as shells) the C records that `base` only points to, so its pointer fields have a type; `ensure_c_record`
+// makes their fields when a type first names them.
+static void name_pointees(state::Emitter *e, types::TypeRef base) {
+    if (!types::is_complete(base) || types::is_union_record(base)) return;
+    for (Usize i = 0; i < countof(types::slots_of(base).items); i++) {
+        types::TypeRef pointee = unmade_c_record(e, types::slots_of(base).items[i].type, true);
+        state::Ty known = {};
+        if (pointee == nullptr || pointee == base || find_record_by_name(e, types::name_of(pointee), &known)) continue;
+        char *label = state::cstr(types::name_of(pointee));
+        c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
+        mem::free(label);
+        state::Ty ty = {.kind = .record, .llvm = named, .name = types::name_of(pointee)};
+        emit_memory::add_record(e, (state::RecordType){.name = types::name_of(pointee), .ty = ty, .shell = true});
     }
-    e->records[at].fields = infos[0:kept];
-    e->records[at].is_union = true;
 }
 
-// A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
-// first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
-// pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer
-// to it is still a pointer.
-static void make_c_record(state::Emitter *e, types::TypeRef base) {
-    char *label = state::cstr(base->name);
-    c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
-    mem::free(label);
-    state::Ty ty = {.kind = .record, .llvm = named, .name = base->name};
-    Usize at = e->record_count;
-    emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
-    Usize count = countof(base->slots);
-    if (base->complete && base->is_union && count > 0) {
-        make_c_union(named, base);
-        make_union_fields(e, at, base);
-        return;
-    }
-    if (!base->complete || base->is_union || count == 0 || count > 64) {
-        return;
-    }
+// The members of a C union, read in place: each is at offset 0 of the array that sizes it. A member this emitter has
+// no type for leaves the union without fields.
+static void name_union_fields(state::Emitter *e, types::TypeRef base, Usize at) {
+    Usize count = countof(types::slots_of(base).items);
     state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
-    c::LLVMTypeRef fields[64];
     ast::Span nowhere = {};
     for (Usize i = 0; i < count; i++) {
-        // A function pointer of C is the bare `ptr` in the struct's layout, not a `fn` value's `{ code, context }`.
-        types::TypeRef held = base->slots[i].type;
+        types::TypeRef held = types::slots_of(base).items[i].type;
         state::TyResult made =
             held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
         if (made == .error) {
@@ -1634,7 +1721,57 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
             mem::free(infos.data);
             return;
         }
-        infos[i] = (state::FieldInfo){.name = base->slots[i].name, .ty = made.ok};
+        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
+    }
+    e->records[at].fields = infos;
+    e->records[at].overlay = true;
+}
+
+// A record that came from a C header (`c::FILE`): no declaration of the module made it, so it is made when a type
+// first names it, with the fields the checker read. A field this emitter has no type for (a union, a function
+// pointer) leaves the record opaque; a struct held by value is made first (`struct stat`'s `st_atim`, #2610): a pointer
+// to it is still a pointer.
+static void make_c_record(state::Emitter *e, types::TypeRef base) {
+    Usize at = e->record_count;
+    c::LLVMTypeRef named = nullptr;
+    for (Usize i = 0; i < e->record_count; i++) {
+        if (e->records[i].shell && state::same_text(e->records[i].name, types::name_of(base))) {
+            at = i;
+            named = e->records[i].ty.llvm;
+            e->records[i].shell = false;
+        }
+    }
+    if (named == nullptr) {
+        char *label = state::cstr(types::name_of(base));
+        named = c::LLVMStructCreateNamed(e->context, label);
+        mem::free(label);
+        state::Ty ty = {.kind = .record, .llvm = named, .name = types::name_of(base)};
+        emit_memory::add_record(e, (state::RecordType){.name = types::name_of(base), .ty = ty});
+    }
+    name_pointees(e, base);
+    Usize count = countof(types::slots_of(base).items);
+    if (types::is_complete(base) && types::is_union_record(base) && count > 0) {
+        make_c_union(named, base);
+        name_union_fields(e, base, at);
+        return;
+    }
+    if (!types::is_complete(base) || types::is_union_record(base) || count == 0 || count > 64) {
+        return;
+    }
+    state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
+    c::LLVMTypeRef fields[64];
+    ast::Span nowhere = {};
+    for (Usize i = 0; i < count; i++) {
+        // A function pointer of C is the bare `ptr` in the struct's layout, not a `fn` value's `{ code, context }`.
+        types::TypeRef held = types::slots_of(base).items[i].type;
+        state::TyResult made =
+            held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : type_from_checked(e, held, nowhere);
+        if (made == .error) {
+            state::free_text(made.error.message);
+            mem::free(infos.data);
+            return;
+        }
+        infos[i] = (state::FieldInfo){.name = types::slots_of(base).items[i].name, .ty = made.ok};
         fields[i] = made.ok.llvm;
     }
     c::LLVMStructSetBody(named, fields, (U32)count, 0);
@@ -1646,12 +1783,15 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
     types::TypeRef base = t;
     for (Usize guard = 0; guard < 16 && (base->kind == .array || (through_pointers && base->kind == .pointer));
          guard++) {
-        types::TypeRef next = base->element;
+        types::TypeRef next = types::element_of(base);
         base = next;
     }
-    state::Ty found = {};
-    if (base->kind == .record && !find_record_by_name(e, base->name, &found) &&
-        (from_header(base->name) || in_module(base->name))) {
+    Bool made = false;
+    for (Usize i = 0; i < e->record_count; i++) {
+        Bool open = e->records[i].shell && from_header(types::name_of(base));
+        if (!open && state::same_text(e->records[i].name, types::name_of(base))) made = true;
+    }
+    if (base->kind == .record && !made && (from_header(types::name_of(base)) || in_module(types::name_of(base)))) {
         return base;
     }
     return nullptr;
@@ -1659,9 +1799,9 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
 
 // The first field held by value (a struct or an array of them) whose record is not made yet, else null.
 static types::TypeRef unmade_field(state::Emitter *e, types::TypeRef record) {
-    if (!record->complete || record->is_union) return nullptr;
-    for (Usize i = 0; i < countof(record->slots); i++) {
-        types::TypeRef inner = unmade_c_record(e, record->slots[i].type, false);
+    if (!types::is_complete(record) || types::is_union_record(record)) return nullptr;
+    for (Usize i = 0; i < countof(types::slots_of(record).items); i++) {
+        types::TypeRef inner = unmade_c_record(e, types::slots_of(record).items[i].type, false);
         if (inner != nullptr && inner != record) return inner;
     }
     return nullptr;
@@ -1732,6 +1872,47 @@ static state::Status convert_failure(state::Value value, state::Ty to, ast::Span
 
 // `value` as a `to`: as it is, a wider integer (the checker's widening rules: the same signedness, or unsigned to a
 // strictly wider signed; none can fail, so no check), or an option's payload (`optional::wrap_some`).
+// A function that takes a context first and drops it, calling `target` with the rest: the code of a `fn` value made
+// from a function's name. One per function.
+static c::LLVMValueRef function_thunk(state::Emitter *e, c::LLVMValueRef target) {
+    Usize length = 0;
+    const char *own = c::LLVMGetValueName2(target, &length);
+    Str label = state::msg(format::push(own, ".thunk"));
+    char *name = state::cstr(label);
+    state::free_text(label);
+    c::LLVMValueRef found = c::LLVMGetNamedFunction(e->module, name);
+    if (found != nullptr) {
+        mem::free(name);
+        return found;
+    }
+    c::LLVMTypeRef inner = c::LLVMGlobalGetValueType(target);
+    U32 count = c::LLVMCountParamTypes(inner);
+    c::LLVMTypeRef given[65];
+    c::LLVMTypeRef wrapped[65];
+    if (count > 64) count = 64;
+    c::LLVMGetParamTypes(inner, given);
+    wrapped[0] = c::LLVMPointerTypeInContext(e->context, 0);
+    for (U32 i = 0; i < count; i++)
+        wrapped[i + 1] = given[i];
+    c::LLVMTypeRef result = c::LLVMGetReturnType(inner);
+    c::LLVMTypeRef outer = c::LLVMFunctionType(result, wrapped, count + 1, 0);
+    c::LLVMValueRef thunk = c::LLVMAddFunction(e->module, name, outer);
+    mem::free(name);
+    c::LLVMSetLinkage(thunk, c::LLVMInternalLinkage);
+    c::LLVMBuilderRef b = c::LLVMCreateBuilderInContext(e->context);
+    c::LLVMPositionBuilderAtEnd(b, c::LLVMAppendBasicBlockInContext(e->context, thunk, "entry"));
+    c::LLVMValueRef args[64];
+    for (U32 i = 0; i < count; i++)
+        args[i] = c::LLVMGetParam(thunk, i + 1);
+    c::LLVMValueRef called = c::LLVMBuildCall2(b, inner, target, args, count, "");
+    if (c::LLVMGetTypeKind(result) == c::LLVMVoidTypeKind)
+        c::LLVMBuildRetVoid(b);
+    else
+        c::LLVMBuildRet(b, called);
+    c::LLVMDisposeBuilder(b);
+    return thunk;
+}
+
 static state::Status convert_value(state::Emitter *e, state::Value value, state::Ty to, ast::Span span,
                                    state::ConvertSite site) {
     if (state::same_type(value.ty, to)) {
@@ -1753,6 +1934,23 @@ static state::Status convert_value(state::Emitter *e, state::Value value, state:
             state::push_value(e, (state::Value){.llvm = wide, .ty = to});
             return state::success();
         }
+    }
+    if (to.kind == .fn_value && from.kind == .pointer && c::LLVMIsAFunction(value.llvm) != nullptr) {
+        // The name of a function given to a `fn` parameter: a `fn` value is `{ code, context }` and its code takes the
+        // context first, so the function is wrapped in a thunk that drops it.
+        c::LLVMValueRef thunk = function_thunk(e, value.llvm);
+        c::LLVMValueRef made = c::LLVMGetUndef(to.llvm);
+        made = c::LLVMBuildInsertValue(e->builder, made, thunk, 0, "code");
+        c::LLVMTypeRef word = c::LLVMPointerTypeInContext(e->context, 0);
+        made = c::LLVMBuildInsertValue(e->builder, made, c::LLVMConstNull(word), 1, "context");
+        state::push_value(e, (state::Value){.llvm = made, .ty = to});
+        return state::success();
+    }
+    if (to.kind == .pointer && to.kind.pointer.element == nullptr && from.kind == .fn_value) {
+        // A `fn` value given to a callback parameter of C: the bare code address.
+        c::LLVMValueRef code = c::LLVMBuildExtractValue(e->builder, value.llvm, 0, "code");
+        state::push_value(e, (state::Value){.llvm = code, .ty = to});
+        return state::success();
     }
     c::LLVMValueRef floated = float_conversion(e, value, to);
     if (floated != nullptr) {
@@ -1799,6 +1997,8 @@ static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
 
 // Pass 1: types, then every function and global.
 static state::Status declare_all(state::Emitter *e) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++)
+        emit_memory::record_shell(e, e->tree->decls[i]);
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .record) try emit_memory::record_decl(e, d);
@@ -1812,11 +2012,16 @@ static state::Status declare_all(state::Emitter *e) {
             else if (!is_template(d))
                 try declare_function(e, d);
         } else if (d->kind == .variable) {
-            if (!is_module_alias(e, d) && !is_type_alias(e, d)) try emit_memory::global_variable(e, d);
+            continue; // after every function: a table of callbacks names functions declared below it (#2643)
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from && d->kind != .static_assert_decl && d->kind != .asm_decl) {
             return state::not_emitted("this kind of declaration", d->span);
         }
+    }
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind == .variable && !is_module_alias(e, d) && !is_type_alias(e, d))
+            try emit_memory::global_variable(e, d);
     }
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
@@ -1913,10 +2118,17 @@ static state::Status emit_all(state::Emitter *e) {
     try check_static_asserts(e);
     append_module_asm(e);
     try debug::finish(e);
+    try call::check_recursion(e->module);
     char *problem = nullptr;
     if (c::LLVMVerifyModule(e->module, c::LLVMReturnStatusAction, &problem) != 0) {
         ast::Span nowhere = {};
-        state::Status failed = state::failf(nowhere, "LLVM rejects the module: ", (const char *)problem);
+        Str culprit = "";
+        for (c::LLVMValueRef f = c::LLVMGetFirstFunction(e->module); f != nullptr && countof(culprit) == 0;
+             f = c::LLVMGetNextFunction(f)) {
+            if (c::LLVMCountBasicBlocks(f) > 0 && c::LLVMVerifyFunction(f, c::LLVMReturnStatusAction) != 0)
+                culprit = state::msg(format::push(" (in ", (const char *)c::LLVMGetValueName(f), ")"));
+        }
+        state::Status failed = state::failf(nowhere, "LLVM rejects the module: ", (const char *)problem, culprit);
         c::LLVMDisposeMessage(problem);
         return failed;
     }

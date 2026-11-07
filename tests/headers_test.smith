@@ -38,7 +38,8 @@ static scratch::Project make_project() {
 // The pieces as one text, in the current allocator: the test's memory, which is given back after the test.
 const char *joined(auto... pieces) {
     Usize length = format::length(pieces...);
-    char *text = mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
+    char *text =
+        (char *)mem::alloc_array_raw(sizeof(char), length + 1, alignof(char)); // a generic's local has no type yet
     (void)format::write(text, length + 1, pieces...);
     return text;
 }
@@ -87,7 +88,7 @@ static void standalone(const scratch::Project *p, const char *name, const char *
 // The headers are written once for each smith under test and set of library sources, in $SMITH_TEST_CACHE/headers-<key>
 // (a lock folder makes one test the writer and the others wait, as runner.smith's shared build does), and each test
 // compiles its own header from there: 28 tests that each wrote all twenty cost 1.2 s of CPU each (#638).
-constexpr char generated_script[_] =
+static const char *const generated_script =
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %N_%m_%z'; else sf='-c %n_%Y_%s'; fi; "
     "key=$( { stat $sf \"$SMITH_SELF\"; cat \"$SMITH_REPO\"/lib/std/*.smith; } | shasum -a 256 | cut -c1-20 ); "
     "c=$SMITH_TEST_CACHE/headers-$key; "
@@ -119,7 +120,8 @@ static void generated(const char *name) {
 // names the listing and a module added there selects the test.
 static const char *library_names() {
     env::Value repo = env::get("SMITH_REPO");
-    const char *folder = joined(repo == .some ? repo.some.data : ".", "/lib/std");
+    const char *base = repo == .some ? repo.some.data : ".";
+    const char *folder = joined(base, "/lib/std");
     files::EntriesResult listed = files::list(folder[0:c::strlen(folder)]);
     files::Entries entries = {};
     switch (listed) {

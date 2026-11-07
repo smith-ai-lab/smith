@@ -30,19 +30,19 @@ static Str as_str(char chars[:]) {
     return chars;
 }
 
-// The replacements of a pass in source order: the span [from, to) of the text becomes texts.
+// The replacements of a pass in source order: the span [from, stop) of the text becomes texts.
 struct Found {
     Usize from[:];
-    Usize to[:];
+    Usize stop[:];
     Texts texts;
 };
 
-static void add(Found *found, Usize from, Usize to, Str text) {
+static void add(Found *found, Usize from, Usize stop, Str text) {
     found->from = mem::realloc(found->from, countof(found->from) + 1);
-    found->to = mem::realloc(found->to, countof(found->to) + 1);
+    found->stop = mem::realloc(found->stop, countof(found->stop) + 1);
     found->texts = mem::realloc(found->texts, countof(found->texts) + 1);
     found->from[countof(found->from) - 1] = from;
-    found->to[countof(found->to) - 1] = to;
+    found->stop[countof(found->stop) - 1] = stop;
     found->texts[countof(found->texts) - 1] = text;
 }
 
@@ -279,7 +279,7 @@ static Str pass(Str source, Bool with_import, Bool *changed) {
     Usize at = 0;
     for (Usize k = 0; k < countof(scan.found.from); k++) {
         out = as_str(format::push(out, source[at:scan.found.from[k]], scan.found.texts[k]));
-        at = scan.found.to[k];
+        at = scan.found.stop[k];
     }
     *changed = true;
     return as_str(format::push(out, source[at:countof(source)]));

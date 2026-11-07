@@ -11,7 +11,7 @@ The driver, in order:
 2. With `$SMITH_NINJA` set, find that ninja (the fallback, below). Otherwise nothing is looked for: the executor is
    part of smith.
 3. Split the arguments. Those that start with `-D` go to the build program, and everything else is the executor's:
-   `-j`, `-k`, `-n`, `-v`, `--quiet`, `-t <tool>` and the targets. `-f` and `-C` are refused, because `smith build`
+   `-j`, `-k`, `-n`, `-v`, `--quiet`, `-t <tool>` and the targets (`--time` is read before: it sets `SMITH_TIME`). `-f` and `-C` are refused, because `smith build`
    names the manifest itself.
 4. Write `.smith/include/smith/build.h`, `.smith/runtime.c`, `.smith/build-program/build.ninja` and `.smith/.gitignore`.
    Each is written only when its bytes changed, so its mtime changes only then.
@@ -31,6 +31,21 @@ commit ([smith-bootstrap](smith-bootstrap.md)).
 
 smith's own files all go in `.smith/`: the manifests, the logs (`builddir`), the build program, stamps and task
 outputs. That manifest has its own `builddir`, `.smith/build-program`, so its logs are separate.
+
+## Where the time goes: `--time` and `SMITH_TIME`
+
+`smith build --time` (also on `smith test` and `smith cc`) or `SMITH_TIME=1` in the environment prints, on stderr after
+the normal output, `time: <phase> <ms> ms`, one line per phase, nested phases indented. The variable reaches every
+compile a build runs, so each prints its own lines; neither is part of the step cache key, since they change no output.
+Without them nothing is printed and no clock is read.
+
+| Verb | Phases |
+| --- | --- |
+| `smith build` | prepare; compile the build file (or served from the cache); run the build file and write the manifest (one phase: the program writes it); plan (read `.smith_log` and `.smith_deps`, stat the files, decide what is dirty); run the steps; then the 10 slowest steps with their kind (`compile .c`, `compile .cpp`, `compile .smith (new front end)`, `compile .smith (old front end)`, `link`, `test`, `other`), the count and time of steps run, the count served from the step cache, and the total |
+| `smith cc --front-end=new` | per file: lex and parse (one phase, the parser pulls the tokens), import (modules and C headers read during the check), check, emit LLVM IR (the effect summary included), write the object (LLVM passes and code generation), other; then the front end's total and clang's share |
+| `smith cc` (old path) | the whole compile as one phase; not printed when `SMITH_CLANG` names an external clang, which takes over the process |
+
+The clock is `CLOCK_MONOTONIC` through one helper in `smith.c` (`smith_time_*`); the front end reads `std::clock`.
 
 ## A change of compiler rebuilds everything
 

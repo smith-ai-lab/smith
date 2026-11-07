@@ -101,6 +101,8 @@ typedef F32 (*Narrow)(F64);
 typedef I32 (*ToInt)(F64);
 typedef I32 (*Nullary)();
 typedef I64 (*ToWide)(F64);
+typedef F64 (*Infinite)();
+typedef F64 (*WideFrom)(I64);
 
 export void test_front_emit_float_parameters_results_locals_and_arithmetic() {
     Scenario s = {};
@@ -125,7 +127,7 @@ export void test_front_emit_float_parameters_results_locals_and_arithmetic() {
     Binary calc = (Binary)symbol_of(&host, "calc");
     Single single = (Single)symbol_of(&host, "single");
     Unary plus = (Unary)symbol_of(&host, "plus");
-    F64 (*infinity)() = (F64 (*)())symbol_of(&host, "infinite");
+    Infinite infinity = (Infinite)symbol_of(&host, "infinite");
     test::check_equal(calc(3.0, 2.0), -2.5);
     test::check_equal(single(1.0F, 4.0F), 3.0F);
     test::check_equal(plus(2.0), 2.0);
@@ -192,9 +194,9 @@ export void test_front_emit_float_comparisons_and_nan() {
     test::check_equal(eq(2.0, 2.0), (I32)1);
     test::check_equal(ne(2.0, 2.0), (I32)0);
     test::check_equal(ne(2.0, 3.0), (I32)1);
-    I32 (*nan_ne)() = (I32 (*)())symbol_of(&host, "nan_ne");
-    I32 (*nan_eq)() = (I32 (*)())symbol_of(&host, "nan_eq");
-    I32 (*literal)(F64) = (I32 (*)(F64))symbol_of(&host, "literal");
+    Nullary nan_ne = (Nullary)symbol_of(&host, "nan_ne");
+    Nullary nan_eq = (Nullary)symbol_of(&host, "nan_eq");
+    ToInt literal = (ToInt)symbol_of(&host, "literal");
     test::check_equal(nan_ne(), (I32)1);
     test::check_equal(nan_eq(), (I32)0);
     test::check_equal(literal(2.0), (I32)1);
@@ -237,7 +239,7 @@ export void test_front_emit_float_casts() {
     test::check_equal(contains(ir, "fptosi"), true);
     test::check_equal(contains(ir, "call void @smith_contract_fail_cast(i64 %"), true);
     Narrow narrow = (Narrow)symbol_of(&host, "narrow");
-    F64 (*wide)(I64) = (F64 (*)(I64))symbol_of(&host, "wide");
+    WideFrom wide = (WideFrom)symbol_of(&host, "wide");
     ToInt truncate = (ToInt)symbol_of(&host, "truncate");
     Nullary literal_truncate = (Nullary)symbol_of(&host, "literal_truncate");
     test::check_equal(narrow(0.5), 0.5F);

@@ -4,8 +4,10 @@
 // knowledge/build-file.md.
 #ifdef __linux__
 // What glibc hides from C23 and macOS does not: nftw's FTW_PHYS, dladdr (knowledge/platform-layer.md).
+#ifndef _GNU_SOURCE // build.c passes it on the command line: Clang modules ignore a define in the file
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
 #define _GNU_SOURCE
+#endif
 #endif
 #include <smith/build.h>
 
@@ -121,8 +123,17 @@ static char smith_command_buffer[smith_command_max + 1];
     abort();
 }
 
-// The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file.
+// The package cache and SHA-256, which smith's `smith fetch` shares. smith writes it next to this file. The units
+// runner links runtime/package_unit.c beside this object (#2685), so there it takes the declarations only.
+#ifdef SMITH_BUILD_CORE
+#include <ftw.h>
+#include <time.h>
+#include "package.h"
+
+constexpr int smith_cache_walk_files = 64; // package.c's, which nftw gets as its open-descriptor limit
+#else
 #include "package.c"
+#endif
 
 // The project's own build file, and the words of the command that compiles it. A project built by convention has
 // none: the build program is smith's own (.smith/conventions.c), which the editor and the linter have no use for.

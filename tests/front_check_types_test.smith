@@ -255,12 +255,12 @@ export void test_front_check_types_other_declaration_in_a_function_is_not_yet_ty
 
 export void test_front_check_types_plain_enum_is_ordered_in_declaration_order() {
     clean("enum Level:\n    low\n    mid\n    high\n\n"
-          "fn above(a: Level, b: Level) -> bool:\n    a < b || a <= b || a > b || a >= b\n");
+          "fn above(a: Level, b: Level) -> bool:\n    a < b or a <= b or a > b or a >= b\n");
 }
 
 export void test_front_check_types_leading_dot_takes_the_type_of_the_other_operand() {
     clean("enum Level:\n    low\n    mid\n    high\n\n"
-          "fn in_range(a: Level) -> bool:\n    a >= .mid && a != .high && .low <= a\n");
+          "fn in_range(a: Level) -> bool:\n    a >= .mid and a != .high and .low <= a\n");
 }
 
 export void test_front_check_types_payload_enum_is_not_ordered() {
@@ -285,4 +285,18 @@ export void test_front_check_types_a_global_built_from_a_record_has_its_type() {
 
 export void test_front_check_types_a_member_of_a_cast_pointer_needs_no_arrow() {
     clean("struct Box:\n    size: usize\n\nfn size_of(raw: *u8) -> usize:\n    return (raw.cast(*Box)).size\n");
+}
+
+// `&x.inner` of a local handed where a `*mut Inner` is wanted: the error carries the fix that writes `mut x`.
+export void test_front_check_types_the_address_of_a_field_of_a_constant_local_has_a_mut_fix() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "pub struct Inner:\n    pub n: i32\n\npub struct Outer:\n    pub inner: Inner\n\n"
+                 "fn take(m: *mut Inner):\n    m.n = 1\n\nfn run(o: Outer):\n    x := o\n    take(&x.inner)\n";
+    types::Checked r = check_text(source);
+    test::check_equal(r.error_count, (Usize)1);
+    parse::Edits fix = r.errors[0].fix;
+    test::check_equal(countof(fix), (Usize)1);
 }

@@ -39,7 +39,7 @@ static scratch::Project folder(const scratch::Project *root, const char *name) {
 
 // --- the server on the fake io ---------------------------------------------------------------------------------------
 
-constexpr char fake_sources[_] =
+static const char *const fake_sources =
     "tests/mcp_fake.c lib/std/text.smith lib/std/arena.smith lib/std/contract.smith runtime/io.smith "
     "lib/std/random.smith lib/std/math.smith lib/std/math_trig.smith lib/std/mem.smith lib/handlers.c "
     "lib/optimize_asm.c";
@@ -50,9 +50,9 @@ constexpr char fake_sources[_] =
 // ($SMITH_TEST_CACHE/mcp-proto-<key>, locked the way `build_project` below is): the first test to need them compiles
 // them, the other waits. The sanitized build compiles all of it in its own translation unit, as the file is without
 // -DMCP_FAKE_PROTOCOL_LINKED.
-constexpr char proto_flags[_] = "-std=gnu23 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror";
+static const char *const proto_flags = "-std=gnu23 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror";
 
-constexpr char proto_script[_] =
+static const char *const proto_script =
     "inc=\"-I $SMITH_REPO/.smith/include -I $SMITH_REPO/.smith/protocol -I runtime/protocol\"; "
     "if [ \"$(uname -s)\" = Darwin ]; then sf='-f %m-%z'; else sf='-c %Y-%s'; fi; "
     "key=$( { echo \"$flags $inc\" | cksum; stat $sf \"$SMITH_SELF\" \"$SMITH_REPO\"/.smith/protocol/dap.[ch] "
@@ -78,6 +78,7 @@ static void check_fake(const char *mode, const char *flags, Bool linked) {
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "tests/mcp_fake.c", "tests/mcp_fake.c");
     scratch::copy_tree(&p, "runtime", "runtime");
+    scratch::copy_tree(&p, "scripts/pack.h", "scripts/pack.h");
     if (linked) {
         scratch::Run objects = scratch::sh(&p, concatenated("flags='", proto_flags, "'; ", proto_script, " 2>&1"));
         if (objects.status != 0) {
@@ -114,7 +115,7 @@ export void test_mcp_fake_io_optimized_without_assertions() {
 
 // --- the stage0 -----------------------------------------------------------------------------------------------------
 
-constexpr char clang_inside[_] =
+static const char *const clang_inside =
     "[ \"$(smith cc --smith-which -c a.c | head -n 1 | cut -d ' ' -f 1,2)\" = 'clang in-process' ]";
 
 export void test_mcp_the_stage0_says_smith_mcp_needs_the_full_smith() {
@@ -348,7 +349,7 @@ export void test_macos_mcp_a_smith_program_session_has_names_as_written() {
 // each smith under test in the tests' cache ($SMITH_TEST_CACHE/mcp-<smith's size and time>/project, the way
 // tests/lsp_test.smith's `built_script` does) and copied; `smith build` in the copy is then a no-op that writes the
 // copy's paths again. The first test to need it takes a lock (a folder) and builds, the other waits for the result.
-constexpr char build_project[_] =
+static const char *const build_project =
     "key=$(stat -c %Y-%s \"$SMITH_SELF\" 2>/dev/null || stat -f %m-%z \"$SMITH_SELF\"); "
     "base=$SMITH_TEST_CACHE/mcp-$key; c=$base/project; lock=$base.lock-project; "
     "if [ ! -d \"$c\" ] && mkdir \"$lock\" 2>/dev/null; then "

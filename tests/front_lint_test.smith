@@ -117,6 +117,26 @@ export void test_front_lint_main_may_run_forever() {
     quiet("fn main():\n    while true:\n        pass\n", "never ends on its own");
 }
 
+export void test_front_lint_a_generator_may_loop_forever_when_each_turn_yields() {
+    quiet("fn nats() -> iter(i32):\n    mut n := 0\n    while true:\n        yield n\n        n += 1\n",
+          "constant condition");
+}
+
+export void test_front_lint_a_generator_with_an_if_else_that_yields_in_both_arms_is_fine() {
+    quiet("fn f(a: bool) -> iter(i32):\n    while true:\n        if a:\n            yield 1\n        else:\n"
+          "            yield 2\n",
+          "constant condition");
+}
+
+export void test_front_lint_a_generator_that_can_skip_its_yield_is_an_error() {
+    reports("fn f(a: bool) -> iter(i32):\n    while true:\n        if a:\n            continue\n        yield 1\n",
+            "may never reach a `yield`");
+}
+
+export void test_front_lint_a_generator_loop_with_no_yield_is_an_error() {
+    reports("fn f() -> iter(i32):\n    yield 0\n    while true:\n        pass\n", "may never reach a `yield`");
+}
+
 export void test_front_lint_a_bounded_loop_is_fine() {
     quiet("fn f(n: u32):\n    let mut i: u32 = 0\n    while i < n:\n        i = i + 1\n", "never ends on its own");
 }
