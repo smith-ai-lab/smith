@@ -181,3 +181,10 @@ Ideas that are not on the roadmap of #73, one line each with the closed issue th
 - #319: Objective-C classes from .smith: objc::class_define with objc::methods(P, Data) tables, and objc::block
 - #636: objc::block takes a function and a context as two values; a closure should lower to a block
 - #1949: linux: smith links statically against musl (one file, no glibc)
+## Closed in the triage of 2026-11-07, not ideas
+Owner: "We want to probably close all the ones that are duplicates and that are fixes in the old syntax, because those I think we can agree on we don't need." The count re-finds any cause still live, and it goes on its part's ticket.
+- Superseded by the part tickets on #73: #1747 #1814 #1845 #1902 #1918 #1997 #1998 #1999 #2000 #2041 #2053 #2084 #2085 #2086 #2087 #2088 #2099 #2100 #2101 #2102 #2103 #2145 #2156 #2159 #2168 #2172 #2191 #2192 #2193 #2200 #2205 #2216 #2224 #2243 #2278 #2391 #2458 #2460 #2477 #2485 #2486 #2500 #2506 #2541 #2562 #2584 #2589 #2590 #2607 #2609 #2620 #2625 #2627 #2631 #2643
+- Conversion work the part tickets own: #2095 #2096 #2109 #2110 #2115 #2116 #2132 #2149 #2203 #2218 #2251 #2319 #2522 #2525 #2526 #2550
+- Fixes to the old front end and old lowering, which the switch-over deletes: #570 #577 #583 #599 #601 #606 #610 #620 #635 #1123 #1153 #1160 #1173 #1175 #1176 #1177 #1179 #1184 #1203 #1204 #1205 #1206 #1207 #1208 #1209 #1262 #1290 #1346 #1424 #1431 #1434 #1476 #1534 #1566 #1575 #1603 #1611 #1726 #1944
+- Friction issues, replaced by each PR's `## Friction` and the lead's sweep: #2595 #2592 #2546 #2524 #2360 #2332 #2233 #2081 #2067 #1819 #1818 #1607 #1594 #1590 #1559 #1548 #1500 #1480 #1383 #1381 #1337 #1335 #1323 #1252 #1182; folded into #2719: #2146 #2545 #2232
+- Factory tickets done or retired: #1406 #1409 #1112 #1140 #2657 #2680
