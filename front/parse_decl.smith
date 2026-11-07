@@ -529,25 +529,11 @@ static void fix_attribute_group(parse::Parser *p, Prefixes *pre, U32 start, Usiz
         pre->unused_after = after;
         return;
     }
-    // After `export` (or `static`, `extern`, `inline`) on a line of its own the group sits on the next line: the text
-    // that takes its place joins the keyword's line, or the declaration would read `pub` and then an indented `fn`.
-    U32 from = start;
-    Str lead = "";
-    Usize first = p->position;
-    while (first > 0 && p->tokens[first - 1].span.start >= start)
-        first -= 1;
-    lex::TokenKind before = first > 0 ? p->tokens[first - 1].kind : lex::end_of_file;
-    if (first > 0 && p->tokens[first - 1].line_break &&
-        (before == lex::kw_export || before == lex::kw_static || before == lex::kw_extern ||
-         before == lex::kw_inline)) {
-        from = p->tokens[first - 1].span.end;
-        lead = " ";
-    }
     parse::Edits edits = {};
     if (countof(mapped.text) == 0) {
-        edits = with_edit(edits, edit(from, after, lead));
+        edits = with_edit(edits, edit(start, after, ""));
     } else {
-        edits = with_edit(edits, edit(from, end, as_str(format::push(lead, mapped.text))));
+        edits = with_edit(edits, edit(start, end, mapped.text));
     }
     if (countof(p->errors) > errors_before) {
         p->errors[errors_before].fix = edits;
@@ -849,7 +835,9 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
         if (top && kind == lex::kw_export) {
             ast::Span word = parse::peek(p).span;
             parse::Edits edits = {};
-            edits = with_edit(edits, edit(word.start, word.end, "pub"));
+            // On a line of its own, the declaration that follows (an attribute, the type) joins it.
+            U32 joined = parse::peek(p).line_break ? parse::peek_at(p, 1).span.start : word.end;
+            edits = with_edit(edits, edit(word.start, joined, joined > word.end ? "pub " : "pub"));
             warn(p, word.start, word.end, "`export` is written `pub`", edits);
         }
         if (top && kind == lex::kw_constexpr) {
