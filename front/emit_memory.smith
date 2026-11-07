@@ -581,12 +581,7 @@ export state::Status address_of(state::Emitter *e, const ast::Expr *x, state::Hi
     }
     const ast::Expr *operand = x->kind.unary.operand;
     state::push_then_none(e, (state::ThenNone){.run = address_finish, .span = x->span});
-    if (is_lvalue(operand)) {
-        push_place_of(e, operand);
-        return state::success();
-    }
-    state::push_then_none(e, (state::ThenNone){.run = spill_finish, .span = x->span});
-    state::push_eval(e, operand, state::no_hint());
+    push_place_of(e, operand);
     return state::success();
 }
 
