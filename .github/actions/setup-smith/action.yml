@@ -125,6 +125,13 @@ runs:
           for runner in build/*/front-project/build/tests; do
             [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
           done
+          for nested in build/*/*-project/.smith/log; do
+            [ -d "$nested" ] || continue
+            echo "::group::$nested"
+            ls -la "$nested" | tail -n 20
+            for log in $(ls -t "$nested"/.smith_task_*.log "$nested"/* 2>/dev/null | head -n 4); do echo "--- $log"; tail -n 40 "$log"; done
+            echo "::endgroup::"
+          done
           # the compiler's `file:line:col: error:` lines with their source lines, the linker's errors, and the command that failed (the
           # nested build's full output is also in `.smith/log/.smith_task_*.log`, and a nested project's (units, front) in its own, a hidden file a `*` glob misses)
           cat .smith/log/.smith_task_*.log build/*/*-project/.smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
