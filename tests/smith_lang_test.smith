@@ -237,30 +237,40 @@ static Built build_sources(const Case *kase) {
                             .data;
     const char *sources = found(kase, "src", ".smith", nullptr, false);
     Built built = {.status = 0, .objects = ""};
-    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        // the headers first, as the build will: no compile waits on another
-        const char *stem = stem_of(arena, file);
-        const char *place = include_stem(stem);
-        if (header_by_command(kase->name)) {
-            const char *command =
-                format::push("mkdir -p \"out/include/$(dirname ", place, ".h)\" && smith cc --smith-header src/", file,
-                             " -o out/include/", place, ".h 2>>out/stderr; [ -f out/include/", place,
-                             ".h ] && cp out/include/", place, ".h out/header/", module_of(arena, file), ".h")
-                    .data;
-            (void)scratch::sh(p, command);
-        } else {
-            write_header(kase, file, stem);
+    {
+        const char *at = sources;
+        const char *file = next_line(arena, &at);
+        while (file != nullptr) {
+            // the headers first, as the build will: no compile waits on another
+            const char *stem = stem_of(arena, file);
+            const char *place = include_stem(stem);
+            if (header_by_command(kase->name)) {
+                const char *command =
+                    format::push("mkdir -p \"out/include/$(dirname ", place, ".h)\" && smith cc --smith-header src/",
+                                 file, " -o out/include/", place, ".h 2>>out/stderr; [ -f out/include/", place,
+                                 ".h ] && cp out/include/", place, ".h out/header/", module_of(arena, file), ".h")
+                        .data;
+                (void)scratch::sh(p, command);
+            } else {
+                write_header(kase, file, stem);
+            }
+            file = next_line(arena, &at);
         }
     }
     const char *ask = scratch::exists(p, "ask") ? text_of(kase, "ask") : "";
-    for (const char *at = sources, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        const char *module = module_of(arena, file);
-        const char *compile =
-            format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ", flags,
-                         " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
-                .data;
-        if (scratch::sh(p, compile).status != 0) built.status = 1;
-        built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
+    {
+        const char *at = sources;
+        const char *file = next_line(arena, &at);
+        while (file != nullptr) {
+            const char *module = module_of(arena, file);
+            const char *compile =
+                format::push("SMITH_LANG_GENERICS=out/generics/", module, ".c SMITH_LANG_ASK='", ask, "' smith cc ",
+                             flags, " -c src/", file, " -o out/obj/", module, ".o 2>>out/stderr")
+                    .data;
+            if (scratch::sh(p, compile).status != 0) built.status = 1;
+            built.objects = format::push(built.objects, " out/obj/", module, ".o").data;
+            file = next_line(arena, &at);
+        }
     }
     return built;
 }
@@ -275,17 +285,22 @@ static void build_others(const Case *kase, Built *built) {
                             .data;
     const char *others = found(kase, "src", ".c", ".cpp", false);
     const char *linker = "cc"; // the verb that links: C++ needs smith c++
-    for (const char *at = others, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
-        Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
-        const char *compile =
-            cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file, " -o ",
-                               object, " 2>>out/stderr")
-                      .data
-                : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
-        if (scratch::sh(p, compile).status != 0) built->status = 1;
-        if (cpp) linker = "c++";
-        built->objects = format::push(built->objects, " ", object).data;
+    {
+        const char *at = others;
+        const char *file = next_line(arena, &at);
+        while (file != nullptr) {
+            const char *object = format::push("out/obj/", object_of(arena, file), ".o").data;
+            Bool cpp = c::strcmp(file + c::strlen(file) - 4, ".cpp") == 0;
+            const char *compile =
+                cpp ? format::push("smith c++ -std=c++20 -g0 -fno-color-diagnostics -I out/include -c src/", file,
+                                   " -o ", object, " 2>>out/stderr")
+                          .data
+                    : format::push("smith cc ", flags, " -c src/", file, " -o ", object, " 2>>out/stderr").data;
+            if (scratch::sh(p, compile).status != 0) built->status = 1;
+            if (cpp) linker = "c++";
+            built->objects = format::push(built->objects, " ", object).data;
+            file = next_line(arena, &at);
+        }
     }
     scratch::write(p, "out/stdout", "");
     Bool has_main =
@@ -423,8 +438,12 @@ static const char *held(const Case *kase, const char *folder) {
     arena::Arena *arena = kase->arena;
     const char *names = found(kase, join("expect/", folder, "", ""), nullptr, nullptr, true);
     const char *lines = "";
-    for (const char *at = names, *name = next_line(arena, &at); name != nullptr; name = next_line(arena, &at))
+    const char *at = names;
+    const char *name = next_line(arena, &at);
+    while (name != nullptr) {
         lines = join(lines, folder, "/", join(name, "\n", "", ""));
+        name = next_line(arena, &at);
+    }
     return lines;
 }
 
@@ -443,8 +462,13 @@ static void check_files(const Case *kase, const Built *built, Bool update) {
         const char *generics = held(kase, "generics");
         files = header_by_command(kase->name) ? join(held(kase, "header"), generics, "", "") : generics;
     }
-    for (const char *at = files, *file = next_line(arena, &at); file != nullptr; file = next_line(arena, &at)) {
-        golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
+    {
+        const char *at = files;
+        const char *file = next_line(arena, &at);
+        while (file != nullptr) {
+            golden_at(kase, join("expect/", file, "", ""), scratch::read(kase->project, join("out/", file, "", "")));
+            file = next_line(arena, &at);
+        }
     }
 }
 

@@ -298,13 +298,16 @@ static Bytes xz_stored(Case *t, Bytes data, U8 check) {
         header[8 + i] = (U8)(header_crc >> (8 * i));
     put(&xz, header, 12);
     Usize start = xz.used;
-    for (Usize at = 0, chunk = 0; at < size || chunk == 0; chunk++) {
+    Usize at = 0;
+    Usize chunk = 0;
+    while (at < size || chunk == 0) {
         Usize take = size - at < 65536 ? size - at : 65536;
         U8 head[3] = {chunk == 0 ? 1 : 2, (U8)((take - 1) >> 8), (U8)(take - 1)};
         if (take > 0) put(&xz, head, 3);
         put(&xz, data.data + at, take);
-        at += take;
+        at = at + take;
         if (take == 0) break;
+        chunk = chunk + 1;
     }
     put_zeros(&xz, 1); // the end of the LZMA2 data
     Usize compressed = xz.used - start;
