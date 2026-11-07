@@ -122,6 +122,18 @@ struct Frame {
     const ast::Expr *twin;
 };
 
+static Frame make_frame(const ast::Expr *node, types::TypeRef expected, U32 stage, const ast::Stmt *source, Usize index,
+                        Str message, const ast::Expr *twin) {
+    Frame f = {.node = node,
+               .expected = expected,
+               .stage = stage,
+               .source = source,
+               .index = index,
+               .message = message,
+               .twin = twin};
+    return f;
+}
+
 constexpr U32 stage_narrow =
     4; // `a && b`: the left side is typed; opens the scope in which `b` sees the narrowed names
 constexpr U32 stage_unnarrow = 5; // `a && b`: the right side is typed; closes that scope
@@ -151,7 +163,7 @@ static void push(Work *w, const ast::Expr *node, types::TypeRef expected, U32 st
     if (wanted != nullptr && wanted->kind == .automatic) {
         wanted = nullptr;
     }
-    push_frame(w, (Frame){.node = node, .expected = wanted, .stage = stage});
+    push_frame(w, make_frame(node, wanted, stage, nullptr, 0, "", nullptr));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -256,11 +268,13 @@ static U64 integer_value(const ast::Expr *e) {
 }
 
 static Bool plain_integer(const ast::Expr *e) {
-    return e->kind == .integer && countof(e->kind.integer.suffix) == 0;
+    if (e->kind == .integer) return countof(e->kind.integer.suffix) == 0;
+    return false;
 }
 
 static Bool plain_float(const ast::Expr *e) {
-    return e->kind == .floating && countof(e->kind.floating.suffix) == 0;
+    if (e->kind == .floating) return countof(e->kind.floating.suffix) == 0;
+    return false;
 }
 
 static Bool negated_literal(const ast::Expr *e) {
@@ -305,22 +319,26 @@ static const types::Symbol *const_variable(const types::Checked *c, const ast::E
 static const types::Symbol *root_symbol(const types::Checked *c, const ast::Expr *e) {
     const ast::Expr *at = e;
     while (at != nullptr) {
-        if (at->kind == .name) {
-            const types::Symbol *s = types::lookup_path(&c->scopes, at->kind.name.path);
+        const ast::Expr *cur = at;
+        const ast::Expr *next = nullptr;
+        if (cur->kind == .name) {
+            const types::Symbol *s = types::lookup_path(&c->scopes, cur->kind.name.path);
             if (s != nullptr && s->kind == .variable) {
                 return s;
             }
             return nullptr;
         }
-        if (at->kind == .member) {
-            at = at->kind.member.base;
-        } else if (at->kind == .index) {
-            at = at->kind.index.base;
-        } else if (at->kind == .unary && at->kind.unary.op == .dereference) {
-            at = at->kind.unary.operand;
+        if (cur->kind == .member) {
+            next = cur->kind.member.base;
+        } else if (cur->kind == .index) {
+            next = cur->kind.index.base;
+        } else if (cur->kind == .unary) {
+            if (cur->kind.unary.op != .dereference) return nullptr;
+            next = cur->kind.unary.operand;
         } else {
             return nullptr;
         }
+        at = next;
     }
     return nullptr;
 }
@@ -341,14 +359,27 @@ static Bool in_new_syntax(const types::Checked *c, const ast::Expr *e) {
     }
     // no variable at the root: a call (`unerase(x).size`) is in smith's own syntax when its body is (#2219)
     const ast::Expr *at = e;
-    while (at != nullptr && (at->kind == .member || at->kind == .index)) {
-        if (at->kind == .member) {
-            at = at->kind.member.base;
-        } else if (at->kind == .index) {
-            at = at->kind.index.base;
+    while (at != nullptr) {
+        const ast::Expr *cur = at;
+        const ast::Expr *next = nullptr;
+        if (cur->kind == .member) {
+            next = cur->kind.member.base;
+        } else if (cur->kind == .index) {
+            next = cur->kind.index.base;
+        } else {
+            break;
         }
+        at = next;
     }
-    return at != nullptr && (at->kind == .call || at->kind == .cast) && c->new_body;
+    if (at == nullptr) return false;
+    return (at->kind == .call || at->kind == .cast) && c->new_body;
+}
+
+// The expression a member or an index reads from; the expression itself for any other.
+static const ast::Expr *place_base(const ast::Expr *e) {
+    if (e->kind == .member) return e->kind.member.base;
+    if (e->kind == .index) return e->kind.index.base;
+    return e;
 }
 
 // The constant variable that writing to `e` would change: `x` itself, or `x` in `x.a` and `x[i]` (a field of a
@@ -364,24 +395,29 @@ static const types::Symbol *constant_place(const types::Checked *c, const ast::E
             }
             return nullptr;
         }
-        const ast::Expr *base = nullptr;
-        if (at->kind == .member) {
-            base = at->kind.member.base;
-        } else if (at->kind == .index) {
-            base = at->kind.index.base;
-        } else {
-            return nullptr;
-        }
-        types::TypeRef t = types::type_of(c, base);
+        if (at->kind != .member && at->kind != .index) return nullptr;
+        types::TypeRef t = types::type_of(c, place_base(at));
         if (t == nullptr || t->kind == .pointer || t->kind == .slice) {
             return nullptr;
         }
-        at = base;
+        at = place_base(at);
     }
     return nullptr;
 }
 
 // The read-only pointer (`*T`, which is `pointee_const`) that writing to `e` goes through, else null: `p.*`, `p.x` and
+// Whether `e` is a dereference, a member or an index: a step of a place.
+static Bool is_place_step(const ast::Expr *e) {
+    if (e->kind == .unary) return e->kind.unary.op == .dereference;
+    return e->kind == .member || e->kind == .index;
+}
+
+// The expression a dereference, a member or an index reads from.
+static const ast::Expr *step_base(const ast::Expr *e) {
+    if (e->kind == .unary) return e->kind.unary.operand;
+    return place_base(e);
+}
+
 // `p[i]` where `p` is a `*T`. Only for a place written in smith's own syntax, where `*T` is read-only and `*mut T`
 // writable (a C `const T *` keeps the rules it had).
 static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr *e) {
@@ -390,17 +426,8 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
     }
     const ast::Expr *at = e;
     while (at != nullptr) {
-        const ast::Expr *base = nullptr;
-        if (at->kind == .unary && at->kind.unary.op == .dereference) {
-            base = at->kind.unary.operand;
-        } else if (at->kind == .member) {
-            base = at->kind.member.base;
-        } else if (at->kind == .index) {
-            base = at->kind.index.base;
-        } else {
-            return nullptr;
-        }
-        types::TypeRef t = types::type_of(c, base);
+        if (!is_place_step(at)) return nullptr;
+        types::TypeRef t = types::type_of(c, step_base(at));
         if (t == nullptr) {
             return nullptr;
         }
@@ -410,7 +437,7 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
             }
             return nullptr;
         }
-        at = base;
+        at = step_base(at);
     }
     return nullptr;
 }
@@ -443,18 +470,26 @@ static syntax::Edits index_enum_fix(const ast::Expr *index, types::TypeRef t) {
 
 // The edits for `&x` handed where a `*mut T` is wanted and `x` is a constant: `x` becomes `mut x`, and when `x` is
 // itself written `*T`, it becomes `*mut T` (what `&x` points at is then writable through the pointer).
-static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name) {
+static const types::Symbol *named_symbol(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .name) return types::lookup_path(&c->scopes, e->kind.name.path);
+    return nullptr;
+}
+
+static Bool is_const_pointer_type(const ast::TypeExpr *written) {
+    if (written->kind == .pointer) return !written->kind.pointer.is_mut;
+    return false;
+}
+
+static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *target) {
     syntax::Edits edits = {};
-    if (!(name->kind == .name)) {
-        return edits;
-    }
-    const types::Symbol *x = types::lookup_path(&c->scopes, name->kind.name.path);
+    const types::Symbol *x = named_symbol(c, target);
     if (x == nullptr || x->kind != .variable || !x->is_new) {
         return edits;
     }
     edits = mut_fix(x);
     const ast::TypeExpr *written = x->written;
-    if (countof(edits) == 1 && written != nullptr && written->kind == .pointer && !written->kind.pointer.is_mut) {
+    if (written == nullptr) return edits;
+    if (countof(edits) == 1 && is_const_pointer_type(written)) {
         edits = mem::realloc(edits, 2);
         U32 after_star = written->span.start + 1;
         Str word = "mut ";
@@ -465,43 +500,33 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
 
 // The edit for `&x` handed where a `*mut P` is wanted and `P` is a pointer to a constant (`const void **`): `x` becomes
 // `mut x`, and its own type stays `*T` (#2643).
-export syntax::Edits address_binding_fix(const types::Checked *c, const ast::Expr *name) {
+export syntax::Edits address_binding_fix(const types::Checked *c, const ast::Expr *target) {
     syntax::Edits none = {};
-    if (name->kind != .name) return none;
-    const types::Symbol *x = types::lookup_path(&c->scopes, name->kind.name.path);
+    const types::Symbol *x = named_symbol(c, target);
     if (x == nullptr || x->kind != .variable || !x->is_new) return none;
     return mut_fix(x);
 }
 
 // The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
 // becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
-static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member, Bool slice_field) {
+static types::TypeRef element_or_self(types::TypeRef t) {
+    const types::Ty *element = t->element;
+    if (element == nullptr) return t;
+    return element;
+}
+
+static const ast::TypeExpr *option_inner_or_self(const ast::TypeExpr *written) {
+    if (written->kind == .option) {
+        const ast::TypeExpr *inner = written->kind.option.inner;
+        if (inner != nullptr) return inner;
+    }
+    return written;
+}
+
+// `*T` as written (the star first, the old spelling `T *` is rewritten by the parse fixes): `mut` goes after the star.
+static syntax::Edits star_fix(const ast::TypeExpr *written) {
     syntax::Edits edits = {};
-    if (!(member->kind == .member)) {
-        return edits;
-    }
-    types::TypeRef owner = types::type_of(c, member->kind.member.base);
-    if (owner != nullptr && owner->kind == .pointer) {
-        owner = owner->element;
-    }
-    if (owner == nullptr || owner->kind != .record || countof(owner->owner) != 0) {
-        return edits;
-    }
-    for (Usize i = 0; i < countof(owner->slots); i++) {
-        const ast::TypeExpr *written = owner->slots[i].written;
-        if (!types::same_text(owner->slots[i].name, member->kind.member.name) || written == nullptr) continue;
-        if (written->kind == .slice && !written->kind.slice.is_mut && slice_field) {
-            // A `[]T` field whose `.data` is handed where a `*mut T` is wanted is `[]mut T` (#2456).
-            edits = mem::realloc(edits, 1);
-            U32 after_brackets = written->span.start + 2;
-            Str word = "mut ";
-            edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
-            continue;
-        }
-        // A `?*T` field is read through its pointer: `mut` goes after the `*` of the option's type (#2643).
-        if (written->kind == .option && written->kind.option.inner != nullptr) written = written->kind.option.inner;
-        // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
-        if (!(written->kind == .pointer)) continue;
+    if (written->kind == .pointer) {
         Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
         if (star_first && !written->kind.pointer.is_mut) {
             edits = mem::realloc(edits, 1);
@@ -513,9 +538,54 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member,
     return edits;
 }
 
+static syntax::Edits slot_fix(const ast::TypeExpr *written, Bool slice_field) {
+    syntax::Edits edits = {};
+    if (written->kind == .slice) {
+        if (!written->kind.slice.is_mut && slice_field) {
+            // A `[]T` field whose `.data` is handed where a `*mut T` is wanted is `[]mut T` (#2456).
+            edits = mem::realloc(edits, 1);
+            U32 after_brackets = written->span.start + 2;
+            Str word = "mut ";
+            edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
+            return edits;
+        }
+    }
+    // A `?*T` field is read through its pointer: `mut` goes after the `*` of the option's type (#2643).
+    return star_fix(option_inner_or_self(written));
+}
+
+static Str member_name(const ast::Expr *e) {
+    if (e->kind == .member) return e->kind.member.name;
+    return "";
+}
+
+static syntax::Edits named_field_fix(const types::Checked *c, const ast::Expr *place, Bool slice_field) {
+    syntax::Edits edits = {};
+    if (place->kind != .member) return edits;
+    types::TypeRef owner = types::type_of(c, place_base(place));
+    if (owner == nullptr) return edits;
+    if (owner->kind == .pointer) owner = element_or_self(owner);
+    if (owner->kind != .record || countof(owner->owner) != 0) {
+        return edits;
+    }
+    for (Usize i = 0; i < countof(owner->slots); i++) {
+        if (!types::same_text(owner->slots[i].name, member_name(place))) continue;
+        const ast::TypeExpr *written = owner->slots[i].written;
+        if (written == nullptr) continue;
+        syntax::Edits found = slot_fix(written, slice_field);
+        if (countof(found) > 0) edits = found;
+    }
+    return edits;
+}
+
+static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *place, Bool slice_field) {
+    return named_field_fix(c, place, slice_field);
+}
+
 // One edit that writes `mut ` at `at` (after the `*` or the `[]` of a written type).
 static syntax::Edits mut_after(U32 at) {
-    syntax::Edits edits = mem::realloc((syntax::Edits){}, 1);
+    syntax::Edits empty = {};
+    syntax::Edits edits = mem::realloc(empty, 1);
     Str word = "mut ";
     edits[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = word};
     return edits;
@@ -524,44 +594,78 @@ static syntax::Edits mut_after(U32 at) {
 // The fix that makes the `*T` variable `base` a `*mut T` (the edit after its star); empty for another spelling.
 export syntax::Edits pointer_name_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits none = {};
-    if (base->kind != .name) return none;
-    const types::Symbol *x = types::lookup_path(&c->scopes, base->kind.name.path);
-    const ast::TypeExpr *written = x != nullptr ? x->written : nullptr;
-    if (written == nullptr || written->kind != .pointer || written->kind.pointer.is_mut) return none;
-    if (written->kind.pointer.pointee->span.start <= written->span.start) return none; // the old spelling `T *`
-    return mut_after(written->span.start + 1);
+    const types::Symbol *x = named_symbol(c, base);
+    if (x == nullptr) return none;
+    const ast::TypeExpr *written = x->written;
+    if (written == nullptr) return none;
+    if (written->kind == .pointer) {
+        if (written->kind.pointer.is_mut) return none;
+        if (written->kind.pointer.pointee->span.start <= written->span.start) return none; // the old spelling `T *`
+        return mut_after(written->span.start + 1);
+    }
+    return none;
 }
 
 // The fix for `&a[i]` of a local array and `&r.f` of a local record: the one for `&a` and `&r` (#2456). A field
 // reached through a pointer is writable when the pointer is, which is another fix. Empty when neither is so.
+static const ast::Expr *index_base(const ast::Expr *e) {
+    if (e->kind == .index) return e->kind.index.base;
+    return e;
+}
+
+static Bool holds_pointer(const types::Checked *c, const ast::Expr *e) {
+    types::TypeRef held = types::type_of(c, e);
+    if (held == nullptr) return false;
+    return held->kind == .pointer;
+}
+
+// The root of a chain of `.f` (not `->f`) and `[i]`: the local that holds the storage; `e` itself when the chain
+// is not one of arrays and records (a pointer ends it).
+// Whether `e`, under an index, keeps the chain going: a name that is not a pointer or a slice, or a member.
+static Bool is_chain_base(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .member) return true;
+    if (e->kind != .name) return false;
+    types::TypeRef held = types::type_of(c, e);
+    if (held == nullptr) return true;
+    return held->kind == .array;
+}
+
+static const ast::Expr *storage_root(const types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *root = e;
+    while (root != nullptr) {
+        const ast::Expr *cur = root;
+        const ast::Expr *next = nullptr;
+        if (cur->kind == .index) {
+            if (!is_chain_base(c, cur->kind.index.base)) return e;
+            next = cur->kind.index.base;
+        } else if (cur->kind == .member) {
+            if (cur->kind.member.arrow) return e;
+            next = cur->kind.member.base;
+        } else {
+            return cur;
+        }
+        root = next;
+    }
+    return e;
+}
+
 static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *operand) {
     syntax::Edits none = {};
-    if (operand->kind == .index && operand->kind.index.base->kind == .name) { // `&slots[i]` of a `*T` global or local
-        const ast::Expr *base = operand->kind.index.base;
-        types::TypeRef held = types::type_of(c, base);
-        if (held != nullptr && held->kind == .pointer) return pointer_name_fix(c, base);
-    }
-    // `&r.word[0]`: the root of a chain of `.f` (not `->f`) and `[i]` is the local that holds the storage.
-    const ast::Expr *root = operand;
-    while (root->kind == .member || root->kind == .index) {
-        if (root->kind == .index) {
-            const ast::Expr *inner = root->kind.index.base;
-            types::TypeRef held = inner->kind == .name ? types::type_of(c, inner) : nullptr;
-            if (inner->kind != .name && inner->kind != .member) return none;
-            if (held != nullptr && held->kind != .array) return none;
-            root = inner;
-        } else if (root->kind == .member && !root->kind.member.arrow) {
-            root = root->kind.member.base;
-        } else {
-            return none;
+    if (operand->kind == .index) {
+        // `&slots[i]` of a `*T` global or local
+        if (index_base(operand)->kind == .name && holds_pointer(c, index_base(operand))) {
+            return pointer_name_fix(c, index_base(operand));
         }
     }
-    if (root == operand || root->kind != .name) return none;
+    // `&r.word[0]`: the root of a chain of `.f` (not `->f`) and `[i]` is the local that holds the storage.
+    const ast::Expr *root = storage_root(c, operand);
+    if (root == operand) return none;
+    if (root->kind != .name) return none;
     types::TypeRef held = types::type_of(c, root);
-    if (held != nullptr && held->kind == .pointer && root->kind == .name) { // `&l.frames[i]` of a `*Loops`: `*mut`
-        return pointer_name_fix(c, root);
-    }
-    return held != nullptr && (held->kind == .record || held->kind == .array) ? address_fix(c, root) : none;
+    if (held == nullptr) return none;
+    if (held->kind == .pointer) return pointer_name_fix(c, root); // `&l.frames[i]` of a `*Loops`: `*mut`
+    if (held->kind == .record || held->kind == .array) return address_fix(c, root);
+    return none;
 }
 
 // The fix for `xs.data` handed where a `*mut T` is wanted: the slice `xs` (a field or a parameter) is `[]mut T`
@@ -652,13 +756,12 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
 static const ast::Expr *readonly_base(const types::Checked *c, const ast::Expr *e) {
     const ast::Expr *at = e;
     while (at != nullptr) {
-        const ast::Expr *base = nullptr;
-        if (at->kind == .unary && at->kind.unary.op == .dereference) {
+        const ast::Expr *base = at;
+        if (at->kind == .unary) {
+            if (at->kind.unary.op != .dereference) return nullptr;
             base = at->kind.unary.operand;
-        } else if (at->kind == .member) {
-            base = at->kind.member.base;
-        } else if (at->kind == .index) {
-            base = at->kind.index.base;
+        } else if (at->kind == .member || at->kind == .index) {
+            base = place_base(at);
         } else {
             return nullptr;
         }
@@ -1387,7 +1490,26 @@ static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::Un
     return invalid(c);
 }
 
+// `T(...)`: a construction of a record, written with a type's name. Its address is a temporary that lives to the end
+// of the statement (D11, owner 2026-11-06), and the pointer is `*mut T`.
+static Bool is_construction(const ast::Expr *e, types::TypeRef t) {
+    if (e->kind != .call || t->kind != .record) {
+        return false;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    Str name = "";
+    if (callee->kind == .member) {
+        name = callee->kind.member.name;
+    } else if (callee->kind == .name && countof(callee->kind.name.path.segments) > 0) {
+        name = callee->kind.name.path.segments[countof(callee->kind.name.path.segments) - 1].text;
+    }
+    return countof(name) > 0 && name[0] >= 'A' && name[0] <= 'Z';
+}
+
 static types::TypeRef unary_address(types::Checked *c, const ast::Expr *e, const ast::Expr *operand, types::TypeRef t) {
+    if (is_construction(operand, t)) {
+        return types::pointer_to(&c->table, t, false);
+    }
     if (!is_lvalue(operand)) {
         types::failf(c, e->span,
                      "cannot take the address of a value that is not a place; store it in a variable first and write "
@@ -1559,6 +1681,16 @@ static Str binary_text(ast::BinaryOp op) {
     return "||";
 }
 
+// A pointer that may be null (`?*T`). The element goes through a local: a null test of the field `element` itself
+// would make `Ty.element` an option in the fixed text (#2669).
+static Bool is_pointer_option(types::TypeRef t) {
+    if (t->kind != .option) {
+        return false;
+    }
+    types::TypeRef inner = t->element;
+    return inner != nullptr && inner->kind == .pointer;
+}
+
 static Bool is_shift(ast::BinaryOp op) {
     return op == .shift_left || op == .shift_right;
 }
@@ -1601,6 +1733,15 @@ static types::TypeRef need_number(types::Checked *c, ast::Span span, ast::Binary
     return invalid(c);
 }
 
+// Whether `r` is a pointer, or an array that decays to one, to the element that the pointer `l` points to: the
+// difference of two pointers into one object, whatever their `const`.
+static Bool same_element(types::TypeRef l, types::TypeRef r) {
+    if (r->kind != .pointer && r->kind != .array) {
+        return false;
+    }
+    return l->element == r->element;
+}
+
 static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                          types::TypeRef r) {
     if (l->kind == .pointer && is_integer(r)) {
@@ -1609,7 +1750,7 @@ static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast:
     if (op == .add && is_integer(l) && r->kind == .pointer) {
         return r;
     }
-    if (op == .subtract && l->kind == .pointer && l == r) {
+    if (op == .subtract && l->kind == .pointer && same_element(l, r)) {
         return types::builtin(&c->table, "Isize");
     }
     types::failf(c, span, "cannot ", op == .add ? "add" : "subtract", " `", types::show(r), "` ",
@@ -1619,6 +1760,9 @@ static types::TypeRef pointer_arithmetic(types::Checked *c, ast::Span span, ast:
 
 static types::TypeRef arith_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                  types::TypeRef r) {
+    // A value of a concept type (`a: num`) has its operator checked on the instance, where its type is known.
+    if (l->kind == .concept_type) return l;
+    if (r->kind == .concept_type) return r;
     if ((op == .add || op == .subtract) && (l->kind == .pointer || r->kind == .pointer)) {
         return pointer_arithmetic(c, span, op, l, r);
     }
@@ -1757,6 +1901,9 @@ static types::TypeRef slice_compare(types::Checked *c, ast::Span span, ast::Bina
 
 static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                    types::TypeRef r) {
+    // A value of an `auto` or a concept type (`a: num`) is not known until the instance: it is compared there.
+    if (l->kind == .automatic || l->kind == .concept_type) return c->table.bool_type;
+    if (r->kind == .automatic || r->kind == .concept_type) return c->table.bool_type;
     if (is_equality(op) && fn_against_function(l, r)) {
         return c->table.bool_type;
     }
@@ -1786,7 +1933,7 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
         return invalid(c);
     }
     // Two `?*T` of one type compare as the pointers they are (null for `.none`, #2205): `a.element != b.element`.
-    if (is_equality(op) && l == r && l->kind == .option && l->element != nullptr && l->element->kind == .pointer) {
+    if (is_equality(op) && l == r && is_pointer_option(l)) {
         return c->table.bool_type;
     }
     if (!is_scalar(l)) {
@@ -1818,7 +1965,8 @@ static Bool is_option_test(ast::BinaryOp op, const ast::Expr *left, const ast::E
     if (right->kind == .variant && left->kind != .variant) {
         return right->kind.variant.payload == nullptr;
     }
-    return left->kind == .variant && right->kind != .variant && left->kind.variant.payload == nullptr;
+    if (left->kind == .variant) return right->kind != .variant && left->kind.variant.payload == nullptr;
+    return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1866,7 +2014,11 @@ export Usize narrowing(types::Checked *c, const ast::Expr *test, Bool when_true,
         if (s == nullptr || s->kind != .variable || !s->is_const || !s->is_new) {
             continue;
         }
-        if (s->type->kind != .option || s->type->element == nullptr) {
+        if (s->type->kind != .option) {
+            continue;
+        }
+        types::TypeRef inner = s->type->element; // a local: a null test of the field would make `Ty.element` an option
+        if (inner == nullptr) {
             continue;
         }
         out[count] = *s;
@@ -2646,7 +2798,7 @@ static Bool is_string_literal(const ast::Expr *x) {
 // What C can receive in the `...` of a call: an integer, float, bool, char, pointer or C enum.
 static Bool c_receivable(types::TypeRef t) {
     if (t->kind == .bool_type || t->kind == .integer || t->kind == .floating || t->kind == .pointer) return true;
-    if (t->kind == .null_type) return true;
+    if (t->kind == .null_type || t->kind == .function) return true; // a function name is a pointer to it in C
     return t->kind == .enumeration && !t->has_payload;
 }
 
@@ -3073,13 +3225,25 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     return s->type;
 }
 
+// Whether the callee names a function of a header that a struct of the same name hides: `stat.sigaction`, or in the
+// written form of C `c::sigaction` (#2611).
+static Bool names_header_function(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind == .member) return types::c_member_function(c, callee) != nullptr;
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 2) return false;
+    ast::Path path = callee->kind.name.path;
+    if (!same_text(path.segments[0].text, "c")) return false;
+    return types::lookup(&c->scopes, msg(format::push("c::", path.segments[1].text, "()"))) != nullptr;
+}
+
 // Whether a call of `h.name(...)` is of the header's function, not a construction of its struct of the same name:
 // the struct is built with named arguments (`signal.sigaction(sa_flags = 0)`), the function called with values.
 static Bool calls_header_function(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
-    if (callee->kind != .member || types::c_member_function(c, callee) == nullptr) return false;
+    if (!names_header_function(c, callee)) return false;
     if (countof(args) == 0) return true;
-    const ast::Expr *first = args[0];
-    if (first->kind == .named_arg) return false;
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) return false; // a C function takes no named argument: this builds the struct
+    }
     return true;
 }
 
@@ -3374,6 +3538,17 @@ static types::TypeRef index_element(types::Checked *c, const ast::Expr *e, const
             return invalid(c);
         }
         return base->element;
+    }
+    if (base->kind == .tuple) { // a pack or a tuple indexed by a constant: the type of that element
+        if (plain_integer(index) && integer_value(index) < countof(base->slots)) {
+            return base->slots[integer_value(index)].type;
+        }
+        if (plain_integer(index)) {
+            types::failf(c, index->span, "index ", integer_value(index), " is out of range for `", types::show(base),
+                         "`, which has ", countof(base->slots), " elements; write an index below ",
+                         countof(base->slots));
+            return invalid(c);
+        }
     }
     if (base->kind == .vector) {
         if (plain_integer(index) && integer_value(index) >= base->count) {
@@ -4052,7 +4227,7 @@ static Bool payload_list(Work *w, Frame f, types::TypeRef t, ast::Initializer it
     ast::Expr *variant = mem::alloc(ast::Expr);
     variant->span = e->span;
     variant->kind = {.variant = {.name = name, .payload = payload_value(slot->type, items[0].value)}};
-    push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 11, .twin = variant});
+    push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", variant));
     push(w, variant, t, 0);
     return true;
 }
@@ -4348,15 +4523,15 @@ static void emit(Plan *p, Frame frame) {
 }
 
 static void emit_expr(Plan *p, const ast::Expr *e, types::TypeRef expected) {
-    emit(p, (Frame){.node = e, .expected = expected});
+    emit(p, make_frame(e, expected, 0, nullptr, 0, "", nullptr));
 }
 
 static void emit_pseudo(Plan *p, U32 stage, const ast::Stmt *source, Usize index) {
-    emit(p, (Frame){.node = p->owner, .stage = stage, .source = source, .index = index});
+    emit(p, make_frame(p->owner, nullptr, stage, source, index, "", nullptr));
 }
 
 static void emit_not_yet(Plan *p, const ast::Stmt *source, Str message) {
-    emit(p, (Frame){.node = p->owner, .stage = stage_not_yet, .source = source, .message = message});
+    emit(p, make_frame(p->owner, nullptr, stage_not_yet, source, 0, message, nullptr));
 }
 
 static void emit_leaf(Plan *p, const ast::Expr *value) {
@@ -4554,7 +4729,7 @@ static Plan read_value(const types::Checked *c, const ast::Expr *e, types::TypeR
 static void value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     Plan p = read_value(c, e, f.expected);
-    push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 1, .index = c->error_count});
+    push_frame(w, make_frame(e, f.expected, 1, nullptr, c->error_count, "", nullptr));
     for (Usize i = p.out_count; i > 0; i--) {
         push_frame(w, p.out[i - 1]);
     }
@@ -5120,7 +5295,7 @@ static void type_value_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     types::set_method(c, f.node, call); // the emitter builds the construction from it
-    push_frame(w, (Frame){.node = f.node, .expected = f.expected, .stage = 1, .twin = call});
+    push_frame(w, make_frame(f.node, f.expected, 1, nullptr, 0, "", call));
     push(w, call, f.expected, 0);
 }
 
@@ -5476,6 +5651,10 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
             if (literal != (pass == 1)) continue;
             types::TypeRef t = typ(c, arg);
             if (t == invalid(c)) return false;
+            const ast::TypeExpr *written = params[i].type;
+            if (t->kind == .text && written != nullptr && written->kind == .slice) {
+                t = types::slice_of(&c->table, types::builtin(&c->table, "Char"), true); // `str` is a slice of `char`
+            }
             if (!types::unify_generics(generics, params[i].type, t, bound, set, pass == 0, &clash)) {
                 types::failf(c, arg->span, "`", generics[clash.generic].name, "` is `", types::show(clash.before),
                              "` from an earlier argument and `", types::show(clash.now),
@@ -6046,6 +6225,13 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
     }
 }
 
+static void push_spreads(Work *w, Frame f, ast::ExprRef args[:]) {
+    push(w, f.node, f.expected, 9);
+    for (Usize i = countof(args); i > 0; i--) {
+        if (is_spread(args[i - 1])) push(w, spread_value(args[i - 1]), nullptr, 0);
+    }
+}
+
 static void call_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) {
@@ -6055,6 +6241,11 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     // `mem.alloc(T, n)` is the builtin, `mem.alloc(T)` the generic of std.mem (#2527)
     const types::Symbol *template =
         builtins::names_alloc(c, callee, countof(e->kind.call.args)) ? nullptr : generic_callee(c, callee);
+    if (template != nullptr && e->kind == .call && has_spread(e->kind.call.args)) {
+        // `inner(0, rest...)` in a generic: the spread becomes the pack's elements before the instance is found
+        push_spreads(w, f, e->kind.call.args);
+        return;
+    }
     if (template != nullptr) {
         generic_before(c, w, f, template);
         return;
@@ -6084,7 +6275,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     types::TypeRef enumeration = nullptr;
     const ast::Expr *variant = enum_variant_call(c, e->span, callee, e->kind.call.args, &enumeration);
     if (variant != nullptr) {
-        push_frame(w, (Frame){.node = e, .expected = f.expected, .stage = 11, .twin = variant});
+        push_frame(w, make_frame(e, f.expected, 11, nullptr, 0, "", variant));
         push(w, variant, enumeration, 0);
         return;
     }
@@ -6102,10 +6293,7 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     }
     if (has_spread(args)) {
         // `f(x; s...)`: the spread values are typed first, then the call is rewritten (stage 9).
-        push(w, e, f.expected, 9);
-        for (Usize i = countof(args); i > 0; i--) {
-            if (is_spread(args[i - 1])) push(w, spread_value(args[i - 1]), nullptr, 0);
-        }
+        push_spreads(w, f, args);
         return;
     }
     push(w, e, f.expected, 1);
@@ -6175,9 +6363,9 @@ static void binary_before(Work *w, Frame f) {
     if (e->kind.binary.op == .logical_and && right->kind != .variant) {
         // `x != .none && use(x)`: the right side sees `x` as a `T`, in a scope of its own (#2481).
         push(w, e, f.expected, 1);
-        push_frame(w, (Frame){.node = e, .stage = stage_unnarrow});
+        push_frame(w, make_frame(e, nullptr, stage_unnarrow, nullptr, 0, "", nullptr));
         push(w, right, nullptr, 0);
-        push_frame(w, (Frame){.node = e, .stage = stage_narrow});
+        push_frame(w, make_frame(e, nullptr, stage_narrow, nullptr, 0, "", nullptr));
         push(w, left, nullptr, 0);
     } else if (compares && right->kind == .variant && left->kind != .variant) {
         // `c == .green`: the side with a leading dot is the type of the other (#2460).
@@ -6276,6 +6464,14 @@ static void before(types::Checked *c, Work *w, Frame f) {
 }
 
 // Stage 1 and later: the children are typed.
+// The call took the type of its rewritten twin, and the instance that twin calls.
+static void method_rewritten(types::Checked *c, const ast::Expr *e) {
+    const ast::Expr *made = types::method_of(c, e);
+    types::set_type(c, e, typ(c, made));
+    Usize at = types::instance_called(c, made);
+    if (at < c->instance_count) types::use_instance(c, e, at); // the emitter asks for the call as written
+}
+
 static void after(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -6318,7 +6514,7 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 11) {
             enum_variant_after(c, f);
         } else if (f.stage == 8) {
-            types::set_type(c, e, typ(c, types::method_of(c, e)));
+            method_rewritten(c, e);
         } else if (f.stage == 6) {
             stream_after(c, f);
         } else if (f.stage == 5) {

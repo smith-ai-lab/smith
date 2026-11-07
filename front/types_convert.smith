@@ -131,6 +131,13 @@ struct Ctx {
     types::TypeRef char_type;
 };
 
+// The element of a pointer, slice or array type; the type itself when it has none (the field is an option).
+static types::TypeRef element_or_self(types::TypeRef t) {
+    const types::Ty *element = t->element;
+    if (element == nullptr) return t;
+    return element;
+}
+
 static Str msg(char chars[:]) {
     return chars;
 }
@@ -303,10 +310,22 @@ static Verdict pointer_to_pointer(const Ctx *c) {
     const types::Ty *from = c->from;
     const types::Ty *to = c->target_type;
     if (from->pointee_const && !to->pointee_const) return dropped_const(c);
-    if (from->element == to->element || types::same_c_record(from->element, to->element)) return accept(add_const);
-    if (to->element->kind == .void_type) return accept(to_void_pointer);
-    if (from->element->kind == .void_type)
-        return needs_cast(c, "a void pointer never converts to a typed pointer implicitly (#398)");
+    const types::Ty *from_element = from->element;
+    const types::Ty *to_element = to->element;
+    if (from_element == nullptr && to_element == nullptr) return accept(add_const);
+    if (from_element != nullptr) {
+        if (to_element != nullptr) {
+            if (from_element == to_element) return accept(add_const);
+            if (types::same_c_record(from_element, to_element)) return accept(add_const);
+        }
+    }
+    if (to_element != nullptr) {
+        if (to_element->kind == .void_type) return accept(to_void_pointer);
+    }
+    if (from_element != nullptr) {
+        if (from_element->kind == .void_type)
+            return needs_cast(c, "a void pointer never converts to a typed pointer implicitly (#398)");
+    }
     return needs_cast(c, "the pointers point to different types");
 }
 
@@ -324,7 +343,8 @@ static Verdict to_pointer(const Ctx *c) {
 
 static Verdict to_slice(const Ctx *c) {
     types::Kind kind = c->from->kind;
-    types::TypeRef element = c->target_type->element;
+    const types::Ty *element = c->target_type->element;
+    if (element == nullptr) return no_rule(c);
     if (kind == .text) {
         if (element != c->char_type)
             return refuse(c, "only Char slices and Str are text", "write the characters as a const Char[:]");
@@ -332,7 +352,9 @@ static Verdict to_slice(const Ctx *c) {
         return refuse(c, "a Str's characters are const", "expected a const element: write const Char xs[:]");
     }
     if (kind != .slice && kind != .array) return no_rule(c);
-    if (c->from->element != element) return needs_cast(c, "the elements are different types");
+    const types::Ty *from_element = c->from->element;
+    if (from_element == nullptr) return no_rule(c);
+    if (from_element != element) return needs_cast(c, "the elements are different types");
     if (c->from->pointee_const && !c->target_type->pointee_const) return dropped_const(c);
     if (kind == .array) return accept(array_to_slice);
     return accept(add_const);
@@ -344,16 +366,21 @@ static Verdict to_block(const Ctx *c) {
     types::TypeRef inner = c->from;
     for (U64 i = 0; i < c->target_type->count; i++) {
         if (inner->kind != .array) return needs_cast(c, "the array has fewer dimensions than the block");
-        inner = inner->element;
+        const types::Ty *next = inner->element;
+        if (next == nullptr) return no_rule(c);
+        inner = next;
     }
-    if (inner != c->target_type->element) return needs_cast(c, "the elements are different types");
+    const types::Ty *target_element = c->target_type->element;
+    if (target_element == nullptr) return no_rule(c);
+    if (inner != target_element) return needs_cast(c, "the elements are different types");
     return accept(array_to_block);
 }
 
 static Verdict to_text(const Ctx *c) {
     types::Kind kind = c->from->kind;
     if (kind != .slice && kind != .array) return no_rule(c);
-    types::TypeRef element = c->from->element;
+    const types::Ty *element = c->from->element;
+    if (element == nullptr) return no_rule(c);
     if (element == c->char_type) return accept(text_from_chars);
     if (element->kind == .integer && element->bits == 8)
         return refuse(c, "only a Char slice makes a Str, not a U8 or I8 slice", "write the conversion xs.to(Str)");
@@ -403,19 +430,20 @@ static How wrapped(types::TypeRef to) {
 // reads through a `const T *` may be a `T *` in `to` (a function that only reads accepts what may be written).
 static Bool function_fits(types::TypeRef from, types::TypeRef to) {
     if (from == to) return true;
-    if (to->kind != .function || from->variadic != to->variadic || from->element != to->element) return false;
+    if (to->kind != .function || from->variadic != to->variadic || element_or_self(from) != element_or_self(to))
+        return false;
     if (countof(from->slots) != countof(to->slots)) return false;
     for (Usize i = 0; i < countof(from->slots); i++) {
         types::TypeRef have = from->slots[i].type;
         types::TypeRef want = to->slots[i].type;
         if (have == want) continue;
         // A callback parameter written `fn(*mut void)` is the header's `Fn(...)` of that function type.
-        if (have->kind == .function && want->kind == .fn_value && want->element == have) continue;
-        if (have->kind == .fn_value && want->kind == .function && have->element == want) continue;
+        if (have->kind == .function && want->kind == .fn_value && element_or_self(want) == have) continue;
+        if (have->kind == .fn_value && want->kind == .function && element_or_self(have) == want) continue;
         Bool pointers = have->kind == .pointer && want->kind == .pointer;
-        Bool same = pointers && types::same_c_record(have->element, want->element);
+        Bool same = pointers && types::same_c_record(element_or_self(have), element_or_self(want));
         if (same && have->pointee_const == want->pointee_const) continue; // the module's `Group` is the header's struct
-        Bool wider = pointers && (have->element == want->element || same);
+        Bool wider = pointers && (element_or_self(have) == element_or_self(want) || same);
         if (!wider || !have->pointee_const || want->pointee_const) return false;
     }
     return true;
@@ -423,8 +451,10 @@ static Bool function_fits(types::TypeRef from, types::TypeRef to) {
 
 export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
     if (from == to || is_invalid_or_auto(from) || is_invalid_or_auto(to)) return accept(identity);
+    if (to->kind == .concept_type) return accept(identity); // `0` for a `num`: the instance is checked with its type
     // A function by its name where its `Fn(...)` is expected (a field of function-pointer type: `alloc = f`).
-    if (from->kind == .function && to->kind == .fn_value && function_fits(from, to->element)) return accept(identity);
+    if (from->kind == .function && to->kind == .fn_value && function_fits(from, element_or_self(to)))
+        return accept(identity);
     if (from->kind == .function && to->kind == .function && function_fits(from, to)) return accept(identity);
     Ctx c = {.from = from,
              .target_type = to,
@@ -434,7 +464,7 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
              .char_type = types::builtin(t, "Char")};
     if (is_wrapper(from)) return from_wrapper(&c);
     if (is_wrapper(to)) {
-        c.target_type = to->element;
+        c.target_type = element_or_self(to);
         if (is_invalid_or_auto(c.target_type)) return accept(wrapped(to));
         if (c.target_type == from) return accept(wrapped(to));
         if (from->kind == .null_type)
@@ -457,7 +487,7 @@ static Verdict cast_pointer(const Ctx *c) {
         // A `*void` is C's `void *` or `const void *`, which the fixer writes alike: a cast out of it to a writable
         // pointer is the C cast `(T *)p` and stays allowed (#2361). A typed read-only pointer still cannot be cast
         // to a writable one.
-        Bool from_void = from->element->kind == .void_type;
+        Bool from_void = element_or_self(from)->kind == .void_type;
         if (from->pointee_const && !to->pointee_const && !from_void) return dropped_const(c);
         return accept(cast);
     }
@@ -502,8 +532,8 @@ static Verdict cast_by_kind(const Ctx *c) {
     types::Kind from = c->from->kind;
     types::Kind to = c->target_type->kind;
     if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ := x");
-    if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
-        c->from->element->bits == 8)
+    if (to == .text && (from == .slice || from == .array) && element_or_self(c->from)->kind == .integer &&
+        element_or_self(c->from)->bits == 8)
         return accept(cast); // bytes to text: free, every byte is a Char, no UTF-8 check (owner, 2026-11-01)
     if (from == .integer && to == .integer) {
         if (c->lit.is_constant && !c->lit.is_float) return never_fits(c, literal_text(c->lit));
@@ -530,7 +560,12 @@ static Verdict cast_by_kind(const Ctx *c) {
 export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
     Verdict implicit = convert(t, from, to, lit);
     if (implicit.ok) return implicit;
-    Ctx c = {.from = from, .target_type = to, .shown = to, .lit = lit, .pointer_bits = t->target.pointer_bytes * 8};
+    Ctx c = {.from = from,
+             .target_type = to,
+             .shown = to,
+             .lit = lit,
+             .pointer_bits = t->target.pointer_bytes * 8,
+             .char_type = types::builtin(t, "Char")};
     if (is_wrapper(from) || is_wrapper(to)) return implicit;
     return cast_by_kind(&c);
 }
