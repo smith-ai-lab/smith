@@ -131,6 +131,87 @@ export struct Slot {
     const ast::TypeExpr *written;   // a field written in smith's own syntax: its type as written (for a fix-it)
 };
 
+// One variant per kind of type, each holding only the fields its kind uses (D17, #2673).
+export typedef enum {
+    invalid;
+    automatic;
+    void_type;
+    bool_type;
+    struct {
+        U32 bits;
+        Bool is_signed;
+        ast::Text name;
+    } integer;
+    struct {
+        U32 bits;
+        ast::Text name;
+    } floating;
+    text;
+    null_type;
+    struct {
+        TypeRef element;
+        Bool pointee_const;
+    } pointer;
+    struct {
+        TypeRef element;
+        U64 count;
+        Bool pointee_const;
+    } array;
+    struct {
+        TypeRef element;
+        Bool pointee_const;
+    } slice;
+    struct {
+        ast::Text name;
+        ast::Text owner;  // the prefix of the module that declares it (`lib::math::`), empty for the module checked
+        ast::Text c_name; // the C struct it is (`@c_name("SmithTaskGroup")`, or a C header's own name), else empty
+        Slot slots[:];
+        Bool is_union;
+        Bool complete;
+        Bool affine; // marked `@affine`: a value is used at most once (front::affine, #1986)
+    } record;
+    struct {
+        ast::Text name;
+        TypeRef element; // the underlying integer
+        Slot slots[:];   // the enumerators, with their values; when has_payload, a slot's type is what it carries
+        Bool complete;
+        Bool has_payload; // the enumerators carry values (`circle: Circle`)
+    } enumeration;
+    struct {
+        Slot slots[:]; // the parameters
+        TypeRef result;
+        Bool variadic;
+    } function;
+    struct {
+        TypeRef element;
+    } option;
+    struct {
+        TypeRef element; // the ok type
+        TypeRef error;
+    } result_type;
+    struct {
+        TypeRef element; // a function type
+    } fn_value;
+    struct {
+        ast::Text name;
+    } concept_type; // `num`, `int`: a family of types, one instance per type (a parameter or local, never a field)
+    type_type;      // `type`: a value of it is a type
+    struct {
+        TypeRef element;
+        U64 count;
+    } block; // `[,]T`, `[,,]T`: a contiguous block with `count` dimensions known at run time, `element` per cell
+    struct {
+        TypeRef element;
+    } stream; // `stream::Stream(T)`: a built-in iterable of `element`; one pointer, null when ended
+    struct {
+        Slot slots[:];
+    } tuple; // `(A, B)`: `slots` hold the element types, named "0", "1", ... (read as `t.0`, `t.1`)
+    struct {
+        TypeRef element;
+        U64 count;
+    } vector; // `vec(T, N)`: `count` lanes of `element` (a number type, or `bool` for a comparison), one `<N x T>`
+} TyKind;
+
 // Which fields mean something depends on `kind`:
 //   integer: bits, is_signed, name        floating: bits, name        record: name, slots, is_union, complete
 //   pointer, slice: element, pointee_const   array: element, count, pointee_const
@@ -157,6 +238,8 @@ export struct Ty {
     Str owner;  // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
     Str c_name; // a record: the C struct it is (`@c_name("SmithTaskGroup")`, or a C header's own name), else empty
     Slot slots[:];
+    TyKind shape; // the same type by kind, with only the fields its kind has (#2673): read through it, then drop the
+                  // flat fields above
 };
 
 export struct Entry {
@@ -270,6 +353,123 @@ static Bool same_shape(const Ty *a, const Ty *b) {
     return same_slots(a->slots, b->slots);
 }
 
+// Sets `shape` from the flat fields, for a type just made or just completed (#2673).
+static void refresh(Ty *t) {
+    switch (t->kind) {
+    case .invalid:
+        t->shape = .invalid;
+        return;
+    case .automatic:
+        t->shape = .automatic;
+        return;
+    case .void_type:
+        t->shape = .void_type;
+        return;
+    case .bool_type:
+        t->shape = .bool_type;
+        return;
+    case .text:
+        t->shape = .text;
+        return;
+    case .null_type:
+        t->shape = .null_type;
+        return;
+    case .type_type:
+        t->shape = .type_type;
+        return;
+    case .integer: {
+        TyKind made = {.integer = {.bits = t->bits, .is_signed = t->is_signed, .name = t->name}};
+        t->shape = made;
+        return;
+    }
+    case .floating: {
+        TyKind made = {.floating = {.bits = t->bits, .name = t->name}};
+        t->shape = made;
+        return;
+    }
+    case .pointer: {
+        TyKind made = {.pointer = {.element = t->element, .pointee_const = t->pointee_const}};
+        t->shape = made;
+        return;
+    }
+    case .slice: {
+        TyKind made = {.slice = {.element = t->element, .pointee_const = t->pointee_const}};
+        t->shape = made;
+        return;
+    }
+    case .array: {
+        TyKind made = {.array = {.element = t->element, .count = t->count, .pointee_const = t->pointee_const}};
+        t->shape = made;
+        return;
+    }
+    case .record: {
+        TyKind made = {.record = {.name = t->name,
+                                  .owner = t->owner,
+                                  .c_name = t->c_name,
+                                  .slots = t->slots,
+                                  .is_union = t->is_union,
+                                  .complete = t->complete,
+                                  .affine = t->affine}};
+        t->shape = made;
+        return;
+    }
+    case .enumeration: {
+        TyKind made = {.enumeration = {.name = t->name,
+                                       .element = t->element,
+                                       .slots = t->slots,
+                                       .complete = t->complete,
+                                       .has_payload = t->has_payload}};
+        t->shape = made;
+        return;
+    }
+    case .function: {
+        TyKind made = {.function = {.slots = t->slots, .result = t->element, .variadic = t->variadic}};
+        t->shape = made;
+        return;
+    }
+    case .option: {
+        TyKind made = {.option = {.element = t->element}};
+        t->shape = made;
+        return;
+    }
+    case .result_type: {
+        TyKind made = {.result_type = {.element = t->element, .error = t->error}};
+        t->shape = made;
+        return;
+    }
+    case .fn_value: {
+        TyKind made = {.fn_value = {.element = t->element}};
+        t->shape = made;
+        return;
+    }
+    case .concept_type: {
+        TyKind made = {.concept_type = {.name = t->name}};
+        t->shape = made;
+        return;
+    }
+    case .block: {
+        TyKind made = {.block = {.element = t->element, .count = t->count}};
+        t->shape = made;
+        return;
+    }
+    case .stream: {
+        TyKind made = {.stream = {.element = t->element}};
+        t->shape = made;
+        return;
+    }
+    case .tuple: {
+        TyKind made = {.tuple = {.slots = t->slots}};
+        t->shape = made;
+        return;
+    }
+    case .vector: {
+        TyKind made = {.vector = {.element = t->element, .count = t->count}};
+        t->shape = made;
+        return;
+    }
+    }
+}
+
 static Ty *add_entry(Table *t, Ty value) {
     if (t->count == countof(t->entries)) {
         Usize capacity = countof(t->entries) * 2;
@@ -278,6 +478,7 @@ static Ty *add_entry(Table *t, Ty value) {
     }
     Ty *node = mem::alloc(Ty);
     *node = value;
+    refresh(node);
     t->entries[t->count].type = node;
     t->count += 1;
     return node;
@@ -455,6 +656,7 @@ export Ty *new_record(Table *t, Str name, Bool is_union) {
 export void set_fields(Ty *record, Slot fields[:]) {
     record->slots = fields;
     record->complete = true;
+    refresh(record);
 }
 
 // An enumeration, nominal, over the integer type `underlying`.
@@ -1592,6 +1794,7 @@ static TypeRef build_record(Checked *r, const ast::TypeExpr *node, const Walk *w
     Ty *made = new_record(&r->table, name, node->kind.record.is_union);
     set_fields(made, fields);
     made->owner = r->prefix;
+    refresh(made);
     return made;
 }
 
@@ -2137,6 +2340,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         made->affine = marks_affine(d);
         made->c_name = from_header;
         if (!from_c) made->c_name = record_c_name(d);
+        refresh(made);
         // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
         Symbol *earlier = nullptr;
         for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
@@ -2167,6 +2371,7 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         }
         Ty *made = new_enumeration(&r->table, name, underlying);
         if (from_c) made->c_name = d->kind.enumeration.name; // a C enumerator is an integer, as in C (#2643)
+        refresh(made);
         declare_in_module(r, type_symbol(name, made, d, exported), span);
     }
 }
@@ -2363,6 +2568,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
     if (record != nullptr) {
         set_fields(record, fields);
         record->owner = r->prefix;
+        refresh(record);
     }
 }
 
@@ -2398,6 +2604,7 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
     if (made != nullptr) {
         set_fields(made, items);
         made->has_payload = has_payload;
+        refresh(made);
     }
 }
 
