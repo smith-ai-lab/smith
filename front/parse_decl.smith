@@ -3659,6 +3659,7 @@ static Str conjunction(Str outer, Str inner) {
 
 // The condition of the branch a block opened inside `parent` lives in, or "" when `parent`'s is not about the system.
 static Str enclosing_condition(const parse::Parser *p, const Frame *parent) {
+    if (parent->condition == nullptr) return ""; // a condition that did not read: no fix
     Str own = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
     if (countof(own) == 0) return "";
     return conjunction(parent->outer, branch_condition(parent, parent->in_else, own));
@@ -3678,6 +3679,7 @@ static Bool nested_fixable(const parse::Parser *p, const Frame *parent, Bool cha
 // The edits of one block's own pieces: its head, its `} else {`, its closing `}` and a `@when` before each declaration
 // of its branches. False when the condition is not about the system (the block gets no fix).
 static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits *edits) {
+    if (frame->condition == nullptr) return false; // a condition that did not read: no fix
     Str own = when_text(trimmed(source_between(p, frame->condition->span.start, frame->condition->span.end)));
     if (countof(own) == 0) return false;
     ast::Span head = whole_line(p, frame->head);
@@ -3758,6 +3760,7 @@ static void open_else(parse::Parser *p, Frame *top, lex::Token brace) {
 // before it; the parent's own edits are made now. False when the parent's condition is not about the system.
 static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::Edits *fix) {
     opened->head.start = parent->else_head.start;
+    if (parent->condition == nullptr) return false;
     Str earlier = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
     // The opened frame owns a copy: sharing the parent's buffer and growing it with realloc frees or moves the block
     // the parent still reads in frame_edits below (a chain of three branches or more crashed there, #2565).
