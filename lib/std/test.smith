@@ -2635,7 +2635,7 @@ void print_failure(const Test *test, const Options *options, const Run *run) {
             "attempts; this is the failure as it was\n");
     if (run->note[0] != '\0') {
         say("    note: ");
-        (void)console::print(run->note);
+        (void)console::print(&run->note[0]);
         say("\n");
     }
     print_indented(run->output.text, run->output.kept, "    ");
@@ -2962,10 +2962,10 @@ constexpr Usize path_max = 1024;
 // Writes "<folder>/<name>" and, when index is not negative, its decimal digits after the name, into out.
 static void pool_path(char *out, const char *folder, const char *name, I32 index) {
     Usize at = 0;
-    for (const char *text = folder; *text != '\0' && at + 1 < path_max; text++)
+    for (const char *text = folder; *text != '\0' && at + 1 < path_max; text = text + 1)
         out[at++] = *text;
     if (at + 1 < path_max) out[at++] = '/';
-    for (const char *text = name; *text != '\0' && at + 1 < path_max; text++)
+    for (const char *text = name; *text != '\0' && at + 1 < path_max; text = text + 1)
         out[at++] = *text;
     if (index >= 0) {
         char digits[12];
@@ -3159,7 +3159,7 @@ void list_processes() {
         I64 pid = c::strtol(&text[0], &rest, 10);
         I64 parent = c::strtol(rest, &rest, 10);
         while (*rest == ' ')
-            rest++;
+            rest = rest + 1;
         char *word_end = c::strchr(rest, ' ');
         if (pid <= 0 || word_end == nullptr) continue;
         *word_end = '\0';
@@ -3683,8 +3683,8 @@ Bool glob(const char *pattern, const char *text) {
             star = pattern++;
             resume = text;
         } else if (*pattern == *text) {
-            pattern++;
-            text++;
+            pattern = pattern + 1;
+            text = text + 1;
         } else if (star != nullptr) {
             pattern = star + 1;
             text = ++resume;
@@ -3693,7 +3693,7 @@ Bool glob(const char *pattern, const char *text) {
         }
     }
     while (*pattern == '*')
-        pattern++;
+        pattern = pattern + 1;
     return *pattern == '\0';
 }
 
