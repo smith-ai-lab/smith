@@ -136,6 +136,19 @@ export void test_front_emit_toplevel_static_assert_consts_increments_and_pointer
     emit_jit::stop(&host);
 }
 
+// #2643: a module-level `static_assert` over `target` numbers and `&&`/`||` folds.
+export void test_front_emit_toplevel_static_assert_folds_target_facts_and_logic() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Bool ok = emits("static_assert(target.float_radix == 2 && target.f32_mantissa_bits == 24, \"floats\");\n"
+                    "static_assert(target.float_eval_method == 0 || false, \"f32\");\n"
+                    "pub fn one() -> u32:\n"
+                    "    1\n",
+                    &host, &s, "");
+    test::check_equal(ok, true);
+    emit_jit::stop(&host);
+}
+
 export void test_front_emit_toplevel_a_false_static_assert_stops_with_its_message() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
@@ -143,5 +156,34 @@ export void test_front_emit_toplevel_a_false_static_assert_stops_with_its_messag
                     "static_assert(n == 4, \"n is four\");\n",
                     &host, &s, "n is four");
     test::check_equal(ok, false);
+    emit_jit::stop(&host);
+}
+
+// #2643: a function's name given to a `fn` parameter is wrapped (a `fn` value's code takes a context first), a `fn`
+// value compares with `nullptr`, a `?*T` name narrowed by `!= .none` reads its fields through the pointer, and a
+// struct may point to one declared below it.
+export void test_front_emit_toplevel_function_names_fn_nullptr_option_fields_and_forward_pointers() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    Bool ok = emits("struct Head:\n"
+                    "    first: ?*Cell\n"
+                    "struct Cell:\n"
+                    "    value: i32\n"
+                    "fn add_one(x: i32) -> i32:\n"
+                    "    x + 1\n"
+                    "fn apply(f: fn(i32) -> i32, x: i32) -> i32:\n"
+                    "    f(x)\n"
+                    "pub fn through(x: i32) -> i32:\n"
+                    "    apply(add_one, x)\n"
+                    "pub fn present(f: fn(i32) -> i32) -> bool:\n"
+                    "    f != nullptr\n"
+                    "pub fn value_of(head: *Head) -> i32:\n"
+                    "    cell := head.first\n"
+                    "    if cell != .none:\n"
+                    "        return cell.value\n"
+                    "    -1\n",
+                    &host, &s, "");
+    test::check_equal(ok, true);
+    if (ok) test::check_equal(((Narrow)symbol_of(&host, "through"))(41), (I32)42);
     emit_jit::stop(&host);
 }

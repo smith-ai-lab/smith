@@ -29,7 +29,11 @@ import front::fix_generic_c;
 import front::fix_generic_mut;
 import front::fix_method;
 import front::fix_opaque;
+import front::fix_payload;
+import front::fix_array;
+import front::fix_bool;
 import front::fix_alloc;
+import front::fix_build;
 import front::fix_typeof;
 import front::fix_variants;
 import front::lex;
@@ -163,6 +167,99 @@ static arena::Arena header_arena;
 static Bool header_arena_made = false;
 static Str header_folder = ".";
 
+// The path of the file being fixed, to find its entry in a compile_commands.json (#2648).
+static Str database_file = "";
+static Str database_text = "";
+static Str database_name(Usize k) {
+    if (k == 0) return "compile_commands.json";
+    if (k == 1) return "build/compile_commands.json";
+    return ".smith/compile_commands.json";
+}
+static Bool database_read = false;
+
+// Whether the database's `file` names the source `path`: the same text, or one a suffix of the other after a `/`.
+static Bool same_file(Str file, Str path) {
+    while (countof(path) >= 2 && path[0] == '.' && path[1] == '/')
+        path = path[2:countof(path)];
+    Str longer = countof(file) >= countof(path) ? file : path;
+    Str shorter = countof(file) >= countof(path) ? path : file;
+    Usize gap = countof(longer) - countof(shorter);
+    if (gap > 0 && longer[gap - 1] != '/') return false;
+    return countof(shorter) > 0 && mem::equal(longer[gap:countof(longer)], shorter);
+}
+
+// The text between the last two quotes of `line`, or an empty string when there are none.
+static Str quoted(Str line) {
+    Usize end = countof(line);
+    while (end > 0 && line[end - 1] != '"')
+        end -= 1;
+    if (end == 0) return "";
+    Usize begin = end - 1;
+    while (begin > 0 && line[begin - 1] != '"')
+        begin -= 1;
+    if (begin == 0) return "";
+    return line[begin:end - 1];
+}
+
+static Bool starts_with_text(Str text, Str prefix) {
+    return countof(text) >= countof(prefix) && mem::equal(text[0:countof(prefix)], prefix);
+}
+
+static Bool is_flag(Str text, Str flag) {
+    return countof(text) == countof(flag) && starts_with_text(text, flag);
+}
+
+// The `-I`, `-isystem`, `-D` and `-isysroot` flags the database gives `database_file`, one on each line as
+// SMITH_FRONT_CIMPORT_FLAGS has them (`smith cc` does the same, #2313): `<llvm-c/Core.h>` is found at
+// `-I<llvm>/include`, so a call of it is typed and the checker's fixes for it are made (#2648).
+static Str database_flags() {
+    if (database_read) return database_text;
+    database_read = true;
+    for (Usize k = 0; k < 3; k++) {
+        if (!files::exists(database_name(k))) continue;
+        files::BytesResult loaded = files::read_file(database_name(k));
+        if (loaded == .error) continue;
+        format::Chars chars = mem::view(loaded.ok, char);
+        Str text = chars;
+        Str out = "";
+        Bool matched = false;
+        Bool inside = false;
+        Str previous = "";
+        Usize from = 0;
+        for (Usize i = 0; i <= countof(text); i++) {
+            if (i < countof(text) && text[i] != '\n') continue;
+            Str line = text[from:i];
+            from = i + 1;
+            Str value = quoted(line);
+            Bool has_quote = false;
+            for (Usize j = 0; j < countof(line); j++)
+                has_quote = has_quote || line[j] == '"';
+            if (starts_with_text(line, "    \"directory\"")) {
+                if (matched && countof(out) > 0) break;
+                matched = false;
+                inside = false;
+                previous = "";
+            } else if (starts_with_text(line, "    \"file\"")) {
+                matched = same_file(value, database_file);
+            } else if (matched && starts_with_text(line, "    \"arguments\"")) {
+                inside = true;
+            } else if (matched && inside && !has_quote) {
+                break;
+            } else if (matched && inside) {
+                Bool pair = is_flag(previous, "-I") || is_flag(previous, "-isystem") || is_flag(previous, "-D") ||
+                            is_flag(previous, "-isysroot");
+                if (pair) out = as_str(format::push(out, previous, "\n", value, "\n"));
+                if (!pair && (starts_with_text(value, "-I") || starts_with_text(value, "-D")) && countof(value) > 2)
+                    out = as_str(format::push(out, value, "\n"));
+                previous = value;
+            }
+        }
+        database_text = out;
+        break;
+    }
+    return database_text;
+}
+
 // The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
 // the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
 static const ast::Module *load_header(Str header, Bool angled) {
@@ -179,7 +276,8 @@ static const ast::Module *load_header(Str header, Bool angled) {
     // `smith lint --fix` has no `-I` of its own: a library's header (`<smith/trace.h>`) is looked for in the project's
     // `include` and `.smith/include`, as `smith cc` is given them (#2224).
     Str given_text = as_str(format::push(flags));
-    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n"));
+    Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n",
+                                     database_flags()));
     flags = joined.data;
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
     if (countof(got.error) > 0) return nullptr;
@@ -279,6 +377,52 @@ static Bool imports_module(const ast::Module *module) {
     return false;
 }
 
+// Whether `needle` is in `text`.
+// A checker fix that inserts at the first byte of a text the parser's fixes replace in the same pass would land before
+// the new text (`?e: *T = x` for `?` at the type of `T *e = x`, #2648): it waits for the next pass, which reads the
+// mended text and puts it at the new type.
+static Bool inserts_at_replaced_start(core::Errors parsed_errors, core::Errors parsed_warnings, core::ParseError more) {
+    for (Usize k = 0; k < countof(more.fix); k++) {
+        if (!is_insert(more.fix[k])) continue;
+        for (Usize i = 0; i < countof(parsed_errors) + countof(parsed_warnings); i++) {
+            core::ParseError other =
+                i < countof(parsed_errors) ? parsed_errors[i] : parsed_warnings[i - countof(parsed_errors)];
+            for (Usize j = 0; j < countof(other.fix); j++) {
+                if (!is_insert(other.fix[j]) && other.fix[j].span.start == more.fix[k].span.start) return true;
+            }
+        }
+    }
+    return false;
+}
+
+static Bool contains_text(Str text, Str needle) {
+    Usize n = countof(needle);
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        if (mem::equal(text[i:i + n], needle)) return true;
+    }
+    return false;
+}
+
+// `out` and `more` in one list.
+static core::Errors append(core::Errors out, core::Errors more) {
+    for (Usize i = 0; i < countof(more); i++) {
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = more[i];
+    }
+    return out;
+}
+
+// The fixes made from the checker's errors of the whole file, whatever else it still gets wrong (#2648): `Ty(kind =
+// (vector = (...)))` where `kind` is a payload enumeration is `.vector((...))`, an array given to a C pointer
+// parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, and `mem::equal(a, b)`
+// is `==` (#2540: the call is found by its name).
+static core::Errors typed_fixes(Str source, const types::Checked *checked) {
+    core::Errors out = fix_equal::edits(source, checked);
+    out = append(out, fix_payload::edits(source, checked));
+    out = append(out, fix_array::edits(source, checked));
+    return append(out, fix_bool::edits(source, checked));
+}
+
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
@@ -294,49 +438,17 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
     }
-    core::Errors imports = c_import_fixes(module, &checked);
-    for (Usize i = 0; i < countof(imports); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = imports[i];
-    }
+    out = append(out, c_import_fixes(module, &checked));
     // `{}` of a struct (#2224): its type is known once the declaration is, whatever else fails in the file.
-    core::Errors zeros = fix_zero::edits(source, module, &checked);
-    for (Usize i = 0; i < countof(zeros); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = zeros[i];
-    }
+    out = append(out, fix_zero::edits(source, module, &checked));
     // `c.name` in a template nothing instantiates (#2303): the checker never reads the body.
-    core::Errors generic = fix_generic_c::edits(source, module, &checked);
-    for (Usize i = 0; i < countof(generic); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = generic[i];
-    }
+    out = append(out, fix_generic_c::edits(source, module, &checked));
     // `total := 0` assigned in a template (#2613): no instance of another module carries the fix.
-    core::Errors assigned = fix_generic_mut::edits(source, module);
-    for (Usize i = 0; i < countof(assigned); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = assigned[i];
-    }
+    out = append(out, fix_generic_mut::edits(source, module));
     // `typeof` of a slice parameter and of a written type (#2340): the new syntax has neither.
-    core::Errors typed = fix_typeof::edits(source, module);
-    for (Usize i = 0; i < countof(typed); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = typed[i];
-    }
-    // `mem::equal(a, b)` (#2540): `==` compares slices and `str` by contents. The call is found by its name, so it is
-    // rewritten whatever else the file still gets wrong.
-    core::Errors equal = fix_equal::edits(source, &checked);
-    for (Usize i = 0; i < countof(equal); i++) {
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = equal[i];
-    }
-    if (checked.error_count == 0 && loader != nullptr) {
-        core::Errors methods = fix_method::edits(source, &checked);
-        for (Usize i = 0; i < countof(methods); i++) {
-            out = mem::realloc(out, countof(out) + 1);
-            out[countof(out) - 1] = methods[i];
-        }
-    }
+    out = append(out, fix_typeof::edits(source, module));
+    out = append(out, typed_fixes(source, &checked));
+    if (checked.error_count == 0 && loader != nullptr) out = append(out, fix_method::edits(source, &checked));
     return out;
 }
 
@@ -583,15 +695,22 @@ static void mend_passes(Str file, Fixed *total, Bool with_checker) {
             errors = mem::realloc(errors, countof(errors) + 1);
             errors[countof(errors) - 1] = sized[i];
         }
-        if (with_checker && countof(parsed.errors) == 0) {
+        // The checker waits one pass when the first still mends old forms of a file with a `Result` it tests:
+        // `Result(T, E) r = f();` is `r: Result(T, E) = f()` first, so the `try` rewrite (#2506) sees a new
+        // declaration and not the `if .error(error) := r` guard that would take its place in the same pass (#2648).
+        // Only these files wait: the guards of one test are edits at several places, so a pass cannot drop some.
+        Bool held = pass == 0 && countof(parsed.warnings) > 0 && contains_text(total->text, "Result(") &&
+                    contains_text(total->text, ".error");
+        if (with_checker && countof(parsed.errors) == 0 && !held) {
             core::Errors more = checker_fixes(total->text, &parsed.module);
             for (Usize i = 0; i < countof(more); i++) {
+                if (inserts_at_replaced_start(errors, parsed.warnings, more[i])) continue;
                 errors = mem::realloc(errors, countof(errors) + 1);
                 errors[countof(errors) - 1] = more[i];
             }
         }
         Fixed fixed = apply_fixes(total->text, errors, parsed.warnings);
-        if (fixed.applied == 0) break;
+        if (fixed.applied == 0 && !held) break;
         total->text = fixed.text;
         // Once the text lexes as smith's own syntax (no old form is left in it), its `//` comments are written `#`
         // now: the next pass would otherwise read it with the old parser, which takes `pub const m: usize = 16` for
@@ -699,10 +818,14 @@ static Str keyword_clash(Str source) {
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_in_names(rename_type_names(rename_target_systems(source)));
+    Str renamed = rename_in_names(rename_type_names(rename_target_systems(fix_build::mend(file, source))));
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
+    // Not compared with the last file: its text may be gone with that file's memory.
+    database_read = false;
+    database_text = "";
+    database_file = file;
     for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
         if (file[i - 1] != '/') continue;
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];

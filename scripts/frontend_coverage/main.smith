@@ -596,8 +596,11 @@ static void list_projects(const char *root) {
         // `tests/f/build.c` is the project `tests/f`; `build.c` alone is the repository; a file of lib/ is a module.
         // The list is sorted, so a folder with two of the files is listed twice in a row.
         Bool library = countof(line) >= 4 && same(line[0:4], "lib/");
+        // The glob `*build.smith` also lists `front/fix_build.smith`: only a file of exactly that name is a project's.
+        typeof(const char[:]) base = line[slash:countof(line)];
+        Bool named = same(base, "build.c") || same(base, "build.smith") || same(base, "main.smith");
         Bool again = project_count > 1 && same(text_of(projects[project_count - 1][0:path_size]), line[0:slash - 1]);
-        if (slash > 1 && !library && !again) {
+        if (slash > 1 && named && !library && !again) {
             copy_text(projects[project_count][0:path_size], line[0:slash - 1]);
             project_count += 1;
         }

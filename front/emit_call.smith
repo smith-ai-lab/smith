@@ -160,7 +160,10 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
     state::Ty all[:] = mem::alloc_slice(state::Ty, count + 1);
     c::LLVMTypeRef llvm_types[64];
     for (Usize i = 0; i < count; i++) {
-        state::TyResult made = state::type_of_checked(e, type->slots[i].type, d->span);
+        // A function pointer of C is the bare `ptr`, not a `fn` value's `{ code, context }`.
+        types::TypeRef held = type->slots[i].type;
+        state::TyResult made =
+            held->kind == .fn_value ? lambdas::pointer_from_checked(e, held) : state::type_of_checked(e, held, d->span);
         if (made == .error) {
             mem::free(all.data);
             return {.error = made.error};
@@ -623,6 +626,27 @@ static ArgumentList filled_fields(state::RecordType record, ast::ExprRef args[:]
     return filled;
 }
 
+// The module path an import's name stands for: `box` after `import geometry.box` is `geometry.box`. A path that does
+// not start with such a name is returned as it is.
+static ast::Path through_import(state::Emitter *e, ast::Path path, ast::Identifier parts[8]) {
+    if (e->options.checked == nullptr || countof(path.segments) == 0) return path;
+    const types::Symbol *module = types::lookup(&e->options.checked->scopes, path.segments[0].text);
+    if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module) return path;
+    ast::Path imported = module->decl->kind.import_module.path;
+    if (countof(imported.segments) + countof(path.segments) > 9) return path;
+    Usize count = 0;
+    for (Usize i = 0; i < countof(imported.segments); i++) {
+        parts[count] = imported.segments[i];
+        count += 1;
+    }
+    for (Usize i = 1; i < countof(path.segments); i++) {
+        parts[count] = path.segments[i];
+        count += 1;
+    }
+    ast::Path expanded = {.segments = parts[0:count], .span = path.span};
+    return expanded;
+}
+
 // `random.UniformInt64(low = 0, high = 9)`: a record of an imported module, declared when first needed.
 static Bool imported_record_at(state::Emitter *e, ast::Path path, Usize *at) {
     if (e->options.checked == nullptr || countof(path.segments) != 2) return false;
@@ -641,6 +665,8 @@ static Bool member_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
     if (callee->kind != .member || callee->kind.member.arrow || callee->kind.member.base->kind != .name) return false;
     ast::Path base = callee->kind.member.base->kind.name.path;
     ast::Identifier parts[8];
+    ast::Identifier expanded[8];
+    base = through_import(e, base, expanded);
     Usize count = countof(base.segments);
     if (count >= 8) return false;
     for (Usize i = 0; i < count; i++)
@@ -657,7 +683,9 @@ static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
-        return c_record(e, path, at) || imported_record_at(e, path, at);
+        if (c_record(e, path, at) || imported_record_at(e, path, at)) return true;
+        ast::Identifier expanded[8];
+        return countof(path.segments) > 1 && c_record(e, through_import(e, path, expanded), at);
     }
     return member_record(e, callee, at);
 }
