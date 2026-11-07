@@ -134,7 +134,7 @@ static parse::Parser layout_parser(Str source) {
     p.hooks.statement = parse_stmt::statement;
     p.new_syntax = true;
     p.layout = true;
-    parse::accept(&p, lex::colon);
+    (void)parse::accept(&p, lex::colon);
     return p;
 }
 

@@ -114,7 +114,7 @@ static void same(Str actual, Str expected) {
 // The first error message of a source; the test fails when there is none.
 static Str first_error(Str source) {
     parse::Parser p = parser_of(source);
-    _ = parse::expression(&p);
+    (void)parse::expression(&p);
     test::check_condition(countof(p.errors) > 0);
     return p.errors[0].message;
 }
@@ -311,7 +311,7 @@ static Str fix_one(Str source) {
     Usize left = 0;
     for (Usize pass = 0; pass < 8; pass += 1) {
         parse::Parser p = parser_of(current);
-        _ = parse::expression(&p);
+        (void)parse::expression(&p);
         for (Usize i = 0; i < countof(p.warnings) && pass == 0; i += 1) {
             parse::ParseError warning = p.warnings[i];
             Str note = "";
