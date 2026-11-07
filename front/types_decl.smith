@@ -121,6 +121,8 @@ struct Pending {
     Str function;
 };
 
+typedef const ast::Stmt *StmtRef;
+
 struct State {
     Frame work[:];
     Usize top;
@@ -133,7 +135,7 @@ struct State {
     Str function;
     types::TypeRef result;      // what `return` is checked against
     types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
-    const ast::Stmt *tails[:];  // the statements whose value is the function's result (the last line, through
+    StmtRef tails[:];  // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
     const ast::Decl *declaring; // the local whose initializer is being checked, for the fix on its written type
     const ast::Decl *last_decl; // the local the statement entered last declared, null when it declared none
@@ -1595,7 +1597,7 @@ static void for_statement(types::Checked *r, const ast::Stmt *s) {
 // into both arms of an if with an else (#1428: the last line is the value).
 static void find_tails(const ast::Stmt *root) {
     state.tail_count = 0;
-    if (countof(state.tails) == 0) state.tails = mem::alloc_slice(const ast::Stmt *, max_tails);
+    if (countof(state.tails) == 0) state.tails = mem::alloc_slice(StmtRef, max_tails);
     const ast::Stmt *todo[32];
     Usize n = 0;
     if (root != nullptr) {
@@ -2176,7 +2178,7 @@ static types::Checked check_once(const ast::Module *m, types::Target target, typ
         const ast::Decl *asserted = m->decls[i];
         if (asserted->kind == .static_assert_decl) {
             state.function = "static_assert";
-            types_expr::check(&r, asserted->kind.static_assert_decl.condition, r.table.bool_type);
+            check_condition(&r, asserted->kind.static_assert_decl.condition);
         }
     }
     check_instances(&r);
