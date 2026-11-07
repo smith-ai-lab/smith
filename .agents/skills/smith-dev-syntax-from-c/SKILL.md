@@ -52,7 +52,6 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `#if defined(__APPLE__)` around declarations | `@when(target.os == .macos)` on each |
 | `#define F(x) ...`, `#pragma`, `#error "..."` | a function or a generic, an attribute, `static_assert(...)` |
 | `extern I32 errno;`, `extern int f(void);` | `extern mut errno: i32`, `extern fn f() -> i32` |
-| `static struct { alignas(16) U8 b[64]; } memory;` | `struct Memory:` with `@align(16)` on its field at the end of the file, and `static mut memory: Memory = ...` (a struct declared in a function is not typed; the name is the variable's in PascalCase) |
 | `static I32 count;` at file scope | `mut count: i32 = 0` |
 | `__asm__("...");` at file scope | `asm`...`` with `@when`, raw text over several lines |
 | `union`, `goto` and labels | a payload `enum`; `defer`, `break`, `continue`, `match` |
