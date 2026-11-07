@@ -685,9 +685,32 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
     return c->table.invalid;
 }
 
+// `typeof(x) == f32` (or `!=`): two types written as values are the same type or they are not. False when it is no
+// such comparison, or a side is not a type, or a type is not known yet.
+static Bool same_type_value(types::Checked *c, const ast::Expr *e, Bool *value) {
+    if (e->kind != .binary) return false;
+    ast::BinaryOp op = e->kind.binary.op;
+    if (op != .equal && op != .not_equal) return false;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    if (left->kind != .type_value && right->kind != .type_value) return false;
+    Usize errors = c->error_count;
+    types::TypeRef l = type_argument(c, left, "==");
+    types::TypeRef r = type_argument(c, right, "==");
+    c->error_count = errors;
+    if (l == nullptr || r == nullptr || l == c->table.invalid || r == c->table.invalid || is_open(l) || is_open(r)) {
+        return false;
+    }
+    *value = (l == r) == (op == .equal);
+    return true;
+}
+
 // Whether the expression is a call of a question about a type, with its answer for the type it is asked of. False
 // when it is no such call, or the type is not known yet (a parameter of a concept or `auto`).
 export Bool query_value(types::Checked *c, const ast::Expr *e, Bool *value) {
+    if (e->kind == .binary) {
+        return same_type_value(c, e, value);
+    }
     Entry entry = {};
     if (e->kind != .call || !callee_entry(c, e->kind.call.callee, &entry) || entry.shape != .type_query) return false;
     ast::ExprRef args[:] = e->kind.call.args;
