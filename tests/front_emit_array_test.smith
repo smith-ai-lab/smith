@@ -179,21 +179,21 @@ export void test_front_emit_array_constant_nested_and_long() {
     emit_jit::Jit host = start_jit();
     static char source[8192];
     Usize at = 0;
-    at += (Usize)c::snprintf(source + at, sizeof(source) - at, "mut table: [2][2]u32 = [[1, 2], [3, 4]]\n");
-    at += (Usize)c::snprintf(source + at, sizeof(source) - at, "mut longer: [2][300]u32 = [");
+    at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at, "mut table: [2][2]u32 = [[1, 2], [3, 4]]\n");
+    at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at, "mut longer: [2][300]u32 = [");
     for (Usize row = 0; row < 2; row++) {
-        at += (Usize)c::snprintf(source + at, sizeof(source) - at, row == 0 ? "[" : ", [");
+        at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at, row == 0 ? "[" : ", [");
         for (Usize i = 0; i < 300; i++)
-            at += (Usize)c::snprintf(source + at, sizeof(source) - at, i == 0 ? "%zu" : ", %zu", row * 1000 + i);
-        at += (Usize)c::snprintf(source + at, sizeof(source) - at, "]");
+            at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at, i == 0 ? "%zu" : ", %zu", row * 1000 + i);
+        at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at, "]");
     }
-    at += (Usize)c::snprintf(source + at, sizeof(source) - at,
-                             "]\npub fn run() -> i32:\n"
-                             "    if table[1][0] != 3 || table[0][1] != 2:\n"
-                             "        return 1\n"
-                             "    if longer[0][299] != 299 || longer[1][0] != 1000 || longer[1][299] != 1299:\n"
-                             "        return 2\n"
-                             "    0\n");
+    at += (Usize)__builtin_snprintf(source + at, sizeof(source) - at,
+                                    "]\npub fn run() -> i32:\n"
+                                    "    if table[1][0] != 3 || table[0][1] != 2:\n"
+                                    "        return 1\n"
+                                    "    if longer[0][299] != 299 || longer[1][0] != 1000 || longer[1][299] != 1299:\n"
+                                    "        return 2\n"
+                                    "    0\n");
     Str text = source[0:at];
     emit_source(text, &host, &s);
     Nullary run = (Nullary)symbol_of(&host, "run");
