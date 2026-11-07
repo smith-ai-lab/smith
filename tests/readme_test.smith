@@ -72,7 +72,7 @@ static void parse_info(arena::Arena *store, const char *info, Block *block) {
     Bool first = true;
     for (const char *at = info; *at != '\0';) {
         if (*at == ' ') {
-            at++;
+            at = at + 1;
             continue;
         }
         Usize length = c::strcspn(at, " ");
@@ -88,7 +88,7 @@ static void parse_info(arena::Arena *store, const char *info, Block *block) {
             flags[used++] = ',';
         }
         first = false;
-        at += length;
+        at = at + length;
     }
     flags[used] = '\0';
     block->flags = flags;
