@@ -1805,8 +1805,8 @@ static Bool hoist_record(parse::Parser *p, Head head, ast::TypeExpr *type) {
 
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
-// `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
-// the like are a warning with no edits.
+// `N := T` (`const n = T` for a lower-case name); the `;` goes. The position is after the `;`. An array suffix,
+// `extern` and the like are a warning with no edits.
 static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
                          Dims dims) {
     if (hoist_record(p, head, type)) return;
@@ -1817,6 +1817,8 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str written = trimmed(parse::mended(p, head.type_start, head.name.span.start));
     Str raw = trimmed(source_between(p, head.type_start, head.name.span.start));
     Bool type_value = pre->is_constexpr && head.name.kind == lex::type_name && same_text(raw, "Type");
+    // `constexpr Type one = slice_of(I32);` is `const one = slice_of(i32)`: a lower-case name is a compile-time value.
+    Bool const_type = pre->is_constexpr && head.name.kind == lex::name && same_text(raw, "Type");
     Bool suffixed = countof(dims.text) > 0;
     // `extern char **environ;` is `extern environ: **char`: the linker provides the value, so no `mut`, no `=
     // undefined`.
@@ -1856,7 +1858,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
         list_edits = named_list_edits(p, written);
         if (p->named_list.positional) drop_array_fix(p, p->named_list.open.start);
     }
-    if (type_value || automatic) text = as_str(format::push(lead, name, untyped));
+    if (type_value || automatic || const_type) text = as_str(format::push(lead, name, untyped));
     if (bare_extern) {
         text = as_str(format::push(name, ": ", written));
         to = head.name.span.end;
