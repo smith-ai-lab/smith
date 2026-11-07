@@ -440,6 +440,7 @@ static Bool group_then_declarator(const parse::Parser *p, Usize offset) {
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
+    if (parse_type::fn_type_declaration(p)) return true;
     // In smith's own syntax a type name and `(` is a construction, `T(1)`, not a declarator; `T (*f)(A)` is one
     // (#2145).
     if (kind == lex::type_name && p->new_syntax && parse::peek_at(p, 1).kind == lex::left_paren &&

@@ -3483,7 +3483,7 @@ static ast::Decl *parse_simple(parse::Parser *p, Bool top) {
     U32 start = parse::peek(p).span.start;
     Prefixes pre = parse_prefixes(p, top);
     lex::TokenKind kind = parse::peek(p).kind;
-    if (kind == lex::kw_fn) return parse_new_function(p, &pre, start);
+    if (kind == lex::kw_fn && !parse_type::fn_type_declaration(p)) return parse_new_function(p, &pre, start);
     if (at_destructure(p)) {
         parse::error(p, parse::peek(p).span,
                      "a destructuring `(q, r) := f()` is a statement, not a declaration of a module");

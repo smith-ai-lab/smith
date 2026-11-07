@@ -45,3 +45,20 @@ export void test_front_fix_fn_alias_in_a_block() {
     parser::Parsed parsed = fix::parse_for_fix("t.smith", first.text);
     test::check_equal(countof(parsed.errors), (Usize)0);
 }
+
+// Two function-pointer locals set to lambdas in a row (from the lambda-two case of tests/smith-lang): a pass that wrote
+// the type and the body but not the header left `Fn(I32 (I32)) add = [](I32 a): a;`, and a type written first
+// (`fn(i32) -> i32 mul = fn(a: i32): a`) read as a function with no name. Both go to `name: type = value`.
+export void test_front_fix_function_pointer_locals_set_to_lambdas() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nI32 run() {\n    I32 (*add)(I32) = [](I32 a) { return a; };\n"
+                 "    I32 (*mul)(I32) = [](I32 a) { return a; };\n    return add(1) + mul(2);\n}\n";
+    fix::Fixed fixed = fix::fix_text("t.smith", before);
+    test::check_condition(contains(fixed.text, "    add: fn(i32) -> i32 = fn(a: i32): a"));
+    test::check_condition(contains(fixed.text, "    mul: fn(i32) -> i32 = fn(a: i32): a"));
+    test::check_condition(!contains(fixed.text, "[]("));
+    test::check_condition(!contains(fixed.text, "Fn("));
+}

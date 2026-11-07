@@ -212,6 +212,29 @@ static Bool fn_word(const parse::Parser *p, Usize offset) {
     return text::is(parse::text(p, token), "fn") || text::is(parse::text(p, token), "fn_once");
 }
 
+// Whether `fn(A) -> R name = v` is ahead: a function type written first, as an earlier pass leaves it, and not a lambda
+// `fn(a: A) -> R: body`. Past the parameters (and the result) the line reaches a name and then `=` before any `:`.
+export Bool fn_type_declaration(const parse::Parser *p) {
+    if (!p->new_syntax || parse::peek(p).kind != lex::kw_fn || parse::peek_at(p, 1).kind != lex::left_paren)
+        return false;
+    Usize depth = 0;
+    Usize at = 1;
+    lex::TokenKind before = lex::end_of_file;
+    for (Usize i = 0; i < countof(p->tokens); i += 1) {
+        lex::Token token = parse::peek_at(p, at);
+        if (token.kind == lex::end_of_file) return false;
+        if (depth == 0 && at > 1 && token.line_break) return false;
+        if (token.kind == lex::left_paren || token.kind == lex::left_bracket) depth += 1;
+        if (token.kind == lex::right_paren || token.kind == lex::right_bracket) depth -= 1;
+        if (depth == 0 && (token.kind == lex::colon || token.kind == lex::semicolon || token.kind == lex::newline))
+            return false;
+        if (depth == 0 && token.kind == lex::equal) return before == lex::name;
+        before = token.kind;
+        at += 1;
+    }
+    return false;
+}
+
 // Whether the tokens from `offset` start a type of the new syntax that no expression starts: `*`, `?`, `fn`, `fn_once`,
 // `type`, or a bracket group followed directly by a type (`[5]T`, `[]T`, `[,3]T`). A parenthesis is never judged here:
 // `(A, B)` is a tuple type where a type is expected, and a parenthesized value where it is not.

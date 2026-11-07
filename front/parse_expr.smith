@@ -733,6 +733,8 @@ static Bool at_old_lambda(const parse::Parser *p) {
     return parse::peek_at(p, at).kind == lex::right_bracket && parse::peek_at(p, at + 1).kind == lex::left_paren;
 }
 
+static ast::Stmt *layout_body(parse::Parser *p);
+
 // `[x, y](I32 a) -> I32 { ... }`: the position is at the bracket.
 static ast::Expr *lambda(parse::Parser *p) {
     U32 start = parse::advance(p).span.start;
@@ -759,13 +761,16 @@ static ast::Expr *lambda(parse::Parser *p) {
     }
     if (countof(p->errors) == errors_before) lambda_warning(p, start, bracket_end, params, has_parens);
     ast::TypeExpr *result = parse::accept(p, lex::arrow) ? parse::type(p) : nullptr;
-    if (!parse::at(p, lex::left_brace)) {
+    // A pass that mended the body before the header leaves `[](I32 a): a`: the `:` and the layout body of the new form.
+    Bool mended_body = p->layout && parse::at(p, lex::colon);
+    if (!mended_body && !parse::at(p, lex::left_brace)) {
         parse::expect(p, lex::left_brace, "`{` to start the lambda's body");
         return nullptr;
     }
+    if (mended_body) parse::advance(p);
     Bool outer = p->void_body;
     p->void_body = false; // a lambda's last line is its value, whatever the function around it returns
-    ast::Stmt *body = parse::statement(p);
+    ast::Stmt *body = mended_body ? layout_body(p) : parse::statement(p);
     p->void_body = outer;
     if (body == nullptr) return nullptr;
     return make(parse::span_from(p, start),
