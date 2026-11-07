@@ -41,6 +41,7 @@ static void register_targets() {
     c::LLVMInitializeAllTargets();
     c::LLVMInitializeAllTargetMCs();
     c::LLVMInitializeAllAsmPrinters();
+    c::LLVMInitializeAllAsmParsers();
 }
 
 static c::LLVMCodeGenOptLevel level_of(I32 optimization) {

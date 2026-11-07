@@ -381,6 +381,7 @@ static Bool imports_module(const ast::Module *module) {
     return false;
 }
 
+// Whether `needle` is in `text`.
 // A checker fix that inserts at the first byte of a text the parser's fixes replace in the same pass would land before
 // the new text (`?e: *T = x` for `?` at the type of `T *e = x`, #2648): it waits for the next pass, which reads the
 // mended text and puts it at the new type.

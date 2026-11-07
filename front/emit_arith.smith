@@ -431,6 +431,8 @@ static state::Status lookup(state::Emitter *e, const ast::Expr *x, state::Local 
 }
 
 // A name that is no local but a function of this module is its address (`f.cast(*mut void)`, #1975): a pointer.
+static Bool prototype_address(state::Emitter *e, Str name);
+
 static Bool function_address(state::Emitter *e, const ast::Expr *x) {
     if (x->kind != .name || countof(x->kind.name.path.segments) != 1) return false;
     Str name = x->kind.name.path.segments[0].text;
@@ -438,6 +440,25 @@ static Bool function_address(state::Emitter *e, const ast::Expr *x) {
         if (!state::same_text(e->functions[i].name, name)) continue;
         state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
         state::push_value(e, (state::Value){.llvm = e->functions[i].llvm, .ty = pointer});
+        return true;
+    }
+    return prototype_address(e, name);
+}
+
+// The address of a function with no body (an `extern`, a C prototype): it is declared by its symbol, not listed in
+// `e->functions`.
+static Bool prototype_address(state::Emitter *e, Str name) {
+    for (Usize i = 0; i < countof(e->tree->decls); i++) {
+        const ast::Decl *d = e->tree->decls[i];
+        if (d->kind != .function || d->kind.function.body != nullptr) continue;
+        if (!state::same_text(d->kind.function.name, name)) continue;
+        Str own = state::c_name_of(d);
+        char *label = state::cstr(countof(own) > 0 ? own : name);
+        c::LLVMValueRef function = c::LLVMGetNamedFunction(e->module, label);
+        mem::free(label);
+        if (function == nullptr) return false;
+        state::Ty pointer = {.kind = {.pointer = {}}, .llvm = state::pointer_type(e, 0), .name = "pointer"};
+        state::push_value(e, (state::Value){.llvm = function, .ty = pointer});
         return true;
     }
     return false;

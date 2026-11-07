@@ -303,7 +303,7 @@ static Verdict pointer_to_pointer(const Ctx *c) {
     const types::Ty *from = c->from;
     const types::Ty *to = c->target_type;
     if (from->pointee_const && !to->pointee_const) return dropped_const(c);
-    if (from->element == to->element) return accept(add_const);
+    if (from->element == to->element || types::same_c_record(from->element, to->element)) return accept(add_const);
     if (to->element->kind == .void_type) return accept(to_void_pointer);
     if (from->element->kind == .void_type)
         return needs_cast(c, "a void pointer never converts to a typed pointer implicitly (#398)");
@@ -409,7 +409,13 @@ static Bool function_fits(types::TypeRef from, types::TypeRef to) {
         types::TypeRef have = from->slots[i].type;
         types::TypeRef want = to->slots[i].type;
         if (have == want) continue;
-        Bool wider = have->kind == .pointer && want->kind == .pointer && have->element == want->element;
+        // A callback parameter written `fn(*mut void)` is the header's `Fn(...)` of that function type.
+        if (have->kind == .function && want->kind == .fn_value && want->element == have) continue;
+        if (have->kind == .fn_value && want->kind == .function && have->element == want) continue;
+        Bool pointers = have->kind == .pointer && want->kind == .pointer;
+        Bool same = pointers && types::same_c_record(have->element, want->element);
+        if (same && have->pointee_const == want->pointee_const) continue; // the module's `Group` is the header's struct
+        Bool wider = pointers && (have->element == want->element || same);
         if (!wider || !have->pointee_const || want->pointee_const) return false;
     }
     return true;
@@ -529,11 +535,18 @@ export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, 
     return cast_by_kind(&c);
 }
 
+static Bool is_c_enumeration(types::TypeRef t) {
+    return t->kind == .enumeration && !t->has_payload && countof(t->c_name) > 0;
+}
+
 // The type both operands of an arithmetic, bitwise or comparison operator widen to (#2531): the same type, or the one
 // of the two that holds every value of the other (`u8` and `i32` are `i32`; `i32` and `f64` are `f64`). Null when
 // neither does (`i32` and `u32`, `u64` and `usize`, `i64` and `f64`): the operands then need a written conversion.
 export types::TypeRef operand_type(types::Table *t, types::TypeRef left, types::TypeRef right) {
     if (left == right) return left;
+    // An enumeration a C header declares is an integer next to one (`request->operation == c::SmithIoOperation_Read`).
+    if (is_c_enumeration(left) && right->kind == .integer) return right;
+    if (is_c_enumeration(right) && left->kind == .integer) return left;
     if (!is_number(left) || !is_number(right)) return nullptr;
     Bool right_wider = right->kind == .floating;
     if ((left->kind == .floating) == (right->kind == .floating)) {
