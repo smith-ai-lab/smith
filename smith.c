@@ -1939,6 +1939,9 @@ static void smith_write_lang_headers(const char *self) {
     bool named = smith_binary_identity(self, identity, sizeof identity);
     bool current =
         named && smith_file_has_bytes(smith_headers_stamp, (const unsigned char *)identity, strlen(identity));
+    // The stamp names the smith whose headers these are. Drop it before another smith rewrites them: a build killed
+    // halfway then leaves no stamp, and no smith takes the half-rewritten headers for its own (#2594).
+    if (!current) unlink(smith_headers_stamp);
     bool copied = named && !current && smith_headers_copy(jobs, count, identity);
     for (size_t i = 0; i < count; i++) {
         jobs[i].pid = 0;
