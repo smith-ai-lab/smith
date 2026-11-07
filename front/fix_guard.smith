@@ -128,9 +128,18 @@ static Bool guard_of(Str line, Str *name, Usize *after) {
     return true;
 }
 
+// Whether `text` starts with the keyword `word` as a whole word.
+static Bool keyword(Str text, Str word) {
+    if (!starts_with(text, word)) return false;
+    return countof(text) == countof(word) || !word_char(text[countof(word)]);
+}
+
 // Whether `text` ends a block by leaving it.
 static Bool leaves(Str text) {
-    return starts_with(text, "return") || starts_with(text, "continue") || starts_with(text, "break");
+    Str ret = "return";
+    Str next = "continue";
+    Str stop = "break";
+    return keyword(text, ret) || keyword(text, next) || keyword(text, stop);
 }
 
 export core::Errors edits(Str source) {
