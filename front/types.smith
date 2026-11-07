@@ -775,15 +775,18 @@ export Str show(TypeRef t) {
     while (top > 0) {
         top -= 1;
         Piece piece = stack[top];
-        Usize pushes = piece.type == nullptr ? 0 : 2 * countof(piece.type->slots);
+        TypeRef shown = piece.type;
+        Usize pushes = 0;
+        if (shown != nullptr) pushes = 2 * countof(shown->slots);
         while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
         }
-        if (piece.type == nullptr)
+        if (shown == nullptr) {
             put(&text, piece.word);
-        else
-            expand(stack, &top, &text, piece.type);
+            continue;
+        }
+        expand(stack, &top, &text, shown);
     }
     return text.data[0:text.length];
 }
