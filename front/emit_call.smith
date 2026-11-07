@@ -27,6 +27,7 @@ import front::emit_control as control;
 import front::emit_lambda as lambdas;
 import front::emit_match as matching;
 import front::emit_memory;
+import front::emit_recursion as recursion;
 import front::emit_state as state;
 import front::emit_stream as streams;
 import front::types;
@@ -1032,8 +1033,8 @@ export state::Status prototype(state::Emitter *e, const ast::Decl *d) {
 // ----------------------------------------
 // The recursion check of the new front end (#2709). A cycle of the module's call graph is allowed
 // when every call on it is a tail call, which the emitter marks `musttail` (front::emit_call::mark_tail_call: a call
-// whose result is the function's value, with nothing to run after it); any other cycle is an error naming the cycle.
-// Until non-tail recursion lands (#2710) the new front end cannot compile it.
+// whose result is the function's value, with nothing to run after it); any other call on a cycle is lowered by
+// front::emit_recursion (#2710): it runs on a stack segment from the runtime when the stack in use is nearly full.
 //
 //   check   Reads the module's IR: the calls between the functions it defines (a call through a pointer, and a call
 //           into code with no source, are not followed), the strongly connected components of that graph (Tarjan's
@@ -1052,6 +1053,9 @@ struct CallGraph {
     Usize first[:];
     Usize to[:];
     Bool tail[:];
+    CallNode sites[:]; // the call instruction of each call
+    Bool addressed[:]; // whether the function's address is used other than to call it: a call through a function
+                       // value may reach it (a possible edge, #2710)
 };
 
 static Usize rec_slot_of(c::LLVMValueRef function, Usize size) {
@@ -1094,6 +1098,16 @@ static Usize rec_callee_of(const CallGraph *g, c::LLVMValueRef instruction) {
     return rec_index_of(g, called);
 }
 
+// Whether the function's address is used other than as the callee of a call: stored, passed, or in an initializer.
+static Bool rec_address_taken(c::LLVMValueRef function) {
+    for (c::LLVMUseRef use = c::LLVMGetFirstUse(function); use != nullptr; use = c::LLVMGetNextUse(use)) {
+        c::LLVMValueRef user = c::LLVMGetUser(use);
+        if (c::LLVMIsACallInst(user) != nullptr && c::LLVMGetCalledValue(user) == function) continue;
+        return true;
+    }
+    return false;
+}
+
 // Visits every call of the module's defined functions: with `fill` false it counts them, with `fill` true it writes
 // them into `to` and `tail`.
 static void rec_walk_calls(CallGraph *g, Bool fill) {
@@ -1103,15 +1117,35 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
         for (c::LLVMBasicBlockRef b = c::LLVMGetFirstBasicBlock(g->functions[i].value); b != nullptr;
              b = c::LLVMGetNextBasicBlock(b)) {
             for (c::LLVMValueRef x = c::LLVMGetFirstInstruction(b); x != nullptr; x = c::LLVMGetNextInstruction(x)) {
+                if (c::LLVMIsACallInst(x) == nullptr) continue;
+                Bool musttail = c::LLVMGetTailCallKind(x) == c::LLVMTailCallKindMustTail;
                 Usize callee = rec_callee_of(g, x);
-                if (callee == ~(Usize)0) {
+                if (callee != ~(Usize)0) {
+                    if (fill) {
+                        g->to[next] = callee;
+                        g->tail[next] = musttail;
+                        g->sites[next].value = x;
+                    }
+                    next += 1;
                     continue;
                 }
-                if (fill) {
-                    g->to[next] = callee;
-                    g->tail[next] = c::LLVMGetTailCallKind(x) == c::LLVMTailCallKindMustTail;
+                // A call through a function value: a possible call of every function whose address is taken and
+                // whose type is the call's. Inline assembly and an intrinsic are no edge.
+                c::LLVMValueRef called = c::LLVMGetCalledValue(x);
+                if (called == nullptr || c::LLVMIsAFunction(called) != nullptr ||
+                    c::LLVMIsAInlineAsm(called) != nullptr)
+                    continue;
+                c::LLVMTypeRef wanted = c::LLVMGetCalledFunctionType(x);
+                for (Usize target = 0; target < countof(g->functions); target++) {
+                    if (!g->addressed[target] || c::LLVMGlobalGetValueType(g->functions[target].value) != wanted)
+                        continue;
+                    if (fill) {
+                        g->to[next] = target;
+                        g->tail[next] = musttail;
+                        g->sites[next].value = x;
+                    }
+                    next += 1;
                 }
-                next += 1;
             }
         }
     }
@@ -1121,6 +1155,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
         g->first = mem::alloc_slice(Usize, functions);
         g->to = mem::alloc_slice(Usize, next);
         g->tail = mem::alloc_slice(Bool, next);
+        g->sites = mem::alloc_slice(CallNode, next);
     }
 }
 
@@ -1321,31 +1356,25 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
         rec_remember(&g, at);
         at += 1;
     }
+    g.addressed = mem::alloc_slice(Bool, n);
+    for (Usize i = 0; i < n; i++)
+        g.addressed[i] = rec_address_taken(g.functions[i].value);
     rec_walk_calls(&g, false);
     rec_walk_calls(&g, true);
     Usize component[:] = mem::alloc_slice(Usize, n);
     rec_components(&g, component);
-    state::Status result = state::success();
+    state::Status result = rec_check_exits(&g, component);
+    // Every other call that closes a cycle is lowered (front::emit_recursion): it runs on the stack in use while there
+    // is room, and on a segment from the runtime when there is not.
+    c::LLVMValueRef lowered = nullptr; // a call through a function value has an edge for each target: lowered once
     for (Usize u = 0; u < n && result == .ok; u++) {
         for (Usize k = g.first[u]; k < g.first[u + 1]; k++) {
-            if (g.tail[k] || component[g.to[k]] != component[u]) {
+            if (g.tail[k] || component[g.to[k]] != component[u] || g.sites[k].value == lowered) {
                 continue;
             }
-            ast::Span nowhere = {};
-            Str way = rec_way_round(&g, u, g.to[k]);
-            if (c::LLVMGlobalGetValueType(g.functions[u].value) !=
-                c::LLVMGlobalGetValueType(g.functions[g.to[k]].value)) {
-                result = state::failf(nowhere, "recursion in a module: ", way,
-                                      " (not a tail call: the callee has other parameters or another result than the "
-                                      "caller, and a tail call needs the same function type; write a loop)");
-            } else
-                result = state::failf(nowhere, "recursion in a module: ", way,
-                                      " (write a loop; a call that ends the function is a tail call: `return f(...)`)");
-            break;
+            lowered = g.sites[k].value;
+            recursion::wrap(module, lowered);
         }
-    }
-    if (result == .ok) {
-        result = rec_check_exits(&g, component);
     }
     mem::free(component.data);
     mem::free(g.functions.data);
@@ -1353,5 +1382,7 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
     mem::free(g.first.data);
     mem::free(g.to.data);
     mem::free(g.tail.data);
+    mem::free(g.sites.data);
+    mem::free(g.addressed.data);
     return result;
 }

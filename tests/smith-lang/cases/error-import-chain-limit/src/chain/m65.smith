@@ -1,3 +1,4 @@
 module chain::m65;
+import chain::m66;
 
 export int f65() { return 65; }

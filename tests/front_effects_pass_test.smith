@@ -145,6 +145,43 @@ export void test_front_effects_pass_a_tail_call_carries_its_effects() {
     test::check_equal(bits(&g, "user"), effects_table::console | effects_table::globals);
 }
 
+// A recursion that is not a tail call is lowered to `smith_recurse_call(thunk, record)` (#2710): the function that
+// recurses allocates a stack segment and may fail doing it, and so does its caller. The effects reach the caller
+// through the thunk the call passes, as a function passed to a callee the build does not define.
+static const char *recursion_ir = "declare void @smith_recurse_call(ptr, ptr)\n"
+                                  "define i64 @fib(i64 %n) {\n"
+                                  "  %rec = alloca { i64, i64 }\n"
+                                  "  store i64 %n, ptr %rec\n"
+                                  "  call void @smith_recurse_call(ptr @fib.rec, ptr %rec)\n"
+                                  "  %at = getelementptr { i64, i64 }, ptr %rec, i32 0, i32 1\n"
+                                  "  %r = load i64, ptr %at\n"
+                                  "  ret i64 %r\n"
+                                  "}\n"
+                                  "define internal void @fib.rec(ptr %rec) {\n"
+                                  "  %n = load i64, ptr %rec\n"
+                                  "  %r = call i64 @fib(i64 %n)\n"
+                                  "  %at = getelementptr { i64, i64 }, ptr %rec, i32 0, i32 1\n"
+                                  "  store i64 %r, ptr %at\n"
+                                  "  ret void\n"
+                                  "}\n"
+                                  "define i64 @user(i64 %n) {\n"
+                                  "  %r = call i64 @fib(i64 %n)\n"
+                                  "  ret i64 %r\n"
+                                  "}\n";
+
+export void test_front_effects_pass_a_recursion_allocates_and_fails() {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    c::LLVMModuleRef module = parse(context, recursion_ir, "recursion.ll");
+    defer c::LLVMDisposeModule(module);
+    effects_pass::Graph g = effects_pass::make();
+    defer effects_pass::release(&g);
+    effects_pass::add_module(&g, module, nullptr);
+    effects_pass::solve(&g);
+    test::check_equal(bits(&g, "fib"), effects_table::alloc | effects_table::fails);
+    test::check_equal(bits(&g, "user"), effects_table::alloc | effects_table::fails);
+}
+
 export void test_front_effects_pass_chain_of_causes() {
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
