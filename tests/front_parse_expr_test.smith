@@ -515,3 +515,14 @@ export void test_parse_expr_a_keyword_is_a_member_name() {
     test::check_condition(contains(dumped, "match"));
     test::check_condition(contains(dumped, "default"));
 }
+
+// A type is a value (lead, 2026-11-07, #2668): `typeof(x) == *mut char` and `== []u8` compare with a type written out.
+export void test_parse_expr_a_type_is_an_operand_of_a_comparison() {
+    Str one = dump_one("typeof(x) == *mut char", true);
+    test::check_condition(!contains(one, "error "));
+    test::check_condition(!contains(one, "left over"));
+    Str two = dump_one("typeof(x) == []u8 || typeof(x) == *char", true);
+    test::check_condition(!contains(two, "error "));
+    test::check_condition(!contains(two, "left over"));
+    test::check_condition(contains(one, "mut"));
+}
