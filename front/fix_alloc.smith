@@ -108,11 +108,25 @@ static Usize skip_blanks(Str s, Usize i) {
     return i;
 }
 
-// The fix of the zero value of a type made from an expression, `(typeof(a)){0}` or `(typeof(a)){}`, that starts at
-// `i`: `mem::zeroed(typeof(a))` (D10, decided on #1406). The type is only known at compile time, so it has no `T()`.
+// Whether the `(` at `i` opens `(T)` where `T` is a type parameter the text declares, `constexpr Type T`.
+static Bool is_type_parameter(Str source, Usize i) {
+    Usize stop = i + 1;
+    while (stop < countof(source) && word_char(source[stop])) stop += 1;
+    if (stop == i + 1 || stop >= countof(source) || source[stop] != ')') return false;
+    Str name = source[i + 1:stop];
+    for (Usize k = 0; k + 15 + countof(name) < countof(source); k++) {
+        if (!at(source, k, "constexpr Type ") || !at(source, k + 15, name)) continue;
+        if (!word_char(source[k + 15 + countof(name)])) return true;
+    }
+    return false;
+}
+
+// The fix of the zero value of a type that is known only at compile time, `(typeof(a)){0}` or `(T){}` with `T` a type
+// parameter, that starts at `i`: `mem::zeroed(typeof(a))` (D10, decided on #1406). It has no `T()`.
 static core::ParseError zero_fix(Str source, Usize i) {
     core::ParseError none = {};
-    if (!at(source, i, "(typeof(") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    if (source[i] != '(' || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    if (!at(source, i, "(typeof(") && !is_type_parameter(source, i)) return none;
     Usize close = close_paren(source, i);
     if (close == countof(source)) return none;
     Usize brace = skip_blanks(source, close + 1);

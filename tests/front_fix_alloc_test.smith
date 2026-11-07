@@ -50,3 +50,8 @@ export void test_front_fix_alloc_an_empty_compound_literal_of_a_typeof_keeps_the
     expect_fixed("module m;\nimport std::mem;\nexport typeof(a) zero_like(auto a) {\n    return (typeof(a)){};\n}\n",
                  "import std.mem\npub fn zero_like(a: auto) -> typeof(a):\n    return mem.zeroed(typeof(a))\n");
 }
+
+export void test_front_fix_alloc_a_compound_literal_of_a_type_parameter_is_mem_zeroed() {
+    expect_fixed("module m;\nexport T zero(constexpr Type T) {\n    return (T){0};\n}\n",
+                 "import std.mem\npub fn zero(T: type) -> T:\n    return mem.zeroed(T)\n");
+}
