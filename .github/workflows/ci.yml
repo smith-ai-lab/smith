@@ -677,7 +677,58 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
+  frontend-coverage-shard:
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/8` fixes and compiles the tracked files
+    # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
+    # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
+    # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
+    needs: [changes, build-linux]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install lld
+        run: sudo apt-get install -y -q lld
+      - uses: ./.github/actions/setup-smith
+        with:
+          artifact: build-linux
+      - name: Count the shard
+        # never fails the job: the status is read by the merge job, whatever happened here
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          exit 0
+      - name: Save the shard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ github.sha }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+
   frontend-coverage:
+    # the merge of the eight shards of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files
+    # (a file in no shard, or in two, is an error), the summary is the single job's, and the gate below is unchanged.
+    # A shard that failed or did not finish leaves the count unmeasured, which fails the merge as before.
     # the count of how many .smith files the new front end handles (#2073, #1885, #2433), measured on Linux (CI's machine,
     # not a developer's Mac) in the merge-queue run, on the smith `build-linux` built for that very commit: the commit the
     # queue fast-forwards main to, so every merge is counted and a drop is pinned on one group. No second build: it
@@ -687,10 +738,10 @@ jobs:
     # main's last one, unless the PR's body has a line `Count drop: <why>`. A group the queue cancels cancels it too; the
     # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count took 9 to 19 minutes on 4 cores on 2026-11-06,
     # so 30 keeps a slow count from failing its group now that it gates (10 groups hit the old 20 that morning).
-    needs: [changes, build-linux]
+    needs: [changes, build-linux, frontend-coverage-shard]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -707,6 +758,12 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
+      - name: Fetch the shards
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: frontend-coverage-shard-${{ github.sha }}-*
+          path: ${{ runner.temp }}/shards
       - name: Count
         id: count
         # never fails the job: the output is read afterwards, whatever happened
@@ -715,9 +772,22 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
-          "$SMITH" build frontend-coverage -Dall=1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
-          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
-          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          out="$RUNNER_TEMP/coverage/output.txt"
+          tables=
+          for k in 1 2 3 4 5 6 7 8; do
+            d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
+            if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
+              tables="${tables:+$tables,}$d/results.tsv"
+            else
+              echo "frontend-coverage: shard $k of 8 did not finish, so the count is not measured" >>"$out"
+              tail -n 20 "$d/output.txt" 2>/dev/null >>"$out"
+            fi
+          done
+          if [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = 7 ]; then
+            "$SMITH" build frontend-coverage -Dmerge="$tables" -Dsmith="$SMITH" >>"$out" 2>&1
+            echo "status: $?" >>"$out"
+            cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          fi
           exit 0
       - name: Publish the number
         if: always()

@@ -3426,8 +3426,18 @@ static int build_frontend_coverage(SmithRun *run) {
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
-    const char *files = run->args[1];
+    // -Dshard=<k>/<n> (#2697): shard k of n, the files whose path hashes to k - 1 modulo n and what they import; only
+    // their rows are written. -Dmerge=<table>,<table>... joins the tables of the shards and summarizes the result.
+    const char *shard = run->args[4];
+    const char *merge = run->args[5];
+    const char *files = shard[0] != '\0' ? smith_fmt(b, "shard:%s", shard) : run->args[1];
     const char *tree = smith_fmt(b, "%s/tree", work);
+    if (merge[0] != '\0') {
+        status = build_spawn(&(BuildSpawn){.argv = smith_list(b, tool, "merge", build_absolute(b, "."), merge, nullptr),
+                                           .log = results,
+                                           .stdout_only = true});
+        return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
@@ -3449,8 +3459,9 @@ static int build_frontend_coverage(SmithRun *run) {
         .log = results,
         .stdout_only = true});
     if (status != 0) return status;
-    return files[0] != '\0' ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
-                            : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    return files[0] != '\0' && shard[0] == '\0'
+               ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
+               : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
@@ -3478,6 +3489,10 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
             smith_option_value(b, "files", "", "frontend-coverage: only these files and what they import (#2309)"),
             smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"),
             smith_option_value(b, "jobs", "", "frontend-coverage: files compiled at once (default: the cores, #2420)"),
+            smith_option_value(b, "shard", "",
+                               "frontend-coverage: shard <k>/<n> of the files and what they import (#2697)"),
+            smith_option_value(b, "merge", "",
+                               "frontend-coverage: join the shards' results.tsv, comma separated (#2697)"),
             nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };

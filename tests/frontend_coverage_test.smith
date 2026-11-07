@@ -93,3 +93,38 @@ export void test_frontend_coverage_filtered_run_equals_the_full_run_and_names_th
     scratch::release(run.out);
     scratch::release(run.err);
 }
+
+// #2697: the shards of `run ... shard:K/N` own every .smith file once, a shard writes the rows of its own files only
+// (the modules it imports are fixed, not reported), and `merge` joins the tables into the rows of a single run, in the
+// order of the files; a file in no table is an error.
+export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_the_full_run() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir repo");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::write(&p, "repo/a.smith", "import b\n\nfn main() -> i32:\n    return b.one()\n");
+    scratch::write(&p, "repo/b.smith", "import c\n\npub fn one() -> i32:\n    return c.two() - 1\n");
+    scratch::write(&p, "repo/c.smith", "pub fn two() -> i32:\n    return nothing_here\n");
+    scratch::write(&p, "repo/d.smith", "pub fn four() -> i32:\n    return 4\n");
+    scratch::Run run = scratch::sh(
+        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+            "smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/all\" > all.tsv && "
+            "for k in 1 2 3; do smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/s$k\" shard:$k/3 > s$k.tsv; done; "
+            "cat s1.tsv s2.tsv s3.tsv | cut -f1 | uniq | sort | uniq -c | awk '$1 != 1' | wc -l; "
+            "cat s1.tsv s2.tsv s3.tsv | cut -f1 | sort -u | wc -l; "
+            "smith run -- merge \"$PWD/repo\" \"$PWD/s3.tsv,$PWD/s1.tsv,$PWD/s2.tsv\" > merged.tsv; "
+            "grep -v '^\\[' all.tsv > all_rows.tsv; grep -v '^\\[' merged.tsv > merged_rows.tsv; "
+            "cmp all_rows.tsv merged_rows.tsv && echo SAME; "
+            "smith run -- merge \"$PWD/repo\" \"$PWD/s1.tsv\" 2>&1 >/dev/null | grep -c 'is in no shard'");
+    scratch::expect_contains("frontend_coverage: no file is in two shards, and the shards have all four", run.out,
+                             "0\n4\nSAME\n");
+    scratch::expect_contains("frontend_coverage: a file in no table is an error", run.out, "\n1\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}
