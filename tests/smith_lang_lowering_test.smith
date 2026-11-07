@@ -218,8 +218,9 @@ static Usize add_errors(arena::Arena *store, const char *errors, const char **li
         const char *marker = c::strstr(at, ": error: ");
         if (marker != nullptr && (Usize)(marker - at) < length && used < capacity) {
             Bool plain = true; // the position has no space or second colon before the line and column
-            for (const char *p = at; p < marker; p++)
-                plain = plain && *p != ' ';
+            Usize before = (Usize)(marker - at);
+            for (Usize position = 0; position < before; position++)
+                plain = plain && at[position] != ' ';
             if (plain) {
                 char *line = arena::push_slice(store, char, length + 1).data;
                 Usize head = (Usize)(marker - at);

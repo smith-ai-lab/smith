@@ -240,8 +240,8 @@ export void test_front_types_resolve_builds_function_and_applied_types() {
     ast::TypeRef list[:] = params[0:2];
     ast::TypeExpr *function =
         ast::make_type({.function = {.params = list, .result = ast::named("Bool"), .variadic = false}});
-    ast::TypeExpr *fn = applied("Fn", function);
-    test::check_condition(says(types::show(types::resolve(&r, fn)), "Fn(Bool (I32, I32))"));
+    ast::TypeExpr *fn_type = applied("Fn", function);
+    test::check_condition(says(types::show(types::resolve(&r, fn_type)), "Fn(Bool (I32, I32))"));
     ast::TypeExpr *option = applied("Option", ast::named("I32"));
     test::check_condition(types::resolve(&r, option) == types::option_of(&r.table, types::builtin(&r.table, "I32")));
     ast::TypeExpr *stream = applied("stream::Stream", ast::named("I32"));
