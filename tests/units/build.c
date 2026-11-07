@@ -24,14 +24,16 @@ static SmithObject build_core_object(SmithBuild *b, const char *root) {
 
 // The runtime files that smith.c used to include (#2685), each compiled as smith's core with the flags of smith.c: all
 // of runtime/*.c but what a program does not link in the units runner (the build program's files, the embedded data,
-// the mcp family that -DSMITH_MCP turns on, the macOS ones, and package.c, which package_unit.c wraps).
+// the mcp family that -DSMITH_MCP turns on, the other platform's files, and package.c, which package_unit.c wraps).
 static const char *const core_skipped[] = {
-    "build_runtime.c",  "commit.c",    "gzip.c",
-    "lint_identity.c",  "mcp.c",       "mcp_dap.c",
-    "mcp_serve.c",      "mcp_show.c",  "mcp_text.c",
-    "mcp_tools.c",      "package.c",   "pack_data.c",
-    "platform_macos.c", "sdk_cache.c", "tree_sitter_data.c",
-    "untar.c",          "xz.c",        nullptr,
+    "build_runtime.c",    "commit.c",   "gzip.c",     "lint_identity.c", "mcp.c",     "mcp_dap.c",
+    "mcp_serve.c",        "mcp_show.c", "mcp_text.c", "mcp_tools.c",     "package.c", "pack_data.c",
+#ifdef __APPLE__
+    "platform_linux.c",
+#else
+    "platform_macos.c",   "sdk_cache.c",
+#endif
+    "tree_sitter_data.c", "untar.c",    "xz.c",       nullptr,
 };
 
 static bool core_is_skipped(const char *path) {
