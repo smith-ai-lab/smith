@@ -278,7 +278,6 @@ I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
         return code;
     }
     c::posix_spawn_file_actions_t actions;
-    mem::zero(&actions);
     c::posix_spawn_file_actions_init(&actions);
     if (mode == mode_piped)
         c::posix_spawn_file_actions_adddup2(&actions, in[0], stdin_fd);
@@ -287,7 +286,6 @@ I32 spawn_real(const char *const *argv, I32 mode, Bool leader, Child *child) {
     if (out[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, out[1], stdout_fd);
     if (err[1] >= 0) c::posix_spawn_file_actions_adddup2(&actions, err[1], stderr_fd);
     c::posix_spawnattr_t attributes;
-    mem::zero(&attributes);
     c::posix_spawnattr_init(&attributes);
     if (leader) {
         c::posix_spawnattr_setflags(&attributes, (I16)spawn_set_group);
