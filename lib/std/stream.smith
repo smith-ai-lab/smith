@@ -101,7 +101,7 @@ void entry(void *context) {
     Stream *stream = *s;
     stream->slot = slot;
     stream->started = true;
-    task::fiber_resume(stream->fiber);
+    (void)task::fiber_resume(stream->fiber);
     if (stream->ended) {
         release(s);
         return false;
@@ -119,6 +119,6 @@ void entry(void *context) {
     stream->closed = true;
     stream->slot = nullptr;
     while (stream->started && !stream->ended)
-        task::fiber_resume(stream->fiber);
+        (void)task::fiber_resume(stream->fiber);
     release(s);
 }

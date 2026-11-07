@@ -110,8 +110,7 @@ struct Frame {
     ast::Span head;
     ast::Span else_head;
     ast::Span close;
-    Bool nested;    // opened inside a branch of another block (not `else if`)
-    Str outer;      // the `@when` text of the enclosing branch, when nested: the branch is under both conditions
+    Str outer;      // opened inside a branch of another block: that branch's condition as `@when` text (#2643)
     StrList before; // the conditions of the branches before this one in an `else if` chain, as `@when` text
     // Where a declaration that failed to read starts (it has a fix of its own to apply first): it still gets its
     // `@when`.
@@ -1233,6 +1232,16 @@ static Bool failed_since(const parse::Parser *p, Usize errors_before) {
     return countof(p->errors) > errors_before;
 }
 
+// Whether every error since `errors_before` carries a fix: the parameters were mended (a C function-pointer
+// declarator) and the body is still worth reading, so its old forms are mended in the same pass.
+static Bool mended_since(const parse::Parser *p, Usize errors_before) {
+    for (Usize i = errors_before; i < countof(p->errors); i++) {
+        parse::Edits fix = p->errors[i].fix;
+        if (countof(fix) == 0) return false;
+    }
+    return true;
+}
+
 // After an error in the parameters (the `)` is taken): skips the K&R declarations that may follow and the body, or the
 // `;` of a prototype.
 static void skip_function(parse::Parser *p) {
@@ -1830,6 +1839,12 @@ static ast::Decl *parse_function(parse::Parser *p, const Prefixes *pre, Head hea
     ParamList params = parse_params(p, &variadic);
     if (failed_since(p, errors_before)) {
         p->apart = false;
+        // A body after mended parameters is read for its own fixes (#2643): the next pass reads this text with
+        // the new parser, which mends no old form of a declaration.
+        if (mended_since(p, errors_before) && parse::at(p, lex::left_brace)) {
+            parse::statement(p);
+            return nullptr;
+        }
         skip_function(p);
         return nullptr;
     }
@@ -3677,19 +3692,42 @@ static Str branch_condition(const Frame *frame, Bool else_branch, Str own) {
     }
     Str glue = "";
     if (countof(result) > 0) glue = " && ";
-    char inner[:] = format::push(result, glue, mine);
-    if (countof(frame->outer) == 0) return str_of(inner);
-    // Nested in a branch of another block: that branch's condition holds as well.
-    Str outer = frame->outer;
-    if (contains(outer, "||")) outer = str_of(format::push("(", outer, ")"));
-    Str both = inner;
-    if (contains(inner, "||")) both = str_of(format::push("(", inner, ")"));
-    return str_of(format::push(outer, " && ", both));
+    return str_of(format::push(result, glue, mine));
+}
+
+// `outer && inner` as one `@when` condition.
+static Str conjunction(Str outer, Str inner) {
+    if (countof(outer) == 0) return inner;
+    Str left = outer;
+    Str right = inner;
+    if (contains(outer, "||")) left = str_of(format::push("(", outer, ")"));
+    if (contains(inner, "||")) right = str_of(format::push("(", inner, ")"));
+    return str_of(format::push(left, " && ", right));
+}
+
+// The condition of the branch a block opened inside `parent` lives in, or "" when `parent`'s is not about the system.
+static Str enclosing_condition(const parse::Parser *p, const Frame *parent) {
+    if (parent->condition == nullptr) return ""; // a condition that did not read: no fix
+    Str own = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
+    if (countof(own) == 0) return "";
+    return conjunction(parent->outer, branch_condition(parent, parent->in_else, own));
+}
+
+// Sets the condition a block opened inside `parent` carries from the branches around it (#2643). False when no fix
+// can be written for it: an `else if` that could not be mended, or a parent whose condition is not about the system.
+static Bool nested_fixable(const parse::Parser *p, const Frame *parent, Bool chain, Bool mended, Frame *opened) {
+    if (chain) {
+        opened->outer = parent->outer;
+        return mended;
+    }
+    opened->outer = enclosing_condition(p, parent);
+    return countof(opened->outer) > 0;
 }
 
 // The edits of one block's own pieces: its head, its `} else {`, its closing `}` and a `@when` before each declaration
 // of its branches. False when the condition is not about the system (the block gets no fix).
 static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits *edits) {
+    if (frame->condition == nullptr) return false; // a condition that did not read: no fix
     Str own = when_text(trimmed(source_between(p, frame->condition->span.start, frame->condition->span.end)));
     if (countof(own) == 0) return false;
     ast::Span head = whole_line(p, frame->head);
@@ -3697,7 +3735,8 @@ static Bool frame_edits(const parse::Parser *p, const Frame *frame, parse::Edits
     for (Usize pass = 0; pass < 2; pass++) {
         Bool in_else = pass == 1;
         DeclRefList list = in_else ? frame->else_decls : frame->then_decls;
-        Str text = str_of(format::push("@when(", branch_condition(frame, in_else, own), ")\n"));
+        Str text =
+            str_of(format::push("@when(", conjunction(frame->outer, branch_condition(frame, in_else, own)), ")\n"));
         for (ast::Decl *item : list) {
             if (item->kind == .if_constexpr) continue; // an `else if`: its own frame did it
             U32 from = item->span.start;
@@ -3787,6 +3826,7 @@ static void open_else(parse::Parser *p, Frame *top, lex::Token brace) {
 // before it; the parent's own edits are made now. False when the parent's condition is not about the system.
 static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::Edits *fix) {
     opened->head.start = parent->else_head.start;
+    if (parent->condition == nullptr) return false;
     Str earlier = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
     // The opened frame owns a copy: sharing the parent's buffer and growing it with realloc frees or moves the block
     // the parent still reads in frame_edits below (a chain of three branches or more crashed there, #2565).
@@ -3797,8 +3837,6 @@ static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::E
     }
     copy[countof(parent->before)] = earlier;
     opened->before = copy;
-    opened->outer = parent->outer;
-    opened->nested = parent->nested;
     return frame_edits(p, parent, fix);
 }
 
@@ -3811,15 +3849,6 @@ static ast::Decl *read_leaf(parse::Parser *p, Bool at_top, FrameList stack, Usiz
     if (done == nullptr && p->position == before) parse::advance(p);
     if (done == nullptr && depth > 0) note_failed(&stack[depth - 1], start);
     return done;
-}
-
-// A block opened inside a branch of `parent` (not an `else if`): its declarations are under both conditions. False when
-// the parent's condition is not about the system.
-static Bool open_nested(const parse::Parser *p, const Frame *parent, Frame *opened) {
-    Str above = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
-    opened->nested = true;
-    opened->outer = branch_condition(parent, parent->in_else, above);
-    return countof(above) > 0;
 }
 
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
@@ -3860,8 +3889,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
             Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
-            if (depth > 0 && !chain) mended = open_nested(p, &stack[depth - 1], &opened);
-            if (depth > 0 && !mended) {
+            if (depth > 0 && !nested_fixable(p, &stack[depth - 1], chain, mended, &opened)) {
                 fixable = false;
             }
             stack[depth] = opened;

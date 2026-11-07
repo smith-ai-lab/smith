@@ -840,3 +840,23 @@ export void test_logical_and_glued_to_its_operand_keeps_a_blank() {
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Bool f(Bool a, Bool b) {\n    return a &&b;\n}\n");
     test::check_condition(contains_text(fixed.text, "a and b"));
 }
+
+// The text `smith lint --fix lib/std/format.smith` segfaulted on: the body of a function that did not read, left as
+// top-level `if constexpr` blocks, one of them with no condition. The fix reads no condition that is not there.
+export void test_a_top_level_block_whose_condition_did_not_read_does_not_crash() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "[[std::c_name(\"a\")]] export void put_bytes(Writer *writer, const char text[:]) {\n"
+                                 "    for (Usize i = 0; i < countof(text); i++) {\n    }\n}\n"
+                                 "[[std::c_name(\"b\")]] export void put_hex(Writer *writer, Hex hex) {\n"
+                                 "    for (Usize place = 0; place < 16; place++) {\n    }\n}\n"
+                                 "[[std::c_name(\"c\")]] export typedef struct {\n    if constexpr (T == F32) {\n"
+                                 "        return read_f32(word);\n    } else if constexpr (T == F64) {\n"
+                                 "        if (!m.ok) return {.error = m.error};\n"
+                                 "        if (m.value > (m.negative ? half : half - 1)) return {.error = Range};\n"
+                                 "        if (m.value > high) return {.error = Range};\n    }\n}\n");
+    test::check_condition(countof(fixed.text) > 0);
+}
