@@ -281,8 +281,7 @@ I32 raw_stat(const char *path, c::SmithFileStatus *status) {
     c::SmithFileHandler *handler = c::smith_handlers_files();
     if (handler != nullptr && handler->stat != nullptr)
         return handler->stat(handler, path, status) == 0 ? 0 : errno_now();
-    struct c::stat info;
-    mem::zero(&info);
+    struct c::stat info = {};
     if (c::fstatat(at_fdcwd, path, &info, 0) != 0) return errno_now();
     status->folder = (info.st_mode & mode_kind_mask) == mode_folder;
     status->size = status->folder ? 0 : (Usize)info.st_size;
@@ -393,8 +392,7 @@ I32 lister_next(Lister *lister, c::SmithFileItem *item, I32 *code) {
         if (length >= sizeof(char[256])) length = sizeof(char[256]) - 1; // name is char[256] in SmithFileItem
         put(item->name, entry->d_name, length);
         item->name[length] = 0;
-        struct c::stat status;
-        mem::zero(&status);
+        struct c::stat status = {};
         Bool known = c::fstatat(c::dirfd(lister->directory), entry->d_name, &status, 0) == 0;
         item->folder = known && (status.st_mode & mode_kind_mask) == mode_folder;
         item->size = known && !item->folder ? (Usize)status.st_size : 0;
@@ -438,8 +436,7 @@ void reads_log_append(const char *log, const char *path) {
     if (c::realpath(path, resolved) == nullptr) return; // a path that is not there has nothing to hash
     Usize length = c::strlen(resolved);
     if (length + 3 >= path_max) return;
-    struct c::stat status;
-    mem::zero(&status);
+    struct c::stat status = {};
     Bool folder = c::fstatat(at_fdcwd, resolved, &status, 0) == 0 && (status.st_mode & mode_kind_mask) == mode_folder;
     if (folder) resolved[length++] = '/';
     resolved[length++] = '\n';
@@ -859,8 +856,7 @@ I32 entry_compare(const void *a, const void *b) {
         return {.error = error_from(errno_now())};
     }
     reads_log(where.text);
-    struct c::stat info_of;
-    mem::zero(&info_of);
+    struct c::stat info_of = {};
     I32 code = c::fstat(descriptor, &info_of) == 0 ? 0 : errno_now();
     Bool is_folder = code == 0 && (info_of.st_mode & mode_kind_mask) == mode_folder;
     Usize size = code == 0 ? (Usize)info_of.st_size : 0;
@@ -958,7 +954,7 @@ Usize fake_new(Fake *fake, const char *path) {
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
-        mem::zero(&fake->files[i]);
+        fake->files[i] = (FakeFile){};
         fake->files[i].used = true;
         put(fake->files[i].path, path, length);
         return i;
@@ -981,7 +977,8 @@ void fake_reserve(FakeFile *file, Usize size) {
     }
     Usize capacity = grown(file->capacity, size);
     U8 bigger[:] = mem::alloc_slice(U8, capacity);
-    put(bigger.data, file->data, file->size);
+    U8 *old = file->data;
+    if (old != nullptr) put(bigger.data, old, file->size); // a file with no data yet has no bytes to move
     file->data = bigger.data; // the old block stays in the region
     file->capacity = capacity;
 }
@@ -1060,7 +1057,8 @@ Isize fake_read(c::SmithFileHandler *self, I32 descriptor, void *buffer, Usize s
     if (open_file->offset >= file->size) return 0;
     Usize count = file->size - open_file->offset;
     if (count > size) count = size;
-    put(buffer, file->data + open_file->offset, count);
+    U8 *bytes = file->data; // a file with size above 0 has data; the test narrows it
+    if (bytes != nullptr) put(buffer, bytes + open_file->offset, count);
     open_file->offset += count;
     return (Isize)count;
 }
@@ -1076,7 +1074,8 @@ Isize fake_write(c::SmithFileHandler *self, I32 descriptor, const void *buffer, 
     FakeFile *file = &fake->files[open_file->file];
     if (open_file->append) open_file->offset = file->size;
     fake_reserve(file, open_file->offset + size);
-    put(file->data + open_file->offset, buffer, size);
+    U8 *bytes = file->data; // fake_reserve gave it room
+    if (bytes != nullptr) put(bytes + open_file->offset, buffer, size);
     open_file->offset += size;
     if (open_file->offset > file->size) file->size = open_file->offset;
     return (Isize)size;
@@ -1125,7 +1124,7 @@ I32 fake_remove(c::SmithFileHandler *self, const char *path) {
         fake_fail(eperm);
         return -1;
     }
-    mem::zero(&fake->files[found]);
+    fake->files[found] = (FakeFile){};
     return 0;
 }
 
@@ -1139,7 +1138,7 @@ I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
     Usize length = c::strlen(to);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     Usize target_found = fake_find(fake, to);
-    if (target_found != fake_files_max && target_found != found) mem::zero(&fake->files[target_found]);
+    if (target_found != fake_files_max && target_found != found) fake->files[target_found] = (FakeFile){};
     fake->files[found].path[0] = 0;
     put(fake->files[found].path, to, length);
     fake->files[found].path[length] = 0;
@@ -1194,6 +1193,13 @@ I32 fake_list(c::SmithFileHandler *self, const char *folder, Usize index, c::Smi
     return 0;
 }
 
+// The bytes of a file, or null when it never held any.
+void *fake_bytes(FakeFile *file) {
+    U8 *bytes = file->data;
+    if (bytes == nullptr) return nullptr;
+    return bytes;
+}
+
 void *fake_map(c::SmithFileHandler *self, const char *path, Usize *size) {
     Fake *fake = (Fake *)self;
     Usize found = fake_find(fake, path);
@@ -1203,7 +1209,7 @@ void *fake_map(c::SmithFileHandler *self, const char *path, Usize *size) {
     }
     *size = fake->files[found].size;
     fake_reserve(&fake->files[found], 1);          // a file that never held bytes still has an address
-    return (void *)(Usize)fake->files[found].data; // the bytes are the file's own, written through the view
+    return fake_bytes(&fake->files[found]); // the bytes are the file's own, written through the view
 }
 
 void fake_unmap(c::SmithFileHandler *self, void *data, Usize size) {
@@ -1281,7 +1287,6 @@ I32 fake_symlink(c::SmithFileHandler *self, const char *target, const char *path
 // An empty fake. Put it in force with `files::set_handler(&fake.base)`.
 [[std::c_name("smith_fs_fake")]] export [[nodiscard]] Fake fake() {
     Fake result = {};
-    mem::zero(&result.base); // the fields not set below are null: libc's own call
     result.base.open = fake_open;
     result.base.read = fake_read;
     result.base.write = fake_write;
