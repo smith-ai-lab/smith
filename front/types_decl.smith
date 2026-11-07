@@ -121,7 +121,9 @@ struct Pending {
     Str function;
 };
 
-typedef const ast::Stmt *StmtRef;
+struct StmtRef {
+    const ast::Stmt *stmt;
+};
 
 struct State {
     Frame work[:];
@@ -135,14 +137,14 @@ struct State {
     Str function;
     types::TypeRef result;      // what `return` is checked against
     types::TypeRef generator;   // the element `T` when the function is a generator (types_stream), else null
-    StmtRef tails[:];  // the statements whose value is the function's result (the last line, through
+    StmtRef tails[:];           // the statements whose value is the function's result (the last line, through
     Usize tail_count;           // blocks and both arms of an if), so a call there is not unused
     const ast::Decl *declaring; // the local whose initializer is being checked, for the fix on its written type
     const ast::Decl *last_decl; // the local the statement entered last declared, null when it declared none
     const ast::Decl *prev_decl; // the local declared by the statement before the one being entered (#2506)
 };
 
-static const Usize max_tails = 32;
+constexpr Usize max_tails = 32;
 
 // A state with nothing in it; the pointers are named, as a construction leaves none out.
 static State empty_state() {
@@ -1618,7 +1620,7 @@ static void find_tails(const ast::Stmt *root) {
             todo[n + 1] = s->kind.if_stmt.else_branch;
             n += 2;
         } else if (s->kind == .match_stmt && state.tail_count < countof(state.tails)) {
-            state.tails[state.tail_count] = s; // its arms are the result
+            state.tails[state.tail_count].stmt = s; // its arms are the result
             state.tail_count += 1;
             ast::MatchArm arms[:] = s->kind.match_stmt.arms;
             for (Usize i = 0; i < countof(arms) && n < countof(todo); i++) {
@@ -1629,7 +1631,7 @@ static void find_tails(const ast::Stmt *root) {
                 }
             }
         } else if (s->kind == .expression && state.tail_count < countof(state.tails)) {
-            state.tails[state.tail_count] = s;
+            state.tails[state.tail_count].stmt = s;
             state.tail_count += 1;
         }
     }
@@ -1637,7 +1639,7 @@ static void find_tails(const ast::Stmt *root) {
 
 static Bool is_tail(const ast::Stmt *s) {
     for (Usize i = 0; i < state.tail_count; i++) {
-        if (state.tails[i] == s) {
+        if (state.tails[i].stmt == s) {
             return true;
         }
     }

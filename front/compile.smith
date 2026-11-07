@@ -308,7 +308,7 @@ static const ast::Module *load_module(const char *dotted) {
     }
     // After the three roots, the folders above the compiled file's: a file that says `module t::uses;` sits below the
     // root that names `t::point` (#2041).
-    // One entry per root and per ancestor, all written out: an array literal needs its whole length (3 + ancestors_max).
+    // One entry per root and per ancestor, all written out: an array literal needs its whole length.
     Str folders[9] = {import_roots.source, import_roots.library, import_roots.local, "", "", "", "", "", ""};
     static_assert(3 + ancestors_max == 9);
     Str above = import_roots.local;
