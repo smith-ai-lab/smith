@@ -205,7 +205,7 @@ static Str single_name(const ast::Expr *e) {
 }
 
 // `k.f` with `k` a plain name and `.` (not `->`): the identifier `k` and the member `f`.
-static Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *field) {
+export Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *field) {
     if (e->kind != .member) return false;
     if (e->kind.member.arrow) return false;
     const ast::Expr *owner = e->kind.member.base;
@@ -1780,7 +1780,7 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path);
 
 // Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
 // written as a value.
-static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
+export Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
     ast::Identifier header = {};
     Str header_member = "";
     if (member_of_name(e, &header, &header_member)) {
@@ -1816,7 +1816,7 @@ static Bool member_step(const ast::Expr *e, const ast::Expr **base, Str *field) 
 }
 
 // The value of an expression that is an integer literal, false for anything else.
-static Bool integer_of(const ast::Expr *e, U64 *out) {
+export Bool integer_of(const ast::Expr *e, U64 *out) {
     if (e == nullptr) return false;
     if (e->kind != .integer) return false;
     *out = e->kind.integer.value;
@@ -1832,7 +1832,7 @@ static const ast::Expr *negated_operand(const ast::Expr *e) {
 }
 
 // The path of an expression that is a name, false for anything else.
-static Bool name_path(const ast::Expr *e, ast::Path *path) {
+export Bool name_path(const ast::Expr *e, ast::Path *path) {
     if (e == nullptr) return false;
     if (e->kind != .name) return false;
     *path = e->kind.name.path;
