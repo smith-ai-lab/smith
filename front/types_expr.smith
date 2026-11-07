@@ -4311,8 +4311,39 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
     }
     push(w, e, f.expected, 4);
     for (Usize i = countof(items); i > 0; i--) {
-        push(w, items[i - 1], wanted, 0);
+        if (items[i - 1]->kind == .expand) {
+            push(w, items[i - 1]->kind.expand.pattern, nullptr,
+                 0); // `[a..., b]`: the pack or array is read, then spliced
+        } else {
+            push(w, items[i - 1], wanted, 0);
+        }
     }
+}
+
+// How many elements the item `[a..., b]` of an array literal adds: one, or the count of the tuple or array it
+// spreads; -1 (reported) when it spreads a value whose count is not known at compile time.
+static Usize spread_count(types::Checked *c, const ast::Expr *item, Bool *ok) {
+    if (!(item->kind == .expand)) return 1;
+    types::TypeRef t = typ(c, item->kind.expand.pattern);
+    if (t == invalid(c)) {
+        *ok = false;
+        return 0;
+    }
+    if (t->kind == .tuple) return countof(types::slots_of(t).items);
+    if (t->kind == .array || t->kind == .vector) return types::count_of(t);
+    types::failf(c, item->span, "cannot spread a value of type `", types::show(t),
+                 "` into an array: only a pack, a tuple or an array has a count known here; ",
+                 "spread one of those, or build the slice with a loop");
+    *ok = false;
+    return 0;
+}
+
+// The type of element `k` of the item `[a..., b]` of an array literal (`k` is 0 for an item that is not a spread).
+static types::TypeRef spread_element(types::Checked *c, const ast::Expr *item, Usize k) {
+    if (!(item->kind == .expand)) return typ(c, item);
+    types::TypeRef t = typ(c, item->kind.expand.pattern);
+    if (t->kind == .tuple) return types::slots_of(t).items[k].type;
+    return types::element_of(t);
 }
 
 static void array_literal_after(types::Checked *c, Frame f) {
@@ -4322,30 +4353,47 @@ static void array_literal_after(types::Checked *c, Frame f) {
     }
     ast::ExprRef items[:] = e->kind.array_lit.items;
     types::TypeRef expected = f.expected;
+    Bool ok = true;
+    Usize total = 0;
+    for (Usize i = 0; i < countof(items) && ok; i++) {
+        total += spread_count(c, items[i], &ok);
+    }
     types::TypeRef element = nullptr;
+    if (!ok) {
+        poison(c, e);
+        return;
+    }
     if (expected != nullptr && (expected->kind == .array || expected->kind == .slice || expected->kind == .vector)) {
         element = types::element_of(expected);
-    } else if (countof(items) > 0) {
-        element = typ(c, items[0]);
+    } else if (total > 0) {
+        element = spread_element(c, items[0], 0);
     }
-    Bool ok = element != invalid(c);
+    if (element == nullptr) {
+        types::failf(c, e->span, "an empty `[]` needs a type for now: write `xs: []i32 = []`, or pass it where a ",
+                     "slice is expected");
+        poison(c, e);
+        return;
+    }
+    ok = element != invalid(c);
     for (Usize i = 0; i < countof(items) && ok; i++) {
-        types::TypeRef t = typ(c, items[i]);
-        if (t == invalid(c)) {
-            ok = false;
-        } else if (t != element && !(expected != nullptr && expected->kind != .automatic && element != nullptr &&
-                                     types::element_of(expected) == element)) {
-            types::failf(c, items[i]->span, "the elements of `[...]` have one type: element ", i + 1, " is `",
-                         types::show(t), "` but the first is `", types::show(element), "`; convert it with `.to(",
-                         types::show(element), ")`");
-            ok = false;
+        Usize n = spread_count(c, items[i], &ok);
+        for (Usize k = 0; k < n && ok; k++) {
+            types::TypeRef t = spread_element(c, items[i], k);
+            if (t == invalid(c)) {
+                ok = false;
+            } else if (t != element && !(expected != nullptr && expected->kind != .automatic && element != nullptr &&
+                                         types::element_of(expected) == element)) {
+                types::failf(c, items[i]->span, "the elements of `[...]` have one type: element ", i + 1, " is `",
+                             types::show(t), "` but the first is `", types::show(element), "`; convert it with `.to(",
+                             types::show(element), ")`");
+                ok = false;
+            }
         }
     }
     if (ok && expected != nullptr && (expected->kind == .array || expected->kind == .vector) &&
-        types::count_of(expected) != countof(items)) {
+        types::count_of(expected) != total) {
         types::failf(c, e->span, "`", types::show(expected), "` holds ", types::count_of(expected),
-                     " elements but this has ", countof(items), "; write exactly ", types::count_of(expected),
-                     " elements");
+                     " elements but this has ", total, "; write exactly ", types::count_of(expected), " elements");
         ok = false;
     }
     if (!ok) {
@@ -4356,7 +4404,7 @@ static void array_literal_after(types::Checked *c, Frame f) {
         finish(c, e, expected, f.expected);
         return;
     }
-    finish(c, e, types::array_of(&c->table, element, countof(items), false), f.expected);
+    finish(c, e, types::array_of(&c->table, element, total, false), f.expected);
 }
 
 // A `name = value` outside a call has nothing to name.
