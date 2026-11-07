@@ -213,8 +213,10 @@ export const char *squeezed(const char *text) {
 // The number a text starts with (digits only), 0 when it has none.
 export Usize number(const char *text) {
     Usize value = 0;
-    for (; *text >= '0' && *text <= '9'; text++)
+    while (*text >= '0' && *text <= '9') {
         value = value * 10 + (Usize)(*text - '0');
+        text = text + 1;
+    }
     return value;
 }
 
@@ -288,7 +290,7 @@ export void expect_lacks(const char *iso, const char *name, const scratch::Run *
 // The forks the run made: the runner's `forks: N` line of --stats.
 export Usize forks_of(const scratch::Run *run) {
     const char *at = c::strstr(run->out, "forks: ");
-    test::check_not_equal(at, nullptr);
+    test::check_condition(at != nullptr);
     Usize count = 0;
     for (at += 7; *at >= '0' && *at <= '9'; at++)
         count = count * 10 + (Usize)(*at - '0');

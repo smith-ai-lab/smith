@@ -85,15 +85,15 @@ static const char *directive(arena::Arena *memory, const char *text, const char 
             const char *value = line + prefix_length;
             Usize value_length = length - prefix_length;
             while (value_length > 0 && *value == ' ') {
-                value++;
+                value = value + 1;
                 value_length--;
             }
             char *copy = arena::push_slice(memory, char, value_length + 1).data;
             mem::copy(copy[0:value_length], value[0:value_length]);
             joined = format::push(joined, " ", copy).data;
         }
-        line += length;
-        if (*line == '\n') line++;
+        line = line + length;
+        if (*line == '\n') line = line + 1;
     }
     return joined;
 }
@@ -249,8 +249,8 @@ static void unsound(const char *name) {
             test::check_not_equal(run.status, 0);
             scratch::expect_contains(function, run.out, expected);
         }
-        line += length;
-        if (*line == '\n') line++;
+        line = line + length;
+        if (*line == '\n') line = line + 1;
     }
 }
 
