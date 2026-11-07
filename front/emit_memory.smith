@@ -574,7 +574,7 @@ export state::Status address_of(state::Emitter *e, const ast::Expr *x, state::Hi
     }
     const ast::Expr *operand = x->kind.unary.operand;
     state::push_then_none(e, (state::ThenNone){.run = address_finish, .span = x->span});
-    push_address(e, operand); // `&Pair(a = 2)`: an rvalue is stored in a temporary and its address taken (D11)
+    push_place_of(e, operand);
     return state::success();
 }
 
@@ -1157,10 +1157,11 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
     if (hint.present && hint.ty.kind == .array && hint.ty.kind.array.count > countof(bytes) + 1) {
         // a literal given to a longer `[N]char`: the bytes, then zeros up to N (#2611)
         state::SizedTy shape = hint.ty.kind.array;
-        c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, shape.count + 1);
+        builtin::Cells values[:] = mem::alloc_slice(builtin::Cells, shape.count + 1);
         for (Usize i = 0; i < shape.count; i++)
-            values[i] = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        c::LLVMValueRef whole = c::LLVMConstArray2(shape.element->llvm, values.data, shape.count);
+            values[i].item = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        c::LLVMValueRef whole =
+            c::LLVMConstArray2(shape.element->llvm, (c::LLVMValueRef *)values.data, shape.count);
         mem::free(values.data);
         state::push_value(e, (state::Value){.llvm = whole, .ty = hint.ty});
         return state::success();
@@ -1701,40 +1702,79 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
-static state::Status compound_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
+static state::Status construction_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
 
 // An array's constant from an array literal of constants (scalars, records, nested arrays) or a string literal;
-// elements left out are zero. Any length: the element values live in a buffer for the call.
+// elements left out are zero. Any length and depth up to 16: the leaves are found by their index digits, then folded
+// into arrays level by level (no recursion).
 static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
                                     c::LLVMValueRef *out) {
     if (x->kind == .string && array.element->kind == .integer && state::width(*array.element) == 8) {
         Str bytes = x->kind.string.bytes;
         if (countof(bytes) + 1 > array.count) return state::failf(x->span, "the string does not fit ", ty.name);
-        c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, array.count + 1); // the bytes, then zeros
+        builtin::Cells values[:] = mem::alloc_slice(builtin::Cells, array.count + 1); // the bytes, then zeros
         for (Usize i = 0; i < array.count; i++)
-            values[i] = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        *out = c::LLVMConstArray2(array.element->llvm, values.data, array.count);
+            values[i].item = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        *out = c::LLVMConstArray2(array.element->llvm, (c::LLVMValueRef *)values.data, array.count);
         mem::free(values.data);
         return state::success();
     }
     if (x->kind != .array_lit)
         return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
-    ast::ExprRef items[:] = x->kind.array_lit.items;
-    if (countof(items) > array.count)
-        return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
-    c::LLVMValueRef values[:] = mem::alloc_slice(c::LLVMValueRef, array.count + 1);
-    for (Usize i = 0; i < array.count; i++) {
-        values[i] = c::LLVMConstNull(array.element->llvm);
-        if (i < countof(items)) {
-            state::Status made = compound_constant(e, *array.element, items[i], &values[i]);
-            if (made == .error) {
-                mem::free(values.data);
-                return made;
+    state::SizedTy chain[16];
+    Usize n = 0;
+    state::Ty level = ty;
+    Usize total = 1;
+    while (level.kind == .array && n < 16) {
+        chain[n] = level.kind.array;
+        total *= chain[n].count;
+        level = *chain[n].element;
+        n++;
+    }
+    if (level.kind == .array) return state::not_emitted("array constant nested more than 16 deep", x->span);
+    builtin::Cells cells[:] = mem::alloc_slice(builtin::Cells, total + 1);
+    for (Usize leaf = 0; leaf < total; leaf++) {
+        const ast::Expr *node = x;
+        Usize rest = leaf;
+        Usize stride = total;
+        for (Usize d = 0; d < n && node != nullptr; d++) {
+            stride /= chain[d].count;
+            Usize at = rest / stride;
+            rest %= stride;
+            if (node->kind != .array_lit) {
+                mem::free(cells.data);
+                return state::failf(node->span, "the initializer of a global is a constant of type ", ty.name);
             }
+            ast::ExprRef items[:] = node->kind.array_lit.items;
+            if (countof(items) > chain[d].count) {
+                mem::free(cells.data);
+                return state::failf(node->span, "the array has ", chain[d].count, " elements, the literal ",
+                                    countof(items));
+            }
+            node = at < countof(items) ? items[at] : nullptr;
+        }
+        cells[leaf].item = c::LLVMConstNull(level.llvm);
+        if (node == nullptr) continue;
+        state::Status made = state::success();
+        if (level.kind == .record && node->kind == .call) {
+            made = construction_constant(e, level, node, &cells[leaf].item);
+        } else {
+            made = scalar_constant(e, level, node, &cells[leaf].item);
+        }
+        if (made == .error) {
+            mem::free(cells.data);
+            return made;
         }
     }
-    *out = c::LLVMConstArray2(array.element->llvm, values.data, array.count);
-    mem::free(values.data);
+    Usize count = total;
+    for (Usize d = n; d > 0; d--) {
+        Usize per = chain[d - 1].count;
+        count = per == 0 ? 0 : count / per;
+        for (Usize g = 0; g < count; g++)
+            cells[g].item = c::LLVMConstArray2(chain[d - 1].element->llvm, (c::LLVMValueRef *)&cells[g * per], per);
+    }
+    *out = cells[0].item;
+    mem::free(cells.data);
     return state::success();
 }
 
