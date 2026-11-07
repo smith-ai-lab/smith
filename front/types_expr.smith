@@ -1354,7 +1354,26 @@ static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::Un
     return invalid(c);
 }
 
+// `T(...)`: a construction of a record, written with a type's name. Its address is a temporary that lives to the end
+// of the statement (D11, owner 2026-11-06), and the pointer is `*mut T`.
+static Bool is_construction(const ast::Expr *e, types::TypeRef t) {
+    if (e->kind != .call || t->kind != .record) {
+        return false;
+    }
+    const ast::Expr *callee = e->kind.call.callee;
+    Str name = "";
+    if (callee->kind == .member) {
+        name = callee->kind.member.name;
+    } else if (callee->kind == .name && countof(callee->kind.name.path.segments) > 0) {
+        name = callee->kind.name.path.segments[countof(callee->kind.name.path.segments) - 1].text;
+    }
+    return countof(name) > 0 && name[0] >= 'A' && name[0] <= 'Z';
+}
+
 static types::TypeRef unary_address(types::Checked *c, const ast::Expr *e, const ast::Expr *operand, types::TypeRef t) {
+    if (is_construction(operand, t)) {
+        return types::pointer_to(&c->table, t, false);
+    }
     if (!is_lvalue(operand)) {
         types::failf(c, e->span,
                      "cannot take the address of a value that is not a place; store it in a variable first and write "
