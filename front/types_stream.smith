@@ -79,7 +79,7 @@ export Bool has_yield(const ast::Stmt *body) {
 // The element `T` of a generator with this written result and body, else null.
 export types::TypeRef generator_element(types::TypeRef result, const ast::Stmt *body) {
     if (result == nullptr || result->kind != .stream || !has_yield(body)) return nullptr;
-    return result->element;
+    return types::element_of(result);
 }
 
 // `yield x` in a function whose generator element is `element` (null outside a generator).

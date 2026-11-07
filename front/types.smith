@@ -757,6 +757,44 @@ export Bool is_variadic(TypeRef t) {
     return t->shape == .function && t->shape.function.variadic;
 }
 
+// The element of a pointer, array, slice, option, stream, block or vector, the ok type of a result, the result of a
+// function, the underlying integer of an enumeration, the function of an `Fn`. A type without one is its own element:
+// ask only for a kind that has one (#2673: the readers move to a pattern on the kind, then this goes).
+export TypeRef element_of(TypeRef t) {
+    if (t->shape == .pointer) return t->shape.pointer.element;
+    if (t->shape == .array) return t->shape.array.element;
+    if (t->shape == .slice) return t->shape.slice.element;
+    if (t->shape == .option) return t->shape.option.element;
+    if (t->shape == .stream) return t->shape.stream.element;
+    if (t->shape == .block) return t->shape.block.element;
+    if (t->shape == .vector) return t->shape.vector.element;
+    if (t->shape == .result_type) return t->shape.result_type.element;
+    if (t->shape == .fn_value) return t->shape.fn_value.element;
+    if (t->shape == .function) return t->shape.function.result;
+    if (t->shape == .enumeration) return t->shape.enumeration.element;
+    return t;
+}
+
+// The error type of a result; the type itself for any other kind.
+export TypeRef error_of(TypeRef t) {
+    if (t->shape == .result_type) return t->shape.result_type.error;
+    return t;
+}
+
+// The length of an array, the dimensions of a block, the lanes of a vector; 0 for any other kind.
+export U64 count_of(TypeRef t) {
+    if (t->shape == .array) return t->shape.array.count;
+    if (t->shape == .block) return t->shape.block.count;
+    if (t->shape == .vector) return t->shape.vector.count;
+    return 0;
+}
+
+// The C struct a record is, or empty.
+export Str c_name_of(TypeRef t) {
+    if (t->shape == .record) return t->shape.record.c_name;
+    return "";
+}
+
 // The width of an integer or floating type in bits; 0 for any other kind.
 export U32 bits_of(TypeRef t) {
     if (t->shape == .integer) return t->shape.integer.bits;

@@ -171,7 +171,7 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
         all[i] = made.ok;
         llvm_types[i] = made.ok.llvm;
     }
-    state::TyResult made_result = state::type_of_checked(e, type->element, d->span);
+    state::TyResult made_result = state::type_of_checked(e, types::element_of(type), d->span);
     if (made_result == .error) {
         mem::free(all.data);
         return {.error = made_result.error};
@@ -321,7 +321,7 @@ static Bool method_callee(state::Emitter *e, const ast::Expr *x, const ast::Decl
     if (callee->kind != .member) return false;
     types::TypeRef t = types::type_of(e->options.checked, callee->kind.member.base);
     if (t == nullptr) return false;
-    if (t->kind == .pointer) t = t->element;
+    if (t->kind == .pointer) t = types::element_of(t);
     if (t->kind != .record) return false;
     Str type_name = t->name;
     Usize cut = 0;

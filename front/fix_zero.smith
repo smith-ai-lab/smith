@@ -124,7 +124,7 @@ static Str flat_zero(types::TypeRef t) {
     Str one = scalar_zero(t);
     if (countof(one) > 0) return one;
     if (t->kind != .array || t->count == 0 || t->count > array_limit) return "";
-    Str item = scalar_zero(t->element);
+    Str item = scalar_zero(types::element_of(t));
     if (countof(item) == 0) return "";
     Str out = "[";
     for (Usize i = 0; i < t->count; i++)
@@ -199,12 +199,12 @@ static Str construct_array(Str element, types::TypeRef t) {
     if (t->kind != .array || t->count == 0) return "";
     // `T xs[a][b]` is `[a][b]T`: the shape `[a, b]` names every dimension (#2496).
     Str shape = types::message_of(format::push(t->count));
-    types::TypeRef leaf = t->element;
+    types::TypeRef leaf = types::element_of(t);
     Usize rank = 1;
     while (leaf->kind == .array && rank < 16) {
         if (leaf->count == 0) return "";
         shape = types::message_of(format::push(shape, ", ", leaf->count));
-        leaf = leaf->element;
+        leaf = types::element_of(leaf);
         rank += 1;
     }
     // a number, `Bool` or pointer element is its own zero: `static char buf[named_length]` (#1901)

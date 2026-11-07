@@ -1112,8 +1112,9 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
         llvm_types[i] = state::abi_type(e, params[i]);
     }
     state::Ty result = void_type(e);
-    if (signature->element != nullptr && signature->element != e->options.checked->table.void_type) {
-        state::TyResult made_result = type_of_checked(e, signature->element, d->span);
+    if (types::element_of(signature) != nullptr &&
+        types::element_of(signature) != e->options.checked->table.void_type) {
+        state::TyResult made_result = type_of_checked(e, types::element_of(signature), d->span);
         if (made_result == .error) {
             return {.error = made_result.error};
         }
@@ -1460,7 +1461,7 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
         return true;
     }
     if (base->kind != .slice && base->kind != .block) return false;
-    types::TypeRef element = base->element;
+    types::TypeRef element = types::element_of(base);
     state::Ty inner = {};
     Bool known = scalar_of_checked(e, element, &inner);
     known = known || (element->kind == .record && find_record_by_name(e, element->name, &inner));
@@ -1498,7 +1499,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
         if (depth == countof(chain)) return state::ty_fail("a type nested more than 16 deep", span);
         chain[depth] = base;
         depth += 1;
-        types::TypeRef next = base->element;
+        types::TypeRef next = types::element_of(base);
         base = next;
     }
     state::Ty ty = {};
@@ -1507,8 +1508,8 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
     known = known || (base->kind == .enumeration && matching::type_enum(e, bare_name(base->name), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
-    known =
-        known || (base->kind == .enumeration && from_header(base->name) && scalar_of_checked(e, base->element, &ty));
+    known = known || (base->kind == .enumeration && from_header(base->name) &&
+                      scalar_of_checked(e, types::element_of(base), &ty));
     known = known || slice_of_checked(e, base, &ty);
     if (!known && base->kind == .void_type) {
         ty = void_type(e);
@@ -1517,18 +1518,18 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     if (!known) {
         if (base->kind == .vector && depth == 0) {
             state::Ty lane = {};
-            if (scalar_of_checked(e, base->element, &lane)) return vectors::make(e, lane, base->count);
+            if (scalar_of_checked(e, types::element_of(base), &lane)) return vectors::make(e, lane, base->count);
         }
         if (base->kind == .option) {
-            ensure_enum(e, base->element);
+            ensure_enum(e, types::element_of(base));
             return optional::from_checked(e, base);
         }
         if (base->kind == .result_type) {
-            ensure_enum(e, base->element);
-            ensure_enum(e, base->error);
-            state::TyResult ok = optional::payload_of_checked(e, base->element);
+            ensure_enum(e, types::element_of(base));
+            ensure_enum(e, types::error_of(base));
+            state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
             if (ok == .error) return {.error = ok.error};
-            state::TyResult bad = optional::payload_of_checked(e, base->error);
+            state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
             if (bad == .error) return {.error = bad.error};
             return optional::build_result(e, ok.ok, bad.ok);
         }
@@ -1664,7 +1665,7 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
     types::TypeRef base = t;
     for (Usize guard = 0; guard < 16 && (base->kind == .array || (through_pointers && base->kind == .pointer));
          guard++) {
-        types::TypeRef next = base->element;
+        types::TypeRef next = types::element_of(base);
         base = next;
     }
     Bool made = false;

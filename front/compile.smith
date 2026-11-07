@@ -602,7 +602,7 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
     }
     types::TypeRef type = types::type_of(checked, base);
     if (type == nullptr) return list;
-    types::TypeRef self = type->kind == .pointer ? type->element : type;
+    types::TypeRef self = type->kind == .pointer ? types::element_of(type) : type;
     Str module = "";
     if (self->kind == .record) {
         for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
@@ -619,7 +619,7 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
         if (s->kind != .function_symbol || s->type == nullptr || s->type->kind != .function) continue;
         if (countof(s->type->slots) == 0 || s->generic) continue;
         types::TypeRef takes = s->type->slots[0].type;
-        if (takes->kind == .pointer) takes = takes->element;
+        if (takes->kind == .pointer) takes = types::element_of(takes);
         if (takes != self) continue;
         Str label = s->name;
         if (starts_with_text(label, module) && countof(module) > 0) {

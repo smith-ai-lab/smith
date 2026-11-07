@@ -195,7 +195,7 @@ static state::TyResult of_checked(state::Emitter *e, types::TypeRef t) {
 }
 
 export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
-    types::TypeRef function = t->kind == .fn_value ? t->element : t;
+    types::TypeRef function = t->kind == .fn_value ? types::element_of(t) : t;
     if (function == nullptr || function->kind != .function)
         return state::ty_fail("not emitted yet: a fn that is not a function", (ast::Span){});
     Usize n = countof(function->slots);
@@ -206,7 +206,7 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t) {
         if (made == .error) return {.error = made.error};
         parts[i] = made.ok;
     }
-    state::TyResult result = of_checked(e, function->element);
+    state::TyResult result = of_checked(e, types::element_of(function));
     if (result == .error) return {.error = result.error};
     state::Ty made_fn = make_type(e, parts[0:n], result.ok);
     return made_fn;
