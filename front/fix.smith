@@ -822,7 +822,9 @@ export Fixed fix_text(Str file, Str source) {
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
-    if (!mem::equal(database_file, file)) database_read = false;
+    // Not compared with the last file: its text may be gone with that file's memory.
+    database_read = false;
+    database_text = "";
     database_file = file;
     for (Usize i = countof(file); i > 0; i--) { // a quoted header is looked up beside the file
         if (file[i - 1] != '/') continue;
