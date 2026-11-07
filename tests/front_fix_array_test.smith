@@ -73,3 +73,8 @@ export void test_front_fix_array_a_local_constexpr_type_is_a_const() {
 export void test_front_fix_array_a_cast_of_a_dereference_in_an_argument() {
     expect("void f(U64 *n) {\n    g((unsigned long long)*n, 1);\n}\n", "fn f(n: *u64):\n    g(n.*.to(u64), 1)\n");
 }
+
+// A brace list that initializes a tuple local is the tuple value, not an array (#2649).
+export void test_front_fix_array_a_brace_list_for_a_tuple_local_is_a_tuple() {
+    expect("void f(void) {\n    struct { I32, F32 } a = {1, 2.0f};\n}\n", "fn f():\n    a: (i32, f32) = (1, 2.0f)\n");
+}
