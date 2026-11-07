@@ -918,7 +918,7 @@ static ast::Decl *make(const parse::Parser *p, U32 start, const Prefixes *pre, a
 // Declarators: array suffixes and the errors of C's declarator forms
 
 // `[N]` and `[:]` after a name wrap the type, the first being the outermost: `I32 m[:][2]` is a slice of arrays of 2.
-static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type) {
+static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type, Bool parameter) {
     Suffix suffixes[8];
     Usize count = 0;
     while (parse::at(p, lex::left_bracket) && !at_attribute(p)) {
@@ -954,6 +954,8 @@ static ast::TypeExpr *array_suffixes(parse::Parser *p, ast::TypeExpr *type) {
         parse::advance(p);
         if (parse::accept(p, lex::colon)) {
             suffix.is_slice = true;
+        } else if (parameter && parse::at(p, lex::right_bracket)) {
+            suffix.is_slice = true; // `I32 xs[]` as a parameter is C's pointer: the head's fix writes `xs: []i32`
         } else if (parse::at(p, lex::right_bracket)) {
             Str message = "an array needs a size: write `[N]`, or `[:]` for a slice";
             parse::error(p, parse::peek(p).span, message);
@@ -1158,7 +1160,7 @@ static ast::Param parse_param(parse::Parser *p) {
         (param.is_rest && is_name(named)))
         param.name = parse::text(p, parse::advance(p));
     if (param.is_rest && countof(param.name) == 0) parse::expect(p, lex::name, "a name after `auto...`");
-    param.type = array_suffixes(p, param.type);
+    param.type = array_suffixes(p, param.type, true);
     while (at_attribute(p))
         parse_attribute_group(p, &pre);
     param.attributes = pre.attributes;
@@ -1951,7 +1953,7 @@ static ast::Decl *parse_variable(parse::Parser *p, const Prefixes *pre, Head hea
     Str name = parse::text(p, head.name);
     Usize errors_before = countof(p->errors);
     Usize suffix_first = p->position;
-    ast::TypeExpr *full = array_suffixes(p, type);
+    ast::TypeExpr *full = array_suffixes(p, type, false);
     Dims dims = read_dims(p, suffix_first, p->position);
     ast::Expr *init = nullptr;
     U32 equal_end = 0;
@@ -2091,7 +2093,7 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
         return field;
     }
     Usize suffix_first = p->position;
-    field.type = array_suffixes(p, field.type);
+    field.type = array_suffixes(p, field.type, false);
     Dims dims = read_dims(p, suffix_first, p->position);
     Bool blocked = false;
     if (parse::accept(p, lex::colon)) {
@@ -2781,7 +2783,7 @@ static ast::Decl *parse_typedef(parse::Parser *p, const Prefixes *pre, U32 start
     }
     Str name = parse::text(p, alias);
     Usize suffix_first = p->position;
-    ast::TypeExpr *full = array_suffixes(p, type);
+    ast::TypeExpr *full = array_suffixes(p, type, false);
     Dims dims = read_dims(p, suffix_first, p->position);
     if (parse::at(p, lex::comma)) {
         several_names_error(p, type, name);
