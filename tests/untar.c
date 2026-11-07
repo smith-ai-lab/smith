@@ -16,8 +16,10 @@
 // links and the types are what stop it, not the checksum.
 #ifdef __linux__
 // runtime/package.c, included below, needs what glibc hides from C23 (nftw's FTW_PHYS), as in smith.c.
+#ifndef _GNU_SOURCE // build.c passes it on the command line
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name for it
 #define _GNU_SOURCE
+#endif
 #endif
 #include <assert.h>
 #include <stdlib.h>

@@ -1,35 +1,21 @@
 // What each target of the Makefile becomes: dropped, an alias, an object, a program, a step or a task. Included by
 // smith.c after make_cc.c.
 
-typedef enum {
-    SmithMakeKind_Drop,
-    SmithMakeKind_Alias,
-    SmithMakeKind_Object,
-    SmithMakeKind_Program,
-    SmithMakeKind_Step,
-    SmithMakeKind_Task,
-} SmithMakeKind;
+#include "make_class.h"
+#include "core.h"
+#include "make.h"
+#include "make_cc.h"
+#include "make_emit.h"
+#include "make_graph.h"
+#include "make_read.h"
+#include "make_sub.h"
 
-typedef struct {
-    SmithMakeKind kind;
-    const char *c_name;    // object_3, program_1, step_7
-    const char *emit_name; // the name of a task or an alias in build.c
-    size_t *kept;          // the commands that do something
-    size_t kept_count;
-    const char **prerequisites; // without FORCE, with the goals of a forwarded $(MAKE)
-    size_t prerequisite_count;
-    bool always;
-    bool test;
-    bool directory; // made by `mkdir -p`: smith makes the folder of an output itself
-    const char *note;
-} SmithMakeInfo;
+SmithMakeInfo *smith_make_infos;
+size_t smith_make_object_count;
+size_t smith_make_program_count;
+size_t smith_make_step_count;
 
-static SmithMakeInfo *smith_make_infos;
-static size_t smith_make_object_count;
-static size_t smith_make_program_count;
-static size_t smith_make_step_count;
-
-static SmithMakeInfo *smith_make_info_of(const SmithMakeNode *node) {
+SmithMakeInfo *smith_make_info_of(const SmithMakeNode *node) {
     return &smith_make_infos[node - smith_make_graph.nodes];
 }
 
@@ -263,7 +249,7 @@ static void smith_make_prune_aliases(void) {
 }
 
 // Decides what every node becomes.
-static void smith_make_classify(void) {
+void smith_make_classify(void) {
     SmithMakeGraph *g = &smith_make_graph;
     smith_make_infos = smith_make_alloc((g->node_count + 1) * sizeof(SmithMakeInfo));
     for (size_t i = 0; i < g->node_count; i++)
@@ -292,8 +278,6 @@ static void smith_make_classify(void) {
 
 // ---- The names a step lists as inputs
 
-constexpr size_t smith_make_inputs_max = 65536;
-
 // Adds one input; past the limit it is reported (once per list), never dropped without a word.
 static void smith_make_input_add(const char **result, size_t *used, const char *name) {
     if (*used < smith_make_inputs_max) {
@@ -309,7 +293,7 @@ static void smith_make_input_add(const char **result, size_t *used, const char *
 
 // What a list of prerequisites means to build.c: files, the outputs of steps and the names of tasks; a target that only
 // groups others (no recipe, no file) is replaced by what it groups, and a folder or FORCE is dropped.
-static const char **smith_make_inputs(const char *const *names, size_t count, size_t *out_count) {
+const char **smith_make_inputs(const char *const *names, size_t count, size_t *out_count) {
     const char **work = smith_make_new_list(smith_make_inputs_max);
     const char **result = smith_make_new_list((smith_make_inputs_max + 1));
     size_t depth = 0;

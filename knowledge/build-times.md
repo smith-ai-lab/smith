@@ -23,7 +23,7 @@ Measured on 2026-11-07 for #2677. Measurement only: nothing here changed `build.
 | The first build right after a warm build | 5.6 s (8.7 s without a test listing in between) | see "The no-op is not a no-op" |
 | A second build after that | 0.45 s | `no work to do` |
 | Edit `front/types_expr.smith` | 9.3 s | its object 2.2 s, link 1.6 s, 4 header steps (`cimport_cache.h` 1.8 s), the rest is the floor below |
-| Edit `runtime/executor.c` | 38.3 s | `smith.o` 31.4 s (executor.c is included by smith.c), link 1.6 s |
+| Edit `runtime/executor.c` | 38.3 s | `smith.o` 31.4 s (executor.c was included by smith.c; since #2685 it is an object of its own) |
 | Edit `smith.c` | 39.0 s | `smith.o` 32.2 s, link 1.5 s |
 | Edit `shim/hook.cpp` | 17.4 s | `hook_shim.o` 8.9 s, link 1.6 s |
 | Build after reverting an edit | 7.0 to 8.5 s | the edit's objects come from the cache; the floor remains |

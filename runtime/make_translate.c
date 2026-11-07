@@ -1,9 +1,20 @@
 // The translation as a whole: the options, the named arrays, the declarations in order, the default, the header and
-// what was not translated. Included by smith.c after make_print.c.
-
-static int smith_make_translate(const char *path, FILE *out, FILE *errors);
+// what was not translated. Linked into smith.
 
 // ---- Options
+
+#include "make_translate.h"
+#include "core.h"
+#include "main.h"
+#include "make.h"
+#include "make_class.h"
+#include "make_emit.h"
+#include "make_expand.h"
+#include "make_graph.h"
+#include "make_print.h"
+#include "make_read.h"
+#include "make_sub.h"
+#include "mcp_unit.h"
 
 static void smith_make_emit_options(SmithMakeBuffer *out) {
     bool any = false;
@@ -330,7 +341,7 @@ static void smith_make_emit_header(FILE *out, const char *path) {
 
 // Runs `smith fmt` (smith's .clang-format, or the project's) on a file. False where it cannot run: the stage0 without a
 // clang-format, then the text stays as it is written.
-static bool smith_make_format_files(FILE *in, FILE *out) {
+bool smith_make_format_files(FILE *in, FILE *out) {
     char self[PATH_MAX];
     if (!smith_self_path(self)) return false;
     fflush(in);
@@ -574,7 +585,7 @@ static void smith_make_reset(void) {
 }
 
 // Prints the translation of the Makefile at path to out. Warnings about what is not translated go to errors.
-static int smith_make_translate(const char *path, FILE *out, FILE *errors) {
+int smith_make_translate(const char *path, FILE *out, FILE *errors) {
     smith_make_reset();
     smith_make.file = path;
     smith_make_read(path);

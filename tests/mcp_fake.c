@@ -32,6 +32,13 @@
     } while (false)
 
 #include "../runtime/mcp.c"
+// The files smith.c used to reach through mcp.c (#2685), in the order mcp.c lists.
+#include "../runtime/mcp_dap.c"
+#include "../runtime/mcp_serve.c"
+#include "../runtime/mcp_show.c"
+#include "../runtime/mcp_text.c"
+#include "../runtime/mcp_tools.c"
+#include "../runtime/world.c"
 
 #include <sys/mman.h>
 

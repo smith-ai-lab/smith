@@ -1,27 +1,14 @@
 // Writing build.c: each target the Makefile builds becomes smith_object, smith_program, smith_step, smith_task or
 // smith_alias, a variable a recipe uses as whole words becomes a named array, and an option becomes
-// smith_option_value. Included by smith.c after make_graph.c.
+// smith_option_value. Linked into smith.
+
+#include "make_emit.h"
+#include "core.h"
+#include "make.h"
+#include "make_expand.h"
+#include "mcp_unit.h"
 
 constexpr size_t smith_make_lex_depth = 32;
-constexpr size_t smith_make_body_size = (size_t)256 << 20;
-
-typedef struct {
-    const char *text; // the word as the shell reads it: unquoted, with its holes
-    int32_t span;     // the longest whole-word use of a variable that starts here, or -1
-} SmithMakeArg;
-
-typedef struct {
-    size_t var;
-    size_t first; // the words first .. last - 1 are the variable's value
-    size_t last;
-} SmithMakeSpan2;
-
-typedef struct {
-    SmithMakeArg *args;
-    size_t count;
-    SmithMakeSpan2 *spans;
-    size_t span_count;
-} SmithMakeArgv;
 
 // ---- Reading a command as the shell would
 
@@ -122,7 +109,7 @@ static bool smith_make_lex_quoted(SmithMakeLexer *lex, const char *text, size_t 
 }
 
 // Splits text into words. With shell, as sh does: quotes and backslashes removed; false for any other shell syntax.
-static bool smith_make_lex(const char *text, bool shell, SmithMakeArgv *out) {
+bool smith_make_lex(const char *text, bool shell, SmithMakeArgv *out) {
     size_t length = strlen(text);
     SmithMakeLexer lex = {};
     smith_make_buffer_init(&lex.word, length + 16);
@@ -154,18 +141,13 @@ static bool smith_make_lex(const char *text, bool shell, SmithMakeArgv *out) {
 // ---- Names in C
 
 // The C name of a Makefile variable's array: build_ and its name in lower case (the same rule as an option's).
-static const char *smith_make_array_name(const SmithMakeVar *var) {
+const char *smith_make_array_name(const SmithMakeVar *var) {
     return smith_make_ident(var->name);
 }
 
 // ---- Lists
 
-typedef struct {
-    SmithMakeBuffer *body;
-    bool words_used; // build.c needs the helper that splits an option into words
-} SmithMakeOutput;
-
-static SmithMakeOutput smith_make_output;
+SmithMakeOutput smith_make_output;
 
 // A unit is a piece of build.c that stands alone: an option, an array or what one target makes. A build.c that does not
 // fit a function of 70 lines (readability-function-size in smith's .clang-tidy) is written as one function for each run
@@ -173,38 +155,22 @@ static SmithMakeOutput smith_make_output;
 // `static`, where each function reaches it.
 constexpr size_t smith_make_units_max = 65536;
 
-typedef struct {
-    size_t start; // the unit's text is buffer[start .. end)
-    size_t end;
-    const char *type; // the variable it declares, if any, as `type name = ` at text[decl_at .. decl_at + decl_length)
-    const char *name;
-    size_t decl_at;
-    size_t decl_length;
-    bool maybe_unused; // nothing reads the variable (an option the build never uses): [[maybe_unused]]
-} SmithMakeUnit;
+SmithMakeUnits *smith_make_unit_list; // the list that units are being made in
 
-typedef struct {
-    SmithMakeBuffer *buffer;
-    SmithMakeUnit *units;
-    size_t count;
-} SmithMakeUnits;
-
-static SmithMakeUnits *smith_make_unit_list; // the list that units are being made in
-
-static void smith_make_units_init(SmithMakeUnits *list, SmithMakeBuffer *buffer) {
+void smith_make_units_init(SmithMakeUnits *list, SmithMakeBuffer *buffer) {
     list->buffer = buffer;
     list->units = smith_make_alloc(smith_make_units_max * sizeof(SmithMakeUnit));
     list->count = 0;
 }
 
-static void smith_make_unit_begin(SmithMakeUnits *list) {
+void smith_make_unit_begin(SmithMakeUnits *list) {
     SMITH_ASSERT(list->count < smith_make_units_max);
     smith_make_unit_list = list;
     list->units[list->count] = (SmithMakeUnit){.start = list->buffer->length, .end = list->buffer->length};
 }
 
 // Ends the unit; one that wrote nothing is not kept.
-static void smith_make_unit_end(void) {
+void smith_make_unit_end(void) {
     SmithMakeUnits *list = smith_make_unit_list;
     SmithMakeUnit *unit = &list->units[list->count];
     unit->end = list->buffer->length;
@@ -212,7 +178,7 @@ static void smith_make_unit_end(void) {
 }
 
 // The declaration `    type name = ` of the unit's variable; the caller writes what it is set to.
-static void smith_make_put_decl(SmithMakeBuffer *out, const char *type, const char *name, bool maybe_unused) {
+void smith_make_put_decl(SmithMakeBuffer *out, const char *type, const char *name, bool maybe_unused) {
     SmithMakeUnit *unit = &smith_make_unit_list->units[smith_make_unit_list->count];
     unit->type = type;
     unit->name = name;
@@ -223,10 +189,8 @@ static void smith_make_put_decl(SmithMakeBuffer *out, const char *type, const ch
     unit->decl_length = out->length - unit->decl_at;
 }
 
-// Every array a list named, in order, so that an array is defined after the arrays its definition names.
-constexpr size_t smith_make_ref_log_max = 65536;
-static size_t smith_make_ref_log[smith_make_ref_log_max];
-static size_t smith_make_ref_log_count;
+size_t smith_make_ref_log[smith_make_ref_log_max];
+size_t smith_make_ref_log_count;
 
 static bool smith_make_is_hole_word(const char *text) {
     size_t length = strlen(text);
@@ -266,7 +230,7 @@ static void smith_make_put_item(SmithMakeBuffer *out, const char *text) {
 
 // The C expression (a list) of the words args[indices[0 .. count)]. A run of words that is a variable's whole value is
 // the variable's array. An empty list is `(const char *[]){nullptr}`.
-static const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indices, size_t count) {
+const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indices, size_t count) {
     SmithMakeBuffer out;
     smith_make_buffer_init(&out, 1024 + count * 512);
     size_t parts = 0;
@@ -320,7 +284,7 @@ static const char *smith_make_list(const SmithMakeArgv *argv, const size_t *indi
 }
 
 // The list of every word of argv.
-static const char *smith_make_list_all(const SmithMakeArgv *argv) {
+const char *smith_make_list_all(const SmithMakeArgv *argv) {
     size_t *indices = smith_make_alloc((argv->count + 1) * sizeof(size_t));
     for (size_t i = 0; i < argv->count; i++)
         indices[i] = i;
@@ -328,7 +292,7 @@ static const char *smith_make_list_all(const SmithMakeArgv *argv) {
 }
 
 // A list of plain strings (file names, which may hold holes): no arrays.
-static const char *smith_make_names(const char *const *names, size_t count) {
+const char *smith_make_names(const char *const *names, size_t count) {
     SmithMakeArg *args = smith_make_alloc((count + 1) * sizeof(SmithMakeArg));
     for (size_t i = 0; i < count; i++)
         args[i] = (SmithMakeArg){names[i], -1};

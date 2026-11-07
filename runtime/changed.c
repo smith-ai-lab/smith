@@ -1,5 +1,5 @@
 // `smith test --changed` (issue #441): the tests a change can affect, found from what the compiler knows and never
-// declared by a test. knowledge/changed-tests.md. Included by smith.c, before runtime/verbs.c.
+// declared by a test. knowledge/changed-tests.md. Linked into smith, before runtime/verbs.c.
 //
 // The reverse dependency graph, and nothing else: every source of the project (`.smith`, `.c`, `.h`, `.cpp`, `.hpp`,
 // `.m`) is scanned for its `module`, `import` and `#include` lines, an edge goes to each project file they name, and
@@ -8,32 +8,32 @@
 // everything compiled into smith). // A path the graph does not know (nothing imports it, no test is it, and it is not
 // part of smith) selects the whole suite: unknown means run it. A few files select the whole suite too (the full-check
 // list below).
+#include "changed.h"
+#include "core.h"
+#include "coverage.h"
+#include "record.h"
+
 #include <sys/mman.h>
 
-constexpr size_t smith_changed_files_max = 16384;
-constexpr size_t smith_changed_edges_max = 1U << 17;
 constexpr size_t smith_changed_pool_max = 1U << 21;
-constexpr size_t smith_changed_text_max = 1U << 21;
-constexpr size_t smith_changed_argument_max =
-    12000; // the runner's arguments travel as -DSMITH_ARGS (16384 bytes in all)
 constexpr size_t smith_changed_paths_max = 4096;
 
 static char smith_changed_pool[smith_changed_pool_max];
 static size_t smith_changed_pool_used;
-static const char *smith_changed_files[smith_changed_files_max];
-static size_t smith_changed_file_count;
-static uint32_t smith_changed_from[smith_changed_edges_max];
-static uint32_t smith_changed_to[smith_changed_edges_max];
-static size_t smith_changed_edge_count;
+const char *smith_changed_files[smith_changed_files_max];
+size_t smith_changed_file_count;
+uint32_t smith_changed_from[smith_changed_edges_max];
+uint32_t smith_changed_to[smith_changed_edges_max];
+size_t smith_changed_edge_count;
 static bool smith_changed_hit[smith_changed_files_max];          // the file is changed or depends on a changed one
 static bool smith_changed_chosen[smith_changed_files_max];       // a test file selected
 static const char *smith_changed_why[smith_changed_files_max];   // and the first reason
 static const char *smith_changed_paths[smith_changed_paths_max]; // the changed paths
 static char smith_changed_kinds[smith_changed_paths_max];        // A added, M modified, D deleted
 static size_t smith_changed_path_count;
-static bool smith_changed_overflow;
+bool smith_changed_overflow;
 static const char *smith_changed_limit; // the first limit crossed, named in the line the fallback prints
-static char smith_changed_text[smith_changed_text_max + 1];
+char smith_changed_text[smith_changed_text_max + 1];
 static FILE *smith_changed_log; // where the selection says what it did: nullptr is stderr, the core's is a buffer
 
 static FILE *smith_changed_out(void) {
@@ -58,20 +58,12 @@ static const char *const smith_changed_smith[] = {"smith.c",      "runtime/", "s
                                                   "include/",     "lib/",     "templates/", "scripts/",
                                                   "tree-sitter/", "plugin/",  "editors/",   nullptr};
 
-// Text that grows as names are added, in memory mapped from the OS (smith's own C has no malloc): the filter of a
-// selection has no size at which it silently becomes "every test".
-typedef struct {
-    char *data;
-    size_t used;
-    size_t capacity;
-} SmithChangedBuffer;
-
 static void smith_changed_buffer_free(SmithChangedBuffer *buffer) {
     if (buffer->data != nullptr) munmap(buffer->data, buffer->capacity);
     *buffer = (SmithChangedBuffer){};
 }
 
-static const char *smith_changed_buffer_text(const SmithChangedBuffer *buffer) {
+const char *smith_changed_buffer_text(const SmithChangedBuffer *buffer) {
     return buffer->data != nullptr ? buffer->data : "";
 }
 
@@ -87,11 +79,11 @@ static const char *smith_changed_copy(const char *text, size_t length) {
     return at;
 }
 
-static bool smith_changed_starts(const char *text, const char *prefix) {
+bool smith_changed_starts(const char *text, const char *prefix) {
     return strncmp(text, prefix, strlen(prefix)) == 0;
 }
 
-static bool smith_changed_ends(const char *text, const char *suffix) {
+bool smith_changed_ends(const char *text, const char *suffix) {
     size_t length = strlen(text);
     size_t tail = strlen(suffix);
     return length >= tail && strcmp(text + length - tail, suffix) == 0;
@@ -104,11 +96,11 @@ static bool smith_changed_in(const char *path, const char *const *prefixes) {
     return false;
 }
 
-static bool smith_changed_is_test(const char *path) {
+bool smith_changed_is_test(const char *path) {
     return smith_changed_ends(path, "_test.smith") || smith_changed_ends(path, "_test.c");
 }
 
-static bool smith_changed_is_source(const char *path) {
+bool smith_changed_is_source(const char *path) {
     static const char *const extensions[] = {".smith", ".c", ".h", ".cpp", ".hpp", ".cc", ".m", nullptr};
     for (size_t i = 0; extensions[i] != nullptr; i++) { // a short fixed list
         if (smith_changed_ends(path, extensions[i])) return true;
@@ -124,11 +116,11 @@ static bool smith_changed_suffix(const char *path, const char *suffix) {
     return length == tail || path[length - tail - 1] == '/';
 }
 
-static bool smith_changed_word(char c) {
+bool smith_changed_word(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
-static size_t smith_changed_read(const char *path) {
+size_t smith_changed_read(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return 0;
     size_t size = fread(smith_changed_text, 1, smith_changed_text_max, file);
@@ -145,7 +137,7 @@ static int smith_changed_find(const char *path) {
     return -1;
 }
 
-static void smith_changed_add_file(const char *path) {
+void smith_changed_add_file(const char *path) {
     if (smith_changed_file_count >= smith_changed_files_max || smith_changed_find(path) >= 0) {
         if (smith_changed_find(path) < 0) smith_changed_cross("the file table (16384 files)");
         return;
@@ -154,7 +146,7 @@ static void smith_changed_add_file(const char *path) {
 }
 
 // Runs git with `argv` (after "git") and gives each line it prints (cut at its end) to `line`; false when git fails.
-static bool smith_changed_git(const char *const *arguments, void (*line)(char *)) {
+bool smith_changed_git(const char *const *arguments, void (*line)(char *)) {
     const char *argv[16] = {"git"};
     size_t used = 1;
     for (size_t i = 0; arguments[i] != nullptr && used < 14; i++)
@@ -185,7 +177,7 @@ static bool smith_changed_git(const char *const *arguments, void (*line)(char *)
     return waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
-static void smith_changed_on_file(char *text) {
+void smith_changed_on_file(char *text) {
     smith_changed_add_file(text);
 }
 
@@ -271,7 +263,7 @@ static void smith_changed_scan_text(size_t from) {
     }
 }
 
-static void smith_changed_build_graph(void) {
+void smith_changed_build_graph(void) {
     for (size_t i = 0; i < smith_changed_file_count; i++) { // bounded by the files
         if (!smith_changed_is_source(smith_changed_files[i])) continue;
         if (smith_changed_read(smith_changed_files[i]) > 0) smith_changed_scan_text(i);
@@ -296,7 +288,7 @@ static void smith_changed_build_graph(void) {
 
 // A test runs smith when it starts it (`scratch::`, `SMITH_SELF`) or links its core as a library (include/smith_core.h,
 // issue #646): the sources of smith are compiled into the runner that runs it.
-static bool smith_changed_runs_smith(const char *text) {
+bool smith_changed_runs_smith(const char *text) {
     return strstr(text, "scratch::") != nullptr || strstr(text, "SMITH_SELF") != nullptr ||
            strstr(text, "smith_core.h") != nullptr;
 }
@@ -333,7 +325,7 @@ static void smith_changed_choose(size_t test, const char *format, const char *pa
 // no record), and runs every test when a changed file is named by no record names and the graph does not place either
 // (a fixture, a new file): unknown means run it. A changed file no record names but the graph places selects the tests
 // whose recorded program is built from it. With no records the graph decides.
-static const char *smith_changed_self;
+const char *smith_changed_self;
 static bool smith_changed_covered; // records are read and every changed source of smith is named by one
 static const char *smith_changed_names[smith_changed_files_max]; // the tests of a file that records selected
 
@@ -773,8 +765,6 @@ static const SmithRecResult *smith_changed_record_of(const char *name) {
     return nullptr;
 }
 
-static void smith_changed_filter_add(SmithChangedBuffer *filter, const char *name);
-
 // The rule by records, for a test file (any, not only a test that runs smith: a user's end-to-end test is as unseen by
 // the graph): its tests with a stale record, with a program built from a changed file no record names, and the ones
 // with none (a new test). True when the records decided, even for no test; false when none of its tests has a record.
@@ -1016,7 +1006,7 @@ static int smith_changed_unknown(void) {
 
 // ---- The filter
 
-static void smith_changed_filter_add(SmithChangedBuffer *filter, const char *name) {
+void smith_changed_filter_add(SmithChangedBuffer *filter, const char *name) {
     size_t length = strlen(name);
     size_t needed = filter->used + length + 2;
     if (needed > filter->capacity) {
@@ -1051,7 +1041,7 @@ static void smith_changed_filter_names(const char *names, SmithChangedBuffer *fi
 }
 
 // What `--test` needs to run the tests of a file: `module::` for a module, else the names of its `test_` functions.
-static void smith_changed_filter_file(const char *path, SmithChangedBuffer *filter) {
+void smith_changed_filter_file(const char *path, SmithChangedBuffer *filter) {
     if (smith_changed_read(path) == 0) return;
     char *module = strstr(smith_changed_text, "\nmodule ");
     if (module != nullptr || smith_changed_starts(smith_changed_text, "module ")) {
@@ -1074,7 +1064,7 @@ static void smith_changed_filter_file(const char *path, SmithChangedBuffer *filt
 
 // --cheapest-first: the CPU seconds of each test the records know, as the runner's --costs file (`cpu<TAB>seconds<TAB>
 // name`) in .smith/costs.tsv. False when there is nothing to write (no records: the runner keeps its order).
-static bool smith_changed_write_costs(char *path, size_t size) {
+bool smith_changed_write_costs(char *path, size_t size) {
     char root[PATH_MAX];
     char folder[PATH_MAX];
     if (getcwd(root, sizeof root) == nullptr) return false;
@@ -1095,8 +1085,6 @@ static bool smith_changed_write_costs(char *path, size_t size) {
     }
     return fclose(out) == 0;
 }
-
-typedef enum { SmithChanged_Failed, SmithChanged_Full, SmithChanged_None, SmithChanged_Some } SmithChangedResult;
 
 static bool smith_changed_name_ok(const char *base) {
     for (const char *c = base; *c != '\0'; c++) {
@@ -1297,7 +1285,7 @@ static SmithChangedResult smith_changed_decide(const char *base, const char *hea
 // Decides which tests to run from the changes `smith_changed_collect` reads. With `head`, the changes are those of
 // base..head (no untracked files); the files themselves (imports, records) are still read from the working tree.
 // `filter` gets the value of `--test` for SmithChanged_Some.
-static SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
+SmithChangedResult smith_changed_select(const char *base_name, const char *head, SmithChangedBuffer *filter) {
     char base[256];
     if (!smith_changed_collect(base_name, head, false, "smith test --changed", base, sizeof base))
         return SmithChanged_Failed;
@@ -1343,7 +1331,7 @@ static SmithChangedResult smith_changed_lint_decide(const char **why) {
 // Reads the changes and, unless one of them selects every file (false), the graph. `base` gets the ref compared with;
 // `given` is the one asked for, whose merge-base with HEAD is used when git has one. Returns SmithChanged_Failed,
 // SmithChanged_Full (every file; `why` names the path) or SmithChanged_Some (ask `smith_changed_lint_wants`).
-static SmithChangedResult smith_changed_lint_select(const char *given, char *base, size_t size, const char **why) {
+SmithChangedResult smith_changed_lint_select(const char *given, char *base, size_t size, const char **why) {
     char merged[256];
     if (given != nullptr && smith_changed_name_ok(given)) {
         const char *const command[] = {"merge-base", "HEAD", given, nullptr};
@@ -1362,17 +1350,17 @@ static size_t smith_changed_lint_paths(void) {
 }
 
 // Whether `path` changed or includes or imports a file that did; a path the graph does not know is wanted.
-static bool smith_changed_lint_wants(const char *path) {
+bool smith_changed_lint_wants(const char *path) {
     int at = smith_changed_find(path);
     return at < 0 || smith_changed_hit[at];
 }
 
 // What `smith lint --changed` says when every file is linted, and after a choice of `kept` of `count` files.
-static void smith_changed_lint_says_all(const char *why) {
+void smith_changed_lint_says_all(const char *why) {
     fprintf(smith_changed_out(), "smith lint --changed: %s changed, so every file is linted\n", why);
 }
 
-static void smith_changed_lint_says(size_t kept, size_t count, const char *base) {
+void smith_changed_lint_says(size_t kept, size_t count, const char *base) {
     size_t changed = smith_changed_lint_paths();
     char text[300];
     fprintf(smith_changed_out(), "smith lint --changed: %zu changed file%s since %s: %zu of %zu files to lint\n",

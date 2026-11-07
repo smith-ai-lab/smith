@@ -5,9 +5,16 @@
 // the full path: its `module` line asks the host for every token. Included by runtime/lang.c, after
 // runtime/lang_head.c.
 
-static void smith_lang_end_of_file(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-static void smith_lang_stream_open(SmithLang *lang, const SmithHost *host, const SmithToken *token);
-static void smith_lang_stream_close(SmithLang *lang, const SmithHost *host, const SmithToken *token);
+#include "lang_sparse.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_head.h"
+#include "lang_import.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_stream.h"
 
 // The names the host should offer from the start of any .smith file.
 void smith_lang_watch_basics(const SmithHost *host) {
@@ -25,7 +32,7 @@ void smith_lang_watch_basics(const SmithHost *host) {
 }
 
 // The token `back` places before the one being lowered (1 is the one before): this batch's own, then the host's record.
-static bool smith_lang_previous(SmithLang *lang, const SmithHost *host, unsigned back, SmithToken *token) {
+bool smith_lang_previous(SmithLang *lang, const SmithHost *host, unsigned back, SmithToken *token) {
     if (back <= lang->recent_count) {
         *token = lang->recent[back - 1];
         return true;
@@ -33,7 +40,7 @@ static bool smith_lang_previous(SmithLang *lang, const SmithHost *host, unsigned
     return host->previous(host->context, back - (unsigned)lang->recent_count, token);
 }
 
-static void smith_lang_remember(SmithLang *lang, const SmithToken *token) {
+void smith_lang_remember(SmithLang *lang, const SmithToken *token) {
     size_t keep = sizeof lang->recent / sizeof lang->recent[0];
     for (size_t i = keep - 1; i > 0; i--)
         lang->recent[i] = lang->recent[i - 1];
@@ -41,7 +48,7 @@ static void smith_lang_remember(SmithLang *lang, const SmithToken *token) {
     if (lang->recent_count < keep) lang->recent_count += 1;
 }
 
-static bool smith_lang_previous_is(SmithLang *lang, const SmithHost *host, unsigned back, const char *punctuator) {
+bool smith_lang_previous_is(SmithLang *lang, const SmithHost *host, unsigned back, const char *punctuator) {
     SmithToken before;
     return smith_lang_previous(lang, host, back, &before) && smith_lang_punct(&before, punctuator);
 }
@@ -53,12 +60,12 @@ static bool smith_lang_sparse_at_start(SmithLang *lang, const SmithHost *host) {
     return smith_lang_punct(&before, ";") || smith_lang_punct(&before, "}");
 }
 
-static bool smith_lang_sparse_member(SmithLang *lang, const SmithHost *host) {
+bool smith_lang_sparse_member(SmithLang *lang, const SmithHost *host) {
     return smith_lang_previous_is(lang, host, 1, ".") || smith_lang_previous_is(lang, host, 1, "->");
 }
 
 // Inside [[ ]], where gnu::unused is no module path, or inside the arguments of __attribute__(( )).
-static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host) {
+bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *host) {
     unsigned closed = 0;                        // parentheses closed on the way back
     unsigned unmatched = 0;                     // parentheses open around the token
     for (unsigned back = 1; back < 8; back++) { // the host remembers eight
@@ -87,7 +94,7 @@ static bool smith_lang_sparse_in_attribute(SmithLang *lang, const SmithHost *hos
 
 // Whether the tokens before end a type, so that a name now is a declarator: a type keyword, a typedef name or a tag
 // name, followed by any stars and qualifiers.
-static bool smith_lang_sparse_typeish(SmithLang *lang, const SmithHost *host) {
+bool smith_lang_sparse_typeish(SmithLang *lang, const SmithHost *host) {
     for (unsigned back = 1; back < 8; back++) { // the host remembers eight
         SmithToken before;
         if (!smith_lang_previous(lang, host, back, &before)) return false;
@@ -239,7 +246,7 @@ static bool smith_lang_countof_parameter(SmithLang *lang, const SmithHost *host,
     return true;
 }
 
-static void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_sparse(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!token->foreign) smith_lang_sparse_imports_done(lang, host, token);
     if (token->foreign) {
         smith_lang_emit_kept(lang, host, token);
@@ -337,7 +344,7 @@ static bool smith_lang_body_c_name(SmithLang *lang, const SmithHost *host, const
 }
 
 // A watched name that is not the module's own: a C name of an import, a binding (rp::open), a sized type, or kept.
-static void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (smith_lang_body_c_name(lang, host, token)) {
         smith_lang_emit_kept(lang, host, token);
         return;
@@ -358,7 +365,7 @@ static void smith_lang_sparse_ident(SmithLang *lang, const SmithHost *host, cons
 }
 
 // A token of a function body, when the host offers only braces and the names it was told to watch.
-static void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_body(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     if (!token->foreign && token->kind == SmithTokenKind_Eof) {
         smith_lang_end_of_file(lang, host, token);
         return;

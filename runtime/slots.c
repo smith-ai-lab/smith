@@ -3,17 +3,19 @@
 // flock on, so the OS drops it when the process dies (no daemon). `smith build`, `check` and `test` take one token at
 // their first heavy step (the base: the run's first worker rides on it); every further worker the run starts (an
 // executor job, a test runner worker) takes one more and gives it back when it ends, so a run grows as tokens free up.
-// knowledge/slots.md. Included by smith.c.
+// knowledge/slots.md. Linked into smith.
+#include "slots.h"
+#include "core.h"
+#include "mcp_unit.h"
+
 constexpr int smith_slots_max = 64;
 constexpr long smith_slots_poll_ms = 200;
 constexpr long smith_slots_report_ms = 30'000;
 constexpr long smith_slots_wait_max_ms = 4L * 60 * 60 * 1000; // a backstop: after it the job runs without a token
 constexpr size_t smith_slots_text_max = 1024;
-constexpr int smith_slots_denied = -1;    // smith_slots_extra: no token is free for another worker
-constexpr int smith_slots_unlimited = -2; // smith_slots_extra: there is no pool, the worker needs none
 
 static int smith_slots_fd = -1; // the base token this process holds; closed by the OS when the process ends
-static bool smith_slots_ci;     // this process runs for CI (SMITH_PRIORITY=ci)
+[[maybe_unused]] static bool smith_slots_ci; // this process runs for CI (SMITH_PRIORITY=ci)
 
 // What this run measured about the pool (issue #754), written to stderr when it ends, for a CI run or when
 // SMITH_SLOTS_LOG is set: how long the base token took, how often and for how long a worker found no token, and how
@@ -87,7 +89,7 @@ static void smith_slots_stats_workers(int delta) {
 
 // The cores of the host: SMITH_CORES (also the size of the pool, and what a test sets as a fake host), else the
 // machine's. At least 1.
-static int smith_slots_cores(void) {
+int smith_slots_cores(void) {
     const char *text = getenv("SMITH_CORES");
     long cores = text != nullptr && text[0] != '\0' ? strtol(text, nullptr, 10) : 0;
     if (cores <= 0) cores = sysconf(_SC_NPROCESSORS_ONLN);
@@ -340,7 +342,7 @@ static int smith_slots_wait(const char *folder, int count, const char *label, bo
 
 // Takes the base token for this process unless it rides on its parent's (a smith that runs smith) or the limit is
 // off. `verb` says who holds it. The children inherit SMITH_SLOT_HELD and take theirs only for their further workers.
-static void smith_slots_take(const char *verb) {
+void smith_slots_take(const char *verb) {
     int count = smith_slots_count();
     if (count == 0 || smith_slots_inherited()) return;
     char folder[PATH_MAX];
@@ -387,7 +389,7 @@ static int smith_slots_extra_try(const char *folder, int count, bool ci) {
     return smith_slots_denied;
 }
 
-static int smith_slots_extra(void) {
+int smith_slots_extra(void) {
     int count = smith_slots_count();
     if (count == 0 || (smith_slots_fd < 0 && !smith_slots_inherited())) return smith_slots_unlimited;
     char folder[PATH_MAX];
@@ -412,7 +414,7 @@ static int smith_slots_extra(void) {
 }
 
 // Gives a token back (a descriptor smith_slots_extra returned).
-static void smith_slots_give(int token) {
+void smith_slots_give(int token) {
     if (token < 0) return;
     close(token);
     smith_slots_stats_workers(-1);
@@ -423,12 +425,12 @@ static void smith_slots_give(int token) {
 // waits.
 static const char *smith_slots_pending;
 
-static void smith_slots_arm(const char *verb) {
+void smith_slots_arm(const char *verb) {
     smith_slots_pending = verb;
 }
 
 // Called by the executor before it starts a step that is not a function of build.c; takes the armed slot, once.
-static void smith_slots_need(void) {
+void smith_slots_need(void) {
     const char *verb = smith_slots_pending;
     if (verb == nullptr) return;
     smith_slots_pending = nullptr;
@@ -436,13 +438,13 @@ static void smith_slots_need(void) {
 }
 
 // The verbs that do heavy work.
-static bool smith_slots_verb(const char *name) {
+bool smith_slots_verb(const char *name) {
     return strcmp(name, "build") == 0 || strcmp(name, "check") == 0 || strcmp(name, "test") == 0;
 }
 
 // `smith --smith-slots <program> [arguments]`: takes a slot as a heavy verb does, runs the program and exits with its
 // status. The tests of the slots use it.
-static int smith_slots_main(int count, char **args) {
+int smith_slots_main(int count, char **args) {
     if (count < 1) smith_die(smith_exit_usage, "--smith-slots needs a program", nullptr);
     smith_slots_take("run");
     pid_t pid = 0;
