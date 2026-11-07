@@ -1764,12 +1764,51 @@ static Bool separates_statements(const parse::Parser *p, lex::Token semicolon) {
     return !semicolon.line_break && after != lex::right_brace && after != lex::end_of_file;
 }
 
+static Bool contains(Str text, Str piece);
+
+// `memory` is `Memory`, `scratch_bytes` is `ScratchBytes`: the name of the struct a variable's anonymous type becomes.
+static Str pascal_name(Str name) {
+    char out[:] = format::push("");
+    Bool upper = true;
+    for (Usize i = 0; i < countof(name); i++) {
+        char c = name[i];
+        if (c == '_') {
+            upper = true;
+            continue;
+        }
+        if (upper && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        upper = false;
+        out = format::push(out, c);
+    }
+    return as_str(out);
+}
+
+// `static struct { alignas(16) U8 bytes[64]; } memory;` is `struct Memory {...};` at the end of the file and `static
+// Memory memory;` where it stood: a struct declared inside a function is not typed, and the next round mends both
+// in the usual way. The name is the variable's in PascalCase, with `Storage` added while the file already uses it.
+static Bool hoist_record(parse::Parser *p, Head head, ast::TypeExpr *type) {
+    if (type->kind != .record || type->kind.record.is_union) return false;
+    Str name = pascal_name(parse::text(p, head.name));
+    if (countof(name) == 0) name = "Storage";
+    while (contains(p->source, name))
+        name = as_str(format::push(name, "Storage"));
+    Str body = source_between(p, type->span.start, type->span.end);
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(type->span.start, type->span.end, name));
+    U32 end = (U32)countof(p->source);
+    edits = with_edit(edits, edit(end, end, as_str(format::push("\nstruct ", name, body[6:countof(body)], ";\n"))));
+    char message[:] = format::push("a variable's anonymous struct type is declared by itself: `", name, "`");
+    warn(p, type->span.start, type->span.end, message, edits);
+    return true;
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
 // the like are a warning with no edits.
 static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::TypeExpr *type, U32 equal_end,
                          Dims dims) {
+    if (hoist_record(p, head, type)) return;
     lex::Token last = p->tokens[p->position - 1];
     Bool has_init = equal_end > 0;
     Bool automatic = type->kind == .auto_type;
