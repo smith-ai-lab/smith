@@ -122,13 +122,15 @@ static SmithWorldError smith_world_remove(const char *path) {
 static SmithWorldError smith_world_make_folder(const char *path) {
     char text[PATH_MAX];
     size_t length = strlen(path);
-    if (length == 0 || length >= sizeof text) return smith_world_error(length == 0 ? ENOENT : ENAMETOOLONG, "mkdir", path);
+    if (length == 0 || length >= sizeof text)
+        return smith_world_error(length == 0 ? ENOENT : ENAMETOOLONG, "mkdir", path);
     memcpy(text, path, length + 1);
     for (size_t at = 1; at <= length; at++) { // bounded by the path
         if (text[at] != '/' && text[at] != '\0') continue;
         char kept = text[at];
         text[at] = '\0';
-        if (mkdir(text, smith_world_folder_mode) != 0 && errno != EEXIST) return smith_world_error(errno, "mkdir", text);
+        if (mkdir(text, smith_world_folder_mode) != 0 && errno != EEXIST)
+            return smith_world_error(errno, "mkdir", text);
         text[at] = kept;
     }
     struct stat status;

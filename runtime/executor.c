@@ -275,7 +275,8 @@ constexpr size_t smith_exec_recap_max = 16; // failed steps the recap lists; the
 constexpr size_t smith_exec_recap_line = 200;
 
 struct SmithExec {
-    SmithIo *io;
+    SmithIo *io;    // the loop and the processes, until std.task replaces them (#2662); null where nothing runs
+    SmithArena own; // what arena points to: address space reserved up front
     SmithArena *arena;
     SmithExecOptions options;
     const char *manifest;
@@ -396,6 +397,23 @@ static size_t smith_exec_canonical(char *path, size_t length) {
 
 #include "executor_state.c"
 
+// A SmithExec in an arena of its own, with the scratch text carved from it. The memory is given back by
+// smith_exec_close.
+static SmithExec *smith_exec_open(SmithIo *io) {
+    SmithArena arena = smith_world_arena();
+    SmithExec *exec = smith_arena_push(&arena, sizeof(SmithExec), alignof(SmithExec));
+    exec->own = arena;
+    exec->arena = &exec->own;
+    exec->io = io;
+    SmithArena scratch = smith_arena_carve(exec->arena, smith_exec_text_max);
+    exec->scratch = (char *)scratch.memory;
+    return exec;
+}
+
+[[maybe_unused]] static void smith_exec_close(SmithExec *exec) { // used by the in-process entry points (SMITH_CORE)
+    munmap(exec->own.memory, exec->own.capacity);
+}
+
 #include "executor_plan.c"
 
 #include "executor_cache.c"
@@ -407,13 +425,9 @@ static size_t smith_exec_canonical(char *path, size_t length) {
 // Runs the manifest: a tool, or a build of the targets. A manifest that has a rule of its own (build.c's regeneration)
 // is built first and read again when that changed it. Returns the status of the build.
 static int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOptions *options) {
-    SmithExec *exec = smith_arena_push(&io->arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = io;
-    exec->arena = &io->arena;
+    SmithExec *exec = smith_exec_open(io);
     exec->options = *options;
     exec->manifest = manifest;
-    SmithArena scratch = smith_arena_carve(&io->arena, smith_exec_text_max);
-    exec->scratch = (char *)scratch.memory;
     smith_run_printer_open(exec);
     smith_run_watch_signals();
     for (size_t reload = 0; reload <= smith_exec_reloads_max; reload++) {
