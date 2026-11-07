@@ -1,6 +1,6 @@
 ---
 name: smith-dev-mac-runner
-description: Load when you set up or supervise the runner loop on the owner's Mac: runners on the owner's Anthropic API credits (key from the login Keychain through apiKeyHelper on the command line), the SMITH_RUNNER_LOOP bash loop, the mailbox #1406, and the Mac's rules (no pkill, no smith build install, own worktree).
+description: Load when you set up or supervise the runner loop on the owner's Mac: runners on the owner's Anthropic API credits (key from the login Keychain through apiKeyHelper on the command line), the SMITH_RUNNER_LOOP bash loop, and the Mac's rules (no pkill, no smith build install, own worktree).
 ---
 
 # smith-dev-mac-runner
@@ -43,15 +43,8 @@ done
 - **Model:** the runner knows its ticket only after it claims it, so the loop starts it on the medium model from [providers/anthropic.md](../smith-dev-factory/providers/anthropic.md). The runner then hands the work to subagents on the model its ticket's difficulty maps to. Each loop runs in its own worktree of main and starts every run from a clean tree at the latest `origin/main` (it waits instead if tracked changes are left, and the runner never reuses the last runner's branch); #73's N counts the Mac's loops. `cost.tsv` holds a line per run (time, loop, seconds, `total_cost_usd`, turns, error): `column -t ~/smith-runner-logs/cost.tsv`.
 - **Paused:** a run under 2 minutes (no ticket, no key, a crash) waits 10 minutes, so it never spins. When #73 says `pool: paused`, it sleeps 5 minutes and checks again. A running runner finishes its ticket first.
 
-## The mailbox #1406
-For rare cases only (a Keychain prompt, a question): comments on #1406 starting `@mac:` or `@lead:`. A zero-token watcher wakes you on a new `@mac:` comment; restart it after each wake and answer with an `@lead:` comment:
-
-```bash
-c() { gh api 'repos/smith-ai-lab/smith/issues/1406/comments?per_page=100' --jq "$1" 2>/dev/null; }
-seen=$(c length)
-while :; do sleep 60; n=$(c length) || continue; [ -z "$n" ] && continue
-  [ "$(c "[.[$seen:][]|select(.body|startswith(\"@mac:\"))]|length")" -gt 0 ] && exit 0; seen=$n; done
-```
+## Questions
+The Mac session has no mailbox and no watcher (owner, 2026-11-07: no `@lead:` comments). A Keychain prompt or a question goes to the owner in the Mac session itself, and a runner in the loop asks the lead with `send_message` like any runner ([smith-dev-runner](../smith-dev-runner/SKILL.md)).
 
 ## Rules on the Mac
 - **Never `pkill` or `killall`** (a reparented pid may be another test's process; kill only a pid you started), and **never `smith build install` or `smith build llvm`**. CI's `install` job puts each release in `~/.local/bin`; a hand install breaks the owner's tools.
