@@ -191,7 +191,7 @@ static Bool fits(U32 bits, Bool is_signed, Literal lit) {
 // `Usize` and `Isize`: 32 bits on some targets and 64 on others, so no conversion to or from a fixed width is
 // lossless on every target (#2531).
 static Bool is_word_size(types::TypeRef t) {
-    return t->kind == .integer && t->name[1] == 's';
+    return t->kind == .integer && types::name_of(t)[1] == 's';
 }
 
 static Verdict integer_to_integer(const Ctx *c) {
@@ -259,7 +259,7 @@ static Bool always_exact(types::TypeRef from, U32 digits) {
 static U32 mantissa(types::TypeRef t) {
     if (types::bits_of(t) >= 64) return 53;
     if (types::bits_of(t) == 32) return 24;
-    return t->name[0] == 'B' ? 8 : 11;
+    return types::name_of(t)[0] == 'B' ? 8 : 11;
 }
 
 static Verdict to_floating(const Ctx *c) {

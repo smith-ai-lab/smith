@@ -605,8 +605,9 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
     types::TypeRef self = type->kind == .pointer ? types::element_of(type) : type;
     Str module = "";
     if (self->kind == .record) {
-        for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
-            if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
+        for (Usize i = countof(types::name_of(self)); i >= 2 && countof(module) == 0; i--)
+            if (types::name_of(self)[i - 1] == ':' && types::name_of(self)[i - 2] == ':')
+                module = types::name_of(self)[0:i];
         for (Usize i = 0; i < countof(types::slots_of(self).items); i++) {
             if (!types::field_visible(self, &types::slots_of(self).items[i]) ||
                 !starts_with_text(types::slots_of(self).items[i].name, prefix))

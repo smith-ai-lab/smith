@@ -102,7 +102,7 @@ static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
     state::Ty ty = {};
     if (t->kind == .bool_type && state::scalar_type(e, "bool", &ty)) return ty;
     if (t->kind == .integer) {
-        if (state::scalar_type(e, t->name, &ty)) return ty;
+        if (state::scalar_type(e, types::name_of(t), &ty)) return ty;
         Str spelled = "u64";
         if (types::bits_of(t) == 8) spelled = types::signed_of(t) ? "i8" : "u8";
         if (types::bits_of(t) == 16) spelled = types::signed_of(t) ? "i16" : "u16";
@@ -112,7 +112,7 @@ static state::TyResult leaf_of_checked(state::Emitter *e, types::TypeRef t) {
     }
     if (t->kind == .record) {
         for (Usize i = 0; i < e->record_count; i++) {
-            if (state::same_text(e->records[i].name, t->name)) {
+            if (state::same_text(e->records[i].name, types::name_of(t))) {
                 ty = e->records[i].ty;
                 return ty;
             }

@@ -181,7 +181,7 @@ static state::TyResult imported_enum(state::Emitter *e, const types::Symbol *tar
     state::Ty ty = {};
     if (!matching::type_enum(e, bare, &ty)) {
         Str outer = e->import_scope;
-        e->import_scope = emit_memory::record_module_prefix(target->type->name);
+        e->import_scope = emit_memory::record_module_prefix(types::name_of(target->type));
         state::Status declared = matching::enum_decl(e, target->decl);
         e->import_scope = outer;
         if (declared == .error) return {.error = declared.error};
@@ -213,7 +213,7 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     if (is_enum_symbol(target)) return imported_enum(e, target);
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return state::ty_fail("unknown type", t->span);
-    return emit_memory::imported_record(e, target->decl, target->type->name);
+    return emit_memory::imported_record(e, target->decl, types::name_of(target->type));
 }
 
 // A record named by its bare name inside an imported function's signature (`fn dot(a: Vec, ...)` of `geom::vec`): the
@@ -232,7 +232,7 @@ static Bool type_in_import_scope(state::Emitter *e, ast::Path path, state::TyRes
     }
     if (target == nullptr || target->kind != .type_name || target->decl == nullptr || target->decl->kind != .record)
         return false;
-    *made = emit_memory::imported_record(e, target->decl, target->type->name);
+    *made = emit_memory::imported_record(e, target->decl, types::name_of(target->type));
     return true;
 }
 
@@ -1430,12 +1430,12 @@ static Bool scalar_of_checked(state::Emitter *e, types::TypeRef t, state::Ty *ty
     if (t->kind == .bool_type) return state::scalar_type(e, "bool", ty);
     if (t->kind == .floating) {
         Str spelled = "F64";
-        if (types::bits_of(t) == 16) spelled = t->name;
+        if (types::bits_of(t) == 16) spelled = types::name_of(t);
         if (types::bits_of(t) == 32) spelled = "F32";
         return arith::type_float(e, spelled, ty);
     }
     if (t->kind != .integer) return false;
-    if (state::scalar_type(e, t->name, ty)) return true;
+    if (state::scalar_type(e, types::name_of(t), ty)) return true;
     Bool is_signed = types::signed_of(t);
     if (types::bits_of(t) == 8) return state::scalar_type(e, is_signed ? "i8" : "u8", ty);
     if (types::bits_of(t) == 16) return state::scalar_type(e, is_signed ? "i16" : "u16", ty);
@@ -1464,8 +1464,8 @@ static Bool slice_of_checked(state::Emitter *e, types::TypeRef base, state::Ty *
     types::TypeRef element = types::element_of(base);
     state::Ty inner = {};
     Bool known = scalar_of_checked(e, element, &inner);
-    known = known || (element->kind == .record && find_record_by_name(e, element->name, &inner));
-    known = known || (element->kind == .enumeration && matching::type_enum(e, element->name, &inner));
+    known = known || (element->kind == .record && find_record_by_name(e, types::name_of(element), &inner));
+    known = known || (element->kind == .enumeration && matching::type_enum(e, types::name_of(element), &inner));
     if (!known) return false;
     *ty = base->kind == .block ? emit_memory::block_type(e, inner, base->count)
                                : emit_memory::slice_type(e, inner, "slice");
@@ -1484,8 +1484,10 @@ static Str bare_name(Str name) {
 static void ensure_enum(state::Emitter *e, types::TypeRef t) {
     if (t == nullptr || t->kind != .enumeration || e->options.checked == nullptr) return;
     state::Ty known = {};
-    if (matching::type_enum(e, t->name, &known) || matching::type_enum(e, bare_name(t->name), &known)) return;
-    const types::Symbol *target = types::lookup(&e->options.checked->scopes, t->name);
+    if (matching::type_enum(e, types::name_of(t), &known) ||
+        matching::type_enum(e, bare_name(types::name_of(t)), &known))
+        return;
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, types::name_of(t));
     if (is_enum_symbol(target)) imported_enum(e, target);
 }
 
@@ -1504,11 +1506,12 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
     }
     state::Ty ty = {};
     Bool known = scalar_of_checked(e, base, &ty);
-    known = known || (base->kind == .record && find_record_by_name(e, base->name, &ty));
-    known = known || (base->kind == .enumeration && matching::type_enum(e, base->name, &ty));
-    known = known || (base->kind == .enumeration && matching::type_enum(e, bare_name(base->name), &ty)); // imported
+    known = known || (base->kind == .record && find_record_by_name(e, types::name_of(base), &ty));
+    known = known || (base->kind == .enumeration && matching::type_enum(e, types::name_of(base), &ty));
+    known = known ||
+            (base->kind == .enumeration && matching::type_enum(e, bare_name(types::name_of(base)), &ty)); // imported
     // A C enumeration is its integer: the header's names are constants of it (`c::red`), never a type of the module.
-    known = known || (base->kind == .enumeration && from_header(base->name) &&
+    known = known || (base->kind == .enumeration && from_header(types::name_of(base)) &&
                       scalar_of_checked(e, types::element_of(base), &ty));
     known = known || slice_of_checked(e, base, &ty);
     if (!known && base->kind == .void_type) {
@@ -1579,12 +1582,12 @@ static void name_pointees(state::Emitter *e, types::TypeRef base) {
     for (Usize i = 0; i < countof(types::slots_of(base).items); i++) {
         types::TypeRef pointee = unmade_c_record(e, types::slots_of(base).items[i].type, true);
         state::Ty known = {};
-        if (pointee == nullptr || pointee == base || find_record_by_name(e, pointee->name, &known)) continue;
-        char *label = state::cstr(pointee->name);
+        if (pointee == nullptr || pointee == base || find_record_by_name(e, types::name_of(pointee), &known)) continue;
+        char *label = state::cstr(types::name_of(pointee));
         c::LLVMTypeRef named = c::LLVMStructCreateNamed(e->context, label);
         mem::free(label);
-        state::Ty ty = {.kind = .record, .llvm = named, .name = pointee->name};
-        emit_memory::add_record(e, (state::RecordType){.name = pointee->name, .ty = ty, .shell = true});
+        state::Ty ty = {.kind = .record, .llvm = named, .name = types::name_of(pointee)};
+        emit_memory::add_record(e, (state::RecordType){.name = types::name_of(pointee), .ty = ty, .shell = true});
     }
 }
 
@@ -1617,18 +1620,18 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     Usize at = e->record_count;
     c::LLVMTypeRef named = nullptr;
     for (Usize i = 0; i < e->record_count; i++) {
-        if (e->records[i].shell && state::same_text(e->records[i].name, base->name)) {
+        if (e->records[i].shell && state::same_text(e->records[i].name, types::name_of(base))) {
             at = i;
             named = e->records[i].ty.llvm;
             e->records[i].shell = false;
         }
     }
     if (named == nullptr) {
-        char *label = state::cstr(base->name);
+        char *label = state::cstr(types::name_of(base));
         named = c::LLVMStructCreateNamed(e->context, label);
         mem::free(label);
-        state::Ty ty = {.kind = .record, .llvm = named, .name = base->name};
-        emit_memory::add_record(e, (state::RecordType){.name = base->name, .ty = ty});
+        state::Ty ty = {.kind = .record, .llvm = named, .name = types::name_of(base)};
+        emit_memory::add_record(e, (state::RecordType){.name = types::name_of(base), .ty = ty});
     }
     name_pointees(e, base);
     Usize count = countof(types::slots_of(base).items);
@@ -1670,10 +1673,10 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
     }
     Bool made = false;
     for (Usize i = 0; i < e->record_count; i++) {
-        Bool open = e->records[i].shell && from_header(base->name);
-        if (!open && state::same_text(e->records[i].name, base->name)) made = true;
+        Bool open = e->records[i].shell && from_header(types::name_of(base));
+        if (!open && state::same_text(e->records[i].name, types::name_of(base))) made = true;
     }
-    if (base->kind == .record && !made && (from_header(base->name) || in_module(base->name))) {
+    if (base->kind == .record && !made && (from_header(types::name_of(base)) || in_module(types::name_of(base)))) {
         return base;
     }
     return nullptr;

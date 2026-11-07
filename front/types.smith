@@ -234,7 +234,7 @@ export struct Ty {
     TypeRef element;
     TypeRef error;
     U64 count;
-    Str name;
+    Str flat_name;
     Str owner;  // a record: the prefix of the module that declares it (`lib::math::`), empty for the module checked
     Str c_name; // a record: the C struct it is (`@c_name("SmithTaskGroup")`, or a C header's own name), else empty
     Slot slots[:];
@@ -349,7 +349,7 @@ static Bool same_shape(const Ty *a, const Ty *b) {
     if (!same_kind(a->kind, b->kind) || a->bits != b->bits || a->is_signed != b->is_signed) return false;
     if (a->pointee_const != b->pointee_const || a->variadic != b->variadic || a->count != b->count) return false;
     if (a->element != b->element || a->error != b->error) return false;
-    if (!same_text(a->name, b->name)) return false;
+    if (!same_text(a->flat_name, b->flat_name)) return false;
     return same_slots(a->slots, b->slots);
 }
 
@@ -378,12 +378,12 @@ static void refresh(Ty *t) {
         t->shape = .type_type;
         return;
     case .integer: {
-        TyKind made = {.integer = {.bits = t->bits, .is_signed = t->is_signed, .name = t->name}};
+        TyKind made = {.integer = {.bits = t->bits, .is_signed = t->is_signed, .name = t->flat_name}};
         t->shape = made;
         return;
     }
     case .floating: {
-        TyKind made = {.floating = {.bits = t->bits, .name = t->name}};
+        TyKind made = {.floating = {.bits = t->bits, .name = t->flat_name}};
         t->shape = made;
         return;
     }
@@ -403,7 +403,7 @@ static void refresh(Ty *t) {
         return;
     }
     case .record: {
-        TyKind made = {.record = {.name = t->name,
+        TyKind made = {.record = {.name = t->flat_name,
                                   .owner = t->owner,
                                   .c_name = t->c_name,
                                   .slots = t->slots,
@@ -414,7 +414,7 @@ static void refresh(Ty *t) {
         return;
     }
     case .enumeration: {
-        TyKind made = {.enumeration = {.name = t->name,
+        TyKind made = {.enumeration = {.name = t->flat_name,
                                        .element = t->element,
                                        .slots = t->slots,
                                        .complete = t->complete,
@@ -443,7 +443,7 @@ static void refresh(Ty *t) {
         return;
     }
     case .concept_type: {
-        TyKind made = {.concept_type = {.name = t->name}};
+        TyKind made = {.concept_type = {.name = t->flat_name}};
         t->shape = made;
         return;
     }
@@ -506,7 +506,7 @@ static void add_builtin(Table *t, Str name, TypeRef type) {
 }
 
 static void add_number(Table *t, Str name, Kind kind, U32 bits, Bool is_signed) {
-    TypeRef type = intern(t, (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .name = name});
+    TypeRef type = intern(t, (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .flat_name = name});
     add_builtin(t, name, type);
 }
 
@@ -516,13 +516,13 @@ static void add_va_list(Table *t);
 export Table start(Target target) {
     Table t = {.target = target};
     U32 word = target.pointer_bytes * 8;
-    t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>"});
-    t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto"});
-    t.void_type = intern(&t, (Ty){.kind = .void_type, .name = "Void"});
-    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool"});
-    t.text = intern(&t, (Ty){.kind = .text, .name = "Str"});
-    t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null"});
-    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type"});
+    t.invalid = intern(&t, (Ty){.kind = .invalid, .flat_name = "<error>"});
+    t.automatic = intern(&t, (Ty){.kind = .automatic, .flat_name = "Auto"});
+    t.void_type = intern(&t, (Ty){.kind = .void_type, .flat_name = "Void"});
+    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .flat_name = "Bool"});
+    t.text = intern(&t, (Ty){.kind = .text, .flat_name = "Str"});
+    t.null_type = intern(&t, (Ty){.kind = .null_type, .flat_name = "Null"});
+    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .flat_name = "type"});
     add_builtin(&t, "Auto", t.automatic);
     add_builtin(&t, "type", type_of_types);
     add_builtin(&t, "Void", t.void_type);
@@ -653,7 +653,7 @@ export TypeRef function_of(Table *t, Slot params[:], TypeRef result, Bool variad
 // A record, nominal: every call makes a new type. It is not `complete` (a pointer to it is fine, a value is not)
 // until `set_fields`. The pointer is the table's, to be given back to `set_fields`.
 export Ty *new_record(Table *t, Str name, Bool is_union) {
-    return add_entry(t, (Ty){.kind = .record, .name = name, .is_union = is_union});
+    return add_entry(t, (Ty){.kind = .record, .flat_name = name, .is_union = is_union});
 }
 
 export void set_fields(Ty *record, Slot fields[:]) {
@@ -664,7 +664,7 @@ export void set_fields(Ty *record, Slot fields[:]) {
 
 // An enumeration, nominal, over the integer type `underlying`.
 export Ty *new_enumeration(Table *t, Str name, TypeRef underlying) {
-    return add_entry(t, (Ty){.kind = .enumeration, .name = name, .element = underlying, .complete = true});
+    return add_entry(t, (Ty){.kind = .enumeration, .flat_name = name, .element = underlying, .complete = true});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -792,6 +792,24 @@ export U64 count_of(TypeRef t) {
 // The C struct a record is, or empty.
 export Str c_name_of(TypeRef t) {
     if (t->shape == .record) return t->shape.record.c_name;
+    return "";
+}
+
+// The name of an integer, floating, record, enumeration or concept type, and of a kind with one spelling (`Void`,
+// `Bool`, `Str`, `Auto`, `Null`, `type`, `<error>`).
+export Str name_of(TypeRef t) {
+    if (t->shape == .integer) return t->shape.integer.name;
+    if (t->shape == .floating) return t->shape.floating.name;
+    if (t->shape == .record) return t->shape.record.name;
+    if (t->shape == .enumeration) return t->shape.enumeration.name;
+    if (t->shape == .concept_type) return t->shape.concept_type.name;
+    if (t->shape == .invalid) return "<error>";
+    if (t->shape == .automatic) return "Auto";
+    if (t->shape == .void_type) return "Void";
+    if (t->shape == .bool_type) return "Bool";
+    if (t->shape == .text) return "Str";
+    if (t->shape == .null_type) return "Null";
+    if (t->shape == .type_type) return "type";
     return "";
 }
 
@@ -1672,7 +1690,7 @@ static Str path_text(ast::Path path) {
 
 // A concept of smith's own syntax (`num`), in a type that is written in it: a family of types, never a field's type.
 export TypeRef concept_of(Table *t, Str name) {
-    return intern(t, (Ty){.kind = .concept_type, .name = name});
+    return intern(t, (Ty){.kind = .concept_type, .flat_name = name});
 }
 
 static Bool is_own_concept(Str name) {
@@ -2725,7 +2743,7 @@ static void fill_record(Checked *r, const ast::Decl *d, Str name) {
         r->new_syntax = false;
         TypeRef field_type = fields[i].type;
         if (field_type->kind == .concept_type) {
-            failf(r, f->span, "the field `", f->name, "` has the concept `", field_type->name,
+            failf(r, f->span, "the field `", f->name, "` has the concept `", name_of(field_type),
                   "` as its type; a struct field needs a concrete type such as `i32`");
             fields[i].type = r->table.invalid;
         }
@@ -2891,7 +2909,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
             r->new_syntax = false;
             TypeRef param_type = params[i].type;
             if (param_type->kind == .concept_type && d->exported) {
-                failf(r, p->span, "`", p->name, "` has the concept `", param_type->name,
+                failf(r, p->span, "`", p->name, "` has the concept `", name_of(param_type),
                       "` as its type, and a `pub` function is called from C and other modules: write a concrete ",
                       "type such as `i32`, or drop `pub`");
             }

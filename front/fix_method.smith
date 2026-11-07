@@ -99,7 +99,7 @@ static core::Edits fix_of(Str source, const types::Checked *c, const ast::Expr *
     types::TypeRef self_type = given;
     if (given->kind == .pointer) self_type = given->element;
     Str prefix = prefix_of(module);
-    if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(self_type->name), prefix))
+    if (self_type->kind != .record || countof(prefix) == 0 || !same(module_prefix(types::name_of(self_type)), prefix))
         return none;
     const types::Symbol *function_sym =
         types::lookup(&c->scopes, types::message_of(format::push(prefix, names.items[1])));

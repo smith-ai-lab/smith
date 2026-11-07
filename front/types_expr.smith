@@ -856,7 +856,7 @@ static Bool float_fits(types::Checked *c, ast::Span span, F64 value, types::Type
     if (types::bits_of(t) != 16) {
         return true;
     }
-    Bool brain = t->name[0] == 'B';
+    Bool brain = types::name_of(t)[0] == 'B';
     F64 top = brain ? 3.3895313892515355e38 : 65504.0;
     if (value <= top) {
         return true;
@@ -2904,7 +2904,7 @@ static void method_resolved(types::Checked *c, Work *w, Frame f) {
     }
     Str prefix = "";
     if (record->kind == .record) {
-        prefix = module_prefix(record->name);
+        prefix = module_prefix(types::name_of(record));
     }
     const types::Symbol *own = nullptr;
     if (countof(prefix) > 0) {
