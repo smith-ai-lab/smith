@@ -1,0 +1,76 @@
+// Tests of the fix-it for a build file (D6, #2631, part of #1428): `smith lint --fix` writes a `build.smith` as
+// `from std.build import Build, App` and `pub fn build(b: *Build):`, so the file's function `build` and the module
+// `build` are never both in it ("I definitely would rather not have multiple things named the same thing", owner,
+// 2026-11-06). A call `build::app(b, ...)` is the method call `b.app(...)`, a type `build::App` is `App`, and the fixer
+// writes no name the file did not write. Any other file name is left alone.
+module front_fix_build_test;
+
+import front::fix;
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+static Usize errors_in(Str source) {
+    parser::Parsed parsed = fix::parse_for_fix("build.smith", source);
+    return countof(parsed.errors);
+}
+
+static void expect_fixed(Str file, Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text(file, before);
+    test::check_equal(first.text, want);
+    test::check_equal(errors_in(first.text), (Usize)0);
+    fix::Fixed second = fix::fix_text(file, first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_build_a_plain_build_file_imports_the_names_it_writes() {
+    expect_fixed("tests/build_fixtures/smith_mixed/build.smith",
+                 "import std::build;\n\nvoid build(build::Build *b) {\n"
+                 "    build::app(b, &(build::App){});\n"
+                 "    build::app_tests(b, &(build::AppTests){});\n}\n",
+                 "from std.build import Build, App, AppTests\n\npub fn build(b: *Build):\n"
+                 "    b.app(&App())\n    b.app_tests(&AppTests())\n");
+}
+
+export void test_front_fix_build_the_module_line_and_export_go() {
+    expect_fixed("build.smith",
+                 "module build;\n\nimport std::build;\n\nexport void build(build::Build *b) {\n"
+                 "    build::app(b, &(build::App){.entry = \"prog.c\"});\n}\n",
+                 "from std.build import Build, App\n\npub fn build(b: *Build):\n"
+                 "    b.app(&App(entry = \"prog.c\"))\n");
+}
+
+export void test_front_fix_build_a_task_is_a_method_of_the_build() {
+    expect_fixed("build.smith",
+                 "import std::build;\n\nvoid build(build::Build *b) {\n"
+                 "    build::task(b, \"x\", &(build::Step){.command = build::list(b, \"true\", nullptr)});\n}\n",
+                 "from std.build import Build, Step\n\npub fn build(b: *Build):\n"
+                 "    b.task(\"x\", &Step(command = b.list(\"true\", nullptr)))\n");
+}
+
+export void test_front_fix_build_a_pointer_array_literal_is_an_array_value() {
+    expect_fixed("build.smith",
+                 "import std::build;\n\nvoid build(build::Build *b) {\n"
+                 "    build::Object object = {.compiler = \"smith-cc\"};\n"
+                 "    build::Program program = {.objects = (const build::Object *const[]){&object, nullptr}};\n"
+                 "    build::program(b, &program);\n}\n",
+                 "from std.build import Build, Object, Program\n\npub fn build(b: *Build):\n"
+                 "    object := Object(compiler = \"smith-cc\")\n"
+                 "    program := Program(objects = [&object, nullptr])\n    b.program(&program)\n");
+}
+
+export void test_front_fix_build_another_file_keeps_its_import() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("helper.smith", "import std::build;\n\nvoid f(build::Build *b) {\n"
+                                                     "    build::app(b, &(build::App){});\n}\n");
+    Str want = "import std.build\n\nfn f(b: *build.Build):\n    build.app(b, &build.App())\n";
+    test::check_equal(fixed.text, want);
+}

@@ -1,0 +1,28 @@
+// Tests of the fix-it for a Bool given where a C function wants an integer (#2648): `1`, `0` and `.to(i32)`.
+module front_fix_bool_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_bool_a_comparison_given_to_a_c_integer_is_converted() {
+    expect_fixed("module m;\nextern void flag(int on, int n);\nvoid f(int a, int b) {\n    flag(a < b, 1);\n}\n",
+                 "extern fn flag(on: i32, n: i32)\nfn f(a: i32, b: i32):\n    flag((a < b).to(i32), 1)\n");
+}
+
+export void test_front_fix_bool_a_literal_given_to_a_c_integer_is_a_number() {
+    expect_fixed("module m;\nextern void flag(int on, int n);\nvoid f(void) {\n    flag(false, 1);\n}\n",
+                 "extern fn flag(on: i32, n: i32)\nfn f():\n    flag(0, 1)\n");
+}
