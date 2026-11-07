@@ -8,9 +8,9 @@
 module build_tail_test;
 
 import std::arena;
-import std::format;
 import std::mem;
 import std::test;
+import <stdio.h>;
 import scratch;
 
 constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
@@ -33,7 +33,7 @@ export void test_build_tail_without_the_token_hook_the_build_fails_clearly() {
     scratch::Run built = scratch::build(&p, "");
     scratch::expect_failure("modules: without the token hook the build fails", &built);
     char both[8192];
-    (void)format::write(both, sizeof both, built.out, built.err);
+    (void)__builtin_snprintf(both, sizeof both, "%s%s", built.out, built.err);
     scratch::expect_contains("modules: with a clear message", both, "token hook");
     scratch::expect_text("modules: after the headers were written", "lib/text.h",
                          scratch::capture(&p, "cd .smith/include && ls lib/text.h"));
@@ -80,10 +80,10 @@ export void test_build_tail_cc_set_to_the_smith_path_is_refused() {
     const char *self = scratch::capture(&p, "printf %s \"$SMITH_SELF\"");
     char text[1024];
     scratch::expect_failure("CC=<path>/smith in the environment is refused", &run);
-    (void)format::write(text, sizeof text, "smith: build.c: smith_object: .compiler is \"", self, "\"");
+    (void)__builtin_snprintf(text, sizeof text, "smith: build.c: smith_object: .compiler is \"%s\"", self);
     scratch::expect_contains("CC=<path>/smith: ... as a build.c error naming the value", run.err, text);
-    (void)format::write(text, sizeof text, "use \"", scratch::capture(&p, "dirname \"$SMITH_SELF\""),
-                        "/smith-cc\" for C");
+    (void)__builtin_snprintf(text, sizeof text, "use \"%s/smith-cc\" for C",
+                             scratch::capture(&p, "dirname \"$SMITH_SELF\""));
     scratch::expect_contains("CC=<path>/smith: ... with the hint for C", run.err, text);
     scratch::expect_contains("CC=<path>/smith: ... and for C++", run.err, "smith-c++\" for C++");
     scratch::expect_text("CC=<path>/smith: nothing ran", "",
@@ -182,11 +182,11 @@ export void test_build_tail_library_files_alone_links_and_brings_the_arena_and_m
         scratch::capture(&p, "ls build/smith/arena.o build/smith/mem.o | tr '\\n' ' ' | sed 's/ $//'"));
     scratch::Run app = scratch::sh(&p, "build/app");
     char state[64];
-    (void)format::write(state, sizeof state, app.status, " ", app.out);
+    (void)__builtin_snprintf(state, sizeof state, "%d %s", app.status, app.out);
     scratch::expect_text("library needs: ... and the program runs", "0 found 1", state);
     scratch::Run second = scratch::build(&p, "");
     char both[4096];
-    (void)format::write(both, sizeof both, second.out, second.err);
+    (void)__builtin_snprintf(both, sizeof both, "%s%s", second.out, second.err);
     scratch::expect_contains("library needs: a second build changes nothing", both, "no work to do");
 }
 
