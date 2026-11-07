@@ -104,14 +104,16 @@ static Usize close_paren(Str s, Usize open) {
 }
 
 static Usize skip_blanks(Str s, Usize i) {
-    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t')) i += 1;
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t'))
+        i += 1;
     return i;
 }
 
 // Whether the `(` at `i` opens `(T)` where `T` is a type parameter the text declares, `constexpr Type T`.
 static Bool is_type_parameter(Str source, Usize i) {
     Usize stop = i + 1;
-    while (stop < countof(source) && word_char(source[stop])) stop += 1;
+    while (stop < countof(source) && word_char(source[stop]))
+        stop += 1;
     if (stop == i + 1 || stop >= countof(source) || source[stop] != ')') return false;
     Str name = source[i + 1:stop];
     for (Usize k = 0; k + 15 + countof(name) < countof(source); k++) {
@@ -156,7 +158,8 @@ static core::ParseError import_mem(Str source) {
     for (Usize i = 0; i + 7 < countof(source); i++) {
         if (!at(source, i, "module ") || (i > 0 && source[i - 1] != '\n')) continue;
         Usize end = i;
-        while (end < countof(source) && source[end] != '\n') end += 1;
+        while (end < countof(source) && source[end] != '\n')
+            end += 1;
         core::ParseError out = {};
         out.span = (ast::Span){.start = (U32)end, .end = (U32)end};
         out.fix = push(out.fix, end, end, "\nimport std::mem;");

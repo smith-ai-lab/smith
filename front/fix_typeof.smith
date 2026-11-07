@@ -209,11 +209,12 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     return out;
 }
 
-// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer to a
-// slice of any element type, as `const auto (*xs)[:]` is mended.
+// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer
+// to a slice of any element type, as `const auto (*xs)[:]` is mended.
 static Bool is_slice_pointer(Str param) {
     Usize colon = 0;
-    while (colon < countof(param) && param[colon] != ':') colon += 1;
+    while (colon < countof(param) && param[colon] != ':')
+        colon += 1;
     if (colon + 3 >= countof(param) || !at(param, colon + 1, " *")) return false;
     Usize n = countof(param);
     return n >= 6 && at(param, n - 6, "[]auto");
@@ -277,7 +278,8 @@ static Str concept_of(Str word) {
 // Whether the module declares a type called `word` itself (`struct Num`, `enum Num`, `Num :=`): then it is no concept.
 static Bool declares(Str source, Str word) {
     for (Usize i = 0; i + countof(word) < countof(source); i++) {
-        if (!at(source, i, word) || (i > 0 && word_char(source[i - 1])) || word_char(source[i + countof(word)])) continue;
+        if (!at(source, i, word) || (i > 0 && word_char(source[i - 1])) || word_char(source[i + countof(word)]))
+            continue;
         if (i >= 7 && at(source, i - 7, "struct ")) return true;
         if (i >= 5 && at(source, i - 5, "enum ")) return true;
         if (at(source, i + countof(word), " :=")) return true;
@@ -305,11 +307,13 @@ static Usize name_end_of(Str source, Str fname, Usize start, Usize end) {
 // (`T: num`) for each goes to `entries`.
 static core::Edits concept_edits(core::Edits edits, Str source, ast::Param param, Str *entries, Usize *count) {
     Usize colon = param.span.start;
-    while (colon < param.span.end && source[colon] != ':') colon += 1;
+    while (colon < param.span.end && source[colon] != ':')
+        colon += 1;
     for (Usize i = colon; i < param.span.end; i++) {
         if (!word_char(source[i]) || (i > 0 && word_char(source[i - 1]) && i > colon + 1)) continue;
         Usize stop = i;
-        while (stop < param.span.end && word_char(source[stop])) stop += 1;
+        while (stop < param.span.end && word_char(source[stop]))
+            stop += 1;
         Str concept = concept_of(source[i:stop]);
         if (countof(concept) == 0 || declares(source, source[i:stop])) {
             i = stop;
@@ -324,8 +328,8 @@ static core::Edits concept_edits(core::Edits edits, Str source, ast::Param param
     return edits;
 }
 
-// A parameter whose type holds a built-in concept (`xs: []Num`, `p: *mut Int`) is an inferred parameter of that concept:
-// `fn sum[T: num](xs: []T)`.
+// A parameter whose type holds a built-in concept (`xs: []Num`, `p: *mut Int`) is an inferred parameter of that
+// concept: `fn sum[T: num](xs: []T)`.
 static core::ParseError concept_fix(Str source, const ast::Decl *d) {
     core::ParseError none = {};
     if (d->kind != .function || d->kind.function.body == nullptr) return none;
@@ -385,12 +389,14 @@ static Str base_name(Str word) {
 }
 
 static Usize skip_space(Str s, Usize i) {
-    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t')) i += 1;
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t'))
+        i += 1;
     return i;
 }
 
 static Usize word_end(Str s, Usize i) {
-    while (i < countof(s) && word_char(s[i])) i += 1;
+    while (i < countof(s) && word_char(s[i]))
+        i += 1;
     return i;
 }
 
