@@ -845,68 +845,119 @@ static Piece of(TypeRef type) {
     return (Piece){.type = type};
 }
 
+// A tuple `(A, B)`: one piece per slot, a written name before its type (`count: i32`), and `(A,)` for one.
+static void push_tuple(Piece stack[:], Usize *top, Output *text, Slot slots[:]) {
+    if (countof(slots) == 1)
+        push_piece(stack, top, word(",)"));
+    else
+        push_piece(stack, top, word(")"));
+    for (Usize i = countof(slots); i > 0; i--) {
+        push_piece(stack, top, of(slots[i - 1].type));
+        if (!is_position(slots[i - 1].name)) push_piece(stack, top, word(msg(format::push(slots[i - 1].name, ": "))));
+        if (i > 1) push_piece(stack, top, word(", "));
+    }
+    put(text, "(");
+}
+
 // Pushes the pieces of `t` so that the first to write is on top. A type has at most 4 + 2 * its parameters pieces.
 static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
-    if (t->kind == .pointer) {
+    switch (t->shape) {
+    case .pointer:
         push_piece(stack, top, word(" *"));
-        push_piece(stack, top, of(t->element));
-        if (t->pointee_const) put(text, "const ");
-    } else if (t->kind == .array) {
-        push_piece(stack, top, word(msg(format::push("[", t->count, "]"))));
-        push_piece(stack, top, of(t->element));
-        if (t->pointee_const) put(text, "const ");
-    } else if (t->kind == .slice) {
+        push_piece(stack, top, of(t->shape.pointer.element));
+        if (t->shape.pointer.pointee_const) put(text, "const ");
+        break;
+    case .array:
+        push_piece(stack, top, word(msg(format::push("[", t->shape.array.count, "]"))));
+        push_piece(stack, top, of(t->shape.array.element));
+        if (t->shape.array.pointee_const) put(text, "const ");
+        break;
+    case .slice:
         push_piece(stack, top, word("[:]"));
-        push_piece(stack, top, of(t->element));
-        if (t->pointee_const) put(text, "const ");
-    } else if (t->kind == .block) {
-        push_piece(stack, top, word(t->count == 2 ? "[,]" : "[,,]"));
-        push_piece(stack, top, of(t->element));
-    } else if (t->kind == .vector) {
-        push_piece(stack, top, word(msg(format::push(", ", t->count, ")"))));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(t->shape.slice.element));
+        if (t->shape.slice.pointee_const) put(text, "const ");
+        break;
+    case .block:
+        push_piece(stack, top, word(t->shape.block.count == 2 ? "[,]" : "[,,]"));
+        push_piece(stack, top, of(t->shape.block.element));
+        break;
+    case .vector:
+        push_piece(stack, top, word(msg(format::push(", ", t->shape.vector.count, ")"))));
+        push_piece(stack, top, of(t->shape.vector.element));
         put(text, "vec(");
-    } else if (t->kind == .option) {
+        break;
+    case .option:
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(t->shape.option.element));
         put(text, "Option(");
-    } else if (t->kind == .stream) {
+        break;
+    case .stream:
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(t->shape.stream.element));
         put(text, "stream::Stream(");
-    } else if (t->kind == .result_type) {
+        break;
+    case .result_type:
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->error));
+        push_piece(stack, top, of(t->shape.result_type.error));
         push_piece(stack, top, word(", "));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(t->shape.result_type.element));
         put(text, "Result(");
-    } else if (t->kind == .tuple) {
-        if (countof(t->slots) == 1)
-            push_piece(stack, top, word(",)"));
-        else
-            push_piece(stack, top, word(")"));
-        for (Usize i = countof(t->slots); i > 0; i--) {
-            push_piece(stack, top, of(t->slots[i - 1].type));
-            if (!is_position(t->slots[i - 1].name))
-                push_piece(stack, top, word(msg(format::push(t->slots[i - 1].name, ": "))));
-            if (i > 1) push_piece(stack, top, word(", "));
-        }
-        put(text, "(");
-    } else if (t->kind == .fn_value) {
+        break;
+    case .tuple:
+        push_tuple(stack, top, text, t->shape.tuple.slots);
+        break;
+    case .fn_value:
         push_piece(stack, top, word(")"));
-        push_piece(stack, top, of(t->element));
+        push_piece(stack, top, of(t->shape.fn_value.element));
         put(text, "Fn(");
-    } else if (t->kind == .function) {
+        break;
+    case .function:
         push_piece(stack, top, word(")"));
-        if (t->variadic) push_piece(stack, top, word(", ..."));
-        for (Usize i = countof(t->slots); i > 0; i--) {
-            push_piece(stack, top, of(t->slots[i - 1].type));
+        if (t->shape.function.variadic) push_piece(stack, top, word(", ..."));
+        for (Usize i = countof(t->shape.function.slots); i > 0; i--) {
+            push_piece(stack, top, of(t->shape.function.slots[i - 1].type));
             if (i > 1) push_piece(stack, top, word(", "));
         }
         push_piece(stack, top, word(" ("));
-        push_piece(stack, top, of(t->element));
-    } else
-        put(text, t->name);
+        push_piece(stack, top, of(t->shape.function.result));
+        break;
+    case .integer:
+        put(text, t->shape.integer.name);
+        break;
+    case .floating:
+        put(text, t->shape.floating.name);
+        break;
+    case .record:
+        put(text, t->shape.record.name);
+        break;
+    case .enumeration:
+        put(text, t->shape.enumeration.name);
+        break;
+    case .concept_type:
+        put(text, t->shape.concept_type.name);
+        break;
+    case .invalid:
+        put(text, "<error>");
+        break;
+    case .automatic:
+        put(text, "Auto");
+        break;
+    case .void_type:
+        put(text, "Void");
+        break;
+    case .bool_type:
+        put(text, "Bool");
+        break;
+    case .text:
+        put(text, "Str");
+        break;
+    case .null_type:
+        put(text, "Null");
+        break;
+    case .type_type:
+        put(text, "type");
+        break;
+    }
 }
 
 // The type as a user writes it, in the current allocator.
