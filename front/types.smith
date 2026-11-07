@@ -352,7 +352,13 @@ static void add_va_list(Table *t);
 
 // A table with every builtin type made, for `target`.
 export Table start(Target target) {
-    Table t = {.target = target};
+    Table t = {.target = target,
+               .invalid = nullptr,
+               .automatic = nullptr,
+               .void_type = nullptr,
+               .bool_type = nullptr,
+               .text = nullptr,
+               .null_type = nullptr};
     U32 word = target.pointer_bytes * 8;
     t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>", .element = nullptr, .error = nullptr});
     t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto", .element = nullptr, .error = nullptr});
@@ -1275,17 +1281,17 @@ export void mark_cast_checked(Checked *r, const ast::Expr *node, TypeRef from) {
 // node and for a cast that cannot lose anything.
 export CastCheck cast_checked(const Checked *r, const ast::Expr *node) {
     Usize capacity = countof(r->nodes);
-    if (capacity == 0) return (CastCheck){};
+    if (capacity == 0) return (CastCheck){.target_type = nullptr};
     Usize at = slot_of(node, capacity);
     while (r->nodes[at].node != nullptr) {
         if (r->nodes[at].node == node) {
             const NodeType *entry = &r->nodes[at];
-            if (!entry->cast_checked) return (CastCheck){};
+            if (!entry->cast_checked) return (CastCheck){.target_type = nullptr};
             return (CastCheck){.needed = true, .from = entry->cast_from, .target_type = entry->type};
         }
         at = (at + 1) & (capacity - 1);
     }
-    return (CastCheck){};
+    return (CastCheck){.target_type = nullptr};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1834,14 +1840,14 @@ export Bool integer_of(const ast::Expr *e, U64 *out) {
 // Whether the symbol is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); its initializer.
 export Bool constant_initializer(const Symbol *s, const ast::Expr **init) {
     if (s == nullptr) return false;
-    if (s->kind != .variable) return false;
     const ast::Decl *decl = s->decl;
     if (decl == nullptr) return false;
     if (decl->kind != .variable) return false;
     Bool fixed = s->is_const;
-    if (decl->kind.variable.is_new) fixed = !decl->kind.variable.is_mut || decl->kind.variable.is_constexpr;
+    Bool is_new = decl->kind.variable.is_new;
+    if (is_new) fixed = !decl->kind.variable.is_mut || decl->kind.variable.is_constexpr;
     *init = decl->kind.variable.init;
-    return fixed;
+    return fixed && s->kind == .variable;
 }
 
 // Whether the symbol's declaration is `pub` or `export`.
