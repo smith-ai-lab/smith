@@ -621,22 +621,32 @@ static Bool holds_pointer(const types::Checked *c, const ast::Expr *e) {
 
 // The root of a chain of `.f` (not `->f`) and `[i]`: the local that holds the storage; `e` itself when the chain
 // is not one of arrays and records (a pointer ends it).
+// Whether `e`, under an index, keeps the chain going: a name that is not a pointer or a slice, or a member.
+static Bool is_chain_base(const types::Checked *c, const ast::Expr *e) {
+    if (e->kind == .member) return true;
+    if (e->kind != .name) return false;
+    types::TypeRef held = types::type_of(c, e);
+    if (held == nullptr) return true;
+    return held->kind == .array;
+}
+
 static const ast::Expr *storage_root(const types::Checked *c, const ast::Expr *e) {
     const ast::Expr *root = e;
-    while (root->kind == .member || root->kind == .index) {
-        const ast::Expr *next = root;
-        if (root->kind == .index) {
-            next = index_base(root);
-            if (next->kind != .name && next->kind != .member) return e;
-            types::TypeRef held = types::type_of(c, next);
-            if (next->kind == .name && held != nullptr && held->kind != .array) return e;
-        } else if (root->kind == .member) {
-            if (root->kind.member.arrow) return e;
-            next = root->kind.member.base;
+    while (root != nullptr) {
+        const ast::Expr *cur = root;
+        const ast::Expr *next = nullptr;
+        if (cur->kind == .index) {
+            if (!is_chain_base(c, cur->kind.index.base)) return e;
+            next = cur->kind.index.base;
+        } else if (cur->kind == .member) {
+            if (cur->kind.member.arrow) return e;
+            next = cur->kind.member.base;
+        } else {
+            return cur;
         }
         root = next;
     }
-    return root;
+    return e;
 }
 
 static syntax::Edits address_part_fix(const types::Checked *c, const ast::Expr *operand) {
