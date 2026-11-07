@@ -116,8 +116,7 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         if (e->kind == .variant && e->kind.variant.payload == nullptr) continue;
         if (e->kind == .name) {
             const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
-            const ast::Expr *init = nullptr;
-            if (!types::constant_initializer(s, &init)) return false;
+            if (types::constant_initializer(s) == nullptr) return false;
             continue;
         }
         if (top + 2 > 32) return false;

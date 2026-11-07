@@ -1818,12 +1818,19 @@ static Bool is_new_function(const ast::Decl *d) {
 }
 
 // `k.f` with `.` (not `->`): the base `k` and the member `f`.
-static Bool member_step(const ast::Expr *e, const ast::Expr **base, Str *field) {
+static Bool is_dot_member(const ast::Expr *e) {
     if (e->kind != .member) return false;
-    if (e->kind.member.arrow) return false;
-    *base = e->kind.member.base;
-    *field = e->kind.member.name;
-    return true;
+    return !e->kind.member.arrow;
+}
+
+static const ast::Expr *member_base(const ast::Expr *e) {
+    if (e->kind != .member) return nullptr;
+    return e->kind.member.base;
+}
+
+static Str member_field(const ast::Expr *e) {
+    if (e->kind != .member) return "";
+    return e->kind.member.name;
 }
 
 // The value of an expression that is an integer literal, false for anything else.
@@ -1837,17 +1844,18 @@ export Bool integer_of(const ast::Expr *e, U64 *out) {
 // What the declaration of a symbol says. A symbol has none when it is a builtin, so each reader below tests for it once
 // and gives an empty answer.
 
-// Whether the symbol is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); its initializer.
-export Bool constant_initializer(const Symbol *s, const ast::Expr **init) {
-    if (s == nullptr) return false;
+// The initializer of a symbol that is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); null
+// when it is not one or has none.
+export const ast::Expr *constant_initializer(const Symbol *s) {
+    if (s == nullptr) return nullptr;
     const ast::Decl *decl = s->decl;
-    if (decl == nullptr) return false;
-    if (decl->kind != .variable) return false;
+    if (decl == nullptr) return nullptr;
+    if (decl->kind != .variable) return nullptr;
     Bool fixed = s->is_const;
     Bool is_new = decl->kind.variable.is_new;
     if (is_new) fixed = !decl->kind.variable.is_mut || decl->kind.variable.is_constexpr;
-    *init = decl->kind.variable.init;
-    return fixed && s->kind == .variable;
+    if (!fixed || s->kind != .variable) return nullptr;
+    return decl->kind.variable.init;
 }
 
 // Whether the symbol's declaration is `pub` or `export`.
@@ -1956,14 +1964,13 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             const Symbol *pack = type_through_modules(r, counted_path);
             if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
                 return false;
-            values[have++] = countof(pack->type->slots);
+            values[have++] = (U64)countof(pack->type->slots);
             continue;
         }
         if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            const ast::Expr *init = nullptr;
-            Bool fixed = constant_initializer(s, &init);
-            if (!fixed || init == nullptr || top == 32) return false;
+            const ast::Expr *init = constant_initializer(s);
+            if (init == nullptr || top == 32) return false;
             steps[top++] = length_step(init, false);
             continue;
         }
@@ -2027,9 +2034,8 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
             value = at->kind.boolean.value ? 1 : 0;
         } else if (names_a_constant(e, &path)) {
             const Symbol *s = type_through_modules(r, path);
-            const ast::Expr *init = nullptr;
-            Bool fixed = constant_initializer(s, &init);
-            if (!fixed) return false;
+            const ast::Expr *init = constant_initializer(s);
+            if (init == nullptr) return false;
             e = init;
             continue;
         } else {
@@ -2723,8 +2729,9 @@ static Str instance_name(Str base, Binding bindings[:]) {
 export void bind_instance(Checked *r, const Instance *x) {
     for (Usize i = 0; i < countof(x->bindings); i++) {
         const Binding *b = &x->bindings[i];
-        Symbol symbol = {.name = b->name, .kind = .variable, .type = b->type};
-        if (b->is_type) symbol.kind = .type_name;
+        SymbolKind kind = .variable;
+        if (b->is_type) kind = .type_name;
+        Symbol symbol = {.name = b->name, .kind = kind, .type = b->type};
         symbol.is_new = true;
         symbol.is_const = true;
         symbol.has_value = !b->is_type;
@@ -2765,15 +2772,23 @@ static const Symbol *reflected_symbol(Str subject, Bool is_type) {
     return s->kind == .function_symbol ? s : nullptr;
 }
 
-// The fields the module being checked may name, in order.
-static Usize visible_fields(const Ty *record, Usize at, const Slot **found) {
+// How many fields the module being checked may name.
+static Usize visible_count(const Ty *record) {
+    Usize seen = 0;
+    for (Usize i = 0; i < countof(record->slots); i++)
+        if (field_visible(record, &record->slots[i])) seen += 1;
+    return seen;
+}
+
+// The `at`-th field the module being checked may name, in order; null when there are fewer.
+static const Slot *visible_at(const Ty *record, Usize at) {
     Usize seen = 0;
     for (Usize i = 0; i < countof(record->slots); i++) {
         if (!field_visible(record, &record->slots[i])) continue;
-        if (seen == at) *found = &record->slots[i];
+        if (seen == at) return &record->slots[i];
         seen += 1;
     }
-    return seen;
+    return nullptr;
 }
 
 // The type as smith's own syntax writes it: the builtin scalars are lowercase (`i32`, `usize`, `bool`, `str`).
@@ -2793,8 +2808,7 @@ static Bool reflect_count(Str kind, Str subject, Usize *count) {
     if (same_text(kind, "fields")) {
         const Symbol *s = reflected_symbol(subject, true);
         if (s == nullptr || s->type->kind != .record || !s->type->complete) return false;
-        const Slot *none = nullptr;
-        *count = visible_fields(s->type, 0, &none);
+        *count = visible_count(s->type);
         return true;
     }
     const Symbol *s = reflected_symbol(subject, false);
@@ -2802,24 +2816,22 @@ static Bool reflect_count(Str kind, Str subject, Usize *count) {
 }
 
 static ast_clone::Entry reflect_at(Str kind, Str subject, Usize at) {
-    ast_clone::Entry entry = {};
     if (same_text(kind, "fields")) {
-        const Slot *slot = nullptr;
-        visible_fields(reflected_symbol(subject, true)->type, at, &slot);
-        entry = (ast_clone::Entry){.name = slot->name,
-                                   .type_name = written_name(slot->type),
-                                   .doc = slot->doc,
-                                   .attributes = slot->attributes,
-                                   .default_value = slot->default_value};
-        return entry;
+        const Symbol *owner = reflected_symbol(subject, true);
+        const Slot *slot = visible_at(owner->type, at);
+        return (ast_clone::Entry){.name = slot->name,
+                                  .type_name = written_name(slot->type),
+                                  .doc = slot->doc,
+                                  .attributes = slot->attributes,
+                                  .default_value = slot->default_value};
     }
     const Symbol *s = reflected_symbol(subject, false);
     const ast::Param *param = declared_param(s, at);
-    if (param == nullptr) return entry;
-    Str shown = {};
+    if (param == nullptr) return (ast_clone::Entry){};
+    Str shown = "";
     if (at < countof(s->type->slots)) shown = written_name(s->type->slots[at].type);
-    entry = (ast_clone::Entry){.name = param->name, .type_name = shown, .attributes = param->attributes};
-    return entry;
+    return (ast_clone::Entry){
+        .name = param->name, .type_name = shown, .attributes = param->attributes, .default_value = nullptr};
 }
 
 static void reflect_fail(ast::Span span, Str message) {
@@ -3268,13 +3280,11 @@ export Names member_names(const ast::Expr *e) {
     Names out = {};
     Names reversed = {};
     const ast::Expr *at = e;
-    const ast::Expr *base = nullptr;
-    Str field = "";
-    while (member_step(at, &base, &field)) {
+    while (is_dot_member(at)) {
         if (reversed.count == 7) return out;
-        reversed.items[reversed.count] = field;
+        reversed.items[reversed.count] = member_field(at);
         reversed.count += 1;
-        at = base;
+        at = member_base(at);
     }
     Str root = single_name(at);
     if (countof(root) == 0) return out;
@@ -3894,7 +3904,7 @@ static void declare_from_names(Checked *r, const ast::Module *m) {
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
 // Errors are in the result, never an abort.
 export Checked check(const ast::Module *m, Options o) {
-    Checked r = {.options = o, .table = start(o.target)};
+    Checked r = {.options = o, .table = start(o.target), .module = nullptr};
     if (o.target.pointer_bytes == 0) {
         fail(&r, (ast::Span){}, "the target has no pointer width; pass a target such as types::lp64() in the options");
         return r;
