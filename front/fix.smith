@@ -34,6 +34,7 @@ import front::fix_array;
 import front::fix_bool;
 import front::fix_chain;
 import front::fix_const;
+import front::fix_guard;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
@@ -433,12 +434,24 @@ static Bool values_take_patterns(void) {
     return pattern_probe == 1;
 }
 
+static Usize guard_probe = 0; // 0: not tried, 1: the parser reads a binding with an else, 2: it does not
+
+// Whether the parser reads `.ok(ok) := r else: return` (the binding of a guard that leaves), tried once on a snippet.
+static Bool bindings_take_else(void) {
+    if (guard_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(r: R) -> i32:\n    .ok(ok) := r else: return 0\n    return ok\n");
+        guard_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return guard_probe == 1;
+}
+
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
+    if (bindings_take_else()) out = append(out, fix_guard::edits(source));
     if (!values_take_patterns()) return out;
     return append(out, fix_chain::edits(source));
 }
