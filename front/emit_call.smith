@@ -973,8 +973,8 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     return state::success();
 }
 
-// A call whose result is the function's value is a guaranteed tail call (#2709): LLVM `musttail`, so tail recursion is a
-// loop at every optimization level, `-O0` included. The call is marked only where LLVM's rules hold: it is the last
+// A call whose result is the function's value is a guaranteed tail call (#2709): LLVM `musttail`, so tail recursion is
+// a loop at every optimization level, `-O0` included. The call is marked only where LLVM's rules hold: it is the last
 // instruction of the block, so nothing runs after it (`value` is its result, returned unchanged), and the caller and
 // the callee have the same function type and calling convention. Anywhere else the call stays ordinary.
 export void mark_tail_call(state::Emitter *e, c::LLVMValueRef value) {
@@ -1127,7 +1127,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
 // Tarjan's algorithm with a stack of its own: `component[i]` for each function.
 static void rec_components(const CallGraph *g, Usize component[:]) {
     Usize n = countof(g->functions);
-    Usize order[:] = mem::alloc_slice(Usize, n);   // 1 + the visit number, 0 when not visited
+    Usize order[:] = mem::alloc_slice(Usize, n); // 1 + the visit number, 0 when not visited
     Usize low[:] = mem::alloc_slice(Usize, n);
     Usize pending[:] = mem::alloc_slice(Usize, n); // the nodes of rec_components not closed yet
     Usize frame_node[:] = mem::alloc_slice(Usize, n);

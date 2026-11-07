@@ -444,6 +444,36 @@ static Bool ends_value(lex::TokenKind next) {
            next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot;
 }
 
+// `[[clang::musttail]] return f(x);` (#2709): a call in tail position is always a guaranteed tail call in smith's own
+// syntax, so the attribute is deleted and the `return` is read as any other.
+static Bool is_word(Str text, Str word) {
+    if (countof(text) != countof(word)) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(word); i++) {
+        if (text[i] != word[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void drop_musttail(parse::Parser *p) {
+    if (parse::peek(p).kind != lex::left_bracket || parse::peek_at(p, 1).kind != lex::left_bracket) return;
+    if (parse::peek_at(p, 3).kind != lex::colon_colon || parse::peek_at(p, 5).kind != lex::right_bracket) return;
+    if (parse::peek_at(p, 6).kind != lex::right_bracket || parse::peek_at(p, 7).kind != lex::kw_return) return;
+    if (!is_word(parse::text(p, parse::peek_at(p, 2)), "clang") ||
+        !is_word(parse::text(p, parse::peek_at(p, 4)), "musttail"))
+        return;
+    ast::Span group = {.start = parse::peek(p).span.start, .end = parse::peek_at(p, 6).span.end};
+    parse::Edits fix = edit_list(1);
+    fix[0] = edit((ast::Span){.start = group.start, .end = parse::peek_at(p, 7).span.start}, "");
+    parse::warning_fix(p, group, "`[[clang::musttail]]` is deleted: a call in tail position is always a tail call",
+                       fix);
+    for (Usize i = 0; i < 7; i++)
+        parse::advance(p);
+}
+
 // Declaration or expression at the start of a statement, with no symbol table.
 static Bool starts_declaration(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
@@ -1871,6 +1901,7 @@ static ast::Stmt *start(parse::Parser *p, Stack *stack) {
         return nullptr;
     }
     if (extended_asm(p)) return asm_statement(p);
+    drop_musttail(p);
     if (starts_declaration(p)) return declaration_statement(p);
     if (new_pointer_init(p)) return pointer_statement(p);
     habit_warning(p);

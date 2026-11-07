@@ -1,0 +1,11 @@
+# A call to a C function in tail position is a tail call when the prototypes agree (#2709): `abs` takes and returns an
+# `int`, as `magnitude` does.
+import c <stdlib.h>
+
+fn magnitude(n: i32) -> i32:
+    return stdlib.abs(n)
+
+pub fn check() -> i32:
+    if magnitude(-5) != 5:
+        return 1
+    0

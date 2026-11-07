@@ -586,6 +586,14 @@ export void test_recursion_plain_smith() {
     effects_case("recursion_plain.smith");
 }
 
+export void test_recursion_cycles_smith() {
+    effects_case("recursion_cycles.smith");
+}
+
+export void test_recursion_cycles_plain_smith() {
+    effects_case("recursion_cycles_plain.smith");
+}
+
 // Functions reached only from proved checks (issue #1055): no recursion error, no effects on the caller; the same
 // function called from running code, or from a check that is not proved, keeps the error.
 export void test_proof_only_smith() {
