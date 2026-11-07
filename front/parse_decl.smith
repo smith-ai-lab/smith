@@ -1303,9 +1303,9 @@ struct Head {
 };
 
 // The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
-// comes back (0 when a suffix has no fix: `[]`, `[const :]`) and `dims` is the same suffixes as smith writes them in
+// comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as smith writes them in
 // front of the type, the first one outermost: `[3]`, `[][2]`.
-static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dims) {
+static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dims, Bool unsized_ok) {
     Str none = "";
     *dims = none;
     for (Usize guard = 0; guard < 8 && to > at + 2 && p->tokens[to - 1].kind == lex::right_bracket; guard++) {
@@ -1314,7 +1314,7 @@ static Usize strip_suffixes(const parse::Parser *p, Usize at, Usize to, Str *dim
             open -= 1;
         if (p->tokens[open].kind != lex::left_bracket || open <= at + 1) return 0;
         Str inner = trimmed(source_between(p, p->tokens[open].span.end, p->tokens[to - 1].span.start));
-        if (countof(inner) == 0) return 0;
+        if (countof(inner) == 0 && !unsized_ok) return 0; // `I32 xs[]` is a parameter's `xs: []i32`
         // `restrict` goes from a slice of a function that states its slices apart (#2463; parse_type::states_apart)
         if (p->apart && starts_with(inner, "restrict")) inner = trimmed(inner[8:countof(inner)]);
         if (same_text(inner, ":")) inner = none;
@@ -1341,7 +1341,7 @@ static Dims read_dims(const parse::Parser *p, Usize first, Usize last) {
     if (last <= first) return dims;
     dims.end = p->tokens[last - 1].span.end;
     Str text = "";
-    dims.blocked = first < 2 || strip_suffixes(p, first - 2, last, &text) != first;
+    dims.blocked = first < 2 || strip_suffixes(p, first - 2, last, &text, false) != first;
     if (!dims.blocked) dims.text = text;
     return dims;
 }
@@ -1377,7 +1377,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Bool is_const = at < to && p->tokens[at].kind == lex::kw_constexpr;
     if (is_const) at += 1;
     Str dims = "";
-    to = strip_suffixes(p, at, to, &dims);
+    to = strip_suffixes(p, at, to, &dims, true);
     if (to == 0 || to <= at + 1) return "";
     lex::Token last = p->tokens[to - 1];
     Bool type_param = to == at + 2 && last.kind == lex::type_name &&
