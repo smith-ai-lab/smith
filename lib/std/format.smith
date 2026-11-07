@@ -571,10 +571,12 @@ void put(Writer *writer, auto piece, Usize count) {
         put_char(writer, ']');
     } else if constexpr (is_record(typeof(piece))) {
         put_char(writer, '{');
+        Bool first = true;
         for constexpr (Usize i = 0; i < countof(fields(typeof(piece))); i++) {
-            if constexpr (i > 0) {
+            if (!first) {
                 put_string(writer, ", ");
             }
+            first = false;
             put_string(writer, fields(typeof(piece))[i].name);
             put_string(writer, " = ");
             if constexpr (is_array(typeof(piece.[fields(typeof(piece))[i]]))) {
