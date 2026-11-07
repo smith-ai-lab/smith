@@ -937,6 +937,7 @@ static const char *const build_front_modules[] = {
     "emit_lambda",
     "emit_vector",
     "emit_stream",
+    "emit_recursion",
     "fix_directive",
     "fix_blocks",
     "fix_equal",

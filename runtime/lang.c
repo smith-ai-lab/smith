@@ -58,10 +58,10 @@ typedef struct {
     } sizes[smith_lang_array_dims_max];
 } SmithLangArrayParam;
 constexpr size_t smith_lang_message_max = 512;
-constexpr size_t smith_lang_cycle_max = 64;
+constexpr size_t smith_lang_cycle_max = 128;
 constexpr size_t smith_lang_written_max = 8192;
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
-constexpr size_t smith_lang_transitive_max = 64;
+constexpr size_t smith_lang_transitive_max = 128;
 constexpr size_t smith_lang_cond_depth_max = 64;      // #if nested in a module the header pass reads
 constexpr size_t smith_lang_include_max = 16384;      // the header's include lines
 constexpr size_t smith_lang_cimports_max = 64;        // `import <h>;` lines of one module
