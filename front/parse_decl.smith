@@ -824,6 +824,41 @@ static Bool take_prefix_keyword(Prefixes *pre, lex::TokenKind kind) {
     }
 }
 
+// `alignas(N)` before a declaration (D18, #1406): the attribute `align(N)`; the fix writes `@align(N)` on the line
+// before the declaration, with the line's indent, and deletes the keyword.
+static void parse_alignas(parse::Parser *p, Prefixes *out) {
+    lex::Token word = parse::advance(p);
+    Str align_name = "align";
+    ast::Attribute attribute = {.is_new = true};
+    attribute.name.segments = mem::alloc_slice(ast::Identifier, 1);
+    attribute.name.segments[0] = (ast::Identifier){.text = align_name, .span = word.span};
+    attribute.name.span = word.span;
+    parse::expect(p, lex::left_paren, "`(` after `alignas`");
+    U32 open = p->tokens[p->position - 1].span.end;
+    ast::Expr *argument = parse::expression(p);
+    if (argument != nullptr) attribute.args = push_expr(attribute.args, argument);
+    U32 close = parse::peek(p).span.start;
+    parse::expect(p, lex::right_paren, "`)`");
+    attribute.span = parse::span_from(p, word.span.start);
+    out->attributes = mem::realloc(out->attributes, countof(out->attributes) + 1);
+    out->attributes[countof(out->attributes) - 1] = attribute;
+    if (argument == nullptr) return;
+    Str source = p->source;
+    U32 line = word.span.start;
+    while (line > 0 && source[line - 1] != '\n')
+        line -= 1;
+    U32 text_start = line;
+    while (text_start < word.span.start && (source[text_start] == ' ' || source[text_start] == '\t'))
+        text_start += 1;
+    Str indent = source[line:text_start];
+    U32 after = parse::peek(p).span.start;
+    Str value = trimmed(source[open:close]);
+    parse::Edits edits = {};
+    edits = with_edit(edits, edit(text_start, text_start, as_str(format::push("@align(", value, ")\n", indent))));
+    edits = with_edit(edits, edit(word.span.start, after, ""));
+    warn(p, word.span.start, after, "`alignas(N)` is written `@align(N)` on the line before", edits);
+}
+
 // Attributes and keywords before the type, in any order.
 static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
     Prefixes pre = {.top = top};
@@ -839,6 +874,10 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             continue;
         }
         if (reject_gnu_spelling(p)) continue;
+        if (kind == lex::kw_alignas && parse::peek_at(p, 1).kind == lex::left_paren) {
+            parse_alignas(p, &pre);
+            continue;
+        }
         if (top && kind == lex::kw_export) {
             ast::Span word = parse::peek(p).span;
             parse::Edits edits = {};
@@ -2032,6 +2071,10 @@ static ast::FieldDecl finish_field(parse::Parser *p, ast::FieldDecl field, Bool 
 // One field whose type is not an anonymous record: a type, then the rest.
 static ast::FieldDecl parse_field(parse::Parser *p, Style *style, Bool top) {
     ast::FieldDecl field = {};
+    Prefixes aligned = {.top = top};
+    while (parse::at(p, lex::kw_alignas) && parse::peek_at(p, 1).kind == lex::left_paren)
+        parse_alignas(p, &aligned);
+    field.attributes = aligned.attributes;
     U32 start = parse::peek(p).span.start;
     if (take_tag_keyword(p)) field.type = parse::type(p);
     if (field.type == nullptr) {

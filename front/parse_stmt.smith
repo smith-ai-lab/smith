@@ -486,6 +486,7 @@ static Bool starts_declaration(const parse::Parser *p) {
     if (kind == lex::type_name && p->new_syntax && ends_value(parse::peek_at(p, 1).kind)) return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
+    if (kind == lex::at) return p->new_syntax; // `@align(16)` on the line before a local (D18)
     if (kind == lex::name) return path_declaration(p) || parse_type::call_type_ahead(p, 0);
     return false;
 }

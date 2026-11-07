@@ -1326,7 +1326,7 @@ static ast::Stmt *returning_block(const ast::Stmt *b) {
     ast::StmtRef list[:] = room[0:count];
     ast::Stmt *made = ast::block(list);
     made->span = b->span;
-    mem::free(room);
+    mem::free((void *)room);
     return made;
 }
 
