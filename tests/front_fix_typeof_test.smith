@@ -79,3 +79,17 @@ export void test_front_fix_typeof_a_pointer_to_a_slice_of_auto_is_generic_in_its
                  "pub fn take_until[T](xs: *[]T, v: T) -> []T:\n    mut n: usize = 0\n"
                  "    while n < countof(xs.*) && (xs.*)[n] != v:\n        n += 1\n    return (xs.*)[0:n]\n");
 }
+
+// A built-in concept as the element of a parameter's type (`Num xs[:]`, `Num *p`) is an inferred parameter of that concept.
+export void test_front_fix_typeof_a_concept_in_a_parameter_is_an_inferred_parameter() {
+    expect_fixed("module m;\nexport Usize find(const Num xs[:], typeof(xs[0]) v) {\n    return countof(xs);\n}\n"
+                 "export void bump(Num *p, typeof(*p) by) {\n    *p += by;\n}\n",
+                 "pub fn find[T: num](xs: []T, v: typeof(xs[0])) -> usize:\n    return countof(xs)\n"
+                 "pub fn bump[T: num](p: *mut T, by: typeof(p.*)):\n    p.* += by\n");
+}
+
+// A module that declares its own `Num` has no concept of that name.
+export void test_front_fix_typeof_a_declared_type_named_like_a_concept_is_not_one() {
+    expect_fixed("module m;\nstruct Num {\n    I32 v;\n};\nexport Usize count(const Num xs[:]) {\n    return countof(xs);\n}\n",
+                 "struct Num:\n    v: i32\npub fn count(xs: []Num) -> usize:\n    return countof(xs)\n");
+}
