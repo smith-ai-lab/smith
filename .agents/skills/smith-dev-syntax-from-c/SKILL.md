@@ -37,6 +37,9 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `for (Usize i = 0; i < n; i++)`, `i++` | `for i in range(0, n):`, `i += 1` |
 | `for (Usize i, T x : xs)` | `for (i, x) in enumerate(xs):` |
 | `if constexpr (c)`, `for constexpr (auto x : rest)` | `if c:` with a compile-time `c`, `for x in rest:` |
+| `for constexpr (Usize i = 0; i < countof(rest); i++)` that reads `rest[i]`, or `fields(T)[i]` | `for x in rest:`, `for f in fields(T):` and `value.[f]`; a loop that needs the number `i` has no form yet (D20) |
+| `(typeof(a)){0}`, `(T){0}` with `constexpr Type T` | `mem.zeroed(typeof(a))`, `mem.zeroed(T)` after `import std.mem` (D10) |
+| `typeof(x) == char *`, `== const char *`, `== struct smith_array_char_n` | `typeof(x) == *mut char`, `== *char`, `== []mut char` (`[]char` for the `const` struct); `Num xs[:]` (a concept in a parameter) is `fn f[T: num](xs: []T)`; `t[0]` over a tuple is `t.0` |
 | `auto... rest`, `rest...`, `countof(rest)` | `rest...` (or `nums: i32...`), `rest...`, `countof(rest)` |
 | `mem::alloc_slice(I32, n)` | `mem.alloc(i32, n)` after `import std.mem`: a type is an ordinary argument |
 | `T f(constexpr Usize n)` | `fn f(const n: usize) -> T:` |
