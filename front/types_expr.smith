@@ -3060,13 +3060,25 @@ static types::TypeRef named_type(const types::Checked *c, const ast::Expr *calle
     return s->type;
 }
 
+// Whether the callee names a function of a header that a struct of the same name hides: `stat.sigaction`, or in the
+// written form of C `c::sigaction` (#2611).
+static Bool names_header_function(const types::Checked *c, const ast::Expr *callee) {
+    if (callee->kind == .member) return types::c_member_function(c, callee) != nullptr;
+    if (callee->kind != .name || countof(callee->kind.name.path.segments) != 2) return false;
+    ast::Path path = callee->kind.name.path;
+    if (!same_text(path.segments[0].text, "c")) return false;
+    return types::lookup(&c->scopes, msg(format::push("c::", path.segments[1].text, "()"))) != nullptr;
+}
+
 // Whether a call of `h.name(...)` is of the header's function, not a construction of its struct of the same name:
 // the struct is built with named arguments (`signal.sigaction(sa_flags = 0)`), the function called with values.
 static Bool calls_header_function(const types::Checked *c, const ast::Expr *callee, ast::ExprRef args[:]) {
-    if (callee->kind != .member || types::c_member_function(c, callee) == nullptr) return false;
+    if (!names_header_function(c, callee)) return false;
     if (countof(args) == 0) return true;
-    const ast::Expr *first = args[0];
-    if (first->kind == .named_arg) return false;
+    for (Usize i = 0; i < countof(args); i++) {
+        const ast::Expr *arg = args[i];
+        if (arg->kind == .named_arg) return false; // a C function takes no named argument: this builds the struct
+    }
     return true;
 }
 
