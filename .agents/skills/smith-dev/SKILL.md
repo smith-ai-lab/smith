@@ -22,3 +22,4 @@ description: "Start here for any change to smith itself (smith.c, runtime/, shim
 | change a concept or a skill | [smith-dev-docs](../smith-dev-docs/SKILL.md) |
 | be the owner's one point of contact: the backlog, the pool, decisions, the factory's rules, writing tickets | [smith-dev-lead](../smith-dev-lead/SKILL.md) |
 | run one ticket end to end as a runner in a chain | [smith-dev-runner](../smith-dev-runner/SKILL.md) |
+| write, merge, rewrite or close a ticket | [smith-dev-tickets](../smith-dev-tickets/SKILL.md) |
