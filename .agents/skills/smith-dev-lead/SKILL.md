@@ -27,12 +27,13 @@ You are the lead: one session, the owner's one point of contact. You don't write
 - **Foundation first.** Work that conflicts with everything (a rename of the tree) runs alone, with the pool paused. **Run until the owner says stop**, then pause the pool on #73 and let running tickets reach a clean point.
 
 ## What wakes you
-Only three things, and nothing polls (owner, 2026-11-07: "Just event based"):
+Messages and one scheduled check; no shell script, so the lead's machine can sleep between wakes (owner, 2026-11-07: "we're only waking up based on messages and scheduled tasks, not based on shell scripts"):
 - **The owner.**
 - **A runner's `send_message`:** a question, a design split, a file conflict, or a chain that hit the depth limit (start a fresh chain).
 - **A crash notice** for a session you started: start its replacement.
+- **The hourly check,** a scheduled task named `smith lead hourly check` that fires into your session. Look at the line once: the runners working against `runners=` (a chain that ended without a successor gets a fresh runner), a claim whose runner is no longer `working`, main red, the queue's first PR, open PRs with no runner, and the count; fix what is wrong. When nothing is, end the turn in one line and say nothing to the owner. Pausing the pool disables it; running the pool enables it.
 
-No watcher script, no scheduled check, no PR subscriptions, no `@lead:` mailbox. A wake on a large context re-reads all of it, so each wake does its job and a look at the whole line (work order, open PRs, main, the queue, the count), then ends.
+No watcher script, no PR subscriptions, no `@lead:` mailbox. A wake on a large context re-reads all of it, so each wake does its job and ends.
 
 ## Factory rules
 - **One work order, ranked by the count** (owner, 2026-11-06). `## Work order` on #73 lists the tickets by the files each unblocks in the latest count (the merge queue's `frontend-coverage` job), each cause ranked by the files whose first error it is, since a file moves only when its first error is fixed. `p0` (main red, or the count unmeasured) comes before the list; only when the list has no eligible entry do labels order the backlog (`p1` to `p3`, oldest first). A ticket that moves no count waits below one that does, unless it unblocks the flow (CI, the queue). Until #1377 is done the backlog holds only its work: the new front end (#1112) to the switch-over, the `.smith` tools, upstream LLVM (#1376), the patch deletions, and what speeds those up.
