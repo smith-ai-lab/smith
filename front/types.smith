@@ -1075,7 +1075,7 @@ export struct InstanceUse {
 
 export struct Checked {
     Options options;
-    HeaderBinding bindings[32];
+    HeaderBinding bindings[:]; // `max_header_bindings` of them
     Usize binding_count;
     Instance instances[:];
     Usize instance_count;
@@ -3313,22 +3313,21 @@ export struct Names {
 // The names of a chain of `.` that starts at a plain name; none (count 0) for anything else.
 export Names member_names(const ast::Expr *e) {
     Names out = {};
-    Names reversed = {};
+    Usize depth = 0;
     const ast::Expr *at = e;
     while (is_dot_member(at)) {
-        if (reversed.count == 7) return out;
-        reversed.items[reversed.count] = member_field(at);
-        reversed.count += 1;
+        depth += 1;
+        if (depth == 8) return out;
         at = member_base(at);
     }
     Str root = single_name(at);
     if (countof(root) == 0) return out;
     out.items[0] = root;
-    out.count = 1;
-    while (reversed.count > 0) {
-        reversed.count -= 1;
-        out.items[out.count] = reversed.items[reversed.count];
-        out.count += 1;
+    out.count = depth + 1;
+    at = e;
+    for (Usize k = depth; k > 0; k--) {
+        out.items[k] = member_field(at);
+        at = member_base(at);
     }
     return out;
 }
@@ -3874,7 +3873,9 @@ static void declare_headers(Checked *r, const ast::Module *m) {
         if (imported->kind == .import_c && countof(imported->kind.import_c.language) > 0 &&
             r->binding_count < max_header_bindings) {
             Str binding = imported->kind.import_c.alias;
-            if (countof(binding) == 0) binding = default_binding(r, m, imported, name);
+            if (countof(binding) == 0) {
+                binding = default_binding(r, m, imported, name);
+            }
             r->bindings[r->binding_count] = (HeaderBinding){.name = binding, .header = header};
             r->binding_count++;
         }
@@ -3939,7 +3940,10 @@ static void declare_from_names(Checked *r, const ast::Module *m) {
 // Declares the names of `m`, resolves the types of its declarations and, when `o.bodies` is set, checks each body.
 // Errors are in the result, never an abort.
 export Checked check(const ast::Module *m, Options o) {
-    Checked r = {.options = o, .table = start(o.target), .module = nullptr};
+    Checked r = {.options = o,
+                 .table = start(o.target),
+                 .bindings = mem::alloc_slice(HeaderBinding, max_header_bindings),
+                 .module = nullptr};
     if (o.target.pointer_bytes == 0) {
         fail(&r, (ast::Span){}, "the target has no pointer width; pass a target such as types::lp64() in the options");
         return r;
