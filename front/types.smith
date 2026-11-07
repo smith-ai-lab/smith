@@ -1092,7 +1092,8 @@ export void fail(Checked *r, ast::Span span, Str message) {
         if (capacity < 8) capacity = 8;
         r->errors = mem::realloc(r->errors, capacity);
     }
-    r->errors[r->error_count] = (Error){.message = msg(format::push(message)), .span = span};
+    r->errors[r->error_count] = (Error){
+        .message = msg(format::push(message)), .span = span, .left_out_call = nullptr, .left_out_record = nullptr};
     r->error_count += 1;
 }
 
@@ -1139,8 +1140,7 @@ export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix)
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
 export void failf(Checked *r, ast::Span span, auto... args) {
-    Error error = {.message = msg(format::push(args...)), .span = span};
-    fail(r, span, error.message);
+    fail(r, span, msg(format::push(args...)));
 }
 
 static Usize slot_of(const ast::Expr *node, Usize capacity) {
