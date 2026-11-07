@@ -72,6 +72,13 @@ export struct Entry {
     Str intrinsic; // the part of the LLVM intrinsic's name that the shape does not fix
 };
 
+// The element of a pointer, slice or array type; the type itself when it has none (the field is an option).
+static types::TypeRef element_or_self(types::TypeRef t) {
+    const types::Ty *element = t->element;
+    if (element == nullptr) return t;
+    return element;
+}
+
 static Bool same(Str a, Str b) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
@@ -215,16 +222,24 @@ export Bool find(Str name, Entry *found) {
 
 // Whether the callee is `<module>.<name>`, `name` read through a module that `import <module>` bound.
 static Bool is_module_named(const types::Checked *c, Str first, Str module_path) {
-    const types::Symbol *module = types::scoped(c, first);
-    if (module == nullptr) return false;
-    if (!(module->kind == .module_name)) return false;
-    return same(types::module_dotted(module), module_path);
+    if (types::scoped(c, first) == nullptr) return false;
+    if (types::scoped(c, first)->kind == .module_name)
+        return same(types::module_dotted(types::scoped(c, first)), module_path);
+    return false;
 }
 
 static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str function) {
     types::Names names = {};
     if (callee->kind == .member) {
-        if (!callee->kind.member.arrow) names = types::member_names(callee);
+        if (callee->kind.member.arrow) return false;
+        const ast::Expr *base = callee->kind.member.base;
+        if (base->kind == .name) {
+            ast::Path base_path = base->kind.name.path;
+            if (countof(base_path.segments) != 1) return false;
+            names.count = 2;
+            names.items[0] = base_path.segments[0].text;
+            names.items[1] = callee->kind.member.name;
+        }
     }
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
@@ -269,13 +284,17 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
 }
 
 // The builtin a call names: `mem.alloc` with a size, or the builtin of its callee (`callee_entry`).
-export Bool call_entry(const types::Checked *c, const ast::Expr *call, Entry *found) {
-    if (call->kind == .call && names_alloc(c, call->kind.call.callee, countof(call->kind.call.args))) {
-        Bool arena = names_push_slice(c, call->kind.call.callee, countof(call->kind.call.args));
-        *found = made(arena ? "arena.push_slice" : "mem.alloc", .alloc, "");
-        return true;
+export Bool call_entry(const types::Checked *c, const ast::Expr *expr, Entry *found) {
+    if (expr->kind == .call) {
+        ast::ExprRef args[:] = expr->kind.call.args;
+        if (names_alloc(c, expr->kind.call.callee, countof(args))) {
+            Bool arena = names_push_slice(c, expr->kind.call.callee, countof(args));
+            *found = made(arena ? "arena.push_slice" : "mem.alloc", .alloc, "");
+            return true;
+        }
+        return callee_entry(c, expr->kind.call.callee, found);
     }
-    return call->kind == .call && callee_entry(c, call->kind.call.callee, found);
+    return false;
 }
 
 // Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), the
@@ -345,8 +364,10 @@ static types::TypeRef check_overflow(types::Checked *c, const ast::Expr *e, Entr
     types::TypeRef r = value_type(c, args[2]);
     if (a == c->table.invalid || b == c->table.invalid || r == c->table.invalid) return c->table.invalid;
     if (is_open(a) || is_open(b)) return c->table.bool_type;
-    if (a->kind != .integer || b != a || r->kind != .pointer || r->element != a)
-        return wrong(c, e->span, entry, wanted);
+    if (a->kind != .integer || b != a || r->kind != .pointer) return wrong(c, e->span, entry, wanted);
+    const types::Ty *pointee = r->element;
+    if (pointee == nullptr) return wrong(c, e->span, entry, wanted);
+    if (pointee != a) return wrong(c, e->span, entry, wanted);
     return c->table.bool_type;
 }
 
@@ -424,8 +445,9 @@ export types::TypeRef libc_type(const types::Checked *c, U8 letter, types::TypeR
 // A pointer that may be null (`?*T`): C's libc functions take it where they take a pointer.
 static Bool is_pointer_option(types::TypeRef t) {
     if (t->kind != .option) return false;
-    types::TypeRef inner = t->element; // a local: a null test of the field would make `Ty.element` an option (#2669)
-    return inner != nullptr && inner->kind == .pointer;
+    const types::Ty *inner = t->element; // a local: a null test of the field would make `Ty.element` an option (#2669)
+    if (inner == nullptr) return false;
+    return inner->kind == .pointer;
 }
 
 static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
@@ -556,9 +578,9 @@ static types::TypeRef check_atomic_add(types::Checked *c, const ast::Expr *e, En
         !same(order->kind.name.path.segments[0].text, "__ATOMIC_RELAXED"))
         return wrong(c, e->span, entry,
                      "a pointer to an integer, an integer and `__ATOMIC_RELAXED`, the one order smith lowers");
-    if (p->kind != .pointer || p->element->kind != .integer || n->kind != .integer)
+    if (p->kind != .pointer || element_or_self(p)->kind != .integer || n->kind != .integer)
         return wrong(c, e->span, entry, wanted);
-    return p->element;
+    return element_or_self(p);
 }
 
 // The memory orders of `__atomic_exchange_n` and `__atomic_store_n`, the macros of the C library.
@@ -580,10 +602,10 @@ static types::TypeRef check_atomic_write(types::Checked *c, const ast::Expr *e, 
     if (order->kind != .name || countof(order->kind.name.path.segments) != 1 ||
         !is_memory_order(order->kind.name.path.segments[0].text))
         return wrong(c, e->span, entry, wanted);
-    if (p->kind != .pointer || p->element->kind != .integer || n->kind != .integer)
+    if (p->kind != .pointer || element_or_self(p)->kind != .integer || n->kind != .integer)
         return wrong(c, e->span, entry, wanted);
     if (entry.shape == .atomic_store) return c->table.void_type;
-    return p->element;
+    return element_or_self(p);
 }
 
 // The element type `array.filled` is called with (its first argument), for the checker to expect of the value; null
@@ -600,7 +622,12 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
 
 // The constant `node` of one dimension of `array.filled`; false, with the error reported, when it is not one.
 static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
-    if (types::fold_length(c, node, count)) return true;
+    U64 folded = *count;
+    folded = 0;
+    if (types::fold_length(c, node, &folded)) {
+        *count = folded;
+        return true;
+    }
     types::fail(c, node->span,
                 "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
     return false;
@@ -665,7 +692,8 @@ static types::TypeRef check_alloc(types::Checked *c, const ast::Expr *e, Entry e
         if (rank == 0 || rank > 16) return wrong(c, e->span, entry, wanted);
     }
     for (Usize i = 0; i < rank; i++) {
-        const ast::Expr *size = shape->kind == .array_lit ? shape->kind.array_lit.items[i] : shape;
+        const ast::Expr *size = shape;
+        if (shape->kind == .array_lit) size = shape->kind.array_lit.items[i];
         types::TypeRef t = value_type(c, size);
         if (t == c->table.invalid) return c->table.invalid;
         if (t->kind != .integer) {
