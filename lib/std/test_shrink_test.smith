@@ -74,7 +74,7 @@ export void test_shrink_a_large_word_shrinks_to_its_exact_threshold() {
 static U32 many_thresholds(void *context) {
     (void)context;
     U32 failing = 1;
-    for (U64 i = 0; i < 30; i++)
+    for (U64 i = 0; i < (U64)30; i++)
         if (test::shrink_draw(key, i, 0xffffffffffffff00ULL) < 0x7000000000000001ULL + i) failing = 0;
     return failing;
 }
