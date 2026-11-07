@@ -1847,7 +1847,17 @@ unsigned sleep(unsigned seconds) {
 // in use. The first recursive call on a stack allows 96 KB below it, a segment 160 KB below its start (it is 256 KB);
 // the rest is for the frames between two checks, so one frame of more than 32 KB is not covered. A stack the program
 // has left (another thread, a task) is told by its address and gets a limit of its own.
+#ifdef __APPLE__
+// macOS marks the ucontext routines deprecated and declares them only when _XOPEN_SOURCE is defined: defined for this
+// one header, then taken back.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#define _XOPEN_SOURCE 600
 #include <ucontext.h>
+#undef _XOPEN_SOURCE
+#else
+#include <ucontext.h>
+#endif
 #if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
 #define SMITH_RECURSE_ASAN 1
 #include <sanitizer/common_interface_defs.h>
@@ -1957,3 +1967,6 @@ void smith_recurse_call(void (*thunk)(void *record), void *record) {
     smith_recurse_segment(s);
     free(s);
 }
+#ifdef __APPLE__
+#pragma clang diagnostic pop
+#endif
