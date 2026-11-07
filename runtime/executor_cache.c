@@ -1239,7 +1239,7 @@ static void smith_stepcache_prune(SmithExec *exec) {
 
 // Defined in executor_run.c, which this file comes before.
 static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack);
-static void smith_run_make_parents(SmithExec *exec, const char *path);
+static void smith_run_make_parents(const char *path);
 static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, SmithJob *job);
 static int64_t smith_run_wall_ns(void);
 
@@ -1250,7 +1250,7 @@ static void smith_stepcache_core_depfile(SmithExec *exec, const SmithCorePlan *b
     for (size_t i = 0; build->depends != nullptr && build->depends[i] != nullptr; i++) { // bounded by the list
         const char *line = build->depends[i];
         if (strncmp(line, first, length) != 0 || line[length] != ':') continue;
-        smith_run_make_parents(exec, edge->depfile);
+        smith_run_make_parents(edge->depfile);
         FILE *file = fopen(edge->depfile, "wb");
         if (file == nullptr) return;
         fprintf(file, "%s\n", line);
@@ -1308,14 +1308,9 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
         if (home >= 0) close(home);
         return false;
     }
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = &io;
-    exec->arena = &io.arena;
+    SmithExec *exec = smith_exec_open(nullptr);
     exec->options.explain = true;
     exec->manifest = build->plan.manifest;
-    SmithArena scratch = smith_arena_carve(&io.arena, smith_exec_text_max);
-    exec->scratch = (char *)scratch.memory;
     smith_plan_core_stream = out;
     smith_manifest_read(exec);
     smith_state_open(exec);
@@ -1338,7 +1333,7 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
     smith_stepcache = (SmithStepCache){};
     smith_plan_core_stream = nullptr;
     fclose(out);
-    smith_io_close(&io);
+    smith_exec_close(exec);
     bool back = fchdir(home) == 0;
     close(home);
     *ran = commands;
@@ -1347,15 +1342,12 @@ bool smith_core_step_cache(const SmithCoreStepCache *build, char *output, size_t
 
 // include/smith_core_step_cache.h: the prune a build starts with, with the cap and the time given.
 bool smith_core_step_cache_prune(const char *cache, uint64_t cap, int64_t now) {
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = &io;
-    exec->arena = &io.arena;
+    SmithExec *exec = smith_exec_open(nullptr);
     smith_stepcache = (SmithStepCache){};
     bool on = smith_stepcache_start(exec, cache);
     if (on) smith_stepcache_prune_at((time_t)now, cap);
     smith_stepcache = (SmithStepCache){};
-    smith_io_close(&io);
+    smith_exec_close(exec);
     return on;
 }
 #endif
