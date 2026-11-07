@@ -220,11 +220,11 @@ static const char *const smith_mcp_runners[] = {"build/tests", "build/debug/test
 // nullptr when there is no build.info or it names none.
 static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char *folder) {
     const char *info_path = smith_mcp_absolute(&server->scratch, folder, ".smith/build.info");
-    if (smith_files_info(&server->io->files, info_path).error.code != 0) return nullptr;
-    SmithRead read = smith_files_read(&server->io->files, &server->scratch, info_path);
-    if (read.error.code != 0 || read.data.data == nullptr) return nullptr;
-    const char *cursor = (const char *)read.data.data;
-    const char *end = cursor + read.data.count[0];
+    if (smith_world_info(info_path).error.code != 0) return nullptr;
+    SmithWorldRead read = smith_world_read(&server->scratch, info_path);
+    if (read.error.code != 0 || read.data == nullptr) return nullptr;
+    const char *cursor = (const char *)read.data;
+    const char *end = cursor + read.size;
     while (cursor < end) { // bounded by the file
         const char *newline = memchr(cursor, '\n', (size_t)(end - cursor));
         const char *stop = newline != nullptr ? newline : end;
@@ -234,7 +234,7 @@ static const char *smith_mcp_runner_of_build(SmithMcpServer *server, const char 
                 (struct smith_array_const_char_n){.data = cursor + sizeof "runner\t" - 1,
                                                   .count = {(size_t)(stop - cursor) - (sizeof "runner\t" - 1)}});
             const char *absolute = smith_mcp_absolute(&server->scratch, folder, path);
-            SmithFileInfo info = smith_files_info(&server->io->files, absolute);
+            SmithWorldInfo info = smith_world_info(absolute);
             if (info.error.code == 0 && !info.folder) return absolute;
         }
         cursor = stop + 1;
@@ -252,7 +252,7 @@ static const char *smith_mcp_runner(SmithMcpServer *server, const SmithJsonValue
     if (built != nullptr) return built;
     for (size_t i = 0; i < sizeof smith_mcp_runners / sizeof smith_mcp_runners[0]; i++) {
         const char *path = smith_mcp_absolute(&server->scratch, folder, smith_mcp_runners[i]);
-        SmithFileInfo info = smith_files_info(&server->io->files, path);
+        SmithWorldInfo info = smith_world_info(path);
         if (info.error.code == 0 && !info.folder) return path;
     }
     smith_mcp_text_add(out,
@@ -411,7 +411,7 @@ static bool smith_mcp_tool_launch(SmithMcpServer *server, const SmithJsonValue *
     program = test != nullptr ? smith_mcp_runner(server, arguments, folder, out)
                               : smith_mcp_absolute(&server->scratch, folder, program);
     if (program == nullptr) return false;
-    SmithFileInfo info = smith_files_info(&server->io->files, program);
+    SmithWorldInfo info = smith_world_info(program);
     if (info.error.code != 0 || info.folder) {
         smith_mcp_text_add(out, "launch: %s is not a file; build the program first (with -g)\n", program);
         return false;

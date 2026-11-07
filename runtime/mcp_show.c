@@ -63,11 +63,11 @@ static void smith_mcp_source_line(SmithMcpServer *server, struct smith_array_con
     if (line < 1) return;
     SmithArenaScope scope = smith_arena_scope_begin(&server->scratch);
     const char *name = smith_mcp_cstring(&server->scratch, path);
-    SmithFileInfo info = smith_files_info(&server->io->files, name);
+    SmithWorldInfo info = smith_world_info(name);
     if (info.error.code == 0 && !info.folder && info.size <= smith_mcp_source_max) {
-        SmithRead read = smith_files_read(&server->io->files, &server->scratch, name);
-        const char *cursor = (const char *)read.data.data;
-        const char *end = cursor != nullptr ? cursor + read.data.count[0] : nullptr;
+        SmithWorldRead read = smith_world_read(&server->scratch, name);
+        const char *cursor = (const char *)read.data;
+        const char *end = cursor != nullptr ? cursor + read.size : nullptr;
         for (int64_t number = 1; read.error.code == 0 && cursor != nullptr && cursor < end;
              number++) { // bounded by the file
             const char *newline = memchr(cursor, '\n', (size_t)(end - cursor));

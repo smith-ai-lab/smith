@@ -18,7 +18,7 @@
 // already ended (`return`, `break`, `continue`) stores nothing and gets no branch. When no branch reaches `end` it gets
 // `unreachable` and the pushed Value is `undef` of the slot's type.
 //
-// NOT HERE (`not emitted yet`): a `for`, `while` or `if let` used as a value, and a `match` with no hint (its handler,
+// NOT HERE (`not emitted yet`): a `for` or `while` used as a value, and a `match` with no hint (its handler,
 // emit_match's `value_of`, is #1585's; a block's last line that is a `match` goes there with the slot's type).
 module front::emit_value;
 
@@ -74,9 +74,17 @@ static state::Status infer_type(state::Emitter *e, const ast::Stmt *s, state::Ty
     while (depth > 0) {
         depth -= 1;
         const ast::Stmt *top = pending[depth];
-        if (top->kind == .if_stmt) {
-            const ast::Stmt *then_branch = top->kind.if_stmt.then_branch;
-            const ast::Stmt *else_branch = top->kind.if_stmt.else_branch;
+        if (top->kind == .if_stmt || top->kind == .if_let) {
+            const ast::Stmt *then_branch = nullptr;
+            const ast::Stmt *else_branch = nullptr;
+            if (top->kind == .if_stmt) {
+                then_branch = top->kind.if_stmt.then_branch;
+                else_branch = top->kind.if_stmt.else_branch;
+            }
+            if (top->kind == .if_let) {
+                then_branch = top->kind.if_let.then_branch;
+                else_branch = top->kind.if_let.else_branch;
+            }
             if (depth + 2 > countof(pending)) return state::fail("an `if` nested more than 32 deep", s->span);
             if (else_branch != nullptr) {
                 pending[depth] = else_branch;
@@ -94,7 +102,7 @@ static state::Status infer_type(state::Emitter *e, const ast::Stmt *s, state::Ty
                 return {.error = typed.error};
             }
             try join_types(out, found, typed.ok, s->span);
-        } else if (last->kind == .if_stmt || last->kind == .block) {
+        } else if (last->kind == .if_stmt || last->kind == .block || last->kind == .if_let) {
             if (depth == countof(pending)) return state::fail("an `if` nested more than 32 deep", s->span);
             pending[depth] = last;
             depth += 1;
@@ -155,7 +163,7 @@ static state::Status last_line_into(state::Emitter *e, const ast::Stmt *last, c:
         state::push_eval(e, value, state::hint_of(ty));
         return state::success();
     }
-    if (last->kind == .if_stmt || last->kind == .block) {
+    if (last->kind == .if_stmt || last->kind == .block || last->kind == .if_let) {
         state::push_then_general(e, into_work(into_start, last, slot, ty));
         return state::success();
     }
@@ -238,6 +246,7 @@ static state::Status into_start(state::Emitter *e, const state::ThenGeneral *w) 
     const ast::Stmt *s = w->stmt;
     if (s->kind == .block) return block_into(e, s, w->value, w->ty);
     if (s->kind == .if_stmt) return if_into(e, s, w->value, w->ty);
+    if (s->kind == .if_let) return matching::if_let_into(e, s, w->value, w->ty, into_start);
     // A one-line branch (`if c: a else: b`) is a statement of its own: an expression stores, `return` and the like end.
     return last_line_into(e, s, w->value, w->ty);
 }
@@ -267,7 +276,7 @@ static state::Status unsupported(const ast::Stmt *s) {
 }
 
 export state::Status value_of(state::Emitter *e, const ast::Stmt *s, state::Hint hint) {
-    if (s->kind != .if_stmt && s->kind != .block) return unsupported(s);
+    if (s->kind != .if_stmt && s->kind != .block && s->kind != .if_let) return unsupported(s);
     state::Ty ty = {};
     if (hint.present) {
         ty = hint.ty;
