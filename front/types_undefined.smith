@@ -80,23 +80,27 @@ static Bool same(Str a, Str b) {
     return true;
 }
 
-static Bool is_name(const ast::Expr *e, Str name) {
-    if (e == nullptr || !(e->kind == .name)) {
+static Bool is_name(const ast::Expr *e, Str wanted) {
+    if (e == nullptr) {
+        return false;
+    }
+    if (e->kind != .name) {
         return false;
     }
     ast::Identifier segments[:] = e->kind.name.path.segments;
-    return countof(segments) == 1 && same(segments[0].text, name);
+    return countof(segments) == 1 && same(segments[0].text, wanted);
 }
 
 // The name an lvalue is built on: `x` in `x`, `x[i]`, `x.f`, `x[a:b]`.
 static const ast::Expr *root_of(const ast::Expr *e) {
     while (e != nullptr) {
-        if (e->kind == .index) {
-            e = e->kind.index.base;
-        } else if (e->kind == .slice_of) {
-            e = e->kind.slice_of.base;
-        } else if (e->kind == .member && !e->kind.member.arrow) {
-            e = e->kind.member.base;
+        const ast::Expr *at = e; // not reassigned, so that the fixer can bind its payloads
+        if (at->kind == .index) {
+            e = at->kind.index.base;
+        } else if (at->kind == .slice_of) {
+            e = at->kind.slice_of.base;
+        } else if (at->kind == .member && !at->kind.member.arrow) {
+            e = at->kind.member.base;
         } else {
             break;
         }
@@ -113,7 +117,7 @@ static void note_read(Usage *u, const ast::Expr *e) {
 
 // `target = value` and `target op= value`.
 static void assignment(Work *w, Usage *u, Str name, const ast::Expr *e) {
-    if (!(e->kind == .assign)) {
+    if (e->kind != .assign) {
         return;
     }
     const ast::Expr *target = e->kind.assign.target;
@@ -132,7 +136,7 @@ static void assignment(Work *w, Usage *u, Str name, const ast::Expr *e) {
 
 // `&x` is a write (the pointer may be used to fill it), `x++` and `--x` read.
 static void unary(Work *w, Usage *u, Str name, const ast::Expr *e) {
-    if (!(e->kind == .unary)) {
+    if (e->kind != .unary) {
         return;
     }
     const ast::Expr *operand = e->kind.unary.operand;
@@ -309,15 +313,15 @@ static void report(types::Checked *r, Str name, const ast::Expr *at) {
 
 // An undefined local, as declared by `s`: its name, else an empty text.
 static Str undefined_name(const ast::Stmt *s) {
-    if (!(s->kind == .declaration)) {
+    if (s->kind != .declaration) {
         return "";
     }
     const ast::Decl *d = s->kind.declaration.decl;
-    if (!(d->kind == .variable) || !d->kind.variable.is_new || d->kind.variable.init == nullptr) {
+    if (d->kind != .variable || !d->kind.variable.is_new || d->kind.variable.init == nullptr) {
         return "";
     }
     const ast::Expr *init = d->kind.variable.init;
-    if (!(init->kind == .name) || countof(init->kind.name.path.segments) != 1 ||
+    if (init->kind != .name || countof(init->kind.name.path.segments) != 1 ||
         !same(init->kind.name.path.segments[0].text, "undefined")) {
         return "";
     }
@@ -326,7 +330,7 @@ static Str undefined_name(const ast::Stmt *s) {
 
 // `s` when it is `name = value` or `name op= value` (its value is read before the write), else null.
 static const ast::Expr *assignment_to(const ast::Stmt *s, Str name) {
-    if (!(s->kind == .expression) || s->kind.expression.value == nullptr) {
+    if (s->kind != .expression || s->kind.expression.value == nullptr) {
         return nullptr;
     }
     const ast::Expr *e = s->kind.expression.value;
@@ -339,14 +343,16 @@ static const ast::Expr *assignment_to(const ast::Stmt *s, Str name) {
 // Reads `s` against one tracked name; true when the name is settled (written, or reported) and need not be followed.
 static Bool settle(types::Checked *r, Str name, const ast::Stmt *s) {
     const ast::Expr *e = assignment_to(s, name);
-    if (e != nullptr && e->kind == .assign) {
-        Usage v = scan(name, nullptr, e->kind.assign.value);
-        if (!(e->kind.assign.op == .plain)) {
-            report(r, name, e->kind.assign.target);
-        } else if (v.reads > 0 && v.writes == 0) {
-            report(r, name, v.first_read);
+    if (e != nullptr) {
+        if (e->kind == .assign) {
+            Usage v = scan(name, nullptr, e->kind.assign.value);
+            if (e->kind.assign.op != .plain) {
+                report(r, name, e->kind.assign.target);
+            } else if (v.reads > 0 && v.writes == 0) {
+                report(r, name, v.first_read);
+            }
+            return true;
         }
-        return true;
     }
     Usage u = scan(name, s, nullptr);
     if (u.writes > 0) {
@@ -361,7 +367,7 @@ static Bool settle(types::Checked *r, Str name, const ast::Stmt *s) {
 
 // One block, in order: follows the undefined locals it declares until each is written.
 static void block(types::Checked *r, const ast::Stmt *b) {
-    if (!(b->kind == .block)) {
+    if (b->kind != .block) {
         return;
     }
     Str tracked[tracked_limit] = {};

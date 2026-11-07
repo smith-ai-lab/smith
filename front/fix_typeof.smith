@@ -13,11 +13,18 @@ module front::fix_typeof;
 
 import front::ast;
 import front::parse as core;
+import front::types;
+import std::ascii;
+import std::format;
 import std::mem;
 
 static Bool at(Str s, Usize i, Str pattern) {
     if (i + countof(pattern) > countof(s)) return false;
     return mem::equal(s[i:i + countof(pattern)], pattern);
+}
+
+static Bool same(Str a, Str b) {
+    return countof(a) == countof(b) && at(a, 0, b);
 }
 
 static Bool word_char(char ch) {
@@ -54,6 +61,7 @@ static Str spelling(Str arg, Str name, Bool mutable) {
     if (is_use(arg, name, "")) return mutable ? "[]mut T" : "[]T";
     if (is_use(arg, name, ".data")) return mutable ? "*mut T" : "*T";
     if (is_use(arg, name, ".data.*") || is_use(arg, name, "[0]")) return "T";
+    if (is_use(arg, name, ".*") || is_use(arg, name, "[0][0]")) return "T";
     return "";
 }
 
@@ -124,8 +132,45 @@ static Bool in_literal(Str s, Usize i) {
     return quote != 0;
 }
 
+// Whether the `typeof(` at `i` is the argument of a type predicate, `is_slice(typeof(x))`, `is_pointer(typeof(x))`.
+static Bool predicate_before(Str text, Usize i) {
+    if (i == 0 || text[i - 1] != '(') return false;
+    Usize start = i - 1;
+    while (start > 0 && (ascii::alpha(text[start - 1]) || text[start - 1] == '_'))
+        start -= 1;
+    return at(text, start, "is_");
+}
+
+// Whether `text` picks what to do by the type of the parameter itself, `typeof(name) == char *` (#2668): the function
+// takes more than slices (`std::format`'s `make_padded` tests a string, a slice and a number), so `auto` stays.
+static Bool dispatches(Str text, Str name) {
+    for (Usize i = 0; i < countof(text); i++) {
+        if (!at(text, i, "typeof(") || !at(text, i + 7, name) || !at(text, i + 7 + countof(name), ")")) continue;
+        if (predicate_before(text, i)) return true;
+        Usize j = i + 8 + countof(name);
+        while (j < countof(text) && text[j] == ' ')
+            j += 1;
+        if (at(text, j, "==") || at(text, j, "!=")) return true;
+    }
+    return false;
+}
+
+static Bool ends_with(Str text, Str tail) {
+    return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):], tail);
+}
+
+// Whether `text` spells a type by `typeof(name` and does not pick what to do by it.
+static Bool used_typed(Str text, Str name) {
+    if (dispatches(text, name)) return false;
+    for (Usize i = 0; i < countof(text); i++) {
+        if (at(text, i, "typeof(") && at(text, i + 7, name) && !in_literal(text, i)) return true;
+    }
+    return false;
+}
+
 // Whether `text` uses `typeof(name` and reads `name` as a slice.
 static Bool used_as_slice(Str text, Str name) {
+    if (dispatches(text, name)) return false;
     Bool typed = false;
     Bool sliced = false;
     for (Usize i = 0; i < countof(text); i++) {
@@ -148,24 +193,47 @@ static core::Edits rewrite_uses(core::Edits edits, Str source, Usize from, Usize
     return edits;
 }
 
+// Whether the text of a parameter is `name: *[]auto` or `name: *mut []auto` (`mut` after the brackets too): a pointer
+// to a slice of any element type, as `const auto (*xs)[:]` is mended.
+static Bool is_slice_pointer(Str param) {
+    Usize colon = 0;
+    while (colon < countof(param) && param[colon] != ':')
+        colon += 1;
+    if (colon + 3 >= countof(param) || !at(param, colon + 1, " *")) return false;
+    Usize n = countof(param);
+    return n >= 6 && at(param, n - 6, "[]auto");
+}
+
 // The fix of the generic function `d`: its `auto` parameter, its name's `[T]` and every `typeof` of the parameter.
 static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     core::ParseError none = {};
     if (d->kind != .function) return none;
     ast::Param params[:] = d->kind.function.params;
     Usize found = countof(params);
+    Bool slice_auto = false; // `xs: []auto`, a read-only slice (`const auto xs[:]`): only the element is generic
     for (Usize i = 0; i < countof(params); i++) {
         const ast::TypeExpr *type = params[i].type;
-        if (type == nullptr || type->kind != .auto_type) continue;
+        if (type == nullptr) continue;
+        Bool is_auto = type->kind == .auto_type;
+        Bool is_slice = false;
+        if (!is_auto && params[i].span.end <= countof(source) && params[i].span.start < params[i].span.end) {
+            Str param = source[params[i].span.start:params[i].span.end];
+            is_slice = !is_slice_pointer(param) && (ends_with(param, ": []auto") || ends_with(param, ": []mut auto") ||
+                                                    ends_with(param, ": *auto") || ends_with(param, ": *mut auto") ||
+                                                    ends_with(param, ": [][]auto"));
+        }
+        if (!is_auto && !is_slice) continue;
         if (found != countof(params) || params[i].is_rest) return none; // one `auto`, no pack
         found = i;
+        slice_auto = is_slice;
     }
     if (found == countof(params) || d->kind.function.body == nullptr) return none;
     Usize start = d->span.start;
     Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
     Str name = params[found].name;
     Str text = source[start:end];
-    if (!used_as_slice(text, name) || word_then(text, 0, "T", "")) return none;
+    if (slice_auto ? !used_typed(text, name) : !used_as_slice(text, name)) return none;
+    if (word_then(text, 0, "T", "")) return none;
     Usize param_end = params[found].span.end;
     if (param_end < 4 || param_end > end || !at(source, param_end - 4, "auto")) return none;
     // The name of the function: `fn <name>(`.
@@ -180,11 +248,156 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     Bool mutable = writes(text, name);
     core::Edits edits = {};
     edits = push(edits, name_end, name_end, "[T]");
-    edits = push(edits, param_end - 4, param_end, mutable ? "[]mut T" : "[]T");
+    Str element = "[]T";
+    if (mutable) element = "[]mut T";
+    if (slice_auto) element = "T";
+    edits = push(edits, param_end - 4, param_end, element);
     edits = rewrite_uses(edits, source, start, end, name, mutable);
     core::ParseError out = {};
     out.span = d->span;
     out.message = "an `auto` slice parameter is an inferred parameter: write `[T]` and `[]T`";
+    out.fix = edits;
+    return out;
+}
+
+// The element type of the pointer to a slice that `d` takes, written `typeof((xs.*)[0])` in the body and the result:
+// the function is generic in it, `fn name[T](xs: *mut []T, ...)`.
+static core::ParseError pointer_fix(Str source, const ast::Decl *d) {
+    core::ParseError none = {};
+    if (d->kind != .function || d->kind.function.body == nullptr) return none;
+    ast::Param params[:] = d->kind.function.params;
+    Usize found = countof(params);
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].span.end > countof(source) || params[i].span.start >= params[i].span.end) continue;
+        Str param = source[params[i].span.start:params[i].span.end];
+        if (!is_slice_pointer(param)) continue;
+        if (found != countof(params)) return none;
+        found = i;
+    }
+    if (found == countof(params)) return none;
+    Usize start = d->span.start;
+    Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    Str fname = d->kind.function.name;
+    Usize name_end = end;
+    for (Usize i = start; i + 3 + countof(fname) < end; i++) {
+        if (at(source, i, "fn ") && at(source, i + 3, fname) && source[i + 3 + countof(fname)] == '(') {
+            name_end = i + 3 + countof(fname);
+            break;
+        }
+    }
+    if (name_end == end) return none;
+    core::Edits edits = {};
+    edits = push(edits, name_end, name_end, "[T]");
+    edits = push(edits, params[found].span.end - 4, params[found].span.end, "T");
+    Str name = params[found].name;
+    Str cut = types::message_of(format::push("(", name, ".*)[0:0]"));
+    Str one = types::message_of(format::push("(", name, ".*)[0]"));
+    Bool spelled = false;
+    for (Usize i = start; i + 8 < end; i++) {
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
+        Usize close = close_of(source, i + 6, end);
+        if (close == end) continue;
+        Str arg = source[i + 7:close];
+        if (mem::equal(arg, cut) || mem::equal(arg, one)) spelled = true;
+    }
+    if (!spelled) return none; // no `typeof` of the element: the pointer to a slice of `auto` stays as it is
+    for (Usize i = params[found].span.end; i + 8 < end; i++) {
+        if (!at(source, i, "typeof(") || (i > 0 && word_char(source[i - 1])) || in_literal(source, i)) continue;
+        Usize close = close_of(source, i + 6, end);
+        if (close == end) continue;
+        Str arg = source[i + 7:close];
+        if (mem::equal(arg, cut)) edits = push(edits, i, close + 1, "[]T");
+        if (mem::equal(arg, one)) edits = push(edits, i, close + 1, "T");
+    }
+    core::ParseError out = {};
+    out.span = d->span;
+    out.message = "a pointer to a slice of `auto` is an inferred parameter: write `[T]` and `*mut []T`";
+    out.fix = edits;
+    return out;
+}
+
+// The built-in concept `word` stands for in the old spelling (`Num` is `num`), or empty when it is not one.
+static Str concept_of(Str word) {
+    if (same(word, "Num")) return "num";
+    if (same(word, "Int")) return "int";
+    if (same(word, "Float")) return "float";
+    return "";
+}
+
+// Whether the module declares a type called `word` itself (`struct Num`, `enum Num`, `Num :=`): then it is no concept.
+static Bool declares(Str source, Str word) {
+    for (Usize i = 0; i + countof(word) < countof(source); i++) {
+        if (!at(source, i, word) || (i > 0 && word_char(source[i - 1])) || word_char(source[i + countof(word)]))
+            continue;
+        if (i >= 7 && at(source, i - 7, "struct ")) return true;
+        if (i >= 5 && at(source, i - 5, "enum ")) return true;
+        if (at(source, i + countof(word), " :=")) return true;
+    }
+    return false;
+}
+
+static Str letter_of(Usize k) {
+    if (k == 0) return "T";
+    if (k == 1) return "U";
+    if (k == 2) return "V";
+    return "W";
+}
+
+// The offset after `fn <name>` in source[start:end], or `end` when it is not there.
+static Usize name_end_of(Str source, Str fname, Usize start, Usize end) {
+    for (Usize i = start; i + 3 + countof(fname) < end; i++) {
+        if (at(source, i, "fn ") && at(source, i + 3, fname) && source[i + 3 + countof(fname)] == '(')
+            return i + 3 + countof(fname);
+    }
+    return end;
+}
+
+// The concept words in the type of one parameter (the text after its `:`), each replaced by a letter; the bracket entry
+// (`T: num`) for each goes to `entries`.
+static core::Edits concept_edits(core::Edits edits, Str source, ast::Param param, Str *entries, Usize *count) {
+    Usize colon = param.span.start;
+    while (colon < param.span.end && source[colon] != ':')
+        colon += 1;
+    for (Usize i = colon; i < param.span.end; i++) {
+        if (!word_char(source[i]) || (i > 0 && word_char(source[i - 1]) && i > colon + 1)) continue;
+        Usize stop = i;
+        while (stop < param.span.end && word_char(source[stop]))
+            stop += 1;
+        Str concept = concept_of(source[i:stop]);
+        if (countof(concept) == 0 || declares(source, source[i:stop])) {
+            i = stop;
+            continue;
+        }
+        Str letter = letter_of(*count);
+        *entries = types::message_of(format::push(*entries, *count > 0 ? ", " : "", letter, ": ", concept));
+        *count += 1;
+        edits = push(edits, i, stop, letter);
+        i = stop;
+    }
+    return edits;
+}
+
+// A parameter whose type holds a built-in concept (`xs: []Num`, `p: *mut Int`) is an inferred parameter of that
+// concept: `fn sum[T: num](xs: []T)`.
+static core::ParseError concept_fix(Str source, const ast::Decl *d) {
+    core::ParseError none = {};
+    if (d->kind != .function || d->kind.function.body == nullptr) return none;
+    ast::Param params[:] = d->kind.function.params;
+    Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    Usize name_end = name_end_of(source, d->kind.function.name, d->span.start, end);
+    if (name_end == end || source[name_end] != '(') return none;
+    core::Edits edits = {};
+    Str entries = "";
+    Usize count = 0;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].span.end > end || params[i].span.start >= params[i].span.end) continue;
+        edits = concept_edits(edits, source, params[i], &entries, &count);
+    }
+    if (count == 0) return none;
+    edits = push(edits, name_end, name_end, types::message_of(format::push("[", entries, "]")));
+    core::ParseError out = {};
+    out.span = d->span;
+    out.message = "a built-in concept in a parameter's type is an inferred parameter: write `[T: num]` and `T`";
     out.fix = edits;
     return out;
 }
@@ -203,6 +416,94 @@ static core::ParseError written_type(Str source, Usize i) {
     return out;
 }
 
+// The new syntax's name of a C base type written in `typeof(x) == T *` (`U8` is `u8`); anything else is kept.
+
+static Str base_name(Str word) {
+    if (same(word, "Char")) return "char";
+    if (same(word, "U8")) return "u8";
+    if (same(word, "I8")) return "i8";
+    if (same(word, "U16")) return "u16";
+    if (same(word, "I16")) return "i16";
+    if (same(word, "U32")) return "u32";
+    if (same(word, "I32")) return "i32";
+    if (same(word, "U64")) return "u64";
+    if (same(word, "I64")) return "i64";
+    if (same(word, "F32")) return "f32";
+    if (same(word, "F64")) return "f64";
+    if (same(word, "Usize")) return "usize";
+    if (same(word, "Isize")) return "isize";
+    if (same(word, "Bool")) return "bool";
+    if (same(word, "Void")) return "void";
+    return word;
+}
+
+static Usize skip_space(Str s, Usize i) {
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t'))
+        i += 1;
+    return i;
+}
+
+static Usize word_end(Str s, Usize i) {
+    while (i < countof(s) && word_char(s[i]))
+        i += 1;
+    return i;
+}
+
+// The slice struct `struct smith_array_char_n` / `struct smith_array_const_char_n` at `i`: `[]mut char` / `[]char`.
+static Str slice_type(Str s, Usize i, Usize *end) {
+    if (!at(s, i, "struct smith_array_")) return "";
+    Usize stop = word_end(s, i + 7);
+    Str tag = s[i + 19:stop];
+    if (countof(tag) < 3 || !at(tag, countof(tag) - 2, "_n")) return "";
+    tag = tag[:countof(tag) - 2];
+    Bool read_only = at(tag, 0, "const_");
+    if (read_only) tag = tag[6:];
+    if (countof(tag) == 0 || !word_char(tag[0])) return "";
+    *end = stop;
+    return types::message_of(format::push(read_only ? "[]" : "[]mut ", base_name(tag)));
+}
+
+// The pointer type `char *` / `const char *` at `i`: `*mut char` / `*char`. One star only.
+static Str pointer_type(Str s, Usize i, Usize *end) {
+    Bool read_only = false;
+    if (at(s, i, "const ")) {
+        read_only = true;
+        i = skip_space(s, i + 5);
+    }
+    Usize stop = word_end(s, i);
+    if (stop == i || same(s[i:stop], "struct")) return "";
+    Str base = s[i:stop];
+    Usize star = skip_space(s, stop);
+    if (at(s, star, "const")) {
+        read_only = true;
+        star = skip_space(s, star + 5);
+    }
+    if (!at(s, star, "*") || at(s, star + 1, "*") || at(s, star + 1, "=")) return "";
+    *end = star + 1;
+    return types::message_of(format::push(read_only ? "*" : "*mut ", base_name(base)));
+}
+
+// The fix of the `typeof(x) == T` or `!= T` that starts at `i` when `T` is a C pointer or slice struct written out.
+static core::ParseError compared_type(Str source, Usize i) {
+    core::ParseError none = {};
+    if (!at(source, i, "typeof(") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    if (in_literal(source, i)) return none;
+    Usize close = close_of(source, i + 6, countof(source));
+    if (close == countof(source)) return none;
+    Usize at_op = skip_space(source, close + 1);
+    if (!at(source, at_op, "==") && !at(source, at_op, "!=")) return none;
+    Usize from = skip_space(source, at_op + 2);
+    Usize end = from;
+    Str type = slice_type(source, from, &end);
+    if (countof(type) == 0) type = pointer_type(source, from, &end);
+    if (countof(type) == 0) return none;
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)from, .end = (U32)end};
+    out.message = "a C pointer or slice type tested with `typeof` is written `*mut T`, `*T`, `[]mut T` or `[]T`";
+    out.fix = push(out.fix, from, end, type);
+    return out;
+}
+
 // The fixes of the module: each generic function over a slice, and each `typeof` of a type written out.
 export core::Errors edits(Str source, const ast::Module *module) {
     core::Errors out = {};
@@ -210,12 +511,15 @@ export core::Errors edits(Str source, const ast::Module *module) {
         const ast::Decl *d = module->decls[i];
         if (d->kind != .function) continue;
         core::ParseError found = generic_fix(source, d);
+        if (countof(found.fix) == 0) found = pointer_fix(source, d);
+        if (countof(found.fix) == 0) found = concept_fix(source, d);
         if (countof(found.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = found;
     }
     for (Usize i = 0; i < countof(source); i++) {
         core::ParseError found = written_type(source, i);
+        if (countof(found.fix) == 0) found = compared_type(source, i);
         if (countof(found.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = found;

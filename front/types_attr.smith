@@ -69,27 +69,36 @@ static Bool marks_attribute(const ast::Decl *d) {
     return false;
 }
 
+// Whether an expression is the name of an imported module (`ast` in `ast.Span`).
+static Bool names_module(const types::Checked *r, const ast::Expr *base) {
+    if (base->kind != .name) return false;
+    const types::Symbol *s = types::lookup_path(&r->scopes, base->kind.name.path);
+    return s != nullptr && s->kind == .module_name;
+}
+
 // Whether a callee names a type, so the call builds a value of it: `Span`, or `ast.Span` through a module.
 static Bool names_type(const types::Checked *r, const ast::Expr *callee) {
     if (callee->kind == .name) {
-        const types::Symbol *s = types::lookup_path(&r->scopes, callee->kind.name.path);
+        // `ast.Span` is read as the one name `ast::Span`: found through the imported module
+        const types::Symbol *s = types::type_through_modules(r, callee->kind.name.path);
         return s != nullptr && s->kind == .type_name;
     }
-    if (!(callee->kind == .member)) return false;
+    if (callee->kind != .member) return false;
     const ast::Expr *base = callee->kind.member.base;
-    Str name = callee->kind.member.name;
-    if (base->kind != .name || countof(name) == 0 || name[0] < 'A' || name[0] > 'Z') return false;
-    const types::Symbol *s = types::lookup_path(&r->scopes, base->kind.name.path);
-    return s != nullptr && s->kind == .module_name;
+    Str written = callee->kind.member.name;
+    if (countof(written) == 0 || written[0] < 'A' || written[0] > 'Z') return false;
+    return names_module(r, base);
 }
 
 // The values of a call known at compile time when its arguments are (#2530): a construction `S(a = 0)` and
 // `array.filled(T, n, 0)`, the zero defaults the fixer writes; false for any other call.
 static Bool constant_call(const types::Checked *r, const ast::Expr *e) {
-    if (!(e->kind == .call)) return false;
+    if (e->kind != .call) return false;
     const ast::Expr *callee = e->kind.call.callee;
     if (names_type(r, callee)) return true;
-    return callee->kind == .member && same_text(callee->kind.member.name, "filled") && countof(e->kind.call.args) == 3;
+    if (callee->kind == .member && same_text(callee->kind.member.name, "filled") && countof(e->kind.call.args) == 3)
+        return true;
+    return false;
 }
 
 // Whether an expression is known at compile time: literals, constants, and operations on them.
@@ -107,12 +116,7 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         if (e->kind == .variant && e->kind.variant.payload == nullptr) continue;
         if (e->kind == .name) {
             const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
-            if (s == nullptr || s->kind != .variable) return false;
-            Bool fixed = s->is_const;
-            if (s->decl != nullptr && s->decl->kind == .variable && s->decl->kind.variable.is_new) {
-                fixed = !s->decl->kind.variable.is_mut;
-            }
-            if (!fixed) return false;
+            if (types::constant_initializer(s) == nullptr) return false;
             continue;
         }
         if (top + 2 > 32) return false;
@@ -124,12 +128,15 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         } else if (e->kind == .named_arg) {
             stack[top++] = e->kind.named_arg.value;
         } else if (e->kind == .array_lit || constant_call(r, e)) {
-            Bool filled = e->kind == .call && !names_type(r, e->kind.call.callee);
+            Bool filled = false;
+            if (e->kind == .call && !names_type(r, e->kind.call.callee)) filled = true;
             ast::ExprRef items[:] = {};
             if (e->kind == .array_lit) items = e->kind.array_lit.items;
             if (e->kind == .call) items = e->kind.call.args;
             if (top + countof(items) > 32) return false;
-            for (Usize i = filled ? 1 : 0; i < countof(items); i++)
+            Usize first = 0;
+            if (filled) first = 1;
+            for (Usize i = first; i < countof(items); i++)
                 stack[top++] = items[i];
         } else {
             return false;
@@ -140,16 +147,19 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
 
 // Whether argument `i` fills a field an earlier argument filled: the field at `at` is among the positional ones, or an
 // earlier argument names it.
+static Bool names_before(const ast::Attribute *a, Usize i, Str wanted) {
+    for (Usize j = 0; j < i; j++) {
+        const ast::Expr *earlier = a->args[j];
+        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, wanted)) return true;
+    }
+    return false;
+}
+
 static Bool given_before(const ast::Attribute *a, Usize i, Usize at, Usize positional) {
     const ast::Expr *arg = a->args[i];
     if (arg->kind != .named_arg) return false;
     if (at < positional) return true;
-    for (Usize j = 0; j < i; j++) {
-        const ast::Expr *earlier = a->args[j];
-        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, arg->kind.named_arg.name))
-            return true;
-    }
-    return false;
+    return names_before(a, i, arg->kind.named_arg.name);
 }
 
 // The arguments of `@rename(...)` against the fields of its struct: matched as a construction matches them (#1813),
@@ -174,7 +184,7 @@ static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name
             types::fail(r, value->span, "an attribute's arguments are computed at compile time");
             continue;
         }
-        types_expr::check(r, value, field->type);
+        (void)types_expr::check(r, value, field->type);
     }
 }
 
@@ -246,7 +256,10 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
             "`@returns_internal`, and your own are structs marked `@attribute`");
         return;
     }
-    if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
+    Bool marked = false;
+    const ast::Decl *decl = symbol->decl;
+    if (decl != nullptr) marked = marks_attribute(decl);
+    if (!marked) {
         types::failf(r, a->span, "`", name, "` is not an attribute: mark its struct `@attribute`");
         return;
     }
@@ -260,34 +273,36 @@ static void check_all(types::Checked *r, ast::Attribute list[:]) {
 
 // A default (`x: T = 3`, a field's or a parameter's): known at compile time, and of the type it fills.
 static void check_default(types::Checked *r, const ast::Expr *value, types::TypeRef wanted) {
-    if (value == nullptr) return;
     // `step: Step = undefined`: C zeroes the member and fills its pointers before use (lead on #2613, as D2 option B)
     if (types_expr::is_undefined(value)) return;
     if (!is_constant(r, value)) {
         types::fail(r, value->span, "a default must be a compile-time constant");
         return;
     }
-    if (wanted != nullptr) types_expr::check(r, value, wanted);
+    if (wanted != nullptr) (void)types_expr::check(r, value, wanted);
 }
 
 // The defaults of a struct's fields.
 static void check_field_defaults(types::Checked *r, const ast::Decl *d) {
-    if (!(d->kind == .record)) return;
+    if (d->kind != .record) return;
     const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.record.name);
     if (symbol == nullptr || symbol->type == nullptr || symbol->type->kind != .record) return;
-    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(types::slots_of(symbol->type).items); k++)
-        check_default(r, d->kind.record.fields[k].default_value, types::slots_of(symbol->type).items[k].type);
+    for (Usize k = 0; k < countof(d->kind.record.fields) && k < countof(types::slots_of(symbol->type).items); k++) {
+        const ast::Expr *given = d->kind.record.fields[k].default_value;
+        if (given != nullptr) check_default(r, given, types::slots_of(symbol->type).items[k].type);
+    }
 }
 
 // The defaults of a function's parameters; a parameter without one may not follow one with one.
 static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
-    if (!(d->kind == .function)) return;
+    if (d->kind != .function) return;
     const types::Symbol *symbol = types::lookup(&r->scopes, d->kind.function.name);
     ast::Param params[:] = d->kind.function.params;
     Bool had_default = false;
     for (Usize k = 0; k < countof(params); k++) {
         const ast::Param *param = &params[k];
-        if (param->default_value == nullptr) {
+        const ast::Expr *given = param->default_value;
+        if (given == nullptr) {
             if (had_default && param->is_new && !param->is_rest && !param->is_keyword) {
                 types::failf(r, param->span, "the parameter `", param->name,
                              "` has no default but follows one that has; give it a default, or move it before the "
@@ -299,7 +314,7 @@ static void check_parameter_defaults(types::Checked *r, const ast::Decl *d) {
         types::TypeRef wanted = nullptr;
         if (symbol != nullptr && symbol->type != nullptr && k < countof(types::slots_of(symbol->type).items))
             wanted = types::slots_of(symbol->type).items[k].type;
-        check_default(r, param->default_value, wanted);
+        check_default(r, given, wanted);
     }
 }
 
