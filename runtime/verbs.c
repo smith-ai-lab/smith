@@ -167,7 +167,8 @@ static const SmithInfo *smith_info_read(const char *verb) {
     fclose(file);
     if (size > smith_verbs_info_max) smith_info_too_many("bytes", smith_verbs_info_max);
     smith_info_text[size] = '\0';
-    smith_info = (SmithInfo){};
+    memset(&smith_info, 0,
+           sizeof smith_info); // not (SmithInfo){}: that temporary is 9.4 MB, over the 8 MB stack at -O0
     char *line = smith_info_text;
     for (size_t guard = 0; *line != '\0' && guard < smith_verbs_info_max; guard++) { // bounded by the bytes
         char *end = strchr(line, '\n');

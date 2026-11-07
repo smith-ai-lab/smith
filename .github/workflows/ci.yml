@@ -677,13 +677,43 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
+  build-linux-release:
+    # the release profile (-O2, #2684) of smith for the front-end coverage shards: the count runs the smith it measures,
+    # and the dev build of `build-linux` (-O0) made six of eight shards hit their timeout (queue run 42349047932). Only
+    # the merge queue counts, so only it builds this; the test jobs keep the dev build.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SMITH_CORES: "4"
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-smith
+        with:
+          profile: release
+      - name: Pack the build
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
+
   frontend-coverage-shard:
     # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/8` fixes and compiles the tracked files
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
-    needs: [changes, build-linux]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    needs: [changes, build-linux-release]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux-release.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -704,7 +734,7 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
-          artifact: build-linux
+          artifact: build-linux-release
       - name: Count the shard
         # never fails the job: the status is read by the merge job, whatever happened here
         continue-on-error: true
