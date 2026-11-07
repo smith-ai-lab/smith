@@ -797,16 +797,55 @@ static state::Status field_index(state::Emitter *e, state::Ty record, Str name, 
     return state::failf(span, "no field ", name, " in ", record.name);
 }
 
-// The place of a field of the record stored at `address`.
+// Whether the record at `at` has a field called `name`, and its index.
+static Bool has_field(state::Emitter *e, Usize at, Str name, Usize *found) {
+    for (Usize i = 0; i < field_count(e, at); i++) {
+        if (state::same_text(e->records[at].fields[i].name, name)) {
+            *found = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static Bool is_anonymous(Str name) {
+    return countof(name) == 0; // the checker's mark of an anonymous member (`types::inner_member`)
+}
+
+// One step into `at`'s field `field` from `address`: a union's members share its address, a struct's are a GEP away.
+static c::LLVMValueRef step_into(state::Emitter *e, Usize at, Usize field, c::LLVMValueRef address) {
+    if (e->records[at].is_union) return address;
+    return c::LLVMBuildStructGEP2(e->builder, e->records[at].ty.llvm, address, (U32)field, "field");
+}
+
+// The place of a field of the record stored at `address`. A name no field has is looked for in the anonymous members
+// (`union { long ru_maxrss; };` of C's `struct rusage`: a member with no name), up to 4 deep.
 static state::Status push_field(state::Emitter *e, state::Ty record, c::LLVMValueRef address, Str name,
                                 ast::Span span) {
-    Usize field = 0;
-    try field_index(e, record, name, span, &field);
     Usize at = 0;
-    find_record_of(e, record, &at);
-    c::LLVMValueRef gep = c::LLVMBuildStructGEP2(e->builder, record.llvm, address, (U32)field, "field");
-    state::push_value(e, (state::Value){.llvm = gep, .ty = e->records[at].fields[field].ty});
-    return state::success();
+    if (record.kind != .record || !find_record_of(e, record, &at))
+        return state::failf(span, record.name, " is not a record");
+    for (Usize depth = 0; depth < 4; depth++) {
+        Usize field = 0;
+        if (has_field(e, at, name, &field)) {
+            c::LLVMValueRef place = step_into(e, at, field, address);
+            state::push_value(e, (state::Value){.llvm = place, .ty = e->records[at].fields[field].ty});
+            return state::success();
+        }
+        Bool entered = false;
+        for (Usize i = 0; i < field_count(e, at) && !entered; i++) {
+            state::Ty inner = e->records[at].fields[i].ty;
+            Usize inner_at = 0;
+            if (!is_anonymous(e->records[at].fields[i].name) || inner.kind != .record ||
+                !find_record_of(e, inner, &inner_at))
+                continue;
+            address = step_into(e, at, i, address);
+            at = inner_at;
+            entered = true;
+        }
+        if (!entered) break;
+    }
+    return state::failf(span, "no field ", name, " in ", record.name);
 }
 
 static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *w) {
@@ -827,6 +866,21 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
         if (pointee->kind == .pointer) return state::fail("`.` follows one pointer; write `pp.*.x`", w->span);
         base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
         record = *pointee;
+    }
+    if (record.kind == .option && record.kind.option.element != nullptr && e->options.checked != nullptr) {
+        // `named.count` where the checker narrowed `named: ?str` to `str` (`if named != .none:`, #2481): the payload,
+        // in a temporary that has an address (a `?*T` is its pointer already).
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr->kind.member.base);
+        if (seen != nullptr && seen->kind != .option) {
+            state::Ty inner = *record.kind.option.element;
+            c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, record.llvm, base.llvm, "option");
+            c::LLVMValueRef got = whole;
+            if (inner.kind != .pointer) got = c::LLVMBuildExtractValue(e->builder, whole, 1, "payload");
+            c::LLVMValueRef slot = state::new_alloca(e, inner, "narrowed");
+            c::LLVMBuildStore(e->builder, got, slot);
+            base.llvm = slot;
+            record = inner;
+        }
     }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
@@ -1157,13 +1211,12 @@ export state::Status string_literal(state::Emitter *e, const ast::Expr *x, state
     if (hint.present && hint.ty.kind == .array && hint.ty.kind.array.count > countof(bytes) + 1) {
         // a literal given to a longer `[N]char`: the bytes, then zeros up to N (#2611)
         state::SizedTy shape = hint.ty.kind.array;
-        if (shape.count > 256)
-            return state::not_emitted("string literal in an array of more than 256 elements", x->span);
-        c::LLVMValueRef values[256];
+        builtin::Cells values[:] = mem::alloc_slice(builtin::Cells, shape.count + 1);
         for (Usize i = 0; i < shape.count; i++)
-            values[i] = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        state::push_value(
-            e, (state::Value){.llvm = c::LLVMConstArray2(shape.element->llvm, values, shape.count), .ty = hint.ty});
+            values[i].item = c::LLVMConstInt(shape.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        c::LLVMValueRef whole = c::LLVMConstArray2(shape.element->llvm, (c::LLVMValueRef *)values.data, shape.count);
+        mem::free(values.data);
+        state::push_value(e, (state::Value){.llvm = whole, .ty = hint.ty});
         return state::success();
     }
     if (hint.present && hint.ty.kind == .array) { // a literal given to `[N]char`: the bytes and the zero byte
@@ -1702,31 +1755,79 @@ static state::Status scalar_constant(state::Emitter *e, state::Ty ty, const ast:
     return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
 }
 
-// An array's constant from an array literal of scalar constants or a string literal; elements left out are zero.
+static state::Status construction_constant(state::Emitter *e, state::Ty ty, const ast::Expr *x, c::LLVMValueRef *out);
+
+// An array's constant from an array literal of constants (scalars, records, nested arrays) or a string literal;
+// elements left out are zero. Any length and depth up to 16: the leaves are found by their index digits, then folded
+// into arrays level by level (no recursion).
 static state::Status array_constant(state::Emitter *e, state::Ty ty, state::SizedTy array, const ast::Expr *x,
                                     c::LLVMValueRef *out) {
     if (x->kind == .string && array.element->kind == .integer && state::width(*array.element) == 8) {
         Str bytes = x->kind.string.bytes;
         if (countof(bytes) + 1 > array.count) return state::failf(x->span, "the string does not fit ", ty.name);
-        if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
-        c::LLVMValueRef values[256]; // the bytes, then zeros up to the length
+        builtin::Cells values[:] = mem::alloc_slice(builtin::Cells, array.count + 1); // the bytes, then zeros
         for (Usize i = 0; i < array.count; i++)
-            values[i] = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
-        *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
+            values[i].item = c::LLVMConstInt(array.element->llvm, i < countof(bytes) ? (U64)(U8)bytes[i] : 0, 0);
+        *out = c::LLVMConstArray2(array.element->llvm, (c::LLVMValueRef *)values.data, array.count);
+        mem::free(values.data);
         return state::success();
     }
     if (x->kind != .array_lit)
         return state::failf(x->span, "the initializer of a global is a constant of type ", ty.name);
-    ast::ExprRef items[:] = x->kind.array_lit.items;
-    if (countof(items) > array.count)
-        return state::failf(x->span, "the array has ", array.count, " elements, the literal ", countof(items));
-    if (array.count > 256) return state::not_emitted("array constant of more than 256 elements", x->span);
-    c::LLVMValueRef values[256];
-    for (Usize i = 0; i < array.count; i++) {
-        values[i] = c::LLVMConstNull(array.element->llvm);
-        if (i < countof(items)) try scalar_constant(e, *array.element, items[i], &values[i]);
+    state::SizedTy chain[16];
+    Usize n = 0;
+    state::Ty level = ty;
+    Usize total = 1;
+    while (level.kind == .array && n < 16) {
+        chain[n] = level.kind.array;
+        total *= chain[n].count;
+        level = *chain[n].element;
+        n++;
     }
-    *out = c::LLVMConstArray2(array.element->llvm, values, array.count);
+    if (level.kind == .array) return state::not_emitted("array constant nested more than 16 deep", x->span);
+    builtin::Cells cells[:] = mem::alloc_slice(builtin::Cells, total + 1);
+    for (Usize leaf = 0; leaf < total; leaf++) {
+        const ast::Expr *node = x;
+        Usize rest = leaf;
+        Usize stride = total;
+        for (Usize d = 0; d < n && node != nullptr; d++) {
+            stride /= chain[d].count;
+            Usize at = rest / stride;
+            rest %= stride;
+            if (node->kind != .array_lit) {
+                mem::free(cells.data);
+                return state::failf(node->span, "the initializer of a global is a constant of type ", ty.name);
+            }
+            ast::ExprRef items[:] = node->kind.array_lit.items;
+            if (countof(items) > chain[d].count) {
+                mem::free(cells.data);
+                return state::failf(node->span, "the array has ", chain[d].count, " elements, the literal ",
+                                    countof(items));
+            }
+            node = at < countof(items) ? items[at] : nullptr;
+        }
+        cells[leaf].item = c::LLVMConstNull(level.llvm);
+        if (node == nullptr) continue;
+        state::Status made = state::success();
+        if (level.kind == .record && node->kind == .call) {
+            made = construction_constant(e, level, node, &cells[leaf].item);
+        } else {
+            made = scalar_constant(e, level, node, &cells[leaf].item);
+        }
+        if (made == .error) {
+            mem::free(cells.data);
+            return made;
+        }
+    }
+    Usize count = total;
+    for (Usize d = n; d > 0; d--) {
+        Usize per = chain[d - 1].count;
+        count = per == 0 ? 0 : count / per;
+        for (Usize g = 0; g < count; g++)
+            cells[g].item = c::LLVMConstArray2(chain[d - 1].element->llvm, (c::LLVMValueRef *)&cells[g * per], per);
+    }
+    *out = cells[0].item;
+    mem::free(cells.data);
     return state::success();
 }
 
@@ -1858,6 +1959,43 @@ export state::Status global_variable(state::Emitter *e, const ast::Decl *d) {
     }
     state::free_text(symbol);
     return result;
+}
+
+// A `static` local (`static mut buffer: [1024]char = array.filled(char, 1024, 0)`): a private global with the local's
+// constant initial value, named after the function and the local so that two functions can both have a `buffer`. The
+// local's name then stands for the global's address.
+export state::Status static_local(state::Emitter *e, const ast::Decl *d, state::Ty *ty_out, c::LLVMValueRef *out) {
+    if (d->kind != .variable) {
+        return state::fail("not a variable", d->span);
+    }
+    const ast::Expr *init = d->kind.variable.init;
+    Str name = d->kind.variable.name;
+    Bool constant = d->kind.variable.is_constexpr;
+    if (d->kind.variable.is_thread_local) return state::not_emitted("this kind of variable", d->span);
+    state::TyResult made = global_type(e, d);
+    if (made == .error) {
+        return {.error = made.error};
+    }
+    state::Ty ty = made.ok;
+    c::LLVMValueRef initial = c::LLVMConstNull(ty.llvm);
+    Bool undefined = init != nullptr && init->kind == .name && countof(init->kind.name.path.segments) == 1 &&
+                     state::same_text(init->kind.name.path.segments[0].text, "undefined");
+    if (init != nullptr && !undefined) try compound_constant(e, ty, init, &initial);
+    Usize copy = 0;
+    Str symbol = state::msg(format::push("static.", name, ".", copy));
+    while (c::LLVMGetNamedGlobal(e->module, symbol.data) != nullptr) {
+        state::free_text(symbol);
+        copy += 1;
+        symbol = state::msg(format::push("static.", name, ".", copy));
+    }
+    c::LLVMValueRef global = c::LLVMAddGlobal(e->module, ty.llvm, symbol.data);
+    state::free_text(symbol);
+    c::LLVMSetInitializer(global, initial);
+    if (constant) c::LLVMSetGlobalConstant(global, 1);
+    c::LLVMSetLinkage(global, c::LLVMInternalLinkage);
+    *ty_out = ty;
+    *out = global;
+    return state::success();
 }
 
 // Give back the record table, its field lists and the `Ty.element` blocks. `emit::module` calls it.

@@ -20,6 +20,7 @@ import std::mem;
 import std::test;
 import <llvm-c/Core.h>;
 import <string.h>;
+import <stdio.h>;
 
 typedef I32 (*Nullary)();
 typedef I32 (*Unary)(I32);
@@ -36,6 +37,7 @@ static void begin(Scenario *s, Str source) {
     s->allocator = arena::allocator(&s->memory);
     mem::Allocator *outside = mem::set_allocator(&s->allocator.base);
     s->parsed = parser::parse_new("t.smith", source);
+
     test::check_equal(countof(s->parsed.errors), (Usize)0);
     s->checked = types_decl::check_module(&s->parsed.module, types::lp64());
     if (s->checked.error_count > 0) {
@@ -169,4 +171,32 @@ export void test_front_emit_array_literal_empty_without_a_type_is_refused() {
     s.checked = types_decl::check_module(&s.parsed.module, types::lp64());
     test::check_equal(s.checked.error_count > 0, true);
     mem::set_allocator(outside);
+}
+
+// A global array constant of any length and nested (the Needs of #2651: `crc_tables`, 8 x 256): no 256-element cap.
+export void test_front_emit_array_constant_nested_and_long() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    static char source[8192];
+    Usize at = 0;
+    at += (Usize)c::snprintf(source + at, sizeof(source) - at, "mut table: [2][2]u32 = [[1, 2], [3, 4]]\n");
+    at += (Usize)c::snprintf(source + at, sizeof(source) - at, "mut longer: [2][300]u32 = [");
+    for (Usize row = 0; row < 2; row++) {
+        at += (Usize)c::snprintf(source + at, sizeof(source) - at, row == 0 ? "[" : ", [");
+        for (Usize i = 0; i < 300; i++)
+            at += (Usize)c::snprintf(source + at, sizeof(source) - at, i == 0 ? "%zu" : ", %zu", row * 1000 + i);
+        at += (Usize)c::snprintf(source + at, sizeof(source) - at, "]");
+    }
+    at += (Usize)c::snprintf(source + at, sizeof(source) - at,
+                             "]\npub fn run() -> i32:\n"
+                             "    if table[1][0] != 3 || table[0][1] != 2:\n"
+                             "        return 1\n"
+                             "    if longer[0][299] != 299 || longer[1][0] != 1000 || longer[1][299] != 1299:\n"
+                             "        return 2\n"
+                             "    0\n");
+    Str text = source[0:at];
+    emit_source(text, &host, &s);
+    Nullary run = (Nullary)symbol_of(&host, "run");
+    test::check_equal(run(), (I32)0);
+    emit_jit::stop(&host);
 }
