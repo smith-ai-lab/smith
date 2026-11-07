@@ -349,6 +349,7 @@ Result run_tool(Bool ninja, const char *smith, Text folder, const char *target) 
         process::Output finished = done.ok;
         result.status = finished.exit.status + 128 * (finished.exit.signal != 0);
         result.said = format::push(text_of(finished.output));
+        break;
     case .error:
         result.status = 127;
         result.said = format::push("");
