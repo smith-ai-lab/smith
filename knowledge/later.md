@@ -187,3 +187,5 @@ Owner: "We want to probably close all the ones that are duplicates and that are 
 - Fixes to the old front end and old lowering, which the switch-over deletes: #570 #577 #583 #599 #601 #606 #610 #620 #635 #1123 #1153 #1160 #1173 #1175 #1176 #1177 #1179 #1184 #1203 #1204 #1205 #1206 #1207 #1208 #1209 #1262 #1290 #1346 #1424 #1431 #1434 #1476 #1534 #1566 #1575 #1603 #1611 #1726 #1944
 - Friction issues, replaced by each PR's `## Friction` and the lead's sweep: #2595 #2592 #2546 #2524 #2360 #2332 #2233 #2081 #2067 #1819 #1818 #1607 #1594 #1590 #1559 #1548 #1500 #1480 #1383 #1381 #1337 #1335 #1323 #1252 #1182; folded into #2719: #2146 #2545 #2232
 - Factory tickets done or retired: #1406 #1409 #1112 #1140 #2657 #2680
+- Folded into the body of #2712 (real-time safety), each a section there: #446 #1830 #1832 #1840 #2080 #1953 #1963 #2713 #2714
+- Folded into the body of a part or switch-over ticket: #1787 (into #2648); #1972 #1977 #1821 #1824 #332 #361 #1823 #2026 (done or moot); #1974 #1975 #2181 #1979 #1667 #1633 #1635 #1636 #2043 #1825 #1632 #1923 #1976 #1978 (replaced by #2722 to #2725); #1375 (done)
