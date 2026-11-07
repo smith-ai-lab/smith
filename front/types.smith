@@ -2944,10 +2944,15 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
     ast::Param generics[:] = copy->kind.function.generics;
     Usize generic_count = countof(generics);
     Usize kept_count = bind_given(r, generics, all, given, bindings, &auto_syntax);
-    Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix};
+    Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix, .signature = nullptr};
     bind_instance(r, &made);
     expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
     if (copy->kind != .function) return max_instances;
+    ast::TypeExpr *result_type = copy->kind.function.result;
+    Str function_name = copy->kind.function.name;
+    ast::Stmt *function_body = copy->kind.function.body;
+    Bool is_variadic = copy->kind.function.variadic;
+    Bool is_new = copy->kind.function.is_new;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     // The signature is written in the template's module: `Chars` in `format::push`'s result is `format::Chars`.
@@ -2961,18 +2966,24 @@ export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Bind
         declare(&r->scopes, parameter);
     }
     TypeRef result = r->table.void_type;
-    if (copy->kind.function.result != nullptr) {
+    if (result_type != nullptr) {
         r->new_syntax = !auto_syntax;
-        result = resolve(r, copy->kind.function.result);
+        result = resolve(r, result_type);
         r->new_syntax = false;
     }
     r->prefix = outer;
     r->scopes.prefix = outer_scopes;
     pop_scope(&r->scopes);
-    copy->kind.function.params = kept;
-    copy->kind.function.generics = copy->kind.function.generics[0:0]; // the instance has none: they are bound
-    copy->kind.function.name = instance_name(copy->kind.function.name, bindings);
-    made.signature = function_of(&r->table, slots, result, copy->kind.function.variadic);
+    // the instance has no generics: they are bound
+    ast::DeclKind instance_kind = {.function = {.name = instance_name(function_name, bindings),
+                                                .params = kept,
+                                                .generics = generics[0:0],
+                                                .result = result_type,
+                                                .body = function_body,
+                                                .variadic = is_variadic,
+                                                .is_new = is_new}};
+    copy->kind = instance_kind;
+    made.signature = function_of(&r->table, slots, result, is_variadic);
     if (r->instance_count == countof(r->instances)) {
         Usize capacity = countof(r->instances) * 2;
         if (capacity < 8) capacity = 8;
