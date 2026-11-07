@@ -338,7 +338,8 @@ static void next_in_group(Pass *p) {
     }
     Item alternative = g->alternatives[g->next];
     g->next += 1;
-    g->last_ends = ends(alternative.stmt);
+    const ast::Stmt *alternative_stmt = alternative.stmt;
+    g->last_ends = alternative_stmt != nullptr && ends(alternative_stmt);
     p->used = copy_of(&g->base);
     push_item(p, (Item){.step = next_alternative});
     push_item(p, alternative);
@@ -570,8 +571,11 @@ static void begin_expression(Pass *p, const ast::Expr *e) {
 }
 
 static void begin(Pass *p, Item item) {
-    if (item.stmt != nullptr && begin_statement(p, item.stmt)) return;
-    if (item.expr != nullptr) begin_expression(p, item.expr);
+    if (item.stmt == nullptr && item.expr == nullptr) return; // an item holds a statement or an expression, or neither
+    const ast::Stmt *stmt = item.stmt;
+    if (stmt != nullptr && begin_statement(p, stmt)) return;
+    const ast::Expr *expr = item.expr;
+    if (expr != nullptr) begin_expression(p, expr);
 }
 
 // Whether `e` is `range(countof(xs))`: the counter of a loop over it is one element of `xs` per turn. Gives the place
@@ -699,6 +703,8 @@ export void check_body(types::Checked *r, const ast::Stmt *root) {
     while (p.top > 0) {
         p.top -= 1;
         Item item = p.work[p.top];
+        const ast::Stmt *item_stmt = item.stmt;
+        const ast::Expr *item_expr = item.expr;
         if (item.step == next_alternative) {
             next_in_group(&p);
         } else if (item.step == begin_branches) {
@@ -710,13 +716,13 @@ export void check_body(types::Checked *r, const ast::Stmt *root) {
             forget(&p.used, item.name);
             affine_loops::declare(&p.loops, item.name);
         } else if (item.step == enter_loop) {
-            begin_loop(&p, item.stmt);
+            if (item_stmt != nullptr) begin_loop(&p, item_stmt);
         } else if (item.step == leave_loop) {
             end_loop(&p);
-        } else if (item.stmt != nullptr) {
-            statement(&p, item.stmt);
-        } else if (item.expr != nullptr) {
-            expression(&p, item.expr);
+        } else if (item_stmt != nullptr) {
+            statement(&p, item_stmt);
+        } else if (item_expr != nullptr) {
+            expression(&p, item_expr);
         }
     }
 }
