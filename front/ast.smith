@@ -4,8 +4,8 @@
 // Plain data: every type is exported with all its fields. A kind is a payload enum (`Expr.kind`, `Stmt.kind`, ...) with
 // its data in the variant; a child that may be absent is a null pointer, a list of children is a slice, and a string is
 // a `Str` into the source text or the current allocator. Nodes are allocated through the current allocator
-// (std::mem), so a caller that sets an arena as the allocator frees a whole tree at once. Nothing here is recursive:
-// the walk of the dump uses an explicit stack, and so must every walk of the tree.
+// (std::mem), so a caller that sets an arena as the allocator frees a whole tree at once. The walk of the dump uses an
+// explicit stack, so a deep tree needs no deep call stack.
 //
 // The dump, `ast::dump(module)`: an S-expression, a node per line, two spaces per depth, ending in a newline. A node is
 // `(kind scalars` then its children, each on its own line one level deeper, and the closing parenthesis follows the

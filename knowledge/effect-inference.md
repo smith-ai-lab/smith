@@ -55,7 +55,8 @@ diagnostic it has no id for). Skill `smith-lang-effects`.
   differ between a clean and an incremental build; a module's header already carries the declared sets (its exports'
   attributes), which the importer treats as promises. A project function with no body in the file is *unresolved* at
   compile time (no effect, no error) where a system function the table does not know is `unknown`.
-- **No recursion in a module** (207c): `checkRecursion` finds the strongly connected components of the call graph of the
+- **Recursion** (#2710, the new front end): none of what follows applies to it; any call on a cycle of calls that is not a tail call is lowered to `smith_recurse_call` (lib/handlers.c), which `front/effects_table.smith` gives `alloc` and `fails`, so a recursive function and its callers carry both and a caller whose ceiling lacks them gets the usual ceiling error. See knowledge/recursion.md.
+- **No recursion in a module** (207c, the old front end only): `checkRecursion` finds the strongly connected components of the call graph of the
   functions the module's file defines (a work list, no recursion) and reports a call that sits on a cycle, once for each
   cycle, with the way round (`a -> b (a.smith:4) -> a (b.smith:9)`); a call of `[[clang::musttail]] return f(...)` (in the new front end every call in tail position is a `musttail` call with no attribute, and `front/emit_call.smith` `check_recursion` reports the cycles that are not all tail calls, #2709; in the old front end an
   AttributedStmt with MustTailAttr over a return of the call) is a jump and does not count, so a cycle of jumps is a
