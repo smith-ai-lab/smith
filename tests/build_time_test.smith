@@ -12,7 +12,8 @@ export void test_build_time_prints_each_phase_the_slowest_steps_and_a_total_that
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(
         &p,
-        "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+        "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
+        "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
         "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && cd .. && cd hi && "
         "smith build --front-end=new --time 2>time.txt >/dev/null; "
         "awk '/^time: (prepare|compile the build file|run the build file|plan|run the steps)/ { sum += $(NF-1) } "
@@ -98,7 +99,8 @@ export void test_time_is_not_part_of_the_step_cache_key() {
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(
         &p,
-        "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+        "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
+        "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
         "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && smith build --front-end=new "
         ">/dev/null 2>&1; smith build --front-end=new --time 2>&1");
     defer scratch::release(run.out);
