@@ -856,7 +856,8 @@ static Bool is_decimal(const char word[:]) {
 // Why a float was refused: no text (or a lone sign), a stray character, or a value that rounds to infinity.
 static Error float_error(const char word[:]) {
     if (countof(word) == 0 || (countof(word) == 1 && (word[0] == '-' || word[0] == '+'))) return Empty;
-    return is_decimal(word) ? Range : Invalid;
+    if (is_decimal(word)) return Range;
+    return Invalid;
 }
 
 static F32Result read_f32(const char word[:]) {
