@@ -69,18 +69,24 @@ static Bool marks_attribute(const ast::Decl *d) {
     return false;
 }
 
+// Whether an expression is the name of an imported module (`ast` in `ast.Span`).
+static Bool names_module(const types::Checked *r, const ast::Expr *base) {
+    if (base->kind != .name) return false;
+    const types::Symbol *s = types::lookup_path(&r->scopes, base->kind.name.path);
+    return s != nullptr && s->kind == .module_name;
+}
+
 // Whether a callee names a type, so the call builds a value of it: `Span`, or `ast.Span` through a module.
 static Bool names_type(const types::Checked *r, const ast::Expr *callee) {
     if (callee->kind == .name) {
         const types::Symbol *s = types::lookup_path(&r->scopes, callee->kind.name.path);
         return s != nullptr && s->kind == .type_name;
     }
-    if (!(callee->kind == .member)) return false;
+    if (callee->kind != .member) return false;
     const ast::Expr *base = callee->kind.member.base;
-    Str name = callee->kind.member.name;
-    if (base->kind != .name || countof(name) == 0 || name[0] < 'A' || name[0] > 'Z') return false;
-    const types::Symbol *s = types::lookup_path(&r->scopes, base->kind.name.path);
-    return s != nullptr && s->kind == .module_name;
+    Str written = callee->kind.member.name;
+    if (countof(written) == 0 || written[0] < 'A' || written[0] > 'Z') return false;
+    return names_module(r, base);
 }
 
 // The values of a call known at compile time when its arguments are (#2530): a construction `S(a = 0)` and
@@ -89,7 +95,9 @@ static Bool constant_call(const types::Checked *r, const ast::Expr *e) {
     if (!(e->kind == .call)) return false;
     const ast::Expr *callee = e->kind.call.callee;
     if (names_type(r, callee)) return true;
-    return callee->kind == .member && same_text(callee->kind.member.name, "filled") && countof(e->kind.call.args) == 3;
+    if (callee->kind == .member && same_text(callee->kind.member.name, "filled") && countof(e->kind.call.args) == 3)
+        return true;
+    return false;
 }
 
 // Whether an expression is known at compile time: literals, constants, and operations on them.
@@ -124,7 +132,8 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         } else if (e->kind == .named_arg) {
             stack[top++] = e->kind.named_arg.value;
         } else if (e->kind == .array_lit || constant_call(r, e)) {
-            Bool filled = e->kind == .call && !names_type(r, e->kind.call.callee);
+            Bool filled = false;
+            if (e->kind == .call && !names_type(r, e->kind.call.callee)) filled = true;
             ast::ExprRef items[:] = {};
             if (e->kind == .array_lit) items = e->kind.array_lit.items;
             if (e->kind == .call) items = e->kind.call.args;
@@ -140,16 +149,19 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
 
 // Whether argument `i` fills a field an earlier argument filled: the field at `at` is among the positional ones, or an
 // earlier argument names it.
+static Bool names_before(const ast::Attribute *a, Usize i, Str wanted) {
+    for (Usize j = 0; j < i; j++) {
+        const ast::Expr *earlier = a->args[j];
+        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, wanted)) return true;
+    }
+    return false;
+}
+
 static Bool given_before(const ast::Attribute *a, Usize i, Usize at, Usize positional) {
     const ast::Expr *arg = a->args[i];
     if (arg->kind != .named_arg) return false;
     if (at < positional) return true;
-    for (Usize j = 0; j < i; j++) {
-        const ast::Expr *earlier = a->args[j];
-        if (earlier->kind == .named_arg && same_text(earlier->kind.named_arg.name, arg->kind.named_arg.name))
-            return true;
-    }
-    return false;
+    return names_before(a, i, arg->kind.named_arg.name);
 }
 
 // The arguments of `@rename(...)` against the fields of its struct: matched as a construction matches them (#1813),
@@ -174,7 +186,7 @@ static void check_arguments(types::Checked *r, const ast::Attribute *a, Str name
             types::fail(r, value->span, "an attribute's arguments are computed at compile time");
             continue;
         }
-        types_expr::check(r, value, field->type);
+        (void)types_expr::check(r, value, field->type);
     }
 }
 
@@ -267,7 +279,7 @@ static void check_default(types::Checked *r, const ast::Expr *value, types::Type
         types::fail(r, value->span, "a default must be a compile-time constant");
         return;
     }
-    if (wanted != nullptr) types_expr::check(r, value, wanted);
+    if (wanted != nullptr) (void)types_expr::check(r, value, wanted);
 }
 
 // The defaults of a struct's fields.

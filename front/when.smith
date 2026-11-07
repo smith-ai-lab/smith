@@ -84,13 +84,19 @@ export const ast::Attribute *find(ast::Attribute list[:]) {
     return nullptr;
 }
 
+// Whether `base` is the bare name `target` (the one line of `is_target_name`).
+static Bool is_target_name(const ast::Expr *base) {
+    if (base == nullptr) return false;
+    if (base->kind != .name) return false;
+    if (countof(base->kind.name.path.segments) != 1) return false;
+    return same_text(base->kind.name.path.segments[0].text, "target");
+}
+
 // `target.os`.
 static Bool is_target_os(const ast::Expr *e) {
     if (e->kind != .member || e->kind.member.arrow) return false;
     if (!same_text(e->kind.member.name, "os")) return false;
-    const ast::Expr *base = e->kind.member.base;
-    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
-    return same_text(base->kind.name.path.segments[0].text, "target");
+    return is_target_name(e->kind.member.base);
 }
 
 // `target.os == .macos` or `.linux != target.os`: which system, and whether the test is `!=`.
@@ -130,9 +136,7 @@ static Bool arch_test(const ast::Expr *e, Arch *which, Bool *negated) {
         b = swap;
     }
     if (a->kind != .member || a->kind.member.arrow || !same_text(a->kind.member.name, "arch")) return false;
-    const ast::Expr *base = a->kind.member.base;
-    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
-    if (!same_text(base->kind.name.path.segments[0].text, "target")) return false;
+    if (!is_target_name(a->kind.member.base)) return false;
     if (b->kind != .variant || b->kind.variant.payload != nullptr) return false;
     if (same_text(b->kind.variant.name, "aarch64")) {
         *which = arch_aarch64;
@@ -146,7 +150,8 @@ static Bool arch_test(const ast::Expr *e, Arch *which, Bool *negated) {
 }
 
 static Bool is_logical(const ast::Expr *e) {
-    return e->kind == .binary && (e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or);
+    if (e->kind != .binary) return false;
+    return e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or;
 }
 
 // `a && b` or `a || b` with both sides written.
@@ -170,9 +175,7 @@ static Bool is_target(const ast::Expr *e, Str fact) {
     }
     if (e->kind != .member || e->kind.member.arrow) return false;
     if (!same_text(e->kind.member.name, fact)) return false;
-    const ast::Expr *base = e->kind.member.base;
-    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
-    return same_text(base->kind.name.path.segments[0].text, "target");
+    return is_target_name(e->kind.member.base);
 }
 
 // The module's boolean constants (`constexpr Bool wide = true;`, `const wide = true`), which a condition may name
@@ -290,9 +293,7 @@ export Bool holds(const ast::Expr *cond, Os os, Bool *ok) {
 // on it is an ordinary condition, not one that needs deciding earlier (#2611).
 export Bool is_folded_fact(const ast::Expr *cond) {
     if (cond == nullptr || cond->kind != .member || cond->kind.member.arrow) return false;
-    const ast::Expr *base = cond->kind.member.base;
-    if (base == nullptr || base->kind != .name || countof(base->kind.name.path.segments) != 1) return false;
-    if (!same_text(base->kind.name.path.segments[0].text, "target")) return false;
+    if (!is_target_name(cond->kind.member.base)) return false;
     Str fact = cond->kind.member.name;
     return same_text(fact, "address_sanitizer") || same_text(fact, "undefined_sanitizer") ||
            same_text(fact, "thread_sanitizer") || same_text(fact, "assertions") || same_text(fact, "fast_math");
@@ -513,7 +514,8 @@ export Bool reads_guarded_header(const ast::Module *m, Os os) {
     read_constants(m);
     for (Usize i = 0; i < countof(m->decls); i++) {
         const ast::Decl *d = m->decls[i];
-        Bool header = d->kind == .import_c || (d->kind == .import_from && countof(d->kind.import_from.header) > 0);
+        Bool header = d->kind == .import_c;
+        if (d->kind == .import_from && countof(d->kind.import_from.header) > 0) header = true;
         if (header && find(d->attributes) != nullptr && exists(d->attributes, os)) return true;
     }
     return false;

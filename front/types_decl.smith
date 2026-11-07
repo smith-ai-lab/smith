@@ -156,7 +156,8 @@ static types_convert::Literal folded_literal(const ast::Expr *e) {
     if (e->kind != .binary) return types_convert::no_literal();
     const ast::Expr *left = e->kind.binary.left;
     const ast::Expr *right = e->kind.binary.right;
-    if (left->kind != .integer || right->kind != .integer) return types_convert::no_literal();
+    if (left->kind != .integer) return types_convert::no_literal();
+    if (right->kind != .integer) return types_convert::no_literal();
     U64 a = left->kind.integer.value;
     U64 b = right->kind.integer.value;
     ast::BinaryOp op = e->kind.binary.op;
@@ -549,7 +550,7 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         type = auto_type(r, d, name, init);
     } else if (init != nullptr) {
         state.declaring = d;
-        types_expr::check(r, init, type);
+        (void)types_expr::check(r, init, type);
         state.declaring = nullptr;
     }
     if (is_constexpr) {
@@ -632,7 +633,7 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
     types::TypeRef want = state.result;
     if (want == nullptr || is_auto(want)) {
         if (value != nullptr) {
-            types_expr::infer(r, value);
+            (void)types_expr::infer(r, value);
         }
         return;
     }
@@ -645,13 +646,13 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (want->kind == .void_type) {
-        types_expr::infer(r, value);
+        (void)types_expr::infer(r, value);
         types::failf(r, s->span,
                      "this function returns `Void`, so it has no value to return; remove the value after `return`, or "
                      "give the function a result type");
         return;
     }
-    types_expr::check(r, value, want);
+    (void)types_expr::check(r, value, want);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1147,7 +1148,7 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     note_guard(r, s); // first: a read in the test's own chain (`k != .v || k.v == 0`) is one it guards
-    types_expr::check(r, test, r->table.bool_type);
+    (void)types_expr::check(r, test, r->table.bool_type);
     // `if x != .none:` names `x` a `T` in the `then` (and `x == .none` in the `else`); `if x == .none: return` does the
     // same for the rest of the block. Each branch gets a scope of its own for the narrowed names (#2481).
     if (else_branch != nullptr) {
@@ -1417,7 +1418,7 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
     for (Usize i = 0; i < countof(cases); i++) {
         ast::ExprRef values[:] = cases[i].values;
         for (Usize j = 0; j < countof(values); j++) {
-            types_expr::check(r, values[j], t);
+            (void)types_expr::check(r, values[j], t);
         }
     }
 }
@@ -1481,7 +1482,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
         const ast::Expr *condition = s->kind.while_stmt.condition;
         const ast::Stmt *body = s->kind.while_stmt.body;
         note_guard(r, s); // `while k == .v && k.v.n < 3:` (D12)
-        types_expr::check(r, condition, r->table.bool_type);
+        (void)types_expr::check(r, condition, r->table.bool_type);
         push(body, nullptr, enter);
     } else if (s->kind == .do_while) {
         push(nullptr, s->kind.do_while.condition, condition);
@@ -1505,7 +1506,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .match_stmt) {
         match_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+        (void)types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
     }
 }
 
@@ -1521,7 +1522,7 @@ static void value_block_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .return_stmt) {
         return_statement(r, s);
     } else if (s->kind == .static_assert_stmt) {
-        types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
+        (void)types_expr::check(r, s->kind.static_assert_stmt.condition, r->table.bool_type);
     } else if (s->kind == .break_stmt || s->kind == .continue_stmt) {
         return; // a `match` arm that leaves the loop (#2336)
     } else {
@@ -1553,11 +1554,11 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
         } else if (f.step == narrow_rest) {
             types_expr::narrow_scope(r, f.expr, false);
         } else if (f.step == condition) {
-            types_expr::check(r, f.expr, r->table.bool_type);
+            (void)types_expr::check(r, f.expr, r->table.bool_type);
         } else if (f.step == advance) {
-            types_expr::infer(r, f.expr);
+            (void)types_expr::infer(r, f.expr);
         } else if (f.step == tail_arm) {
-            types_expr::check(r, f.expr, state.result);
+            (void)types_expr::check(r, f.expr, state.result);
         } else if (f.step == arm) {
             match_patterns(r, f.stmt, f.index);
             types_expr::match_arm(r, f.stmt, f.index);
@@ -1805,7 +1806,7 @@ export types::Options options(types::Target target) {
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
     if (d->kind == .static_assert_decl) { // its condition folds before emit (`target.float_radix == 2`)
-        types_expr::check(r, d->kind.static_assert_decl.condition, r->table.bool_type);
+        (void)types_expr::check(r, d->kind.static_assert_decl.condition, r->table.bool_type);
         return;
     }
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
@@ -1831,9 +1832,9 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
         require_constant(r, name, d->kind.variable.init);
     }
     if (is_auto(type)) {
-        types_expr::infer(r, d->kind.variable.init);
+        (void)types_expr::infer(r, d->kind.variable.init);
     } else {
-        types_expr::check(r, d->kind.variable.init, type);
+        (void)types_expr::check(r, d->kind.variable.init, type);
     }
 }
 
