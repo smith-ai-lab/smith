@@ -1,5 +1,6 @@
 import std::build;
 
 void build(build::Build *b) {
-    build::app(b, &(build::App){.entry = "main.c", .name = "hello"});
+    build::App app = {.entry = "main.c", .name = "hello"};
+    build::app(b, &app);
 }

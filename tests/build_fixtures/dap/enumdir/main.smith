@@ -11,7 +11,7 @@ export typedef enum {
 } Shape;
 
 I32 main() {
-    Shape a = {.circle = {2}};
+    Shape a = {.circle = {.r = 2}};
     Shape b = .empty;
     Shape c = {.square = 3};
     return (a == .empty ? 1 : 0) + (b == .empty ? 0 : 1) + (c == .empty ? 1 : 0);
