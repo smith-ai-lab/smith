@@ -2548,14 +2548,15 @@ void print_reason(const Options *options, const Run *run) {
     const char *name = signal_name(run->outcome.number);
     switch (run->outcome.end) {
     case End_Timeout:
+        const char *timer = run->outcome.number == sig_prof ? "SIGPROF" : "SIGALRM";
         if (run->lost)
             say(": the test did not run: its worker was stopped by %s %u times before the test began, which is a "
                 "left-over timer's doing, not the test's",
-                run->outcome.number == sig_prof ? "SIGPROF" : "SIGALRM", run->lost_count + 1);
+                timer, run->lost_count + 1);
         else if (run->idle)
             say(": used no CPU time for %u s (%.1f s of wall time), neither it nor its processes; it was waiting for: "
                 "%s",
-                options->idle_timeout, run->seconds, run->waited);
+                options->idle_timeout, run->seconds, &run->waited[0]);
         else if (run->outcome.number == sig_prof)
             say(": over its CPU time limit of %u s (%.1f s of wall time passed; threads add CPU time)",
                 options->timeout, run->seconds);
@@ -3842,7 +3843,7 @@ void suggest_files(const char *filter) {
     if (found == 0) return;
     say("closest test files:");
     for (Usize k = 0; k < found; k++)
-        say(" %s", best[k]);
+        say(" %s", &best[k][0]);
     say("\n");
 }
 
@@ -3870,7 +3871,8 @@ void suggest_names(const char *filter) {
         if (c::strncmp(last - head, filter, head) != 0) continue;
         const char *function = last + 2;
         if (c::strstr(function, item) == nullptr && distance(item, function) > 3) continue;
-        say(shown == 0 ? "closest tests of that file: %s" : ", %s", function);
+        const char *lead = shown == 0 ? "closest tests of that file: %s" : ", %s";
+        say(lead, function);
         shown++;
     }
     if (shown > 0) say("\n");
@@ -3943,7 +3945,7 @@ void explain_filter(const char *filter) {
         list += length + (list[length] == ',' ? 1 : 0);
     }
     joined[used] = '\0';
-    if (changed) say("did you mean: --test '%s'\n", joined);
+    if (changed) say("did you mean: --test '%s'\n", &joined[0]);
 }
 
 // Whether the filter matches a test of either platform: a CI part of `--macos-only` or `--skip-macos` whose filter (a
@@ -3975,11 +3977,11 @@ Bool other_runner_matches(const Options *options) {
         char macos_flag[13] = "--macos-only";
         char skip_flag[13] = "--skip-macos";
         char *arguments[6] = {nullptr, &list_flag[0], &test_flag[0], nullptr, nullptr, nullptr};
-        // the pointers are copied bit for bit: execv takes a non-const argv, and a null filter ends the list
+        // execv takes a non-const argv: the pointers go through Usize, and a null filter ends the list
         const char *program = options->others;
         const char *wanted = options->filter;
-        __builtin_memcpy((void *)&arguments[0], (void *)&program, sizeof program);
-        __builtin_memcpy((void *)&arguments[3], (void *)&wanted, sizeof wanted);
+        arguments[0] = (char *)(Usize)program;
+        arguments[3] = (char *)(Usize)wanted;
         if (options->macos != 0) arguments[4] = options->macos == 1 ? &macos_flag[0] : &skip_flag[0];
         c::execv(arguments[0], arguments);
         c::_exit(127);
@@ -4198,7 +4200,8 @@ void say_written() {
     }
     if (!update_run) return;
     const char *scope = selection_text == nullptr ? " (no --test: every test was updated)" : "";
-    say("--update wrote %zu file%s%s\n", count, count == 1 ? "" : "s", scope);
+    const char *plural = count == 1 ? "" : "s";
+    say("--update wrote %zu file%s%s\n", count, plural, scope);
 }
 
 // How many tests may run at once: the share of a slot (SMITH_CORES, runtime/slots.c) or the machine's logical cores.
@@ -4244,9 +4247,9 @@ static void say_usage(const Runner *runner, Bool help) {
         "prefix; --update writes the files of the selected tests (every test without --test)\n",
         runner->argv[0], (Usize)seeds_max, jobs_max);
     if (help) {
-        say("%s", text);
+        say("%s", &text[0]);
     } else {
-        complain("%s", text);
+        complain("%s", &text[0]);
     }
 }
 
@@ -4322,8 +4325,8 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     }
     if (plan->count == 0 && options.filter != nullptr) {
         if (options.macos != 0 && filter_matches_any(&options)) { // the other platform's tests only: nothing to run
-            say("no test of %s matches \"%s\": nothing to run\n", options.macos == 1 ? "--macos-only" : "--skip-macos",
-                options.filter);
+            const char *only = options.macos == 1 ? "--macos-only" : "--skip-macos";
+            say("no test of %s matches \"%s\": nothing to run\n", only, options.filter);
             return 0;
         }
         // Another runner owns the names (`smith test --changed` gives every runner the same list).
@@ -4336,8 +4339,8 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
             say("no test of this runner matches \"%s\": the other runner has it, nothing to run\n", options.filter);
             return 0;
         }
-        say("no test matches \"%s\"%s\n", options.filter,
-            options.others != nullptr ? " in this runner or the other one (units, front)" : "");
+        const char *where = options.others != nullptr ? " in this runner or the other one (units, front)" : "";
+        say("no test matches \"%s\"%s\n", options.filter, where);
         explain_filter(options.filter);
         suggest_files(options.filter);
         suggest_names(options.filter);
