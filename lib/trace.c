@@ -2,8 +2,10 @@
 // include/smith/trace.h. Everything here that a signal handler may call uses write(2) and no allocator, formatting
 // numbers by hand.
 #ifndef __APPLE__
+#ifndef _GNU_SOURCE // the build may pass it on the command line (Clang modules)
 // NOLINTNEXTLINE(bugprone-reserved-identifier,readability-identifier-naming): glibc's name; it hides dl_iterate_phdr
 #define _GNU_SOURCE
+#endif
 #endif
 #include <smith/handlers.h>
 #include <smith/trace.h>

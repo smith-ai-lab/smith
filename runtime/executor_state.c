@@ -14,8 +14,13 @@
 // Both are appended to as jobs end, and written whole (through a temporary file) when more than two thirds of their
 // lines are dead. A line cut short by a crash is not read, and neither is a file of another version.
 
+#include "executor_state.h"
+#include "core.h"
+#include "executor.h"
+#include "mcp_unit.h"
+#include "world.h"
+
 constexpr size_t smith_state_entries_max = (size_t)1 << 20;
-constexpr size_t smith_state_deps_max = (size_t)1 << 23;
 constexpr size_t smith_state_compact_ratio = 3;
 constexpr size_t smith_state_compact_floor = 100;
 
@@ -85,7 +90,7 @@ static bool smith_state_deps_set(SmithExec *exec, const SmithDepsEntry *entry) {
     return false;
 }
 
-static const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *path) {
+const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *path) {
     const SmithState *state = &exec->state;
     if (state->log_count == 0) return nullptr;
     size_t slot =
@@ -93,7 +98,7 @@ static const SmithLogEntry *smith_state_log_find(SmithExec *exec, const char *pa
     return state->log_table[slot] != 0 ? &state->log[state->log_table[slot] - 1] : nullptr;
 }
 
-static const SmithDepsEntry *smith_state_deps_find(SmithExec *exec, const char *path) {
+const SmithDepsEntry *smith_state_deps_find(SmithExec *exec, const char *path) {
     const SmithState *state = &exec->state;
     if (state->deps_count == 0) return nullptr;
     size_t slot = smith_state_slot(state->deps_table, state->deps_capacity, state->deps, sizeof(SmithDepsEntry), path,
@@ -227,7 +232,7 @@ static bool smith_state_wasteful(size_t lines, size_t live) {
 }
 
 // Loads both logs from the builddir, making the folder if it is missing.
-static void smith_state_open(SmithExec *exec) {
+void smith_state_open(SmithExec *exec) {
     SmithState *state = &exec->state;
     const char *builddir = exec->graph.builddir;
     (void)smith_world_make_folder(builddir);
@@ -268,8 +273,7 @@ static void smith_state_append(SmithExec *exec, const char *path, const char *he
 }
 
 // Records that a command ran: for each output, its run and its mtime.
-static void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms,
-                               int64_t mtime) {
+void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t start_ms, uint64_t end_ms, int64_t mtime) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     for (uint32_t i = 0; i < edge->output_count; i++) {
@@ -291,8 +295,8 @@ static void smith_state_record(SmithExec *exec, const SmithEdge *edge, uint64_t 
 }
 
 // Records what a command's depfile named, for each output of the edge.
-static void smith_state_record_deps(SmithExec *exec, const SmithEdge *edge, int64_t mtime, const char *const *deps,
-                                    uint32_t count) {
+void smith_state_record_deps(SmithExec *exec, const SmithEdge *edge, int64_t mtime, const char *const *deps,
+                             uint32_t count) {
     SmithState *state = &exec->state;
     SmithGrow grow = {.arena = exec->arena};
     char line[smith_exec_name_max + 64];

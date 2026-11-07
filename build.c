@@ -773,26 +773,94 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
     return outputs;
 }
 
+// smith.c used to include these files (#2685, one translation unit of 60,000 lines); each is an object of its own now,
+// compiled with smith.c's flags, so an edit of one recompiles one file. gzip, xz and untar stay in package.c, which the
+// build runtime embeds and includes as one file.
+static const char *const build_runtime_sources[] = {
+    "runtime/account.c",
+    "runtime/cache.c",
+    "runtime/changed.c",
+    "runtime/coverage.c",
+    "runtime/docs.c",
+    "runtime/executor.c",
+    "runtime/executor_cache.c",
+    "runtime/executor_manifest.c",
+    "runtime/executor_plan.c",
+    "runtime/executor_run.c",
+    "runtime/executor_state.c",
+    "runtime/executor_tools.c",
+    "runtime/explain.c",
+    "runtime/front_flag.c",
+    "runtime/lang.c",
+    "runtime/lang_body.c",
+    "runtime/lang_command.c",
+    "runtime/lang_constexpr.c",
+    "runtime/lang_decl.c",
+    "runtime/lang_declare.c",
+    "runtime/lang_enum.c",
+    "runtime/lang_fields.c",
+    "runtime/lang_generic.c",
+    "runtime/lang_head.c",
+    "runtime/lang_import.c",
+    "runtime/lang_lambda.c",
+    "runtime/lang_lex.c",
+    "runtime/lang_names.c",
+    "runtime/lang_nested.c",
+    "runtime/lang_out.c",
+    "runtime/lang_private.c",
+    "runtime/lang_rfor.c",
+    "runtime/lang_slice.c",
+    "runtime/lang_sparse.c",
+    "runtime/lang_stream.c",
+    "runtime/lang_target.c",
+    "runtime/lang_trivia.c",
+    "runtime/lang_try.c",
+    "runtime/lang_tuple.c",
+    "runtime/lang_type.c",
+    "runtime/lang_unused.c",
+    "runtime/lint_cache.c",
+    "runtime/make.c",
+    "runtime/make_cc.c",
+    "runtime/make_class.c",
+    "runtime/make_emit.c",
+    "runtime/make_expand.c",
+    "runtime/make_graph.c",
+    "runtime/make_print.c",
+    "runtime/make_read.c",
+    "runtime/make_sub.c",
+    "runtime/make_translate.c",
+    "runtime/mcp.c",
+    "runtime/mcp_dap.c",
+    "runtime/mcp_serve.c",
+    "runtime/mcp_show.c",
+    "runtime/mcp_text.c",
+    "runtime/mcp_tools.c",
+    "runtime/package_unit.c",
+    "runtime/quiet.c",
+    "runtime/record.c",
+    "runtime/slots.c",
+    "runtime/symbolize.c",
+    "runtime/test_cache.c",
+    "runtime/verbs.c",
+    "runtime/world.c",
+    nullptr,
+};
+// The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
+// library and the protocol runtime, each an object of its own now that smith.c includes none of them.
+static const char *const build_runtime_sources_mcp[] = {".smith/protocol/dap.c", ".smith/protocol/mcp.c", "lib/json.c",
+                                                        "runtime/protocol/protocol.c", nullptr};
+static const char *const build_runtime_sources_linux[] = {"runtime/platform_linux.c", nullptr};
+static const char *const build_runtime_sources_macos[] = {"runtime/platform_macos.c", "runtime/sdk_cache.c", nullptr};
+
 // What smith.c embeds or includes, which its depfile may not list: a change to any recompiles it.
 static const char *const build_smith_inputs[] = {
     "runtime/base.h",
     "runtime/build_runtime.c",
     "runtime/package.c",
+    "runtime/package.h",
     "runtime/gzip.c",
     "runtime/xz.c",
     "runtime/untar.c",
-    "runtime/cache.c",
-    "runtime/symbolize.c",
-    "runtime/explain.c",
-    "runtime/platform_macos.c",
-    "runtime/platform_linux.c",
-    "shim/lldb_explain.h",
-    "runtime/mcp.c",
-    "runtime/mcp_text.c",
-    "runtime/mcp_dap.c",
-    "runtime/mcp_show.c",
-    "runtime/mcp_tools.c",
-    "runtime/mcp_serve.c",
     "runtime/protocol/protocol.h",
     "runtime/protocol/protocol.c",
     "runtime/io.smith",
@@ -808,25 +876,6 @@ static const char *const build_smith_inputs[] = {
     "templates/defaults/clang-tidy",
     "templates/new/claude-settings.json",
     "runtime/lang.h",
-    "runtime/lang.c",
-    "runtime/lang_out.c",
-    "runtime/lang_trivia.c",
-    "runtime/lang_decl.c",
-    "runtime/lang_names.c",
-    "runtime/lang_import.c",
-    "runtime/lang_head.c",
-    "runtime/lang_generic.c",
-    "runtime/lang_constexpr.c",
-    "runtime/lang_fields.c",
-    "runtime/lang_rfor.c",
-    "runtime/lang_sparse.c",
-    "runtime/lang_declare.c",
-    "runtime/lang_tuple.c",
-    "runtime/lang_unused.c",
-    "runtime/lang_type.c",
-    "runtime/lang_stream.c",
-    "runtime/lang_lex.c",
-    "runtime/lang_command.c",
     nullptr,
 };
 
@@ -1048,6 +1097,42 @@ static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *
     return objects;
 }
 
+// build/<OS>-<arch>/rt_<path with / as _>.o, so that runtime/mcp.c and the generated .smith/protocol/mcp.c differ.
+static const char *build_runtime_object_path(SmithBuild *b, const char *folder, const char *source) {
+    char flat[512];
+    size_t length = 0;
+    for (const char *at = source + (source[0] == '.' ? 1 : 0); *at != '\0' && length + 1 < sizeof flat; at++) // bounded
+        flat[length++] = *at == '/' ? '_' : *at;
+    flat[length] = '\0';
+    return smith_fmt(b, "%s/rt_%s.o", folder, smith_replace_extension(b, flat, ""));
+}
+
+// One object for each runtime source; returns how many it added to `list`.
+static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                    const char *const *flags, SmithObject *objects, const SmithObject **list) {
+    const char *const *platform = build_is_linux(b) ? build_runtime_sources_linux : build_runtime_sources_macos;
+    const char *const *inputs =
+        smith_cat(b, smith_list(b, "scripts/pack.h", nullptr), config->headers, config->protocol, nullptr);
+    size_t count = 0;
+    const char *const *tables[] = {build_runtime_sources, build_runtime_sources_mcp, platform};
+    for (size_t pass = 0; pass < 3; pass++) { // the three tables
+        const char *const *table = tables[pass];
+        for (size_t i = 0; table[i] != nullptr; i++) { // bounded by the tables
+            objects[count] = (SmithObject){
+                .compiler = config->cc,
+                .source = table[i],
+                .output = build_runtime_object_path(b, folder, table[i]),
+                .flags = flags,
+                .implicit_inputs = inputs,
+            };
+            smith_object(b, &objects[count]);
+            list[count] = &objects[count];
+            count++;
+        }
+    }
+    return count;
+}
+
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
     const char *pack = build_resource_pack(b, config, folder);
     const char *const *flags = smith_cat(
@@ -1069,9 +1154,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
         .source = "smith.c",
         .output = smith_fmt(b, "%s/smith.o", folder),
         .flags = flags,
-        .implicit_inputs = smith_cat(b, (const char *[]){"scripts/pack.h", "runtime/front_flag.c", nullptr},
-                                     build_smith_inputs, build_library_sources(b), config->headers, config->protocol,
-                                     build_llvm_required(b, config), nullptr),
+        .implicit_inputs =
+            smith_cat(b, (const char *[]){"scripts/pack.h", nullptr}, build_smith_inputs, build_library_sources(b),
+                      config->headers, config->protocol, build_llvm_required(b, config), nullptr),
     };
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
@@ -1086,7 +1171,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     build_io_object(b, config, folder, flags, &runtime_io);
     // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 19, the packed data and
     // the parser) and the prover's four, ended by nullptr
-    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + 1];
+    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2;
+    SmithObject runtime_objects[runtime_max];
+    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + runtime_max + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
@@ -1095,6 +1182,7 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     objects[3] = &lint_identity;
     size_t count = 4;
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
+    count += build_runtime_objects(b, config, folder, flags, runtime_objects, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);
     SmithProgram program = {
         .linker = config->cc,
@@ -3605,6 +3693,9 @@ static const char *build_enzyme_install(SmithBuild *b) {
 }
 
 void build(SmithBuild *b) {
+    // smith's own C follows the conventions it gives a project (#2685): Clang modules for the system and smith headers.
+    // runtime/*.h stay textual: core.h defines _GNU_SOURCE and includes the libc headers, which a module cannot see.
+    smith_modules(b, &(SmithModules){});
     const char *std = build_variable(b, "STD", "gnu23", "the C standard");
     const char *werror = build_variable(b, "WERROR", "-Werror", "-Werror, or empty to let warnings pass");
     const char *folder = build_variable(b, "BUILD", smith_fmt(b, "build/%s-%s", b->os, b->arch), "the build folder");
@@ -3630,6 +3721,9 @@ void build(SmithBuild *b) {
     config.cflags = smith_cat(b,
                               (const char *[]){smith_fmt(b, "-std=%s", std), config.optimize, "-g", "-Wall", "-Wextra",
                                                "-Wpedantic", nullptr},
+                              // glibc hides nftw, O_TMPFILE and the like from C23; a module of libc takes the macro
+                              // from the command line, not from a #define in the file (#2685)
+                              smith_when(b, build_is_linux(b), (const char *[]){"-D_GNU_SOURCE", nullptr}),
                               smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}),
                               config.platform->deployment, nullptr);
 

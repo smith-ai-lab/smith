@@ -1,6 +1,6 @@
 // `smith docs`: checks a project's documents, knowledge/ (an OKF bundle) and .agents/skills/, and prints
 // each problem on stderr as path: message, in the order of the rules below, then a summary on stdout. It exits 1 if
-// there was a problem. One file, included by smith.c; it allocates nothing itself (its memory is two mapped regions,
+// there was a problem. One file, linked into smith; it allocates nothing itself (its memory is two mapped regions,
 // used as arenas). Ported from virtual-cell's docs_check; the rules, the fixtures and the skill smith-docs describe it.
 //
 //   smith docs [--type <name>]... [--require <type>:<field>[=<value>,...]]...
@@ -24,6 +24,10 @@
 // each and as root/relative, every file it read or found to exist: the documents, the skills, and what each link
 // points at. A file that is not there is not named, since the check then has a problem and builds no stamp. A space is
 // written as "\ ", # as "\#" and $ as "$$". A build.c step reruns the check when one of them changes.
+#include "docs.h"
+#include "core.h"
+#include "main.h"
+
 #include <dirent.h>
 #include <stdint.h>
 #include <sys/mman.h>
@@ -1031,7 +1035,7 @@ static void smith_docs_plugin(SmithDocs *docs) {
     from += 1;
     SmithDocsText *listed = SMITH_DOCS_PUSH(&docs->arena, SmithDocsText, smith_docs_plugin_skills_max);
     uint32_t count = 0;
-    for (;; count++) {
+    for (; count <= smith_docs_plugin_skills_max; count++) { // one past the limit reports it
         SmithDocsText entry = smith_docs_json_string(json, &from);
         if (entry.begin == nullptr) break;
         if (count == smith_docs_plugin_skills_max)
@@ -1250,7 +1254,7 @@ static const char *smith_docs_find_root(void) {
     return ".";
 }
 
-static int smith_docs_check(int count, char **args) {
+int smith_docs_check(int count, char **args) {
     SmithDocs docs = {.root = nullptr, .errors = stderr};
     SmithDocsOutput output = smith_docs_arguments(&docs, count, args);
     if (docs.root == nullptr) docs.root = smith_docs_find_root();
@@ -1268,7 +1272,7 @@ static int smith_docs_check(int count, char **args) {
 
 // `smith docs`: the check on the project they name (the current folder by default), with the types and required fields
 // knowledge/index.md declares. Its arguments are the check's options.
-static int smith_docs_main(int count, char **args) {
+int smith_docs_main(int count, char **args) {
     return smith_docs_check(smith_only_options(count, args) ? 0 : count, args);
 }
 

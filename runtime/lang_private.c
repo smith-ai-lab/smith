@@ -13,7 +13,19 @@
 //     variables the symbol (the label `_m::helper`), where every other private one is `static`.
 // A private name is still private to source: it is in no `// smith-names:` line, so an importer cannot write it.
 
-static void smith_lang_priv_begin(SmithLang *lang) {
+#include "lang_private.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_import.h"
+#include "lang_main.h"
+#include "lang_names.h"
+#include "lang_out.h"
+#include "lang_stream.h"
+#include "lang_trivia.h"
+
+void smith_lang_priv_begin(SmithLang *lang) {
     lang->private_active = false;
     lang->priv_range = 0;
     if (!lang->tee || !lang->is_module) return;
@@ -31,7 +43,7 @@ static void smith_lang_priv_begin(SmithLang *lang) {
 }
 
 // The declaration is complete (or its text is: a function's prototype, a variable's `extern`).
-static void smith_lang_priv_end(SmithLang *lang) {
+void smith_lang_priv_end(SmithLang *lang) {
     if (lang->priv_range != 0) {
         SmithLangPrivRange *range = &lang->priv_ranges[lang->priv_range - 1];
         range->to = (uint32_t)lang->priv_used;
@@ -42,20 +54,20 @@ static void smith_lang_priv_end(SmithLang *lang) {
 }
 
 // The declaration is not kept after all (a function body the head did not give a prototype for).
-static void smith_lang_priv_abandon(SmithLang *lang) {
+void smith_lang_priv_abandon(SmithLang *lang) {
     smith_lang_priv_end(lang);
     if (lang->priv_ranges_count > 0) lang->priv_ranges[lang->priv_ranges_count - 1].done = false;
 }
 
 // The declaration is a function or a variable with a symbol, or a type or constant with none.
-static void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked) {
+void smith_lang_priv_form(SmithLang *lang, uint8_t form, bool linked) {
     if (lang->priv_range == 0) return;
     lang->priv_ranges[lang->priv_range - 1].form = form;
     lang->priv_ranges[lang->priv_range - 1].linked = linked;
 }
 
 // A token of the private declaration being kept: its text, and the names it writes through an import.
-static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
+void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
     if (lang->priv_range == 0 || token->kind == SmithTokenKind_Eof) return;
     SmithLangPrivRange *range = &lang->priv_ranges[lang->priv_range - 1];
     if (token->via != 0 && lang->priv_notes_count >= smith_lang_priv_notes_max) {
@@ -77,8 +89,7 @@ static void smith_lang_priv_write(SmithLang *lang, const SmithToken *token) {
 }
 
 // A name the kept declaration declares: what the generics that name it find it by.
-static void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname,
-                                 size_t cname_length) {
+void smith_lang_priv_name(SmithLang *lang, const char *name, size_t length, const char *cname, size_t cname_length) {
     if (lang->priv_range == 0) return;
     if (lang->priv_names_count >= smith_lang_priv_names_max) {
         smith_lang_limit(lang, "names private declarations declare", smith_lang_priv_names_max);
@@ -110,7 +121,7 @@ static bool smith_lang_priv_writes(const SmithLang *lang, const SmithLangPrivRan
 
 // Chooses the declarations the header's instance section holds: those the exported generics name, and those these
 // name. The names they write through imports are noted for the includes of the header.
-static void smith_lang_priv_resolve(SmithLang *lang) {
+void smith_lang_priv_resolve(SmithLang *lang) {
     if (lang->priv_resolved) return;
     lang->priv_resolved = true;
     for (bool changed = true; changed;) { // what the exported generics use, and what the generics they call use
@@ -211,7 +222,7 @@ static size_t smith_lang_priv_guard(const SmithLang *lang, char *out, size_t cap
 // again with SMITH_INSTANCES defined, and the section must be read then even when a plain include came first (an
 // importer of io, which includes random.h, then of random). So the declarations have an include guard, defined at
 // their end so that the opening is one line, and the section a guard of its own.
-static size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, size_t used) {
     smith_lang_priv_resolve(lang);
     if (!smith_lang_priv_any(lang)) return smith_lang_append(out, capacity, used, "#pragma once\n");
     used = smith_lang_append(out, capacity, used, "#ifndef ");
@@ -220,7 +231,7 @@ static size_t smith_lang_priv_open(SmithLang *lang, char *out, size_t capacity, 
 }
 
 // The end of the declarations: the guard's define and its #endif.
-static size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity, size_t used) {
     smith_lang_priv_resolve(lang);
     if (!smith_lang_priv_any(lang)) return used;
     used = smith_lang_append(out, capacity, used, "#define ");
@@ -230,7 +241,7 @@ static size_t smith_lang_priv_close(SmithLang *lang, char *out, size_t capacity,
 
 // The instance section: the declarations the exported generics need of the module's private code, read at the first
 // include with SMITH_INSTANCES.
-static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used, bool c_linkage) {
+size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacity, size_t used, bool c_linkage) {
     smith_lang_priv_resolve(lang);
     if (!smith_lang_priv_any(lang)) return used;
     used = smith_lang_append(out, capacity, used, "#ifdef SMITH_INSTANCES\n#ifndef ");
@@ -251,7 +262,7 @@ static size_t smith_lang_priv_section(SmithLang *lang, char *out, size_t capacit
 
 // `// smith-linked: helper counter`: the private functions and variables the section declares, which the module's own
 // compile gives a symbol.
-static size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     bool any = false;
     for (size_t i = 0; i < lang->priv_names_count; i++) {
         const SmithLangPrivName *entry = &lang->priv_names[i];
@@ -274,7 +285,7 @@ static size_t smith_lang_priv_linked_line(const SmithLang *lang, char *out, size
 
 // `// smith-hidden: offset Pair helper`: the private names the section declares. They are in the importers' C, and no
 // importer may write them (`m::helper` is an error there).
-static size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
+size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size_t capacity, size_t used) {
     bool any = false;
     for (size_t i = 0; i < lang->priv_names_count; i++) {
         const SmithLangPrivName *entry = &lang->priv_names[i];
@@ -294,8 +305,8 @@ static size_t smith_lang_priv_hidden_line(const SmithLang *lang, char *out, size
 }
 
 // The names an imported header says it declares for instances only, as the lowering writes them.
-static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,
-                                   size_t prefix_length) {
+void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t length, const char *prefix,
+                            size_t prefix_length) {
     size_t cursor = 0;
     size_t start = 0;
     size_t end = 0;
@@ -312,7 +323,7 @@ static void smith_lang_hidden_read(SmithLang *lang, const char *text, size_t len
     }
 }
 
-static bool smith_lang_is_hidden(const SmithLang *lang, const char *lowered, size_t length) {
+bool smith_lang_is_hidden(const SmithLang *lang, const char *lowered, size_t length) {
     for (size_t i = 0; i < lang->hidden_count; i++) {
         if (lang->hidden[i].length == length && memcmp(smith_lang_str(lang->hidden[i]), lowered, length) == 0)
             return true;
@@ -325,7 +336,7 @@ static bool smith_lang_is_hidden(const SmithLang *lang, const char *lowered, siz
 
 // Reads the `// smith-linked:` line of the module's own header, once. A compile with no header on its path asks the
 // host for the module's interface made from its source, which has the line too.
-static void smith_lang_linked_read(SmithLang *lang, const SmithHost *host) {
+void smith_lang_linked_read(SmithLang *lang, const SmithHost *host) {
     if (lang->linked_read || host->previous == nullptr || host->read_header == nullptr) return;
     lang->linked_read = true;
     char path[smith_lang_name_max];
@@ -353,7 +364,7 @@ static void smith_lang_linked_read(SmithLang *lang, const SmithHost *host) {
     }
 }
 
-static bool smith_lang_is_linked(const SmithLang *lang, const char *name, size_t length) {
+bool smith_lang_is_linked(const SmithLang *lang, const char *name, size_t length) {
     for (size_t i = 0; i < lang->linked_count; i++) {
         if (lang->linked[i].length == length && memcmp(smith_lang_str(lang->linked[i]), name, length) == 0) return true;
     }

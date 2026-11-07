@@ -1,56 +1,12 @@
 // The expander of make's `$(...)`: variables, substitution references, the automatic variables and the functions of
 // issue #44. It is a machine with a stack of frames and one buffer, not a recursion: a text frame scans its text, and
 // meeting `$(` it pushes a call frame, which expands its arguments by pushing a text frame for each, then computes. The
-// buffer is a stack too: a call's result goes where its first argument began. Included by smith.c after make.c.
+// buffer is a stack too: a call's result goes where its first argument began. Linked into smith.
 
-constexpr size_t smith_make_depth_max = 96;
-constexpr size_t smith_make_args_max = 16;
-constexpr uint64_t smith_make_steps_max = (uint64_t)1 << 32;
-
-typedef struct {
-    const char *p;
-    size_t n;
-} SmithMakeSpan;
-
-typedef enum {
-    SmithMakeFn_Var,
-    SmithMakeFn_Mark,
-    SmithMakeFn_Subst,
-    SmithMakeFn_Patsubst,
-    SmithMakeFn_Strip,
-    SmithMakeFn_Findstring,
-    SmithMakeFn_Filter,
-    SmithMakeFn_FilterOut,
-    SmithMakeFn_Sort,
-    SmithMakeFn_Word,
-    SmithMakeFn_Wordlist,
-    SmithMakeFn_Words,
-    SmithMakeFn_Firstword,
-    SmithMakeFn_Lastword,
-    SmithMakeFn_Join,
-    SmithMakeFn_Dir,
-    SmithMakeFn_Notdir,
-    SmithMakeFn_Suffix,
-    SmithMakeFn_Basename,
-    SmithMakeFn_Addsuffix,
-    SmithMakeFn_Addprefix,
-    SmithMakeFn_Wildcard,
-    SmithMakeFn_Abspath,
-    SmithMakeFn_Realpath,
-    SmithMakeFn_Shell,
-    SmithMakeFn_Eval,
-    SmithMakeFn_Error,
-    SmithMakeFn_Warning,
-    SmithMakeFn_Info,
-    SmithMakeFn_Origin,
-    SmithMakeFn_Flavor,
-    SmithMakeFn_Value,
-    SmithMakeFn_If,
-    SmithMakeFn_Or,
-    SmithMakeFn_And,
-    SmithMakeFn_Foreach,
-    SmithMakeFn_Call,
-} SmithMakeFn;
+#include "make_expand.h"
+#include "core.h"
+#include "make.h"
+#include "mcp_unit.h"
 
 typedef struct {
     const char *name;
@@ -98,56 +54,9 @@ static const SmithMakeFunction smith_make_functions[] = {
     {"call", SmithMakeFn_Call, 1, smith_make_args_max, true},
 };
 
-// A variable's state, saved while a foreach or a call lends it a value.
-typedef struct {
-    SmithMakeVar *var;
-    SmithMakeVar state;
-} SmithMakeSaved;
+SmithMakeMachine smith_make_machine;
 
-typedef struct {
-    bool is_call;
-    bool top;     // a whole variable used here is marked as a use (make.c)
-    bool pending; // an argument was pushed and its end is not recorded yet
-    SmithMakeFn fn;
-    size_t stage;
-    const char *src; // a text frame: what it scans
-    size_t pos;
-    size_t end;
-    size_t start; // a call frame: where its result goes in the buffer
-    SmithMakeSpan raw[smith_make_args_max];
-    size_t raw_count;
-    size_t done[smith_make_args_max]; // the buffer's length once argument i was expanded
-    size_t cursor;
-    size_t aux;
-    const char *text; // foreach: the list; var: the substitution's patterns
-    SmithMakeSaved saved[smith_make_args_max + 1];
-    size_t saved_count;
-} SmithMakeFrame;
-
-typedef struct {
-    SmithMakeFrame frames[smith_make_depth_max];
-    size_t depth;
-    SmithMakeBuffer buffer;
-    SmithMakeBuffer scratch;
-} SmithMakeMachine;
-
-static SmithMakeMachine smith_make_machine;
-
-// The automatic variables of the rule being expanded, if any.
-typedef struct {
-    bool active;
-    const char *target;
-    const char *first;
-    const char *prerequisites; // $^, each once
-    const char *all;           // $+
-    const char *newer;         // $?
-    const char *order_only;    // $|
-    const char *stem;
-} SmithMakeAuto;
-
-static SmithMakeAuto smith_make_auto;
-
-static const char *smith_make_render(const char *text, size_t length);
+SmithMakeAuto smith_make_auto;
 
 // ---- C text
 
@@ -174,7 +83,7 @@ static void smith_make_c_escape(SmithMakeBuffer *out, const char *text, size_t l
 }
 
 // The C string literal of text.
-static const char *smith_make_literal(const char *text, size_t length) {
+const char *smith_make_literal(const char *text, size_t length) {
     SmithMakeBuffer out;
     smith_make_buffer_init(&out, length * 4 + 16);
     smith_make_put_char(&out, '"');
@@ -184,7 +93,7 @@ static const char *smith_make_literal(const char *text, size_t length) {
 }
 
 // A C expression of type const char * for text, which may hold holes: a literal, a hole's expression, or smith_fmt.
-static const char *smith_make_render(const char *text, size_t length) {
+const char *smith_make_render(const char *text, size_t length) {
     text = smith_make_unmark(smith_make_dup(text, length));
     length = strlen(text);
     if (!smith_make_has_hole(text, length)) return smith_make_literal(text, length);
@@ -266,17 +175,9 @@ static const char *smith_make_c_name(const char *name) {
     return out;
 }
 
-// The C name of a Makefile variable in build.c (an option's variable or a named array): build_ and the name in lower
-// case, as smith's naming rules ask (CFLAGS is build_cflags), and the same name each time it is asked for. Two
-// variables whose names differ only in case, or a name another variable took, get a number.
-constexpr size_t smith_make_idents_max = 8192;
-static struct {
-    const char *names[smith_make_idents_max]; // the Makefile's names
-    const char *idents[smith_make_idents_max];
-    size_t count;
-} smith_make_idents;
+SmithMakeIdents smith_make_idents;
 
-static const char *smith_make_ident(const char *name) {
+const char *smith_make_ident(const char *name) {
     for (size_t i = 0; i < smith_make_idents.count; i++) {
         if (strcmp(smith_make_idents.names[i], name) == 0) return smith_make_idents.idents[i];
     }
@@ -301,7 +202,7 @@ static const char *smith_make_ident(const char *name) {
 }
 
 // Makes the variable a knob whose option is -DNAME: its value is the hole for the option's C variable.
-static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
+void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
     const char *text = smith_make_hole_text(smith_make_ident(var->name));
     var->knob = true;
     var->option = true;
@@ -309,10 +210,8 @@ static void smith_make_make_knob(SmithMakeVar *var, const char *fallback) {
     smith_make_var_set(var, text, text, true);
 }
 
-// The names of the empty variables already reported (smith_make_reset forgets them).
-constexpr size_t smith_make_reported_max = 256;
-static const char *smith_make_reported[smith_make_reported_max];
-static size_t smith_make_reported_count;
+const char *smith_make_reported[smith_make_reported_max];
+size_t smith_make_reported_count;
 
 // A variable the Makefile never assigns: an environment variable is a hole for it; any other is a knob (`make X=1`),
 // unless its name was made by an expansion ($(BINARY_$(1))), which is how a Makefile asks whether a setting exists.
@@ -1479,6 +1378,6 @@ static const char *smith_make_expand(const char *text, size_t length, bool top) 
     return smith_make_take(&m->buffer, 0);
 }
 
-static const char *smith_make_expand_text(const char *text, bool top) {
+const char *smith_make_expand_text(const char *text, bool top) {
     return smith_make_expand(text, strlen(text), top);
 }

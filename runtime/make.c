@@ -15,96 +15,20 @@
 //
 // Nothing here recurses and nothing is freed: the memory is one mapped region, every loop is bounded, and an
 // expression is expanded by a machine with a stack of its own (make_expand.c).
+#include "make.h"
+#include "core.h"
+#include "mcp_unit.h"
+
 #include <dirent.h>
 #include <glob.h>
 #include <stdint.h>
 #include <sys/mman.h>
 
-constexpr size_t smith_make_memory_size = (size_t)2 << 30; // reserved; touched as used
-constexpr size_t smith_make_vars_max = 8192;
-constexpr size_t smith_make_slots = 16384; // the variables' hash table, a power of two
-constexpr size_t smith_make_holes_max = 4096;
-constexpr size_t smith_make_diags_max = 512;
-constexpr size_t smith_make_buffer_size = (size_t)32 << 20;
-constexpr size_t smith_make_name_max = 4096;
-constexpr size_t smith_make_words_max = (size_t)1 << 20;
-constexpr size_t smith_make_input_max = (size_t)16 << 20;
-constexpr size_t smith_make_files_max = 64;
-
-// In-band marks (bytes no Makefile holds).
-constexpr char smith_make_hole_begin = '\x01';
-constexpr char smith_make_hole_end = '\x02';
-constexpr char smith_make_use_begin = '\x03';
-constexpr char smith_make_use_sep = '\x04';
-constexpr char smith_make_use_end = '\x05';
-
-typedef struct {
-    const char *file;
-    uint32_t line;
-} SmithMakeWhere;
-
-typedef struct {
-    SmithMakeWhere where;
-    const char *message;
-} SmithMakeDiag;
-
-// A variable. A simple one holds its expansion (`value`, and `marked` with the uses of other variables marked); a
-// recursive one holds its text, expanded where it is used. A knob is a variable `make VAR=value` can set: its value is
-// a hole, and `default_value` is what the Makefile gives it.
-typedef struct {
-    const char *name;
-    const char *value;
-    const char *marked;
-    bool simple;
-    bool defined;
-    bool knob;
-    bool used_as_array;   // some recipe, or an array that is one, uses it as whole words
-    bool option;          // a hole refers to its option (-DNAME=value): build.c declares it
-    const char *fallback; // a knob's value when no option or environment variable gives one (marked)
-    const char *source;   // the text the Makefile assigned, for the comments of build.c
-    bool built_in;        // make's own default (CC, CXX, ...)
-    bool command_line;    // set in a way a Makefile assignment must not replace (not used yet)
-    SmithMakeWhere where;
-    uint32_t order; // the order of the first assignment, for emitting arrays in the Makefile's order
-} SmithMakeVar;
-
-typedef struct {
-    const char *expression; // a C expression of type const char *
-} SmithMakeHole;
-
-typedef struct {
-    char *data;
-    size_t length;
-    size_t capacity;
-} SmithMakeBuffer;
-
-typedef struct {
-    uint32_t slots[smith_make_slots]; // index + 1 into vars, 0 for empty
-    SmithMakeVar vars[smith_make_vars_max];
-    size_t var_count;
-    SmithMakeHole holes[smith_make_holes_max];
-    size_t hole_count;
-    SmithMakeDiag diags[smith_make_diags_max];
-    size_t diag_count;
-    SmithMakeWhere here; // what is being read or expanded, for the diagnostics
-    char *pool;
-    size_t pool_used;
-    const char *root; // the folder the Makefile is in, as the translation was asked for
-    const char *file; // the Makefile, relative to root
-    uint32_t order;
-    bool no_knobs;          // an undefined variable is empty, not a knob (make's own rules use CFLAGS and the like)
-    bool generated_include; // a Makefile that this one makes is included: a variable it does not define may be there
-    bool reading;           // the Makefile is being read (a $(eval) then adds lines to it)
-    bool in_eval;           // the line being read is the text of an $(eval)
-    const char *evals[64];  // the text of $(eval) calls the reader has not read yet
-    size_t eval_count;
-} SmithMake;
-
-static SmithMake smith_make;
+SmithMake smith_make;
 
 // ---- Memory
 
-static void *smith_make_alloc(size_t size) {
+void *smith_make_alloc(size_t size) {
     constexpr size_t align = 16;
     if (smith_make.pool == nullptr) {
         void *region = mmap(nullptr, smith_make_memory_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -119,28 +43,28 @@ static void *smith_make_alloc(size_t size) {
 }
 
 // A fixed table is full: stop, naming what filled it and the limit, never drop the rest.
-[[noreturn]] static void smith_make_too_many(const char *things, size_t limit) {
+[[noreturn]] void smith_make_too_many(const char *things, size_t limit) {
     char message[160];
     snprintf(message, sizeof message, "make: more than %zu %s (the limit)", limit, things);
     smith_die(smith_exit_usage, message, nullptr);
 }
 
-static const char **smith_make_new_list(size_t count) {
+const char **smith_make_new_list(size_t count) {
     return (const char **)smith_make_alloc(count * sizeof(char *));
 }
 
-static char *smith_make_dup(const char *text, size_t length) {
+char *smith_make_dup(const char *text, size_t length) {
     char *copy = smith_make_alloc(length + 1);
     memcpy(copy, text, length);
     copy[length] = '\0';
     return copy;
 }
 
-static const char *smith_make_copy(const char *text) {
+const char *smith_make_copy(const char *text) {
     return smith_make_dup(text, strlen(text));
 }
 
-[[gnu::format(printf, 1, 2)]] static const char *smith_make_format(const char *format, ...) {
+[[gnu::format(printf, 1, 2)]] const char *smith_make_format(const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     va_list again;
@@ -156,28 +80,28 @@ static const char *smith_make_copy(const char *text) {
 
 // ---- Buffers
 
-static void smith_make_buffer_init(SmithMakeBuffer *buffer, size_t capacity) {
+void smith_make_buffer_init(SmithMakeBuffer *buffer, size_t capacity) {
     buffer->data = smith_make_alloc(capacity);
     buffer->length = 0;
     buffer->capacity = capacity;
 }
 
-static void smith_make_put(SmithMakeBuffer *buffer, const char *text, size_t length) {
+void smith_make_put(SmithMakeBuffer *buffer, const char *text, size_t length) {
     if (length > buffer->capacity - buffer->length)
         smith_die(smith_exit_usage, "make: an expansion is too long", nullptr);
     memcpy(buffer->data + buffer->length, text, length);
     buffer->length += length;
 }
 
-static void smith_make_put_char(SmithMakeBuffer *buffer, char c) {
+void smith_make_put_char(SmithMakeBuffer *buffer, char c) {
     smith_make_put(buffer, &c, 1);
 }
 
-static void smith_make_put_text(SmithMakeBuffer *buffer, const char *text) {
+void smith_make_put_text(SmithMakeBuffer *buffer, const char *text) {
     smith_make_put(buffer, text, strlen(text));
 }
 
-[[gnu::format(printf, 2, 3)]] static void smith_make_put_format(SmithMakeBuffer *buffer, const char *format, ...) {
+[[gnu::format(printf, 2, 3)]] void smith_make_put_format(SmithMakeBuffer *buffer, const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     size_t room = buffer->capacity - buffer->length;
@@ -188,14 +112,14 @@ static void smith_make_put_text(SmithMakeBuffer *buffer, const char *text) {
 }
 
 // The buffer's text as a string in the pool.
-static const char *smith_make_take(const SmithMakeBuffer *buffer, size_t from) {
+const char *smith_make_take(const SmithMakeBuffer *buffer, size_t from) {
     SMITH_ASSERT(from <= buffer->length);
     return smith_make_dup(buffer->data + from, buffer->length - from);
 }
 
 // ---- Diagnostics
 
-[[gnu::format(printf, 2, 3)]] static void smith_make_report_at(SmithMakeWhere where, const char *format, ...) {
+[[gnu::format(printf, 2, 3)]] void smith_make_report_at(SmithMakeWhere where, const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     char message[1024];
@@ -211,7 +135,7 @@ static const char *smith_make_take(const SmithMakeBuffer *buffer, size_t from) {
     smith_make.diags[smith_make.diag_count++] = (SmithMakeDiag){where, smith_make_copy(message)};
 }
 
-[[gnu::format(printf, 1, 2)]] static void smith_make_report(const char *format, ...) {
+[[gnu::format(printf, 1, 2)]] void smith_make_report(const char *format, ...) {
     va_list arguments;
     va_start(arguments, format);
     char message[1024];
@@ -222,18 +146,18 @@ static const char *smith_make_take(const SmithMakeBuffer *buffer, size_t from) {
 
 // ---- Text
 
-static bool smith_make_blank(char c) {
+bool smith_make_blank(char c) {
     return c == ' ' || c == '\t';
 }
 
-static bool smith_make_space(char c) {
+bool smith_make_space(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
 
 // The next word of text[*at .. length): its start and length, or false at the end. A hole or a use mark is part of a
 // word (they hold no space), and so is what a use mark encloses when it has words in it: callers that need the words
 // of a marked text read it with smith_make_words_marked.
-static bool smith_make_next_word(const char *text, size_t length, size_t *at, size_t *start, size_t *size) {
+bool smith_make_next_word(const char *text, size_t length, size_t *at, size_t *start, size_t *size) {
     size_t i = *at;
     while (i < length && smith_make_space(text[i]))
         i++;
@@ -249,7 +173,7 @@ static bool smith_make_next_word(const char *text, size_t length, size_t *at, si
     return true;
 }
 
-static size_t smith_make_trim_length(const char *text, size_t length, size_t *from) {
+size_t smith_make_trim_length(const char *text, size_t length, size_t *from) {
     size_t begin = 0;
     while (begin < length && smith_make_space(text[begin]))
         begin++;
@@ -260,18 +184,18 @@ static size_t smith_make_trim_length(const char *text, size_t length, size_t *fr
     return end - begin;
 }
 
-static const char *smith_make_trim(const char *text) {
+const char *smith_make_trim(const char *text) {
     size_t from = 0;
     size_t size = smith_make_trim_length(text, strlen(text), &from);
     return smith_make_dup(text + from, size);
 }
 
-static bool smith_make_has_hole(const char *text, size_t length) {
+bool smith_make_has_hole(const char *text, size_t length) {
     return memchr(text, smith_make_hole_begin, length) != nullptr;
 }
 
 // The text without use marks.
-static const char *smith_make_unmark(const char *text) {
+const char *smith_make_unmark(const char *text) {
     size_t length = strlen(text);
     if (strchr(text, smith_make_use_begin) == nullptr && strchr(text, smith_make_use_end) == nullptr) return text;
     char *out = smith_make_alloc(length + 1);
@@ -293,13 +217,8 @@ static const char *smith_make_unmark(const char *text) {
 
 // ---- Words
 
-typedef struct {
-    const char *text;
-    size_t length;
-} SmithMakeWord;
-
 // The words of text into a pool array; *count is how many.
-static SmithMakeWord *smith_make_words(const char *text, size_t length, size_t *count) {
+SmithMakeWord *smith_make_words(const char *text, size_t length, size_t *count) {
     size_t at = 0;
     size_t start = 0;
     size_t size = 0;
@@ -316,15 +235,15 @@ static SmithMakeWord *smith_make_words(const char *text, size_t length, size_t *
     return words;
 }
 
-static const char *smith_make_word_text(SmithMakeWord word) {
+const char *smith_make_word_text(SmithMakeWord word) {
     return smith_make_dup(word.text, word.length);
 }
 
 // ---- Patterns
 
 // Whether text matches pattern (a `%` stands for any text, once). The stem is what `%` matched.
-static bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length,
-                             const char **stem, size_t *stem_length) {
+bool smith_make_match(const char *pattern, size_t pattern_length, const char *text, size_t length, const char **stem,
+                      size_t *stem_length) {
     const char *percent = memchr(pattern, '%', pattern_length);
     if (percent == nullptr) {
         if (pattern_length != length || memcmp(pattern, text, length) != 0) return false;
@@ -343,8 +262,7 @@ static bool smith_make_match(const char *pattern, size_t pattern_length, const c
 }
 
 // pattern with its `%` replaced by stem, or the pattern when it has none.
-static const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem,
-                                         size_t stem_length) {
+const char *smith_make_substitute(const char *pattern, size_t pattern_length, const char *stem, size_t stem_length) {
     const char *percent = memchr(pattern, '%', pattern_length);
     if (percent == nullptr) return smith_make_dup(pattern, pattern_length);
     size_t before = (size_t)(percent - pattern);
@@ -369,12 +287,12 @@ static size_t smith_make_hole(const char *expression) {
     return smith_make.hole_count++;
 }
 
-static const char *smith_make_hole_text(const char *expression) {
+const char *smith_make_hole_text(const char *expression) {
     return smith_make_format("%c%zu%c", smith_make_hole_begin, smith_make_hole(expression), smith_make_hole_end);
 }
 
 // At text[i] there is a hole: its number, and where it ends (past the end mark).
-static size_t smith_make_hole_at(const char *text, size_t length, size_t i, size_t *number) {
+size_t smith_make_hole_at(const char *text, size_t length, size_t i, size_t *number) {
     SMITH_ASSERT(text[i] == smith_make_hole_begin);
     size_t value = 0;
     size_t j = i + 1;
@@ -389,7 +307,7 @@ static size_t smith_make_hole_at(const char *text, size_t length, size_t i, size
 
 // ---- Variables
 
-static uint32_t smith_make_hash(const char *name, size_t length) {
+uint32_t smith_make_hash(const char *name, size_t length) {
     uint32_t hash = 2166136261U;
     for (size_t i = 0; i < length; i++) {
         hash ^= (unsigned char)name[i];
@@ -398,7 +316,7 @@ static uint32_t smith_make_hash(const char *name, size_t length) {
     return hash;
 }
 
-static SmithMakeVar *smith_make_var_find(const char *name, size_t length) {
+SmithMakeVar *smith_make_var_find(const char *name, size_t length) {
     uint32_t at = smith_make_hash(name, length) & (smith_make_slots - 1);
     for (size_t probes = 0; probes < smith_make_slots; probes++) {
         uint32_t slot = smith_make.slots[at];
@@ -411,7 +329,7 @@ static SmithMakeVar *smith_make_var_find(const char *name, size_t length) {
 }
 
 // The variable of that name, made (undefined) when it is not there.
-static SmithMakeVar *smith_make_var_get(const char *name, size_t length) {
+SmithMakeVar *smith_make_var_get(const char *name, size_t length) {
     SmithMakeVar *found = smith_make_var_find(name, length);
     if (found != nullptr) return found;
     if (smith_make.var_count >= smith_make_vars_max) smith_make_too_many("variables", smith_make_vars_max);
@@ -424,12 +342,12 @@ static SmithMakeVar *smith_make_var_get(const char *name, size_t length) {
     return var;
 }
 
-static size_t smith_make_var_index(const SmithMakeVar *var) {
+size_t smith_make_var_index(const SmithMakeVar *var) {
     return (size_t)(var - smith_make.vars);
 }
 
 // Sets a variable's whole state (what a log restores).
-static void smith_make_var_set(SmithMakeVar *var, const char *value, const char *marked, bool simple) {
+void smith_make_var_set(SmithMakeVar *var, const char *value, const char *marked, bool simple) {
     var->value = value;
     var->marked = marked;
     var->simple = simple;
@@ -439,7 +357,7 @@ static void smith_make_var_set(SmithMakeVar *var, const char *value, const char 
 }
 
 // The value of a variable for the Makefile's own text, e.g. `.DEFAULT_GOAL`: nullptr if it is not defined.
-static const char *smith_make_var_value(const char *name) {
+const char *smith_make_var_value(const char *name) {
     const SmithMakeVar *var = smith_make_var_find(name, strlen(name));
     return var != nullptr && var->defined ? var->value : nullptr;
 }

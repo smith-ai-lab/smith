@@ -19,35 +19,14 @@
 // defined before the functions; `x->[rest]...` and `x.[rest]...` are those members as the arguments of a call or an
 // initializer. Both lower to plain C.
 
-static void smith_lang_replay_run(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay);
-static void smith_lang_replay_begin(SmithLangReplay *replay, const SmithLangGeneric *generic,
-                                    const SmithLangInstance *instance, uint32_t id, uint32_t location);
+#include "lang_nested.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
 
-constexpr size_t smith_lang_nested_max = 8;
-constexpr size_t smith_lang_nested_names_max = 16;
-
-typedef struct {
-    uint32_t start; // [start, end) of smith_lang_gt: `[](P) -> R { ... }`
-    uint32_t end;
-    uint32_t params_from, params_to; // the tokens between the parentheses
-    bool has_type;
-    uint32_t type_from, type_to; // `-> R`: the tokens of R
-    uint32_t body_from, body_to; // the `{` and the `}`
-    char mangled[smith_lang_name_max];
-} SmithLangNested;
-
-typedef struct {
-    SmithLangNested list[smith_lang_nested_max];
-    size_t count;
-    char pack_tag[smith_lang_name_max];
-    bool failed; // an error was reported: a lambda stands for `nullptr`, so that the body adds no second error
-    // the probe of an inferred return type: a parameter of the lambda is a member of a compound literal
-    char probe_tag[smith_lang_name_max];
-    const SmithLangGenToken *probe_names[smith_lang_nested_names_max];
-    size_t probe_count;
-} SmithLangNestedState;
-
-static SmithLangNestedState smith_lang_nested;
+SmithLangNestedState smith_lang_nested;
 
 // The token after the `)` that matches the `(` at `open`, below `limit` (UINT32_MAX when none).
 static uint32_t smith_lang_nested_close(uint32_t open, uint32_t limit, const char *opener, const char *closer) {
@@ -303,8 +282,7 @@ static void smith_lang_nested_define_pack(SmithLang *lang, const SmithHost *host
 
 // What the body's replay does with a lambda, the probe of an inferred type and `typeof(rest)`. True when it took
 // tokens.
-static bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                     SmithLangFrame *frame) {
+bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay, SmithLangFrame *frame) {
     if (replay->instance == nullptr ||
         (smith_lang_nested.count == 0 && smith_lang_nested.pack_tag[0] == 0 && smith_lang_nested.probe_count == 0)) {
         return false;
@@ -361,7 +339,7 @@ static bool smith_lang_nested_replay(SmithLang *lang, const SmithHost *host, Smi
 }
 
 // Whether the tokens at `at` are `[ rest ]` after a `.` or `->`: the member of the argument.
-static bool smith_lang_nested_member_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
+bool smith_lang_nested_member_at(const SmithLangReplay *replay, uint32_t at, uint32_t limit) {
     SmithLangPackRef ref;
     return at > 0 && at + 2 < limit && smith_lang_gt_punct(&smith_lang_gt.tokens[at], "[") &&
            smith_lang_member_before(at) && smith_lang_pack_resolve(replay, at + 1, &ref) &&
@@ -494,8 +472,8 @@ static bool smith_lang_nested_write_one(const SmithLangNestedWriter *w, const Sm
 
 // The lambdas in the body of the replay's generic, written at file scope for the instance: the struct of the
 // arguments, then each function. False after an error.
-static bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                    const SmithLangInstance *instance, uint32_t location, uint32_t id) {
+bool smith_lang_nested_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                             const SmithLangInstance *instance, uint32_t location, uint32_t id) {
     smith_lang_nested.pack_tag[0] = 0;
     smith_lang_nested.probe_count = 0;
     smith_lang_nested.failed = false;
@@ -650,7 +628,7 @@ static bool smith_lang_argl_f_split(uint32_t from, uint32_t to, SmithLangArglF *
 }
 
 // The tokens [*from, *to) of F in `Lambda(F) name`, the parameter of slot `slot`: false when it is no such parameter.
-static bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to) {
+bool smith_lang_argl_slot(const SmithLangGeneric *generic, size_t slot, uint32_t *from, uint32_t *to) {
     if (slot >= generic->type_count || generic->type_kind[slot] != SmithLangSlot_Function) return false;
     SmithLangParam params[smith_lang_call_params_max];
     size_t count = smith_lang_generic_params(generic, params, smith_lang_call_params_max);
@@ -676,8 +654,8 @@ static bool smith_lang_argl_from_f(const SmithLangPool *pool, uint32_t from, uin
 }
 
 // The lambda at `span` of a call: checked against F at the call. False after the error.
-static bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
-                                  SmithLangSpan span, uint32_t place) {
+bool smith_lang_argl_check(SmithLang *lang, const SmithHost *host, const SmithLangGeneric *generic, size_t slot,
+                           SmithLangSpan span, uint32_t place) {
     uint32_t fa = 0;
     uint32_t fb = 0;
     char shown[256];
@@ -831,8 +809,8 @@ static void smith_lang_argl_write_one(const SmithLangNestedWriter *w, const Smit
 }
 
 // The functions of the instance's lambdas, and the check of every `Lambda(F)` argument, before the instance.
-static void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
-                                  const SmithLangInstance *instance, uint32_t location, uint32_t id) {
+void smith_lang_argl_write(SmithLang *lang, const SmithHost *host, SmithLangReplay *replay,
+                           const SmithLangInstance *instance, uint32_t location, uint32_t id) {
     const SmithLangGeneric *generic = &smith_lang_generics[instance->generic];
     SmithLangNestedWriter writer = {lang, host, replay, instance, location, id};
     for (size_t slot = 0; slot < generic->type_count; slot++) { // the slots

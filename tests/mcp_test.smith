@@ -78,6 +78,7 @@ static void check_fake(const char *mode, const char *flags, Bool linked) {
     scratch::copy_tree(&p, "lib", "lib");
     scratch::copy_tree(&p, "tests/mcp_fake.c", "tests/mcp_fake.c");
     scratch::copy_tree(&p, "runtime", "runtime");
+    scratch::copy_tree(&p, "scripts/pack.h", "scripts/pack.h");
     if (linked) {
         scratch::Run objects = scratch::sh(&p, concatenated("flags='", proto_flags, "'; ", proto_script, " 2>&1"));
         if (objects.status != 0) {

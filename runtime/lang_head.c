@@ -2,13 +2,24 @@
 // module's prefix, `static` if it is private, and for an exported function a prototype carrying the symbol.
 // Included by runtime/lang.c, after runtime/lang_import.c.
 
+#include "lang_head.h"
+#include "core.h"
+#include "lang.h"
+#include "lang_body.h"
+#include "lang_decl.h"
+#include "lang_generic.h"
+#include "lang_main.h"
+#include "lang_out.h"
+#include "lang_private.h"
+#include "lang_slice.h"
+
 typedef enum {
     SmithLangForm_Type,     // a typedef, a tag, an assertion: nothing is declared that has a symbol
     SmithLangForm_Function, // a name followed by a parameter list
     SmithLangForm_Variable,
 } SmithLangForm;
 
-static SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHeld *held) {
+SmithToken smith_lang_held_token(const SmithLang *lang, const SmithLangHeld *held) {
     SmithToken token = {};
     token.kind = held->kind;
     token.line_start = held->line_start;
@@ -134,7 +145,7 @@ static bool smith_lang_alias_name(const SmithLang *lang, size_t index, const Smi
            smith_lang_equals(smith_lang_scratch_str(before->original), before->original.length, "Type");
 }
 
-static void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const SmithToken *next) {
+void smith_lang_resolve(SmithLang *lang, const SmithHost *host, const SmithToken *next) {
     if (lang->pending == SIZE_MAX) return;
     SmithLangHeld *held = &lang->head[lang->pending];
     size_t index = lang->pending;
@@ -246,11 +257,6 @@ static bool smith_lang_head_punct(SmithLang *lang, const SmithToken *token) {
 // ---- Writing the head out
 // ------------------------------------------------------------------------------------------------
 
-// A module's symbol is `_` and its path (`_std::test::order`) on every platform: Mach-O's own spelling of a C name,
-// and on Linux the same, so that a header written on one platform (include/smith/*.h, generated on macOS) names the
-// symbols a compile on the other defines (issue #305).
-constexpr char smith_lang_symbol_underscore[] = "_";
-
 static SmithToken smith_lang_punct_after(const char *text, const SmithToken *like) {
     SmithToken made = smith_lang_synth(SmithTokenKind_Punctuator, text, strlen(text), like);
     made.line_start = false;
@@ -333,10 +339,8 @@ static bool smith_lang_head_dropped(const SmithLang *lang, size_t index) {
 // that is not null and has N objects (`dereferenceable`), and which `smith prove` reads. The generated header keeps
 // the C declaration. The first dimension only; a parameter with no size is an error.
 
-typedef enum { SmithLangArray_None, SmithLangArray_Sized, SmithLangArray_Unsized } SmithLangArray;
-
 // What the token after the `[` of an array parameter says of its size.
-static SmithLangArray smith_lang_array_size(const SmithToken *token) {
+SmithLangArray smith_lang_array_size(const SmithToken *token) {
     if (smith_lang_punct(token, "]")) return SmithLangArray_Unsized;
     if (smith_lang_punct(token, "*") || smith_lang_punct(token, ".")) return SmithLangArray_None;
     if (token->kind == SmithTokenKind_Identifier) {
@@ -346,7 +350,7 @@ static SmithLangArray smith_lang_array_size(const SmithToken *token) {
     return SmithLangArray_Sized;
 }
 
-static void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uint32_t location) {
     smith_lang_error(lang, host, location,
                      "an array parameter needs its size: write `T xs[N]`, `T xs[:]` for a length known at run time, "
                      "or `T *xs` for a pointer");
@@ -357,8 +361,8 @@ static void smith_lang_unsized_error(SmithLang *lang, const SmithHost *host, uin
 // Both ways a head is read (a private one as it streams by, an exported one held) tell this each token of a parameter
 // list, with how deep in `[ ]` it is before and after. The tokens of each dimension are kept as the code wrote them.
 
-static void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
-                                   SmithTokenKind kind, uint32_t before, uint32_t after) {
+void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const char *text, size_t length,
+                            SmithTokenKind kind, uint32_t before, uint32_t after) {
     bool open = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == '[';
     bool close = kind == SmithTokenKind_Punctuator && length == 1 && text[0] == ']';
     SmithLangArrayParam *param =
@@ -404,8 +408,6 @@ static void smith_lang_array_token(SmithLang *lang, const SmithHost *host, const
         lang->array_pending[length] = 0;
     }
 }
-
-static bool smith_lang_slice_defined(const SmithLang *lang, const char *tag);
 
 // The end of the braces that open at the held token `open`, or `head_count` when they do not close.
 static size_t smith_lang_head_close_brace(const SmithLang *lang, size_t open) {
@@ -479,7 +481,7 @@ static void smith_lang_emit_maybe_unused(SmithLang *lang, const SmithHost *host,
     }
 }
 
-static void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
+void smith_lang_emit_head(SmithLang *lang, const SmithHost *host, bool header_too, bool with_static) {
     size_t static_at = with_static ? smith_lang_head_after_attributes(lang) : SIZE_MAX;
     bool function = lang->decl.is_function && !lang->decl.is_typedef;
     lang->array_param_count = 0;
@@ -598,8 +600,6 @@ static void smith_lang_declare_variable(SmithLang *lang, const SmithHost *host, 
     lang->emit_synthetic = false;
 }
 
-static void smith_lang_body_note(SmithLang *lang); // runtime/lang_body.c
-
 // An exported `constexpr Type Y = X;` is `typedef X Y;` in the header, so C callers see the name. What was written to
 // the header after the `typedef` keyword is the initializer, as the lowering spelled it (`double;`, `uint8_t[16];`,
 // `void (*)(int32_t);`): the name goes where C's declarator has it, inside the `(*` of a function pointer or a pointer
@@ -669,7 +669,7 @@ static void smith_lang_alias_finish(SmithLang *lang) {
         lang->header_used -= 1;
 }
 
-static void smith_lang_end_declaration(SmithLang *lang) {
+void smith_lang_end_declaration(SmithLang *lang) {
     if (lang->decl.alias_header) smith_lang_alias_finish(lang);
     if (lang->due_late != 0 && lang->due_count < smith_lang_due_max) lang->due[lang->due_count++] = lang->due_late - 1;
     lang->due_late = 0;
@@ -698,7 +698,7 @@ static void smith_lang_end_declaration(SmithLang *lang) {
     lang->bracket_depth = 0;
 }
 
-static void smith_lang_push_brace(SmithLang *lang, const SmithHost *host, SmithLangBrace kind, uint32_t location) {
+void smith_lang_push_brace(SmithLang *lang, const SmithHost *host, SmithLangBrace kind, uint32_t location) {
     if (lang->brace_depth >= smith_lang_braces_max) {
         smith_lang_error(lang, host, location, "braces nest more deeply than smith reads (%zu)", smith_lang_braces_max);
         lang->broken = true;
@@ -708,7 +708,7 @@ static void smith_lang_push_brace(SmithLang *lang, const SmithHost *host, SmithL
 }
 
 // A function's `{`: its body needs the braces, the module's names and the imported ones.
-static void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32_t location) {
+void smith_lang_enter_body(SmithLang *lang, const SmithHost *host, uint32_t location) {
     if (host->previous != nullptr) {
         if (lang->has_c && !lang->imports_watched) host->watch_imports(host->context);
         lang->imports_watched = true;
@@ -781,9 +781,6 @@ static void smith_lang_emit_inline_head(SmithLang *lang, const SmithHost *host) 
     for (size_t i = at; i < lang->head_count; i++) // bounded by the head
         smith_lang_emit_held(lang, host, i, true);
 }
-
-// runtime/lang_generic.c
-static void smith_lang_generic_flush_head(SmithLang *lang, const SmithHost *host, const SmithToken *terminator);
 
 // An exported function with a body: an importer may run it (runtime/lang_body.c).
 static void smith_lang_body_listed_add(SmithLang *lang, bool is_main) {
@@ -923,7 +920,7 @@ static void smith_lang_head_identifier(SmithLang *lang, const SmithHost *host, c
     lang->pending = lang->head_count - 1;
 }
 
-static void smith_lang_head(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
+void smith_lang_head(SmithLang *lang, const SmithHost *host, const SmithToken *token) {
     smith_lang_resolve(lang, host, token);
     if (token->kind == SmithTokenKind_Identifier) {
         smith_lang_head_identifier(lang, host, token);

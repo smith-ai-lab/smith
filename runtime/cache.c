@@ -1,10 +1,18 @@
 // `smith cache`: shows and cleans the two caches, and the lock that tells a clean a build is using them. One file,
-// included by smith.c after runtime/package.c, which holds where the caches are and the pruning rule. See
+// linked into smith, which holds where the caches are and the pruning rule. See
 // knowledge/caches.md.
 //
 // The caches are $XDG_CACHE_HOME/smith/modules (clang's module cache, shared by every project and worktree) and
 // $XDG_CACHE_HOME/smith/packages (smith_package). Both are keyed by hash, so anything removed is simply built or
 // fetched again.
+#include "cache.h"
+#include "core.h"
+#include "mcp_unit.h"
+#include "package.h"
+#ifdef SMITH_CORE
+void smith_core_package_environment(bool given, const char *xdg, const char *home);
+#endif
+
 #include <sys/file.h>
 
 constexpr size_t smith_cache_entries_max = 4096;
@@ -34,7 +42,7 @@ static bool smith_cache_lock_path(char *out) {
 // by ninja and every process it starts, so the lock lasts exactly as long as the build's processes do, and it is
 // released by the system if smith is killed. Costs one open and one flock. Without a usable cache folder the build
 // simply holds nothing (and then has no cache a clean could remove).
-static void smith_cache_hold(void) {
+void smith_cache_hold(void) {
     char lock[PATH_MAX];
     SmithPackageFault error;
     char base[PATH_MAX];
@@ -158,7 +166,7 @@ static void smith_cache_show(bool verbose) {
 
 // The descriptor that holds the lock exclusively: open until the process ends (no build starts while the clean runs: it
 // waits for the lock), or until smith_core_cache closes it.
-static int smith_cache_exclusive_fd = -1;
+[[maybe_unused]] static int smith_cache_exclusive_fd = -1;
 
 // Takes the lock exclusively and returns true, or false (and its path) when a build holds it. With no lock file there
 // is no build.
@@ -219,7 +227,7 @@ static bool smith_cache_args_ok(int count, char **args) {
 }
 
 // `smith cache [-v]` and `smith cache clean [modules|packages|lint]`.
-static int smith_cache_main(int count, char **args) {
+int smith_cache_main(int count, char **args) {
     if (smith_cache_out == nullptr) smith_cache_out = stdout;
     if (!smith_cache_args_ok(count, args)) smith_die(smith_exit_usage, smith_cache_usage, nullptr);
     if (count == 0 || (count == 1 && strcmp(args[0], "-v") == 0)) {
@@ -243,9 +251,7 @@ static int smith_cache_main(int count, char **args) {
 // include/smith_core_cache.h: `smith cache` in process on an explicit cache folder. What the verb would end the process
 // for is returned as its status (2) with the message in `out`.
 int smith_core_cache(const char *xdg_cache_home, const char *home, int count, char **args, char *out, size_t out_size) {
-    smith_core_environment.given = true;
-    smith_core_environment.xdg = xdg_cache_home;
-    smith_core_environment.home = home;
+    smith_core_package_environment(true, xdg_cache_home, home);
     int status = 0;
     char text[PATH_MAX + 128] = "";
     char base[PATH_MAX];
@@ -255,7 +261,7 @@ int smith_core_cache(const char *xdg_cache_home, const char *home, int count, ch
     FILE *stream = open_memstream(&memory, &length);
     if (stream == nullptr) {
         snprintf(out, out_size, "cannot make a stream");
-        smith_core_environment.given = false;
+        smith_core_package_environment(false, nullptr, nullptr);
         return 1;
     }
     char lock[PATH_MAX];
@@ -286,9 +292,7 @@ int smith_core_cache(const char *xdg_cache_home, const char *home, int count, ch
     smith_cache_exclusive_fd = -1;
     snprintf(out, out_size, "%s", memory != nullptr ? memory : "");
     free(memory);
-    smith_core_environment.given = false;
-    smith_core_environment.xdg = nullptr;
-    smith_core_environment.home = nullptr;
+    smith_core_package_environment(false, nullptr, nullptr);
     return status;
 }
 #endif
