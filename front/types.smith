@@ -1330,7 +1330,7 @@ static void push_made(Walk *w, TypeRef type) {
 
 // A type path `a.T`, `a::T` or `a.b.T`: through the modules when its first name is one, else the whole path as a name
 // (`c::printf`); inside an imported module, that module's own names first.
-static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+export const Symbol *type_through_modules(const Checked *r, ast::Path path);
 export const HeaderBinding *header_binding(const Checked *r, Str name);
 
 static Str path_text(ast::Path path) {
@@ -1781,7 +1781,7 @@ static Bool apply_length(ast::BinaryOp op, U64 a, U64 b, U64 *out) {
     return true;
 }
 
-static const Symbol *type_through_modules(const Checked *r, ast::Path path);
+export const Symbol *type_through_modules(const Checked *r, ast::Path path);
 
 // Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
 // written as a value.
@@ -1832,7 +1832,7 @@ export Bool integer_of(const ast::Expr *e, U64 *out) {
 // and gives an empty answer.
 
 // Whether the symbol is a constant variable (`const`, `constexpr`, or a `let` that is not `mut`); its initializer.
-static Bool constant_initializer(const Symbol *s, const ast::Expr **init) {
+export Bool constant_initializer(const Symbol *s, const ast::Expr **init) {
     if (s == nullptr) return false;
     if (s->kind != .variable) return false;
     const ast::Decl *decl = s->decl;
@@ -1859,7 +1859,7 @@ static Bool declared_in_c(const Symbol *s) {
 }
 
 // Whether the symbol is the declaration `d`.
-static Bool declared_by(const Symbol *s, const ast::Decl *d) {
+export Bool declared_by(const Symbol *s, const ast::Decl *d) {
     const ast::Decl *decl = s->decl;
     if (decl == nullptr) return false;
     return decl == d;
@@ -3382,7 +3382,7 @@ export Through through_modules(const Checked *r, const Names *names) {
     return out;
 }
 
-static const Symbol *type_through_modules(const Checked *r, ast::Path path) {
+export const Symbol *type_through_modules(const Checked *r, ast::Path path) {
     Usize count = countof(path.segments);
     if (count > 1 && count <= 8) {
         const Symbol *first = scoped(r, path.segments[0].text);

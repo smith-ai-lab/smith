@@ -464,8 +464,9 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     if (earlier == nullptr || earlier->kind != .variable) {
         return false;
     }
-    if (earlier->decl != nullptr) {
-        types::failf(r, d->span, "`", name, "` hides the `", name, "` declared at byte ", earlier->decl->span.start,
+    const ast::Decl *there = earlier->decl;
+    if (there != nullptr) {
+        types::failf(r, d->span, "`", name, "` hides the `", name, "` declared at byte ", there->span.start,
                      "; shadowing is an error: assign with `=`, or choose another name");
     } else {
         types::failf(r, d->span, "`", name, "` hides a parameter or an outer `", name,
@@ -1422,11 +1423,15 @@ static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
         return false;
     }
     const types::Symbol *s = types::lookup_path(&r->scopes, value->kind.call.callee->kind.name.path);
-    if (s == nullptr || s->kind != .function_symbol || s->decl == nullptr) {
+    if (s == nullptr || s->kind != .function_symbol) {
         return false;
     }
-    for (Usize i = 0; i < countof(s->decl->attributes); i++) {
-        ast::Identifier segments[:] = s->decl->attributes[i].name.segments;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) {
+        return false;
+    }
+    for (Usize i = 0; i < countof(decl->attributes); i++) {
+        ast::Identifier segments[:] = decl->attributes[i].name.segments;
         Usize n = countof(segments);
         if (n > 0 && types::same_text(segments[n - 1].text, "noreturn")) return true;
     }
@@ -1737,7 +1742,7 @@ export void check_body(types::Checked *r, const ast::Decl *function) {
     }
     Str name = function->kind.function.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
-    if (symbol == nullptr || symbol->decl != function || symbol->type->kind != .function) {
+    if (symbol == nullptr || !types::declared_by(symbol, function) || symbol->type->kind != .function) {
         return;
     }
     if (symbol->generic) {
@@ -1888,8 +1893,10 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
         return; // `mut p: *mut T = undefined`: a global C zeroes
     }
     Str name = d->kind.variable.name;
+    Bool constant = d->kind.variable.is_constexpr;
+    const ast::Expr *init = d->kind.variable.init;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
-    if (symbol == nullptr || symbol->decl != d) {
+    if (symbol == nullptr || !types::declared_by(symbol, d)) {
         return;
     }
     if (symbol->kind == .type_name) {
@@ -1897,13 +1904,13 @@ static void check_initializer(types::Checked *r, const ast::Decl *d) {
     }
     state.function = name;
     types::TypeRef type = symbol->type;
-    if (d->kind.variable.is_constexpr) {
-        require_constant(r, name, d->kind.variable.init);
+    if (constant) {
+        require_constant(r, name, init);
     }
     if (is_auto(type)) {
-        (void)types_expr::infer(r, d->kind.variable.init);
+        (void)types_expr::infer(r, init);
     } else {
-        (void)types_expr::check(r, d->kind.variable.init, type);
+        (void)types_expr::check(r, init, type);
     }
 }
 

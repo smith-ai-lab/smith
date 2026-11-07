@@ -79,7 +79,8 @@ static Bool names_module(const types::Checked *r, const ast::Expr *base) {
 // Whether a callee names a type, so the call builds a value of it: `Span`, or `ast.Span` through a module.
 static Bool names_type(const types::Checked *r, const ast::Expr *callee) {
     if (callee->kind == .name) {
-        const types::Symbol *s = types::lookup_path(&r->scopes, callee->kind.name.path);
+        // `ast.Span` is read as the one name `ast::Span`: found through the imported module
+        const types::Symbol *s = types::type_through_modules(r, callee->kind.name.path);
         return s != nullptr && s->kind == .type_name;
     }
     if (callee->kind != .member) return false;
@@ -115,12 +116,8 @@ static Bool is_constant(const types::Checked *r, const ast::Expr *root) {
         if (e->kind == .variant && e->kind.variant.payload == nullptr) continue;
         if (e->kind == .name) {
             const types::Symbol *s = types::lookup_path(&r->scopes, e->kind.name.path);
-            if (s == nullptr || s->kind != .variable) return false;
-            Bool fixed = s->is_const;
-            if (s->decl != nullptr && s->decl->kind == .variable && s->decl->kind.variable.is_new) {
-                fixed = !s->decl->kind.variable.is_mut;
-            }
-            if (!fixed) return false;
+            const ast::Expr *init = nullptr;
+            if (!types::constant_initializer(s, &init)) return false;
             continue;
         }
         if (top + 2 > 32) return false;
@@ -258,7 +255,10 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
             "`@returns_internal`, and your own are structs marked `@attribute`");
         return;
     }
-    if (symbol->decl == nullptr || !marks_attribute(symbol->decl)) {
+    Bool marked = false;
+    const ast::Decl *decl = symbol->decl;
+    if (decl != nullptr) marked = marks_attribute(decl);
+    if (!marked) {
         types::failf(r, a->span, "`", name, "` is not an attribute: mark its struct `@attribute`");
         return;
     }
