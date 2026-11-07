@@ -11,15 +11,14 @@ export void test_build_time_prints_each_phase_the_slowest_steps_and_a_total_that
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     scratch::Run run = scratch::sh(
-        &p,
-        "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
-        "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
-        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && cd .. && cd hi && "
-        "smith build --front-end=new --time 2>time.txt >/dev/null; "
-        "awk '/^time: (prepare|compile the build file|run the build file|plan|run the steps)/ { sum += $(NF-1) } "
-        "/^time: total / { total = $(NF-1) } "
-        "END { d = sum - total; if (d < 0) d = -d; print (d <= total / 10 ? \"ok\" : \"bad\"), sum, total }' "
-        "time.txt");
+        &p, "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
+            "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+            "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && cd .. && cd hi && "
+            "smith build --front-end=new --time 2>time.txt >/dev/null; "
+            "awk '/^time: (prepare|compile the build file|run the build file|plan|run the steps)/ { sum += $(NF-1) } "
+            "/^time: total / { total = $(NF-1) } "
+            "END { d = sum - total; if (d < 0) d = -d; print (d <= total / 10 ? \"ok\" : \"bad\"), sum, total }' "
+            "time.txt");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("the phases add up to the total", run.out, "ok ");
@@ -97,12 +96,11 @@ export void test_cc_through_the_old_path_is_one_phase() {
 export void test_time_is_not_part_of_the_step_cache_key() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
-    scratch::Run run = scratch::sh(
-        &p,
-        "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
-        "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
-        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && smith build --front-end=new "
-        ">/dev/null 2>&1; smith build --front-end=new --time 2>&1");
+    scratch::Run run =
+        scratch::sh(&p, "export SMITH_OUTPUT=full; export XDG_CACHE_HOME=$PWD/cache; "
+                        "smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+                        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && smith build --front-end=new "
+                        ">/dev/null 2>&1; smith build --front-end=new --time 2>&1");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("the second build had nothing to do", run.out, "no work to do");
