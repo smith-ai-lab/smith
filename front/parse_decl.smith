@@ -110,7 +110,8 @@ struct Frame {
     ast::Span head;
     ast::Span else_head;
     ast::Span close;
-    Bool nested;    // opened inside a branch of another block (not `else if`): no fix
+    Bool nested;    // opened inside a branch of another block (not `else if`)
+    Str outer;      // the `@when` text of the enclosing branch, when nested: the branch is under both conditions
     StrList before; // the conditions of the branches before this one in an `else if` chain, as `@when` text
     // Where a declaration that failed to read starts (it has a fix of its own to apply first): it still gets its
     // `@when`.
@@ -3676,7 +3677,14 @@ static Str branch_condition(const Frame *frame, Bool else_branch, Str own) {
     }
     Str glue = "";
     if (countof(result) > 0) glue = " && ";
-    return str_of(format::push(result, glue, mine));
+    char inner[:] = format::push(result, glue, mine);
+    if (countof(frame->outer) == 0) return str_of(inner);
+    // Nested in a branch of another block: that branch's condition holds as well.
+    Str outer = frame->outer;
+    if (contains(outer, "||")) outer = str_of(format::push("(", outer, ")"));
+    Str both = inner;
+    if (contains(inner, "||")) both = str_of(format::push("(", inner, ")"));
+    return str_of(format::push(outer, " && ", both));
 }
 
 // The edits of one block's own pieces: its head, its `} else {`, its closing `}` and a `@when` before each declaration
@@ -3789,6 +3797,8 @@ static Bool chain_frame(parse::Parser *p, Frame *parent, Frame *opened, parse::E
     }
     copy[countof(parent->before)] = earlier;
     opened->before = copy;
+    opened->outer = parent->outer;
+    opened->nested = parent->nested;
     return frame_edits(p, parent, fix);
 }
 
@@ -3801,6 +3811,15 @@ static ast::Decl *read_leaf(parse::Parser *p, Bool at_top, FrameList stack, Usiz
     if (done == nullptr && p->position == before) parse::advance(p);
     if (done == nullptr && depth > 0) note_failed(&stack[depth - 1], start);
     return done;
+}
+
+// A block opened inside a branch of `parent` (not an `else if`): its declarations are under both conditions. False when
+// the parent's condition is not about the system.
+static Bool open_nested(const parse::Parser *p, const Frame *parent, Frame *opened) {
+    Str above = when_text(trimmed(source_between(p, parent->condition->span.start, parent->condition->span.end)));
+    opened->nested = true;
+    opened->outer = branch_condition(parent, parent->in_else, above);
+    return countof(above) > 0;
 }
 
 // One declaration, which for an `if constexpr` is the whole block with its declarations: the open blocks are an
@@ -3841,6 +3860,7 @@ static ast::Decl *parse_one(parse::Parser *p, Bool at_top) {
             Bool chain = depth > 0 && stack[depth - 1].chained && stack[depth - 1].in_else;
             Frame opened = open_frame(p);
             Bool mended = chain && chain_frame(p, &stack[depth - 1], &opened, &fix);
+            if (depth > 0 && !chain) mended = open_nested(p, &stack[depth - 1], &opened);
             if (depth > 0 && !mended) {
                 fixable = false;
             }

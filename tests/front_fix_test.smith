@@ -814,3 +814,19 @@ export void test_a_compound_literal_of_a_tuple_type_is_a_tuple_value() {
     test::check_condition(contains_text(fixed.text, "(1, 2.0f)"));
     test::check_condition(!contains_text(fixed.text, "{"));
 }
+
+// An `if constexpr` inside a branch of another one: its declarations are under both conditions, one `@when` each.
+export void test_a_nested_if_constexpr_is_mended_with_both_conditions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "module m;\nif constexpr (target::os == target::macos) {\n    if constexpr (target::arch == "
+                   "target::aarch64) {\n"
+                   "        Bool g() {\n            return true;\n        }\n    } else {\n        Bool g() {\n"
+                   "            return false;\n        }\n    }\n}\n");
+    test::check_condition(!contains_text(fixed.text, "constexpr"));
+    test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch == .aarch64)"));
+    test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch != .aarch64)"));
+}
