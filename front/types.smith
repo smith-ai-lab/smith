@@ -2923,36 +2923,60 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
     return ast_clone::clone_decl(template);
 }
 
+// What a function declaration says of itself apart from its parameters; `ok` is false for any other declaration.
+struct Shape {
+    ast::TypeExpr *result;
+    Str name;
+    ast::Stmt *body;
+    Bool variadic;
+    Bool is_new;
+    Bool ok;
+};
+
+static Shape shape_of(const ast::Decl *d) {
+    Shape s = {.result = nullptr, .name = "", .body = nullptr, .variadic = false, .is_new = false, .ok = false};
+    if (d->kind != .function) return s;
+    s.result = d->kind.function.result;
+    s.name = d->kind.function.name;
+    s.body = d->kind.function.body;
+    s.variadic = d->kind.function.variadic;
+    s.is_new = d->kind.function.is_new;
+    s.ok = true;
+    return s;
+}
+
 // The instance of the template `template` for what a call passed, one per set of arguments: made (cloned, its
 // compile-time parameters taken out, its signature typed) on the first call and found after. Its index in
 // `r->instances`, or `max_instances` when there are too many.
 export Usize instance_of(Checked *r, const ast::Decl *template, Str prefix, Binding given[:]) {
     Usize found = find_instance(r, template, given);
     if (found < r->instance_count) return found;
-    if (template->kind != .function) return max_instances;
+    if (!shape_of(template).ok) return max_instances;
     if (r->instance_count == max_instances) {
-        failf(r, template->span, "`", template->kind.function.name, "` has more than ", max_instances,
+        failf(r, template->span, "`", shape_of(template).name, "` has more than ", max_instances,
               " instances; a generic function that calls itself with ever larger types never ends");
         return max_instances;
     }
     ast::Decl *copy = clone_instance(template, given);
-    if (copy->kind != .function) return max_instances;
-    ast::Param all[:] = copy->kind.function.params;
+    const ast::Decl *first = copy;
+    if (first->kind != .function) return max_instances;
+    ast::Param all[:] = first->kind.function.params;
     Binding bindings[:] = mem::alloc_slice(Binding, countof(given));
     Bool auto_syntax = false; // the types of an `auto` template are written in today's syntax
     push_scope(&r->scopes);
-    ast::Param generics[:] = copy->kind.function.generics;
+    ast::Param generics[:] = first->kind.function.generics;
     Usize generic_count = countof(generics);
     Usize kept_count = bind_given(r, generics, all, given, bindings, &auto_syntax);
     Instance made = {.template = template, .decl = copy, .bindings = bindings, .prefix = prefix, .signature = nullptr};
     bind_instance(r, &made);
     expand_reflection(r, copy); // `fields(T)` of the instance, with `T` bound
-    if (copy->kind != .function) return max_instances;
-    ast::TypeExpr *result_type = copy->kind.function.result;
-    Str function_name = copy->kind.function.name;
-    ast::Stmt *function_body = copy->kind.function.body;
-    Bool is_variadic = copy->kind.function.variadic;
-    Bool is_new = copy->kind.function.is_new;
+    Shape shape = shape_of(copy);
+    if (!shape.ok) return max_instances;
+    ast::TypeExpr *result_type = shape.result;
+    Str function_name = shape.name;
+    ast::Stmt *function_body = shape.body;
+    Bool is_variadic = shape.variadic;
+    Bool is_new = shape.is_new;
     ast::Param kept[:] = mem::alloc_slice(ast::Param, kept_count);
     Slot slots[:] = mem::alloc_slice(Slot, kept_count);
     // The signature is written in the template's module: `Chars` in `format::push`'s result is `format::Chars`.
@@ -3381,7 +3405,7 @@ export Str c_binding_of(const Checked *r, Str name) {
 // Reads `names`: the first is a module symbol, each next name is looked up in the module before. In the code being
 // checked a name that is not `pub` is missing; inside an imported module it is not.
 export Through through_modules(const Checked *r, const Names *names) {
-    Through out = {.symbol = scoped(r, names->items[0])};
+    Through out = {.symbol = scoped(r, names->items[0]), .module = nullptr};
     for (Usize i = 1; i < names->count; i++) {
         const Symbol *module = out.symbol;
         if (module == nullptr || module->kind != .module_name) {
@@ -3392,7 +3416,7 @@ export Through through_modules(const Checked *r, const Names *names) {
         Str full = msg(format::push(prefix, names->items[i]));
         const Symbol *next = lookup(&r->scopes, full);
         if (next == nullptr || (countof(r->prefix) == 0 && !is_public(next))) {
-            return (Through){.module = module, .missing = names->items[i]};
+            return (Through){.symbol = nullptr, .module = module, .missing = names->items[i]};
         }
         out.symbol = next;
     }
@@ -3474,7 +3498,7 @@ export void report_missing(Checked *r, ast::Span span, Through t) {
     Str prefix = prefix_of_symbol(t.module);
     Str owner = enumeration_of(r, prefix, t.missing);
     if (countof(owner) > 0) {
-        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        syntax::Edits fix = mem::alloc_slice(syntax::Edit, 1);
         fix[0] = (syntax::Edit){.span = span, .text = msg(format::push(".", t.missing))};
         fail_fix(r, span,
                  msg(format::push("`", t.missing, "` is an enumerator of `", owner, "`: write `.", t.missing,
@@ -3759,7 +3783,7 @@ static Str default_binding(Checked *r, const ast::Module *m, const ast::Decl *im
     Str binding = header_stem(header);
     if (!declares_function(m, binding)) return binding;
     Str renamed = msg(format::push(binding, "_h"));
-    syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+    syntax::Edits fix = mem::alloc_slice(syntax::Edit, 1);
     fix[0] = (syntax::Edit){.span = {.start = imported->span.end, .end = imported->span.end},
                             .text = msg(format::push(" as ", renamed))};
     Str prefix = r->prefix; // the previous header left `c::`, which would drop the fix
