@@ -126,8 +126,8 @@ runs:
             [ -x "$runner" ] && { echo "::group::$runner --list"; "$runner" --list 2>&1 | tail -n 100; echo "::endgroup::"; }
           done
           # the compiler's `file:line:col: error:` lines with their source lines, the linker's errors, and the command that failed (the
-          # nested build's full output is also in `.smith/log/.smith_task_*.log`, a hidden file a `*` glob misses)
-          cat .smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
+          # nested build's full output is also in `.smith/log/.smith_task_*.log`, and a nested project's (units, front) in its own, a hidden file a `*` glob misses)
+          cat .smith/log/.smith_task_*.log build/*/*-project/.smith/log/.smith_task_*.log "$RUNNER_TEMP/list.out" 2>/dev/null |
             grep -hE -A3 '^[^ :]+:[0-9]+:[0-9]+: (fatal )?error|^FAILED:|^smith: build stopped|^Undefined symbols|^duplicate symbol|^ld: |^clang(\+\+)?: error|^smith: build\.c' | grep -vE '^--$' | awk '!seen[$0]++' |
             tail -n 60 >"$RUNNER_TEMP/build-failed.txt" || true
           [ -s "$RUNNER_TEMP/build-failed.txt" ] || tail -n 60 "$RUNNER_TEMP/list.out" >"$RUNNER_TEMP/build-failed.txt"
