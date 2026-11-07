@@ -198,7 +198,7 @@ static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, type
     if (d == nullptr || d->kind != .variable || d->kind.variable.init != e) return edits;
     if (from->element->kind != .pointer || to->element->kind != .pointer) return edits;
     if (from->element->element != to->element->element) return edits;
-    if (from->element->pointee_const || !to->element->pointee_const) return edits;
+    if (types::points_to_const(from->element) || !types::points_to_const(to->element)) return edits;
     const ast::TypeExpr *outer = d->kind.variable.type;
     if (outer->kind != .pointer) return edits;
     const ast::TypeExpr *inner = outer->kind.pointer.pointee;
@@ -216,7 +216,7 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
                                      types::TypeRef to) {
     syntax::Edits edits = {};
     if (from->kind != .pointer || to->kind != .pointer || from->element->kind != .pointer ||
-        to->element->kind != .pointer || !from->element->pointee_const || to->element->pointee_const)
+        to->element->kind != .pointer || !types::points_to_const(from->element) || types::points_to_const(to->element))
         return edits;
     if (e->kind != .unary || e->kind.unary.op != .address_of || e->kind.unary.operand->kind != .index) return edits;
     const ast::Expr *array = e->kind.unary.operand->kind.index.base;
@@ -239,9 +239,10 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         return true;
     }
     // A `*T` argument where a `*mut T` is wanted: the fix writes `*mut T` on the parameter or local it comes from.
-    Bool drops_const = from->kind == .pointer && to->kind == .pointer && from->pointee_const && !to->pointee_const;
-    drops_const =
-        drops_const || (from->kind == .slice && to->kind == .slice && from->pointee_const && !to->pointee_const);
+    Bool drops_const =
+        from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) && !types::points_to_const(to);
+    drops_const = drops_const || (from->kind == .slice && to->kind == .slice && types::points_to_const(from) &&
+                                  !types::points_to_const(to));
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
     const ast::Expr *source = e;
     while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
@@ -250,7 +251,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     // `&bottom` handed where `const void **` is wanted: the local is `mut`, and its `*void` stays (#2643).
     if (drops_const && source->kind == .unary && source->kind.unary.op == .address_of && to->kind == .pointer &&
-        to->element->kind == .pointer && to->element->pointee_const)
+        to->element->kind == .pointer && types::points_to_const(to->element))
         fix = types_expr::address_binding_fix(c, source->kind.unary.operand);
     // `&p.f` handed where a `*mut` is wanted is as writable as `p`: the fix is the one for `p` (`&simulation.waiting`).
     if (drops_const && countof(fix) == 0 && source->kind == .unary && source->kind.unary.op == .address_of) {
@@ -265,13 +266,13 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
             place = base;
         }
     }
-    if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
+    if (from->kind == .pointer && to->kind == .pointer && !types::points_to_const(from) && !types::points_to_const(to))
         fix = inner_mut_fix(e, from, to);
     if (countof(fix) == 0) fix = element_mut_fix(c, e, from, to);
     // `&rest` where `*(*mut T)` is wanted (`strtol`'s end pointer): the local `rest: *T` becomes `*mut T`.
     if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer && from->element->kind == .pointer &&
-        to->element->kind == .pointer && from->element->pointee_const && !to->element->pointee_const &&
-        e->kind == .unary && e->kind.unary.op == .address_of)
+        to->element->kind == .pointer && types::points_to_const(from->element) &&
+        !types::points_to_const(to->element) && e->kind == .unary && e->kind.unary.op == .address_of)
         fix = types_expr::pointer_name_fix(c, e->kind.unary.operand);
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type ||
@@ -344,8 +345,8 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
         // A `p.cast(*mut T)` of a `*T` drops const: the fix writes `*mut T` on the parameter or local `p` comes from
         // (std.mem's `self: *Allocator` cast to `*mut Checked`, #2427).
         syntax::Edits fix = discard_fix(e, to);
-        if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && from->pointee_const &&
-            !to->pointee_const) {
+        if (e->kind == .cast && from->kind == .pointer && to->kind == .pointer && types::points_to_const(from) &&
+            !types::points_to_const(to)) {
             // `(base + n).cast(*mut T)` points where `base` does: the fix is the one for `base` (#2643).
             const ast::Expr *source = e->kind.cast.operand;
             while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
@@ -1261,7 +1262,7 @@ static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
 // The checks of `.v(x) := value else: ...` (#2494): the pattern can fail, the `else` leaves, the name is new.
 static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef t, ast::Pattern pattern,
                               const ast::Stmt *else_branch) {
-    Bool can_fail = t != nullptr && (t->kind == .option || (t->kind == .enumeration && t->has_payload));
+    Bool can_fail = t != nullptr && (t->kind == .option || (t->kind == .enumeration && types::is_payload_enum(t)));
     if (t != nullptr && t != r->table.invalid && !can_fail) {
         types::failf(r, span, "this pattern always matches: remove `else`");
     }
@@ -1297,7 +1298,7 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     push(then_branch, nullptr, enter);
     Str binding = pattern.binding;
     types::TypeRef element = r->table.invalid;
-    if (t != nullptr && t->kind == .enumeration && t->has_payload) {
+    if (t != nullptr && t->kind == .enumeration && types::is_payload_enum(t)) {
         element = types_expr::pattern_payload(r, s->span, t, pattern);
     }
     if (countof(binding) == 0 || is_discard(binding)) {
@@ -1491,7 +1492,7 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     types::TypeRef t = types_expr::infer(r, s->kind.switch_stmt.value);
-    Bool variants = t != nullptr && t->kind == .enumeration && t->has_payload;
+    Bool variants = t != nullptr && t->kind == .enumeration && types::is_payload_enum(t);
     ast::SwitchCase cases[:] = s->kind.switch_stmt.cases;
     for (Usize i = countof(cases); i > 0; i--) {
         ast::SwitchCase *k = &cases[i - 1];

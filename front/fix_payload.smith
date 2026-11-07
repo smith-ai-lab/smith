@@ -64,7 +64,7 @@ static Bool is_variant_of(const types::Checked *c, Str message, Str name) {
         const types::Symbol *symbol = types::lookup(&c->scopes, rest[0:i]);
         if (symbol == nullptr || symbol->type == nullptr) return false;
         types::TypeRef wanted = symbol->type;
-        return wanted->kind == .enumeration && wanted->has_payload && types::member(wanted, name) != nullptr;
+        return wanted->kind == .enumeration && types::is_payload_enum(wanted) && types::member(wanted, name) != nullptr;
     }
     return false;
 }

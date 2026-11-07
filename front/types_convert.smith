@@ -304,7 +304,7 @@ static Verdict dropped_const(const Ctx *c) {
 static Verdict pointer_to_pointer(const Ctx *c) {
     const types::Ty *from = c->from;
     const types::Ty *to = c->target_type;
-    if (from->pointee_const && !to->pointee_const) return dropped_const(c);
+    if (types::points_to_const(from) && !types::points_to_const(to)) return dropped_const(c);
     if (from->element == to->element || types::same_c_record(from->element, to->element)) return accept(add_const);
     if (to->element->kind == .void_type) return accept(to_void_pointer);
     if (from->element->kind == .void_type)
@@ -330,12 +330,12 @@ static Verdict to_slice(const Ctx *c) {
     if (kind == .text) {
         if (element != c->char_type)
             return refuse(c, "only Char slices and Str are text", "write the characters as a const Char[:]");
-        if (c->target_type->pointee_const) return accept(text_from_chars);
+        if (types::points_to_const(c->target_type)) return accept(text_from_chars);
         return refuse(c, "a Str's characters are const", "expected a const element: write const Char xs[:]");
     }
     if (kind != .slice && kind != .array) return no_rule(c);
     if (c->from->element != element) return needs_cast(c, "the elements are different types");
-    if (c->from->pointee_const && !c->target_type->pointee_const) return dropped_const(c);
+    if (types::points_to_const(c->from) && !types::points_to_const(c->target_type)) return dropped_const(c);
     if (kind == .array) return accept(array_to_slice);
     return accept(add_const);
 }
@@ -405,7 +405,8 @@ static How wrapped(types::TypeRef to) {
 // reads through a `const T *` may be a `T *` in `to` (a function that only reads accepts what may be written).
 static Bool function_fits(types::TypeRef from, types::TypeRef to) {
     if (from == to) return true;
-    if (to->kind != .function || from->variadic != to->variadic || from->element != to->element) return false;
+    if (to->kind != .function || types::is_variadic(from) != types::is_variadic(to) || from->element != to->element)
+        return false;
     if (countof(from->slots) != countof(to->slots)) return false;
     for (Usize i = 0; i < countof(from->slots); i++) {
         types::TypeRef have = from->slots[i].type;
@@ -416,9 +417,10 @@ static Bool function_fits(types::TypeRef from, types::TypeRef to) {
         if (have->kind == .fn_value && want->kind == .function && have->element == want) continue;
         Bool pointers = have->kind == .pointer && want->kind == .pointer;
         Bool same = pointers && types::same_c_record(have->element, want->element);
-        if (same && have->pointee_const == want->pointee_const) continue; // the module's `Group` is the header's struct
+        if (same && types::points_to_const(have) == types::points_to_const(want))
+            continue; // the module's `Group` is the header's struct
         Bool wider = pointers && (have->element == want->element || same);
-        if (!wider || !have->pointee_const || want->pointee_const) return false;
+        if (!wider || !types::points_to_const(have) || types::points_to_const(want)) return false;
     }
     return true;
 }
@@ -460,7 +462,7 @@ static Verdict cast_pointer(const Ctx *c) {
         // pointer is the C cast `(T *)p` and stays allowed (#2361). A typed read-only pointer still cannot be cast
         // to a writable one.
         Bool from_void = from->element->kind == .void_type;
-        if (from->pointee_const && !to->pointee_const && !from_void) return dropped_const(c);
+        if (types::points_to_const(from) && !types::points_to_const(to) && !from_void) return dropped_const(c);
         return accept(cast);
     }
     if (from->kind == .pointer && pointer_wide(c, to)) return accept(cast);
@@ -538,7 +540,7 @@ export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, 
 }
 
 static Bool is_c_enumeration(types::TypeRef t) {
-    return t->kind == .enumeration && !t->has_payload && countof(t->c_name) > 0;
+    return t->kind == .enumeration && !types::is_payload_enum(t) && countof(t->c_name) > 0;
 }
 
 // The type both operands of an arithmetic, bitwise or comparison operator widen to (#2531): the same type, or the one

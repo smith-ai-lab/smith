@@ -167,7 +167,7 @@ static void forget(Used *u, Str path) {
 // Whether a value of `t` is affine: a record marked `@affine`. A record that holds one is not affine itself: reading
 // the member is the use (`h.key`), as shim/affine.cpp has it.
 static Bool is_affine(types::TypeRef t) {
-    return t != nullptr && t->kind == .record && t->affine;
+    return t != nullptr && t->kind == .record && types::is_affine_record(t);
 }
 
 // A place: the path `e` names (`key`, `h.key`, `keys[0]`, `keys[i]`), or none. `bad` is set when an index of an array

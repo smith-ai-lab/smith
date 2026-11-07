@@ -102,7 +102,7 @@ static Bool nameable(Str field) {
 // The zero value of an enumeration with no payloads: the variant whose value is 0, `.empty` (lead, 2026-11-05, #2488).
 // By value, not by position: with no such variant it is empty, and the error stays.
 static Str enum_zero(types::TypeRef t) {
-    if (t->kind != .enumeration || t->has_payload) return "";
+    if (t->kind != .enumeration || types::is_payload_enum(t)) return "";
     for (Usize i = 0; i < countof(t->slots); i++)
         if (t->slots[i].value == 0) return types::message_of(format::push(".", t->slots[i].name));
     return "";
@@ -136,7 +136,7 @@ static Str flat_zero(types::TypeRef t) {
 // the same, one, two or three structs deep (a C struct such as `LLVMOrcCSymbolMapPair` is three). No recursion is
 // allowed, so each level is a function that calls the one below it.
 static Str construct_one(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) || countof(t->slots) == 0) return "";
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
         types::TypeRef field = t->slots[i].type;
@@ -149,7 +149,7 @@ static Str construct_one(Str name, types::TypeRef t) {
 }
 
 static Str construct_two(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) || countof(t->slots) == 0) return "";
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
         types::TypeRef field = t->slots[i].type;
@@ -162,7 +162,7 @@ static Str construct_two(Str name, types::TypeRef t) {
 }
 
 static Str construct_three(Str name, types::TypeRef t) {
-    if (t->kind != .record || t->is_union || !t->complete || countof(t->slots) == 0) return "";
+    if (t->kind != .record || types::is_union_record(t) || !types::is_complete(t) || countof(t->slots) == 0) return "";
     Str out = types::message_of(format::push(name, "("));
     for (Usize i = 0; i < countof(t->slots); i++) {
         types::TypeRef field = t->slots[i].type;
@@ -219,7 +219,7 @@ static Str construct_array(Str element, types::TypeRef t) {
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
 static Str omitted(types::TypeRef record, U64 given) {
-    if (record->kind != .record || record->is_union || !record->complete) return "";
+    if (record->kind != .record || types::is_union_record(record) || !types::is_complete(record)) return "";
     Str out = "";
     for (Usize k = 0; k < countof(record->slots); k++) {
         if ((given & ((U64)1 << k)) != 0 || record->slots[k].default_value != nullptr) continue;

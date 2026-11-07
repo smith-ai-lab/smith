@@ -1574,7 +1574,7 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
 // Names (as shells) the C records that `base` only points to, so its pointer fields have a type; `ensure_c_record`
 // makes their fields when a type first names them.
 static void name_pointees(state::Emitter *e, types::TypeRef base) {
-    if (!base->complete || base->is_union) return;
+    if (!types::is_complete(base) || types::is_union_record(base)) return;
     for (Usize i = 0; i < countof(base->slots); i++) {
         types::TypeRef pointee = unmade_c_record(e, base->slots[i].type, true);
         state::Ty known = {};
@@ -1631,12 +1631,12 @@ static void make_c_record(state::Emitter *e, types::TypeRef base) {
     }
     name_pointees(e, base);
     Usize count = countof(base->slots);
-    if (base->complete && base->is_union && count > 0) {
+    if (types::is_complete(base) && types::is_union_record(base) && count > 0) {
         make_c_union(named, base);
         name_union_fields(e, base, at);
         return;
     }
-    if (!base->complete || base->is_union || count == 0 || count > 64) {
+    if (!types::is_complete(base) || types::is_union_record(base) || count == 0 || count > 64) {
         return;
     }
     state::FieldInfo infos[:] = mem::alloc_slice(state::FieldInfo, count);
@@ -1680,7 +1680,7 @@ static types::TypeRef unmade_c_record(state::Emitter *e, types::TypeRef t, Bool 
 
 // The first field held by value (a struct or an array of them) whose record is not made yet, else null.
 static types::TypeRef unmade_field(state::Emitter *e, types::TypeRef record) {
-    if (!record->complete || record->is_union) return nullptr;
+    if (!types::is_complete(record) || types::is_union_record(record)) return nullptr;
     for (Usize i = 0; i < countof(record->slots); i++) {
         types::TypeRef inner = unmade_c_record(e, record->slots[i].type, false);
         if (inner != nullptr && inner != record) return inner;

@@ -176,8 +176,9 @@ static SignatureResult c_function(state::Emitter *e, const ast::Decl *d) {
         mem::free(all.data);
         return {.error = made_result.error};
     }
-    Signature sig = {.result = made_result.ok, .params = all[0:count], .owned = true, .variadic = type->variadic};
-    sig.type = c::LLVMFunctionType(made_result.ok.llvm, llvm_types, (U32)count, type->variadic ? 1 : 0);
+    Signature sig = {
+        .result = made_result.ok, .params = all[0:count], .owned = true, .variadic = types::is_variadic(type)};
+    sig.type = c::LLVMFunctionType(made_result.ok.llvm, llvm_types, (U32)count, types::is_variadic(type) ? 1 : 0);
     char *label = state::cstr(name);
     sig.function = c::LLVMGetNamedFunction(e->module, label);
     if (sig.function == nullptr) sig.function = c::LLVMAddFunction(e->module, label, sig.type);

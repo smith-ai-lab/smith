@@ -722,6 +722,41 @@ static TypeRef part(TypeRef t, Usize i) {
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
+// Whether the type is an enumeration whose enumerators carry values.
+export Bool is_payload_enum(TypeRef t) {
+    return t->shape == .enumeration && t->shape.enumeration.has_payload;
+}
+
+// Whether the type is a union record.
+export Bool is_union_record(TypeRef t) {
+    return t->shape == .record && t->shape.record.is_union;
+}
+
+// Whether a record or an enumeration has its members; false for any other kind.
+export Bool is_complete(TypeRef t) {
+    if (t->shape == .record) return t->shape.record.complete;
+    if (t->shape == .enumeration) return t->shape.enumeration.complete;
+    return false;
+}
+
+// Whether the type is a record marked `@affine`.
+export Bool is_affine_record(TypeRef t) {
+    return t->shape == .record && t->shape.record.affine;
+}
+
+// Whether a pointer, array or slice has a `const` element; false for any other kind.
+export Bool points_to_const(TypeRef t) {
+    if (t->shape == .pointer) return t->shape.pointer.pointee_const;
+    if (t->shape == .array) return t->shape.array.pointee_const;
+    if (t->shape == .slice) return t->shape.slice.pointee_const;
+    return false;
+}
+
+// Whether a function type takes C's `...`; false for any other kind.
+export Bool is_variadic(TypeRef t) {
+    return t->shape == .function && t->shape.function.variadic;
+}
+
 // The width of an integer or floating type in bits; 0 for any other kind.
 export U32 bits_of(TypeRef t) {
     if (t->shape == .integer) return t->shape.integer.bits;

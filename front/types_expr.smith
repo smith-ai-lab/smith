@@ -405,7 +405,7 @@ static types::TypeRef readonly_pointer(const types::Checked *c, const ast::Expr 
             return nullptr;
         }
         if (t->kind == .pointer) {
-            if (t->pointee_const) {
+            if (types::points_to_const(t)) {
                 return t;
             }
             return nullptr;
@@ -432,7 +432,7 @@ static syntax::Edits mut_fix(const types::Symbol *s) {
 // (#2460). Another expression, or an enum with payloads, has no mechanical fix.
 static syntax::Edits index_enum_fix(const ast::Expr *index, types::TypeRef t) {
     syntax::Edits edits = {};
-    if (t->kind != .enumeration || t->has_payload || !(index->kind == .name || index->kind == .member)) {
+    if (t->kind != .enumeration || types::is_payload_enum(t) || !(index->kind == .name || index->kind == .member)) {
         return edits;
     }
     edits = mem::realloc(edits, 1);
@@ -1192,7 +1192,7 @@ static types::TypeRef carried_type(Frame f) {
         }
         return same_text(name, "error") ? expected->error : nullptr;
     }
-    if (expected->kind == .enumeration && expected->has_payload) {
+    if (expected->kind == .enumeration && types::is_payload_enum(expected)) {
         const types::Slot *slot = types::member(expected, name);
         if (slot != nullptr && carries_value(slot->type)) {
             return slot->type;
@@ -1307,7 +1307,7 @@ static void variant_expr(types::Checked *c, Frame f) {
     if (expected->kind == .enumeration) {
         slot = types::member(expected, name);
     }
-    if (slot != nullptr && expected->has_payload && carries_value(slot->type)) {
+    if (slot != nullptr && types::is_payload_enum(expected) && carries_value(slot->type)) {
         types::failf(c, e->span, "`.", name, "` carries a `", types::show(slot->type), "`; write `.", name, "(value)`");
         poison(c, e);
         return;
@@ -1746,7 +1746,7 @@ static types::TypeRef slice_compare(types::Checked *c, ast::Span span, ast::Bina
                      "` and `", types::show(r), "`; compare slices of one element type");
         return invalid(c);
     }
-    Bool plain_enum = l->element->kind == .enumeration && !l->element->has_payload;
+    Bool plain_enum = l->element->kind == .enumeration && !types::is_payload_enum(l->element);
     if (!is_scalar(l->element) || (l->element->kind == .enumeration && !plain_enum) || l->element->kind == .fn_value) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l), "`: its element `",
                      types::show(l->element), "` has no `==` yet; compare the elements one by one");
@@ -1794,7 +1794,8 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
                      "`; write numbers, Bools, enumerators or pointers");
         return invalid(c);
     }
-    Bool plain_enum = l->kind == .enumeration && !l->has_payload; // ordered by declaration (owner, 2026-11-05)
+    Bool plain_enum =
+        l->kind == .enumeration && !types::is_payload_enum(l); // ordered by declaration (owner, 2026-11-05)
     if (is_ordering(op) && l->kind != .pointer && !is_number(l) && !plain_enum) {
         return need_number(c, span, op, l, false);
     }
@@ -2467,7 +2468,7 @@ static Bool arity_ok(types::Checked *c, const ast::Expr *e, types::TypeRef signa
                      Usize given) {
     Usize wanted = countof(signature->slots);
     Usize required = required_arguments(params, wanted);
-    if ((given >= required && given <= wanted) || (given > wanted && signature->variadic)) {
+    if ((given >= required && given <= wanted) || (given > wanted && types::is_variadic(signature))) {
         return true;
     }
     Str plural = "s";
@@ -2647,13 +2648,13 @@ static Bool is_string_literal(const ast::Expr *x) {
 static Bool c_receivable(types::TypeRef t) {
     if (t->kind == .bool_type || t->kind == .integer || t->kind == .floating || t->kind == .pointer) return true;
     if (t->kind == .null_type) return true;
-    return t->kind == .enumeration && !t->has_payload;
+    return t->kind == .enumeration && !types::is_payload_enum(t);
 }
 
 // The arguments past the fixed parameters of a C variadic (`extern fn printf(f: *u8, ...)`) must be types C can
 // receive.
 static void check_variadic_arguments(types::Checked *c, types::TypeRef signature, ast::ExprRef args[:]) {
-    if (!signature->variadic) return;
+    if (!types::is_variadic(signature)) return;
     for (Usize i = countof(signature->slots); i < countof(args); i++) {
         types::TypeRef t = typ(c, args[i]);
         if (t == nullptr || t->kind == .invalid || t->kind == .automatic || t->kind == .concept_type) continue;
@@ -3100,7 +3101,7 @@ static types::TypeRef constructed_call(const types::Checked *c, const ast::Expr 
 static const ast::Expr *enum_variant_call(const types::Checked *c, ast::Span span, const ast::Expr *callee,
                                           ast::ExprRef args[:], types::TypeRef *made) {
     types::TypeRef t = named_type(c, callee);
-    if (t == nullptr || t->kind != .enumeration || !t->has_payload || countof(args) != 1) return nullptr;
+    if (t == nullptr || t->kind != .enumeration || !types::is_payload_enum(t) || countof(args) != 1) return nullptr;
     const ast::Expr *arg = args[0];
     if (!(arg->kind == .named_arg)) return nullptr;
     const types::Slot *slot = types::member(t, arg->kind.named_arg.name);
@@ -3230,7 +3231,7 @@ static void construct_after(types::Checked *c, Frame f, types::TypeRef record) {
         }
         // Two named fields of one anonymous struct member are two fields; two of an anonymous union overlap.
         Bool inside = countof(field->name) == 0 && arg->kind == .named_arg;
-        if (seen[index] && (!inside || field->type->is_union)) {
+        if (seen[index] && (!inside || types::is_union_record(field->type))) {
             Str given_name = field->name;
             if (arg->kind == .named_arg && inside) given_name = arg->kind.named_arg.name;
             types::failf(c, arg->span, "the field `", given_name, "` of `", shown, "` is given twice; remove one");
@@ -3458,7 +3459,7 @@ static void slice_after(types::Checked *c, Frame f) {
     if (base->kind == .array || base->kind == .slice || typed_pointer) {
         // The tree does not record whether a slice written `[]T` is writable (the parser drops `[]mut T`), so in
         // smith's own syntax a slice of a read-only pointer is a `[]T` too: its const would make it no `[]T` (#2386).
-        Bool element_const = base->pointee_const && !(typed_pointer && c->new_body);
+        Bool element_const = types::points_to_const(base) && !(typed_pointer && c->new_body);
         result = types::slice_of(&c->table, base->element, element_const);
     } else if (base->kind == .text || base->kind == .block || base->kind == .type_type) {
         result = base; // `t[:]` of a type value is a type value: the slice of that type, made where it is computed
@@ -3608,7 +3609,8 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     }
     Str found = types::show(base);
     // `p.v` through a pointer to a payload enumeration in smith's own syntax is a payload read like `k.v` (#2494)
-    Bool to_payloads = base->kind == .pointer && base->element->kind == .enumeration && base->element->has_payload;
+    Bool to_payloads =
+        base->kind == .pointer && base->element->kind == .enumeration && types::is_payload_enum(base->element);
     if (!arrow && to_payloads && e->kind == .member && in_new_syntax(c, e->kind.member.base)) {
         base = base->element;
         found = types::show(base);
@@ -3627,7 +3629,7 @@ static types::TypeRef record_of(types::Checked *c, const ast::Expr *e, types::Ty
     syntax::Edits error_fix = {};
     if (base->kind == .result_type && e->kind == .member && same_text(e->kind.member.name, "error"))
         error_fix = guarded_read(c, e, false);
-    if (base->kind == .enumeration && base->has_payload) {
+    if (base->kind == .enumeration && types::is_payload_enum(base)) {
         Str shown = msg(format::push("`", found, "` is a payload enumeration, so a payload can't be read with `",
                                      arrow ? "->" : ".",
                                      "`; test the variant first, with `if .variant(v) := x:` or a `match`"));
@@ -3695,7 +3697,7 @@ static Bool builtin_member(types::Checked *c, Frame f, types::TypeRef base, Str 
     }
     if (base->kind == .slice && !arrow && same_text(name, "data")) {
         // `xs.data` is the pointer to a slice's elements, read-only when the slice's are (#2456).
-        finish(c, e, types::pointer_to(&c->table, base->element, base->pointee_const), f.expected);
+        finish(c, e, types::pointer_to(&c->table, base->element, types::points_to_const(base)), f.expected);
         return true;
     }
     if (base->kind == .slice && !arrow && same_text(name, "count")) {
@@ -3918,7 +3920,7 @@ static types::TypeRef record_item(types::Checked *c, types::TypeRef t, const ast
         return field->type;
     }
     Usize limit = countof(t->slots);
-    if (t->is_union && limit > 1) {
+    if (types::is_union_record(t) && limit > 1) {
         limit = 1;
     }
     if (cursor->next >= limit) {
@@ -4041,7 +4043,8 @@ static Bool listable(types::TypeRef t) {
 // the type, as an argument. False when the list is no such form.
 static Bool payload_list(Work *w, Frame f, types::TypeRef t, ast::Initializer items[:]) {
     const ast::Expr *e = f.node;
-    if (!(t->kind == .enumeration) || !t->has_payload || countof(items) != 1 || !field_designator(&items[0])) {
+    if (!(t->kind == .enumeration) || !types::is_payload_enum(t) || countof(items) != 1 ||
+        !field_designator(&items[0])) {
         return false;
     }
     Str name = field_name(&items[0]);
@@ -4674,7 +4677,7 @@ static Usize case_of(types::Checked *c, ast::Span span, types::TypeRef t, ast::P
     }
     for (Usize i = 0; i < countof(t->slots); i++) {
         if (same_text(t->slots[i].name, name)) {
-            Bool carries = t->has_payload && carries_value(t->slots[i].type);
+            Bool carries = types::is_payload_enum(t) && carries_value(t->slots[i].type);
             if (report && countof(pat.binding) > 0 && !carries) {
                 types::failf(c, span, "`.", name, "` carries no value to bind; write `.", name, "` alone");
                 return countof(t->slots);
@@ -4823,7 +4826,7 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
                 element = t->element;
             } else if (t->kind == .result_type && at == 1) {
                 element = t->error;
-            } else if (t->kind == .enumeration && at < countof(t->slots) && t->has_payload) {
+            } else if (t->kind == .enumeration && at < countof(t->slots) && types::is_payload_enum(t)) {
                 element = t->slots[at].type;
             }
         }
@@ -6156,7 +6159,7 @@ static void binary_variant_side(types::Checked *c, Work *w, Frame f) {
     push(w, e, f.expected, 1);
     // `x.kind == .cast` on a payload enumeration tests the tag: the name stands for its enumerator, whatever it
     // carries.
-    if (is_equality(op) && want->kind == .enumeration && want->has_payload && dotted->kind == .variant &&
+    if (is_equality(op) && want->kind == .enumeration && types::is_payload_enum(want) && dotted->kind == .variant &&
         types::member(want, dotted->kind.variant.name) != nullptr) {
         types::set_type(c, dotted, want);
         return;
