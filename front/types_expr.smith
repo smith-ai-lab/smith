@@ -2609,7 +2609,7 @@ static Bool is_string_literal(const ast::Expr *x) {
 // What C can receive in the `...` of a call: an integer, float, bool, char, pointer or C enum.
 static Bool c_receivable(types::TypeRef t) {
     if (t->kind == .bool_type || t->kind == .integer || t->kind == .floating || t->kind == .pointer) return true;
-    if (t->kind == .null_type) return true;
+    if (t->kind == .null_type || t->kind == .function) return true; // a function name is a pointer to it in C
     return t->kind == .enumeration && !t->has_payload;
 }
 
