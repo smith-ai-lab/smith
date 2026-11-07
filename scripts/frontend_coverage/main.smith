@@ -83,7 +83,17 @@ struct Group {
     Usize last_file;
     Usize stopped;
     Usize appeared;
+    Usize alone; // the files whose every error is this cause: fixing it alone passes them (#2731)
     Usize examples[examples_max];
+};
+
+// Two causes that are the only two left in a file (#2731): the files that have exactly this pair.
+struct Pair {
+    char a[message_size];
+    char b[message_size];
+    Usize files;
+    Usize appeared;
+    Bool shown;
 };
 
 // A name behind `unknown name` or `unknown type` (#2413): the first backticked text of the message, counted per kind.
@@ -96,6 +106,11 @@ struct Name {
     Usize stopped;
     Usize appeared;
 };
+
+constexpr Usize pairs_max = 2048;
+constexpr Usize pairs_listed = 10;
+static struct Pair pairs[pairs_max];
+static Usize pair_count = 0;
 
 static struct Entry entries[entries_max];
 static Usize entry_count = 0;
@@ -259,6 +274,7 @@ static struct Group *group_of(const char cause[:]) {
     made->last_file = 0;
     made->stopped = 0;
     made->appeared = group_count;
+    made->alone = 0;
     group_count += 1;
     return made;
 }
@@ -345,6 +361,61 @@ static void count_name(Usize i, Usize file) {
     }
 }
 
+// The first two causes of each file, and whether a third came (#2731); a cause is its group's index plus one, so 0 is
+// none. `files` numbers the files from 1, as group_failures does.
+static Usize file_first[files_max + 1];
+static Usize file_second[files_max + 1];
+static Bool file_more[files_max + 1];
+static Usize failing_files = 0;
+
+static void note_file_cause(Usize file, Usize cause) {
+    if (file > files_max) return;
+    if (file_first[file] == 0) {
+        file_first[file] = cause;
+    } else if (file_first[file] != cause) {
+        if (file_second[file] == 0) {
+            file_second[file] = cause;
+        } else if (file_second[file] != cause) {
+            file_more[file] = true;
+        }
+    }
+}
+
+// The pair of two causes that are a file's only two, counted once per file; the first made comes first.
+static void add_pair(const char a[:], const char b[:]) {
+    for (Usize i = 0; i < pair_count; i++) {
+        if (same(text_of(pairs[i].a[0:message_size]), a) && same(text_of(pairs[i].b[0:message_size]), b)) {
+            pairs[i].files += 1;
+            return;
+        }
+    }
+    if (pair_count == pairs_max) return;
+    struct Pair *made = &pairs[pair_count];
+    copy_text(made->a[0:message_size], a);
+    copy_text(made->b[0:message_size], b);
+    made->files = 1;
+    made->appeared = pair_count;
+    made->shown = false;
+    pair_count += 1;
+}
+
+// Once every file's causes are known, before the groups are sorted (a group's `appeared` is its index then): a file
+// whose errors are one cause adds to that cause's `alone`; a file with exactly two adds to their pair (#2731).
+static void tally_files(Usize files) {
+    failing_files = 0;
+    for (Usize f = 1; f <= files && f <= files_max; f++) {
+        if (file_first[f] == 0) continue;
+        failing_files += 1;
+        if (file_second[f] == 0) {
+            groups[file_first[f] - 1].alone += 1;
+        } else if (!file_more[f]) {
+            Usize lo = file_first[f] < file_second[f] ? file_first[f] : file_second[f];
+            Usize hi = file_first[f] < file_second[f] ? file_second[f] : file_first[f];
+            add_pair(text_of(groups[lo - 1].message[0:message_size]), text_of(groups[hi - 1].message[0:message_size]));
+        }
+    }
+}
+
 // Every diagnostic of a failed file counts, in the group of its cause; `file` numbers the files from 1.
 static void group_failures() {
     Usize file = 0;
@@ -362,13 +433,16 @@ static void group_failures() {
             group->last_file = file;
             group->files += 1;
         }
+        note_file_cause(file, group->appeared + 1);
         count_name(i, file);
     }
+    tally_files(file);
 }
 
 // Whether group `a` ranks below group `b`: fewer files stopped at it (#2247), then fewer files, then fewer
 // occurrences, then it appeared later.
 static Bool ranks_below(const struct Group *a, const struct Group *b) {
+    if (a->alone != b->alone) return a->alone < b->alone;
     if (a->stopped != b->stopped) return a->stopped < b->stopped;
     if (a->files != b->files) return a->files < b->files;
     if (a->count != b->count) return a->count < b->count;
@@ -465,12 +539,36 @@ static void print_causes() {
     }
 }
 
-// One fixed line per cause for the top 20, for the CI log: `frontend-cause: <first> <files> <count> <cause>`.
+// One fixed line per cause for the top 20, for the CI log: `frontend-cause: <alone> <first> <files> <count> <cause>`.
 static void print_cause_lines() {
     Usize shown = group_count < causes_listed ? group_count : causes_listed;
     for (Usize g = 0; g < shown; g++) {
-        console::print("frontend-cause: ", groups[g].stopped, " ", groups[g].files, " ", groups[g].count, " ",
-                       (const char *)groups[g].message, "\n");
+        console::print("frontend-cause: ", groups[g].alone, " ", groups[g].stopped, " ", groups[g].files, " ",
+                       groups[g].count, " ", (const char *)groups[g].message, "\n");
+    }
+}
+
+// `frontend-errors: <errors> <files failing>` (#2731): every diagnostic and every failed file, for the CI summary.
+static void print_error_line() {
+    Usize errors = 0;
+    for (Usize g = 0; g < group_count; g++)
+        errors += groups[g].count;
+    console::print("frontend-errors: ", errors, " ", failing_files, "\n");
+}
+
+// `frontend-pair: <files> <cause a> | <cause b>` for the top 10 pairs, by files, then the one made first (#2731).
+static void print_pair_lines() {
+    Usize shown = pair_count < pairs_listed ? pair_count : pairs_listed;
+    for (Usize k = 0; k < shown; k++) {
+        Usize best = pair_count;
+        for (Usize i = 0; i < pair_count; i++) {
+            if (pairs[i].shown) continue;
+            if (best == pair_count || pairs[i].files > pairs[best].files) best = i;
+        }
+        if (best == pair_count) return;
+        pairs[best].shown = true;
+        console::print("frontend-pair: ", pairs[best].files, " ", (const char *)pairs[best].a, " | ",
+                       (const char *)pairs[best].b, "\n");
     }
 }
 
@@ -533,7 +631,9 @@ static I32 summarize(const char file[:], const char *smith) {
     print_causes();
     print_names();
     console::print("\n");
+    print_error_line();
     print_cause_lines();
+    print_pair_lines();
     print_name_lines();
     return 0;
 }
