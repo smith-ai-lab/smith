@@ -1852,9 +1852,11 @@ unsigned sleep(unsigned seconds) {
 // one header, then taken back.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): the system's own name
 #define _XOPEN_SOURCE 600
 #include <ucontext.h>
 #undef _XOPEN_SOURCE
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
 #else
 #include <ucontext.h>
 #endif
