@@ -1528,24 +1528,30 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
         return (I32)finish(&call);
     }
 
-    c::SmithFileHandler io_files = {.read = files_read,
-                                    .write = files_write,
-                                    .pwrite = files_pwrite,
-                                    .pread = files_pread,
-                                    .readv = files_readv,
-                                    .writev = files_writev,
-                                    .descriptors_only = true};
-    c::SmithConsoleHandler io_console = {.write = console_write, .read = console_read, .descriptors_only = true};
-    c::SmithNetHandler io_net = {.read = net_read,
-                                 .write = net_write,
-                                 .send = net_send,
-                                 .recv = net_recv,
-                                 .accept_socket = net_accept,
-                                 .connect_socket = net_connect,
-                                 .descriptors_only = true};
+    // The handlers start zeroed and install_io_handlers sets their fields: the fields left out are null, as before.
+    c::SmithFileHandler io_files = {};
+    c::SmithConsoleHandler io_console = {};
+    c::SmithNetHandler io_net = {};
 
     // Puts the three handlers in the table of a task, each where none is set.
     void install_io_handlers(c::SmithHandlers *table) {
+        io_files.read = files_read;
+        io_files.write = files_write;
+        io_files.pwrite = files_pwrite;
+        io_files.pread = files_pread;
+        io_files.readv = files_readv;
+        io_files.writev = files_writev;
+        io_files.descriptors_only = true;
+        io_console.write = console_write;
+        io_console.read = console_read;
+        io_console.descriptors_only = true;
+        io_net.read = net_read;
+        io_net.write = net_write;
+        io_net.send = net_send;
+        io_net.recv = net_recv;
+        io_net.accept_socket = net_accept;
+        io_net.connect_socket = net_connect;
+        io_net.descriptors_only = true;
         if (table->files == nullptr) table->files = &io_files;
         if (table->console == nullptr) table->console = &io_console;
         if (table->net == nullptr) table->net = &io_net;
