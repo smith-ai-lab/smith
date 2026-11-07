@@ -722,11 +722,17 @@ static TypeRef part(TypeRef t, Usize i) {
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
-// The width of an integer or floating type in bits.
-static U64 bits_of(TypeRef t) {
+// The width of an integer or floating type in bits; 0 for any other kind.
+export U32 bits_of(TypeRef t) {
     if (t->shape == .integer) return t->shape.integer.bits;
     if (t->shape == .floating) return t->shape.floating.bits;
     return 0;
+}
+
+// Whether an integer type is signed (a floating type is, by its sign bit); false for any other kind.
+export Bool signed_of(TypeRef t) {
+    if (t->shape == .integer) return t->shape.integer.is_signed;
+    return t->shape == .floating;
 }
 
 static Layout vector_layout(const Target *target, TypeRef t) {

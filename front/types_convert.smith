@@ -200,14 +200,16 @@ static Verdict integer_to_integer(const Ctx *c) {
     Bool word = is_word_size(from) || is_word_size(to);
     // D8 (owner, 2026-11-06): `usize` and `isize` are at least 32 bits on every target, so a narrower or 32-bit integer
     // of the same signedness goes in without a conversion, and an unsigned one narrower than 32 bits goes into `isize`.
-    if (is_word_size(to) && !is_word_size(from) && from->bits <= 32) {
-        if (from->is_signed == to->is_signed) return accept(widening);
-        if (!from->is_signed && to->is_signed && from->bits < 32) return accept(widening);
+    if (is_word_size(to) && !is_word_size(from) && types::bits_of(from) <= 32) {
+        if (types::signed_of(from) == types::signed_of(to)) return accept(widening);
+        if (!types::signed_of(from) && types::signed_of(to) && types::bits_of(from) < 32) return accept(widening);
     }
-    if (!word && from->is_signed == to->is_signed && to->bits >= from->bits) return accept(widening);
-    if (!word && !from->is_signed && to->is_signed && to->bits > from->bits) return accept(widening);
+    if (!word && types::signed_of(from) == types::signed_of(to) && types::bits_of(to) >= types::bits_of(from))
+        return accept(widening);
+    if (!word && !types::signed_of(from) && types::signed_of(to) && types::bits_of(to) > types::bits_of(from))
+        return accept(widening);
     if (c->lit.is_constant) {
-        if (fits(to->bits, to->is_signed, c->lit)) return accept(constant_fits);
+        if (fits(types::bits_of(to), types::signed_of(to), c->lit)) return accept(constant_fits);
         Str number = literal_text(c->lit);
         Str reason = msg(format::push(number, " does not fit ", types::show(to)));
         return refuse(c, reason,
@@ -215,7 +217,7 @@ static Verdict integer_to_integer(const Ctx *c) {
                                        ".to(", types::show(to), ")")));
     }
     if (word) return needs_cast(c, "Usize and Isize have a different width on some targets");
-    if (from->is_signed != to->is_signed && to->bits >= from->bits)
+    if (types::signed_of(from) != types::signed_of(to) && types::bits_of(to) >= types::bits_of(from))
         return needs_cast(c, "a sign change may lose a value");
     return needs_cast(c, "narrowing may lose a value");
 }
@@ -248,23 +250,23 @@ static Bool exact_in(U32 digits, Literal lit) {
 // Whether every value of the integer type `from` is exact in a float of `bits` bits (its significant bits fit the
 // mantissa).
 static Bool always_exact(types::TypeRef from, U32 digits) {
-    U32 used = from->bits;
-    if (from->is_signed) used -= 1;
+    U32 used = types::bits_of(from);
+    if (types::signed_of(from)) used -= 1;
     return used <= digits;
 }
 
 // The significant bits of a float type: 11 for `F16`, 8 for `BF16`, 24 for `F32`, 53 for `F64`.
 static U32 mantissa(types::TypeRef t) {
-    if (t->bits >= 64) return 53;
-    if (t->bits == 32) return 24;
+    if (types::bits_of(t) >= 64) return 53;
+    if (types::bits_of(t) == 32) return 24;
     return t->name[0] == 'B' ? 8 : 11;
 }
 
 static Verdict to_floating(const Ctx *c) {
     types::Kind kind = c->from->kind;
     // `F16` and `BF16` have 16 bits each but neither holds the other's values: converting one to the other is a cast.
-    if (kind == .floating && c->target_type->bits > c->from->bits) return accept(widening);
-    if (kind == .floating && c->target_type->bits == c->from->bits && c->target_type == c->from)
+    if (kind == .floating && types::bits_of(c->target_type) > types::bits_of(c->from)) return accept(widening);
+    if (kind == .floating && types::bits_of(c->target_type) == types::bits_of(c->from) && c->target_type == c->from)
         return accept(widening);
     if (kind == .floating) return needs_cast(c, "narrowing may lose precision");
     if (kind == .integer && !is_word_size(c->from) && always_exact(c->from, mantissa(c->target_type)))
@@ -355,7 +357,7 @@ static Verdict to_text(const Ctx *c) {
     if (kind != .slice && kind != .array) return no_rule(c);
     types::TypeRef element = c->from->element;
     if (element == c->char_type) return accept(text_from_chars);
-    if (element->kind == .integer && element->bits == 8)
+    if (element->kind == .integer && types::bits_of(element) == 8)
         return refuse(c, "only a Char slice makes a Str, not a U8 or I8 slice", "write the conversion xs.to(Str)");
     return refuse(c, "only characters make a Str", "write a slice or an array of Char");
 }
@@ -447,7 +449,7 @@ export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, 
 }
 
 static Bool pointer_wide(const Ctx *c, types::TypeRef integer) {
-    return integer->kind == .integer && integer->bits == c->pointer_bits;
+    return integer->kind == .integer && types::bits_of(integer) == c->pointer_bits;
 }
 
 static Verdict cast_pointer(const Ctx *c) {
@@ -475,11 +477,11 @@ static Bool is_number(types::TypeRef t) {
 static Bool float_fits(types::TypeRef to, F64 value) {
     if (value != value) return false;
     F64 top = 1.0;
-    for (U32 i = 0; i < (to->is_signed ? to->bits - 1 : to->bits); i++) {
+    for (U32 i = 0; i < (types::signed_of(to) ? types::bits_of(to) - 1 : types::bits_of(to)); i++) {
         top *= 2.0;
     }
     F64 bottom = -1.0;
-    if (to->is_signed) bottom = -top - 1.0;
+    if (types::signed_of(to)) bottom = -top - 1.0;
     return value > bottom && value < top;
 }
 
@@ -503,7 +505,7 @@ static Verdict cast_by_kind(const Ctx *c) {
     types::Kind to = c->target_type->kind;
     if (to == .void_type) return refuse(c, "a cast to Void discards a value", "write _ := x");
     if (to == .text && (from == .slice || from == .array) && c->from->element->kind == .integer &&
-        c->from->element->bits == 8)
+        types::bits_of(c->from->element) == 8)
         return accept(cast); // bytes to text: free, every byte is a Char, no UTF-8 check (owner, 2026-11-01)
     if (from == .integer && to == .integer) {
         if (c->lit.is_constant && !c->lit.is_float) return never_fits(c, literal_text(c->lit));
@@ -550,8 +552,8 @@ export types::TypeRef operand_type(types::Table *t, types::TypeRef left, types::
     if (!is_number(left) || !is_number(right)) return nullptr;
     Bool right_wider = right->kind == .floating;
     if ((left->kind == .floating) == (right->kind == .floating)) {
-        right_wider = right->bits > left->bits;
-        if (left->is_signed != right->is_signed) right_wider = right->is_signed;
+        right_wider = types::bits_of(right) > types::bits_of(left);
+        if (types::signed_of(left) != types::signed_of(right)) right_wider = types::signed_of(right);
     }
     types::TypeRef wide = right_wider ? right : left;
     types::TypeRef narrow = right_wider ? left : right;
