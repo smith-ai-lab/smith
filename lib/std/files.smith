@@ -954,7 +954,7 @@ Usize fake_new(Fake *fake, const char *path) {
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     for (Usize i = 0; i < fake_files_max; i++) {
         if (fake->files[i].used) continue;
-        mem::zero(fake->files[i:i + 1]);
+        mem::zero(&fake->files[i]);
         fake->files[i].used = true;
         put(fake->files[i].path, path, length);
         return i;
@@ -1121,7 +1121,7 @@ I32 fake_remove(c::SmithFileHandler *self, const char *path) {
         fake_fail(eperm);
         return -1;
     }
-    mem::zero(fake->files[found:found + 1]);
+    mem::zero(&fake->files[found]);
     return 0;
 }
 
@@ -1135,7 +1135,7 @@ I32 fake_rename(c::SmithFileHandler *self, const char *from, const char *to) {
     Usize length = c::strlen(to);
     if (length >= fake_path_max) misuse("files fake: a path longer than 255 bytes");
     Usize target_found = fake_find(fake, to);
-    if (target_found != fake_files_max && target_found != found) mem::zero(fake->files[target_found:target_found + 1]);
+    if (target_found != fake_files_max && target_found != found) mem::zero(&fake->files[target_found]);
     fake->files[found].path[0] = 0;
     put(fake->files[found].path, to, length);
     fake->files[found].path[length] = 0;
