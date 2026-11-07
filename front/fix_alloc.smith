@@ -90,15 +90,90 @@ static core::ParseError call_fix(Str source, Usize i, Str name, Usize shape, Str
     return out;
 }
 
+// The offset of the `)` that closes the `(` at `open`, or `countof(s)` when there is none.
+static Usize close_paren(Str s, Usize open) {
+    Usize depth = 0;
+    for (Usize i = open; i < countof(s); i++) {
+        if (s[i] == '(') depth += 1;
+        if (s[i] == ')') {
+            depth -= 1;
+            if (depth == 0) return i;
+        }
+    }
+    return countof(s);
+}
+
+static Usize skip_blanks(Str s, Usize i) {
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t')) i += 1;
+    return i;
+}
+
+// The fix of the zero value of a type made from an expression, `(typeof(a)){0}` or `(typeof(a)){}`, that starts at
+// `i`: `mem::zeroed(typeof(a))` (D10, decided on #1406). The type is only known at compile time, so it has no `T()`.
+static core::ParseError zero_fix(Str source, Usize i) {
+    core::ParseError none = {};
+    if (!at(source, i, "(typeof(") || (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.'))) return none;
+    Usize close = close_paren(source, i);
+    if (close == countof(source)) return none;
+    Usize brace = skip_blanks(source, close + 1);
+    if (brace >= countof(source) || source[brace] != '{') return none;
+    Usize inner = skip_blanks(source, brace + 1);
+    if (inner < countof(source) && source[inner] == '0') inner = skip_blanks(source, inner + 1);
+    if (inner >= countof(source) || source[inner] != '}') return none;
+    core::ParseError out = {};
+    out.span = (ast::Span){.start = (U32)i, .end = (U32)(inner + 1)};
+    out.fix = push(out.fix, i, i + 1, "mem::zeroed(");
+    out.fix = push(out.fix, close, inner + 1, ")");
+    out.message = "the zero value of a type known at compile time is `mem.zeroed(T)`";
+    return out;
+}
+
+// Whether the text imports `std::mem` (or has already been written `import std.mem`).
+static Bool has_mem(Str source) {
+    for (Usize i = 0; i + 14 < countof(source); i++) {
+        if (at(source, i, "import std::mem;") || at(source, i, "import std.mem")) return true;
+    }
+    return false;
+}
+
+// The fix that adds `import std::mem;` once, on the line after `module ...;`.
+static core::ParseError import_mem(Str source) {
+    core::ParseError none = {};
+    for (Usize i = 0; i + 7 < countof(source); i++) {
+        if (!at(source, i, "module ") || (i > 0 && source[i - 1] != '\n')) continue;
+        Usize end = i;
+        while (end < countof(source) && source[end] != '\n') end += 1;
+        core::ParseError out = {};
+        out.span = (ast::Span){.start = (U32)end, .end = (U32)end};
+        out.fix = push(out.fix, end, end, "\nimport std::mem;");
+        out.message = "a fix needs a standard module";
+        return out;
+    }
+    return none;
+}
+
 // The fixes of the module's text.
 export core::Errors edits(Str source) {
     core::Errors out = {};
+    Bool zeroes = false;
     for (Usize i = 0; i < countof(source); i++) {
         core::ParseError found = call_fix(source, i, "mem.alloc_slice(", 1, "mem.alloc");
         if (countof(found.fix) == 0) found = call_fix(source, i, "arena.push_slice(", 2, "");
+        core::ParseError zero = zero_fix(source, i);
+        if (countof(found.fix) == 0 && countof(zero.fix) > 0) {
+            found = zero;
+            zeroes = true;
+        }
         if (countof(found.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = found;
+    }
+    if (zeroes && !has_mem(source)) {
+        core::ParseError add = import_mem(source);
+        if (countof(add.fix) > 0) {
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = add;
+        }
     }
     return out;
 }
