@@ -886,7 +886,7 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             edits = with_edit(edits, edit(word.start, joined, joined > word.end ? "pub " : "pub"));
             warn(p, word.start, word.end, "`export` is written `pub`", edits);
         }
-        if (top && kind == lex::kw_constexpr) {
+        if (kind == lex::kw_constexpr) { // a local `constexpr` goes too
             ast::Span word = parse::peek(p).span;
             pre.constexpr_start = word.start;
             pre.constexpr_end = word.end;
