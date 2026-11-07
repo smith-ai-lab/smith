@@ -5,12 +5,15 @@
 // errno code and a message, as `open config.txt: No such file or directory`.
 //
 // The read puts the bytes in the arena it is given, with a zero after them that the size does not count, so a caller
-// can hand the text to C.
+// can hand the text to C. A user of this file takes what it needs: the rest is `maybe_unused`.
+
+#pragma once
 
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <smith/arena.h>
+#include <smith/handlers.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,28 +56,45 @@ static SmithWorldError smith_world_error(int code, const char *what, const char 
     return error;
 }
 
-// A whole file in the arena. A name that is not a file is the error of its open or read.
-static SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
-    int descriptor = open(path, O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) return (SmithWorldRead){.error = smith_world_error(errno, "open", path)};
-    struct stat status;
-    if (fstat(descriptor, &status) != 0 || S_ISDIR(status.st_mode)) {
-        int code = S_ISDIR(status.st_mode) ? EISDIR : errno;
-        close(descriptor);
-        return (SmithWorldRead){.error = smith_world_error(code, "read", path)};
+// What is at the path (symbolic links followed).
+static SmithWorldInfo smith_world_info(const char *path) {
+    SmithFileHandler *handler = smith_handlers_files();
+    if (handler != nullptr && handler->stat != nullptr) {
+        SmithFileStatus fake;
+        if (handler->stat(handler, path, &fake) != 0)
+            return (SmithWorldInfo){.error = smith_world_error(errno, "stat", path)};
+        return (SmithWorldInfo){.folder = fake.folder, .size = fake.folder ? 0 : fake.size};
     }
-    size_t capacity = status.st_size > 0 ? (size_t)status.st_size : 0;
-    uint8_t *data = smith_arena_push(arena, capacity + 1, 1);
+    struct stat status;
+    if (stat(path, &status) != 0) return (SmithWorldInfo){.error = smith_world_error(errno, "stat", path)};
+    bool folder = S_ISDIR(status.st_mode);
+    return (SmithWorldInfo){.folder = folder, .size = folder ? 0 : (size_t)status.st_size};
+}
+
+// A whole file in the arena. A name that is not a file is the error of its open or read. With a files handler set
+// (smith_handlers_set_files) its members do the work, so a test can swap the file system.
+static SmithWorldRead smith_world_read(SmithArena *arena, const char *path) {
+    SmithFileHandler *handler = smith_handlers_files();
+    SmithWorldInfo info = smith_world_info(path);
+    if (info.error.code != 0) return (SmithWorldRead){.error = info.error};
+    if (info.folder) return (SmithWorldRead){.error = smith_world_error(EISDIR, "read", path)};
+    uint8_t *data = smith_arena_push(arena, info.size + 1, 1);
+    int descriptor = handler != nullptr ? handler->open(handler, path, O_RDONLY, 0) : open(path, O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) return (SmithWorldRead){.error = smith_world_error(errno, "open", path)};
     size_t used = 0;
     int code = 0;
-    while (used < capacity) { // bounded by the size the file had
-        ssize_t count = read(descriptor, data + used, capacity - used);
+    while (used < info.size) { // bounded by the size the file had
+        ssize_t count = handler != nullptr ? handler->read(handler, descriptor, data + used, info.size - used)
+                                           : read(descriptor, data + used, info.size - used);
         if (count < 0 && errno == EINTR) continue;
         if (count < 0) code = errno;
         if (count <= 0) break;
         used += (size_t)count;
     }
-    close(descriptor);
+    if (handler != nullptr)
+        (void)handler->close(handler, descriptor);
+    else
+        close(descriptor);
     data[used] = 0;
     if (code != 0) return (SmithWorldRead){.error = smith_world_error(code, "read", path)};
     return (SmithWorldRead){.data = data, .size = used};
@@ -99,7 +119,8 @@ static SmithWorldError smith_world_write_to(const char *path, const uint8_t *dat
 }
 
 // Writes the bytes to the file as the mode says. A failed atomic write leaves the old file as it was.
-static SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size, SmithWorldWrite mode) {
+[[maybe_unused]] static SmithWorldError smith_world_write(const char *path, const uint8_t *data, size_t size,
+                                                          SmithWorldWrite mode) {
     if (mode == SmithWorld_Append) return smith_world_write_to(path, data, size, O_APPEND);
     if (mode == SmithWorld_Replace) return smith_world_write_to(path, data, size, O_TRUNC);
     char temporary[PATH_MAX];
@@ -112,14 +133,14 @@ static SmithWorldError smith_world_write(const char *path, const uint8_t *data, 
 }
 
 // Deletes a file (not a folder: EPERM, as on macOS).
-static SmithWorldError smith_world_remove(const char *path) {
+[[maybe_unused]] static SmithWorldError smith_world_remove(const char *path) {
     if (unlink(path) == 0) return (SmithWorldError){};
     int code = errno == EISDIR ? EPERM : errno;
     return smith_world_error(code, "remove", path);
 }
 
 // Makes the folder and the ones above it that are missing; one that is there already is success.
-static SmithWorldError smith_world_make_folder(const char *path) {
+[[maybe_unused]] static SmithWorldError smith_world_make_folder(const char *path) {
     char text[PATH_MAX];
     size_t length = strlen(path);
     if (length == 0 || length >= sizeof text)
@@ -138,16 +159,8 @@ static SmithWorldError smith_world_make_folder(const char *path) {
     return (SmithWorldError){};
 }
 
-// What is at the path (symbolic links followed).
-static SmithWorldInfo smith_world_info(const char *path) {
-    struct stat status;
-    if (stat(path, &status) != 0) return (SmithWorldInfo){.error = smith_world_error(errno, "stat", path)};
-    bool folder = S_ISDIR(status.st_mode);
-    return (SmithWorldInfo){.folder = folder, .size = folder ? 0 : (size_t)status.st_size};
-}
-
 // Monotonic time in nanoseconds.
-static uint64_t smith_world_clock(void) {
+[[maybe_unused]] static uint64_t smith_world_clock(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * smith_world_second + (uint64_t)now.tv_nsec;
