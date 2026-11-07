@@ -314,14 +314,14 @@ static Str first_error(Str source) {
 
 static Bool mentions(Str text, Str needle) {
     for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
-        Bool match = true;
+        Bool matched = true;
         for (Usize k = 0; k < countof(needle); k++) {
             if (text[i + k] != needle[k]) {
-                match = false;
+                matched = false;
                 break;
             }
         }
-        if (match) return true;
+        if (matched) return true;
     }
     return false;
 }
