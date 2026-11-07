@@ -58,7 +58,7 @@ export void test_front_check_bind_fix_a_guard_that_returns_binds_the_rest() {
 // `if !(k == .v): return X` is the same guard as `if k != .v: return X`.
 export void test_front_check_bind_fix_a_negated_equality_guard_binds_the_rest() {
     char before[:] = format::push(
-        shape_text(), "fn area(s: Shape) -> i32:\n    if !(s == .circle):\n        return 0\n    s.circle * 2\n");
+        shape_text(), "fn area(s: Shape) -> i32:\n    if not (s == .circle):\n        return 0\n    s.circle * 2\n");
     char after[:] = format::push(
         shape_text(), "fn area(s: Shape) -> i32:\n    .circle(circle) := s else:\n        return 0\n    circle * 2\n");
     expect(before, after);
@@ -66,7 +66,7 @@ export void test_front_check_bind_fix_a_negated_equality_guard_binds_the_rest() 
 
 // In a chain `a || k != .v || b` the test stands alone, between `if a:` and `if b:`, which may read the payload.
 export void test_front_check_bind_fix_a_guard_in_a_chain_stands_alone() {
-    char before[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0 || s != .circle || ",
+    char before[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0 or s != .circle or ",
                                   "s.circle == 0: return 0\n    s.circle * n\n");
     char after[:] = format::push(shape_text(), "fn area(s: Shape, n: i32) -> i32:\n    if n < 0: return 0\n    ",
                                  ".circle(circle) := s else: return 0\n    if circle == 0: return 0\n    circle * n\n");
@@ -207,18 +207,18 @@ export void test_front_check_bind_fix_try_an_unread_result_is_a_bare_try() {
 export void test_front_check_bind_fix_a_test_that_starts_an_and_chain_binds_the_payload() {
     char before[:] = format::push(
         shape_text(),
-        "fn big(s: Shape) -> i32:\n    if s == .circle && s.circle > 1:\n        return s.circle * 2\n    0\n");
+        "fn big(s: Shape) -> i32:\n    if s == .circle and s.circle > 1:\n        return s.circle * 2\n    0\n");
     char after[:] = format::push(
         shape_text(),
-        "fn big(s: Shape) -> i32:\n    if .circle(circle) := s && circle > 1:\n        return circle * 2\n    0\n");
+        "fn big(s: Shape) -> i32:\n    if .circle(circle) := s and circle > 1:\n        return circle * 2\n    0\n");
     expect(before, after);
 }
 
 export void test_front_check_bind_fix_a_test_that_starts_an_and_chain_binds_a_while() {
     char before[:] = format::push(shape_text(), "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while s == "
-                                                ".circle && n < s.circle:\n        n += 1\n    n\n");
+                                                ".circle and n < s.circle:\n        n += 1\n    n\n");
     char after[:] = format::push(shape_text(), "fn count(s: Shape) -> i32:\n    mut n: i32 = 0\n    while "
-                                               ".circle(circle) := s && n < circle:\n        n += 1\n    n\n");
+                                               ".circle(circle) := s and n < circle:\n        n += 1\n    n\n");
     expect(before, after);
 }
 
@@ -226,6 +226,6 @@ export void test_front_check_bind_fix_a_test_that_starts_an_and_chain_binds_a_wh
 export void test_front_check_bind_fix_a_test_inside_an_and_chain_stays() {
     char site[:] = format::push(
         shape_text(),
-        "fn big(s: Shape, ok: bool) -> i32:\n    if ok && s == .circle && s.circle > 1:\n        return 1\n    0\n");
+        "fn big(s: Shape, ok: bool) -> i32:\n    if ok and s == .circle and s.circle > 1:\n        return 1\n    0\n");
     expect(site, site);
 }

@@ -1,0 +1,9 @@
+import std::test;
+
+void test_cache_one(void) {
+    test::check_equal(1 + 1, 2);
+}
+
+void test_cache_two(void) {
+    test::check_equal(2 * 3, 6);
+}

@@ -797,6 +797,10 @@ static Usize kind_index(TokenKind kind) {
 static TokenKind identifier_kind(Str s, Usize start, Usize end, Bool new_syntax) {
     Str word = s[start:end];
     if ((same(word, "module") || same(word, "type")) && is_plain_name(s, start, end, word)) return name;
+    if (new_syntax && same(word, "and")) return ampersand_ampersand; // D19: the words are the operators
+    if (new_syntax && same(word, "or")) return pipe_pipe;
+    if (new_syntax && same(word, "not")) return bang;
+    if (!new_syntax && same(word, "_Countof")) return kw_countof; // C2y's spelling; the parser mends it to `countof`
     Usize last_keyword = new_syntax ? kind_index(kw_yield) : kind_index(kw_countof);
     for (Usize k = kind_index(kw_alignas); k <= last_keyword; k++) {
         if (same(kind_text((TokenKind)k), word)) return (TokenKind)k;

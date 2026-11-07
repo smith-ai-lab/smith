@@ -48,7 +48,8 @@ static Bool is_empty(Node n) {
 }
 
 static Bool is_logical(const ast::Expr *e) {
-    return e->kind == .binary && (e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or);
+    if (!(e->kind == .binary)) return false;
+    return e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or;
 }
 
 static Usize expr_child_count(const ast::Expr *e) {
@@ -149,7 +150,8 @@ static Node stmt_child(const ast::Stmt *s, Usize i) {
     }
     if (s->kind == .declaration) {
         const ast::Decl *d = s->kind.declaration.decl;
-        if (d != nullptr && d->kind == .variable) return of_expr(d->kind.variable.init);
+        if (d == nullptr) return (Node){};
+        if (d->kind == .variable) return of_expr(d->kind.variable.init);
         return (Node){};
     }
     if (s->kind == .block) {
@@ -196,34 +198,50 @@ static Node stmt_child(const ast::Stmt *s, Usize i) {
 }
 
 static Usize child_count(Node n) {
-    return n.expr != nullptr ? expr_child_count(n.expr) : stmt_child_count(n.stmt);
+    const ast::Expr *expr = n.expr;
+    if (expr != nullptr) return expr_child_count(expr);
+    const ast::Stmt *stmt = n.stmt;
+    if (stmt == nullptr) return 0;
+    return stmt_child_count(stmt);
 }
 
 static Node child(Node n, Usize i) {
-    return n.expr != nullptr ? expr_child(n.expr, i) : stmt_child(n.stmt, i);
+    const ast::Expr *expr = n.expr;
+    if (expr != nullptr) return expr_child(expr, i);
+    const ast::Stmt *stmt = n.stmt;
+    if (stmt == nullptr) return (Node){};
+    return stmt_child(stmt, i);
 }
 
 // The index of the first alternative of a node that branches (child 0 is what decides, the rest are the paths, and a
 // path that is absent is the empty one); 0 for a node that does not branch.
 static Usize first_alternative(Node n) {
-    if (n.expr != nullptr) {
-        if (n.expr->kind == .conditional || is_logical(n.expr)) return 1;
+    const ast::Expr *expr = n.expr;
+    if (expr != nullptr) {
+        if (expr->kind == .conditional || is_logical(expr)) return 1;
         return 0;
     }
-    if (n.stmt->kind == .if_stmt || n.stmt->kind == .if_let || n.stmt->kind == .match_stmt) return 1;
+    const ast::Stmt *stmt = n.stmt;
+    if (stmt == nullptr) return 0;
+    if (stmt->kind == .if_stmt || stmt->kind == .if_let || stmt->kind == .match_stmt) return 1;
     return 0;
 }
 
 // One more than the index of the first child that a loop runs again and again; 0 for a node that is no loop.
 static Usize loop_from(Node n) {
-    if (n.stmt == nullptr) return 0;
-    if (n.stmt->kind == .while_stmt || n.stmt->kind == .do_while) return 1;
-    if (n.stmt->kind == .for_stmt || n.stmt->kind == .for_in) return 2;
+    const ast::Stmt *stmt = n.stmt;
+    if (stmt == nullptr) return 0;
+    if (stmt->kind == .while_stmt || stmt->kind == .do_while) return 1;
+    if (stmt->kind == .for_stmt || stmt->kind == .for_in) return 2;
     return 0;
 }
 
 static ast::Span span_of(Node n) {
-    return n.expr != nullptr ? n.expr->span : n.stmt->span;
+    const ast::Expr *expr = n.expr;
+    if (expr != nullptr) return expr->span;
+    const ast::Stmt *stmt = n.stmt;
+    if (stmt == nullptr) return (ast::Span){};
+    return stmt->span;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -274,9 +292,13 @@ static Bool same_text(Str a, Str b) {
     return true;
 }
 
-static Bool names(const ast::Expr *e, Str name) {
-    return e != nullptr && e->kind == .name && countof(e->kind.name.path.segments) == 1 &&
-           same_text(e->kind.name.path.segments[0].text, name);
+static Bool names(const ast::Expr *e, Str text) {
+    if (e == nullptr) return false;
+    if (e->kind == .name) {
+        ast::Path path = e->kind.name.path;
+        return countof(path.segments) == 1 && same_text(path.segments[0].text, text);
+    }
+    return false;
 }
 
 // One use more on every path.
@@ -326,7 +348,9 @@ static void enter_child(Walk *w, Frame *f, Usize i) {
 
 static void finish(types::Checked *c, Walk *w, Frame *f) {
     Node n = f->node;
-    if (n.expr != nullptr && names(n.expr, w->name)) use(c, w, n.expr->span);
+    const ast::Expr *expr = n.expr;
+    const ast::Stmt *stmt = n.stmt;
+    if (expr != nullptr && names(expr, w->name)) use(c, w, expr->span);
     Usize alt = first_alternative(n);
     if (alt > 0 && child_count(n) > alt) {
         f->joined |= w->now;
@@ -338,11 +362,11 @@ static void finish(types::Checked *c, Walk *w, Frame *f) {
                                    "` is `fn_once` and is used inside a loop, so it would be used once "
                                    "per turn; call it after the loop, or take an `fn(...)` parameter")));
     }
-    if (n.stmt != nullptr && n.stmt->kind == .return_stmt) {
-        leave(c, w, n.stmt->span);
+    if (stmt != nullptr && stmt->kind == .return_stmt) {
+        leave(c, w, stmt->span);
         w->now = 0;
     }
-    if (n.expr != nullptr && n.expr->kind == .try_expr) leave(c, w, n.expr->span);
+    if (expr != nullptr && expr->kind == .try_expr) leave(c, w, expr->span);
 }
 
 static void walk(types::Checked *c, Walk *w, Node root) {
@@ -363,7 +387,10 @@ static void walk(types::Checked *c, Walk *w, Node root) {
 }
 
 static Bool is_once_param(const ast::Param *p) {
-    return p->type != nullptr && p->type->kind == .function && p->type->kind.function.is_once;
+    const ast::TypeExpr *type = p->type;
+    if (type == nullptr) return false;
+    if (type->kind == .function) return type->kind.function.is_once;
+    return false;
 }
 
 // Checks every `fn_once` parameter of a function or lambda: used exactly once on every path of `body`.
@@ -395,9 +422,12 @@ export void reset() {
 // The lambdas written as arguments of a call; they are non-escaping. Call before the arguments are typed.
 export void note_arguments(ast::ExprRef args[:]) {
     for (Usize i = 0; i < countof(args); i++) {
-        const ast::Expr *a = args[i];
-        if (a != nullptr && a->kind == .named_arg) a = a->kind.named_arg.value;
-        if (a == nullptr || a->kind != .lambda) continue;
+        const ast::Expr *arg = args[i];
+        if (arg == nullptr) continue;
+        const ast::Expr *a = arg;
+        if (arg->kind == .named_arg) a = arg->kind.named_arg.value;
+        if (a == nullptr) continue;
+        if (a->kind != .lambda) continue;
         if (arguments.count == countof(arguments.items)) {
             Usize capacity = countof(arguments.items) * 2;
             if (capacity < 8) capacity = 8;
@@ -428,17 +458,19 @@ static const types::Symbol *stack_symbol(const types::Checked *c, ast::Path path
 static const types::Symbol *stack_local(const types::Checked *c, const ast::Expr *e) {
     const ast::Expr *at = e;
     while (at != nullptr) {
-        if (at->kind == .index) {
-            at = at->kind.index.base;
-        } else if (at->kind == .member) {
-            if (at->kind.member.arrow) return nullptr;
-            at = at->kind.member.base;
+        const ast::Expr *cur = at;
+        const ast::Expr *next = nullptr;
+        if (cur->kind == .index) {
+            next = cur->kind.index.base;
+        } else if (cur->kind == .member) {
+            if (cur->kind.member.arrow) return nullptr;
+            next = cur->kind.member.base;
         } else {
-            break;
+            if (cur->kind == .name) return stack_symbol(c, cur->kind.name.path);
+            return nullptr;
         }
+        at = next;
     }
-    if (at == nullptr) return nullptr;
-    if (at->kind == .name) return stack_symbol(c, at->kind.name.path);
     return nullptr;
 }
 
@@ -555,9 +587,15 @@ static void check_capture(types::Checked *c, const ast::Param params[:], const N
 
 static void capture(types::Checked *c, const ast::Expr *use_site, Str name) {
     const types::Symbol *s = types::lookup(&c->scopes, name);
-    if (s == nullptr || s->kind != .variable || s->decl == nullptr || s->decl->kind != .variable) return;
+    if (s == nullptr || s->kind != .variable) return;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return;
     if (s->type->kind != .pointer && s->type->kind != .slice) return;
-    if (!points_into_stack(c, s, s->decl->kind.variable.init)) return;
+    if (decl->kind == .variable) {
+        if (!points_into_stack(c, s, decl->kind.variable.init)) return;
+    } else {
+        return;
+    }
     types::failf(c, use_site->span, "the stored lambda captures `", name, "`, a ",
                  s->type->kind == .pointer ? "pointer" : "slice",
                  " into this function's stack, which dangles once the function returns; pass the lambda as an "

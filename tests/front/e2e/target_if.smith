@@ -14,19 +14,19 @@ fn analyzed(x: i32) -> i32:
     x + 1
 
 fn word_bits() -> i32:
-    if target.os == .macos || target.os == .linux:
+    if target.os == .macos or target.os == .linux:
         return 64
     32
 
 fn only_then() -> i32:
     let mut n = 1
-    if !target.static_analyzer:
+    if not target.static_analyzer:
         n = 2
     n
 
 pub fn check() -> i32:
     let size = page_size()
-    if size != 16384 && size != 4096:
+    if size != 16384 and size != 4096:
         return 1
     if analyzed(4) != 5:
         return 2

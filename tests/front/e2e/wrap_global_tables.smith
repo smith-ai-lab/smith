@@ -12,7 +12,7 @@ fn largest() -> usize:
 pub fn check() -> i32:
     if largest().wrap(u64) != 0xFFFFFFFFFFFFFFFFULL:
         return 1
-    if terms[2] != 2.0 || terms[0] >= 0.0:
+    if terms[2] != 2.0 or terms[0] >= 0.0:
         return 2
     if names[1][2] != 'e':
         return 3
@@ -20,6 +20,6 @@ pub fn check() -> i32:
     second: *mut u32 = &values[0] + 1
     if second.* != 20:
         return 4
-    if sanitized && !sanitized:
+    if sanitized and not sanitized:
         return 5
     0

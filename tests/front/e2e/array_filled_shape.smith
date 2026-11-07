@@ -17,19 +17,19 @@ fn generic_fill(T: type, v: T) -> T:
     xs[1][2]
 
 pub fn check() -> i32:
-    if countof(names) != 5 || countof(names[0]) != 8 || names[4][7] != 0:
+    if countof(names) != 5 or countof(names[0]) != 8 or names[4][7] != 0:
         return 1
-    if ones[0][0] != 1 || ones[1][2] != 1 || countof(ones[1]) != 3:
+    if ones[0][0] != 1 or ones[1][2] != 1 or countof(ones[1]) != 3:
         return 2
-    if countof(grid) != 3 || countof(grid[2]) != 6 || grid[2][5] != 0:
+    if countof(grid) != 3 or countof(grid[2]) != 6 or grid[2][5] != 0:
         return 3
-    if cube[1][1][1] != 9 || cube[0][0][0] != 9:
+    if cube[1][1][1] != 9 or cube[0][0][0] != 9:
         return 4
     nested := array.filled([3]u8, 2, array.filled(u8, 3, 4))
-    if nested[1][2] != 4 || nested[0][0] != 4:
+    if nested[1][2] != 4 or nested[0][0] != 4:
         return 5
     local := array.filled(f64, [2, 2], 2.5)
-    if local[1][1] != 2.5 || countof(local) != 2:
+    if local[1][1] != 2.5 or countof(local) != 2:
         return 6
     if runtime_fill(7) != 14:
         return 7

@@ -74,13 +74,13 @@ static void expect(Str source, Bool today, Str needle) {
 
 export void test_front_target_if_the_branch_not_kept_is_not_checked() {
     expect("fn f(x: i32) -> i32:\n    if target.static_analyzer:\n        return nothing_here(x)\n    x\n", false, "");
-    expect("fn f(x: i32) -> i32:\n    if !target.static_analyzer:\n        return x\n    else:\n        return "
+    expect("fn f(x: i32) -> i32:\n    if not target.static_analyzer:\n        return x\n    else:\n        return "
            "nothing_here(x)\n",
            false, "");
 }
 
 export void test_front_target_if_the_branch_kept_is_checked() {
-    expect("fn f(x: i32) -> i32:\n    if !target.static_analyzer:\n        return nothing_here(x)\n    x\n", false,
+    expect("fn f(x: i32) -> i32:\n    if not target.static_analyzer:\n        return nothing_here(x)\n    x\n", false,
            "nothing_here");
 }
 
@@ -109,6 +109,6 @@ export void test_front_target_if_constexpr_in_todays_syntax_keeps_one_branch() {
 export void test_front_target_if_a_condition_on_target_that_cannot_be_decided_is_an_error() {
     expect("fn f() -> i32:\n    if target.os == .windows:\n        return 1\n    return 2\n", false,
            "a condition on `target` is decided at compile time");
-    expect("fn f(n: i32) -> i32:\n    if target.static_analyzer || n > 0:\n        return 1\n    return 2\n", false,
+    expect("fn f(n: i32) -> i32:\n    if target.static_analyzer or n > 0:\n        return 1\n    return 2\n", false,
            "a condition on `target` is decided at compile time");
 }

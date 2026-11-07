@@ -1537,10 +1537,11 @@ typedef struct {
     Bool update; // --update: test::golden writes its file
     Bool list;
     const char
-        *costs;   // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
-    U8 macos;     // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
-    Bool partial; // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
-                  // tests is no error
+        *costs;    // --costs <file>: lines `cpu<TAB>seconds<TAB>name`; the heaviest tests start first (unknown first)
+    U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
+    Bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
+                   // tests is no error
+    Bool no_cache; // --no-cache: run the tests that passed before and have not changed too (#2686)
     const char *others; // --others <runner>: the other runner of the run; a filter that selects none of ours but some
                         // of its tests (it is asked with --list) is no error either
     Bool cheapest; // --cheapest: with --costs, the cheapest tests start first instead (a selection under --fail-fast)
@@ -2018,6 +2019,50 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
     if (merger > 0) c::waitpid(merger, &status, 0);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The cache of passed tests (#2686, runtime/test_cache.c, knowledge/build-tests.md). Before the run the runner writes
+// the names of the tests it would run to a folder of its own and asks `smith test --cache check` which of them passed
+// before with nothing they depend on changed; those are left out of the plan and counted. While a test runs,
+// SMITH_READS_LOG names a file in the folder, so `files` logs what it reads, and after the run `smith test --cache
+// store` keeps an entry for each test that passed. A test that failed is never stored, so it runs again every time.
+
+char cache_folder[path_capacity]; // the folder of this run; empty when the cache is not used
+Usize cached_total = 0;           // the tests left out of the plan because they are unchanged
+
+// Whether this run uses the cache: not for a listing, a debugger, a golden update, a part of a shard (the miss sets
+// would partition the tests differently), a run that records coverage, or one inside a test that is itself cached.
+Bool cache_wanted(const Options *options) {
+    if (options->list || options->in_process || options->update || options->no_cache) return false;
+    if (options->shard_count > 0 || c::getenv("SMITH_COVERAGE_DIR") != nullptr) return false;
+    const char *mode = c::getenv("SMITH_RESULT_CACHE");
+    if (mode != nullptr && (c::strcmp(mode, "off") == 0 || c::strcmp(mode, "0") == 0)) return false;
+    const char *self = c::getenv("SMITH_SELF");
+    return self != nullptr && self[0] != '\0';
+}
+
+// The environment entries the workers rewrite in place (putenv keeps the pointer): a worker that came out of a failed
+// test still has that test's allocator installed until the next test resets it, and setenv would take its memory.
+char cache_reads_entry[path_capacity + 24] = "SMITH_READS_LOG=/dev/null";
+char cache_off_entry[24] = "SMITH_RESULT_CACHE=off";
+
+// In the runner, once the run uses the cache: the entries are in the environment (the workers and everything they
+// start inherit them) and a smith a test starts does not use the cache.
+void cache_environment() {
+    c::putenv(&cache_reads_entry[0]);
+    c::putenv(&cache_off_entry[0]);
+}
+
+// In the worker, before a test: its reads go to a file of the folder.
+void cache_reads_begin(const Test *test) {
+    if (cache_folder[0] == '\0') return;
+    char clean[256];
+    char path[path_capacity];
+    coverage_name(test->name, &clean[0], sizeof clean);
+    __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
+    c::unlink(path);
+    __builtin_snprintf(&cache_reads_entry[0], sizeof cache_reads_entry, "SMITH_READS_LOG=%s", &path[0]);
+}
+
 // Runs the test: once, or a property test on its one key or on all of them. A failure's stack ends in this function's
 // frame (smith_trace_stop), so it is the same whichever way the runner reached it, which shrinking compares.
 [[std::noinline]] void execute(const Test *test, const Options *options, const Command *command) {
@@ -2061,6 +2106,7 @@ void setup(Shared *block, I32 output) {
 // --isolate: the process runs its one test and exits 0 if it returns.
 [[noreturn]] void child(const Test *test, const Options *options, Shared *block, I32 output, const Command *command) {
     setup(block, output);
+    cache_reads_begin(test);
     coverage_begin(test);
     execute(test, options, command);
     coverage_end(test, true, 0);
@@ -2091,6 +2137,7 @@ End serve(const Options *options, const Command *command) {
     } else {
         jumped = c::__sigsetjmp(loop_jump, 1); // glibc's sigsetjmp is a macro of it
     }
+    cache_reads_begin(test);
     coverage_begin(test);
     if (jumped == 0) execute(test, options, command);
     coverage_end(test, jumped == 0, process_cpu() - cpu_before);
@@ -3641,6 +3688,8 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             options->macos = 2;
         } else if (c::strcmp(flag, "--partial") == 0) {
             options->partial = true;
+        } else if (c::strcmp(flag, "--no-cache") == 0) {
+            options->no_cache = true;
         } else if (c::strcmp(flag, "--cheapest") == 0) {
             options->cheapest = true;
         } else if (c::strcmp(flag, "--stats") == 0) {
@@ -4125,6 +4174,129 @@ void shard_plan(Plan *plan, const Options *options) {
 }
 
 // The tests the options choose, in order, with a run for each.
+// Writes `text` to <folder>/<file>.
+void cache_write(const char *file, const char *text) {
+    char path[path_capacity];
+    __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], file);
+    c::FILE *out = c::fopen(path, "w");
+    if (out == nullptr) return;
+    c::fputs(text, out);
+    c::fclose(out);
+}
+
+// Runs `$SMITH_SELF test --cache <action> <folder>` and waits for it.
+void cache_call(const char *action) {
+    console::flush();
+    c::pid_t child = c::fork();
+    if (child == 0) {
+        char program[path_capacity];
+        char folder[path_capacity];
+        char verb[5] = "test";
+        char option[8] = "--cache";
+        char word[8] = {};
+        __builtin_snprintf(program, sizeof program, "%s", c::getenv("SMITH_SELF"));
+        __builtin_snprintf(folder, sizeof folder, "%s", &cache_folder[0]);
+        __builtin_snprintf(word, sizeof word, "%s", action);
+        char *arguments[6] = {program, verb, option, word, folder, nullptr};
+        c::execv(program, arguments);
+        c::_exit(127);
+    }
+    I32 status = 0;
+    if (child > 0) c::waitpid(child, &status, 0);
+}
+
+// What changes a test's result besides its code: the options of the run, and the runner's own place in the build.
+void cache_write_options(const Options *options) {
+    static char text[path_capacity + 512];
+    __builtin_snprintf(
+        text, sizeof text,
+        "seed=%d,%zu seeds=%zu full=%d unchecked=%d timeout=%u wall=%u idle=%u shrink=%d,%u macos=%u\n%s\n",
+        options->seed_given ? 1 : 0, (Usize)options->seed, (Usize)options->seed_count, options->full ? 1 : 0,
+        options->unchecked ? 1 : 0, options->timeout, options->wall_timeout, options->idle_timeout,
+        options->shrink ? 1 : 0, options->shrink_seconds, (U32)options->macos, options->runner->argv[0]);
+    cache_write("options", &text[0]);
+}
+
+// Leaves out of the plan the tests whose entry holds. `<folder>/hits` lists their names in the order of the plan.
+void cache_filter(Plan *plan, const Options *options) {
+    if (plan->count == 0 || !cache_wanted(options)) {
+        c::putenv(&cache_off_entry[0]); // a smith a test starts runs what it is told, whatever this run did (a shard)
+        return;
+    }
+    const char *temp = c::getenv("TMPDIR");
+    __builtin_snprintf(cache_folder, sizeof cache_folder, "%s/smith-test-cache.XXXXXX",
+                       temp != nullptr && temp[0] != '\0' ? temp : "/tmp");
+    if (c::mkdtemp(cache_folder) == nullptr) {
+        cache_folder[0] = '\0';
+        return;
+    }
+    char path[path_capacity];
+    __builtin_snprintf(path, sizeof path, "%s/reads", &cache_folder[0]);
+    c::mkdir(path, 493); // 0755
+    __builtin_snprintf(path, sizeof path, "%s/names", &cache_folder[0]);
+    c::FILE *names = c::fopen(path, "w");
+    if (names == nullptr) return;
+    for (Usize i = 0; i < plan->count; i++) {
+        c::fputs(plan->tests[i]->name, names);
+        c::fputs("\n", names);
+    }
+    c::fclose(names);
+    cache_write_options(options);
+    cache_call("check");
+    cache_environment();
+    __builtin_snprintf(path, sizeof path, "%s/hits", &cache_folder[0]);
+    c::FILE *hits = c::fopen(path, "r");
+    if (hits == nullptr) return;
+    char line[512];
+    Bool more = c::fgets(&line[0], (I32)sizeof line, hits) != nullptr;
+    Usize kept = 0;
+    for (Usize i = 0; i < plan->count; i++) {
+        Usize length = more ? c::strcspn(&line[0], "\n") : 0;
+        if (more && c::strlen(plan->tests[i]->name) == length &&
+            c::strncmp(plan->tests[i]->name, &line[0], length) == 0) {
+            more = c::fgets(&line[0], (I32)sizeof line, hits) != nullptr;
+            cached_total += 1;
+        } else {
+            plan->tests[kept] = plan->tests[i];
+            kept += 1;
+        }
+    }
+    c::fclose(hits);
+    plan->count = kept;
+}
+
+// After the run: the tests that passed are stored, and the folder goes.
+void cache_store(const Plan *plan) {
+    if (cache_folder[0] == '\0') return;
+    char path[path_capacity];
+    __builtin_snprintf(path, sizeof path, "%s/passed", &cache_folder[0]);
+    c::FILE *passed = c::fopen(path, "w");
+    if (passed != nullptr) {
+        for (Usize i = 0; i < plan->count; i++) {
+            const Run *run = &plan->runs[i];
+            if (!run->finished || run->skipped || run->outcome.end != End_Passed) continue;
+            c::fputs(plan->tests[i]->name, passed);
+            c::fputs("\n", passed);
+        }
+        c::fclose(passed);
+        cache_call("store");
+    }
+    for (Usize i = 0; i < plan->count; i++) {
+        char clean[256];
+        coverage_name(plan->tests[i]->name, &clean[0], sizeof clean);
+        __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
+        c::unlink(path);
+    }
+    static const char *const files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
+    for (Usize i = 0; files[i] != nullptr; i++) {
+        __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], files[i]);
+        c::unlink(path);
+    }
+    __builtin_snprintf(path, sizeof path, "%s/reads", &cache_folder[0]);
+    c::rmdir(path);
+    c::rmdir(&cache_folder[0]);
+}
+
 Plan *make_plan(const Options *options) {
     Plan *plan = (Plan *)map_bytes((1) * sizeof(Plan), map_private);
     plan->options = options;
@@ -4141,6 +4313,7 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
+    cache_filter(plan, options);
     if (options->shard_count > 0 && !shard_built(options)) shard_plan(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
@@ -4233,13 +4406,14 @@ static Options default_options(Runner *runner) {
 
 // The runner's usage: on stderr after a bad option, on stdout (and exit 0) for --help or -h.
 static void say_usage(const Runner *runner, Bool help) {
-    static char text[1280];
+    static char text[1400];
     __builtin_snprintf(
         text, sizeof text,
         "usage: %s [--test <names>] [--seed <n>] [--seeds <1 to %zu>] [--jobs <1 to %zu>] "
         "[--timeout <cpu seconds>] [--wall-timeout <seconds>] [--shrink 0|1] [--shrink-seconds "
         "<seconds>] [--shuffle <seed>] [--shard <i>/<n>] [--macos-only|--skip-macos] [--partial] "
         "[--others <runner>] [--isolate] [--in-process] [--full] [--update] [--list] [--fail-fast] [--costs <file>] "
+        "[--no-cache] "
         "[--cheapest] [--idle-timeout <seconds>] [--verbose] [--stats] [--trace] [--color] "
         "[--explain <smith>] [--explain-max <n>] [--no-explain] [--unchecked] [-h|--help]\n"
         "a bare name or path (smith test x_test) is --test; --test takes a test file's path, a name (x_test, "
@@ -4288,7 +4462,12 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     }
     print_slowest(plan);
     say_written();
-    say("\n%zu passed, %zu failed in %.2f s\n", plan->count - failed - skipped, failed, seconds() - start);
+    cache_store(plan);
+    say("\n%zu passed, %zu failed in %.2f s\n", plan->count + cached_total - failed - skipped, failed,
+        seconds() - start);
+    if (cached_total > 0)
+        say("%zu cached: they passed before and nothing they depend on has changed (--no-cache runs them)\n",
+            cached_total);
     if (skipped > 0) say("%zu not run (--fail-fast)\n", skipped);
     say_explained(options);
     if (options->stats) say("forks: %zu\n", (Usize)*forks);
@@ -4323,7 +4502,7 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
             say("%s\n", plan->tests[plan->order[i]]->name);
         return 0;
     }
-    if (plan->count == 0 && options.filter != nullptr) {
+    if (plan->count == 0 && options.filter != nullptr && cached_total == 0) {
         if (options.macos != 0 && filter_matches_any(&options)) { // the other platform's tests only: nothing to run
             const char *only = options.macos == 1 ? "--macos-only" : "--skip-macos";
             say("no test of %s matches \"%s\": nothing to run\n", only, options.filter);

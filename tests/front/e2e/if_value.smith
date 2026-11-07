@@ -13,8 +13,8 @@ fn pick(n: i32) -> i32:
     v
 
 pub fn check() -> i32:
-    if word(true) != 1 || word(false) != 2:
+    if word(true) != 1 or word(false) != 2:
         return 1
-    if pick(3) != 7 || pick(-4) != 4 || pick(0) != 100:
+    if pick(3) != 7 or pick(-4) != 4 or pick(0) != 100:
         return 2
     0

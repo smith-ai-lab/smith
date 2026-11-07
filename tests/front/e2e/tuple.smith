@@ -6,7 +6,7 @@ fn widen(p: (i32, i64)) -> i64:
 
 pub fn check() -> i32:
     let (q, r) = divmod(17, 5)
-    if q != 3 || r != 2:
+    if q != 3 or r != 2:
         return 1
     let mut t: (i32, i64) = (1, 2)
     t.0 = 40

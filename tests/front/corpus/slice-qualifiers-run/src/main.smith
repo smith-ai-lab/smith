@@ -14,7 +14,7 @@ fn east(xs: []u8) -> usize:
 
 fn copy(dst: []u8, src: []u8):
     let mut i: usize = 0
-    while i < countof(dst) && i < countof(src):
+    while i < countof(dst) and i < countof(src):
         dst[i] = src[i]
         i += 1
 

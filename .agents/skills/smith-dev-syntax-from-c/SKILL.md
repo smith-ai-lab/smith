@@ -10,6 +10,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | Today | New |
 |---|---|
 | `// comment`, `/* ... */` | `# comment`; `##` for a doc comment |
+| `a \`a && b`\`a && b` b`, `a \|\| b`, `!a` | `a and b`, `a or b`, `not a` (D19; the old signs are a warning with a fix) |
 | `module game::replay;` | nothing: the module is the file's path (`game/replay.smith` is `game.replay`) |
 | `import std::math;` then `math::sin(x)` | `import std.math` then `math.sin(x)` |
 | `import <stdio.h>;` then `c::printf(...)` | `import c <stdio.h>` then `stdio.printf(...)`, the header's own name (also when a local named `c` hides `c`) |
