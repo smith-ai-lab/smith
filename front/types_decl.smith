@@ -303,6 +303,9 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
     return edits;
 }
 
+static const ast::Expr *member_base(const ast::Expr *e);
+static const ast::Expr *additive_left(const ast::Expr *e);
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok) {
@@ -314,16 +317,18 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         drops_const || (from->kind == .slice && to->kind == .slice && from->pointee_const && !to->pointee_const);
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
     const ast::Expr *source = pointer_source(e);
-    syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
+    syntax::Edits fix = mem::alloc_slice(syntax::Edit, 0);
+    if (drops_const) fix = types_expr::pointer_fix(c, source);
     // `&bottom` handed where `const void **` is wanted: the local is `mut`, and its `*void` stays (#2643).
-    if (drops_const && source->kind == .unary && source->kind.unary.op == .address_of && to->kind == .pointer &&
-        to->element->kind == .pointer && to->element->pointee_const)
-        fix = types_expr::address_binding_fix(c, source->kind.unary.operand);
+    const ast::Expr *addressed = address_operand(source);
+    if (drops_const && addressed != nullptr && to->kind == .pointer && to->element->kind == .pointer &&
+        to->element->pointee_const)
+        fix = types_expr::address_binding_fix(c, addressed);
     // `&p.f` handed where a `*mut` is wanted is as writable as `p`: the fix is the one for `p` (`&simulation.waiting`).
-    if (drops_const && countof(fix) == 0 && source->kind == .unary && source->kind.unary.op == .address_of) {
-        const ast::Expr *place = source->kind.unary.operand;
-        while (place->kind == .member && place->kind.member.base != nullptr) {
-            const ast::Expr *base = place->kind.member.base;
+    if (drops_const && countof(fix) == 0 && addressed != nullptr) {
+        const ast::Expr *place = addressed;
+        while (member_base(place) != nullptr) {
+            const ast::Expr *base = member_base(place);
             types::TypeRef owner = types::type_of(c, base);
             if (owner != nullptr && owner->kind == .pointer) {
                 fix = types_expr::pointer_fix(c, base);
@@ -414,8 +419,8 @@ static Bool cast_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from
             !to->pointee_const) {
             // `(base + n).cast(*mut T)` points where `base` does: the fix is the one for `base` (#2643).
             const ast::Expr *source = e->kind.cast.operand;
-            while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
-                source = source->kind.binary.left;
+            while (additive_left(source) != nullptr)
+                source = additive_left(source);
             fix = types_expr::pointer_fix(c, source);
         }
         // `task_main.to(usize)`: a function is an address, so it is a pointer first, `task_main.cast(*void).to(usize)`
@@ -562,6 +567,13 @@ static Bool binary_compares(const ast::Expr *e, Bool equal) {
 static const ast::Stmt *inner_statement(const ast::Expr *e) {
     if (e->kind != .stmt_expr) return nullptr;
     return e->kind.stmt_expr.stmt;
+}
+
+// The left of `a + b` and `a - b`; null for any other expression.
+static const ast::Expr *additive_left(const ast::Expr *e) {
+    if (e->kind != .binary) return nullptr;
+    if (e->kind.binary.op != .add && e->kind.binary.op != .subtract) return nullptr;
+    return e->kind.binary.left;
 }
 
 static Bool dot_member(const ast::Expr *e) {
@@ -918,7 +930,9 @@ static Bool leaves(const ast::Stmt *s) {
 // later in the function, leaves the site as it is, as does a write through `k.v` or to `k`.
 static void add_guard(types::Checked *r, types::Guard guard) {
     if (r->guard_count == countof(r->guards)) {
-        r->guards = mem::realloc(r->guards, r->guard_count < 8 ? 8 : r->guard_count * 2);
+        Usize capacity = 8;
+        if (r->guard_count >= 8) capacity = r->guard_count * 2;
+        r->guards = mem::realloc(r->guards, capacity);
     }
     r->guards[r->guard_count] = guard;
     r->guard_count += 1;
@@ -969,8 +983,10 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
     head[0] = edit_of(left->span.start, left->span.start, pattern);
     head[1] = edit_of(left->span.end, right->span.end, "");
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
-    add_guard(r,
-              (types::Guard){.base = guard_base(left), .variant = variant, .reads = then_branch->span, .head = head});
+    add_guard(
+        r,
+        (types::Guard){
+            .base = guard_base(left), .variant = variant, .reads = then_branch->span, .head = head, .test = nullptr});
 }
 
 // `if k == .v && rest: X` and `while k == .v && rest: X` (D12): a variant test that starts an `&&` chain binds the
@@ -994,7 +1010,8 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
     head[0] = edit_of(left->span.start, left->span.start, pattern);
     head[1] = edit_of(left->span.end, right->span.end, "");
     ast::Span reads = {.start = tested->span.end, .end = body->span.end};
-    add_guard(r, (types::Guard){.base = guard_base(left), .variant = variant, .reads = reads, .head = head});
+    add_guard(
+        r, (types::Guard){.base = guard_base(left), .variant = variant, .reads = reads, .head = head, .test = nullptr});
 }
 
 // The operands of a chain `a || b || c`, at most `countof(out)`; 0 when there are more.
@@ -1086,9 +1103,12 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
         head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, bound, " else", after)));
     }
     ast::Span reads = {.start = parts[at]->span.end, .end = end};
-    add_guard(
-        r, (types::Guard){
-               .base = guard_base(left), .variant = variant, .reads = reads, .skip = then_branch->span, .head = head});
+    add_guard(r, (types::Guard){.base = guard_base(left),
+                                .variant = variant,
+                                .reads = reads,
+                                .skip = then_branch->span,
+                                .head = head,
+                                .test = nullptr});
 }
 
 // The statement itself when `s` is a block of one statement, through nested blocks.
@@ -1220,7 +1240,8 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     }
     ast::Span reads = {.start = s->span.end, .end = end};
     Str ok_name = "ok";
-    add_guard(r, (types::Guard){.base = guard_base(left), .variant = ok_name, .reads = reads, .head = head});
+    add_guard(
+        r, (types::Guard){.base = guard_base(left), .variant = ok_name, .reads = reads, .head = head, .test = nullptr});
     return true;
 }
 
@@ -1237,10 +1258,10 @@ static const ast::Expr *null_test(const ast::Expr *test, Bool equal) {
 
 // The leftmost test of a chain `a && b && c`, when `test` is one, else null.
 static const ast::Expr *chain_head(const ast::Expr *test) {
-    if (!(test->kind == .binary) || test->kind.binary.op != .logical_and) return nullptr;
-    const ast::Expr *head = test->kind.binary.left;
-    while (head->kind == .binary && head->kind.binary.op == .logical_and)
-        head = head->kind.binary.left;
+    if (!binary_and(test)) return nullptr;
+    const ast::Expr *head = binary_left(test);
+    while (binary_and(head))
+        head = binary_left(head);
     return head;
 }
 
@@ -1257,16 +1278,15 @@ static Bool starts_line(U32 at) {
 // on the line before, which the test and its `then` use: `if f != .none && rest:` narrows the name. The reads of
 // `a.f` after the first test are `f`.
 static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *first) {
-    if (!(s->kind == .if_stmt)) return false;
-    if (!(first->kind == .binary)) return false;
-    const ast::Expr *left = first->kind.binary.left;
+    if (s->kind != .if_stmt) return false;
+    const ast::Expr *left = binary_left(first);
+    if (left == nullptr) return false;
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Expr *some = null_test(first, false);
     if (some == nullptr || !indented_if(s->span, test->span) || !starts_line(s->span.start)) return false;
-    if (!(left->kind == .member)) return false;
-    Str field = left->kind.member.name;
-    if (name_taken(r, field)) return false;
+    Str field = member_name(left);
+    if (countof(field) == 0 || name_taken(r, field)) return false;
     for (Usize i = 0; i < r->guard_count; i++) {
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
@@ -1278,7 +1298,7 @@ static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const 
     head[0] =
         edit_of(s->span.start, s->span.start, msg(format::push(field, " := ", read, "\n", indent_at(s->span.start))));
     head[1] = edit_of(left->span.start, left->span.end, field);
-    types::Guard guard = {.base = left->kind.member.base, .variant = field, .option = true, .test = first};
+    types::Guard guard = {.base = member_base(left), .variant = field, .option = true, .test = first};
     guard.reads = (ast::Span){.start = first->span.end, .end = then_branch->span.end};
     guard.head = head;
     add_guard(r, guard);
@@ -1377,8 +1397,11 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
         syntax::Edits head = {};
         head = mem::realloc(head, 1);
         head[0] = (syntax::Edit){.span = {.start = pats[0].span.end, .end = pats[0].span.end}, .text = binding};
-        add_guard(r, (types::Guard){
-                         .base = guard_base(scrutinee), .variant = name, .reads = arms[i].value->span, .head = head});
+        add_guard(r, (types::Guard){.base = guard_base(scrutinee),
+                                    .variant = name,
+                                    .reads = arms[i].value->span,
+                                    .head = head,
+                                    .test = nullptr});
     }
 }
 
@@ -1486,7 +1509,7 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     types::Symbol symbol = {
         .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     symbol.init = s->kind.if_let.value; // a fix that makes the value writable reaches it through the name (#2643)
-    types::declare(&r->scopes, symbol);
+    (void)types::declare(&r->scopes, symbol);
     note_local(binding, element);
 }
 
@@ -1519,7 +1542,7 @@ static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
         } else if (!is_discard(names[i].text)) {
             types::Symbol symbol = {
                 .name = names[i].text, .kind = .variable, .type = bound, .is_const = true, .is_new = true};
-            types::declare(&r->scopes, symbol);
+            (void)types::declare(&r->scopes, symbol);
             r->new_body = true;
             note_local(names[i].text, bound);
         }
@@ -1685,8 +1708,8 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
     if (variants || t == nullptr) {
         return;
     }
-    for (Usize i = 0; i < countof(cases); i++) {
-        ast::ExprRef values[:] = cases[i].values;
+    for (Usize c = 0; c < countof(cases); c++) {
+        ast::ExprRef values[:] = cases[c].values;
         for (Usize j = 0; j < countof(values); j++) {
             (void)types_expr::check(r, values[j], t);
         }
@@ -1703,8 +1726,9 @@ static void match_patterns(types::Checked *r, const ast::Stmt *s, Usize index) {
     types::TypeRef t = types::type_of(r, s->kind.match_stmt.value);
     Bool enumeration = t != nullptr && t->kind == .enumeration;
     for (Usize k = 0; k < countof(pats); k++) {
-        if (pats[k].constant != nullptr && !(enumeration && types_expr::names_case(pats[k].constant))) {
-            _ = types_expr::infer(r, pats[k].constant);
+        const ast::Expr *constant = pats[k].constant;
+        if (constant != nullptr && !(enumeration && types_expr::names_case(constant))) {
+            (void)types_expr::infer(r, constant);
         }
     }
 }
@@ -1717,7 +1741,7 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
-    _ = types_expr::infer(r, s->kind.match_stmt.value);
+    (void)types_expr::infer(r, s->kind.match_stmt.value);
     note_arm_guards(r, s);
     Bool tail = r->new_body && is_tail(s) && state.result != nullptr && state.result != r->table.void_type;
     push(s, nullptr, cover);
@@ -2020,8 +2044,8 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
     }
     state.function = name;
     r->new_body = false;
-    for (Usize i = 0; i < countof(params); i++) {
-        r->new_body = r->new_body || params[i].is_new;
+    for (Usize p = 0; p < countof(params); p++) {
+        r->new_body = r->new_body || params[p].is_new;
     }
     types::TypeRef outer_generator = state.generator;
     state.generator = types_stream::generator_element(signature->element, target->kind.function.body);
