@@ -88,3 +88,14 @@ Shared LLVM is not in the list: its ceiling is the 1.6 s link.
 ## Not measured
 
 The CI Mac and the owner's Mac; the full `smith test` as a repeated measurement; the cost of the build program itself (`.smith/program`, 98 ms in the executor's log); a `-O0` test run (the crash above). The first -O1 build after switching back from the `-O0` branch took 74.7 s, as if the step cache did not serve the older -O1 objects: not investigated.
+
+## Tracked on main
+
+The `warm` job of `.github/workflows/ci.yml` (a push to main, Linux only, after every cache is saved) runs `smith build --time` in four cases and records them (#2705):
+
+1. **cold:** `build/`, `.smith/` (not `stage0/`) and `~/.cache/smith/steps` moved aside, the LLVM pack kept;
+2. **no-op:** the build again;
+3. **`front/` edit:** `# timing` appended to `front/types_expr.smith`, built, reverted;
+4. **`runtime/` edit:** `/* timing */` appended to `runtime/executor.c`, built, reverted.
+
+The job summary has a table of wall seconds and the 10 slowest steps of the cold build. One comment per main commit goes to the tracking issue #2751 ("Build times on main"): `<sha7> <date> cold=<s> noop=<s> front=<s> runtime=<s>` and those steps. The numbers come from hosted runners and differ run to run by about 15%; the step has `continue-on-error` and no threshold, so it never fails main's push. Container reference run (this repo's dev profile): cold 99.6 s, no-op 12 s, `front/` edit 2 s, `runtime/` edit 11 s.
