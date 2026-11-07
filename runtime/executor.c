@@ -417,21 +417,26 @@ static int smith_exec_run(SmithIo *io, const char *manifest, const SmithExecOpti
     smith_run_printer_open(exec);
     smith_run_watch_signals();
     for (size_t reload = 0; reload <= smith_exec_reloads_max; reload++) {
+        uint64_t mark = smith_time_now(); // `--time`: reading the manifest and the logs, and planning, are the plan
         smith_manifest_read(exec);
         if (!exec->state.ready) smith_state_open(exec);
         if (options->tool != nullptr) return smith_tool_run(exec);
         smith_stepcache_prune(exec);
         uint32_t node = smith_run_manifest_node(exec);
         exec->first_reason[0] = '\0';
-        if (node == UINT32_MAX || !smith_plan_build(exec, &node, 1)) break;
+        bool regenerate = node != UINT32_MAX && smith_plan_build(exec, &node, 1);
+        smith_time_state.plan_nanoseconds += smith_time_since(mark);
+        if (!regenerate) break;
         int status = smith_run_plan(exec);
         if (status != 0 || options->dry_run) return status;
         if (reload == smith_exec_reloads_max)
             smith_exec_fail("%s is still out of date after %zu tries; the first thing out of date in the last one: %s",
                             manifest, reload, exec->first_reason[0] != '\0' ? exec->first_reason : "(none recorded)");
     }
+    uint64_t mark = smith_time_now();
     size_t room = exec->graph.node_count + exec->graph.default_count + options->target_count + 1;
     uint32_t *targets = smith_exec_push(exec, room * sizeof(uint32_t), alignof(uint32_t));
     size_t count = smith_plan_targets(exec, targets);
+    smith_time_state.plan_nanoseconds += smith_time_since(mark);
     return smith_run_targets(exec, targets, count, true);
 }

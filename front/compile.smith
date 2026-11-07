@@ -61,6 +61,7 @@ static Str as_str(char chars[:]) {
 // Nanoseconds of each stage.
 export struct Times {
     U64 parse;
+    U64 imports; // the part of `check` spent reading imported modules and C headers (--time, #2681)
     U64 check;
     U64 emit;
     U64 write;
@@ -298,7 +299,7 @@ static roots::Roots import_roots;
 // The tree of the module at the dotted `path` (`std.math`, NUL-terminated) for the checker (#1714): the file
 // `<root>/std/math.smith` under the project's source folder, else under smith's library folder, parsed as `file`
 // parses and named by its path. Null when no root holds it, it does not parse, or its `module` line disagrees.
-static const ast::Module *load_module(const char *dotted) {
+static const ast::Module *read_module(const char *dotted) {
     Str relative = as_str(format::push((const char *)dotted));
     Str inside = "";
     for (Usize i = 0; i < countof(relative); i++) {
@@ -348,7 +349,7 @@ static Bool header_arena_made = false;
 
 // The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
 // when clang cannot read it.
-static const ast::Module *load_header(Str header, Bool angled) {
+static const ast::Module *read_header(Str header, Bool angled) {
     Str name = as_str(format::push(header));
     Str folder = as_str(format::push(header_folder));
     if (!header_arena_made) {
@@ -364,6 +365,23 @@ static const ast::Module *load_header(Str header, Bool angled) {
     ast::Module *module = mem::alloc(ast::Module);
     module->decls = got.decls;
     return module;
+}
+
+// `--time` (#2681): what reading the imports cost, summed over a file's check, so `check` can be told from `import`.
+static U64 import_nanoseconds = 0;
+
+static const ast::Module *load_module(const char *dotted) {
+    U64 mark = clock::monotonic();
+    const ast::Module *found = read_module(dotted);
+    import_nanoseconds += clock::monotonic() - mark;
+    return found;
+}
+
+static const ast::Module *load_header(Str header, Bool angled) {
+    U64 mark = clock::monotonic();
+    const ast::Module *found = read_header(header, angled);
+    import_nanoseconds += clock::monotonic() - mark;
+    return found;
 }
 
 // The text of the C header `import c <h>` names, for smith's own lint check of library headers (#1976): a quoted
@@ -983,11 +1001,14 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     mark = clock::monotonic();
     import_roots = folders;
     header_folder = folder_of(path);
+    import_nanoseconds = 0;
     lint_inputs(source);
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
     lint_inputs_done();
-    times.check = clock::monotonic() - mark;
+    U64 checking = clock::monotonic() - mark;
+    times.imports = import_nanoseconds < checking ? import_nanoseconds : checking;
+    times.check = checking - times.imports;
     if (checked.error_count > 0) {
         Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
@@ -1019,6 +1040,37 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     return (Report){.ok = true, .text = warned, .times = times};
 }
 
+// Whether SMITH_TIME asks for the stages (set, not empty, not 0).
+static Bool time_requested() {
+    const char *given = c::getenv("SMITH_TIME");
+    return given != nullptr && given[0] != 0 && given[0] != '0';
+}
+
+// `--time` (#2681): the milliseconds of `nanoseconds` with a tenth, "12.3".
+static Str milliseconds(U64 nanoseconds) {
+    U64 tenths = nanoseconds / 100000;
+    return as_str(format::push(tenths / 10, ".", tenths % 10));
+}
+
+static Str time_line(Str name, U64 nanoseconds) {
+    return as_str(format::push("time:   ", name, " ", milliseconds(nanoseconds), " ms\n"));
+}
+
+// The stages of one file, for stderr when SMITH_TIME is set. Lexing is part of parsing (the parser pulls tokens as it
+// goes), and the effect summary is part of emitting, so those two are not apart.
+static void report_times(Str path, Times times, U64 wall) {
+    U64 staged = times.parse + times.imports + times.check + times.emit + times.write;
+    Str lines = as_str(format::push("time: ", path, "\n"));
+    lines = as_str(format::push(lines, time_line("lex and parse", times.parse)));
+    lines = as_str(format::push(lines, time_line("import (modules and C headers)", times.imports)));
+    lines = as_str(format::push(lines, time_line("check", times.check)));
+    lines = as_str(format::push(lines, time_line("emit LLVM IR", times.emit)));
+    lines = as_str(format::push(lines, time_line("write the object (LLVM passes and code generation)", times.write)));
+    lines = as_str(format::push(lines, time_line("other (reading the file, setting up the target and LLVM)",
+                                                 wall > staged ? wall - staged : 0)));
+    report(lines);
+}
+
 // The stage that stopped a failed compile: a stage that ran has its time, so the last one with a time is it.
 static Str stage_of(Times times) {
     if (times.write > 0) return "write";
@@ -1031,6 +1083,7 @@ static Str stage_of(Times times) {
 // default). Nothing is compiled when two files would get one module name. Diagnostics go to stderr.
 [[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
                                                     const char *triple) {
+    U64 run_started = clock::monotonic();
     roots::Roots folders = roots::default_roots();
     roots::Source paths[:] = {};
     for (Usize i = 0; i < count; i++) {
@@ -1051,13 +1104,20 @@ static Str stage_of(Times times) {
         Str output = as_str(format::push((const char *)outputs[i]));
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
+        U64 started = clock::monotonic();
         Report done = file(paths[i].path, output, target, beside);
+        U64 wall = clock::monotonic() - started;
         if (countof(done.text) > 0) report(done.text);
+        if (time_requested()) report_times(paths[i].path, done.times, wall);
         if (!done.ok) status = 1;
         // With SMITH_FRONT_STAGE set, a failed file also names the stage that stopped it (frontend-coverage, #1730).
         if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
             report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
         }
+    }
+    if (time_requested()) {
+        report(
+            as_str(format::push("time: front end compile ", milliseconds(clock::monotonic() - run_started), " ms\n")));
     }
     return status;
 }

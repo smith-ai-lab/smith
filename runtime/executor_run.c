@@ -471,6 +471,25 @@ static void smith_run_release(SmithExec *exec, SmithJob *job, const SmithEdge *e
     exec->running -= 1;
 }
 
+// What kind of step an edge is, for `--time`'s list of the slowest (#2681): a compile of a .c, .cpp or .smith file (the
+// .smith ones through the old or the new front end), a link, a test, or other. The words are the step's description
+// (`compile runtime/slots.c`, `link smith`, `testing`); the front end shows in the command.
+static const char *smith_run_kind(const SmithEdge *edge) {
+    const char *description = edge->description != nullptr ? edge->description : "";
+    if (strncmp(description, "link", 4) == 0) return "link";
+    if (strncmp(description, "test", 4) == 0) return "test";
+    if (strncmp(description, "compile", 7) != 0 && strncmp(description, "header", 6) != 0) return "other";
+    size_t length = strlen(description);
+    if (length > 6 && strcmp(description + length - 6, ".smith") == 0) {
+        bool new_front = edge->command != nullptr && strstr(edge->command, "--front-end=new") != nullptr;
+        return new_front ? "compile .smith (new front end)" : "compile .smith (old front end)";
+    }
+    if (length > 4 && strcmp(description + length - 4, ".cpp") == 0) return "compile .cpp";
+    if (length > 3 && strcmp(description + length - 3, ".cc") == 0) return "compile .cpp";
+    if (length > 2 && strcmp(description + length - 2, ".c") == 0) return "compile .c";
+    return "other";
+}
+
 // The job ended: report it, and when it succeeded let the edges that waited for it go.
 static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
     SmithGraph *graph = &exec->graph;
@@ -486,6 +505,9 @@ static void smith_run_finish(SmithExec *exec, SmithJob *job, uint32_t *stack) {
     if (success && !job->cached && job->key.valid) smith_stepcache_store(exec, edge, job, smith_run_wall_ns());
     if (!success && job->status == 0) job->status = smith_exec_failed;
     exec->finished_edges += 1;
+    if (smith_time_on() && !exec->options.dry_run)
+        smith_time_step(smith_run_kind(edge), edge->description != nullptr ? edge->description : edge->command,
+                        (end_ms - job->started) * smith_time_ns_per_ms, job->cached);
     if (edge->pool != smith_exec_pool_console) smith_run_progress(exec, edge, job->cached);
     if (!success) {
         smith_run_report_failure(exec, job, edge);
@@ -687,7 +709,15 @@ static void smith_run_recap(const SmithExec *exec) {
 
 // Runs the plan until it is done, a job fails past what -k allows, or a signal stops it. Returns 0, 1 or the status of
 // an interrupt.
+static int smith_run_plan_steps(SmithExec *exec);
 static int smith_run_plan(SmithExec *exec) {
+    uint64_t mark = smith_time_now();
+    int status = smith_run_plan_steps(exec);
+    smith_time_state.steps_run_nanoseconds += smith_time_since(mark);
+    return status;
+}
+
+static int smith_run_plan_steps(SmithExec *exec) {
     uint32_t *stack = smith_exec_push(exec, (exec->graph.node_count + exec->graph.link_count + 8) * sizeof(uint32_t),
                                       alignof(uint32_t));
     exec->origin = smith_clock_now(&exec->io->clock);
@@ -725,7 +755,10 @@ static int smith_run_plan(SmithExec *exec) {
 
 // Plans the targets and runs the plan. Prints that there is nothing to do when there is not.
 static int smith_run_targets(SmithExec *exec, const uint32_t *targets, size_t count, bool say_done) {
-    if (!smith_plan_build(exec, targets, count)) {
+    uint64_t mark = smith_time_now();
+    bool dirty = smith_plan_build(exec, targets, count);
+    smith_time_state.plan_nanoseconds += smith_time_since(mark);
+    if (!dirty) {
         if (say_done && !exec->options.quiet) printf("smith: no work to do.\n");
         return 0;
     }
