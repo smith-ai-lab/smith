@@ -1939,6 +1939,10 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     if (is_equality(op) && l == r && is_pointer_option(l)) {
         return c->table.bool_type;
     }
+    // Two options of one value type compare by tag, and by payload when both hold one.
+    if (is_equality(op) && l == r && l->kind == .option && is_scalar(types::element_of(l))) {
+        return c->table.bool_type;
+    }
     if (!is_scalar(l)) {
         types::failf(c, span, "`", binary_text(op), "` cannot compare `", types::show(l),
                      "`; write numbers, Bools, enumerators or pointers");

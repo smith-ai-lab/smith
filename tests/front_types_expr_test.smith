@@ -337,6 +337,9 @@ export void test_front_types_expr_operand_errors_name_the_types_and_what_to_writ
     types_expr::infer(&r, binary(.add, ast::name("s"), ast::name("s")));
     test::check_condition(says(last(&r), "`+` needs a number, found `Str`; write an integer or floating value"));
     types_expr::infer(&r, binary(.equal, ast::name("s"), ast::name("s"))); // two `Str` compare by contents (#2540)
+    declare(&r, "m", .variable, types::option_of(&r.table, ty(&r, "I32")), false);
+    types_expr::infer(&r, binary(.equal, ast::name("m"), ast::name("m"))); // two options of a value type compare
+    types_expr::infer(&r, binary(.not_equal, ast::name("m"), ast::name("m")));
     types_expr::infer(&r, binary(.remainder, ast::name("f"), real(2.0)));
     test::check_condition(says(last(&r), "`%` needs integers, found `F64`; write an integer such as `U32` or `I64`"));
     types_expr::infer(&r, binary(.add, ast::name("c"), num(300)));
