@@ -198,6 +198,14 @@ static state::TyResult type_of_imported(state::Emitter *e, const ast::TypeExpr *
     ast::Path path = t->kind.named.path;
     const types::Scopes *scopes = &e->options.checked->scopes;
     const types::Symbol *module = types::lookup(scopes, path.segments[0].text);
+    // `format.Written` in the signature or the body of an imported module's function or generic instance: the module
+    // is one that module imported, found under its path
+    if (module == nullptr && (countof(e->import_scope) > 0 || countof(e->instance_scope) > 0)) {
+        Str base = countof(e->import_scope) > 0 ? e->import_scope : e->instance_scope;
+        Str own = state::msg(format::push(base, path.segments[0].text));
+        module = types::lookup(scopes, own);
+        state::free_text(own);
+    }
     if (module == nullptr || module->kind != .module_name || module->decl->kind != .import_module)
         return state::ty_fail("unknown module", path.segments[0].span);
     ast::Path via = module->decl->kind.import_module.path;
