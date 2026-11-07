@@ -2117,10 +2117,16 @@ export types::Options options(types::Target target) {
     return (types::Options){.target = target, .bodies = check_body, .expression = types_expr::infer};
 }
 
+// A condition against Bool; the fixer drops a `(void)` cast, so the type is read here.
+static void check_condition(types::Checked *r, const ast::Expr *condition) {
+    const types::Ty *t = types_expr::check(r, condition, r->table.bool_type);
+    if (t == nullptr) return;
+}
+
 // A module-level variable's initializer, against its declared type.
 static void check_initializer(types::Checked *r, const ast::Decl *d) {
     if (d->kind == .static_assert_decl) { // its condition folds before emit (`target.float_radix == 2`)
-        (void)types_expr::check(r, d->kind.static_assert_decl.condition, r->table.bool_type);
+        check_condition(r, d->kind.static_assert_decl.condition);
         return;
     }
     if (d->kind != .variable || d->from_c || d->kind.variable.init == nullptr) {
