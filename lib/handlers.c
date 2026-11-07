@@ -1838,3 +1838,139 @@ unsigned sleep(unsigned seconds) {
     return smith_handlers_clock_sleep(clock, (uint64_t)seconds * 1'000'000'000U) == 0 ? 0 : seconds;
 }
 #endif
+
+// Non-tail recursion (#2710). The emitter turns a call that closes a cycle of calls, and is not a tail call, into
+// `smith_recurse_call(thunk, record)`: the callee runs as `thunk(record)` on the stack in use while it has room, and on
+// a stack segment of its own once it is nearly full, so a recursion a million calls deep is a chain of segments and
+// never a stack overflow. A segment is a block of the allocator in force (malloc reaches it), freed when the callee
+// returns; when the allocator has no block, the task fails. The stack switch is the C library's ucontext.
+//
+// How the room is known: `limit` is the lowest stack address from which a recursive call may still start on the stack
+// in use. The first recursive call on a stack allows 96 KB below it, a segment 160 KB below its start (it is 256 KB);
+// the rest is for the frames between two checks, so one frame of more than 32 KB is not covered. A stack the program
+// has left (another thread, a task) is told by its address and gets a limit of its own.
+#ifdef __APPLE__
+// macOS marks the ucontext routines deprecated and declares them only when _XOPEN_SOURCE is defined: defined for this
+// one header, then taken back.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// NOLINTBEGIN(bugprone-reserved-identifier,readability-identifier-naming): the system's own name
+#define _XOPEN_SOURCE 600
+#include <ucontext.h>
+#undef _XOPEN_SOURCE
+// NOLINTEND(bugprone-reserved-identifier,readability-identifier-naming)
+#else
+#include <ucontext.h>
+#endif
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+#define SMITH_RECURSE_ASAN 1
+#include <sanitizer/common_interface_defs.h>
+#endif
+
+constexpr size_t smith_recurse_first_budget = 98304;
+constexpr size_t smith_recurse_segment_budget = 163840;
+constexpr size_t smith_recurse_segment_size = 262144;
+constexpr size_t smith_recurse_other_stack = 1048576; // an address this far below the limit is another stack
+
+// The C library's own context calls on Linux: AddressSanitizer intercepts them and warns that it does not support them,
+// and the segment's switch is announced to it with the fiber calls below instead.
+#ifdef __APPLE__
+#define SMITH_RECURSE_GETCONTEXT(context) getcontext(context)
+#define SMITH_RECURSE_MAKECONTEXT(...) makecontext(__VA_ARGS__)
+#define SMITH_RECURSE_SWAPCONTEXT(from, to) swapcontext(from, to)
+#else
+static SmithHandlersNext smith_handlers_next_getcontext = {"getcontext", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_makecontext = {"makecontext", nullptr, nullptr};
+static SmithHandlersNext smith_handlers_next_swapcontext = {"swapcontext", nullptr, nullptr};
+#define SMITH_RECURSE_GETCONTEXT(context) \
+    ((int (*)(ucontext_t *))smith_handlers_find(&smith_handlers_next_getcontext))(context)
+#define SMITH_RECURSE_MAKECONTEXT(...) \
+    ((void (*)(ucontext_t *, void (*)(void), int, ...))smith_handlers_find(&smith_handlers_next_makecontext))( \
+        __VA_ARGS__)
+#define SMITH_RECURSE_SWAPCONTEXT(from, to) \
+    ((int (*)(ucontext_t *, const ucontext_t *))smith_handlers_find(&smith_handlers_next_swapcontext))(from, to)
+#endif
+
+static thread_local uintptr_t smith_recurse_limit; // 0 when unset
+static thread_local uintptr_t smith_recurse_high;  // the first recursive call on that stack: above it is another stack
+
+typedef struct {
+    void (*thunk)(void *record);
+    void *record;
+    ucontext_t caller;
+    ucontext_t segment;
+    const void *caller_bottom;
+    size_t caller_size;
+} SmithRecurse;
+
+// The segment's entry: the callee under a limit of this stack, then back to the caller for good.
+static void smith_recurse_entry(unsigned low, unsigned high) {
+    SmithRecurse *s = (SmithRecurse *)(((uintptr_t)high << 32) | (uintptr_t)low);
+#ifdef SMITH_RECURSE_ASAN
+    __sanitizer_finish_switch_fiber(nullptr, &s->caller_bottom, &s->caller_size);
+#endif
+    uintptr_t here = (uintptr_t)__builtin_frame_address(0);
+    uintptr_t outer_limit = smith_recurse_limit;
+    uintptr_t outer_high = smith_recurse_high;
+    smith_recurse_limit = here - smith_recurse_segment_budget;
+    smith_recurse_high = here;
+    s->thunk(s->record);
+    smith_recurse_limit = outer_limit;
+    smith_recurse_high = outer_high;
+#ifdef SMITH_RECURSE_ASAN
+    __sanitizer_start_switch_fiber(nullptr, s->caller_bottom, s->caller_size);
+#endif
+    SMITH_RECURSE_SWAPCONTEXT(&s->segment, &s->caller);
+}
+
+// The caller's side of a new segment: makes the stack and runs the callee on it.
+static void smith_recurse_segment(SmithRecurse *s) {
+    void *stack = malloc(smith_recurse_segment_size);
+    if (stack == nullptr) {
+        static const char message[] = "smith: recursion too deep: no memory for a stack segment\n";
+        (void)!write(2, message, sizeof message - 1);
+        abort();
+    }
+    SMITH_RECURSE_GETCONTEXT(&s->segment);
+    s->segment.uc_stack.ss_sp = stack;
+    s->segment.uc_stack.ss_size = smith_recurse_segment_size;
+    s->segment.uc_link = nullptr;
+    SMITH_RECURSE_MAKECONTEXT(&s->segment, (void (*)(void))smith_recurse_entry, 2, (unsigned)(uintptr_t)s,
+                              (unsigned)((uintptr_t)s >> 32));
+#ifdef SMITH_RECURSE_ASAN
+    void *fake = nullptr;
+    __sanitizer_start_switch_fiber(&fake, stack, smith_recurse_segment_size);
+#endif
+    SMITH_RECURSE_SWAPCONTEXT(&s->caller, &s->segment);
+#ifdef SMITH_RECURSE_ASAN
+    __sanitizer_finish_switch_fiber(fake, nullptr, nullptr);
+#endif
+    free(stack);
+}
+
+// Runs `thunk(record)`: here when this stack has room, on a new segment when it does not.
+void smith_recurse_call(void (*thunk)(void *record), void *record) {
+    uintptr_t here = (uintptr_t)__builtin_frame_address(0);
+    if (smith_recurse_limit == 0 || here > smith_recurse_high ||
+        (here < smith_recurse_limit && smith_recurse_limit - here > smith_recurse_other_stack)) {
+        smith_recurse_limit = here - smith_recurse_first_budget;
+        smith_recurse_high = here;
+    }
+    if (here >= smith_recurse_limit) {
+        thunk(record);
+        return;
+    }
+    SmithRecurse *s = (SmithRecurse *)malloc(sizeof *s);
+    if (s == nullptr) {
+        static const char message[] = "smith: recursion too deep: no memory for a stack segment\n";
+        (void)!write(2, message, sizeof message - 1);
+        abort();
+    }
+    s->thunk = thunk;
+    s->record = record;
+    smith_recurse_segment(s);
+    free(s);
+}
+#ifdef __APPLE__
+#pragma clang diagnostic pop
+#endif

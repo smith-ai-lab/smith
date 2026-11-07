@@ -79,13 +79,13 @@ typedef struct {
 
 constexpr size_t smith_lang_message_max = 512;
 
-constexpr size_t smith_lang_cycle_max = 64;
+constexpr size_t smith_lang_cycle_max = 72;
 
 constexpr size_t smith_lang_written_max = 8192;
 
 constexpr size_t smith_lang_written_slots = 16384; // a power of two, twice the names
 
-constexpr size_t smith_lang_transitive_max = 64;
+constexpr size_t smith_lang_transitive_max = 72;
 
 constexpr size_t smith_lang_cond_depth_max = 64; // #if nested in a module the header pass reads
 

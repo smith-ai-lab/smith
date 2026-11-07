@@ -64,3 +64,11 @@ error-import-chain-limit/chain/m62.smith: ok
 error-import-chain-limit/chain/m63.smith: ok
 error-import-chain-limit/chain/m64.smith: ok
 error-import-chain-limit/chain/m65.smith: ok
+error-import-chain-limit/chain/m66.smith: ok
+error-import-chain-limit/chain/m67.smith: ok
+error-import-chain-limit/chain/m68.smith: ok
+error-import-chain-limit/chain/m69.smith: ok
+error-import-chain-limit/chain/m70.smith: ok
+error-import-chain-limit/chain/m71.smith: ok
+error-import-chain-limit/chain/m72.smith: ok
+error-import-chain-limit/chain/m73.smith: ok
