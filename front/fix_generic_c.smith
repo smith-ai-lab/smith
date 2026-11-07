@@ -16,7 +16,7 @@ static Bool is_generic(const ast::Decl *d) {
     if (d->kind != .function) return false;
     ast::Param params[:] = d->kind.function.params;
     for (Usize i = 0; i < countof(params); i++) {
-        if (params[i].is_const || params[i].is_constexpr) return true;
+        if (params[i].is_const || params[i].is_constexpr || params[i].is_pack || params[i].is_rest) return true;
         const ast::TypeExpr *type = params[i].type;
         if (type != nullptr && type->kind == .auto_type) return true;
     }

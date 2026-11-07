@@ -27,3 +27,25 @@ export void test_front_fix_generic_mut_a_local_that_is_only_read_stays() {
     expect_fixed("module m;\nexport I32 first(auto xs) {\n    I32 n = 3;\n    return n + (I32)xs[0];\n}\n",
                  "pub fn first(xs: auto) -> i32:\n    n: i32 = 3\n    return n + xs[0].to(i32)\n");
 }
+
+export void test_front_fix_generic_mut_a_pointer_parameter_written_through_is_mut() {
+    expect_fixed("module m;\nexport void fill(char *buffer, auto x) {\n    buffer[0] = (char)x;\n}\n",
+                 "pub fn fill(buffer: *mut char, x: auto):\n    buffer[0] = x.to(char)\n");
+}
+
+export void test_front_fix_generic_mut_a_pointer_parameter_only_read_stays() {
+    expect_fixed(
+        "module m;\nexport Usize peek(const char *buffer, auto x) {\n    return (Usize)buffer[0] + (Usize)x;\n}\n",
+        "pub fn peek(buffer: *char, x: auto) -> usize:\n    return buffer[0].to(usize) + x.to(usize)\n");
+}
+
+export void test_front_fix_generic_mut_a_pointer_handed_to_a_mut_field_in_a_pack_function_is_mut() {
+    expect_fixed("module m;\nexport typedef struct {\n    char *out;\n    Usize capacity;\n} Writer;\n\n"
+                 "static void put(Writer *writer, char c) {\n    writer->out[0] = c;\n}\n\n"
+                 "export Usize write(char *buffer, Usize capacity, auto... args) {\n"
+                 "    Writer writer = {buffer, capacity};\n    put(&writer, 'a');\n    return writer.capacity;\n}\n",
+                 "pub struct Writer:\n    pub out: *mut char\n    pub capacity: usize\n\n"
+                 "static fn put(writer: *Writer, c: char):\n    writer.out[0] = c\n\n"
+                 "pub fn write(buffer: *mut char, capacity: usize, args...) -> usize:\n"
+                 "    writer := Writer(buffer, capacity)\n    put(&writer, 'a')\n    return writer.capacity\n");
+}
