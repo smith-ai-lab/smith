@@ -711,7 +711,10 @@ static void return_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     if (want->kind == .void_type) {
-        (void)types_expr::infer(r, value);
+        // `return f()` of a call that has no value is the last line of the rest of a binding's `else:` (the parser
+        // writes the last line as `return`, not knowing the result): it ends the function and is not an error
+        types::TypeRef given = types_expr::infer(r, value);
+        if (given != nullptr && given->kind == .void_type) return;
         types::failf(r, s->span,
                      "this function returns `Void`, so it has no value to return; remove the value after `return`, or "
                      "give the function a result type");
