@@ -19,6 +19,7 @@ for (i, mut x) in enumerate(copies): x *= 2     # mut on one name, as in a decla
 while n := todo.pop(): visit(n)                 # until the pattern fails to match
 ```
 
+- Over a pack, `fields(T)` or `parameters(F)`, `for (i, arg) in enumerate(args):` is unrolled like `for arg in args:`, and `i` is a compile-time `usize`, so `args[i]` and `char[i + 1]` work inside it (D20; owner, 2026-11-07: "A").
 - `for` loops over arrays, slices (so `str`), contiguous blocks (one row per turn), **iterators** (`iter(T)` values, made by generators) and **containers**: a value whose type's module has `items`, which `for x in c` calls as `c.items()`, so each loop gets a fresh pass. `std.seq` (`range`, `enumerate`, `zip`, `refs`, `take`, `drop`, `peekable`) is written with `yield`. There is no `map` or `filter`: a `for` expression does that.
 
 ## Generators
