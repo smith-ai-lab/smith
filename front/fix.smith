@@ -30,6 +30,7 @@ import front::fix_generic_mut;
 import front::fix_method;
 import front::fix_opaque;
 import front::fix_alloc;
+import front::fix_build;
 import front::fix_typeof;
 import front::fix_variants;
 import front::lex;
@@ -699,7 +700,7 @@ static Str keyword_clash(Str source) {
 // Mends the text of the file called `file`: parses, applies the fixes, and parses the result again, until a pass
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
-    Str renamed = rename_in_names(rename_type_names(rename_target_systems(source)));
+    Str renamed = rename_in_names(rename_type_names(rename_target_systems(fix_build::mend(file, source))));
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";

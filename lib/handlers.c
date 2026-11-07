@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -121,16 +122,28 @@ __attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_get
     return smith_handlers_tab()->console;
 }
 
-__attribute__((noinline)) static SmithFileHandler *smith_handlers_files_current(void) {
+// `_set` is the handler in the table, whatever it is; `_current` is the one every call but the descriptor calls sees,
+// which is none for a handler that answers descriptor calls only (a scheduler's, issue #2662).
+__attribute__((noinline)) static SmithFileHandler *smith_handlers_files_set(void) {
     if (atomic_load_explicit(&smith_handlers_files_active, memory_order_relaxed) == 0) return nullptr;
     if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
     return smith_handlers_files_get();
 }
 
-__attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_current(void) {
+__attribute__((noinline)) static SmithConsoleHandler *smith_handlers_console_set(void) {
     if (atomic_load_explicit(&smith_handlers_console_active, memory_order_relaxed) == 0) return nullptr;
     if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
     return smith_handlers_console_get();
+}
+
+static SmithFileHandler *smith_handlers_files_current(void) {
+    SmithFileHandler *files = smith_handlers_files_set();
+    return files != nullptr && files->descriptors_only ? nullptr : files;
+}
+
+static SmithConsoleHandler *smith_handlers_console_current(void) {
+    SmithConsoleHandler *console = smith_handlers_console_set();
+    return console != nullptr && console->descriptors_only ? nullptr : console;
 }
 
 SmithFileHandler *smith_handlers_set_files(SmithFileHandler *files) {
@@ -258,10 +271,15 @@ __attribute__((noinline)) static SmithNetHandler *smith_handlers_net_get(void) {
     return smith_handlers_tab()->net;
 }
 
-__attribute__((noinline)) static SmithNetHandler *smith_handlers_net_current(void) {
+__attribute__((noinline)) static SmithNetHandler *smith_handlers_net_set(void) {
     if (atomic_load_explicit(&smith_handlers_net_active, memory_order_relaxed) == 0) return nullptr;
     if (!atomic_load_explicit(&smith_handlers_ready, memory_order_relaxed)) return nullptr;
     return smith_handlers_net_get();
+}
+
+static SmithNetHandler *smith_handlers_net_current(void) {
+    SmithNetHandler *net = smith_handlers_net_set();
+    return net != nullptr && net->descriptors_only ? nullptr : net;
 }
 
 SmithNetHandler *smith_handlers_set_net(SmithNetHandler *net) {
@@ -300,9 +318,8 @@ SmithProcessHandler *smith_handlers_process(void) {
     return smith_handlers_process_current();
 }
 
-// The scheduler, found the same way. The calls it answers (read, write, pread, pwrite, readv, writev, send, recv,
-// accept, connect) build a request and hand it to `io`; with no scheduler, or one without `io`, they are the real
-// calls.
+// The scheduler, found the same way. The runtime only stores it (and counts it, for the locks below): it answers no
+// call.
 
 __attribute__((noinline)) static SmithScheduler *smith_handlers_scheduler_get(void) {
     return smith_handlers_tab()->scheduler;
@@ -358,15 +375,155 @@ static void smith_handlers_lock_given(void) {
     smith_handlers_locks_add(-1);
 }
 
-// True when a scheduler took the request: its result is then the call's, with errno set as the real call would set it.
-// The counter is read here, so a thread with no scheduler pays one load.
-static bool smith_handlers_route(SmithIoRequest *request) {
-    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return false;
-    if (smith_handlers_locks_any()) return false;
-    SmithScheduler *scheduler = smith_handlers_scheduler_current();
-    if (scheduler == nullptr || scheduler->io == nullptr) return false;
-    scheduler->io(scheduler, request);
-    if (request->result < 0) errno = request->error;
+// ---- The descriptor calls (read, write, pread, pwrite, readv, writev, send, recv, accept, connect) are routed by what
+// the descriptor is, not by who opened it (issue #2662): 0 is the console's input and 1 and 2 its output; a socket,
+// including one that C code smith did not write opened, is the net handler's; any other descriptor is the files'. A
+// handler that is set always wins; none set is the real call. A handler that answers descriptor calls only (a
+// scheduler's) is not used while the thread holds a pthread mutex: parking there could leave another task of the same
+// worker blocked on that mutex for good.
+
+static bool smith_handlers_descriptor_ok(bool descriptors_only) {
+    if (!descriptors_only) return true;
+    if (atomic_load_explicit(&smith_handlers_scheduler_active, memory_order_relaxed) == 0) return true;
+    return !smith_handlers_locks_any();
+}
+
+static SmithFileHandler *smith_handlers_files_fd(void) {
+    SmithFileHandler *files = smith_handlers_files_set();
+    return files != nullptr && smith_handlers_descriptor_ok(files->descriptors_only) ? files : nullptr;
+}
+
+static SmithNetHandler *smith_handlers_net_fd(void) {
+    SmithNetHandler *net = smith_handlers_net_set();
+    return net != nullptr && smith_handlers_descriptor_ok(net->descriptors_only) ? net : nullptr;
+}
+
+static SmithConsoleHandler *smith_handlers_console_fd(void) {
+    SmithConsoleHandler *console = smith_handlers_console_set();
+    return console != nullptr && smith_handlers_descriptor_ok(console->descriptors_only) ? console : nullptr;
+}
+
+constexpr int smith_handlers_first_file = 3;
+
+static bool smith_handlers_is_socket(int fd) {
+    struct stat info;
+    return fstat(fd, &info) == 0 && S_ISSOCK(info.st_mode);
+}
+
+// The handler that answers a call on `fd` from 3 up: `*files` for a descriptor that is not a socket, `*net` for a
+// socket, and the other (or both) null when none is set or none applies.
+static void smith_handlers_pick(int fd, SmithFileHandler **files, SmithNetHandler **net) {
+    *files = nullptr;
+    *net = nullptr;
+    if (fd < smith_handlers_first_file) return;
+    SmithFileHandler *set_files = smith_handlers_files_fd();
+    SmithNetHandler *set_net = smith_handlers_net_fd();
+    if (set_files == nullptr && set_net == nullptr) return;
+    if (smith_handlers_is_socket(fd))
+        *net = set_net;
+    else
+        *files = set_files;
+}
+
+// Each of these returns true when a handler answered, with its result in `*result` (errno set as the handler left it);
+// false is the real call. A member a handler leaves null is the real call.
+static bool smith_handlers_via_read(int fd, void *buffer, size_t size, ssize_t *result) {
+    if (fd == 0) {
+        SmithConsoleHandler *console = smith_handlers_console_fd();
+        if (console != nullptr) *result = console->read(console, buffer, size);
+        return console != nullptr;
+    }
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files != nullptr) *result = files->read(files, fd, buffer, size);
+    if (net != nullptr) *result = net->read(net, fd, buffer, size);
+    return files != nullptr || net != nullptr;
+}
+
+static bool smith_handlers_via_write(int fd, const void *buffer, size_t size, ssize_t *result) {
+    if (fd == 1 || fd == 2) {
+        SmithConsoleHandler *console = smith_handlers_console_fd();
+        if (console != nullptr) *result = console->write(console, fd, buffer, size);
+        return console != nullptr;
+    }
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files != nullptr) *result = files->write(files, fd, buffer, size);
+    if (net != nullptr) *result = net->write(net, fd, buffer, size);
+    return files != nullptr || net != nullptr;
+}
+
+static bool smith_handlers_via_pread(int fd, void *buffer, size_t size, off_t offset, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files == nullptr || files->pread == nullptr) return false;
+    *result = files->pread(files, fd, buffer, size, offset);
+    return true;
+}
+
+static bool smith_handlers_via_pwrite(int fd, const void *buffer, size_t size, off_t offset, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files == nullptr || files->pwrite == nullptr) return false;
+    *result = files->pwrite(files, fd, buffer, size, offset);
+    return true;
+}
+
+static bool smith_handlers_via_readv(int fd, const struct iovec *vectors, int count, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files == nullptr || files->readv == nullptr) return false;
+    *result = files->readv(files, fd, vectors, count);
+    return true;
+}
+
+static bool smith_handlers_via_writev(int fd, const struct iovec *vectors, int count, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (files == nullptr || files->writev == nullptr) return false;
+    *result = files->writev(files, fd, vectors, count);
+    return true;
+}
+
+static bool smith_handlers_via_send(int fd, const void *buffer, size_t size, int flags, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (net == nullptr || net->send == nullptr) return false;
+    *result = net->send(net, fd, buffer, size, flags);
+    return true;
+}
+
+static bool smith_handlers_via_recv(int fd, void *buffer, size_t size, int flags, ssize_t *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (net == nullptr || net->recv == nullptr) return false;
+    *result = net->recv(net, fd, buffer, size, flags);
+    return true;
+}
+
+static bool smith_handlers_via_accept(int fd, struct sockaddr *address, socklen_t *length, int *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (net == nullptr || net->accept_socket == nullptr) return false;
+    *result = net->accept_socket(net, fd, address, length);
+    return true;
+}
+
+static bool smith_handlers_via_connect(int fd, const struct sockaddr *peer, socklen_t length, int *result) {
+    SmithFileHandler *files;
+    SmithNetHandler *net;
+    smith_handlers_pick(fd, &files, &net);
+    if (net == nullptr || net->connect_socket == nullptr) return false;
+    *result = net->connect_socket(net, fd, peer, length);
     return true;
 }
 
@@ -486,9 +643,7 @@ static malloc_zone_t *smith_handlers_zone_from_ptr(const void *block) {
     return smith_handlers_owns(smith_handlers_current(), block) ? malloc_default_zone() : malloc_zone_from_ptr(block);
 }
 
-// ---- The file descriptors: 0 is the console's input, 1 and 2 its output, 3 and up the files'.
-
-constexpr int smith_handlers_first_file = 3;
+// ---- The file descriptors: 0 is the console's input, 1 and 2 its output, 3 and up the files' (sockets the net's).
 
 static int smith_handlers_open(const char *path, int flags, ...) {
     int mode = 0;
@@ -520,67 +675,54 @@ static int smith_handlers_mutex_unlock(pthread_mutex_t *mutex) {
 }
 
 static ssize_t smith_handlers_read(int fd, void *buffer, size_t size) {
-    SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
-    if (console != nullptr) return console->read(console, buffer, size);
-    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    if (files != nullptr) return files->read(files, fd, buffer, size);
-    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
-    return smith_handlers_route(&request) ? request.result : read(fd, buffer, size);
+    ssize_t result;
+    return smith_handlers_via_read(fd, buffer, size, &result) ? result : read(fd, buffer, size);
 }
 
 static ssize_t smith_handlers_write(int fd, const void *buffer, size_t size) {
-    SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
-    if (console != nullptr) return console->write(console, fd, buffer, size);
-    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    if (files != nullptr) return files->write(files, fd, buffer, size);
-    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
-    return smith_handlers_route(&request) ? request.result : write(fd, buffer, size);
+    ssize_t result;
+    return smith_handlers_via_write(fd, buffer, size, &result) ? result : write(fd, buffer, size);
 }
 
 static ssize_t smith_handlers_pread(int fd, void *buffer, size_t size, off_t offset) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
-    return smith_handlers_route(&request) ? request.result : pread(fd, buffer, size, offset);
+    ssize_t result;
+    return smith_handlers_via_pread(fd, buffer, size, offset, &result) ? result : pread(fd, buffer, size, offset);
 }
 
 static ssize_t smith_handlers_pwrite(int fd, const void *buffer, size_t size, off_t offset) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
-    return smith_handlers_route(&request) ? request.result : pwrite(fd, buffer, size, offset);
+    ssize_t result;
+    return smith_handlers_via_pwrite(fd, buffer, size, offset, &result) ? result : pwrite(fd, buffer, size, offset);
 }
 
 static ssize_t smith_handlers_readv(int fd, const struct iovec *vectors, int count) {
-    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
-    return smith_handlers_route(&request) ? request.result : readv(fd, vectors, count);
+    ssize_t result;
+    return smith_handlers_via_readv(fd, vectors, count, &result) ? result : readv(fd, vectors, count);
 }
 
 static ssize_t smith_handlers_writev(int fd, const struct iovec *vectors, int count) {
-    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
-    return smith_handlers_route(&request) ? request.result : writev(fd, vectors, count);
+    ssize_t result;
+    return smith_handlers_via_writev(fd, vectors, count, &result) ? result : writev(fd, vectors, count);
 }
 
 static ssize_t smith_handlers_send(int fd, const void *buffer, size_t size, int flags) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
-    return smith_handlers_route(&request) ? request.result : send(fd, buffer, size, flags);
+    ssize_t result;
+    return smith_handlers_via_send(fd, buffer, size, flags, &result) ? result : send(fd, buffer, size, flags);
 }
 
 static ssize_t smith_handlers_recv(int fd, void *buffer, size_t size, int flags) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
-    return smith_handlers_route(&request) ? request.result : recv(fd, buffer, size, flags);
+    ssize_t result;
+    return smith_handlers_via_recv(fd, buffer, size, flags, &result) ? result : recv(fd, buffer, size, flags);
 }
 
 static int smith_handlers_accept(int fd, struct sockaddr *address, socklen_t *address_length) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
-    return smith_handlers_route(&request) ? (int)request.result : accept(fd, address, address_length);
+    int result;
+    return smith_handlers_via_accept(fd, address, address_length, &result) ? result
+                                                                           : accept(fd, address, address_length);
 }
 
 static int smith_handlers_connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
-    return smith_handlers_route(&request) ? (int)request.result : connect(fd, peer, peer_length);
+    int result;
+    return smith_handlers_via_connect(fd, peer, peer_length, &result) ? result : connect(fd, peer, peer_length);
 }
 
 static int smith_handlers_close(int fd) {
@@ -1192,9 +1334,7 @@ size_t malloc_usable_size(void *block) {
     return next != nullptr ? next(block) : 0;
 }
 
-// ---- The file descriptors: 0 is the console's input, 1 and 2 its output, 3 and up the files'.
-
-constexpr int smith_handlers_first_file = 3;
+// ---- The file descriptors: 0 is the console's input, 1 and 2 its output, 3 and up the files' (sockets the net's).
 
 static ssize_t smith_handlers_raw_read(int fd, void *buffer, size_t size) {
     return ((ssize_t (*)(int, void *, size_t))smith_handlers_find(&smith_handlers_next_read))(fd, buffer, size);
@@ -1235,81 +1375,67 @@ int pthread_mutex_unlock(pthread_mutex_t *mutex) {
 }
 
 ssize_t read(int fd, void *buffer, size_t size) {
-    SmithConsoleHandler *console = fd == 0 ? smith_handlers_console_current() : nullptr;
-    if (console != nullptr) return console->read(console, buffer, size);
-    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    if (files != nullptr) return files->read(files, fd, buffer, size);
-    SmithIoRequest request = {.operation = SmithIoOperation_Read, .fd = fd, .buffer = buffer, .size = size};
-    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_read(fd, buffer, size);
+    ssize_t result;
+    return smith_handlers_via_read(fd, buffer, size, &result) ? result : smith_handlers_raw_read(fd, buffer, size);
 }
 
 ssize_t write(int fd, const void *buffer, size_t size) {
-    SmithConsoleHandler *console = fd == 1 || fd == 2 ? smith_handlers_console_current() : nullptr;
-    if (console != nullptr) return console->write(console, fd, buffer, size);
-    SmithFileHandler *files = fd >= smith_handlers_first_file ? smith_handlers_files_current() : nullptr;
-    if (files != nullptr) return files->write(files, fd, buffer, size);
-    SmithIoRequest request = {.operation = SmithIoOperation_Write, .fd = fd, .source = buffer, .size = size};
-    return smith_handlers_route(&request) ? request.result : smith_handlers_raw_write(fd, buffer, size);
+    ssize_t result;
+    return smith_handlers_via_write(fd, buffer, size, &result) ? result : smith_handlers_raw_write(fd, buffer, size);
 }
 
 ssize_t pread(int fd, void *buffer, size_t size, off_t offset) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Pread, .fd = fd, .buffer = buffer, .size = size, .offset = offset};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_pread(fd, buffer, size, offset, &result)) return result;
     return ((ssize_t (*)(int, void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pread))(fd, buffer, size,
                                                                                                       offset);
 }
 
 ssize_t pwrite(int fd, const void *buffer, size_t size, off_t offset) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Pwrite, .fd = fd, .source = buffer, .size = size, .offset = offset};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_pwrite(fd, buffer, size, offset, &result)) return result;
     return ((ssize_t (*)(int, const void *, size_t, off_t))smith_handlers_find(&smith_handlers_next_pwrite))(
         fd, buffer, size, offset);
 }
 
 ssize_t readv(int fd, const struct iovec *vectors, int count) {
-    SmithIoRequest request = {.operation = SmithIoOperation_Readv, .fd = fd, .vectors = vectors, .count = count};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_readv(fd, vectors, count, &result)) return result;
     return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_readv))(fd, vectors,
                                                                                                           count);
 }
 
 ssize_t writev(int fd, const struct iovec *vectors, int count) {
-    SmithIoRequest request = {.operation = SmithIoOperation_Writev, .fd = fd, .vectors = vectors, .count = count};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_writev(fd, vectors, count, &result)) return result;
     return ((ssize_t (*)(int, const struct iovec *, int))smith_handlers_find(&smith_handlers_next_writev))(fd, vectors,
                                                                                                            count);
 }
 
 ssize_t send(int fd, const void *buffer, size_t size, int flags) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Send, .fd = fd, .source = buffer, .size = size, .flags = flags};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_send(fd, buffer, size, flags, &result)) return result;
     return ((ssize_t (*)(int, const void *, size_t, int))smith_handlers_find(&smith_handlers_next_send))(fd, buffer,
                                                                                                          size, flags);
 }
 
 ssize_t recv(int fd, void *buffer, size_t size, int flags) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Recv, .fd = fd, .buffer = buffer, .size = size, .flags = flags};
-    if (smith_handlers_route(&request)) return request.result;
+    ssize_t result;
+    if (smith_handlers_via_recv(fd, buffer, size, flags, &result)) return result;
     return ((ssize_t (*)(int, void *, size_t, int))smith_handlers_find(&smith_handlers_next_recv))(fd, buffer, size,
                                                                                                    flags);
 }
 
 int accept(int fd, struct sockaddr *address, socklen_t *address_length) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Accept, .fd = fd, .address = address, .address_length = address_length};
-    if (smith_handlers_route(&request)) return (int)request.result;
+    int result;
+    if (smith_handlers_via_accept(fd, address, address_length, &result)) return result;
     return ((int (*)(int, struct sockaddr *, socklen_t *))smith_handlers_find(&smith_handlers_next_accept))(
         fd, address, address_length);
 }
 
 int connect(int fd, const struct sockaddr *peer, socklen_t peer_length) {
-    SmithIoRequest request = {
-        .operation = SmithIoOperation_Connect, .fd = fd, .peer = peer, .peer_length = peer_length};
-    if (smith_handlers_route(&request)) return (int)request.result;
+    int result;
+    if (smith_handlers_via_connect(fd, peer, peer_length, &result)) return result;
     return ((int (*)(int, const struct sockaddr *, socklen_t))smith_handlers_find(&smith_handlers_next_connect))(
         fd, peer, peer_length);
 }
