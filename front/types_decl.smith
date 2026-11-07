@@ -152,14 +152,20 @@ static Str msg(char chars[:]) {
 
 // `1U << 22`, `64 * 1024` and `4096 + 8` are constants too: two integer literals joined by `<<`, `*`, `+` or `|`
 // whose value fits 64 bits, so `test.memory(1U << 22)` passes a `usize` (the count's `expected Usize, found U32`).
+// The value of an integer literal, or 0 for any other expression.
+static U64 integer_value(const ast::Expr *e) {
+    if (e->kind != .integer) return 0;
+    return e->kind.integer.value;
+}
+
 static types_convert::Literal folded_literal(const ast::Expr *e) {
     if (e->kind != .binary) return types_convert::no_literal();
     const ast::Expr *left = e->kind.binary.left;
     const ast::Expr *right = e->kind.binary.right;
     if (left->kind != .integer) return types_convert::no_literal();
     if (right->kind != .integer) return types_convert::no_literal();
-    U64 a = left->kind.integer.value;
-    U64 b = right->kind.integer.value;
+    U64 a = integer_value(left);
+    U64 b = integer_value(right);
     ast::BinaryOp op = e->kind.binary.op;
     if (op == .shift_left && b < 63 && a < ((U64)1 << (63 - b))) return types_convert::constant_unsigned(a << b);
     if (op == .multiply && a < (U64)0x80000000 && b < (U64)0x80000000) return types_convert::constant_unsigned(a * b);
@@ -176,12 +182,14 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     }
     if (e->kind == .unary) {
         const ast::Expr *operand = e->kind.unary.operand;
-        if (e->kind.unary.op == .negate && operand->kind == .integer) {
-            return (types_convert::Literal){
-                .is_constant = true, .negative = true, .magnitude = operand->kind.integer.value};
-        }
-        if (e->kind.unary.op == .negate && operand->kind == .floating) {
-            return types_convert::constant_float(-operand->kind.floating.value);
+        if (e->kind.unary.op == .negate) {
+            if (operand->kind == .integer) {
+                return (types_convert::Literal){
+                    .is_constant = true, .negative = true, .magnitude = operand->kind.integer.value};
+            }
+            if (operand->kind == .floating) {
+                return types_convert::constant_float(-operand->kind.floating.value);
+            }
         }
     }
     if (e->kind == .floating) {
@@ -191,19 +199,81 @@ static types_convert::Literal literal_of(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
+// What a written pointer type points at, or null when it is not a pointer.
+static const ast::TypeExpr *pointee_written(const ast::TypeExpr *t) {
+    if (t == nullptr) return nullptr;
+    if (t->kind != .pointer) return nullptr;
+    return t->kind.pointer.pointee;
+}
+
+// Whether a written type is a pointer that is not `*mut`.
+static Bool is_plain_pointer(const ast::TypeExpr *t) {
+    if (t->kind != .pointer) return false;
+    return !t->kind.pointer.is_mut;
+}
+
+// The element of a written array type, or null.
+static const ast::TypeExpr *array_element_written(const ast::TypeExpr *t) {
+    if (t->kind != .array) return nullptr;
+    return t->kind.array.element;
+}
+
+// The array `xs` of `&xs[i]`, or null for any other expression.
+static const ast::Expr *address_of_element_base(const ast::Expr *e) {
+    if (e->kind != .unary) return nullptr;
+    if (e->kind.unary.op != .address_of) return nullptr;
+    const ast::Expr *operand = e->kind.unary.operand;
+    if (operand->kind != .index) return nullptr;
+    return operand->kind.index.base;
+}
+
+// The operand of `&x`, or null for any other expression.
+static const ast::Expr *address_operand(const ast::Expr *e) {
+    if (e->kind != .unary) return nullptr;
+    if (e->kind.unary.op != .address_of) return nullptr;
+    return e->kind.unary.operand;
+}
+
+// The written type of the local `declaring` declares when `e` is its initializer and the type is a pointer, else null.
+static const ast::TypeExpr *declared_pointer_type(const ast::Decl *declaring, const ast::Expr *e) {
+    if (declaring == nullptr) return nullptr;
+    if (declaring->kind != .variable) return nullptr;
+    if (declaring->kind.variable.init != e) return nullptr;
+    const ast::TypeExpr *written = declaring->kind.variable.type;
+    if (written == nullptr) return nullptr;
+    if (written->kind != .pointer) return nullptr;
+    return written;
+}
+
+// `p + n` and `p - n` point where `p` points, and `buffer[filled:]` is as writable as `buffer`: the place a fix for a
+// pointer expression is made for.
+static const ast::Expr *pointer_source(const ast::Expr *e) {
+    const ast::Expr *source = e;
+    while (true) {
+        const ast::Expr *at = source; // not reassigned, so that the fixer can bind its payloads
+        if (at->kind != .binary) break;
+        ast::BinaryOp op = at->kind.binary.op;
+        if (op != .add && op != .subtract) break;
+        source = at->kind.binary.left;
+    }
+    const ast::Expr *last = source;
+    if (last->kind == .slice_of) return last->kind.slice_of.base;
+    return last;
+}
+
 // The edit for a local written `*mut *T` and initialized with a `*mut *mut T`: the inner pointer becomes `*mut T`,
 // since what the initializer points at is writable (std.mem's `buckets` from `table(...)`, #2427).
 static syntax::Edits inner_mut_fix(const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     syntax::Edits edits = {};
     const ast::Decl *d = state.declaring;
-    if (d == nullptr || d->kind != .variable || d->kind.variable.init != e) return edits;
+    if (d == nullptr) return edits;
+    if (d->kind != .variable) return edits;
+    if (d->kind.variable.init != e) return edits;
     if (from->element->kind != .pointer || to->element->kind != .pointer) return edits;
     if (from->element->element != to->element->element) return edits;
     if (from->element->pointee_const || !to->element->pointee_const) return edits;
-    const ast::TypeExpr *outer = d->kind.variable.type;
-    if (outer->kind != .pointer) return edits;
-    const ast::TypeExpr *inner = outer->kind.pointer.pointee;
-    if (inner->kind != .pointer || inner->kind.pointer.is_mut) return edits;
+    const ast::TypeExpr *inner = pointee_written(d->kind.variable.type);
+    if (inner == nullptr || !is_plain_pointer(inner)) return edits;
     edits = mem::realloc(edits, 1);
     U32 after_star = inner->span.start + 1;
     Str word = "mut ";
@@ -219,14 +289,13 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
     if (from->kind != .pointer || to->kind != .pointer || from->element->kind != .pointer ||
         to->element->kind != .pointer || !from->element->pointee_const || to->element->pointee_const)
         return edits;
-    if (e->kind != .unary || e->kind.unary.op != .address_of || e->kind.unary.operand->kind != .index) return edits;
-    const ast::Expr *array = e->kind.unary.operand->kind.index.base;
+    const ast::Expr *array = address_of_element_base(e);
+    if (array == nullptr) return edits;
     if (array->kind != .name) return edits;
     const types::Symbol *s = types::lookup_path(&c->scopes, array->kind.name.path);
-    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr || s->written->kind != .array)
-        return edits;
-    const ast::TypeExpr *element = s->written->kind.array.element;
-    if (element->kind != .pointer || element->kind.pointer.is_mut) return edits;
+    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr) return edits;
+    const ast::TypeExpr *element = array_element_written(s->written);
+    if (element == nullptr || !is_plain_pointer(element)) return edits;
     edits = mem::realloc(edits, 1);
     U32 after_star = element->span.start + 1;
     Str word = "mut ";
@@ -244,10 +313,7 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     drops_const =
         drops_const || (from->kind == .slice && to->kind == .slice && from->pointee_const && !to->pointee_const);
     // `p + n` and `p - n` point where `p` points: the fix is the one for `p` (`arena.memory + used`).
-    const ast::Expr *source = e;
-    while (source->kind == .binary && (source->kind.binary.op == .add || source->kind.binary.op == .subtract))
-        source = source->kind.binary.left;
-    if (source->kind == .slice_of) source = source->kind.slice_of.base; // `buffer[filled:]` is as writable as `buffer`
+    const ast::Expr *source = pointer_source(e);
     syntax::Edits fix = drops_const ? types_expr::pointer_fix(c, source) : (syntax::Edits){};
     if (from->kind == .pointer && to->kind == .pointer && !from->pointee_const && !to->pointee_const)
         fix = inner_mut_fix(e, from, to);
@@ -255,8 +321,8 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     // `&rest` where `*(*mut T)` is wanted (`strtol`'s end pointer): the local `rest: *T` becomes `*mut T`.
     if (countof(fix) == 0 && from->kind == .pointer && to->kind == .pointer && from->element->kind == .pointer &&
         to->element->kind == .pointer && from->element->pointee_const && !to->element->pointee_const &&
-        e->kind == .unary && e->kind.unary.op == .address_of)
-        fix = types_expr::pointer_name_fix(c, e->kind.unary.operand);
+        address_operand(e) != nullptr)
+        fix = types_expr::pointer_name_fix(c, address_operand(e));
     if (from->kind == .array && to->kind == .pointer &&
         (from->element == to->element || to->element->kind == .void_type ||
          (from->element->kind == .pointer && to->element->kind == .pointer))) // `execv(path, argv)`
@@ -273,11 +339,10 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (from->kind == .option && to->kind != .option && countof(fix) == 0) fix = types_expr::option_read_fix(c, e);
     // `p: *char = a.f` of an option: the local holds the option, `p: ?*char = a.f`.
     const ast::Decl *declaring = state.declaring;
-    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declaring != nullptr &&
-        declaring->kind == .variable && declaring->kind.variable.init == e &&
-        declaring->kind.variable.type != nullptr && declaring->kind.variable.type->kind == .pointer) {
+    const ast::TypeExpr *declared = declared_pointer_type(declaring, e);
+    if (from->kind == .option && to->kind == .pointer && countof(fix) == 0 && declared != nullptr) {
         fix = mem::realloc(fix, 1);
-        U32 at = declaring->kind.variable.type->span.start;
+        U32 at = declared->span.start;
         Str question = "?";
         fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
     }
@@ -1219,8 +1284,9 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     if (countof(binding) == 0 || is_discard(binding)) {
         return;
     }
-    if (t != nullptr && t->kind == .option && t->element != nullptr) {
-        element = t->element;
+    if (t != nullptr && t->kind == .option) {
+        types::TypeRef inner = t->element; // tested as a local: a test of the field `element` would make it an option
+        if (inner != nullptr) element = inner;
     }
     types::Symbol symbol = {
         .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};

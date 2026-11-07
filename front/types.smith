@@ -2395,7 +2395,8 @@ export Bool is_type_parameter(const ast::Param *p) {
 // instance keeps its element type and the parameter's `const` (#2070).
 export Bool is_auto_slice(const ast::TypeExpr *t) {
     if (t == nullptr || !(t->kind == .slice)) return false;
-    return t->kind.slice.element != nullptr && t->kind.slice.element->kind == .auto_type;
+    const ast::TypeExpr *inner = t->kind.slice.element;
+    return inner != nullptr && inner->kind == .auto_type;
 }
 
 // Whether a parameter is written `auto x` (today's syntax) or `x: auto` (smith's own): its type is the type each call
