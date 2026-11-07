@@ -249,7 +249,7 @@ static const ast::TypeExpr *declared_pointer_type(const ast::Decl *declaring, co
 // pointer expression is made for.
 static const ast::Expr *pointer_source(const ast::Expr *e) {
     const ast::Expr *source = e;
-    while (true) {
+    for (Usize steps = 0; steps < 64; steps++) {
         const ast::Expr *at = source; // not reassigned, so that the fixer can bind its payloads
         if (at->kind != .binary) break;
         ast::BinaryOp op = at->kind.binary.op;
