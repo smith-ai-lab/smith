@@ -937,6 +937,7 @@ static const char *const build_front_modules[] = {
     "fix_const",
     "fix_chain",
     "fix_guard",
+    "fix_words",
     "fix_typeof",
     "lsp_server",
     "lsp_hover",

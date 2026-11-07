@@ -35,6 +35,7 @@ import front::fix_bool;
 import front::fix_chain;
 import front::fix_const;
 import front::fix_guard;
+import front::fix_words;
 import front::fix_alloc;
 import front::fix_build;
 import front::fix_typeof;
@@ -445,6 +446,18 @@ static Bool bindings_take_else(void) {
     return guard_probe == 1;
 }
 
+static Usize words_probe = 0; // 0: not tried, 1: the parser reads `and`, `or` and `not`, 2: it does not
+
+// Whether the parser reads the operators as words (D19, #2649), tried once on a snippet. `fix_words` writes them, so
+// it waits: written before, they would turn a parsed file into a parse error.
+static Bool operators_are_words(void) {
+    if (words_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(a: bool, b: bool) -> bool:\n    return a and not b or a\n");
+        words_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return words_probe == 1;
+}
+
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
@@ -452,6 +465,7 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));
+    if (operators_are_words()) out = append(out, fix_words::edits(source));
     if (!values_take_patterns()) return out;
     return append(out, fix_chain::edits(source));
 }
