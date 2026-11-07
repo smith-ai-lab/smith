@@ -164,3 +164,11 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   malloc/free pair (Linux x86_64, -O2, best of five): no handler 11.4 ns before and 11.5 ns after; under a bump handler
   6.2 ns before and 6.6 ns after; the bump pair under ASan 6.7 ns before and 7.0 ns after (no handler under ASan 161 ns
   both).
+
+- **The handler table is the one way to replace a side effect (owner, 2026-11-06, #2657: "we should just be able to call
+  arbitrary c code which you didn't write, and be able to swap the effects. This means we cannot force anyone to use our io
+  type").** No smith type carries the world: code calls libc, `<smith/*.h>` or `std.*` directly and a test sets a handler.
+  `runtime/world.c`, which the executor and `smith mcp` use, reads the files handler's `stat`, `open`, `read` and `close`
+  and the console handler's `write` when one is set, and is libc otherwise. `tests/mcp_fake.c` is the example: a four-member
+  files handler and a console handler capture the server's files and output. `runtime/io.smith` keeps only the event loop
+  until jobs and sessions are tasks (#2662).

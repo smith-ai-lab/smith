@@ -420,18 +420,14 @@ static void smith_fmt_no_list(void) {
 // staged is still listed) and wanted by extension, in smith_fmt_files. NUL-separated names, so no name is mistaken.
 // False, with a message, when git cannot list them.
 static bool smith_fmt_list(size_t *count) {
-    SmithIo io = smith_io_make(0, nullptr);
     const char *const argv[] = {"git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", nullptr};
-    SmithProcessResult result = smith_processes_run(&io.processes, &io.arena, argv);
-    if (result.error.code != 0 || result.exit_status != 0) {
+    ptrdiff_t captured = smith_world_capture(argv, smith_fmt_names, smith_verbs_names_max - 1);
+    if (captured == -2) smith_die(smith_exit_usage, "too many files", nullptr);
+    if (captured < 0) {
         smith_fmt_no_list();
-        smith_io_close(&io);
         return false;
     }
-    if (result.output_size >= smith_verbs_names_max) smith_die(smith_exit_usage, "too many files", nullptr);
-    memcpy(smith_fmt_names, result.output, result.output_size);
-    size_t size = result.output_size;
-    smith_io_close(&io);
+    size_t size = (size_t)captured;
     smith_fmt_names[size] = '\0';
     *count = 0;
     for (size_t at = 0; at < size; at += strlen(smith_fmt_names + at) + 1) { // bounded by the output

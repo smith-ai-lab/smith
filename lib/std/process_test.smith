@@ -78,7 +78,20 @@ Bool is_text(typeof(const U8[:]) got, const char *text) {
 }
 
 const U8 *bytes_of(const char *text) {
-    return (const U8 *)text;
+    const void *raw = text;
+    return (const U8 *)raw;
+}
+
+// Whether a write failed with the error.
+Bool count_failed_with(process::CountResult result, process::Error expected) {
+    if (result != .error) return false;
+    return result.error == expected;
+}
+
+// Whether a kill failed with the error.
+Bool done_failed_with(process::DoneResult result, process::Error expected) {
+    if (result != .error) return false;
+    return result.error == expected;
 }
 
 // Reads a piped child's stdout to its end.
@@ -124,10 +137,12 @@ export void test_process_a_program_with_no_script_is_not_found() {
     const char *const argv[_] = {"nothing"};
     process::OutputResult ran = process::run(argv[0:1]);
     test::check_condition(ran == .error);
-    test::check_condition(failure_output(ran) == process::NotFound);
+    process::Error not_found_1 = process::NotFound;
+    test::check_condition(failure_output(ran) == not_found_1);
     process::ChildResult spawned = process::spawn(argv[0:1]);
     test::check_condition(spawned == .error);
-    test::check_condition(failure_child(spawned) == process::NotFound);
+    process::Error not_found_2 = process::NotFound;
+    test::check_condition(failure_child(spawned) == not_found_2);
 }
 
 export void test_process_two_children_of_one_program_use_two_scripts() {
@@ -192,7 +207,8 @@ export void test_process_a_child_that_has_exited_takes_no_more_input() {
     const char *const argv[_] = {"true"};
     process::Child child = value_child(process::start(argv[0:1]));
     process::CountResult sent = process::write(&child, bytes_of("x")[0:1]);
-    test::check_condition(sent == .error && sent.error == process::Broken);
+    process::Error broken_1 = process::Broken;
+    test::check_condition(count_failed_with(sent, broken_1));
     process::close(&child);
 }
 
@@ -234,12 +250,14 @@ export void test_process_kill_ends_a_child_that_would_not_end_and_a_second_kill_
     process::DoneResult killed = process::kill(&child, 9);
     test::check_condition(killed == .ok);
     process::DoneResult again = process::kill(&child, 9);
-    test::check_condition(again == .error && again.error == process::Gone);
+    process::Error gone_1 = process::Gone;
+    test::check_condition(done_failed_with(again, gone_1));
     process::Exit ended = value_exit(process::wait(&child));
     test::check_equal(ended.signal, 9);
     test::check_equal(ended.status, 0);
     process::DoneResult late = process::kill(&child, 9);
-    test::check_condition(late == .error && late.error == process::Gone);
+    process::Error gone_2 = process::Gone;
+    test::check_condition(done_failed_with(late, gone_2));
     process::close(&child);
 }
 
@@ -281,7 +299,8 @@ export void test_process_run_of_a_real_program_captures_its_streams_and_status()
     const char *const missing[_] = {"/nonexistent/program"};
     process::OutputResult none = process::run(missing[0:1]);
     test::check_condition(none == .error);
-    test::check_condition(failure_output(none) == process::NotFound);
+    process::Error not_found_3 = process::NotFound;
+    test::check_condition(failure_output(none) == not_found_3);
 }
 
 export void test_process_a_real_child_with_pipes_echoes_what_it_is_written() {
@@ -310,7 +329,8 @@ export void test_process_a_real_spawned_child_is_waited_for_and_a_kill_after_it_
     process::Child child = value_child(started);
     test::check_equal(value_exit(process::wait(&child)).status, 7);
     process::DoneResult late = process::kill(&child, 15);
-    test::check_condition(late == .error && late.error == process::Gone);
+    process::Error gone_3 = process::Gone;
+    test::check_condition(done_failed_with(late, gone_3));
     process::close(&child);
 }
 
@@ -358,7 +378,8 @@ export void test_process_usage_self_has_memory_and_time() {
 }
 
 export void test_process_describe_names_every_error() {
-    for (I32 i = 0; i <= (I32)process::Other; i++) {
+    process::Error last = process::Other;
+    for (I32 i = 0; i <= (I32)last; i++) {
         test::check(countof(process::describe((process::Error)i)) > 0);
     }
     test::check(text::is(process::describe(process::NotFound), "the program was not found"));
