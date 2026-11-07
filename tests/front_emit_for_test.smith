@@ -182,6 +182,22 @@ export void test_front_emit_for_range_with_two_bounds_signed_and_unsigned() {
     emit_jit::stop(&host);
 }
 
+// Bounds of different widths: the narrower widens to the wider (`range(count, width)` of std.format, usize and u32).
+export void test_front_emit_for_range_bounds_of_different_widths() {
+    Scenario s = {};
+    emit_jit::Jit host = start_jit();
+    emit_source("pub fn pad(a: usize, b: u32) -> i32:\n"
+                "    let mut n = 0\n"
+                "    for _ in range(a, b):\n"
+                "        n += 1\n"
+                "    n\n",
+                &host, &s);
+    Binary pad = (Binary)symbol_of(&host, "pad");
+    test::check_equal(pad(2, 9), (I32)7);
+    test::check_equal(pad(9, 2), (I32)0);
+    emit_jit::stop(&host);
+}
+
 export void test_front_emit_for_range_with_a_step_ends_on_and_past_the_bound() {
     Scenario s = {};
     emit_jit::Jit host = start_jit();
