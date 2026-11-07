@@ -441,8 +441,134 @@ static Bool is_auto(types::TypeRef t) {
 }
 
 // A local written in smith's own syntax: constant unless it is `mut`.
+static const ast::Expr *variable_init(const ast::Decl *d) {
+    if (d->kind != .variable) return nullptr;
+    return d->kind.variable.init;
+}
+
+static Str variable_name(const ast::Decl *d) {
+    if (d->kind != .variable) return "";
+    return d->kind.variable.name;
+}
+
+// Whether `d` is a variable written `mut`.
+static Bool variable_is_mut(const ast::Decl *d) {
+    if (d->kind != .variable) return false;
+    return d->kind.variable.is_mut;
+}
+
+// The `then` of an `if`; null for any other statement.
+static const ast::Stmt *then_of(const ast::Stmt *s) {
+    if (s->kind != .if_stmt) return nullptr;
+    return s->kind.if_stmt.then_branch;
+}
+
+// The value of a `return`, null for `return;` and for any other statement.
+static const ast::Expr *returned_value(const ast::Stmt *s) {
+    if (s->kind != .return_stmt) return nullptr;
+    return s->kind.return_stmt.value;
+}
+
+static Bool error_item(const ast::Initializer *item);
+
+// The value `.error = x` or `.error(x)` carries in a returned expression, else null.
+static const ast::Expr *passed_error(const ast::Expr *value) {
+    if (value->kind == .compound) {
+        if (countof(value->kind.compound.items) != 1) return nullptr;
+        if (!error_item(&value->kind.compound.items[0])) return nullptr;
+        return value->kind.compound.items[0].value;
+    }
+    if (value->kind != .variant) return nullptr;
+    if (!types::same_text(value->kind.variant.name, "error")) return nullptr;
+    return value->kind.variant.payload;
+}
+
 static Bool is_new_variable(const ast::Decl *d) {
-    return d->kind == .variable && d->kind.variable.is_new;
+    if (d->kind != .variable) return false;
+    return d->kind.variable.is_new;
+}
+
+// The statements of a block; none for any other statement.
+static Usize block_size(const ast::Stmt *s) {
+    if (s->kind != .block) return 0;
+    return countof(s->kind.block.items);
+}
+
+static const ast::Stmt *block_item(const ast::Stmt *s, Usize k) {
+    if (s->kind != .block) return nullptr;
+    return s->kind.block.items[k];
+}
+
+// The parts of a binary or unary expression; null for any other.
+static const ast::Expr *binary_left(const ast::Expr *e) {
+    if (e->kind != .binary) return nullptr;
+    return e->kind.binary.left;
+}
+
+static const ast::Expr *binary_right(const ast::Expr *e) {
+    if (e->kind != .binary) return nullptr;
+    return e->kind.binary.right;
+}
+
+static Bool binary_and(const ast::Expr *e) {
+    if (e->kind != .binary) return false;
+    return e->kind.binary.op == .logical_and;
+}
+
+static Bool binary_or(const ast::Expr *e) {
+    if (e->kind != .binary) return false;
+    return e->kind.binary.op == .logical_or;
+}
+
+// Whether `e` is `a == b` (`a != b` when not `equal`).
+static Bool binary_compares(const ast::Expr *e, Bool equal) {
+    if (e->kind != .binary) return false;
+    if (equal) return e->kind.binary.op == .equal;
+    return e->kind.binary.op == .not_equal;
+}
+
+// Whether `e` is `a.f` with `.` (not `->`).
+// The statement a `stmt_expr` holds; null for any other expression.
+static const ast::Stmt *inner_statement(const ast::Expr *e) {
+    if (e->kind != .stmt_expr) return nullptr;
+    return e->kind.stmt_expr.stmt;
+}
+
+static Bool dot_member(const ast::Expr *e) {
+    if (e->kind != .member) return false;
+    return !e->kind.member.arrow;
+}
+
+static Str member_name(const ast::Expr *e) {
+    if (e->kind != .member) return "";
+    return e->kind.member.name;
+}
+
+static const ast::Expr *member_base(const ast::Expr *e) {
+    if (e->kind != .member) return nullptr;
+    return e->kind.member.base;
+}
+
+static const ast::Expr *unary_operand(const ast::Expr *e) {
+    if (e->kind != .unary) return nullptr;
+    return e->kind.unary.operand;
+}
+
+static Bool unary_not(const ast::Expr *e) {
+    if (e->kind != .unary) return false;
+    return e->kind.unary.op == .logical_not;
+}
+
+// The name of a variant (`.error`); empty for any other expression.
+static Str variant_name(const ast::Expr *e) {
+    if (e->kind != .variant) return "";
+    return e->kind.variant.name;
+}
+
+// Whether `e` is a variant with no payload (`.none`).
+static Bool bare_variant(const ast::Expr *e) {
+    if (e->kind != .variant) return false;
+    return e->kind.variant.payload == nullptr;
 }
 
 static Bool is_discard(Str name) {
@@ -584,7 +710,7 @@ static void require_constant(types::Checked *r, Str name, const ast::Expr *init)
 }
 
 static void local_variable(types::Checked *r, const ast::Decl *d) {
-    if (!(d->kind == .variable)) {
+    if (d->kind != .variable) {
         return;
     }
     Str name = d->kind.variable.name;
@@ -598,7 +724,7 @@ static void local_variable(types::Checked *r, const ast::Decl *d) {
         r->new_body = true;
     }
     types::TypeRef type = r->table.automatic;
-    if (!(written->kind == .auto_type)) {
+    if (written->kind != .auto_type) {
         r->new_syntax = is_new; // a local's `*T` is read-only in smith's own syntax (#1899), as a parameter's is
         type = types::resolve(r, written);
         r->new_syntax = false;
@@ -642,7 +768,7 @@ static void local_declaration(types::Checked *r, const ast::Decl *d) {
 // `let (q, r) = f()` and `let (mut q, mut r) = f()`: one constant (or variable) per element of the tuple the
 // initializer returns; `_` discards an element. The count must match the tuple's length.
 static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .destructure)) {
+    if (s->kind != .destructure) {
         return;
     }
     ast::Identifier names[:] = s->kind.destructure.names;
@@ -689,7 +815,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
 // return
 
 static void return_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .return_stmt)) {
+    if (s->kind != .return_stmt) {
         return;
     }
     const ast::Expr *value = s->kind.return_stmt.value;
@@ -732,7 +858,7 @@ static void not_yet(types::Checked *r, const ast::Stmt *s, Str what) {
 }
 
 static void block_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .block)) {
+    if (s->kind != .block) {
         return;
     }
     ast::StmtRef items[:] = s->kind.block.items;
@@ -752,9 +878,8 @@ export void set_source(Str source) {
 // Whether the statement always ends by leaving its block: it is a `return`, `break` or `continue`, or a block whose
 // last statement is one.
 static Bool leaves(const ast::Stmt *s) {
-    while (s->kind == .block && countof(s->kind.block.items) > 0) {
-        s = s->kind.block.items[countof(s->kind.block.items) - 1];
-    }
+    while (block_size(s) > 0)
+        s = block_item(s, block_size(s) - 1);
     return s->kind == .return_stmt || s->kind == .break_stmt || s->kind == .continue_stmt;
 }
 
@@ -771,18 +896,15 @@ static void add_guard(types::Checked *r, types::Guard guard) {
 
 // `k == .v` (or `k != .v` when not `equal`) with no payload on `.v`: the test, else null.
 static const ast::Expr *plain_variant_test(const ast::Expr *test, Bool equal) {
-    if (!(test->kind == .binary)) return nullptr;
-    ast::BinaryOp op = test->kind.binary.op;
-    if (equal ? op != .equal : op != .not_equal) return nullptr;
-    const ast::Expr *right = test->kind.binary.right;
-    if (!(right->kind == .variant) || right->kind.variant.payload != nullptr) return nullptr;
+    if (!binary_compares(test, equal)) return nullptr;
+    if (!bare_variant(binary_right(test))) return nullptr;
     return test;
 }
 
 // The same, and `!(k == .v)` counts as `k != .v` (its inner test is returned).
 static const ast::Expr *variant_test(const ast::Expr *test, Bool equal) {
-    if (!equal && test->kind == .unary && test->kind.unary.op == .logical_not) {
-        return plain_variant_test(test->kind.unary.operand, true);
+    if (!equal && unary_not(test)) {
+        return plain_variant_test(unary_operand(test), true);
     }
     return plain_variant_test(test, equal);
 }
@@ -806,12 +928,11 @@ static syntax::Edit edit_of(U32 start, U32 end, Str text) {
 
 // `if k == .v:` with no `else`: the reads in the `then` are the test's, written `if .v(v) := k:`.
 static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
-    if (!(s->kind == .if_stmt) || !(test->kind == .binary)) return;
-    const ast::Expr *left = test->kind.binary.left;
-    const ast::Expr *right = test->kind.binary.right;
-    if (!(right->kind == .variant)) return;
-    Str variant = right->kind.variant.name;
-    if (name_taken(r, variant)) return;
+    if (s->kind != .if_stmt || test->kind != .binary) return;
+    const ast::Expr *left = binary_left(test);
+    const ast::Expr *right = binary_right(test);
+    Str variant = variant_name(right);
+    if (countof(variant) == 0 || name_taken(r, variant)) return;
     Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
@@ -827,17 +948,16 @@ static void note_then_guard(types::Checked *r, const ast::Stmt *s, const ast::Ex
 // before a test may be what makes `k` safe to read. The reads in the chain's other conjuncts and in `body` are the
 // test's; the `else` is not.
 static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast::Stmt *body) {
-    if (!(test->kind == .binary) || test->kind.binary.op != .logical_and) return;
+    if (!binary_and(test)) return;
     const ast::Expr *first = test;
-    while (first->kind == .binary && first->kind.binary.op == .logical_and)
-        first = first->kind.binary.left;
+    while (binary_and(first))
+        first = binary_left(first);
     const ast::Expr *tested = plain_variant_test(first, true);
-    if (tested == nullptr || !(tested->kind == .binary)) return;
-    const ast::Expr *left = tested->kind.binary.left;
-    const ast::Expr *right = tested->kind.binary.right;
-    if (!(right->kind == .variant)) return;
-    Str variant = right->kind.variant.name;
-    if (name_taken(r, variant)) return;
+    if (tested == nullptr) return;
+    const ast::Expr *left = binary_left(tested);
+    const ast::Expr *right = binary_right(tested);
+    Str variant = variant_name(right);
+    if (countof(variant) == 0 || name_taken(r, variant)) return;
     Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
@@ -851,11 +971,11 @@ static void note_chain_guard(types::Checked *r, const ast::Expr *test, const ast
 static Usize or_operands(const ast::Expr *test, const ast::Expr *out[8]) {
     Usize count = 0;
     const ast::Expr *at = test;
-    while (at->kind == .binary && at->kind.binary.op == .logical_or) {
+    while (binary_or(at)) {
         if (count == 7) return 0;
-        out[count] = at->kind.binary.right;
+        out[count] = binary_right(at);
         count += 1;
-        at = at->kind.binary.left;
+        at = binary_left(at);
     }
     out[count] = at;
     count += 1;
@@ -891,7 +1011,7 @@ static Bool indented_if(ast::Span statement, ast::Span test) {
 // test's, written `.v(v) := k else: return X` (#2503). In a chain `if a || k != .v || b: X` the test stands alone
 // between `if a: X` and `if b: X`, which copies `X`: that needs the text, so a chain is left when there is none.
 static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_stmt)) return;
+    if (s->kind != .if_stmt) return;
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Expr *parts[8] = {};
@@ -903,12 +1023,11 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     U32 end = state.block_end;
     if (at == count || end == 0 || !indented_if(s->span, test->span)) return;
     const ast::Expr *tested = variant_test(parts[at], false);
-    if (tested == nullptr || !(tested->kind == .binary)) return;
-    const ast::Expr *left = tested->kind.binary.left;
-    const ast::Expr *right = tested->kind.binary.right;
-    if (!(right->kind == .variant)) return;
-    Str variant = right->kind.variant.name;
-    if (name_taken(r, variant)) return;
+    if (tested == nullptr) return;
+    const ast::Expr *left = binary_left(tested);
+    const ast::Expr *right = binary_right(tested);
+    Str variant = variant_name(right);
+    if (countof(variant) == 0 || name_taken(r, variant)) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
@@ -944,8 +1063,8 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
 
 // The statement itself when `s` is a block of one statement, through nested blocks.
 static const ast::Stmt *only_statement(const ast::Stmt *s) {
-    while (s->kind == .block && countof(s->kind.block.items) == 1) {
-        s = s->kind.block.items[0];
+    while (block_size(s) == 1) {
+        s = block_item(s, 0);
     }
     return s;
 }
@@ -1005,7 +1124,8 @@ static Bool contains(Str text, Str needle) {
 static Bool error_item(const ast::Initializer *item) {
     if (countof(item->designators) != 1) return false;
     const ast::Designator *d = &item->designators[0];
-    return *d == .field && types::same_text(d->field.name, "error");
+    if (*d != .field) return false;
+    return types::same_text(d->field.name, "error");
 }
 
 // `r: Result(T, E) = f()` followed by `if r == .error: return {.error = r.error}` (or `.error(r.error)`) passes the
@@ -1014,37 +1134,31 @@ static Bool error_item(const ast::Initializer *item) {
 // leaves the site as it is. Returns whether the site is one.
 static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Expr *test) {
     const ast::Decl *d = state.prev_decl;
-    if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || !(d->kind == .variable) ||
-        !(s->kind == .if_stmt))
+    if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || d->kind != .variable ||
+        s->kind != .if_stmt)
         return false;
-    const ast::Expr *init = d->kind.variable.init;
-    if (test == nullptr || !(test->kind == .binary) || init == nullptr || d->kind.variable.is_mut ||
-        !d->kind.variable.is_new)
+    const ast::Expr *init = variable_init(d);
+    if (test == nullptr || test->kind != .binary || init == nullptr || variable_is_mut(d) || !is_new_variable(d))
         return false;
-    const ast::Expr *left = test->kind.binary.left;
-    Str name = d->kind.variable.name;
-    const ast::Expr *right = test->kind.binary.right;
-    if (!(right->kind == .variant) || !types::same_text(right->kind.variant.name, "error") ||
+    const ast::Expr *left = binary_left(test);
+    Str name = variable_name(d);
+    const ast::Expr *right = binary_right(test);
+    if (!types::same_text(variant_name(right), "error") ||
         !types::same_text(fixed_source[left->span.start:left->span.end], name))
         return false;
     // `if r == .error: cleanup; return {.error = r.error}`: the cleanup, one line, becomes an `errdefer` before the
     // call.
-    const ast::Stmt *body = s->kind.if_stmt.then_branch;
+    const ast::Stmt *body = then_of(s);
     const ast::Stmt *cleanup = nullptr;
-    if (body->kind == .block && countof(body->kind.block.items) == 2) {
-        cleanup = body->kind.block.items[0];
-        body = body->kind.block.items[1];
+    if (block_size(body) == 2) {
+        cleanup = block_item(body, 0);
+        body = block_item(body, 1);
     }
     const ast::Stmt *leave = only_statement(body);
-    if (!(leave->kind == .return_stmt) || leave->kind.return_stmt.value == nullptr) return false;
-    const ast::Expr *value = leave->kind.return_stmt.value;
+    const ast::Expr *value = returned_value(leave);
+    if (value == nullptr) return false;
     // `{.error = r.error}` of C, or `.error(r.error)` once the option and Result fix has mended the braces (#2563)
-    const ast::Expr *error_value = nullptr;
-    if (value->kind == .compound && countof(value->kind.compound.items) == 1 &&
-        error_item(&value->kind.compound.items[0]))
-        error_value = value->kind.compound.items[0].value;
-    else if (value->kind == .variant && types::same_text(value->kind.variant.name, "error"))
-        error_value = value->kind.variant.payload;
+    const ast::Expr *error_value = passed_error(value);
     if (error_value == nullptr) return false;
     Str passed = fixed_source[error_value->span.start:error_value->span.end];
     if (!types::same_text(passed, msg(format::push(name, ".error")))) return false;
@@ -1082,15 +1196,12 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
 
 // `a.f != nullptr` or `a.f != .none` (`==` when `equal`), where `a.f` is a field read: the test, else null.
 static const ast::Expr *null_test(const ast::Expr *test, Bool equal) {
-    if (!(test->kind == .binary)) return nullptr;
-    ast::BinaryOp op = test->kind.binary.op;
-    if (equal ? op != .equal : op != .not_equal) return nullptr;
-    const ast::Expr *left = test->kind.binary.left;
-    const ast::Expr *right = test->kind.binary.right;
-    if (!(left->kind == .member) || left->kind.member.arrow) return nullptr;
-    Bool none = right->kind == .variant && right->kind.variant.payload == nullptr &&
-                types::same_text(right->kind.variant.name, "none");
-    if (!none && !(right->kind == .null_pointer)) return nullptr;
+    if (!binary_compares(test, equal)) return nullptr;
+    const ast::Expr *left = binary_left(test);
+    const ast::Expr *right = binary_right(test);
+    if (!dot_member(left)) return nullptr;
+    Bool none = bare_variant(right) && types::same_text(variant_name(right), "none");
+    if (!none && right->kind != .null_pointer) return nullptr;
     return test;
 }
 
@@ -1100,17 +1211,16 @@ static const ast::Expr *null_test(const ast::Expr *test, Bool equal) {
 // site as it is. Only while the fixer runs, on the `if` as smith's own syntax writes it. The guard is kept whatever
 // the field's type: only a read of an option takes it (`front::types_expr`). Returns whether the test is one.
 static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
-    if (countof(fixed_source) == 0 || !(s->kind == .if_stmt)) return false;
+    if (countof(fixed_source) == 0 || s->kind != .if_stmt) return false;
     const ast::Expr *test = s->kind.if_stmt.condition;
     const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
     const ast::Expr *some = null_test(test, false);
     Bool rest = null_test(test, true) != nullptr && s->kind.if_stmt.else_branch == nullptr && leaves(then_branch) &&
                 state.block_end != 0;
-    if ((some == nullptr && !rest) || !indented_if(s->span, test->span) || !(test->kind == .binary)) return false;
-    const ast::Expr *left = test->kind.binary.left;
-    if (!(left->kind == .member)) return false;
-    Str field = left->kind.member.name;
-    if (name_taken(r, field)) return false;
+    if ((some == nullptr && !rest) || !indented_if(s->span, test->span) || test->kind != .binary) return false;
+    const ast::Expr *left = binary_left(test);
+    Str field = member_name(left);
+    if (countof(field) == 0 || name_taken(r, field)) return false;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same field is covered by the first
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
@@ -1119,7 +1229,7 @@ static Bool note_option_guard(types::Checked *r, const ast::Stmt *s) {
     Str pattern = msg(format::push(field, " := "));
     syntax::Edits head = {};
     head = mem::realloc(head, 2);
-    types::Guard guard = {.base = left->kind.member.base, .variant = field, .option = true, .test = test};
+    types::Guard guard = {.base = member_base(left), .variant = field, .option = true, .test = test};
     if (some != nullptr) {
         head[0] = edit_of(left->span.start, left->span.start, pattern);
         head[1] = edit_of(left->span.end, test->span.end, "");
@@ -1145,7 +1255,7 @@ static void note_guard(types::Checked *r, const ast::Stmt *s) {
         note_chain_guard(r, s->kind.while_stmt.condition, s->kind.while_stmt.body);
         return;
     }
-    if (!(s->kind == .if_stmt)) {
+    if (s->kind != .if_stmt) {
         return;
     }
     const ast::Expr *test = s->kind.if_stmt.condition;
@@ -1161,7 +1271,7 @@ static void note_guard(types::Checked *r, const ast::Stmt *s) {
 
 // An arm `.v: value` of a `match k:` reads the payload as `k.v`: the fix is `.v(v): value` and `v` for each read.
 static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .match_stmt)) {
+    if (s->kind != .match_stmt) {
         return;
     }
     const ast::Expr *scrutinee = s->kind.match_stmt.value;
@@ -1191,7 +1301,7 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
 }
 
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_stmt)) {
+    if (s->kind != .if_stmt) {
         return;
     }
     Bool is_constexpr = s->kind.if_stmt.is_constexpr;
@@ -1236,9 +1346,8 @@ static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value);
 
 // Whether a refutable binding's `else` ends by leaving: `return`, `break`, `continue` or a call that never returns.
 static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
-    while (s->kind == .block && countof(s->kind.block.items) > 0) {
-        s = s->kind.block.items[countof(s->kind.block.items) - 1];
-    }
+    while (block_size(s) > 0)
+        s = block_item(s, block_size(s) - 1);
     if (s->kind == .expression) return calls_noreturn(r, s->kind.expression.value);
     return leaves(s);
 }
@@ -1265,7 +1374,7 @@ static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef 
 // payload's type in the `then` branch, and the `else` branch is checked outside it. A payload enumeration's
 // `.circle(c)` binds what the enumerator carries (#2494).
 static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .if_let)) {
+    if (s->kind != .if_let) {
         return;
     }
     ast::Pattern pattern = s->kind.if_let.pattern;
@@ -1299,7 +1408,7 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
 }
 
 static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .for_in)) {
+    if (s->kind != .for_in) {
         return;
     }
     ast::Identifier names[:] = s->kind.for_in.names;
@@ -1335,7 +1444,7 @@ static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
 }
 
 static void for_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .for_stmt)) {
+    if (s->kind != .for_stmt) {
         return;
     }
     Bool is_constexpr = s->kind.for_stmt.is_constexpr;
@@ -1395,8 +1504,8 @@ static void find_tails(const ast::Stmt *root) {
             ast::MatchArm arms[:] = s->kind.match_stmt.arms;
             for (Usize i = 0; i < countof(arms) && n < countof(todo); i++) {
                 const ast::Expr *value = arms[i].value;
-                if (value != nullptr && value->kind == .stmt_expr) {
-                    todo[n] = value->kind.stmt_expr.stmt;
+                if (value != nullptr && inner_statement(value) != nullptr) {
+                    todo[n] = inner_statement(value);
                     n += 1;
                 }
             }
@@ -1419,10 +1528,14 @@ static Bool is_tail(const ast::Stmt *s) {
 // Whether a call names a function marked `[[noreturn]]` (or `@noreturn`): as the last line it ends the function, so it
 // has no value to match against the result type (#2461: `std.arena` ends in `stop(...)`).
 static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
-    if (value->kind != .call || value->kind.call.callee->kind != .name) {
+    if (value->kind != .call) {
         return false;
     }
-    const types::Symbol *s = types::lookup_path(&r->scopes, value->kind.call.callee->kind.name.path);
+    const ast::Expr *callee = value->kind.call.callee;
+    if (callee->kind != .name) {
+        return false;
+    }
+    const types::Symbol *s = types::lookup_path(&r->scopes, callee->kind.name.path);
     if (s == nullptr || s->kind != .function_symbol) {
         return false;
     }
@@ -1440,7 +1553,7 @@ static Bool calls_noreturn(const types::Checked *r, const ast::Expr *value) {
 
 // An expression statement. In smith's own syntax a call whose result is not `Void` must be used or discarded.
 static void expression_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .expression)) {
+    if (s->kind != .expression) {
         return;
     }
     const ast::Expr *value = s->kind.expression.value;
@@ -1451,7 +1564,7 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
     } else {
         type = types_expr::infer(r, value);
     }
-    if (!r->new_body || !(value->kind == .call) || type == nullptr) {
+    if (!r->new_body || value->kind != .call || type == nullptr) {
         return;
     }
     if (state.result != r->table.void_type && is_tail(s)) {
@@ -1476,7 +1589,7 @@ static void expression_statement(types::Checked *r, const ast::Stmt *s) {
 // its cases are variants, which the arms of a `match` check by name; any other value types its cases against it. Each
 // case opens a scope for its body, like a block.
 static void switch_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .switch_stmt)) {
+    if (s->kind != .switch_stmt) {
         return;
     }
     types::TypeRef t = types_expr::infer(r, s->kind.switch_stmt.value);
@@ -1500,7 +1613,7 @@ static void switch_statement(types::Checked *r, const ast::Stmt *s) {
 // Types the constant patterns of arm `index` of a `match`, before the arm checks them against its value. Over an
 // enumeration a name is one of its enumerators (`lex.name`), which is not a value in scope, so it is not typed.
 static void match_patterns(types::Checked *r, const ast::Stmt *s, Usize index) {
-    if (!(s->kind == .match_stmt)) {
+    if (s->kind != .match_stmt) {
         return;
     }
     ast::Pattern pats[:] = s->kind.match_stmt.arms[index].patterns;
@@ -1517,7 +1630,7 @@ static void match_patterns(types::Checked *r, const ast::Stmt *s, Usize index) {
 // value and what it binds; then the arms together cover every case. An arm's value is a statement (`return`, a block)
 // or an expression, which is the function's result when the `match` is its last line.
 static void match_statement(types::Checked *r, const ast::Stmt *s) {
-    if (!(s->kind == .match_stmt)) {
+    if (s->kind != .match_stmt) {
         return;
     }
     ast::MatchArm arms[:] = s->kind.match_stmt.arms;
@@ -1528,8 +1641,8 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
     for (Usize i = countof(arms); i > 0; i--) {
         const ast::Expr *value = arms[i - 1].value;
         push(nullptr, nullptr, leave);
-        if (value != nullptr && value->kind == .stmt_expr) {
-            push(value->kind.stmt_expr.stmt, nullptr, enter);
+        if (value != nullptr && inner_statement(value) != nullptr) {
+            push(inner_statement(value), nullptr, enter);
         } else if (value != nullptr) {
             push(nullptr, value, tail ? tail_arm : advance);
         }
@@ -1694,28 +1807,28 @@ static void lambda_hook(types::Checked *c, const ast::Expr *lambda, types::TypeR
 }
 
 static void lambda_body(types::Checked *r, Pending p) {
-    const ast::Expr *lambda = p.lambda;
-    if (!(lambda->kind == .lambda)) {
+    const ast::Expr *anchor = p.lambda;
+    if (anchor->kind != .lambda) {
         return;
     }
-    ast::Param params[:] = lambda->kind.lambda.params;
-    const ast::Stmt *body = lambda->kind.lambda.body;
+    ast::Param params[:] = anchor->kind.lambda.params;
+    const ast::Stmt *body = anchor->kind.lambda.body;
     types::Scopes outer = r->scopes;
     r->scopes = p.scopes;
     types::push_scope(&r->scopes);
-    types::TypeRef function = p.type->element;
+    types::TypeRef shape = p.type->element;
     Str outer_function = state.function;
     state.function = p.function;
-    for (Usize i = 0; i < countof(params) && i < countof(function->slots); i++) {
-        types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = function->slots[i].type};
+    for (Usize i = 0; i < countof(params) && i < countof(shape->slots); i++) {
+        types::Symbol symbol = {.name = params[i].name, .kind = .variable, .type = shape->slots[i].type};
         if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
         } else {
-            note_local(params[i].name, function->slots[i].type);
+            note_local(params[i].name, shape->slots[i].type);
         }
     }
-    walk(r, body, function->element);
+    walk(r, body, shape->element);
     state.function = outer_function;
     types::pop_scope(&r->scopes);
     r->scopes = outer;
@@ -1736,22 +1849,25 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
 static Bool declares_type(const ast::Decl *function);
 
 // The types::BodyChecker: the body of one function of the module.
-export void check_body(types::Checked *r, const ast::Decl *function) {
-    if (function->kind != .function || function->kind.function.body == nullptr) {
+export void check_body(types::Checked *r, const ast::Decl *target) {
+    if (target->kind != .function) {
         return;
     }
-    Str name = function->kind.function.name;
+    if (target->kind.function.body == nullptr) {
+        return;
+    }
+    Str name = target->kind.function.name;
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
-    if (symbol == nullptr || !types::declared_by(symbol, function) || symbol->type->kind != .function) {
+    if (symbol == nullptr || !types::declared_by(symbol, target) || symbol->type->kind != .function) {
         return;
     }
     if (symbol->generic) {
         return; // a template: its bodies are the instances' (check_instances)
     }
-    if (declares_type(function)) {
+    if (declares_type(target)) {
         return; // a type function: its unnamed `enum:` or `struct:` is the type it returns (#2251)
     }
-    check_function(r, function, symbol->type);
+    check_function(r, target, symbol->type);
 }
 
 // Whether a function's result is written `type`.
@@ -1765,33 +1881,39 @@ static Bool returns_type(const ast::TypeExpr *result) {
 
 // Whether `function` is a type function (`-> type`) whose last statement is an unnamed `enum:` or `struct:` block:
 // that declaration is the type each call returns (`Option(i32)`), so the body has nothing else to check.
-static Bool declares_type(const ast::Decl *function) {
-    if (function->kind != .function) {
-        return false;
-    }
-    if (!returns_type(function->kind.function.result)) {
-        return false;
-    }
-    const ast::Stmt *body = function->kind.function.body;
-    if (body->kind != .block || countof(body->kind.block.items) == 0) {
-        return false;
-    }
-    const ast::Stmt *last = body->kind.block.items[countof(body->kind.block.items) - 1];
+// Whether a statement declares an `enum:` or `struct:` with no name.
+static Bool declares_unnamed(const ast::Stmt *last) {
     if (last->kind != .declaration) {
         return false;
     }
     const ast::Decl *declared = last->kind.declaration.decl;
-    return (declared->kind == .enumeration && countof(declared->kind.enumeration.name) == 0) ||
-           (declared->kind == .record && countof(declared->kind.record.name) == 0);
+    if (declared->kind == .enumeration) return countof(declared->kind.enumeration.name) == 0;
+    if (declared->kind == .record) return countof(declared->kind.record.name) == 0;
+    return false;
+}
+
+static Bool declares_type(const ast::Decl *target) {
+    if (target->kind != .function) {
+        return false;
+    }
+    if (!returns_type(target->kind.function.result)) {
+        return false;
+    }
+    const ast::Stmt *body = target->kind.function.body;
+    if (block_size(body) == 0) {
+        return false;
+    }
+    const ast::Stmt *last = block_item(body, block_size(body) - 1);
+    return declares_unnamed(last);
 }
 
 // The body of `function` against `signature`: the parameters in a scope of their own, then the body.
-static void check_function(types::Checked *r, const ast::Decl *function, types::TypeRef signature) {
-    if (function->kind != .function) {
+static void check_function(types::Checked *r, const ast::Decl *target, types::TypeRef signature) {
+    if (target->kind != .function) {
         return;
     }
-    Str name = function->kind.function.name;
-    ast::Param params[:] = function->kind.function.params;
+    Str name = target->kind.function.name;
+    ast::Param params[:] = target->kind.function.params;
     types::push_scope(&r->scopes);
     for (Usize i = 0; i < countof(params) && i < countof(signature->slots); i++) {
         Bool is_const = params[i].type != nullptr && params[i].type->qualifiers.is_const;
@@ -1819,13 +1941,13 @@ static void check_function(types::Checked *r, const ast::Decl *function, types::
         r->new_body = r->new_body || params[i].is_new;
     }
     types::TypeRef outer_generator = state.generator;
-    state.generator = types_stream::generator_element(signature->element, function->kind.function.body);
+    state.generator = types_stream::generator_element(signature->element, target->kind.function.body);
     types::TypeRef returned = signature->element;
-    if (returns_type(function->kind.function.result))
+    if (returns_type(target->kind.function.result))
         returned = types::builtin(&r->table, "type"); // a type function returns a type value
-    walk(r, function->kind.function.body, state.generator != nullptr ? r->table.void_type : returned);
+    walk(r, target->kind.function.body, state.generator != nullptr ? r->table.void_type : returned);
     state.generator = outer_generator;
-    types_fn::check_once(r, params, function->kind.function.body);
+    types_fn::check_once(r, params, target->kind.function.body);
     types::pop_scope(&r->scopes);
     drain(r);
 }
