@@ -76,16 +76,14 @@ export void test_format_space_operand_tables() {
 }
 
 // The tokens of source joined by the rule, the way a driver walks a line. A lexing error is the result.
-static Str joined(Str source) {
-    lex::Lexed lexed = lex::tokenize_new(source);
-    if (lexed == .error) return lexed.error.message;
+static Str joined_tokens(Str source, lex::Tokens tokens) {
     char shown[:] = format::push("");
     lex::TokenKind before = lex::newline;
     lex::TokenKind prev = lex::newline;
     Bool open_bracket[32] = {};
     Usize depth = 0;
     Bool prev_unary = false;
-    for (lex::Token token : lexed.ok) {
+    for (lex::Token token : tokens) {
         if (token.kind == lex::end_of_file) break;
         format_space::SpaceContext context = {.prev_unary = prev_unary,
                                               .in_brackets = depth > 0 && open_bracket[depth - 1]};
@@ -106,6 +104,17 @@ static Str joined(Str source) {
     }
     Str result = shown[0:countof(shown)];
     return result;
+}
+
+static Str joined(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .error:
+        return lexed.error.message;
+    case .ok:
+        lex::Tokens tokens = lexed.ok;
+        return joined_tokens(source, tokens);
+    }
 }
 
 static void expect_line(Str line) {

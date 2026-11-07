@@ -21,15 +21,15 @@ import std::mem;
 
 // The flags of the harnesses: the sanitizers, the includes of the library and of the raw lowering of two modules, and
 // the files every harness links.
-constexpr char cc_flags[_] = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
-                             "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
+static const char *const cc_flags = "-std=gnu23 -g -O0 -fsanitize=address,undefined -fno-sanitize-recover=all "
+                                    "-ftrivial-auto-var-init=pattern -I \"$SMITH_REPO/.smith/include\" -I lowered -w";
 
 // The three files every harness links (trace, contract and the optimization barriers that std::random and std::math
 // call, #2303), compiled once for each smith under test and each content of the sources, into
 // $SMITH_TEST_CACHE/prove-sound/<key>/ (#967): built in a folder of their own, moved into place by a rename, so
 // tests that start together build them at most a few times and never read half an object. The command prints the
 // folder.
-constexpr char common_script[_] =
+static const char *const common_script =
     "c=\"$SMITH_TEST_CACHE/prove-sound\"; r=\"$SMITH_REPO\"; s=$(command -v smith); "
     "id=$(stat -L -c %s.%Y \"$s\" 2>/dev/null || stat -L -f %z.%m \"$s\"); "
     "k=$( (cat \"$r/lib/trace.c\" \"$r/lib/optimize_asm.c\" \"$r/lib/std/contract.smith\" "
@@ -85,15 +85,15 @@ static const char *directive(arena::Arena *memory, const char *text, const char 
             const char *value = line + prefix_length;
             Usize value_length = length - prefix_length;
             while (value_length > 0 && *value == ' ') {
-                value++;
+                value = value + 1;
                 value_length--;
             }
             char *copy = arena::push_slice(memory, char, value_length + 1).data;
             mem::copy(copy[0:value_length], value[0:value_length]);
             joined = format::push(joined, " ", copy).data;
         }
-        line += length;
-        if (*line == '\n') line++;
+        line = line + length;
+        if (*line == '\n') line = line + 1;
     }
     return joined;
 }
@@ -249,8 +249,8 @@ static void unsound(const char *name) {
             test::check_not_equal(run.status, 0);
             scratch::expect_contains(function, run.out, expected);
         }
-        line += length;
-        if (*line == '\n') line++;
+        line = line + length;
+        if (*line == '\n') line = line + 1;
     }
 }
 

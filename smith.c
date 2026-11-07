@@ -1312,6 +1312,128 @@ static const SmithLibrary smith_libraries[] = {
 #include "runtime/quiet.c"
 // The host-wide slots that limit heavy jobs, so that local work cannot starve CI.
 #include "runtime/slots.c"
+// `--time` and SMITH_TIME=1 (#2681): where the time goes, printed to stderr after the normal output as
+// `time: <phase> <ms> ms`, nested phases indented. One monotonic clock read per phase, and none at all when it is off.
+// The environment variable reaches every compile a build runs; the flag only sets it (smith_time_flag).
+constexpr size_t smith_time_phases_max = 16;
+constexpr size_t smith_time_steps_max = 10;
+constexpr size_t smith_time_text_max = 160;
+constexpr uint64_t smith_time_ns_per_ms = 1'000'000;
+
+typedef struct {
+    const char *name;
+    int depth;
+    uint64_t nanoseconds;
+} SmithTimePhase;
+
+typedef struct {
+    char text[smith_time_text_max]; // "compile .c  runtime/slots.c"
+    uint64_t nanoseconds;
+} SmithTimeStep;
+
+static struct {
+    SmithTimePhase phases[smith_time_phases_max];
+    size_t phase_count;
+    SmithTimeStep slowest[smith_time_steps_max]; // longest first
+    size_t slowest_count;
+    size_t steps;
+    uint64_t steps_nanoseconds;
+    size_t cached;
+    uint64_t cached_nanoseconds;
+    uint64_t plan_nanoseconds; // the executor's, summed over the manifests it ran, until a build takes it
+    uint64_t steps_run_nanoseconds;
+    uint64_t front_nanoseconds; // `smith cc`: the new front end's share of the command
+} smith_time_state;
+
+static bool smith_time_on(void) {
+    static int state = 0; // 0 not read, 1 off, 2 on
+    if (state == 0) {
+        const char *value = getenv("SMITH_TIME");
+        state = value != nullptr && *value != '\0' && strcmp(value, "0") != 0 ? 2 : 1;
+    }
+    return state == 2;
+}
+
+// The monotonic clock in nanoseconds; 0 when timing is off, so a phase costs nothing then.
+static uint64_t smith_time_now(void) {
+    if (!smith_time_on()) return 0;
+    struct timespec now = {};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1'000'000'000 + (uint64_t)now.tv_nsec;
+}
+
+static uint64_t smith_time_since(uint64_t start) {
+    return smith_time_on() ? smith_time_now() - start : 0;
+}
+
+static void smith_time_phase(const char *name, int depth, uint64_t nanoseconds) {
+    if (!smith_time_on() || smith_time_state.phase_count >= smith_time_phases_max) return;
+    smith_time_state.phases[smith_time_state.phase_count++] = (SmithTimePhase){name, depth, nanoseconds};
+}
+
+// One step of the executor: the slowest are kept, longest first, and the steps the step cache served are counted apart.
+static void smith_time_step(const char *kind, const char *what, uint64_t nanoseconds, bool cached) {
+    if (!smith_time_on()) return;
+    smith_time_state.steps += 1;
+    if (cached) {
+        smith_time_state.cached += 1;
+        smith_time_state.cached_nanoseconds += nanoseconds;
+        return;
+    }
+    smith_time_state.steps_nanoseconds += nanoseconds;
+    size_t at = smith_time_state.slowest_count;
+    while (at > 0 && smith_time_state.slowest[at - 1].nanoseconds < nanoseconds) // bounded by the list
+        at -= 1;
+    if (at >= smith_time_steps_max) return;
+    size_t last = smith_time_state.slowest_count < smith_time_steps_max ? smith_time_state.slowest_count
+                                                                        : smith_time_steps_max - 1;
+    for (size_t i = last; i > at; i--) // bounded by the list
+        smith_time_state.slowest[i] = smith_time_state.slowest[i - 1];
+    SmithTimeStep *step = &smith_time_state.slowest[at];
+    step->nanoseconds = nanoseconds;
+    snprintf(step->text, sizeof step->text, "%s: %s", kind, what);
+    if (smith_time_state.slowest_count < smith_time_steps_max) smith_time_state.slowest_count += 1;
+}
+
+static void smith_time_line(FILE *out, int depth, const char *name, uint64_t nanoseconds) {
+    fprintf(out, "time: %*s%s %.1f ms\n", depth * 2, "", name, (double)nanoseconds / (double)smith_time_ns_per_ms);
+}
+
+// The report: each phase, the slowest steps, the steps the cache served, then the total.
+static void smith_time_report(uint64_t total_nanoseconds) {
+    if (!smith_time_on()) return;
+    fflush(stdout);
+    for (size_t i = 0; i < smith_time_state.phase_count; i++) // bounded by the table
+        smith_time_line(stderr, smith_time_state.phases[i].depth, smith_time_state.phases[i].name,
+                        smith_time_state.phases[i].nanoseconds);
+    for (size_t i = 0; i < smith_time_state.slowest_count; i++) { // bounded by the list
+        char name[smith_time_text_max + 8];
+        snprintf(name, sizeof name, "step %s", smith_time_state.slowest[i].text);
+        smith_time_line(stderr, 2, name, smith_time_state.slowest[i].nanoseconds);
+    }
+    if (smith_time_state.steps > 0)
+        fprintf(stderr,
+                "time: %zu steps ran for %.1f ms in all (the %zu slowest above), %zu served from the step cache\n",
+                smith_time_state.steps - smith_time_state.cached,
+                (double)smith_time_state.steps_nanoseconds / (double)smith_time_ns_per_ms,
+                smith_time_state.slowest_count, smith_time_state.cached);
+    smith_time_line(stderr, 0, "total", total_nanoseconds);
+}
+
+// `--time` on cc, c++, build and test (and the compiler links): drop it and set SMITH_TIME, which every compile of the
+// build inherits. Only the verb's own arguments are read, up to a `--`.
+static void smith_time_flag(int *argc, char **argv, int first) {
+    for (int i = first; i < *argc; i++) { // bounded by argc
+        if (strcmp(argv[i], "--") == 0) return;
+        if (strcmp(argv[i], "--time") != 0) continue;
+        setenv("SMITH_TIME", "1", 1);
+        for (int j = i; j < *argc; j++) // bounded by argc
+            argv[j] = argv[j + 1];
+        *argc -= 1;
+        i -= 1;
+    }
+}
+
 // The files, the clock and the memory the executor and `smith mcp` use: plain libc calls.
 #include "runtime/world.c"
 // The executor that runs the build graph, in place of ninja.
@@ -2318,8 +2440,29 @@ static void smith_build_effects_argument(const char *self, char *out, size_t cap
 
 // verb is nullptr for `smith build`, and the project verb that runs this build otherwise (runtime/verbs.c passes
 // nullptr: its targets are smith's own, smith_needs, smith_tests and smith_info, and the files a lint needs).
-static int smith_build_main(int count, char **args, const char *self, const char *verb) {
+// The build program's two runs: compile build.c and run it (it writes the manifest), then the project's manifest.
+static int smith_build_run_manifests(const SmithExecOptions *options, char **program_argv) {
+    SmithIo io = smith_io_make(0, nullptr);
+    SmithExecOptions program_options = {.jobs = options->jobs, .failures_allowed = 1, .quiet = true};
+    uint64_t mark = smith_time_now();
+    int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
+    smith_time_phase("compile the build file (or served from the cache)", 0, smith_time_since(mark));
+    smith_time_state.plan_nanoseconds = 0; // what follows is the project's own manifest
+    smith_time_state.steps_run_nanoseconds = 0;
+    mark = smith_time_now();
+    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
+    smith_time_phase("run the build file and write the manifest", 0, smith_time_since(mark));
+    if (status != 0) return status;
+    status = smith_exec_run(&io, ".smith/build.ninja", options);
+    smith_time_phase("plan (read the logs, stat the files, decide what is dirty)", 0,
+                     smith_time_state.plan_nanoseconds);
+    smith_time_phase("run the steps", 0, smith_time_state.steps_run_nanoseconds);
+    return status;
+}
+
+static int smith_build_main_timed(int count, char **args, const char *self, const char *verb) {
     SMITH_ASSERT(count >= 0);
+    uint64_t mark = smith_time_now();
     if (verb == nullptr && count == 1 && strcmp(args[0], "--dump-config") == 0) return smith_build_dump_config();
     if ((size_t)count <= smith_build_args_max && verb == nullptr) smith_build_refuse_verbs(count, args);
     SmithBuildFile file = smith_build_file();
@@ -2370,12 +2513,16 @@ static int smith_build_main(int count, char **args, const char *self, const char
 #endif
     smith_build_prepare(self, clang, in_process, file);
     if (use_ninja) return smith_build_with_ninja(ninja, ninja_argv, program_argv);
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExecOptions program_options = {.jobs = options.jobs, .failures_allowed = 1, .quiet = true};
-    int status = smith_exec_run(&io, ".smith/build-program/build.ninja", &program_options);
-    if (status == 0) status = smith_build_spawn(program_argv[0], program_argv);
-    if (status != 0) return status;
-    return smith_exec_run(&io, ".smith/build.ninja", &options);
+    smith_time_phase("prepare (find the build file, write the files the build needs)", 0, smith_time_since(mark));
+    return smith_build_run_manifests(&options, program_argv);
+}
+
+// `smith build`, with `--time`'s report after it (#2681).
+static int smith_build_main(int count, char **args, const char *self, const char *verb) {
+    uint64_t begin = smith_time_now();
+    int status = smith_build_main_timed(count, args, self, verb);
+    smith_time_report(smith_time_since(begin));
+    return status;
 }
 
 // `smith --smith-exec <manifest> [flags and targets]` runs any manifest the executor reads, as ninja would, in the
@@ -3624,7 +3771,7 @@ static int smith_headers_main(int count, char **args) {
 // The compiler: `smith cc <args>` and `smith c++ <args>`, and the links smith-cc and smith-c++, which act as them by
 // their name. The program is argv[at]; --smith-which, when it comes first, names the compiler without running it,
 // and --smith-header, --smith-lower and --smith-tree-sitter are the .smith helpers.
-static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
+static int smith_compile_run(int argc, char **argv, int at, bool plus, const char *self) {
     SMITH_ASSERT(at >= 0 && at < argc);
     int first = at + 1;
     // The .smith helpers that need no compiler run: --smith-header writes a module's header, --smith-lower prints a
@@ -3646,7 +3793,9 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
     char **args = argv + first;
 #ifndef SMITH_CORE
     if (!which && smith_front_requested(count, args)) { // experimental, off by default (runtime/front_flag.c)
+        uint64_t front_mark = smith_time_now();
         int forwarded = smith_front_rewrite(argv, first, count, args, self);
+        smith_time_state.front_nanoseconds = smith_time_since(front_mark);
         if (forwarded <= 0) return forwarded < 0 ? 1 : 0;
         argv = smith_front_arguments;
         argc = forwarded;
@@ -3673,6 +3822,25 @@ static int smith_compile_main(int argc, char **argv, int at, bool plus, const ch
         return smith_route_clang(argc, argv, first, which, plus, self);
     }
     return smith_exit_missing;
+}
+
+// `smith cc`, with `--time`'s report after it (#2681). Through the new front end the front end printed its own stages;
+// the rest of the command is clang's. Through the old path the whole compile is one phase. A compile that hands the
+// process to an external clang (SMITH_CLANG) never comes back to print.
+static int smith_compile_main(int argc, char **argv, int at, bool plus, const char *self) {
+    uint64_t begin = smith_time_now();
+    int status = smith_compile_run(argc, argv, at, plus, self);
+    uint64_t total = smith_time_since(begin);
+    if (!smith_time_on()) return status;
+    if (smith_time_state.front_nanoseconds > 0) {
+        smith_time_line(stderr, 0, "front end with its setup (the stages above, and the std sources)",
+                        smith_time_state.front_nanoseconds);
+        smith_time_line(stderr, 0, "clang (the rest of the command)", total - smith_time_state.front_nanoseconds);
+    } else {
+        smith_time_line(stderr, 0, "compile (the old path: one phase)", total);
+    }
+    smith_time_line(stderr, 0, "total", total);
+    return status;
 }
 
 // Whether every argument is a -D option of the build, which neither clang-format nor clang-tidy has (none is true).
@@ -4163,10 +4331,14 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     // compile_commands.json. So do the driver's own, bin/clang and bin/clang++ of the programs folder, which it runs
     // again with -cc1.
     if (strcmp(name, "llvm-symbolizer") == 0) return smith_llvm_symbolizer_main(argc, argv);
-    if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0)
+    if (strcmp(name, "smith-cc") == 0 || strcmp(name, "clang") == 0) {
+        smith_time_flag(&argc, argv, 1);
         return smith_compile_main(argc, argv, 0, false, self);
-    if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0)
+    }
+    if (strcmp(name, "smith-c++") == 0 || strcmp(name, "clang++") == 0) {
+        smith_time_flag(&argc, argv, 1);
         return smith_compile_main(argc, argv, 0, true, self);
+    }
     if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
         smith_help_list(stdout);
         return 0;
@@ -4189,6 +4361,9 @@ static int smith_main_route(int argc, char **argv, const char *self) {
     if (strcmp(argv[1], "--smith-slots") == 0) return smith_slots_main(argc - 2, argv + 2);
     const SmithVerb *verb = smith_find_verb(argv[1]);
     if (verb == nullptr) smith_bare_arguments(argc, argv);
+    if (strcmp(verb->name, "cc") == 0 || strcmp(verb->name, "c++") == 0 || strcmp(verb->name, "build") == 0 ||
+        strcmp(verb->name, "test") == 0)
+        smith_time_flag(&argc, argv, 2);
     if (smith_help_requested(verb, argc - 2, argv + 2)) {
         smith_help_page(verb, stdout); // before anything builds or runs
         return 0;

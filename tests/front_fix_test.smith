@@ -271,8 +271,128 @@ export void test_a_top_level_if_constexpr_becomes_when() {
                    "    import <sys/types.h>;\n    int a = 1;\n} else if constexpr (target::os == target::linux) {\n"
                    "    int a = 2;\n} else {\n    int a = 3;\n}\nint after = 4;\n");
     check_text(fixed.text, "\n@when(target.os == .macos)\nimport c <sys/types.h>\n@when(target.os == .macos)\n"
-                           "mut a: i32 = 1\n@when(target.os != .macos && target.os == .linux)\nmut a: i32 = 2\n"
-                           "@when(target.os != .macos && target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
+                           "mut a: i32 = 1\n@when(target.os != .macos and target.os == .linux)\nmut a: i32 = 2\n"
+                           "@when(target.os != .macos and target.os != .linux)\nmut a: i32 = 3\nmut after: i32 = 4\n");
+}
+
+// A declaration of the block that has a fix of its own to apply first (a struct member that is a function pointer)
+// left the block with no `@when` for it: the block waits for the next pass, which reads it whole (lib/std/net.smith).
+export void test_a_declaration_with_its_own_fix_in_an_if_constexpr_still_gets_its_when() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "if constexpr (target::os == target::macos) {\n    typedef struct {\n"
+                                                "        I32 (*f)(void *x);\n    } Api;\n}\n");
+    test::check_condition(fixed.text[0] == '@');
+}
+
+static Bool contains_text(const char text[:], const char *word) {
+    Usize n = 0;
+    while (word[n] != 0)
+        n += 1;
+    for (Usize i = 0; i + n <= countof(text); i++) {
+        Usize k = 0;
+        while (k < n && text[i + k] == word[k])
+            k += 1;
+        if (k == n) return true;
+    }
+    return false;
+}
+
+// The same with two branches: the failed declaration of the else branch is written with its `@when` too, so the
+// block is mended in one pass and no `else:` is left beside a brace.
+export void test_a_two_branch_if_constexpr_with_a_failed_declaration_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "if constexpr (target::os == target::macos) {\n    constexpr U64 b = 1;\n} else {\n"
+                                 "    constexpr U64 a = 1 << 7; // a peer\n    typedef struct {\n"
+                                 "        void (*clear)();\n    } Api;\n}\n");
+    test::check_condition(!contains_text(fixed.text, "constexpr"));
+    test::check_condition(!contains_text(fixed.text, "else"));
+}
+
+// `export` on a line of its own, then an attribute and the declaration: the text of the attribute took the next line,
+// leaving `pub` alone before an indented `fn` that never read (runtime/io.smith `make`).
+export void test_an_attribute_on_the_line_after_export_joins_it() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "export\n    [[nodiscard]] Io make(I32 a) {\n    return io;\n}\n");
+    check_text(fixed.text, "pub fn make(a: i32) -> Io:\n    return io\n");
+}
+
+// An empty or positional compound literal left in a text that already reads as the indented syntax (a `#` comment makes
+// the old reader refuse it) is mended by the new reader (lib/std/task.smith `init_task`).
+export void test_an_empty_compound_literal_in_the_indented_syntax_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "fn f(task: *Task):\n    task.* = (Task){} # reset\n    x = (P){1, 2}\n");
+    check_text(fixed.text, "fn f(task: *Task):\n    task.* = Task() # reset\n    x = P(1, 2)\n");
+}
+
+// A cast whose type only had its name lowered by an earlier pass, `(usize)c::f(n)`, is a cast to the new reader too:
+// the declaration around it stayed unmended (lib/std/task.smith `make_task`).
+export void test_a_cast_to_a_lowered_builtin_type_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "fn f(n: i32):\n    usize page = (usize)g(n); # a\n");
+    check_text(fixed.text, "fn f(n: i32):\n    page: usize = g(n).to(usize) # a\n");
+}
+
+// Two statements on a line: the `;` after a declaration separates them and stays, or they ran together as
+// `x: u32 = 1 return x` (tests/build_fixtures/neovim/project/main.smith).
+export void test_a_declaration_followed_by_a_statement_on_its_line_keeps_the_separator() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "I32 f() { U32 x = 1; return x; }\n");
+    check_text(fixed.text, "fn f() -> i32:\n    x: u32 = 1; return x.to(i32)\n");
+}
+
+// A cast to a named type, and one to a function type with a result, `(fn() -> i32)(usize)address`, left by a pass that
+// only mended the types around them (tests/front_emit_float_test.smith, tests/front_emit_test.smith).
+export void test_a_cast_to_a_named_or_function_type_is_mended_in_the_indented_syntax() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed named = fix::fix_text("t.smith", "fn f(n: usize):\n    t: ToInt = (ToInt)g(n) # a\n");
+    check_text(named.text, "fn f(n: usize):\n    t: ToInt = g(n).to(ToInt) # a\n");
+}
+
+// A capitalized name that ends a line is a value, not the type of a declaration whose name never came: `else: Other`
+// as the last of a function (tests/skills_test.smith `block_of`).
+export void test_a_capitalized_value_ending_an_if_expression_is_no_declaration() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed parsed = fix::parse_for_fix(
+        "t.smith",
+        "fn f(a: i32) -> i32:\n    return if a == 0: 1 else: Other\n\nstatic fn g() -> i32:\n    return 2\n");
+    test::check_equal(countof(parsed.errors), 0);
+}
+
+// A cast to a pointer to const of an address, `(const char *)&x`, was read in the second pass as a type and a bit-and:
+// the type was mended and the cast never (lib/std/net.smith `symbol`).
+export void test_a_cast_to_a_const_pointer_of_an_address_is_mended() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "void f(I32 x) {\n    put((const char *)&x);\n}\n");
+    check_text(fixed.text, "fn f(x: i32):\n    put((&x).cast(*char))\n");
 }
 
 // Two `else if` branches with `&&` conditions: the second chain frame used to share the first one's list of earlier
@@ -287,11 +407,11 @@ export void test_a_chain_of_two_else_if_constexpr_with_and_becomes_when() {
         "    int a = 3;\n} else {\n    int a = 4;\n}\nint after = 5;\n");
     check_text(fixed.text,
                "\n@when(target.os == .macos)\nmut a: i32 = 1\n"
-               "@when(target.os != .macos && target.arch == .aarch64 && target.os == .linux)\nmut a: i32 = 2\n"
-               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
-               "target.arch == .x86_64 && target.os == .linux)\nmut a: i32 = 3\n"
-               "@when(target.os != .macos && !(target.arch == .aarch64 && target.os == .linux) && "
-               "!(target.arch == .x86_64 && target.os == .linux))\nmut a: i32 = 4\nmut after: i32 = 5\n");
+               "@when(target.os != .macos and target.arch == .aarch64 and target.os == .linux)\nmut a: i32 = 2\n"
+               "@when(target.os != .macos and not (target.arch == .aarch64 and target.os == .linux) and "
+               "target.arch == .x86_64 and target.os == .linux)\nmut a: i32 = 3\n"
+               "@when(target.os != .macos and not (target.arch == .aarch64 and target.os == .linux) and "
+               "not (target.arch == .x86_64 and target.os == .linux))\nmut a: i32 = 4\nmut after: i32 = 5\n");
 }
 
 // `target::arch == target::aarch64` is `target.arch == .aarch64` and the `else` is its `!=` (#2142).
@@ -315,7 +435,7 @@ export void test_a_top_level_if_constexpr_on_a_constant_becomes_when() {
     fix::Fixed fixed = fix::fix_text("t.smith", "constexpr bool wide = true;\n\nif constexpr (wide) {\n"
                                                 "    int a = 1;\n} else {\n    int a = 2;\n}\n");
     check_text(fixed.text, "const wide: bool = true\n\n@when(wide)\nmut a: i32 = 1\n"
-                           "@when(!(wide))\nmut a: i32 = 2\n");
+                           "@when(not (wide))\nmut a: i32 = 2\n");
 }
 
 // In a file in smith's own syntax a top-level `if constexpr` is an error (#2142); a condition that is not about the
@@ -666,4 +786,77 @@ export void test_a_call_statement_with_an_unused_result_is_discarded() {
     check_text(fixed.text, "static fn f(x: i32) -> i32:\n    return x\nstatic fn g(x: i32):\n    _ := f(x)\n");
     fix::Fixed again = fix::fix_text("t.smith", fixed.text);
     check_text(again.text, fixed.text);
+}
+
+// A C `for` with several steps and no init is a `while`: the steps run at the end of the body, one to a line. (With
+// an init, front::fix_blocks writes the loop from the text.)
+export void test_a_for_with_comma_steps_becomes_a_while() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith",
+        "module m;\nstatic void g(int a, int b) {\n    for (; a < b; a++, b--) {\n        g(a, b);\n    }\n}\n");
+    test::check_condition(contains_text(fixed.text, "while"));
+    test::check_condition(!contains_text(fixed.text, "for "));
+    test::check_condition(contains_text(fixed.text, "b -= 1"));
+}
+
+// A compound literal of a tuple type is the tuple's own value: `(struct { I32, F32 }){1, 2.0f}` is `(1, 2.0f)`.
+export void test_a_compound_literal_of_a_tuple_type_is_a_tuple_value() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "module m;\nstatic struct { I32, F32 } make() {\n    return (struct { I32, F32 }){1, 2.0f};\n}\n");
+    test::check_condition(contains_text(fixed.text, "(1, 2.0f)"));
+    test::check_condition(!contains_text(fixed.text, "{"));
+}
+
+// An `if constexpr` inside a branch of another one: its declarations are under both conditions, one `@when` each.
+export void test_a_nested_if_constexpr_is_mended_with_both_conditions() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "module m;\nif constexpr (target::os == target::macos) {\n    if constexpr (target::arch == "
+                   "target::aarch64) {\n"
+                   "        Bool g() {\n            return true;\n        }\n    } else {\n        Bool g() {\n"
+                   "            return false;\n        }\n    }\n}\n");
+    test::check_condition(!contains_text(fixed.text, "constexpr"));
+    test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch == .aarch64)"));
+    test::check_condition(contains_text(fixed.text, "@when(target.os == .macos and target.arch != .aarch64)"));
+}
+
+// `&&` written with no blank after it is `and` with one: `andarena` is not a word the lexer reads as two.
+export void test_logical_and_glued_to_its_operand_keeps_a_blank() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Bool f(Bool a, Bool b) {\n    return a &&b;\n}\n");
+    test::check_condition(contains_text(fixed.text, "a and b"));
+}
+
+// The text `smith lint --fix lib/std/format.smith` segfaulted on: the body of a function that did not read, left as
+// top-level `if constexpr` blocks, one of them with no condition. The fix reads no condition that is not there.
+export void test_a_top_level_block_whose_condition_did_not_read_does_not_crash() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "[[std::c_name(\"a\")]] export void put_bytes(Writer *writer, const char text[:]) {\n"
+                                 "    for (Usize i = 0; i < countof(text); i++) {\n    }\n}\n"
+                                 "[[std::c_name(\"b\")]] export void put_hex(Writer *writer, Hex hex) {\n"
+                                 "    for (Usize place = 0; place < 16; place++) {\n    }\n}\n"
+                                 "[[std::c_name(\"c\")]] export typedef struct {\n    if constexpr (T == F32) {\n"
+                                 "        return read_f32(word);\n    } else if constexpr (T == F64) {\n"
+                                 "        if (!m.ok) return {.error = m.error};\n"
+                                 "        if (m.value > (m.negative ? half : half - 1)) return {.error = Range};\n"
+                                 "        if (m.value > high) return {.error = Range};\n    }\n}\n");
+    test::check_condition(countof(fixed.text) > 0);
 }

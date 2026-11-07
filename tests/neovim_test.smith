@@ -21,7 +21,7 @@ import scratch;
 
 // The scratch home: the fixture (a project, a folder with a .smith file alone, and a nvim-dap that is only a table)
 // and the compile database of the project.
-constexpr char setup[_] =
+static const char *const setup =
     "d=$PWD; mkdir -p data config state cache home new empty-data && "
     "printf "
     "'[{\"directory\":\"%s\",\"file\":\"main.smith\",\"arguments\":[\"smith-cc\",\"-x\",\"c\",\"-c\",\"main.smith\"]}]"
@@ -34,13 +34,14 @@ constexpr char setup[_] =
 // so no test builds it. The projects smith new writes (no build file; the plugin finds them by their main), made only
 // for the tests that read them: a C one that builds (hello), a C one whose main.c does not compile (broken), and one of
 // the default language (fresh).
-constexpr char make_new[_] =
+static const char *const make_new =
     "mk() { smith new \"$@\" >new.log 2>&1 || { echo \"smith new $*: failed\" >&2; tail -n 40 new.log >&2; return 1; "
     "}; }; ";
 
-constexpr char make_hello[_] = "(cd new && mk --language c hello)";
-constexpr char make_broken[_] = "(cd new && mk --language c broken && printf 'this is an error\\n' >>broken/main.c)";
-constexpr char make_fresh[_] = "(cd new && mk fresh)";
+static const char *const make_hello = "(cd new && mk --language c hello)";
+static const char *const make_broken =
+    "(cd new && mk --language c broken && printf 'this is an error\\n' >>broken/main.c)";
+static const char *const make_fresh = "(cd new && mk fresh)";
 
 // Whether the test `name` is `other`.
 static Bool is(const char *name, const char *other) {
@@ -53,8 +54,17 @@ static const char *setup_for(const char *name) {
              is(name, "neotest_is_test_file") || is(name, "neotest_discover_c") || is(name, "neotest_build_spec");
     Bool b = is(name, "dap_build_fails");
     Bool f = is(name, "dap_default_project");
-    return format::push(setup, a || b || f ? "; " : "", a || b || f ? make_new : "", a ? make_hello : "",
-                        a && (b || f) ? " && " : "", b ? make_broken : "", b && f ? " && " : "", f ? make_fresh : "")
+    Str new_text = make_new[0:c::strlen(make_new)];
+    Str hello_text = make_hello[0:c::strlen(make_hello)];
+    Str broken_text = make_broken[0:c::strlen(make_broken)];
+    Str fresh_text = make_fresh[0:c::strlen(make_fresh)];
+    Str none = "";
+    Str semicolon = "; ";
+    Str and_then = " && ";
+    Str setup_text = setup[0:c::strlen(setup)];
+    return format::push(setup_text, a || b || f ? semicolon : none, a || b || f ? new_text : none,
+                        a ? hello_text : none, a && (b || f) ? and_then : none, b ? broken_text : none,
+                        b && f ? and_then : none, f ? fresh_text : none)
         .data;
 }
 

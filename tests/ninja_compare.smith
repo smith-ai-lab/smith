@@ -118,7 +118,11 @@ typeof(const char[:]) text_of(const U8 data[:]) {
 Text join(const char *const *items, Usize count, const char *separator) {
     Text out = format::push("");
     for (Usize i = 0; i < count; i++)
-        out = format::push(out, i > 0 ? separator : "", items[i]);
+        if (i > 0) {
+            out = format::push(out, separator, items[i]);
+        } else {
+            out = format::push(out, items[i]);
+        }
     return out;
 }
 
@@ -306,23 +310,28 @@ struct Result {
 // The numbers of runs.log, in order of value: the commands run do not have an order that has to match.
 void read_ran(Text folder, Result *result) {
     files::BytesResult log = files::read_file(in_folder(folder, "runs.log"));
-    if (log == .error) return;
-    I32 value = 0;
-    Bool in_number = false;
-    for (Usize i = 0; i <= countof(log.ok); i++) {
-        Bool digit = i < countof(log.ok) && log.ok[i] >= '0' && log.ok[i] <= '9';
-        if (digit) {
-            value = value * 10 + (I32)(log.ok[i] - '0');
-            in_number = true;
-        } else if (in_number && result->ran_count < ran_max) {
-            Usize at = result->ran_count++;
-            while (at > 0 && result->ran[at - 1] > value) {
-                result->ran[at] = result->ran[at - 1];
-                at--;
+    switch (log) {
+    case .error:
+        return;
+    case .ok:
+        files::Bytes bytes = log.ok;
+        I32 value = 0;
+        Bool in_number = false;
+        for (Usize i = 0; i <= countof(bytes); i++) {
+            Bool digit = i < countof(bytes) && bytes[i] >= '0' && bytes[i] <= '9';
+            if (digit) {
+                value = value * 10 + (I32)(bytes[i] - '0');
+                in_number = true;
+            } else if (in_number && result->ran_count < ran_max) {
+                Usize at = result->ran_count++;
+                while (at > 0 && result->ran[at - 1] > value) {
+                    result->ran[at] = result->ran[at - 1];
+                    at--;
+                }
+                result->ran[at] = value;
+                value = 0;
+                in_number = false;
             }
-            result->ran[at] = value;
-            value = 0;
-            in_number = false;
         }
     }
 }
@@ -335,9 +344,16 @@ Result run_tool(Bool ninja, const char *smith, Text folder, const char *target) 
                                  nullptr};
     Result result = {};
     process::OutputResult done = process::run(argv[0:3]);
-    result.status = done == .ok ? done.ok.exit.status + 128 * (done.ok.exit.signal != 0) : 127;
-    result.said = format::push("");
-    if (done == .ok) result.said = format::push(text_of(done.ok.output));
+    switch (done) {
+    case .ok:
+        process::Output finished = done.ok;
+        result.status = finished.exit.status + 128 * (finished.exit.signal != 0);
+        result.said = format::push(text_of(finished.output));
+        break;
+    case .error:
+        result.status = 127;
+        result.said = format::push("");
+    }
     read_ran(folder, &result);
     return result;
 }
@@ -345,8 +361,13 @@ Result run_tool(Bool ninja, const char *smith, Text folder, const char *target) 
 // The text of a file, or nullptr when it is not there.
 Text contents(Text folder, const char *name) {
     files::BytesResult file = files::read_file(in_folder(folder, name));
-    if (file == .error) return format::push("(absent)");
-    return format::push(text_of(file.ok));
+    switch (file) {
+    case .error:
+        return format::push("(absent)");
+    case .ok:
+        files::Bytes bytes = file.ok;
+        return format::push(text_of(bytes));
+    }
 }
 
 Bool same(Text a, Text b) {
@@ -455,7 +476,13 @@ Text mutate(Rng *rng, Graph *graph, Text a, Text b, const char **target) {
 Bool have_ninja() {
     const char *const argv[3] = {"/bin/sh", "-c", "command -v ninja >/dev/null"};
     process::OutputResult found = process::run(argv[0:3]);
-    return found == .ok && found.ok.exit.status == 0;
+    switch (found) {
+    case .ok:
+        process::Output finished = found.ok;
+        return finished.exit.status == 0;
+    case .error:
+        return false;
+    }
 }
 
 // Runs one seed; true when ninja and the executor agreed at every step.

@@ -51,3 +51,4 @@ export void test_sorted_stays_sorted(random::Key key) { // a property test: runs
 - `test::golden(path, actual)` compares a text with a file in the project (`smith test --update` writes it): [smith-test-checks](../smith-test-checks/SKILL.md).
 
 Also in this family: [smith-test-modules](../smith-test-modules/SKILL.md), [smith-test-checks](../smith-test-checks/SKILL.md), [smith-test-workers](../smith-test-workers/SKILL.md), [smith-test-c](../smith-test-c/SKILL.md), [smith-build-tests](../smith-build-tests/SKILL.md).
+- A test that passed is not run again while nothing it depends on has changed: `smith test` caches each passing test by the content of its source, its imports and the files it read (#2686), reports `N cached`, and runs a failing test every time. A test that reads the clock, the network or a file without `std::files` needs a line `// smith-test: uncached`. `smith test --no-cache` runs everything: [smith-run-test](../smith-run-test/SKILL.md).

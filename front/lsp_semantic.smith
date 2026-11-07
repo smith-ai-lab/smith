@@ -280,6 +280,13 @@ static Entry name_entry(const Names *names, Str source, lex::Tokens tokens, Usiz
     return entry;
 }
 
+// `and`, `or` and `not` (D19) have the kinds of `&&`, `||` and `!`: a keyword to the editor when written as a word.
+static Bool is_logic_word(Str source, lex::Token token) {
+    if (token.kind != lex::ampersand_ampersand && token.kind != lex::pipe_pipe && token.kind != lex::bang) return false;
+    char first = source[token.span.start];
+    return first >= 'a' && first <= 'z';
+}
+
 // The entries of one token, if it makes any; `i` moves past a second token that joined it (an attribute's name).
 static void token_entry(Found *found, const Names *names, Str source, lex::Tokens tokens, Usize *i) {
     lex::Token token = tokens[*i];
@@ -297,7 +304,7 @@ static void token_entry(Found *found, const Names *names, Str source, lex::Token
         add_lines(found, source, token.span.start, token.span.end, number_type, 0);
     } else if (kind == lex::string || kind == lex::character) {
         add_lines(found, source, token.span.start, token.span.end, string_type, 0);
-    } else if (lex::is_keyword(kind)) {
+    } else if (lex::is_keyword(kind) || is_logic_word(source, token)) {
         add_lines(found, source, token.span.start, token.span.end, keyword_type, 0);
     }
 }

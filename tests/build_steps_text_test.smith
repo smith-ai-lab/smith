@@ -14,9 +14,9 @@ import std::test;
 
 constexpr Usize memory_size = 1U << 25; // a test's memory: what scratch returns goes back with it
 
+static char last_line_line[512];
 // The last line of a text without its trailing newlines, as `echo "$out" | tail -n 1` gives it.
 static const char *last_line(const char *text) {
-    static char line[512];
     Usize end = 0;
     while (text[end] != '\0') {
         end++;
@@ -28,10 +28,10 @@ static const char *last_line(const char *text) {
     while (start > 0 && text[start - 1] != '\n') {
         start--;
     }
-    Usize length = end - start < sizeof line - 1 ? end - start : sizeof line - 1;
-    mem::copy(line[0:length], text[start:start + length]);
-    line[length] = '\0';
-    return line;
+    Usize length = end - start < sizeof last_line_line - 1 ? end - start : sizeof last_line_line - 1;
+    mem::copy(last_line_line[0:length], text[start:start + length]);
+    last_line_line[length] = '\0';
+    return last_line_line;
 }
 
 static const char *present(const scratch::Project *p, const char *name) {

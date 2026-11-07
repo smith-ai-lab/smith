@@ -9,6 +9,14 @@ import std::arena;
 import std::mem;
 import std::test;
 
+static Bool contains(Str contents, Str piece) {
+    if (countof(piece) > countof(contents)) return false;
+    for (Usize i = 0; i + countof(piece) <= countof(contents); i += 1) {
+        if (mem::equal(contents[i:i + countof(piece)], piece)) return true;
+    }
+    return false;
+}
+
 export void test_front_fix_fn_alias_parses() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -21,4 +29,36 @@ export void test_front_fix_fn_alias_parses() {
     test::check_equal(countof(parsed.errors), (Usize)0);
     fix::Fixed second = fix::fix_text("t.smith", first.text);
     test::check_equal(second.applied, (Usize)0);
+}
+
+// A typedef in a block is an alias too (from #2668): `typedef I32 (*Flag)(I32);` inside a function is `Flag := fn(i32)
+// -> i32`, and the text parses.
+export void test_front_fix_fn_alias_in_a_block() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nexport I32 run(void *address) {\n    typedef I32 (*Flag)(I32);\n"
+                 "    Flag typed = (Flag)address;\n    return typed(1);\n}\n";
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_condition(contains(first.text, "    Flag := fn(i32) -> i32\n"));
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", first.text);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+}
+
+// Two function-pointer locals set to lambdas in a row (from the lambda-two case of tests/smith-lang): a pass that wrote
+// the type and the body but not the header left `Fn(I32 (I32)) add = [](I32 a): a;`, and a type written first
+// (`fn(i32) -> i32 mul = fn(a: i32): a`) read as a function with no name. Both go to `name: type = value`.
+export void test_front_fix_function_pointer_locals_set_to_lambdas() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str before = "module m;\nI32 run() {\n    I32 (*add)(I32) = [](I32 a) { return a; };\n"
+                 "    I32 (*mul)(I32) = [](I32 a) { return a; };\n    return add(1) + mul(2);\n}\n";
+    fix::Fixed fixed = fix::fix_text("t.smith", before);
+    test::check_condition(contains(fixed.text, "    add: fn(i32) -> i32 = fn(a: i32): a"));
+    test::check_condition(contains(fixed.text, "    mul: fn(i32) -> i32 = fn(a: i32): a"));
+    test::check_condition(!contains(fixed.text, "[]("));
+    test::check_condition(!contains(fixed.text, "Fn("));
 }

@@ -193,6 +193,11 @@ static Bool tight_before(lex::TokenKind prev, lex::TokenKind next) {
     }
 }
 
+// Whether the kind is a layout token (a line break or an indent change): no space goes next to it.
+export Bool is_layout_kind(lex::TokenKind kind) {
+    return is_layout(kind);
+}
+
 // Whether one space (true) or none (false) goes between a token of kind prev and the next one on the same line.
 export Bool space_between(lex::TokenKind prev, lex::TokenKind next, SpaceContext context) {
     if (is_layout(prev) || is_layout(next)) return false;

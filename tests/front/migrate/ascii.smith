@@ -4,12 +4,12 @@
 
 # A space, a tab, a newline or a carriage return.
 pub fn space(c: char) -> bool:
-    return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+    return c == ' ' or c == '\t' or c == '\n' or c == '\r'
 
 # A digit, 0 to 9.
 pub fn digit(c: char) -> bool:
-    return c >= '0' && c <= '9'
+    return c >= '0' and c <= '9'
 
 # A letter, a to z or A to Z.
 pub fn alpha(c: char) -> bool:
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z')

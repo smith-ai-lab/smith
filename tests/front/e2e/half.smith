@@ -10,7 +10,7 @@ pub fn check() -> i32:
     if (y.to(f32)) != 2.25:
         return 1
     let b: bf16 = 3.0
-    if !(b < ((4.0).to(bf16))) || scale(b).to(f32) != 6.0:
+    if not (b < ((4.0).to(bf16))) or scale(b).to(f32) != 6.0:
         return 2
     let wide: f32 = x
     if wide != 1.5:

@@ -9,28 +9,28 @@ module std::wrapping;
 // a + b, wrapped to the type of a.
 export typeof(a) add(Int a, typeof(a) b) {
     typeof(a) result = 0;
-    __builtin_add_overflow(a, b, &result);
+    (void)__builtin_add_overflow(a, b, &result);
     return result;
 }
 
 // a - b, wrapped to the type of a.
 export typeof(a) sub(Int a, typeof(a) b) {
     typeof(a) result = 0;
-    __builtin_sub_overflow(a, b, &result);
+    (void)__builtin_sub_overflow(a, b, &result);
     return result;
 }
 
 // a * b, wrapped to the type of a.
 export typeof(a) mul(Int a, typeof(a) b) {
     typeof(a) result = 0;
-    __builtin_mul_overflow(a, b, &result);
+    (void)__builtin_mul_overflow(a, b, &result);
     return result;
 }
 
 // -a, wrapped: the minimum of a signed type negates to itself.
 export typeof(a) neg(Int a) {
     typeof(a) result = 0;
-    __builtin_sub_overflow((typeof(a))0, a, &result);
+    (void)__builtin_sub_overflow((typeof(a))0, a, &result);
     return result;
 }
 
@@ -38,7 +38,7 @@ export typeof(a) neg(Int a) {
 export typeof(a) shl(Int a, U32 n) {
     typeof(a) result = 0;
     if (n < sizeof(a) * 8) {
-        __builtin_mul_overflow(a, (U64)1 << n, &result);
+        (void)__builtin_mul_overflow(a, (U64)1 << n, &result);
     }
     return result;
 }
@@ -46,6 +46,6 @@ export typeof(a) shl(Int a, U32 n) {
 // The low bits of x as a T, for any integer T and x: wrapping::to(U8, 300) is 44, wrapping::to(I8, 200) is -56.
 export T to(constexpr Type T, Int x) {
     T result = 0;
-    __builtin_add_overflow(x, 0, &result);
+    (void)__builtin_add_overflow(x, 0, &result);
     return result;
 }

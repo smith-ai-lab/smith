@@ -33,7 +33,8 @@ typedef struct {
     const BuildPlatform *platform; // what differs between macOS and Linux
     const char *cc;
     const char *const *cflags;
-    const char *binary; // the smith this build makes
+    const char *optimize; // the profile's level: -O0 for dev (the default), -O2 for release (-DPROFILE=release, #2684)
+    const char *binary;   // the smith this build makes
     const char *prefix;
     const char *werror;
     const char *llvm;    // the LLVM install smith links clang from, so that it compiles in its own process; else ""
@@ -164,6 +165,18 @@ static bool build_is_arm(SmithBuild *b) {
 
 static const BuildPlatform *build_platform(SmithBuild *b) {
     return build_is_linux(b) ? &build_platform_linux : &build_platform_macos;
+}
+
+// The build's profile (#2684): -DPROFILE=dev (the default) compiles smith's own C, C++ and .smith with -O0 -g, so an
+// edit-and-rebuild loop and CI's tests do not pay for the optimizer; -DPROFILE=release compiles everything with -O2 -g.
+// `smith build release` builds the release profile (build_release). The level is part of every compile's flags, so
+// the step cache never mixes the two. A step that is unusable unoptimized keeps its own level, with a comment.
+static const char *build_profile_optimize(SmithBuild *b) {
+    const char *profile = smith_option_value(b, "PROFILE", "dev", "dev (-O0, the default) or release (-O2)");
+    if (strcmp(profile, "release") == 0) return "-O2";
+    if (strcmp(profile, "dev") == 0) return "-O0";
+    fprintf(stderr, "smith: -DPROFILE=%s: the profiles are dev and release\n", profile);
+    exit(2);
 }
 
 // A make variable set with ?=: -DNAME=value, else the environment, else the fallback.
@@ -410,7 +423,7 @@ static const char *const *build_enzyme_libraries(SmithBuild *b, const BuildConfi
 static const char *const *build_shim_flags(SmithBuild *b, const BuildConfig *config) {
     return smith_cat(
         b,
-        (const char *[]){"-std=c++17", "-O1", "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
+        (const char *[]){"-std=c++17", config->optimize, "-g", "-Wall", "-Wextra", "-fno-exceptions", "-fno-rtti",
                          "-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-isystem",
                          smith_fmt(b, "%s/include", config->llvm), "-isystem", "shim/lldb", nullptr},
         smith_when(b, config->werror[0] != '\0', (const char *[]){config->werror, nullptr}),
@@ -526,7 +539,7 @@ typedef struct {
 
 static void build_prover(SmithBuild *b, const BuildConfig *config, const char *folder, BuildProver *prover) {
     const char *const flags_head[] = {"-std=c++20",
-                                      "-O1",
+                                      config->optimize,
                                       "-g",
                                       "-Wall",
                                       "-Wextra",
@@ -599,7 +612,8 @@ static const char *build_resource_pack(SmithBuild *b, const BuildConfig *config,
                                    nullptr};
     SmithStep program = {
         .command = smith_cat(
-            b, smith_list(b, config->cc, "-O1", "-w", "-I", "include", "-I", ".smith/include", nullptr), sources,
+            b, smith_list(b, config->cc, config->optimize, "-w", "-I", "include", "-I", ".smith/include", nullptr),
+            sources,
             smith_cat(b, config->platform->pack_libraries,
                       smith_list(b, "-o", smith_fmt(b, "%s/pack", folder), nullptr), nullptr),
             nullptr),
@@ -1449,6 +1463,7 @@ static const char *const *build_test(SmithBuild *b, const BuildConfig *config, c
                 "sh", "-c",
                 "work=${TMPDIR:-/tmp}/smith-text-$$.noindex; mkdir \"$work\"; trap 'rm -rf \"$work\"' "
                 "EXIT; export XDG_CACHE_HOME=$work/xdg-cache; "
+                // -O2 on purpose: the exhaustive search is only usable optimized (#2684)
                 "\"$0\" cc -std=gnu23 -O2 -Wall -Wextra -Werror -I include -I .smith/include tests/text_exhaustive.c "
                 "\"$1\" -pthread -o \"$work/exhaustive\" || exit 1; start=$(date +%s); "
                 "\"$work/exhaustive\"; status=$?; "
@@ -1491,9 +1506,27 @@ static void build_install(SmithBuild *b, const BuildConfig *config, const char *
 // `stage0-<commit>` and prunes the old ones. release/publish.smith (module release::publish, which replaced
 // scripts/release.sh, #1674) refuses unless HEAD is main's tip (or CI's push to main); the smith just built compiles it
 // first (`release-tool`, a program until the build can run a module itself, #1667). No test or install is an input:
-// CI's check and install jobs come first, and a failure here breaks neither.
-static void build_release(SmithBuild *b, const char *binary, const char *folder) {
+// CI's check and install jobs come first, and a failure here breaks neither. What it publishes is the release profile
+// (#2684, -O2): under the default dev profile the `release-binary` task builds it first, by a build of its own with
+// -DPROFILE=release in a folder of its own (`<build folder>-release`), so dev and release objects never mix.
+static const char *build_release_binary(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    if (strcmp(config->optimize, "-O2") == 0) return config->binary;
+    const char *release_folder = smith_fmt(b, "%s-release", folder);
+    const char *binary = smith_fmt(b, "%s/smith", release_folder);
+    SmithStep build = {
+        .command = smith_list(b, smith_env(b, "SMITH_SELF", "smith"), "build", "-DPROFILE=release",
+                              smith_fmt(b, "-DBUILD=%s", release_folder), binary, nullptr),
+        .description = "building the release profile (-O2)",
+    };
+    smith_task(b, "release-binary", &build);
+    return binary;
+}
+
+static void build_release(SmithBuild *b, const BuildConfig *config, const char *folder) {
+    const char *binary = build_release_binary(b, config, folder);
     const char *tool = smith_fmt(b, "%s/release", folder);
+    const char *const *built = strcmp(binary, config->binary) == 0 ? (const char *[]){binary, nullptr}
+                                                                   : (const char *[]){"release-binary", nullptr};
     SmithStep compile = {
         .command = smith_list(b, binary, "cc", "-w", "-I", "include", "-I", ".smith/include", "release/publish.smith",
                               "lib/std/files.smith", "lib/std/console.smith", "lib/std/format.smith",
@@ -1501,13 +1534,13 @@ static void build_release(SmithBuild *b, const char *binary, const char *folder)
                               "lib/std/text.smith", "lib/std/process.smith", "lib/std/clock.smith", "lib/handlers.c",
                               "lib/trace.c", "lib/optimize_asm.c", "-o", tool, nullptr),
         .description = "compiling the release tool",
-        .inputs = (const char *[]){binary, nullptr},
+        .inputs = built,
     };
     smith_task(b, "release-tool", &compile);
     SmithStep release = {
         .command = (const char *[]){tool, "publish", binary, nullptr},
         .description = "publishing the stage0 release",
-        .inputs = (const char *[]){binary, "release-tool", nullptr},
+        .inputs = smith_cat(b, built, (const char *[]){"release-tool", nullptr}, nullptr),
     };
     smith_task(b, "release", &release);
 }
@@ -3052,8 +3085,9 @@ static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, con
         .compiler = config->cc,
         .source = "tree-sitter/src/parser.c",
         .output = smith_fmt(b, "%s/tree-sitter-parser.o", folder),
-        .flags = smith_cat(b, smith_list(b, "-std=gnu11", "-O1", "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
-                           config->platform->deployment, nullptr),
+        .flags =
+            smith_cat(b, smith_list(b, "-std=gnu11", config->optimize, "-w", "-fPIC", "-I", "tree-sitter/src", nullptr),
+                      config->platform->deployment, nullptr),
         .implicit_inputs = generate.outputs,
     };
     smith_object(b, &parser);
@@ -3426,8 +3460,18 @@ static int build_frontend_coverage(SmithRun *run) {
     if (status != 0) return status;
     const char *tool = build_defer_tool(b, folder);
     // -Dfiles=a.smith,b.smith (#2309): only these files and what they import; the output names the chain of imports.
-    const char *files = run->args[1];
+    // -Dshard=<k>/<n> (#2697): shard k of n, the files whose path hashes to k - 1 modulo n and what they import; only
+    // their rows are written. -Dmerge=<table>,<table>... joins the tables of the shards and summarizes the result.
+    const char *shard = run->args[4];
+    const char *merge = run->args[5];
+    const char *files = shard[0] != '\0' ? smith_fmt(b, "shard:%s", shard) : run->args[1];
     const char *tree = smith_fmt(b, "%s/tree", work);
+    if (merge[0] != '\0') {
+        status = build_spawn(&(BuildSpawn){.argv = smith_list(b, tool, "merge", build_absolute(b, "."), merge, nullptr),
+                                           .log = results,
+                                           .stdout_only = true});
+        return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
@@ -3449,8 +3493,9 @@ static int build_frontend_coverage(SmithRun *run) {
         .log = results,
         .stdout_only = true});
     if (status != 0) return status;
-    return files[0] != '\0' ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
-                            : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
+    return files[0] != '\0' && shard[0] == '\0'
+               ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
+               : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
 }
 
 static void build_developer_tasks(SmithBuild *b, const char *binary) {
@@ -3478,6 +3523,10 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
             smith_option_value(b, "files", "", "frontend-coverage: only these files and what they import (#2309)"),
             smith_option_value(b, "all", "1", "frontend-coverage: every error of a file (always, #1922)"),
             smith_option_value(b, "jobs", "", "frontend-coverage: files compiled at once (default: the cores, #2420)"),
+            smith_option_value(b, "shard", "",
+                               "frontend-coverage: shard <k>/<n> of the files and what they import (#2697)"),
+            smith_option_value(b, "merge", "",
+                               "frontend-coverage: join the shards' results.tsv, comma separated (#2697)"),
             nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
@@ -3573,9 +3622,12 @@ void build(SmithBuild *b) {
     config.coverage =
         build_variable(b, "COVERAGE", "", "COVERAGE=1: count the lines smith runs (the check that records)")[0] != '\0';
     config.lldb = access(smith_fmt(b, "%s/lib/libsmithlldb.a", config.llvm), R_OK) == 0;
-    config.cflags = smith_cat(
-        b, (const char *[]){smith_fmt(b, "-std=%s", std), "-O1", "-g", "-Wall", "-Wextra", "-Wpedantic", nullptr},
-        smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}), config.platform->deployment, nullptr);
+    config.optimize = build_profile_optimize(b);
+    config.cflags = smith_cat(b,
+                              (const char *[]){smith_fmt(b, "-std=%s", std), config.optimize, "-g", "-Wall", "-Wextra",
+                                               "-Wpedantic", nullptr},
+                              smith_when(b, werror[0] != '\0', (const char *[]){werror, nullptr}),
+                              config.platform->deployment, nullptr);
 
     config.headers = build_header_steps(b, &config);
     config.protocol = build_protocol_steps(b, &config, folder);
@@ -3588,7 +3640,7 @@ void build(SmithBuild *b) {
     config.binary = smith.outputs[0];
     const char *const *tested = build_test(b, &config, config.binary, folder);
     build_install(b, &config, config.binary, tested);
-    build_release(b, config.binary, folder);
+    build_release(b, &config, folder);
     build_nvim_task(b);
     build_llvm(b);
     build_developer_tasks(b, config.binary);

@@ -1,0 +1,107 @@
+// `--time` and SMITH_TIME (issue #2681): `smith build --time` prints, after its normal output, one `time:` line for
+// each phase of the build, the slowest steps and the total, and the phases add up to the total within 10%; `smith cc
+// --front-end=new --time` prints the front end's stages; the old path is one phase; without the flag nothing is
+// printed. smith-covers: smith.c runtime/executor.c runtime/executor_run.c front/compile.smith
+module build_time_test;
+
+import std::test;
+import scratch;
+
+export void test_build_time_prints_each_phase_the_slowest_steps_and_a_total_that_the_phases_add_up_to() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p,
+        "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && cd .. && cd hi && "
+        "smith build --front-end=new --time 2>time.txt >/dev/null; "
+        "awk '/^time: (prepare|compile the build file|run the build file|plan|run the steps)/ { sum += $(NF-1) } "
+        "/^time: total / { total = $(NF-1) } "
+        "END { d = sum - total; if (d < 0) d = -d; print (d <= total / 10 ? \"ok\" : \"bad\"), sum, total }' "
+        "time.txt");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the phases add up to the total", run.out, "ok ");
+    scratch::Run text = scratch::sh(&p, "cat hi/time.txt");
+    defer scratch::release(text.out);
+    defer scratch::release(text.err);
+    scratch::expect_contains("prepare", text.out, "time: prepare");
+    scratch::expect_contains("compile the build file", text.out, "time: compile the build file");
+    scratch::expect_contains("run the build file", text.out, "time: run the build file and write the manifest");
+    scratch::expect_contains("plan", text.out, "time: plan");
+    scratch::expect_contains("run the steps", text.out, "time: run the steps");
+    scratch::expect_contains("the slowest steps", text.out, "time:     step ");
+    scratch::expect_contains("the kind of a step", text.out, "compile .smith (new front end): compile main.smith");
+    scratch::expect_contains("the step cache", text.out, "served from the step cache");
+    scratch::expect_contains("the total", text.out, "time: total ");
+}
+
+export void test_build_without_time_prints_no_time_lines() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p,
+        "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && smith build --front-end=new 2>&1");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_lacks("no time lines", run.out, "time: ");
+}
+
+export void test_cc_with_the_new_front_end_prints_the_stages() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "t.smith", "fn main() -> i32:\n    return 0\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --front-end=new --time -c t.smith -o t.o 2>&1");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    test::check_equal(run.status, 0);
+    scratch::expect_contains("the file", run.out, "time: t.smith");
+    scratch::expect_contains("lex and parse", run.out, "time:   lex and parse ");
+    scratch::expect_contains("import", run.out, "time:   import ");
+    scratch::expect_contains("check", run.out, "time:   check ");
+    scratch::expect_contains("emit", run.out, "time:   emit LLVM IR ");
+    scratch::expect_contains("write", run.out, "time:   write the object ");
+    scratch::expect_contains("front end", run.out, "time: front end compile ");
+    scratch::expect_contains("front end with its setup", run.out, "time: front end with its setup");
+    scratch::expect_contains("total", run.out, "time: total ");
+}
+
+export void test_the_front_end_stages_add_up_to_the_front_end() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "t.smith", "fn main() -> i32:\n    return 0\n");
+    scratch::Run run = scratch::sh(
+        &p, "SMITH_TIME=1 smith cc --front-end=new -c t.smith -o t.o 2>time.txt; "
+            "awk '/^time:   / { sum += $(NF-1) } /^time: front end compile / { total = $(NF-1) } "
+            "END { d = sum - total; if (d < 0) d = -d; print (d <= total / 10 + 1 ? \"ok\" : \"bad\"), sum, total }' "
+            "time.txt");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("stages add up", run.out, "ok ");
+}
+
+export void test_cc_through_the_old_path_is_one_phase() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "a.c", "int x;\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --time -c a.c -o a.o 2>&1");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    test::check_equal(run.status, 0);
+    scratch::expect_contains("one phase", run.out, "time: compile (the old path: one phase) ");
+    scratch::expect_contains("total", run.out, "time: total ");
+}
+
+export void test_time_is_not_part_of_the_step_cache_key() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::Run run = scratch::sh(
+        &p,
+        "export SMITH_OUTPUT=full; smith new hi >/dev/null 2>&1 && cd hi && rm -f primes.smith primes_test.smith && "
+        "printf 'fn main() -> i32:\\n    return 0\\n' > main.smith && smith build --front-end=new "
+        ">/dev/null 2>&1; smith build --front-end=new --time 2>&1");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the second build had nothing to do", run.out, "no work to do");
+}

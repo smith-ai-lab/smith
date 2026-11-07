@@ -6,7 +6,7 @@ description: "New syntax (D7, #2636): the tagged backtick literal, `asm` followe
 # Tagged literals and module assembly
 
 ```smith
-@when(target.arch == .x86_64 && target.os == .linux)
+@when(target.arch == .x86_64 and target.os == .linux)
 asm`.text
 .globl smith_task_switch
 smith_task_switch:
@@ -14,7 +14,7 @@ smith_task_switch:
   ret
 `
 
-@when(target.arch == .x86_64 && target.os == .linux)
+@when(target.arch == .x86_64 and target.os == .linux)
 extern @c_name("smith_task_switch") fn switch_stacks(save: **void, to: *void)
 ```
 

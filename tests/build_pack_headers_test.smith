@@ -12,7 +12,7 @@ import scratch;
 
 // For each `build .smith/include/smith/<m>.h:` step whose lib/std/<m>.smith the packer compiles, prints <m> unless the
 // packer's own `build` line lists that header.
-constexpr char missing_script[_] =
+static const char *const missing_script =
     "cd \"$SMITH_REPO\" && pack=$(grep '^build build/[^/]*/pack:' .smith/build.ninja) && "
     "[ -n \"$pack\" ] || { echo 'no packer step in .smith/build.ninja'; exit 0; }; "
     "for header in $(sed -n 's|^build \\(\\.smith/include/smith/[a-z_]*\\.h\\):.*|\\1|p' .smith/build.ninja); do "

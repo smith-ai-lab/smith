@@ -3,6 +3,7 @@
 // the tokens and the dumps go back with it.
 module front_lex_test;
 
+import front::ast;
 import front::lex;
 import std::arena;
 import std::console;
@@ -32,7 +33,8 @@ static lex::LexError error_of(Str source) {
     lex::LexError none = {};
     switch (lexed) {
     case .ok:
-        test::check_equal(countof(lexed.ok), 0);
+        lex::Tokens tokens = lexed.ok;
+        test::check_equal(countof(tokens), 0);
         break;
     case .error:
         return lexed.error;
@@ -105,7 +107,9 @@ export void test_lex_every_keyword_is_a_token_of_its_own() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Usize seen = 0;
-    for (Usize k = (Usize)lex::kw_alignas; k <= (Usize)lex::kw_countof; k++) {
+    lex::TokenKind first_kind = lex::kw_alignas;
+    lex::TokenKind last_kind = lex::kw_countof;
+    for (Usize k = (Usize)first_kind; k <= (Usize)last_kind; k++) {
         lex::TokenKind kind = (lex::TokenKind)k;
         test::check_equal(lex::is_keyword(kind), true);
         expect_one(lex::kind_text(kind), kind);
@@ -128,7 +132,9 @@ export void test_lex_every_punctuator_is_a_token_of_its_own() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Usize seen = 0;
-    for (Usize k = (Usize)lex::left_paren; k <= (Usize)lex::comma; k++) {
+    lex::TokenKind first_kind = lex::left_paren;
+    lex::TokenKind last_kind = lex::comma;
+    for (Usize k = (Usize)first_kind; k <= (Usize)last_kind; k++) {
         lex::TokenKind kind = (lex::TokenKind)k;
         test::check_equal(lex::is_punctuator(kind), true);
         expect_one(lex::kind_text(kind), kind);
@@ -167,13 +173,16 @@ static lex::LexError error_of_new(Str source) {
 // The tokens of source in smith's own syntax (#1428); an error fails the test.
 static lex::Tokens new_tokens_of(Str source) {
     lex::Lexed lexed = lex::tokenize_new(source);
-    if (lexed == .error) {
+    switch (lexed) {
+    case .error:
         Str expected = "no error";
         test::check_equal(lexed.error.message, expected);
         lex::Tokens none = {};
         return none;
+    case .ok:
+        lex::Tokens tokens = lexed.ok;
+        return tokens;
     }
-    return lexed.ok;
 }
 
 export void test_lex_the_new_punctuators_are_tokens_in_both_syntaxes() {
@@ -231,7 +240,9 @@ export void test_lex_the_new_keywords_are_keywords_only_in_the_new_syntax() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     Usize seen = 0;
-    for (Usize k = (Usize)lex::kw_fn; k <= (Usize)lex::kw_yield; k++) {
+    lex::TokenKind first_kind = lex::kw_fn;
+    lex::TokenKind last_kind = lex::kw_yield;
+    for (Usize k = (Usize)first_kind; k <= (Usize)last_kind; k++) {
         lex::TokenKind kind = (lex::TokenKind)k;
         test::check_equal(lex::is_keyword(kind), true);
         Str word = lex::kind_text(kind);
@@ -294,14 +305,10 @@ export void test_lex_golden_the_new_syntax() {
     test::golden("tests/front/lex/new-syntax.tokens", lex::dump_lines(tokens, source));
 }
 
-// The layout of source as one line: a layout token by its name, any other by its text, and the first lexing error.
-static Str layout_of(Str source) {
-    lex::Lexed lexed = lex::tokenize_new(source);
-    if (lexed == .error) return lexed.error.message;
-    lex::Lexed laid = lex::layout(source, lexed.ok);
-    if (laid == .error) return laid.error.message;
+// The tokens of a layout as one line: a layout token by its name, any other by its text.
+static Str layout_shown(Str source, lex::Tokens tokens) {
     char shown[:] = format::push("");
-    for (lex::Token token : laid.ok) {
+    for (lex::Token token : tokens) {
         Str piece = lex::text(source, token);
         if (token.kind == lex::end_of_file) piece = "eof";
         if (token.kind == lex::newline || token.kind == lex::indent || token.kind == lex::dedent) {
@@ -311,6 +318,25 @@ static Str layout_of(Str source) {
     }
     Str result = shown[0:countof(shown)];
     return result;
+}
+
+// The layout of source as one line: a layout token by its name, any other by its text, and the first lexing error.
+static Str layout_of(Str source) {
+    lex::Lexed lexed = lex::tokenize_new(source);
+    switch (lexed) {
+    case .error:
+        return lexed.error.message;
+    case .ok:
+        lex::Tokens tokens = lexed.ok;
+        lex::Lexed laid = lex::layout(source, tokens);
+        switch (laid) {
+        case .error:
+            return laid.error.message;
+        case .ok:
+            lex::Tokens laid_tokens = laid.ok;
+            return layout_shown(source, laid_tokens);
+        }
+    }
 }
 
 static void expect_layout(Str source, Str expected) {
@@ -370,16 +396,18 @@ export void test_lex_layout_error_a_tab_in_the_indentation() {
     defer mem::set_allocator(outside);
     Str source = "a:\n\tb";
     lex::Lexed laid = lex::layout(source, new_tokens_of(source));
-    if (laid != .error) {
+    switch (laid) {
+    case .ok:
         Str none = "an error";
         Str got = "no error";
         test::check_equal(got, none);
         return;
+    case .error:
+        Str message = "indent with spaces, not a tab";
+        test::check_equal(laid.error.message, message);
+        test::check_equal(laid.error.span.start, 3);
+        test::check_equal(laid.error.span.end, 4);
     }
-    Str message = "indent with spaces, not a tab";
-    test::check_equal(laid.error.message, message);
-    test::check_equal(laid.error.span.start, 3);
-    test::check_equal(laid.error.span.end, 4);
 }
 
 export void test_lex_layout_any_consistent_width_opens_a_block() {
@@ -588,18 +616,19 @@ export void test_lex_a_failed_tokenize_returns_nothing_to_free() {
 }
 
 // The corpus (tests/smith-lang/cases) is the specification: the text of a `.smith` file of it, or nothing.
-static format::Chars read_text(Str path) {
+static Str read_text(Str path) {
     files::BytesResult read = files::read_file(path);
     Str none = "";
     switch (read) {
     case .ok:
-        format::Chars text = mem::view(read.ok, char);
+        files::Bytes bytes = read.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str text = chars;
         return text;
     case .error:
         test::check_equal(path, none);
     }
-    format::Chars nothing = {};
-    return nothing;
+    return none;
 }
 
 // What tokenizing a corpus file found: whether it has a `#` (there is no preprocessor, so lines with one are not
@@ -610,7 +639,7 @@ struct Swept {
     lex::LexError error;
 };
 
-static Swept sweep(format::Chars source) {
+static Swept sweep(Str source) {
     char work[:] = mem::alloc_slice(char, countof(source));
     for (Usize i = 0; i < countof(source); i++) {
         work[i] = source[i];
@@ -618,12 +647,17 @@ static Swept sweep(format::Chars source) {
     Swept result = {};
     for (Usize attempt = 0; attempt <= countof(work); attempt++) {
         lex::Lexed lexed = lex::tokenize(work);
-        if (lexed == .ok) return result;
-        U32 at = lexed.error.span.start;
-        if (work[at] != '#') {
-            result.failed = true;
-            result.error = lexed.error;
+        U32 at = 0;
+        switch (lexed) {
+        case .ok:
             return result;
+        case .error:
+            at = lexed.error.span.start;
+            if (work[at] != '#') {
+                result.failed = true;
+                result.error = lexed.error;
+                return result;
+            }
         }
         result.has_hash = true;
         Usize line = at;
@@ -636,6 +670,35 @@ static Swept sweep(format::Chars source) {
     return result;
 }
 
+// The `.smith` files of one folder of the corpus swept, counted into checked, hashed and failed.
+static void sweep_folder(Str folder, Usize *checked, Usize *hashed, Usize *failed) {
+    Str suffix = ".smith";
+    files::EntriesResult sources = files::list(folder);
+    switch (sources) {
+    case .error:
+        return;
+    case .ok:
+        files::Entries entries = sources.ok;
+        for (files::Entry source : entries) {
+            if (!slice::ends_with(source.name, suffix)) {
+                continue;
+            }
+            char path[:] = format::push(folder, "/", source.name);
+            Swept swept = sweep(read_text(path));
+            *checked += 1;
+            if (swept.has_hash) {
+                *hashed += 1;
+                console::print("has a # line: ", path, "\n");
+            }
+            if (swept.failed) {
+                *failed += 1;
+                Str message = swept.error.message;
+                console::print_error(path, ": ", message, " at byte ", swept.error.span.start, "\n");
+            }
+        }
+    }
+}
+
 // Every `.smith` file of every case of the corpus: the number of files, those with a `#` line printed, and any file
 // that has another error fails the test.
 export void test_lex_every_corpus_file_tokenizes_except_for_hash_lines() {
@@ -643,37 +706,19 @@ export void test_lex_every_corpus_file_tokenizes_except_for_hash_lines() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    Str suffix = ".smith";
     files::EntriesResult cases = files::list("tests/smith-lang/cases");
-    if (cases == .error) {
-        test::check_condition(false);
-        return;
-    }
     Usize checked = 0;
     Usize hashed = 0;
     Usize failed = 0;
-    for (files::Entry corpus_case : cases.ok) {
-        char folder[:] = format::push("tests/smith-lang/cases/", corpus_case.name, "/src");
-        files::EntriesResult sources = files::list(folder);
-        if (sources == .error) {
-            continue;
-        }
-        for (files::Entry source : sources.ok) {
-            if (!slice::ends_with(source.name, suffix)) {
-                continue;
-            }
-            char path[:] = format::push(folder, "/", source.name);
-            Swept swept = sweep(read_text(path));
-            checked += 1;
-            if (swept.has_hash) {
-                hashed += 1;
-                console::print("has a # line: ", path, "\n");
-            }
-            if (swept.failed) {
-                failed += 1;
-                Str message = swept.error.message;
-                console::print_error(path, ": ", message, " at byte ", swept.error.span.start, "\n");
-            }
+    switch (cases) {
+    case .error:
+        test::check_condition(false);
+        return;
+    case .ok:
+        files::Entries corpus_cases = cases.ok;
+        for (files::Entry corpus_case : corpus_cases) {
+            char folder[:] = format::push("tests/smith-lang/cases/", corpus_case.name, "/src");
+            sweep_folder(folder, &checked, &hashed, &failed);
         }
     }
     console::print(checked, " corpus files, ", hashed, " with a # line\n");
@@ -690,7 +735,7 @@ static void expect_golden(Str corpus_case, Str file) {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     char path[:] = format::push("tests/smith-lang/cases/", corpus_case, "/src/", file, ".smith");
-    char source[:] = read_text(path);
+    Str source = read_text(path);
     lex::Tokens tokens = tokens_of(source);
     Str dumped = lex::dump(tokens, source);
     char actual[:] = format::push(dumped);
@@ -820,4 +865,22 @@ export void test_lex_new_slash_comments_and_hash_words_are_errors() {
     test::check_equal(directive.span.end, (U32)1);
     lex::LexError fine = error_of_new("a # fine\n");
     test::check_equal(fine.span.end, (U32)0);
+}
+
+// D19: `and`, `or` and `not` are the kinds of `&&`, `||` and `!` in the new syntax, and plain names in the old one.
+export void test_lex_new_logic_words_have_the_kinds_of_the_signs() {
+    arena::Arena memory = test::memory(1U << 20);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    lex::Lexed words = lex::tokenize_new("not a and b or c\n");
+    test::check_equal(words == .ok, true);
+    if (words != .ok) return;
+    test::check_equal(words.ok[0].kind == lex::bang, true);
+    test::check_equal(words.ok[2].kind == lex::ampersand_ampersand, true);
+    test::check_equal(words.ok[4].kind == lex::pipe_pipe, true);
+    lex::Lexed old = lex::tokenize("not and or");
+    test::check_equal(old == .ok, true);
+    if (old != .ok) return;
+    test::check_equal(old.ok[0].kind == lex::name, true);
 }

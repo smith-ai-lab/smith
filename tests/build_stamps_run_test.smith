@@ -16,10 +16,11 @@ static const char *yes_no(Bool value) {
     return value ? "yes" : "no";
 }
 
+static char status_and_stamp_text[64];
 static const char *status_and_stamp(const scratch::Project *p, const scratch::Run *run) {
-    static char text[64];
-    __builtin_snprintf(text, sizeof text, "%d %s", run->status, yes_no(scratch::exists(p, "build/check/a.stamp")));
-    return text;
+    __builtin_snprintf(status_and_stamp_text, sizeof status_and_stamp_text, "%d %s", run->status,
+                       yes_no(scratch::exists(p, "build/check/a.stamp")));
+    return status_and_stamp_text;
 }
 
 // Builds and expects the check to have run (its description is printed), then again and expects nothing to rerun.

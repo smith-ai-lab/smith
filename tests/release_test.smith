@@ -17,13 +17,13 @@ import scratch;
 // name of the package. The package is xz of the program it holds: of the 235 MB smith, level 6 is 56 s of CPU and level
 // 1 is 9 s, so the packaging tests package the small fake smith (../fake-smith, a script that says its commit): the
 // script does not look at what the program is, only at its name and its commit (#116, #639).
-constexpr char prelude[_] =
+static const char *const prelude =
     "export PATH=\"$PWD/../bin:$PATH\" RELEASE_XZ_LEVEL=1 GH_LOG=\"$PWD/../gh.log\" GH_DIR=\"$PWD/../gh\" "
     "GITHUB_ACTIONS=; script=\"$PWD/../release\"; head=$(git rev-parse HEAD); "
     "name=smith-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.xz; ";
 
 // release/publish.smith with the library modules it uses, built by the smith under test into ../release.
-constexpr char build_tool[_] =
+static const char *const build_tool =
     "R=$SMITH_REPO; L=$R/lib/std; smith cc -w -I $R/include -I $R/.smith/include $R/release/publish.smith "
     "$L/files.smith $L/console.smith $L/format.smith $L/mem.smith $L/arena.smith $L/contract.smith $L/env.smith "
     "$L/text.smith $L/process.smith $L/clock.smith $R/lib/handlers.c $R/lib/trace.c -o ../release";

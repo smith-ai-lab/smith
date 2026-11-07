@@ -214,18 +214,35 @@ export Bool find(Str name, Entry *found) {
 }
 
 // Whether the callee is `<module>.<name>`, `name` read through a module that `import <module>` bound.
-static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str name) {
+static Bool is_module_named(const types::Checked *c, Str first, Str module_path) {
+    if (types::scoped(c, first) == nullptr) return false;
+    if (types::scoped(c, first)->kind == .module_name)
+        return same(types::module_dotted(types::scoped(c, first)), module_path);
+    return false;
+}
+
+static Bool names_std(const types::Checked *c, const ast::Expr *callee, Str module_path, Str function) {
     types::Names names = {};
-    if (callee->kind == .member && !callee->kind.member.arrow) {
-        names = types::member_names(callee);
-    } else if (callee->kind == .name) {
+    if (callee->kind == .member) {
+        if (callee->kind.member.arrow) return false;
+        const ast::Expr *base = callee->kind.member.base;
+        if (base->kind == .name) {
+            ast::Path base_path = base->kind.name.path;
+            if (countof(base_path.segments) != 1) return false;
+            names.count = 2;
+            names.items[0] = base_path.segments[0].text;
+            names.items[1] = callee->kind.member.name;
+        }
+    }
+    if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         if (countof(path.segments) != 2) return false;
-        names = (types::Names){.count = 2, .items = {path.segments[0].text, path.segments[1].text}};
+        names.count = 2;
+        names.items[0] = path.segments[0].text;
+        names.items[1] = path.segments[1].text;
     }
-    if (names.count != 2 || !same(names.items[1], name)) return false;
-    const types::Symbol *module = types::scoped(c, names.items[0]);
-    return module != nullptr && module->kind == .module_name && same(types::module_dotted(module), module_path);
+    if (names.count != 2 || !same(names.items[1], function)) return false;
+    return is_module_named(c, names.items[0], module_path);
 }
 
 static Bool names_filled(const types::Checked *c, const ast::Expr *callee) {
@@ -260,13 +277,17 @@ export Bool callee_entry(const types::Checked *c, const ast::Expr *callee, Entry
 }
 
 // The builtin a call names: `mem.alloc` with a size, or the builtin of its callee (`callee_entry`).
-export Bool call_entry(const types::Checked *c, const ast::Expr *call, Entry *found) {
-    if (call->kind == .call && names_alloc(c, call->kind.call.callee, countof(call->kind.call.args))) {
-        Bool arena = names_push_slice(c, call->kind.call.callee, countof(call->kind.call.args));
-        *found = made(arena ? "arena.push_slice" : "mem.alloc", .alloc, "");
-        return true;
+export Bool call_entry(const types::Checked *c, const ast::Expr *expr, Entry *found) {
+    if (expr->kind == .call) {
+        ast::ExprRef args[:] = expr->kind.call.args;
+        if (names_alloc(c, expr->kind.call.callee, countof(args))) {
+            Bool arena = names_push_slice(c, expr->kind.call.callee, countof(args));
+            *found = made(arena ? "arena.push_slice" : "mem.alloc", .alloc, "");
+            return true;
+        }
+        return callee_entry(c, expr->kind.call.callee, found);
     }
-    return call->kind == .call && callee_entry(c, call->kind.call.callee, found);
+    return false;
 }
 
 // Whether the argument `index` of the builtin is not a value: a type (read as a type, not typed as a value), the
@@ -284,6 +305,8 @@ static types::TypeRef type_argument(types::Checked *c, const ast::Expr *arg, Str
     if (arg->kind == .name) {
         const types::Symbol *s = types::lookup_path(&c->scopes, arg->kind.name.path);
         if (s != nullptr && s->kind == .type_name) return s->type;
+        // `t: type` of a type function (`is_pointer(t)`): a type not known until the instance, like an `auto` one
+        if (s != nullptr && s->type != nullptr && s->type->kind == .type_type) return c->table.automatic;
         if (s == nullptr) {
             ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
             written->span = arg->span;
@@ -587,7 +610,12 @@ export types::TypeRef filled_element(types::Checked *c, const ast::Expr *e) {
 
 // The constant `node` of one dimension of `array.filled`; false, with the error reported, when it is not one.
 static Bool filled_dimension(types::Checked *c, const ast::Expr *node, U64 *count) {
-    if (types::fold_length(c, node, count)) return true;
+    U64 folded = *count;
+    folded = 0;
+    if (types::fold_length(c, node, &folded)) {
+        *count = folded;
+        return true;
+    }
     types::fail(c, node->span,
                 "the length of `array.filled` is a constant: an integer, a `const` or arithmetic on them");
     return false;
@@ -652,7 +680,8 @@ static types::TypeRef check_alloc(types::Checked *c, const ast::Expr *e, Entry e
         if (rank == 0 || rank > 16) return wrong(c, e->span, entry, wanted);
     }
     for (Usize i = 0; i < rank; i++) {
-        const ast::Expr *size = shape->kind == .array_lit ? shape->kind.array_lit.items[i] : shape;
+        const ast::Expr *size = shape;
+        if (shape->kind == .array_lit) size = shape->kind.array_lit.items[i];
         types::TypeRef t = value_type(c, size);
         if (t == c->table.invalid) return c->table.invalid;
         if (t->kind != .integer) {
@@ -727,9 +756,32 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
     return c->table.invalid;
 }
 
+// `typeof(x) == f32` (or `!=`): two types written as values are the same type or they are not. False when it is no
+// such comparison, or a side is not a type, or a type is not known yet.
+static Bool same_type_value(types::Checked *c, const ast::Expr *e, Bool *value) {
+    if (e->kind != .binary) return false;
+    ast::BinaryOp op = e->kind.binary.op;
+    if (op != .equal && op != .not_equal) return false;
+    const ast::Expr *left = e->kind.binary.left;
+    const ast::Expr *right = e->kind.binary.right;
+    if (left->kind != .type_value && right->kind != .type_value) return false;
+    Usize errors = c->error_count;
+    types::TypeRef l = type_argument(c, left, "==");
+    types::TypeRef r = type_argument(c, right, "==");
+    c->error_count = errors;
+    if (l == nullptr || r == nullptr || l == c->table.invalid || r == c->table.invalid || is_open(l) || is_open(r)) {
+        return false;
+    }
+    *value = (l == r) == (op == .equal);
+    return true;
+}
+
 // Whether the expression is a call of a question about a type, with its answer for the type it is asked of. False
 // when it is no such call, or the type is not known yet (a parameter of a concept or `auto`).
 export Bool query_value(types::Checked *c, const ast::Expr *e, Bool *value) {
+    if (e->kind == .binary) {
+        return same_type_value(c, e, value);
+    }
     Entry entry = {};
     if (e->kind != .call || !callee_entry(c, e->kind.call.callee, &entry) || entry.shape != .type_query) return false;
     ast::ExprRef args[:] = e->kind.call.args;

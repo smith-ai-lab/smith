@@ -433,6 +433,7 @@ static Bool function_fits(types::TypeRef from, types::TypeRef to) {
 
 export Verdict convert(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
     if (from == to || is_invalid_or_auto(from) || is_invalid_or_auto(to)) return accept(identity);
+    if (to->kind == .concept_type) return accept(identity); // `0` for a `num`: the instance is checked with its type
     // A function by its name where its `Fn(...)` is expected (a field of function-pointer type: `alloc = f`).
     if (from->kind == .function && to->kind == .fn_value && function_fits(from, types::element_of(to)))
         return accept(identity);
@@ -542,7 +543,12 @@ static Verdict cast_by_kind(const Ctx *c) {
 export Verdict cast_ok(types::Table *t, types::TypeRef from, types::TypeRef to, Literal lit) {
     Verdict implicit = convert(t, from, to, lit);
     if (implicit.ok) return implicit;
-    Ctx c = {.from = from, .target_type = to, .shown = to, .lit = lit, .pointer_bits = t->target.pointer_bytes * 8};
+    Ctx c = {.from = from,
+             .target_type = to,
+             .shown = to,
+             .lit = lit,
+             .pointer_bits = t->target.pointer_bytes * 8,
+             .char_type = types::builtin(t, "Char")};
     if (is_wrapper(from) || is_wrapper(to)) return implicit;
     return cast_by_kind(&c);
 }

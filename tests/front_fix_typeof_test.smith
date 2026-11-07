@@ -62,7 +62,7 @@ export void test_front_fix_typeof_an_auto_the_body_tests_by_type_stays_auto() {
 export void test_front_fix_typeof_a_pointer_type_a_typeof_is_compared_with() {
     expect_fixed(
         "module m;\nexport Bool text(auto p) {\n    return typeof(p) == char * || typeof(p) != const char *;\n}\n",
-        "pub fn text(p: auto) -> bool:\n    return typeof(p) == *mut char || typeof(p) != *char\n");
+        "pub fn text(p: auto) -> bool:\n    return typeof(p) == *mut char or typeof(p) != *char\n");
 }
 
 // A slice struct written out is a slice type, `[]mut char` and `[]char`.
@@ -70,7 +70,7 @@ export void test_front_fix_typeof_a_slice_struct_a_typeof_is_compared_with() {
     expect_fixed(
         "module m;\nexport Bool text(auto p) {\n    return typeof(p) == struct smith_array_char_n ||\n"
         "           typeof(p) == struct smith_array_const_char_n;\n}\n",
-        "pub fn text(p: auto) -> bool:\n    return typeof(p) == []mut char ||\n           typeof(p) == []char\n");
+        "pub fn text(p: auto) -> bool:\n    return typeof(p) == []mut char or\n           typeof(p) == []char\n");
 }
 
 // A pointer to a slice of any element type, `const auto (*xs)[:]`, is generic in the element: `[T]`, and
@@ -80,7 +80,7 @@ export void test_front_fix_typeof_a_pointer_to_a_slice_of_auto_is_generic_in_its
                  "    Usize n = 0;\n    while (n < countof(*xs) && (*xs)[n] != v) {\n        n += 1;\n    }\n"
                  "    return (*xs)[0:n];\n}\n",
                  "pub fn take_until[T](xs: *[]T, v: T) -> []T:\n    mut n: usize = 0\n"
-                 "    while n < countof(xs.*) && (xs.*)[n] != v:\n        n += 1\n    return (xs.*)[0:n]\n");
+                 "    while n < countof(xs.*) and (xs.*)[n] != v:\n        n += 1\n    return (xs.*)[0:n]\n");
 }
 
 // A built-in concept as the element of a parameter's type (`Num xs[:]`, `Num *p`) is an inferred parameter of that
