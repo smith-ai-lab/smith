@@ -1,0 +1,6 @@
+pub struct Box:
+    pub w: i32
+    pub h: i32
+
+pub fn area(b: Box) -> i32:
+    b.w * b.h

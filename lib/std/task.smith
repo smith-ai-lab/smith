@@ -54,7 +54,7 @@ if constexpr (target::os == target::macos) {
     c::SmithScheduler *scheduler; // the scheduler that spawned the last of them: its `wait` waits for them
 };
 
-// What runs the tasks and in what order: the module's name for the runtime's SmithScheduler (spawn, pause, wait, io).
+// What runs the tasks and in what order: the module's name for the runtime's SmithScheduler (spawn, pause, wait).
 export typedef c::SmithScheduler Scheduler;
 
 // The platform's numbers. A C macro is the preprocessor's, and a .smith file has none: each is read once, here.
@@ -70,6 +70,38 @@ constexpr I32 processors_name = c::_SC_NPROCESSORS_ONLN;
 constexpr Usize stack_size = 262144;
 
 struct Worker;
+
+// One descriptor call a task makes (read, write, send, accept...), shaped as a completion: "do this, wake me when it is
+// done". The files, net and console handlers the default scheduler installs build one, and `run_io` does it, parking
+// the task. `result` is what the real call returns and `error` the errno it set.
+constexpr I32 io_read = 1;
+constexpr I32 io_write = 2;
+constexpr I32 io_pread = 3;
+constexpr I32 io_pwrite = 4;
+constexpr I32 io_readv = 5;
+constexpr I32 io_writev = 6;
+constexpr I32 io_send = 7;
+constexpr I32 io_recv = 8;
+constexpr I32 io_accept = 9;
+constexpr I32 io_connect = 10;
+
+struct IoCall {
+    I32 operation; // io_read ...
+    I32 fd;
+    void *buffer;                   // read, pread, recv: where the bytes go
+    const void *source;             // write, pwrite, send: the bytes
+    Usize size;                     // read, write, pread, pwrite, send, recv: how many
+    c::off_t offset;                // pread, pwrite
+    const struct c::iovec *vectors; // readv, writev
+    I32 count;                      // readv, writev: the number of vectors
+    I32 flags;                      // send, recv
+    struct c::sockaddr *address;    // accept: where the peer's address goes (may be null)
+    c::socklen_t *address_length;   // accept: its size in, its length out
+    const struct c::sockaddr *peer; // connect: where to
+    c::socklen_t peer_length;       // connect
+    Isize result;
+    I32 error;
+};
 
 struct Task {
     void *sp;      // the stack pointer while it is not running
@@ -98,8 +130,8 @@ struct Task {
     Bool woken;           // the group ended before it had switched out
     Bool io_waiting;      // registered with its worker's kqueue, or queued to the file pool, not ready yet
     Task *pool_next;      // the link of the file pool's queue, then of its worker's list of finished calls
-    c::SmithIoRequest *pool_request; // the file call the pool is to do for it
-    Worker *pool_worker;             // the worker whose task asked: the pool hands the finished call back to it
+    IoCall *pool_request; // the file call the pool is to do for it
+    Worker *pool_worker;  // the worker whose task asked: the pool hands the finished call back to it
 };
 
 // The context switch: saves the callee-saved registers on the stack, stores the stack pointer in *save, takes the one
@@ -502,8 +534,8 @@ void inline_pause([[maybe_unused]] Scheduler *scheduler) {
     }
 }
 
-// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. Its `io` is null, so a call
-// made under it reaches the real function.
+// The inline scheduler: spawn runs the task at once, so concurrent code runs sequentially. It installs no handlers, so
+// a call made under it reaches the real function.
 Scheduler inline_value = {.spawn = inline_spawn, .pause = inline_pause, .wait = inline_wait};
 
 // The inline scheduler, to set with `use` or to wrap in a scheduler of your own, and for debugging: tasks run one at a
@@ -661,7 +693,7 @@ void simulation_wait(Scheduler *self, Group *group) {
 // A scheduler for tests: tasks run one at a time on the calling thread, and at each switch a random ready task goes
 // next, drawn from `key`, so one key is one order, and a failure replays from it. Install it with `use`. Its state
 // comes from the current allocator and is given back when a `wait` of `main` leaves with no task alive: make one per
-// run. Its `io` is null, so a call reaches the real function.
+// run. It installs no handlers, so a call reaches the real function.
 export Scheduler *simulation(random::Key key) {
     Simulation *simulation = mem::alloc(Simulation);
     *simulation = (Simulation){};
@@ -1056,13 +1088,13 @@ void run_ready(Worker *worker) {
 
 // ---- Parking a task on a socket or a pipe (macOS and Linux). ----
 //
-// The default scheduler's `io` makes a socket or a pipe non-blocking, tries the call, and when it would block registers
-// the descriptor with the worker's kqueue and parks the task: the worker runs other tasks until the descriptor is
-// ready, then the task tries again. A regular file, a terminal and a descriptor that does not exist go to the real call
-// (a regular file moves off the worker with the pool ticket; a terminal's flags are shared with the shell, so they stay
-// blocking). The code that called is a plain blocking call.
+// The default scheduler's handlers make a socket or a pipe non-blocking, tries the call, and when it would block
+// registers the descriptor with the worker's kqueue and parks the task: the worker runs other tasks until the
+// descriptor is ready, then the task tries again. A regular file, a terminal and a descriptor that does not exist go to
+// the real call (a regular file moves off the worker with the pool ticket; a terminal's flags are shared with the
+// shell, so they stay blocking). The code that called is a plain blocking call.
 if constexpr (target::os == target::macos || target::os == target::linux) {
-    c::SmithHandlers empty_handlers; // the table a real call runs under: no scheduler, so it is not routed again
+    c::SmithHandlers empty_handlers; // the table a real call runs under: no handlers, so it is not routed again
 
     // NOLINTBEGIN(smith-preprocessor, bugprone-signed-bitwise)
     constexpr I32 get_flags = c::F_GETFL;
@@ -1079,31 +1111,31 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     // NOLINTEND(smith-preprocessor, bugprone-signed-bitwise)
 
     // One try of the request on the descriptor, under a table with no scheduler so it is the real call.
-    void attempt(c::SmithIoRequest *request) {
+    void attempt(IoCall *request) {
         contract::trusted(); // the request names raw buffers
         c::SmithHandlers *previous = c::smith_handlers_set_table(&empty_handlers);
         *errno_location() = 0;
         Isize result = -1;
         // NOLINTBEGIN(smith-effects): the system's descriptors are this module's edge
-        if (request->operation == c::SmithIoOperation_Read) {
+        if (request->operation == io_read) {
             result = c::read(request->fd, request->buffer, request->size);
-        } else if (request->operation == c::SmithIoOperation_Write) {
+        } else if (request->operation == io_write) {
             result = c::write(request->fd, request->source, request->size);
-        } else if (request->operation == c::SmithIoOperation_Pread) {
+        } else if (request->operation == io_pread) {
             result = c::pread(request->fd, request->buffer, request->size, request->offset);
-        } else if (request->operation == c::SmithIoOperation_Pwrite) {
+        } else if (request->operation == io_pwrite) {
             result = c::pwrite(request->fd, request->source, request->size, request->offset);
-        } else if (request->operation == c::SmithIoOperation_Readv) {
+        } else if (request->operation == io_readv) {
             result = c::readv(request->fd, request->vectors, request->count);
-        } else if (request->operation == c::SmithIoOperation_Writev) {
+        } else if (request->operation == io_writev) {
             result = c::writev(request->fd, request->vectors, request->count);
-        } else if (request->operation == c::SmithIoOperation_Send) {
+        } else if (request->operation == io_send) {
             result = c::send(request->fd, request->source, request->size, request->flags);
-        } else if (request->operation == c::SmithIoOperation_Recv) {
+        } else if (request->operation == io_recv) {
             result = c::recv(request->fd, request->buffer, request->size, request->flags);
-        } else if (request->operation == c::SmithIoOperation_Accept) {
+        } else if (request->operation == io_accept) {
             result = c::accept(request->fd, request->address, request->address_length);
-        } else if (request->operation == c::SmithIoOperation_Connect) {
+        } else if (request->operation == io_connect) {
             result = c::connect(request->fd, request->peer, request->peer_length);
         }
         // NOLINTEND(smith-effects)
@@ -1256,7 +1288,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     }
 
     // Queues the request of the calling task to the pool and parks it until the call is done.
-    void pool_call(c::SmithIoRequest *request) {
+    void pool_call(IoCall *request) {
         contract::trusted(); // the request names raw buffers
         Task *self = current();
         Worker *worker = home;
@@ -1286,7 +1318,7 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     }
 
     // A connect that returned EINPROGRESS has finished when the descriptor is writable: SO_ERROR says how.
-    void finish_connect(c::SmithIoRequest *request) {
+    void finish_connect(IoCall *request) {
         contract::trusted(); // the system's descriptor is the edge
         I32 error = 0;
         c::socklen_t length = sizeof(error);
@@ -1296,12 +1328,11 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
     }
 
     Bool waits_for_write(I32 operation) {
-        return operation == c::SmithIoOperation_Write || operation == c::SmithIoOperation_Writev ||
-               operation == c::SmithIoOperation_Send || operation == c::SmithIoOperation_Connect;
+        return operation == io_write || operation == io_writev || operation == io_send || operation == io_connect;
     }
 
-    // The scheduler's `io`: a plain blocking call to the code that made it.
-    void default_io([[maybe_unused]] Scheduler *self, c::SmithIoRequest *request) {
+    // Does the call, parking the calling task until it completes: a plain blocking call to the code that made it.
+    void run_io(IoCall *request) {
         if (!active || home == nullptr) {
             attempt(request);
             return;
@@ -1310,15 +1341,14 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
             pool_call(request);
             return;
         }
-        Bool offset =
-            request->operation == c::SmithIoOperation_Pread || request->operation == c::SmithIoOperation_Pwrite;
+        Bool offset = request->operation == io_pread || request->operation == io_pwrite;
         if (offset || !parkable(request->fd)) {
             attempt(request);
             return;
         }
         while (true) { // NOLINT(smith-bounded-loop): ends when the call completes
             attempt(request);
-            Bool connecting = request->operation == c::SmithIoOperation_Connect && request->error == in_progress;
+            Bool connecting = request->operation == io_connect && request->error == in_progress;
             if (request->result >= 0 || (request->error != would_block && !connecting)) return;
             if (!park_on(request->fd, waits_for_write(request->operation))) {
                 request->error = *errno_location();
@@ -1330,6 +1360,164 @@ if constexpr (target::os == target::macos || target::os == target::linux) {
             }
         }
     }
+
+    // ---- The handlers the default scheduler installs in the table of every task it runs (issue #2662). Each answers
+    // the descriptor calls only (`descriptors_only`): a call is routed by what the descriptor is, a socket to `net`, 0
+    // to 2 to `console`, any other descriptor to `files`, and each does it through `run_io`. A handler already in the
+    // table is not replaced: a handler that is set always wins.
+
+    // Runs the call and leaves errno as the real call would have.
+    Isize finish(IoCall *call) {
+        run_io(call);
+        if (call->result < 0) *errno_location() = call->error;
+        return call->result;
+    }
+
+    Isize do_read(I32 fd, void *buffer, Usize size) {
+        IoCall call = {};
+        call.operation = io_read;
+        call.fd = fd;
+        call.buffer = buffer;
+        call.size = size;
+        return finish(&call);
+    }
+
+    Isize do_write(I32 fd, const void *buffer, Usize size) {
+        IoCall call = {};
+        call.operation = io_write;
+        call.fd = fd;
+        call.source = buffer;
+        call.size = size;
+        return finish(&call);
+    }
+
+    Isize files_read([[maybe_unused]] c::SmithFileHandler *self, I32 fd, void *buffer, Usize size) {
+        return do_read(fd, buffer, size);
+    }
+
+    Isize files_write([[maybe_unused]] c::SmithFileHandler *self, I32 fd, const void *buffer, Usize size) {
+        return do_write(fd, buffer, size);
+    }
+
+    Isize files_pread([[maybe_unused]] c::SmithFileHandler *self, I32 fd, void *buffer, Usize size, c::off_t offset) {
+        IoCall call = {};
+        call.operation = io_pread;
+        call.fd = fd;
+        call.buffer = buffer;
+        call.size = size;
+        call.offset = offset;
+        return finish(&call);
+    }
+
+    Isize files_pwrite([[maybe_unused]] c::SmithFileHandler *self, I32 fd, const void *buffer, Usize size,
+                       c::off_t offset) {
+        IoCall call = {};
+        call.operation = io_pwrite;
+        call.fd = fd;
+        call.source = buffer;
+        call.size = size;
+        call.offset = offset;
+        return finish(&call);
+    }
+
+    Isize files_readv([[maybe_unused]] c::SmithFileHandler *self, I32 fd, const struct c::iovec *vectors, I32 count) {
+        IoCall call = {};
+        call.operation = io_readv;
+        call.fd = fd;
+        call.vectors = vectors;
+        call.count = count;
+        return finish(&call);
+    }
+
+    Isize files_writev([[maybe_unused]] c::SmithFileHandler *self, I32 fd, const struct c::iovec *vectors, I32 count) {
+        IoCall call = {};
+        call.operation = io_writev;
+        call.fd = fd;
+        call.vectors = vectors;
+        call.count = count;
+        return finish(&call);
+    }
+
+    Isize console_read([[maybe_unused]] c::SmithConsoleHandler *self, void *buffer, Usize size) {
+        return do_read(0, buffer, size);
+    }
+
+    Isize console_write([[maybe_unused]] c::SmithConsoleHandler *self, I32 fd, const void *buffer, Usize size) {
+        return do_write(fd, buffer, size);
+    }
+
+    Isize net_read([[maybe_unused]] c::SmithNetHandler *self, I32 fd, void *buffer, Usize size) {
+        return do_read(fd, buffer, size);
+    }
+
+    Isize net_write([[maybe_unused]] c::SmithNetHandler *self, I32 fd, const void *buffer, Usize size) {
+        return do_write(fd, buffer, size);
+    }
+
+    Isize net_send([[maybe_unused]] c::SmithNetHandler *self, I32 fd, const void *buffer, Usize size, I32 flags) {
+        IoCall call = {};
+        call.operation = io_send;
+        call.fd = fd;
+        call.source = buffer;
+        call.size = size;
+        call.flags = flags;
+        return finish(&call);
+    }
+
+    Isize net_recv([[maybe_unused]] c::SmithNetHandler *self, I32 fd, void *buffer, Usize size, I32 flags) {
+        IoCall call = {};
+        call.operation = io_recv;
+        call.fd = fd;
+        call.buffer = buffer;
+        call.size = size;
+        call.flags = flags;
+        return finish(&call);
+    }
+
+    I32 net_accept([[maybe_unused]] c::SmithNetHandler *self, I32 fd, struct c::sockaddr *address,
+                   c::socklen_t *address_length) {
+        IoCall call = {};
+        call.operation = io_accept;
+        call.fd = fd;
+        call.address = address;
+        call.address_length = address_length;
+        return (I32)finish(&call);
+    }
+
+    I32 net_connect([[maybe_unused]] c::SmithNetHandler *self, I32 fd, const struct c::sockaddr *peer,
+                    c::socklen_t peer_length) {
+        IoCall call = {};
+        call.operation = io_connect;
+        call.fd = fd;
+        call.peer = peer;
+        call.peer_length = peer_length;
+        return (I32)finish(&call);
+    }
+
+    c::SmithFileHandler io_files = {.read = files_read,
+                                    .write = files_write,
+                                    .pwrite = files_pwrite,
+                                    .pread = files_pread,
+                                    .readv = files_readv,
+                                    .writev = files_writev,
+                                    .descriptors_only = true};
+    c::SmithConsoleHandler io_console = {.write = console_write, .read = console_read, .descriptors_only = true};
+    c::SmithNetHandler io_net = {.read = net_read,
+                                 .write = net_write,
+                                 .send = net_send,
+                                 .recv = net_recv,
+                                 .accept_socket = net_accept,
+                                 .connect_socket = net_connect,
+                                 .descriptors_only = true};
+
+    // Puts the three handlers in the table of a task, each where none is set.
+    void install_io_handlers(c::SmithHandlers *table) {
+        if (table->files == nullptr) table->files = &io_files;
+        if (table->console == nullptr) table->console = &io_console;
+        if (table->net == nullptr) table->net = &io_net;
+    }
+} else {
+    void install_io_handlers([[maybe_unused]] c::SmithHandlers *table) {}
 }
 
 // The thread of a worker other than 0: runs what is queued for it, sleeps when there is none, ends at shutdown.
@@ -1437,7 +1625,8 @@ void default_spawn(Scheduler *self, Group *group, void (*entry)(void *context), 
     Task *task = record_take();
     init_task(task, group, entry, context);
     task->managed = true;
-    if (task->handlers.scheduler == nullptr) task->handlers.scheduler = self; // its I/O reaches `io`
+    if (task->handlers.scheduler == nullptr) task->handlers.scheduler = self; // so the locks it holds are counted
+    install_io_handlers(&task->handlers);                                     // its descriptor calls park it
     lock_scheduler();
     Worker *target = home;
     for (Usize i = 0; i < worker_count; i++) {
@@ -1513,12 +1702,9 @@ void default_pause([[maybe_unused]] Scheduler *self) {
 Scheduler default_value = {.spawn = default_spawn, .pause = default_pause, .wait = default_wait};
 
 // The default scheduler: one worker thread per core, started at the first spawn, each with its own run queue. What
-// runs when none is set. Its `io` parks a task on a socket or a pipe in its worker's kqueue (macOS) or epoll instance
-// (Linux).
+// runs when none is set. The files, net and console handlers it installs in its tasks park a task on a socket or a
+// pipe in its worker's kqueue (macOS) or epoll instance (Linux).
 export Scheduler *default_scheduler() {
-    if constexpr (target::os == target::macos || target::os == target::linux) {
-        default_value.io = default_io;
-    }
     return &default_value;
 }
 

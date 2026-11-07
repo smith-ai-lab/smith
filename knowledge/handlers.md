@@ -120,25 +120,37 @@ allocator; `checked` (D2a), `failing` and the profiles (D2b).
   (`getentropy` is `entropy` in `shim/effects_table.h`), and `std::random` stays pure. A test scripts it with
   `entropy::fake(number)`, whose `fill` writes the bytes of a number.
 
-- **Scheduler (issue #936, part of #241):** `SmithScheduler {spawn, pause, wait, io}` is the handler kind of whatever runs
-  tasks (`std::task`); the runtime only stores it (per thread, a setter returning the previous one, none set is today's
-  behaviour). When one with `io` is set, `read`, `write`, `pread`, `pwrite`, `readv`, `writev`, `send`, `recv`, `accept`
-  and `connect` build a `SmithIoRequest` (the operation, its arguments, and on return `result` and `error`), call the scheduler's `io`,
-  which does it and parks the calling task until it completes, and return its result with `errno` set from `error` when
-  it is negative. The request is completion-shaped so a backend may be readiness (kqueue, epoll), a pool or io_uring and
-  IOCP. A files or console handler that answers a call wins (a fake never reaches the scheduler); with none set, or one
-  without `io`, each call is the real one after one relaxed load of the counter. Both systems: `__interpose` tuples on
-  macOS, definitions through `dlsym(RTLD_NEXT)` (ASan's interceptor when sanitized) on Linux. A call `io` itself makes
-  to one of these functions reaches the scheduler again, so a scheduler does its real calls under
-  `smith_handlers_set_table` with a table that has no scheduler. `tests/handlers/scheduler.c` tests it with a fake whose
-  `io` logs each request. **A pthread mutex held (issue #938):** C code may still hold one across a blocking call, and a
-  task that parked there could leave another task of the same worker blocked on that mutex for good. So the runtime
-  counts, per thread, the mutexes held while a scheduler is set (`pthread_mutex_lock` and a successful
-  `pthread_mutex_trylock` add one, `pthread_mutex_unlock` takes one away; interposed on macOS, defined on Linux), and a
-  routed call made above zero is the real call, blocking the thread, not `io`. Per thread is per task because a task
-  switches only by parking. Known gaps: two tasks on the same worker can still deadlock through C locks taken in
-  opposite orders, and `pthread_cond_wait` stalls its worker. `tests/handlers/bench.c` prints a one-byte `read` of `/dev/zero` with no handler (Linux
-  x86_64, -O2, best of five, syscall noise about 5 ns): 156.8 ns before and 159.4 ns after.
+- **The handler table is the one way to replace a side effect (issue #2662, replacing #936).** `SmithScheduler {spawn,
+  pause, wait}` is the handler kind of whatever runs tasks (`std::task`); the runtime only stores it (per thread, a
+  setter returning the previous one, none set is today's behaviour) and counts it. It answers no call: there is no
+  `io` member and no I/O request type, so no one is forced to use an io type of ours, and C code that smith did not
+  write can be swapped the same way as smith's own (owner, 2026-11-06: "we want io FULLY gone"). **The descriptor calls
+  are routed by what the descriptor is, not by who opened it.** `read`, `write`, `pread`, `pwrite`, `readv`, `writev`,
+  `send`, `recv`, `accept` and `connect` go to: the `console` handler for 0 (`read`) and 1 and 2 (`write`); the `net`
+  handler for any other descriptor that `fstat` says is a socket, including one that C code opened itself (`read`,
+  `write`, and `send`, `recv`, `accept_socket`, `connect_socket` with libc's own arguments); the `files` handler for any
+  other descriptor from 3 up (`read`, `write`, `pread`, `pwrite`, `readv`, `writev`; a descriptor the system does not
+  have, such as a fake's 40, is a file's). A handler that is set always wins; with none set for the kind of the
+  descriptor, or a member left null, the call is the real one (a socket with only `files` set is real, and a pipe with
+  only `net` set is real). Both systems: `__interpose` tuples on macOS, definitions through `dlsym(RTLD_NEXT)` (ASan's
+  interceptor when sanitized) on Linux. **A scheduler parks a task through handlers:** `std::task`'s default scheduler
+  puts a `files`, a `net` and a `console` handler in the table of each task it spawns, where the table has none. Each
+  has `descriptors_only` set: it answers the calls above and nothing else (open, close, fopen, printf, std::net's own
+  calls, `isatty` stay libc's, and `smith_handlers_files()`, `smith_handlers_net()` and `smith_handlers_console()` say
+  none is set). Its members do the call without blocking (kqueue on macOS, epoll on Linux, the file pool for a regular
+  file) and park the task until it completes. A call those handlers make themselves runs under `smith_handlers_set_table`
+  with a table that has no handlers, so it is the real call. `tests/handlers/scheduler.c` tests the routing with fakes;
+  `lib/std/task_test.smith` tests a task parking on a socket with `read`, `recv`, `accept` and `connect`, and a net
+  handler that is set answering `recv` in a task. **A pthread mutex held (issue #938):** C code may still hold one across
+  a blocking call, and a task that parked there could leave another task of the same worker blocked on that mutex for
+  good. So the runtime counts, per thread, the mutexes held while a scheduler is set (`pthread_mutex_lock` and a
+  successful `pthread_mutex_trylock` add one, `pthread_mutex_unlock` takes one away; interposed on macOS, defined on
+  Linux), and a `descriptors_only` handler is not used above zero: the call is the real one, blocking the thread. Per
+  thread is per task because a task switches only by parking. Known gaps: two tasks on the same worker can still
+  deadlock through C locks taken in opposite orders, `pthread_cond_wait` stalls its worker, and a `readv`, `writev`,
+  `pread` or `pwrite` on 0, 1 or 2 is not the console's. `tests/handlers/bench.c` prints a one-byte `read` of
+  `/dev/zero` with no handler (Linux x86_64, -O2, best of five, syscall noise about 5 ns): 156.8 ns before and 159.4 ns
+  after the scheduler's counter; a call with a files or net handler set also pays one `fstat`.
 
 - **One table per thread (issue #885):** the handlers of a thread are one `SmithHandlers` (`include/smith/handlers.h`: a
   pointer per kind, `allocator`, `files`, `console`, `env`, `clock`, `entropy`, `net`, `process`, `scheduler`). Each thread has a table
