@@ -1460,7 +1460,8 @@ static Bool else_leaves(const types::Checked *r, const ast::Stmt *s) {
 // The checks of `.v(x) := value else: ...` (#2494): the pattern can fail, the `else` leaves, the name is new.
 static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef t, ast::Pattern pattern,
                               const ast::Stmt *else_branch) {
-    Bool can_fail = t != nullptr && (t->kind == .option || (t->kind == .enumeration && t->has_payload));
+    Bool can_fail =
+        t != nullptr && (t->kind == .option || t->kind == .result_type || (t->kind == .enumeration && t->has_payload));
     if (t != nullptr && t != r->table.invalid && !can_fail) {
         types::failf(r, span, "this pattern always matches: remove `else`");
     }
