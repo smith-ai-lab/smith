@@ -559,7 +559,9 @@ static U64 word_for_index(U64 index, U64 span) {
 }
 
 export void test_random_zero_word_gives_the_simplest_value() {
-    ConstantTap zero = {.tap = {tap_constant}, .word = 0};
+    ConstantTap zero;
+    zero.tap.word = tap_constant;
+    zero.word = 0;
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-3, 6)), 0);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(5, 9)), 5);
     test::check_equal(random::uniform_int64_sample(tapped(&zero), range(-9, -5)), -5);
@@ -594,7 +596,9 @@ export void test_random_zero_word_gives_the_simplest_value() {
 }
 
 export void test_random_one_step_off_the_identity_moves_a_position() {
-    ConstantTap step = {.tap = {tap_constant}, .word = word_for_index(1, 4)};
+    ConstantTap step;
+    step.tap.word = tap_constant;
+    step.word = word_for_index(1, 4);
     Usize out[4];
     random::permutation_sample(tapped(&step), (random::Permutation){4}, out);
     Usize moved = 0;
@@ -609,9 +613,13 @@ export void test_random_small_words_walk_out_from_zero() {
     const U64 words[_] = {0, 1, 2, 3, 4};
     const I64 full[_] = {0, -1, 1, -2, 2};
     for (Usize i = 0; i < 5; i++) {
-        ConstantTap full_tap = {.tap = {tap_constant}, .word = words[i]};
+        ConstantTap full_tap;
+        full_tap.tap.word = tap_constant;
+        full_tap.word = words[i];
         test::check_equal(random::uniform_int64_sample(tapped(&full_tap), range(i64_min, i64_max)), full[i]);
-        ConstantTap span_tap = {.tap = {tap_constant}, .word = word_for_index(i, 10)}; // indices 0 to 4 of [-3, 6]
+        ConstantTap span_tap;
+        span_tap.tap.word = tap_constant;
+        span_tap.word = word_for_index(i, 10); // indices 0 to 4 of [-3, 6]
         test::check_equal(random::uniform_int64_sample(tapped(&span_tap), range(-3, 6)), full[i]);
     }
 }
@@ -620,7 +628,9 @@ export void test_random_small_words_walk_out_from_zero() {
 export void test_random_small_words_walk_the_real_grid() {
     F64 previous = -1.0;
     for (U64 w = 0; w < 5; w++) {
-        ConstantTap tap = {.tap = {tap_constant}, .word = w << 11};
+        ConstantTap tap;
+        tap.tap.word = tap_constant;
+        tap.word = w << 11;
         F64 d = random::uniform_double_sample(tapped(&tap), (random::UniformDouble){0.0, 1.0});
         test::check_equal(d, (F64)w * 0x1p-53);
         test::check_greater(d, previous);
@@ -630,9 +640,13 @@ export void test_random_small_words_walk_the_real_grid() {
 
 // The Bernoulli: only the last grid index is true, at probability 1 - 2^-53.
 export void test_random_bernoulli_under_a_tap() {
-    ConstantTap low = {.tap = {tap_constant}, .word = (U64)1 << 11};
+    ConstantTap low;
+    low.tap.word = tap_constant;
+    low.word = (U64)1 << 11;
     test::check(!random::bernoulli_sample(tapped(&low), (random::Bernoulli){0.5}));
     test::check(random::bernoulli_sample(tapped(&low), (random::Bernoulli){1.0}));
-    ConstantTap high = {.tap = {tap_constant}, .word = 18446744073709551615ULL};
+    ConstantTap high;
+    high.tap.word = tap_constant;
+    high.word = 18446744073709551615ULL;
     test::check(random::bernoulli_sample(tapped(&high), (random::Bernoulli){0.5}));
 }

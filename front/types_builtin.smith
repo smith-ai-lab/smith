@@ -55,6 +55,8 @@ export typedef enum {
     format;
     count_zeros;
     atomic_add;
+    atomic_exchange;
+    atomic_store;
     filled;
     alloc;
     type_query;
@@ -124,6 +126,10 @@ static Bool find_libc(Str name, Entry *found) {
         *found = made(name, .va_format, "vsnprintf");
     } else if (same(name, "__atomic_fetch_add")) {
         *found = made(name, .atomic_add, "add");
+    } else if (same(name, "__atomic_exchange_n")) {
+        *found = made(name, .atomic_exchange, "xchg");
+    } else if (same(name, "__atomic_store_n")) {
+        *found = made(name, .atomic_store, "store");
     } else if (same(name, "__builtin_clzll")) {
         *found = made(name, .count_zeros, "ctlz");
     } else {
@@ -268,7 +274,8 @@ export Bool call_entry(const types::Checked *c, const ast::Expr *call, Entry *fo
 export Bool is_type_argument(Entry entry, Usize index) {
     if (entry.shape == .alloc) return index == (same(entry.name, "arena.push_slice") ? 1 : 0); // T after the arena
     if (entry.shape == .bit_cast || entry.shape == .filled || entry.shape == .type_query) return index == 0;
-    if (entry.shape == .atomic_add) return index == 2;
+    if (entry.shape == .atomic_add || entry.shape == .atomic_exchange || entry.shape == .atomic_store)
+        return index == 2;
     return entry.shape == .constant && same(entry.intrinsic[0:3], "nan") && index == 0;
 }
 
@@ -424,6 +431,13 @@ static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
 export syntax::Edits element_address_fix(const ast::Expr *e) {
     syntax::Edits edits = {};
     if (e->kind != .name && e->kind != .member && e->kind != .index) return edits;
+    // `rest...` reads as a member whose name is the dots: a pack, not an array to take the address of.
+    if (e->kind == .member) {
+        Str field = e->kind.member.name;
+        Bool word = countof(field) > 0 &&
+                    (field[0] == '_' || (field[0] >= 'a' && field[0] <= 'z') || (field[0] >= 'A' && field[0] <= 'Z'));
+        if (!word) return edits;
+    }
     Str open = "&";
     Str close = "[0]";
     edits = mem::realloc(edits, 2);
@@ -535,6 +549,31 @@ static types::TypeRef check_atomic_add(types::Checked *c, const ast::Expr *e, En
                      "a pointer to an integer, an integer and `__ATOMIC_RELAXED`, the one order smith lowers");
     if (p->kind != .pointer || p->element->kind != .integer || n->kind != .integer)
         return wrong(c, e->span, entry, wanted);
+    return p->element;
+}
+
+// The memory orders of `__atomic_exchange_n` and `__atomic_store_n`, the macros of the C library.
+export Bool is_memory_order(Str name) {
+    return same(name, "__ATOMIC_RELAXED") || same(name, "__ATOMIC_ACQUIRE") || same(name, "__ATOMIC_RELEASE") ||
+           same(name, "__ATOMIC_ACQ_REL") || same(name, "__ATOMIC_SEQ_CST");
+}
+
+// `__atomic_exchange_n(p, v, order)` stores `v` where the integer pointer `p` points and gives the old value;
+// `__atomic_store_n(p, v, order)` only stores it (#2643).
+static types::TypeRef check_atomic_write(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
+    Str wanted = "a pointer to an integer, an integer and a memory order such as `__ATOMIC_ACQUIRE`";
+    if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
+    types::TypeRef p = value_type(c, args[0]);
+    types::TypeRef n = value_type(c, args[1]);
+    if (p == c->table.invalid || n == c->table.invalid) return c->table.invalid;
+    if (is_open(p) || is_open(n)) return c->table.invalid;
+    const ast::Expr *order = args[2];
+    if (order->kind != .name || countof(order->kind.name.path.segments) != 1 ||
+        !is_memory_order(order->kind.name.path.segments[0].text))
+        return wrong(c, e->span, entry, wanted);
+    if (p->kind != .pointer || p->element->kind != .integer || n->kind != .integer)
+        return wrong(c, e->span, entry, wanted);
+    if (entry.shape == .atomic_store) return c->table.void_type;
     return p->element;
 }
 
@@ -670,6 +709,9 @@ export types::TypeRef check(types::Checked *c, const ast::Expr *e, Entry entry) 
         return c->table.bool_type;
     case .atomic_add:
         return check_atomic_add(c, e, entry, args);
+    case .atomic_exchange:
+    case .atomic_store:
+        return check_atomic_write(c, e, entry, args);
     case .va_start:
     case .va_end:
     case .va_format:

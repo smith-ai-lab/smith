@@ -256,7 +256,6 @@ uint32_t Reader::builtin(const clang::BuiltinType *type, uint32_t flags) {
 uint32_t Reader::function_type(const clang::FunctionProtoType *proto, uint32_t flags) {
     uint32_t result = convert(proto->getReturnType(), false);
     if (result == bad) return bad;
-    uint32_t first = static_cast<uint32_t>(parameters.size());
     std::vector<uint32_t> kinds;
     for (clang::QualType p : proto->param_types()) {
         p = without_volatile_pointee(p);
@@ -264,6 +263,8 @@ uint32_t Reader::function_type(const clang::FunctionProtoType *proto, uint32_t f
         if (t == bad) return bad;
         kinds.push_back(t);
     }
+    // After the loop: a parameter that is itself a function pointer adds its own parameters to the pool (#2643).
+    uint32_t first = static_cast<uint32_t>(parameters.size());
     for (uint32_t t : kinds)
         parameters.push_back({0, t});
     return type_node(Function, flags | (proto->isVariadic() ? 4U : 0U), result, first,

@@ -463,6 +463,16 @@ static syntax::Edits address_fix(const types::Checked *c, const ast::Expr *name)
     return edits;
 }
 
+// The edit for `&x` handed where a `*mut P` is wanted and `P` is a pointer to a constant (`const void **`): `x` becomes
+// `mut x`, and its own type stays `*T` (#2643).
+export syntax::Edits address_binding_fix(const types::Checked *c, const ast::Expr *name) {
+    syntax::Edits none = {};
+    if (name->kind != .name) return none;
+    const types::Symbol *x = types::lookup_path(&c->scopes, name->kind.name.path);
+    if (x == nullptr || x->kind != .variable || !x->is_new) return none;
+    return mut_fix(x);
+}
+
 // The edit for a field read `x.f` (or `x->f`) of a `*T` handed where a `*mut T` is wanted: the field's declared type
 // becomes `*mut T`, when the record is declared in the module checked and the field is written in smith's own syntax.
 static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member, Bool slice_field) {
@@ -488,6 +498,8 @@ static syntax::Edits field_fix(const types::Checked *c, const ast::Expr *member,
             edits[0] = (syntax::Edit){.span = {.start = after_brackets, .end = after_brackets}, .text = word};
             continue;
         }
+        // A `?*T` field is read through its pointer: `mut` goes after the `*` of the option's type (#2643).
+        if (written->kind == .option && written->kind.option.inner != nullptr) written = written->kind.option.inner;
         // Only `*T` as written (the star first); the old spelling `T *` is rewritten by the parse fixes.
         if (!(written->kind == .pointer)) continue;
         Bool star_first = written->kind.pointer.pointee->span.start > written->span.start;
@@ -569,6 +581,16 @@ static syntax::Edits data_fix(const types::Checked *c, const ast::Expr *slice_ex
 // neither is so (the pointer comes from somewhere a fix cannot see).
 export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base) {
     syntax::Edits edits = {};
+    // `s.*` of an `s: *mut *T` handed where a `*mut T` is wanted: the inner pointer is `*mut T` (#2643).
+    if (base->kind == .unary && base->kind.unary.op == .dereference && base->kind.unary.operand->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&c->scopes, base->kind.unary.operand->kind.name.path);
+        const ast::TypeExpr *outer = s != nullptr && s->kind == .variable && s->is_new ? s->written : nullptr;
+        const ast::TypeExpr *inner = nullptr;
+        if (outer != nullptr && outer->kind == .pointer) inner = outer->kind.pointer.pointee;
+        if (inner != nullptr && inner->kind == .pointer && !inner->kind.pointer.is_mut &&
+            inner->kind.pointer.pointee->span.start > inner->span.start)
+            return mut_after(inner->span.start + 1);
+    }
     if (base->kind == .unary && base->kind.unary.op == .address_of && base->kind.unary.operand->kind == .name) {
         return address_fix(c, base->kind.unary.operand);
     }
@@ -581,6 +603,15 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
     }
     if (base->kind == .member) {
         return field_fix(c, base, false);
+    }
+    // `xs[i]` of an array of `*T` handed where a `*mut T` is wanted: the element is written `*mut T` (#2643).
+    if (base->kind == .index && base->kind.index.base->kind == .name) {
+        const types::Symbol *xs = types::lookup_path(&c->scopes, base->kind.index.base->kind.name.path);
+        const ast::TypeExpr *array = xs != nullptr && xs->kind == .variable && xs->is_new ? xs->written : nullptr;
+        const ast::TypeExpr *element = array != nullptr && array->kind == .array ? array->kind.array.element : nullptr;
+        if (element != nullptr && element->kind == .pointer && !element->kind.pointer.is_mut)
+            return mut_after(element->span.start + 1);
+        return edits;
     }
     if (base->kind != .name) {
         return edits;
@@ -611,6 +642,8 @@ export syntax::Edits pointer_fix(const types::Checked *c, const ast::Expr *base)
             edits[countof(edits) - 1] = more[0];
         }
     }
+    // A name bound from a field (`region := task.region else: return`) is as writable as the field (#2643).
+    if (countof(edits) == 0 && init != nullptr && init->kind == .member) return field_fix(c, init, false);
     return edits;
 }
 
@@ -1777,6 +1810,19 @@ static types::TypeRef compare_type(types::Checked *c, ast::Span span, ast::Binar
     if (l->kind == .tuple && r->kind == .tuple) {
         return tuple_compare(c, span, op, l, r);
     }
+    if (is_equality(op) && l->kind == .function && r->kind == .null_type) {
+        // A function value is never null in smith: `f != nullptr` is true (#2643).
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 1);
+        Str answer = "false";
+        if (op == .not_equal) {
+            answer = "true";
+        }
+        fix[0] = (syntax::Edit){.span = span, .text = answer};
+        types::fail_fix(
+            c, span,
+            msg(format::push("a function value is never null, so this is always ", answer, ": write ", answer)), fix);
+        return invalid(c);
+    }
     // Two `?*T` of one type compare as the pointers they are (null for `.none`, #2205): `a.element != b.element`.
     if (is_equality(op) && l == r && is_pointer_option(l)) {
         return c->table.bool_type;
@@ -2656,6 +2702,15 @@ static void check_variadic_arguments(types::Checked *c, types::TypeRef signature
         if (c_receivable(t) || is_string_literal(args[i])) continue;
         Str hint = " cannot go through `...`: C receives an integer, float, bool, char, pointer or C enum";
         if (t->kind == .text) hint = " cannot go through `...`: pass `cstr.of(s)`, a `*u8` C can read";
+        if (t->kind == .array) { // C's array decays to the address of its first element: `&names[0]`
+            // A place gets the fix; `rest...` and other values get the error alone (a fix there would not parse).
+            types::fail_fix(
+                c, args[i]->span,
+                msg(format::push("`", types::show(t), "` cannot go through `...`: C receives the address of ",
+                                 "its first element, so write `&x[0]`")),
+                builtins::element_address_fix(args[i]));
+            continue;
+        }
         types::failf(c, args[i]->span, "argument ", (U64)i + 1, " is `", types::show(t), "`,", hint);
     }
 }
@@ -3552,20 +3607,33 @@ static Bool leads_to(const ast::Expr *place, const ast::Expr *base) {
     return found;
 }
 
+// The read `a.f` of an option of a pointer that `place` writes through (`a.f.x = v` with `a.f` a `?*T`), or null: the
+// binding of a test of `a.f` is a copy of the pointer, and the write lands in what both point at (#2643).
+static const ast::Expr *pointer_payload_read(types::Checked *c, const ast::Expr *place) {
+    if (!(place->kind == .member)) return nullptr;
+    const ast::Expr *read = place->kind.member.base;
+    if (!(read->kind == .member)) return nullptr;
+    types::TypeRef t = typ(c, read);
+    if (t == nullptr || t->kind != .option || t->element == nullptr || t->element->kind != .pointer) return nullptr;
+    return read;
+}
+
 // A write to `place` (`k.v.f = x`, `&k.v.f`, `k = other`): the binding of a test it reaches would be a copy, or stale,
 // so the test's site is left as it is (#2503).
 static void spoil_written(types::Checked *c, const ast::Expr *place) {
     if (place->kind == .unary && place->kind.unary.op == .dereference) {
         place = place->kind.unary.operand; // `p.* = x` changes what a test of `p.*` read
     }
+    const ast::Expr *through = pointer_payload_read(c, place);
+    types::Guard *kept = through != nullptr ? guard_of(c, through) : nullptr;
     for (Usize i = 0; i < c->guard_count; i++) {
         types::Guard *g = &c->guards[i];
         Bool inside = place->span.start >= g->reads.start && place->span.end <= g->reads.end;
-        if (inside && leads_to(place, g->base)) g->spoiled = true;
+        if (inside && leads_to(place, g->base) && g != kept) g->spoiled = true;
     }
     while (place->kind == .member || place->kind == .index) {
         types::Guard *g = guard_of(c, place);
-        if (g != nullptr) g->spoiled = true;
+        if (g != nullptr && g != kept) g->spoiled = true;
         if (place->kind == .member) {
             place = place->kind.member.base;
         } else if (place->kind == .index) {

@@ -68,7 +68,7 @@ process::Error failure_child(process::ChildResult r) {
 }
 
 // Whether the bytes are the text.
-Bool is_text(process::Bytes got, const char *text) {
+Bool is_text(typeof(const U8[:]) got, const char *text) {
     Usize length = __builtin_strlen(text);
     if (countof(got) != length) return false;
     for (Usize i = 0; i < length; i++) {

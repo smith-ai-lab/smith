@@ -931,6 +931,9 @@ static const char *const build_front_modules[] = {
     "fix_method",
     "fix_zero",
     "fix_opaque",
+    "fix_payload",
+    "fix_array",
+    "fix_bool",
     "fix_typeof",
     "lsp_server",
     "lsp_hover",
@@ -3433,6 +3436,11 @@ static int build_frontend_coverage(SmithRun *run) {
         status = status != 0 ? status
                              : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
                                                      smith_fmt(b, "%s/tree/compile_commands.json", work), nullptr));
+        // The fixer runs in the pristine copy beside the tree (#2521), so its database is there too (#2648).
+        status = status != 0 ? status : build_make_folder(b, smith_fmt(b, "%s/pristine", work));
+        status = status != 0 ? status
+                             : build_exec(smith_list(b, "/bin/cp", "compile_commands.json",
+                                                     smith_fmt(b, "%s/pristine/compile_commands.json", work), nullptr));
         if (status != 0) return status;
     }
     status = build_spawn(&(BuildSpawn){
