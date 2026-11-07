@@ -50,3 +50,9 @@ export void test_front_fix_array_a_prototype_before_its_definition_goes() {
     expect("const char *name(I32 x);\nconst char *name(I32 x) {\n    return nullptr;\n}\n",
            "fn name(x: i32) -> *char:\n    return nullptr\n");
 }
+
+// An array parameter with no length is C's pointer: `I32 xs[]` is `xs: []i32` (#2649).
+export void test_front_fix_array_an_unsized_array_parameter_is_a_slice() {
+    expect("I32 sum(I32 xs[], Usize count) {\n    return xs[0] + (I32)count;\n}\n",
+           "fn sum(xs: []i32, count: usize) -> i32:\n    return xs[0] + count.to(i32)\n");
+}
