@@ -22,6 +22,15 @@ fn count_down(n: u64, steps: u64) -> u64:
         return steps
     count_down(n - 1, steps + 1)
 
+# The last line is an `if` whose branches end in a call: each is a tail call.
+fn count_up(n: u64, limit: u64) -> u64:
+    if n == limit:
+        n
+    else if n > limit:
+        0
+    else:
+        count_up(n + 1, limit)
+
 pub fn check() -> i32:
     if sum_to(10000000, 0) != 50000005000000:
         return 1
@@ -29,4 +38,6 @@ pub fn check() -> i32:
         return 2
     if count_down(10000000, 0) != 10000000:
         return 3
+    if count_up(0, 10000000) != 10000000:
+        return 4
     0

@@ -1311,6 +1311,60 @@ static state::Status value_start(state::Emitter *e, const state::ThenGeneral *w)
     return blockval::value_of(e, s, w->hint);
 }
 
+// A block whose last line is an expression, with that line written as `return <expression>` (#2709), or null.
+static ast::Stmt *returning_block(const ast::Stmt *b) {
+    if (b->kind != .block || countof(b->kind.block.items) == 0) return nullptr;
+    ast::StmtRef items[:] = b->kind.block.items;
+    Usize count = countof(items);
+    const ast::Stmt *last = items[count - 1];
+    if (last->kind != .expression) return nullptr;
+    ast::StmtRef *room = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), count, alignof(ast::StmtRef));
+    for (Usize i = 0; i + 1 < count; i++)
+        room[i] = items[i];
+    room[count - 1] = ast::return_value(last->kind.expression.value);
+    room[count - 1]->span = last->span;
+    ast::StmtRef list[:] = room[0:count];
+    ast::Stmt *made = ast::block(list);
+    made->span = b->span;
+    mem::free(room);
+    return made;
+}
+
+// An `if` (with `else if` and `else`) whose every branch ends in an expression, with each branch's last line
+// written as `return <expression>`, so a call there is in tail position (#2709). Null for anything else: a branch that
+// is not such a block, no `else`, or a chain of more than 32. The chain is read with a loop, not recursion.
+static ast::Stmt *returning_if(const ast::Stmt *s) {
+    const ast::Stmt *chain[32];
+    Usize count = 0;
+    const ast::Stmt *current = s;
+    ast::Stmt *tail = nullptr;
+    while (tail == nullptr) {
+        if (current->kind != .if_stmt || current->kind.if_stmt.is_constexpr || count == 32) return nullptr;
+        const ast::Stmt *otherwise = current->kind.if_stmt.else_branch;
+        if (otherwise == nullptr || current->kind.if_stmt.then_branch->kind != .block) return nullptr;
+        chain[count++] = current;
+        if (otherwise->kind == .if_stmt)
+            current = otherwise;
+        else if (otherwise->kind == .block) {
+            tail = returning_block(otherwise);
+            if (tail == nullptr) return nullptr;
+        } else
+            return nullptr;
+    }
+    for (Usize i = count; i > 0; i--) {
+        const ast::Stmt *node = chain[i - 1];
+        if (node->kind != .if_stmt) return nullptr;
+        ast::Stmt *then_branch = returning_block(node->kind.if_stmt.then_branch);
+        if (then_branch == nullptr) return nullptr;
+        ast::Stmt copy = *node;
+        if (copy.kind != .if_stmt) return nullptr;
+        copy.kind.if_stmt.then_branch = then_branch;
+        copy.kind.if_stmt.else_branch = tail;
+        tail = ast::new_stmt(copy);
+    }
+    return tail;
+}
+
 // The body with its last `if`, `match` or block returned: as `value_block`, through the same continuation.
 static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *body) {
     try debug::stmt_location(e, body);
@@ -1319,6 +1373,17 @@ static state::Status value_statement_block(state::Emitter *e, const ast::Stmt *b
     }
     ast::StmtRef items[:] = body->kind.block.items;
     const ast::Stmt *last = items[countof(items) - 1];
+    ast::Stmt *returning = last->kind == .if_stmt ? returning_if(last) : nullptr;
+    if (returning != nullptr) {
+        // Each branch returns its own value, so a call that ends a branch is a tail call (#2709).
+        state::begin_scope(e);
+        state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
+        state::push_statement(e, returning);
+        state::push_then_general(e, (state::ThenGeneral){.run = value_after_end, .span = last->span});
+        for (Usize i = countof(items) - 1; i > 0; i--)
+            state::push_statement(e, items[i - 1]);
+        return state::success();
+    }
     state::begin_scope(e);
     state::push_then_none(e, (state::ThenNone){.run = block_finish, .span = body->span});
     state::push_then_none(e, (state::ThenNone){.run = return_finish, .span = last->span});
