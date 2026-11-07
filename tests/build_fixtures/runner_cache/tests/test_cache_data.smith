@@ -1,0 +1,14 @@
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+// Reads data/value.txt through files, so the cache knows the test depends on it.
+void test_cache_reads_a_file(void) {
+    arena::Arena memory = test::memory(1U << 16);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    files::BytesResult contents = files::read_file("data/value.txt");
+    mem::set_allocator(outside);
+    test::check_condition(contents == .ok);
+}
