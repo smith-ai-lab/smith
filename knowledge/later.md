@@ -1,6 +1,12 @@
+---
+type: design
+title: "Later: ideas off the roadmap"
+description: Every idea that is not on the roadmap of #73, one line each with the closed issue that held it; moved up only by the lead with the owner, as a fresh ticket.
+tags: [factory, backlog, roadmap]
+---
 # Later
 
-Ideas that are not on the roadmap of #73, one line each with the closed issue that held them (owner, 2026-11-07: "350 is insane. We're never going to be able to do all that, and it seems highly speculative ... only keep stuff that we like really need and know we need"). Nothing here is worked on. When the lead and the owner move an idea up, it becomes a new ticket written fresh from the code as it is then ([smith-dev-tickets](../.agents/skills/smith-dev-tickets/SKILL.md)); the old issue is history, not a spec.
+Ideas that are not on the roadmap of #73, one line each with the closed issue that held them (owner, 2026-11-07: "350 is insane. We're never going to be able to do all that, and it seems highly speculative ... only keep stuff that we like really need and know we need"). Nothing here is worked on. When the lead and the owner move an idea up, it becomes a new ticket written fresh from the code as it is then (smith-dev-tickets (skill smith-dev-tickets)); the old issue is history, not a spec.
 
 ## Editor and formatting (roadmap step 3, zero patches)
 - #2048: smith lsp: format-on-save for .smith through front::format, never clang-format
