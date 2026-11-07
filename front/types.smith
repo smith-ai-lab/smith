@@ -193,6 +193,44 @@ export Bool same_text(Str a, Str b) {
     return true;
 }
 
+// Readers of the payloads that the checker reads in a condition. Each is one test and one read, so that the fixer binds
+// the payload (`.name(name) := e.kind`), and gives an empty value for any other kind.
+
+// The name `n` of an expression that is one plain name (a path of one segment), else an empty text.
+static Str single_name(const ast::Expr *e) {
+    if (e == nullptr) return "";
+    if (e->kind != .name) return "";
+    if (countof(e->kind.name.path.segments) != 1) return "";
+    return e->kind.name.path.segments[0].text;
+}
+
+// `k.f` with `k` a plain name and `.` (not `->`): the identifier `k` and the member `f`.
+static Bool member_of_name(const ast::Expr *e, ast::Identifier *base, Str *member) {
+    if (e->kind != .member) return false;
+    if (e->kind.member.arrow) return false;
+    const ast::Expr *owner = e->kind.member.base;
+    if (owner->kind != .name) return false;
+    if (countof(owner->kind.name.path.segments) != 1) return false;
+    *base = owner->kind.name.path.segments[0];
+    *member = e->kind.member.name;
+    return true;
+}
+
+// The path of a written type that is a name, else an empty path.
+static Bool written_path(const ast::TypeExpr *t, ast::Path *path) {
+    if (t == nullptr) return false;
+    if (t->kind != .named) return false;
+    *path = t->kind.named.path;
+    return true;
+}
+
+// The expression of a type argument that is a value, else null.
+static const ast::Expr *value_argument(const ast::TypeArg *a) {
+    if (a == nullptr) return nullptr;
+    if (*a != .value) return nullptr;
+    return a->value.value;
+}
+
 static Bool same_slots(Slot a[:], Slot b[:]) {
     if (countof(a) != countof(b)) return false;
     for (Usize i = 0; i < countof(a); i++) {
@@ -1519,21 +1557,27 @@ static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
     if (operand->kind == .type_value) {
         // (no recursion: only a named type, as `typeof(i32)`, is read here)
         const ast::TypeExpr *given = operand->kind.type_value.type;
-        if (given->kind == .named) return resolve_name(r, given->span, given->kind.named.path);
+        ast::Path given_path = {};
+        if (written_path(given, &given_path)) return resolve_name(r, given->span, given_path);
         // `typeof(Edit[:])`, the alias of a list (`Edits`, `Errors`): one slice of a plain name, with no recursion
         // (#2602)
-        const ast::TypeExpr *element = given->kind == .slice ? given->kind.slice.element : nullptr;
-        if (element != nullptr && element->kind == .named) {
-            TypeRef of = resolve_name(r, element->span, element->kind.named.path);
+        const ast::TypeExpr *element = nullptr;
+        if (given->kind == .slice) element = given->kind.slice.element;
+        ast::Path element_path = {};
+        if (written_path(element, &element_path)) {
+            TypeRef of = resolve_name(r, element->span, element_path);
             return slice_of(&r->table, of, false);
         }
         failf(r, node->span, "not yet typed: `typeof` of a type that is not a plain name; write the type itself");
         return r->table.invalid;
     }
-    if (operand->kind == .name && countof(operand->kind.name.path.segments) == 1) {
-        const Symbol *found = lookup(&r->scopes, operand->kind.name.path.segments[0].text);
+    Str operand_name = single_name(operand);
+    if (countof(operand_name) > 0) {
+        const Symbol *found = lookup(&r->scopes, operand_name);
         if (found != nullptr && found->kind == .variable) return found->type;
-        return resolve_name(r, operand->span, operand->kind.name.path); // a type written as a name; else unknown
+        if (operand->kind == .name) {
+            return resolve_name(r, operand->span, operand->kind.name.path); // a type written as a name; else unknown
+        }
     }
     if (r->options.expression != nullptr) return r->options.expression(r, operand);
     failf(r, node->span,
@@ -1543,8 +1587,8 @@ static TypeRef type_of_operand(Checked *r, const ast::TypeExpr *node) {
 
 static TypeRef leaf_type(Checked *r, const ast::TypeExpr *node) {
     if (node->kind == .named) {
-        ast::Path named = node->kind.named.path;
-        return resolve_name(r, node->span, named);
+        ast::Path named_path = node->kind.named.path;
+        return resolve_name(r, node->span, named_path);
     }
     if (node->kind == .auto_type) return r->table.automatic;
     if (node->kind == .type_of) {
@@ -1617,7 +1661,7 @@ static TypeRef build_vector(Checked *r, const ast::TypeExpr *node, TypeRef eleme
         failf(r, node->span, "`vec` takes an element type and a lane count; write `vec(f32, 4)`");
         return r->table.invalid;
     }
-    const ast::Expr *count = second->value.value;
+    const ast::Expr *count = value_argument(second);
     if (count->kind != .integer) {
         failf(r, count->span, "not yet typed: a lane count that is not an integer literal; write `vec(f32, 4)`");
         return r->table.invalid;
@@ -1643,7 +1687,8 @@ static TypeRef build_slice_of(Checked *r, const ast::TypeExpr *node, TypeRef ele
     ast::TypeArg args[:] = node->kind.applied.args;
     U64 count = 0;
     const ast::TypeArg *second = countof(args) == 2 ? &args[1] : nullptr;
-    if (second == nullptr || !(*second == .value) || !constant_length(r, second->value.value, &count) || count < 1) {
+    const ast::Expr *count_expr = value_argument(second);
+    if (count_expr == nullptr || !constant_length(r, count_expr, &count) || count < 1) {
         failf(r, node->span, "`slice_of` takes an element type and a count known at compile time, of 1 or more");
         return r->table.invalid;
     }
@@ -1736,13 +1781,13 @@ static const Symbol *type_through_modules(const Checked *r, ast::Path path);
 // Whether `e` is a name that may stand for a constant, and its path: `n`, or `N`, which the parser reads as a type
 // written as a value.
 static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
-    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
-        countof(e->kind.member.base->kind.name.path.segments) == 1) {
+    ast::Identifier header = {};
+    Str header_member = "";
+    if (member_of_name(e, &header, &header_member)) {
         // `k.depth`: a name of a C header's constant, `k` the header's binding (the path of `k.SIDE` is a type_value)
-        ast::Identifier second = {.text = e->kind.member.name, .span = e->span};
-        Usize first_at = 0;
+        ast::Identifier second = {.text = header_member, .span = e->span};
         ast::Identifier segments[:] = mem::alloc_slice(ast::Identifier, 2);
-        segments[first_at] = e->kind.member.base->kind.name.path.segments[0];
+        segments[0] = header;
         segments[1] = second;
         *path = (ast::Path){.segments = segments, .span = e->span};
         return true;
@@ -1751,14 +1796,15 @@ static Bool names_a_constant(const ast::Expr *e, ast::Path *path) {
         *path = e->kind.name.path;
         return true;
     }
-    if (e->kind == .type_value) {
-        const ast::TypeExpr *t = e->kind.type_value.type;
-        if (t != nullptr && t->kind == .named) {
-            *path = t->kind.named.path;
-            return true;
-        }
-    }
+    if (e->kind == .type_value) return written_path(e->kind.type_value.type, path);
     return false;
+}
+
+// The operand of `countof(x)`, else null.
+static const ast::Expr *counted_operand(const ast::Expr *e) {
+    if (e->kind != .query) return nullptr;
+    if (e->kind.query.op != .count_of) return nullptr;
+    return e->kind.query.operand;
 }
 
 // The value of an array length that is known at compile time: an integer literal, a name of a constant (`constexpr`,
@@ -1780,10 +1826,10 @@ static Bool constant_length(const Checked *r, const ast::Expr *root, U64 *out) {
             continue;
         }
         ast::Path path = {};
-        if (e->kind == .query && e->kind.query.op == .count_of && e->kind.query.operand != nullptr &&
-            e->kind.query.operand->kind == .name) {
+        const ast::Expr *counted = counted_operand(e);
+        if (counted != nullptr && counted->kind == .name) {
             // `countof(dims)` of a pack in an instance: the number of elements of the tuple it is bound to
-            const Symbol *pack = type_through_modules(r, e->kind.query.operand->kind.name.path);
+            const Symbol *pack = type_through_modules(r, counted->kind.name.path);
             if (pack == nullptr || pack->kind != .variable || pack->type == nullptr || pack->type->kind != .tuple)
                 return false;
             values[have++] = countof(pack->type->slots);
