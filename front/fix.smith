@@ -482,23 +482,10 @@ static Usize pattern_probe = 0; // 0: not tried, 1: the parser reads a pattern i
 // into a parse error, and the module would still not pass.
 static Bool values_take_patterns() {
     if (pattern_probe == 0) {
-        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K) -> bool:\n    return .v(v) := k && v.x\n");
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K) -> bool:\n    return .v(v) := k and v.x\n");
         pattern_probe = countof(probe.errors) == 0 ? 1 : 2;
     }
     return pattern_probe == 1;
-}
-
-static Usize condition_probe = 0; // 0: not tried, 1: the parser reads a pattern after a test in an `if`, 2: it does not
-
-// Whether the parser reads a pattern that does not start the chain of an `if` (D12: `if a && .v(v) := k && v.x:`).
-static Bool conditions_take_patterns() {
-    if (condition_probe == 0) {
-        parser::Parsed probe = parser::parse_new(
-            "probe.smith",
-            "fn f(a: bool, k: K) -> bool:\n    if a && .v(v) := k && v.x:\n        return true\n    return false\n");
-        condition_probe = countof(probe.errors) == 0 ? 1 : 2;
-    }
-    return condition_probe == 1;
 }
 
 static Usize guard_probe = 0; // 0: not tried, 1: the parser reads a binding with an else, 2: it does not
@@ -546,10 +533,8 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     if (bindings_take_else()) out = append(out, fix_guard::edits(source));
     if (places_are_bound()) out = append(out, fix_place::edits(source));
     if (operators_are_words()) out = append(out, fix_words::edits(source));
-    Bool values = values_take_patterns();
-    Bool conditions = conditions_take_patterns();
-    if (!values && !conditions) return out;
-    return append(out, fix_chain::edits_for(source, values, conditions));
+    if (!values_take_patterns()) return out;
+    return append(out, fix_chain::edits(source));
 }
 
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).

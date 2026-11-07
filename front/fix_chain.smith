@@ -3,12 +3,11 @@
 //   return e.kind == .binary && e.kind.binary.op == .add    return .binary(binary) := e.kind && binary.op == .add
 //   z := a.kind == .v && a.kind.v.f == 1 && a.kind.v.g      z := .v(v) := a.kind && v.f == 1 && v.g
 //
-// A pattern is a conjunct of any `&&` chain wherever a bool is wanted (D12 for `if` and `while`, D16 for `return`, an
-// initializer or an argument); its names are in scope to its right in the chain and nowhere else. The `if` and `while`
-// forms are the checker's; this pass reads the text of the statements the checker has no fix for: a `return` or a
-// `name := ...` / `name: bool = ...` of one line, and the tests after the first conjunct of an `if`, `else if` or
-// `while` (the first one is the checker's), whose chain at the top level has `A == .v` followed by reads of
-// `A.v`. A chain with a `||` at the top level is left (the pattern would not hold for the other side), and so is a
+// A pattern is a conjunct of an `and` chain wherever a bool is wanted (D12 for `if` and `while`, D16 for `return` or an
+// initializer); its names are in scope to its right in the chain and nowhere else. The `if` and `while` forms are the
+// checker's; this pass reads the text of the statements the checker has no fix for: a `return` or a `name := ...` /
+// `name: bool = ...` of one line, whose chain at the top level has `A == .v` followed by reads of `A.v`. A chain
+// with an `or` at the top level is left (the pattern would not hold for the other side), and so is a
 // read to the left of the test. The binding is named after its variant, as everywhere else. Tests:
 // `tests/front_fix_chain_test.smith`.
 //
@@ -168,11 +167,11 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
 }
 
 // The fixes for one chain whose line starts at `base` in the source.
-static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Usize from, Usize first_test) {
+static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Usize from) {
     Piece parts[8];
     Usize count = 0;
     if (!pieces_of(line, from, parts, &count) || count < 2) return out;
-    for (Usize i = first_test; i + 1 < count; i++) {
+    for (Usize i = 0; i + 1 < count; i++) {
         Usize a = parts[i].start;
         Usize b = parts[i].stop;
         while (a < b && line[a] == ' ')
@@ -200,22 +199,10 @@ static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Us
     return out;
 }
 
-// Where the chain of an `if`, `else if` or `while` line starts, or the end of the line when it is none of these or its
-// block is on the same line.
-static Usize condition_start(Str line, Usize from) {
-    if (countof(line) == 0 || line[countof(line) - 1] != ':') return countof(line);
-    Str plain = "if ";
-    Str other = "else if ";
-    Str loop = "while ";
-    if (starts_with(line[from:countof(line)], plain)) return from + countof(plain);
-    if (starts_with(line[from:countof(line)], other)) return from + countof(other);
-    if (starts_with(line[from:countof(line)], loop)) return from + countof(loop);
-    return countof(line);
-}
-
-// The fixes for the statements of `source`: `values` takes a `return` or an initializer (D16), `conditions` the
-// tests that do not start the chain of an `if`, `else if` or `while` (the checker's rule has the first one).
-export core::Errors edits_for(Str source, Bool values, Bool conditions) {
+// The fixes for the statements of `source`: a `return` or an initializer (D16). A test in an `if`, `else if` or `while`
+// is the checker's when it starts the chain and stays as it is when a conjunct comes before it (`ok and k == .v and
+// k.v.n`: the conjuncts before it may be what makes `k` safe to read).
+export core::Errors edits(Str source) {
     core::Errors out = {};
     Usize at = 0;
     while (at < countof(source)) {
@@ -224,15 +211,10 @@ export core::Errors edits_for(Str source, Bool values, Bool conditions) {
         Usize k = 0;
         while (k < countof(line) && line[k] == ' ')
             k += 1;
-        Usize from = values ? value_start(line, k) : countof(line);
+        Usize from = value_start(line, k);
         if (from < countof(line)) out = chain(out, source, line, at, from, 0);
-        Usize head = conditions ? condition_start(line, k) : countof(line);
-        if (head < countof(line)) out = chain(out, source, line[0:countof(line) - 1], at, head, 1);
         at = end + 1;
     }
     return out;
 }
 
-export core::Errors edits(Str source) {
-    return edits_for(source, true, true);
-}

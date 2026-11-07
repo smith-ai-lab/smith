@@ -77,20 +77,15 @@ export void test_front_fix_chain_a_local_of_the_variants_name_keeps_the_chain() 
            "fn f(e: *Expr, binary: i32) -> bool:\n    return e.kind == .binary && e.kind.binary.op == .add\n");
 }
 
-export void test_front_fix_chain_a_test_after_another_conjunct_of_an_if_is_a_pattern() {
+export void test_front_fix_chain_a_test_after_another_conjunct_of_an_if_stays() {
     expect("    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n",
-           "    if a.present && .tuple(tuple) := a.ty.kind && tuple.n == c:\n");
+           "    if a.present && a.ty.kind == .tuple && a.ty.kind.tuple.n == c:\n");
+    expect("    while n != nullptr && n.kind == .member && !n.kind.member.arrow:\n",
+           "    while n != nullptr && n.kind == .member && !n.kind.member.arrow:\n");
 }
 
 export void test_front_fix_chain_the_first_test_of_an_if_is_the_checkers() {
     expect("    if k == .v && k.v.f == 1:\n", "    if k == .v && k.v.f == 1:\n");
-}
-
-export void test_front_fix_chain_a_while_and_an_else_if_chain_too() {
-    expect("    while n != nullptr && n.kind == .member && !n.kind.member.arrow:\n",
-           "    while n != nullptr && .member(member) := n.kind && !member.arrow:\n");
-    expect("    else if e != nullptr && e.kind == .unary && e.kind.unary.op == .negate:\n",
-           "    else if e != nullptr && .unary(unary) := e.kind && unary.op == .negate:\n");
 }
 
 export void test_front_fix_chain_a_chain_written_with_and_is_read_too() {
