@@ -342,7 +342,9 @@ static void add_builtin(Table *t, Str name, TypeRef type) {
 }
 
 static void add_number(Table *t, Str name, Kind kind, U32 bits, Bool is_signed) {
-    TypeRef type = intern(t, (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .name = name});
+    TypeRef type = intern(
+        t,
+        (Ty){.kind = kind, .bits = bits, .is_signed = is_signed, .name = name, .element = nullptr, .error = nullptr});
     add_builtin(t, name, type);
 }
 
@@ -352,13 +354,13 @@ static void add_va_list(Table *t);
 export Table start(Target target) {
     Table t = {.target = target};
     U32 word = target.pointer_bytes * 8;
-    t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>"});
-    t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto"});
-    t.void_type = intern(&t, (Ty){.kind = .void_type, .name = "Void"});
-    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool"});
-    t.text = intern(&t, (Ty){.kind = .text, .name = "Str"});
-    t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null"});
-    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type"});
+    t.invalid = intern(&t, (Ty){.kind = .invalid, .name = "<error>", .element = nullptr, .error = nullptr});
+    t.automatic = intern(&t, (Ty){.kind = .automatic, .name = "Auto", .element = nullptr, .error = nullptr});
+    t.void_type = intern(&t, (Ty){.kind = .void_type, .name = "Void", .element = nullptr, .error = nullptr});
+    t.bool_type = intern(&t, (Ty){.kind = .bool_type, .name = "Bool", .element = nullptr, .error = nullptr});
+    t.text = intern(&t, (Ty){.kind = .text, .name = "Str", .element = nullptr, .error = nullptr});
+    t.null_type = intern(&t, (Ty){.kind = .null_type, .name = "Null", .element = nullptr, .error = nullptr});
+    TypeRef type_of_types = intern(&t, (Ty){.kind = .type_type, .name = "type", .element = nullptr, .error = nullptr});
     add_builtin(&t, "Auto", t.automatic);
     add_builtin(&t, "type", type_of_types);
     add_builtin(&t, "Void", t.void_type);
@@ -422,11 +424,12 @@ export TypeRef float_of_width(const Table *t, U32 bits) {
 }
 
 export TypeRef pointer_to(Table *t, TypeRef pointee, Bool pointee_const) {
-    return intern(t, (Ty){.kind = .pointer, .element = pointee, .pointee_const = pointee_const});
+    return intern(t, (Ty){.kind = .pointer, .element = pointee, .pointee_const = pointee_const, .error = nullptr});
 }
 
 export TypeRef array_of(Table *t, TypeRef element, U64 count, Bool element_const) {
-    return intern(t, (Ty){.kind = .array, .element = element, .count = count, .pointee_const = element_const});
+    return intern(
+        t, (Ty){.kind = .array, .element = element, .count = count, .pointee_const = element_const, .error = nullptr});
 }
 
 static void add_va_list(Table *t) {
@@ -434,25 +437,25 @@ static void add_va_list(Table *t) {
 }
 
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
-    return intern(t, (Ty){.kind = .slice, .element = element, .pointee_const = element_const});
+    return intern(t, (Ty){.kind = .slice, .element = element, .pointee_const = element_const, .error = nullptr});
 }
 
 // `[,]T` (count 2), `[,,]T` (count 3): a block whose sizes are known at run time.
 export TypeRef block_of(Table *t, TypeRef element, U64 dimensions) {
-    return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions});
+    return intern(t, (Ty){.kind = .block, .element = element, .count = dimensions, .error = nullptr});
 }
 
 // `vec(T, N)`: `count` lanes of `element`.
 export TypeRef vector_of(Table *t, TypeRef element, U64 count) {
-    return intern(t, (Ty){.kind = .vector, .element = element, .count = count});
+    return intern(t, (Ty){.kind = .vector, .element = element, .count = count, .error = nullptr});
 }
 
 export TypeRef stream_of(Table *t, TypeRef element) {
-    return intern(t, (Ty){.kind = .stream, .element = element});
+    return intern(t, (Ty){.kind = .stream, .element = element, .error = nullptr});
 }
 
 export TypeRef option_of(Table *t, TypeRef some) {
-    return intern(t, (Ty){.kind = .option, .element = some});
+    return intern(t, (Ty){.kind = .option, .element = some, .error = nullptr});
 }
 
 export TypeRef result_of(Table *t, TypeRef ok, TypeRef error) {
@@ -468,11 +471,11 @@ export TypeRef tuple_of(Table *t, Slot elements[:]) {
         slots[i].name = countof(given) > 0 ? given : msg(format::push(i));
         slots[i].type = elements[i].type;
     }
-    return intern(t, (Ty){.kind = .tuple, .slots = slots});
+    return intern(t, (Ty){.kind = .tuple, .slots = slots, .element = nullptr, .error = nullptr});
 }
 
 export TypeRef fn_value_of(Table *t, TypeRef function) {
-    return intern(t, (Ty){.kind = .fn_value, .element = function});
+    return intern(t, (Ty){.kind = .fn_value, .element = function, .error = nullptr});
 }
 
 // `result (params...)`; the parameter names are dropped, they are not part of the type.
@@ -480,13 +483,14 @@ export TypeRef function_of(Table *t, Slot params[:], TypeRef result, Bool variad
     Slot copy[:] = mem::alloc_slice(Slot, countof(params));
     for (Usize i = 0; i < countof(params); i++)
         copy[i].type = params[i].type;
-    return intern(t, (Ty){.kind = .function, .element = result, .slots = copy, .variadic = variadic});
+    return intern(t, (Ty){.kind = .function, .element = result, .slots = copy, .variadic = variadic, .error = nullptr});
 }
 
 // A record, nominal: every call makes a new type. It is not `complete` (a pointer to it is fine, a value is not)
 // until `set_fields`. The pointer is the table's, to be given back to `set_fields`.
 export Ty *new_record(Table *t, Str name, Bool is_union) {
-    return add_entry(t, (Ty){.kind = .record, .name = name, .is_union = is_union});
+    return add_entry(t,
+                     (Ty){.kind = .record, .name = name, .is_union = is_union, .element = nullptr, .error = nullptr});
 }
 
 export void set_fields(Ty *record, Slot fields[:]) {
@@ -496,7 +500,8 @@ export void set_fields(Ty *record, Slot fields[:]) {
 
 // An enumeration, nominal, over the integer type `underlying`.
 export Ty *new_enumeration(Table *t, Str name, TypeRef underlying) {
-    return add_entry(t, (Ty){.kind = .enumeration, .name = name, .element = underlying, .complete = true});
+    return add_entry(
+        t, (Ty){.kind = .enumeration, .name = name, .element = underlying, .complete = true, .error = nullptr});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1339,7 +1344,7 @@ static Str path_text(ast::Path path) {
 
 // A concept of smith's own syntax (`num`), in a type that is written in it: a family of types, never a field's type.
 export TypeRef concept_of(Table *t, Str name) {
-    return intern(t, (Ty){.kind = .concept_type, .name = name});
+    return intern(t, (Ty){.kind = .concept_type, .name = name, .element = nullptr, .error = nullptr});
 }
 
 static Bool is_own_concept(Str name) {
