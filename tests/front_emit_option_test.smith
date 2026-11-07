@@ -274,7 +274,7 @@ export void test_front_emit_option_a_name_known_not_to_be_none_is_a_t() {
                      "    o + 3\n"
                      "pub fn both(n: i32) -> i32:\n"
                      "    o := make(n)\n"
-                     "    if o != .none && o > 4:\n"
+                     "    if o != .none and o > 4:\n"
                      "        return 1\n"
                      "    0\n"
                      "",

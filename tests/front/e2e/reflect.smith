@@ -48,7 +48,7 @@ pub fn check() -> i32:
         return 3
     let first = fields(Point)[0]
     let n: usize = countof(fields(Point))
-    if n != 2 || countof(first.name) != 1:
+    if n != 2 or countof(first.name) != 1:
         return 4
     let params: usize = countof(parameters(describe))
     if params != 2:

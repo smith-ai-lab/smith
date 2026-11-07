@@ -164,12 +164,40 @@ export void test_semantic_tokens_of_a_chain_with_two_patterns() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    open("file:///t/chain.smith", "fn f(k: K):\\n    if .a(x) := k && .b(y) := x:\\n        g(y)\\n");
+    open("file:///t/chain.smith", "fn f(k: K):\\n    if .a(x) := k and .b(y) := x:\\n        g(y)\\n");
     Str out = tokens("file:///t/chain.smith");
     Found keyword = token_at(out, 1, 4);
     test::check(keyword.there && keyword.type == 8);
     Found use = token_at(out, 2, 10);
     test::check(use.there && use.length == 1);
+}
+
+export void test_semantic_tokens_of_a_chain_that_starts_with_a_test() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/lead.smith", "fn f(k: K, ok: bool):\\n    if ok and .a(x) := k:\\n        g(x)\\n");
+    Str out = tokens("file:///t/lead.smith");
+    Found keyword = token_at(out, 1, 4);
+    test::check(keyword.there && keyword.type == 8);
+    Found use = token_at(out, 2, 10);
+    test::check(use.there && use.length == 1);
+}
+
+export void test_semantic_tokens_of_and_or_not_are_keywords() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    open("file:///t/logic.smith", "fn f(a: bool, b: bool) -> bool:\\n    return not a and b or a\\n");
+    Str out = tokens("file:///t/logic.smith");
+    Found negation = token_at(out, 1, 11);
+    test::check(negation.there && negation.type == 8);
+    Found both = token_at(out, 1, 17);
+    test::check(both.there && both.type == 8);
+    Found either = token_at(out, 1, 23);
+    test::check(either.there && either.type == 8);
 }
 
 export void test_semantic_tokens_range_and_unknown_documents() {

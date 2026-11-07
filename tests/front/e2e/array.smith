@@ -14,7 +14,7 @@ pub fn check() -> i32:
     if grid[1][2] != 6:
         return 3
     let empty: []i32 = []
-    if countof(empty) != 0 || total(empty) != 0:
+    if countof(empty) != 0 or total(empty) != 0:
         return 4
     let mut runs = 0
     for i in range(0, 3):

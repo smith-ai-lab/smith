@@ -18,7 +18,7 @@ fn count(o: ?i32) -> i32:
         .none: 0
 
 pub fn check() -> i32:
-    if score(.red) != 1 || score(.blue) != 2:
+    if score(.red) != 1 or score(.blue) != 2:
         return 1
     let top: Level = .high
     if top.to(u8) != 9:
@@ -29,6 +29,6 @@ pub fn check() -> i32:
         .red: seen = 1
         .green: seen = 2
         .blue: seen = 3
-    if seen != 2 || count(.some(4)) + count(.none) != 4:
+    if seen != 2 or count(.some(4)) + count(.none) != 4:
         return 3
     0

@@ -151,40 +151,41 @@ export void test_front_types_payload_read_without_testing_the_variant_suggests_i
 // A pattern starts an `&&` chain (D12): the bound name is in scope in the rest of the chain and the body, not in `else`
 
 export void test_front_types_payload_pattern_chain_binds_in_the_rest_of_the_chain_and_the_body() {
-    clean(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s && c.radius > 1.0:\n        return c.radius\n"
+    clean(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s and c.radius > 1.0:\n        return c.radius\n"
                  "    return 0.0\n"));
 }
 
 export void test_front_types_payload_pattern_chain_reads_the_payload_in_every_conjunct() {
-    clean(shapes("fn wide(s: Shape) -> bool:\n    if .rect(r) := s && r.w > 1.0 && r.h < r.w:\n        return true\n"
+    clean(shapes("fn wide(s: Shape) -> bool:\n    if .rect(r) := s and r.w > 1.0 and r.h < r.w:\n        return true\n"
                  "    return false\n"));
 }
 
 export void test_front_types_payload_pattern_chain_leads_a_while() {
-    clean(shapes("fn spin(s: Shape) -> f32:\n    mut total: f32 = 0.0\n    while .circle(c) := s && total < c.radius:\n"
-                 "        total += 1.0\n    return total\n"));
+    clean(
+        shapes("fn spin(s: Shape) -> f32:\n    mut total: f32 = 0.0\n    while .circle(c) := s and total < c.radius:\n"
+               "        total += 1.0\n    return total\n"));
 }
 
 export void test_front_types_payload_pattern_chain_name_is_not_in_the_else() {
-    fails(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s && c.radius > 1.0:\n        return 1.0\n"
+    fails(shapes("fn big(s: Shape) -> f32:\n    if .circle(c) := s and c.radius > 1.0:\n        return 1.0\n"
                  "    else:\n        return c.radius\n"),
           "`c`", "");
 }
 
 export void test_front_types_payload_pattern_chain_may_bind_again_to_the_right() {
     clean(shapes("struct Holder:\n    shape: Shape\nenum Slot:\n    held: Holder\n    free\n"
-                 "fn width(s: Slot) -> f32:\n    if .held(h) := s && .rect(r) := h.shape && r.w > 1.0:\n"
+                 "fn width(s: Slot) -> f32:\n    if .held(h) := s and .rect(r) := h.shape and r.w > 1.0:\n"
                  "        return r.w + r.h\n    return 0.0\n"));
 }
 
 export void test_front_types_payload_pattern_chain_binds_after_a_test() {
-    clean(shapes("fn big(s: Shape, t: Shape) -> f32:\n    if .circle(c) := s && c.radius > 1.0 && .rect(r) := t"
-                 " && r.w > c.radius:\n        return r.w\n    return 0.0\n"));
+    clean(shapes("fn big(s: Shape, t: Shape) -> f32:\n    if .circle(c) := s and c.radius > 1.0 and .rect(r) := t"
+                 " and r.w > c.radius:\n        return r.w\n    return 0.0\n"));
 }
 
 export void test_front_types_payload_pattern_chain_binds_again_in_a_while() {
     clean(shapes("fn spin(s: Shape, t: Shape) -> f32:\n    mut total: f32 = 0.0\n"
-                 "    while .circle(c) := s && .rect(r) := t && total < c.radius + r.w:\n        total += 1.0\n"
+                 "    while .circle(c) := s and .rect(r) := t and total < c.radius + r.w:\n        total += 1.0\n"
                  "    return total\n"));
 }
 
@@ -202,7 +203,7 @@ export void test_front_types_payload_pattern_chain_second_name_is_not_in_the_els
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     types::Checked r =
-        check_text(shapes("fn big(s: Shape, t: Shape) -> f32:\n    if .circle(c) := s && .rect(r) := t:\n"
+        check_text(shapes("fn big(s: Shape, t: Shape) -> f32:\n    if .circle(c) := s and .rect(r) := t:\n"
                           "        return r.w\n    else:\n        r\n        return 0.0\n"));
     test::check_condition(r.error_count > 0);
     test::check_condition(has(errors_of(&r), "`r`"));
@@ -210,6 +211,32 @@ export void test_front_types_payload_pattern_chain_second_name_is_not_in_the_els
 
 export void test_front_types_payload_pattern_chain_ends_with_a_call_and_a_statement_follows() {
     clean(shapes("fn near(x: f32) -> bool:\n    return x < 1.0\nfn big(s: Shape) -> f32:\n"
-                 "    if .circle(c) := s && !near(c.radius):\n        return c.radius\n    if near(1.0):\n"
+                 "    if .circle(c) := s and not near(c.radius):\n        return c.radius\n    if near(1.0):\n"
                  "        return 2.0\n    return 0.0\n"));
+}
+
+// A pattern after a plain test (D12): `ok && .v(x) := k`, the name is in the rest of the chain and the body.
+export void test_front_types_payload_pattern_chain_may_follow_a_plain_test() {
+    clean(shapes("fn big(s: Shape, ok: bool) -> f32:\n    if ok and .circle(c) := s and c.radius > 1.0:\n"
+                 "        return c.radius\n    return 0.0\n"));
+}
+
+export void test_front_types_payload_pattern_chain_after_a_test_does_not_leak_into_the_else() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = check_text(shapes("fn big(s: Shape, ok: bool) -> f32:\n    if ok and .circle(c) := s:\n"
+                                         "        return 1.0\n    else:\n        return c.radius\n"));
+    test::check_condition(r.error_count > 0); // `c` is not in the else (once per path the else is run by)
+}
+
+// A function with no result has no value line (#2669): the last line after a refutable binding stays a statement.
+export void test_front_types_payload_binding_in_a_function_without_a_result_ends_with_a_call() {
+    clean(shapes("fn note(x: f32):\n    return\nfn run(s: Shape):\n    .circle(c) := s else:\n        return\n"
+                 "    note(c.radius)\n"));
+}
+
+export void test_front_types_payload_binding_in_a_function_with_a_result_returns_its_last_line() {
+    clean(shapes("fn area(s: Shape) -> f32:\n    .circle(c) := s else:\n        return 0.0\n    c.radius * 2.0\n"));
 }
