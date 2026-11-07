@@ -696,11 +696,21 @@ static TypeRef part(TypeRef t, Usize i) {
 }
 
 // A vector is `count` lanes, its size and alignment rounded up to a power of two as LLVM's `<N x T>` is.
+// The width of an integer or floating type in bits.
+static U64 bits_of(TypeRef t) {
+    if (t->shape == .integer) return t->shape.integer.bits;
+    if (t->shape == .floating) return t->shape.floating.bits;
+    return 0;
+}
+
 static Layout vector_layout(const Target *target, TypeRef t) {
+    if (t->shape != .vector) return (Layout){.size = 1, .align = 1, .known = true};
+    TypeRef lane_type = t->shape.vector.element;
+    U64 count = t->shape.vector.count;
     U64 lane = 1;
-    if (t->element->kind != .bool_type) lane = t->element->bits / 8;
+    if (lane_type->kind != .bool_type) lane = bits_of(lane_type) / 8;
     U64 size = 1;
-    while (size < lane * t->count)
+    while (size < lane * count)
         size *= 2;
     return (Layout){.size = size, .align = least(size, target->max_align), .known = true};
 }
@@ -711,14 +721,15 @@ static Layout leaf_layout(const Target *target, TypeRef t) {
     Layout none = {};
     if (t->kind == .bool_type) return (Layout){.size = 1, .align = 1, .known = true};
     if (t->kind == .integer || t->kind == .floating) {
-        U64 bytes = t->bits / 8;
+        U64 bytes = bits_of(t) / 8;
         return (Layout){.size = bytes, .align = least(bytes, target->max_align), .known = true};
     }
     if (t->kind == .pointer || t->kind == .fn_value || t->kind == .null_type || t->kind == .stream)
         return (Layout){.size = word, .align = word, .known = true};
     if (t->kind == .slice || t->kind == .text) return (Layout){.size = 2 * word, .align = word, .known = true};
     if (t->kind == .vector) return vector_layout(target, t);
-    if ((t->kind == .record && t->complete) || t->kind == .tuple) return (Layout){.size = 0, .align = 1, .known = true};
+    if ((t->shape == .record && t->shape.record.complete) || t->kind == .tuple)
+        return (Layout){.size = 0, .align = 1, .known = true};
     return none;
 }
 
@@ -733,13 +744,13 @@ struct Frame {
 // Folds the layout of one part into the frame of its parent.
 static void absorb(Frame *f, Layout part_layout) {
     if (!part_layout.known) f->known = false;
-    if (f->type->kind == .array) {
-        f->size = part_layout.size * f->type->count;
+    if (f->type->shape == .array) {
+        f->size = part_layout.size * f->type->shape.array.count;
         f->align = part_layout.align;
     } else if (f->type->kind == .enumeration) {
         f->size = part_layout.size;
         f->align = part_layout.align;
-    } else if (f->type->is_union) {
+    } else if (f->type->shape == .record && f->type->shape.record.is_union) {
         f->size = most(f->size, part_layout.size);
         f->align = most(f->align, part_layout.align);
     } else {
@@ -758,7 +769,7 @@ export Layout layout(const Target *target, TypeRef t) {
     if (part_count(t) == 0) return leaf_layout(target, t);
     Frame stack[layout_depth];
     Usize top = 1;
-    stack[0] = (Frame){.type = t, .align = 1, .known = t->kind != .record || t->complete};
+    stack[0] = (Frame){.type = t, .align = 1, .known = t->shape != .record || t->shape.record.complete};
     Layout finished = {};
     Bool have_finished = false;
     while (top > 0) {
