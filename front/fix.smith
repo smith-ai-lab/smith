@@ -418,13 +418,28 @@ static core::Errors append(core::Errors out, core::Errors more) {
 // (vector = (...)))` where `kind` is a payload enumeration is `.vector((...))`, an array given to a C pointer
 // parameter is `&xs[0]`, a Bool given where a C function wants an integer is `1` or `.to(i32)`, and `mem::equal(a, b)`
 // is `==` (#2540: the call is found by its name). `fix_const` reads the text: a `= undefined` local whose address is
-// taken is `mut`, and `fix_chain` writes a pattern conjunct for a payload read after its test in a value (D16).
+// taken is `mut`, and `fix_chain` writes a pattern conjunct for a payload read after its test in a value (D16), once the parser
+// reads one.
+static Usize pattern_probe = 0; // 0: not tried, 1: the parser reads a pattern in a value, 2: it does not
+
+// Whether the parser reads a pattern conjunct in a value (D16: `return .v(v) := k && v.x`), tried once on a snippet.
+// `fix_chain` writes that form, so it waits for the parser that reads it: written before, it would turn a check error
+// into a parse error, and the module would still not pass.
+static Bool values_take_patterns(void) {
+    if (pattern_probe == 0) {
+        parser::Parsed probe = parser::parse_new("probe.smith", "fn f(k: K) -> bool:\n    return .v(v) := k && v.x\n");
+        pattern_probe = countof(probe.errors) == 0 ? 1 : 2;
+    }
+    return pattern_probe == 1;
+}
+
 static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     core::Errors out = fix_equal::edits(source, checked);
     out = append(out, fix_payload::edits(source, checked));
     out = append(out, fix_array::edits(source, checked));
     out = append(out, fix_bool::edits(source, checked));
     out = append(out, fix_const::edits(source));
+    if (!values_take_patterns()) return out;
     return append(out, fix_chain::edits(source));
 }
 
