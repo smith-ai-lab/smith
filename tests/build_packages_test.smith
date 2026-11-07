@@ -42,7 +42,12 @@ static const char *cache_in(const scratch::Project *p, const char *name) {
 // A project with the archives made and the cache `cache` (a name in the project's scratch folder). `fixture_name` is
 // the build.c fixture of the test that builds, null for the others.
 static Fixture fixture(arena::Arena *memory, const char *cache, const char *fixture_name) {
-    Fixture f = {.p = scratch::make("p", fixture_name), .memory = memory};
+    Fixture f = {.p = scratch::make("p", fixture_name),
+                 .pk = nullptr,
+                 .url = nullptr,
+                 .hash = nullptr,
+                 .hex = nullptr,
+                 .memory = memory};
     scratch::Run made = scratch::sh(&f.p, make_archives);
     test::check_equal(made.status, 0);
     f.pk = format::push(f.p.dir, "/pk").data;
