@@ -6,8 +6,8 @@
 // C's `T x = {};` followed by `f(&x)` is an out-parameter: `f` fills `x`. In smith a name is constant unless it is
 // `mut`, so `&x` is a `*T` and the checker says "this drops const" where `f` wants a `*mut T`. The fixer's own checker
 // does not report it for a callee in another module, so the rule reads the text: a local written `name: T = value`
-// (`= undefined` is what `{}` of a struct that C fills becomes) whose address `&name` or `&name.field` is taken later in
-// the same function is `mut`.
+// (`= undefined` is what `{}` of a struct that C fills becomes) whose address `&name` or `&name.field` is taken
+// later in the same function is `mut`.
 //
 //   fix_const::edits(source)   one fix for each such local
 module front::fix_const;
