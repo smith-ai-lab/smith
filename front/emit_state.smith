@@ -304,6 +304,7 @@ export struct ThenBlocks {
 // deletes this.
 export struct ThenGeneral {
     Continuation run;
+    Continuation branch; // an `if let` used as a value: what runs each branch (stores its last line into `value`)
     const ast::Expr *expr;
     const ast::Stmt *stmt;
     const ast::Decl *decl;
@@ -472,6 +473,17 @@ export void push_then_general(Emitter *e, ThenGeneral item) {
     Then then = {.general = item};
     Work work = {.then = then};
     push_work(e, work);
+}
+
+// A branch of an `if let`: a statement, or (when `w` carries a `branch`) work that stores the branch's value in
+// `w->value`.
+export void push_branch(Emitter *e, const ThenGeneral *w, const ast::Stmt *s) {
+    if (w->branch == nullptr) {
+        push_statement(e, s);
+        return;
+    }
+    ThenGeneral item = {.run = w->branch, .stmt = s, .ty = w->ty, .value = w->value, .span = s->span};
+    push_then_general(e, item);
 }
 
 export void push_value(Emitter *e, Value value) {

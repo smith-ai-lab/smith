@@ -309,18 +309,20 @@ static const ast::Module *read_module(const char *dotted) {
     }
     // After the three roots, the folders above the compiled file's: a file that says `module t::uses;` sits below the
     // root that names `t::point` (#2041).
-    Str folders[3 + ancestors_max] = {import_roots.source, import_roots.library, import_roots.local};
+    // One entry per root and per ancestor, all written out: an array literal needs its whole length.
+    Str folders[9] = {import_roots.source, import_roots.library, import_roots.local, "", "", "", "", "", ""};
+    static_assert(3 + ancestors_max == 9);
     Str above = import_roots.local;
-    for (Usize k = 3; k < 3 + ancestors_max && countof(above) > 0 && !roots::same(above, "."); k++) {
+    for (Usize level = 3; level < 3 + ancestors_max && countof(above) > 0 && !roots::same(above, "."); level++) {
         above = folder_of(above);
-        folders[k] = above;
+        folders[level] = above;
     }
     for (Usize k = 0; k < 3 + ancestors_max; k++) {
         if (countof(folders[k]) == 0) continue;
         Str path = as_str(format::push(folders[k], "/", inside, ".smith"));
         if (!files::exists(path)) continue;
         files::BytesResult loaded = load(path);
-        if (loaded == .error) return nullptr;
+        if (loaded != .ok) return nullptr;
         format::Chars chars = mem::view(loaded.ok, char);
         Str source = chars;
         parser::Parsed parsed =
@@ -390,7 +392,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
 static Str read_header_in(Str folder, Str header) {
     Str path = as_str(format::push(folder, "/", header));
     files::BytesResult loaded = files::read_file(path);
-    if (loaded == .error) return "";
+    if (loaded != .ok) return "";
     format::Chars chars = mem::view(loaded.ok, char);
     Str text = chars;
     return text;
@@ -495,7 +497,7 @@ static const types::Symbol *header_symbol(const types::Checked *checked, const a
     } else if (at->kind == .member && at->kind.member.base->kind == .name) {
         found = types::lookup(&checked->scopes, as_str(format::push("c::", at->kind.member.name)));
     }
-    if (found == nullptr || found->decl == nullptr || !found->decl->from_c) return nullptr;
+    if (found == nullptr || !types::declared_in_c(found)) return nullptr;
     return found;
 }
 
@@ -515,7 +517,7 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     if (type == nullptr && named != nullptr) type = named->type; // `c.f` before the checker binds `c` (#1961)
     if (type == nullptr) return (Hover){};
     Str doc = "";
-    if (named != nullptr) doc = named->decl->doc;
+    if (named != nullptr) doc = types::declared_doc(named);
     return (Hover){.found = true, .start = at->span.start, .end = at->span.end, .type = types::show(type), .doc = doc};
 }
 
@@ -608,13 +610,14 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
         header_qualifier(m, base->kind.name.path.segments[0].text) && types::type_of(checked, base) == nullptr) {
         for (Usize i = 0; i < countof(checked->scopes.symbols) && i < checked->scopes.count; i++) {
             const types::Symbol *s = &checked->scopes.symbols[i];
-            if (s->decl == nullptr || !s->decl->from_c || !starts_with_text(s->name, "c::")) continue;
+            if (!types::declared_in_c(s) || !starts_with_text(s->name, "c::")) continue;
             Str label = s->name[3:countof(s->name)];
             if (!starts_with_text(label, prefix) || s->type == nullptr) continue;
             U32 kind = s->kind == .function_symbol ? 3 : 6;
             if (s->kind == .type_name) kind = 7;
             list = offer(
-                list, (Candidate){.label = label, .kind = kind, .detail = types::show(s->type), .doc = s->decl->doc});
+                list, (Candidate){
+                          .label = label, .kind = kind, .detail = types::show(s->type), .doc = types::declared_doc(s)});
         }
         return list;
     }
@@ -623,8 +626,8 @@ static Candidates members_of(Candidates list, const types::Checked *checked, con
     types::TypeRef self = type->kind == .pointer ? type->element : type;
     Str module = "";
     if (self->kind == .record) {
-        for (Usize i = countof(self->name); i >= 2 && countof(module) == 0; i--)
-            if (self->name[i - 1] == ':' && self->name[i - 2] == ':') module = self->name[0:i];
+        for (Usize cut = countof(self->name); cut >= 2 && countof(module) == 0; cut--)
+            if (self->name[cut - 1] == ':' && self->name[cut - 2] == ':') module = self->name[0:cut];
         for (Usize i = 0; i < countof(self->slots); i++) {
             if (!types::field_visible(self, &self->slots[i]) || !starts_with_text(self->slots[i].name, prefix))
                 continue;
@@ -871,8 +874,10 @@ export Location definition_at(Str path, Str source, roots::Roots folders, U32 of
     const ast::Expr *at = ast::expr_at(&parsed.module, offset);
     if (at == nullptr) return (Location){};
     Location found = {};
-    if (at->kind == .name) {
-        ast::Path name = at->kind.name.path;
+    ast::Path name = {};
+    ast::Identifier owner = {};
+    Str member_name = "";
+    if (types::name_path(at, &name)) {
         Usize n = countof(name.segments);
         if (n == 0) return (Location){};
         if (n >= 2) {
@@ -883,11 +888,8 @@ export Location definition_at(Str path, Str source, roots::Roots folders, U32 of
             found = declaration_in(&parsed.module, word);
             if (!found.found) found = declaration_in(from_module(&parsed.module, word), word);
         }
-    } else if (at->kind == .member && at->kind.member.base->kind == .name) {
-        ast::Path base = at->kind.member.base->kind.name.path;
-        if (countof(base.segments) == 1) {
-            found = declaration_in(qualified_module(&parsed.module, base.segments[0].text), at->kind.member.name);
-        }
+    } else if (types::member_of_name(at, &owner, &member_name)) {
+        found = declaration_in(qualified_module(&parsed.module, owner.text), member_name);
     }
     if (found.found && countof(found.file) == 0) found.file = path;
     return found;
@@ -978,7 +980,7 @@ static Str wanted_triple(Str triple) {
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
     files::BytesResult loaded = load(path);
-    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
     format::Chars chars = mem::view(loaded.ok, char);
     Str source = chars;
 
@@ -1221,6 +1223,27 @@ static U64 integer_value(const ast::Expr *e) {
     return e->kind.integer.value;
 }
 
+// Whether a type is an array whose length is an integer literal; the length.
+static Bool sized_array(const ast::TypeExpr *t, U64 *length) {
+    if (t->kind != .array) return false;
+    if (!is_integer(t->kind.array.count)) return false;
+    *length = integer_value(t->kind.array.count);
+    return true;
+}
+
+// The element of an array type, else the type itself.
+static const ast::TypeExpr *array_element(const ast::TypeExpr *t) {
+    if (t->kind != .array) return t;
+    return t->kind.array.element;
+}
+
+// The one name a type is written as (`i32`, `Char`), else an empty text.
+static Str named_once(const ast::TypeExpr *t) {
+    if (t->kind != .named) return "";
+    if (countof(t->kind.named.path.segments) != 1) return "";
+    return t->kind.named.path.segments[0].text;
+}
+
 static Spelled spell_dimensional(const ast::TypeExpr *t) {
     Spelled none = {.text = "", .by_value = false, .suffix = ""};
     Str shape = "";
@@ -1228,12 +1251,14 @@ static Spelled spell_dimensional(const ast::TypeExpr *t) {
     const ast::TypeExpr *at = t;
     Bool is_const = t->qualifiers.is_const;
     for (Usize guard = 0; guard < 8; guard++) {
-        if (at->kind == .slice) {
+        const ast::TypeExpr *here = at;
+        U64 length = 0;
+        if (here->kind == .slice) {
             shape = as_str(format::push(shape, "_n"));
             runtime += 1;
-            at = at->kind.slice.element;
-        } else if (at->kind == .block_type) {
-            ast::ExprRef dims[:] = at->kind.block_type.dims;
+            at = here->kind.slice.element;
+        } else if (here->kind == .block_type) {
+            ast::ExprRef dims[:] = here->kind.block_type.dims;
             for (Usize i = 0; i < countof(dims); i++) {
                 if (dims[i] == nullptr) {
                     shape = as_str(format::push(shape, "_n"));
@@ -1244,10 +1269,10 @@ static Spelled spell_dimensional(const ast::TypeExpr *t) {
                     return none;
                 }
             }
-            at = at->kind.block_type.element;
-        } else if (at->kind == .array && is_integer(at->kind.array.count)) {
-            shape = as_str(format::push(shape, "_", integer_value(at->kind.array.count)));
-            at = at->kind.array.element;
+            at = here->kind.block_type.element;
+        } else if (sized_array(here, &length)) {
+            shape = as_str(format::push(shape, "_", length));
+            at = array_element(here);
         } else {
             break;
         }
@@ -1255,11 +1280,11 @@ static Spelled spell_dimensional(const ast::TypeExpr *t) {
     if (at->kind == .slice || at->kind == .block_type || at->kind == .array) return none;
     is_const = is_const || at->qualifiers.is_const;
     // The element is a scalar: a pointer or a struct here would call `spell` back, and the checker allows no recursion.
-    if (at->kind != .named || countof(at->kind.named.path.segments) != 1) return none;
-    Spelled element = {.text = scalar_spelling(at->kind.named.path.segments[0].text), .by_value = false, .suffix = ""};
+    Str written = named_once(at);
+    if (countof(written) == 0) return none;
+    Spelled element = {.text = scalar_spelling(written), .by_value = false, .suffix = ""};
     if (countof(element.text) == 0) return none;
     // The name of the struct uses the type's smith name, lowercase (`f32`, `char`), not the C spelling.
-    Str written = at->kind.named.path.segments[0].text;
     Str name_part = written;
     if (written[0] >= 'A' && written[0] <= 'Z') {
         Usize at_letter = (Usize)(written[0] - 'A');
@@ -1338,8 +1363,8 @@ static Spelled spell_base(const ast::TypeExpr *t, HeaderScope *scope, Str prefix
         Str imported = imported_spelling(t, scope);
         return (Spelled){.text = imported, .by_value = false, .suffix = ""};
     }
-    if (t->kind != .named || countof(t->kind.named.path.segments) != 1) return none;
-    Str name = t->kind.named.path.segments[0].text;
+    Str name = named_once(t);
+    if (countof(name) == 0) return none;
     Str scalar = scalar_spelling(name);
     if (countof(scalar) > 0) return (Spelled){.text = scalar, .by_value = false, .suffix = ""};
     if (!is_struct_name(name, scope->structs)) return none;
@@ -1355,10 +1380,12 @@ static Spelled spell(const ast::TypeExpr *t, HeaderScope *scope, Str prefix) {
     Bool mutable_level[8] = {};
     Usize depth = 0;
     const ast::TypeExpr *at = t;
-    while (at->kind == .pointer && depth < pointer_depth_max) {
-        mutable_level[depth] = at->kind.pointer.is_mut;
+    for (Usize steps = 0; steps < pointer_depth_max; steps++) {
+        const ast::TypeExpr *here = at;
+        if (here->kind != .pointer || depth >= pointer_depth_max) break;
+        mutable_level[depth] = here->kind.pointer.is_mut;
         depth += 1;
-        at = at->kind.pointer.pointee;
+        at = here->kind.pointer.pointee;
     }
     Spelled base = spell_base(at, scope, prefix, depth > 0);
     if (countof(base.text) == 0) return base;
@@ -1423,15 +1450,16 @@ static Spelled spell_declarator(const ast::TypeExpr *t, HeaderScope *scope, Str 
             at = block_element(at);
             continue;
         }
-        if (!(at->kind == .array)) break;
-        const ast::Expr *count = at->kind.array.count;
+        const ast::TypeExpr *here = at;
+        if (here->kind != .array) break;
+        const ast::Expr *count = here->kind.array.count;
         Str binding = "";
         Str text = length_text(count, &binding);
         if (countof(text) == 0) return (Spelled){.text = "", .by_value = false, .suffix = ""};
         if (countof(binding) > 0) bindings = as_str(format::push(bindings, binding, "\n"));
         suffix = as_str(format::push(suffix, "[", text, "]"));
         depth += 1;
-        at = at->kind.array.element;
+        at = here->kind.array.element;
     }
     Spelled base = spell(at, scope, prefix);
     if (countof(base.text) == 0 || depth == 0) return base;
@@ -1552,20 +1580,24 @@ static Str guarded(ast::Attribute list[:], Str text, Bool own_lines) {
     return as_str(format::push("#if ", condition, "\n", text, "#endif\n"));
 }
 
+// The operator and operands of an expression that is a binary one, else false.
+static Bool binary_of(const ast::Expr *e, ast::BinaryOp *op, const ast::Expr **left, const ast::Expr **right) {
+    if (e == nullptr) return false;
+    if (e->kind != .binary) return false;
+    *op = e->kind.binary.op;
+    *left = e->kind.binary.left;
+    *right = e->kind.binary.right;
+    return true;
+}
+
 // The C text of one operand of an array length: an integer, or a name a header binding gives (`k.SIDE` is `SIDE`, and
 // `*binding` the binding's name). Empty when it has no C spelling (a constant of smith's own is no C name).
 static Str length_leaf(const ast::Expr *e, Str *binding) {
     if (e == nullptr) return "";
-    if (e->kind == .integer) return as_str(format::push((U64)e->kind.integer.value));
-    if (e->kind == .member && !e->kind.member.arrow && e->kind.member.base->kind == .name &&
-        countof(e->kind.member.base->kind.name.path.segments) == 1) {
-        *binding = e->kind.member.base->kind.name.path.segments[0].text;
-        return e->kind.member.name;
-    }
+    U64 literal = 0;
+    if (types::integer_of(e, &literal)) return as_str(format::push(literal));
     ast::Path path = {};
-    if (e->kind == .name) path = e->kind.name.path;
-    if (e->kind == .type_value && e->kind.type_value.type->kind == .named)
-        path = e->kind.type_value.type->kind.named.path;
+    if (!types::names_a_constant(e, &path)) return "";
     if (countof(path.segments) != 2) return "";
     *binding = path.segments[0].text;
     return path.segments[1].text;
@@ -1581,10 +1613,13 @@ static Str length_operator(ast::BinaryOp op) {
 
 // The C text of an array length: one operand, or two joined by `+ - * /`. Empty when it has no C spelling.
 static Str length_text(const ast::Expr *e, Str *binding) {
-    if (e != nullptr && e->kind == .binary) {
-        Str op = length_operator(e->kind.binary.op);
-        Str left = length_leaf(e->kind.binary.left, binding);
-        Str right = length_leaf(e->kind.binary.right, binding);
+    ast::BinaryOp operator = .add;
+    const ast::Expr *first = nullptr;
+    const ast::Expr *second = nullptr;
+    if (binary_of(e, &operator, &first, &second)) {
+        Str op = length_operator(operator);
+        Str left = length_leaf(first, binding);
+        Str right = length_leaf(second, binding);
         if (countof(op) == 0 || countof(left) == 0 || countof(right) == 0) return "";
         return as_str(format::push(left, op, right));
     }
@@ -1717,7 +1752,7 @@ static Str write_if_changed(Str output, Str text) {
 export Report header(Str path, Str output, Str triple, roots::Roots folders) {
     Times times = {};
     files::BytesResult loaded = load(path);
-    if (loaded == .error) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
+    if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
     format::Chars chars = mem::view(loaded.ok, char);
     Str source = chars;
     if (starts_with_module(source))

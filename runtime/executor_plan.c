@@ -552,7 +552,7 @@ static bool smith_plan_build(SmithExec *exec, const uint32_t *targets, size_t co
 
 // Defined in executor_run.c, which this file comes before.
 static int64_t smith_run_restat(SmithExec *exec, SmithEdge *edge, int64_t started, uint32_t *stack);
-static void smith_run_make_parents(SmithExec *exec, const char *path);
+static void smith_run_make_parents(const char *path);
 
 static bool smith_plan_core_listed(const char *const *list, const char *path) {
     for (size_t i = 0; list != nullptr && list[i] != nullptr; i++) { // bounded by the list
@@ -596,7 +596,7 @@ static void smith_plan_core_command(SmithExec *exec, const SmithCorePlan *build,
         bool exists = smith_plan_stat_path(path) != 0;
         if (strstr(edge->command, path) == nullptr || (exists && smith_plan_core_listed(build->unchanged, path)))
             continue;
-        smith_run_make_parents(exec, path);
+        smith_run_make_parents(path);
         FILE *file = fopen(path, "wb");
         if (file == nullptr) continue;
         fputs("made\n", file);
@@ -659,14 +659,9 @@ bool smith_core_plan(const SmithCorePlan *build, char *output, size_t output_siz
         if (home >= 0) close(home);
         return false;
     }
-    SmithIo io = smith_io_make(0, nullptr);
-    SmithExec *exec = smith_arena_push(&io.arena, sizeof(SmithExec), alignof(SmithExec));
-    exec->io = &io;
-    exec->arena = &io.arena;
+    SmithExec *exec = smith_exec_open(nullptr);
     exec->options.explain = true;
     exec->manifest = build->manifest;
-    SmithArena scratch = smith_arena_carve(&io.arena, smith_exec_text_max);
-    exec->scratch = (char *)scratch.memory;
     smith_plan_core_stream = out;
     smith_manifest_read(exec);
     smith_state_open(exec);
@@ -684,7 +679,7 @@ bool smith_core_plan(const SmithCorePlan *build, char *output, size_t output_siz
         fputs("no work to do\n", out);
     smith_plan_core_stream = nullptr;
     fclose(out);
-    smith_io_close(&io);
+    smith_exec_close(exec);
     bool back = fchdir(home) == 0;
     close(home);
     *ran = commands;

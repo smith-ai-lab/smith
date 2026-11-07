@@ -99,7 +99,7 @@ static void smith_run_lock(SmithExec *exec, bool locked) {
 // ---------------------------------------------------------------- jobs
 
 static uint64_t smith_run_now_ms(const SmithExec *exec) {
-    return (smith_clock_now(&exec->io->clock) - exec->origin) / smith_exec_milliseconds;
+    return (smith_world_clock() - exec->origin) / smith_exec_milliseconds;
 }
 
 static void smith_run_command_argv(const SmithEdge *edge, const char *argv[4]) {
@@ -304,7 +304,7 @@ static bool smith_run_parse_depfile(SmithExec *exec, const char *text, size_t si
 // The edge's depfile: its dependencies go to the depfile log and the file is removed. A missing depfile is no
 // dependencies. False, with the reason in the job, if it does not name the edge's first output.
 static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, SmithJob *job) {
-    SmithRead file = smith_files_read(&exec->io->files, exec->arena, edge->depfile);
+    SmithWorldRead file = smith_world_read(exec->arena, edge->depfile);
     if (file.error.code != 0 && file.error.code != ENOENT) {
         snprintf(job->message, sizeof job->message, "%s", file.error.message);
         return false;
@@ -313,8 +313,8 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
     uint32_t count = 0;
     char first[smith_exec_name_max] = "";
     const char *output = exec->graph.nodes[smith_plan_output(exec, edge, 0)].path;
-    if (file.error.code == 0 && smith_run_parse_depfile(exec, (const char *)file.data.data, file.data.count[0], &deps,
-                                                        &count, first, sizeof first)) {
+    if (file.error.code == 0 &&
+        smith_run_parse_depfile(exec, (const char *)file.data, file.size, &deps, &count, first, sizeof first)) {
         char folded[smith_exec_name_max];
         snprintf(folded, sizeof folded, "%s", first);
         (void)smith_exec_canonical(folded, strlen(folded));
@@ -324,7 +324,7 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
             return false;
         }
     }
-    (void)smith_files_remove(&exec->io->files, edge->depfile);
+    (void)smith_world_remove(edge->depfile);
     static const char *none[1];
     if (deps == nullptr) deps = none;
     // a compile of the step cache names the system's headers too: the graph tracks the project's alone
@@ -332,8 +332,8 @@ static bool smith_run_take_depfile(SmithExec *exec, const SmithEdge *edge, Smith
     uint32_t tracked_count = smith_stepcache_graph_deps(exec, edge, deps, count, &tracked);
     job->step_deps = deps;
     job->step_dep_count = count;
-    job->depfile_text = file.error.code == 0 ? (const char *)file.data.data : nullptr;
-    job->depfile_size = file.error.code == 0 ? file.data.count[0] : 0;
+    job->depfile_text = file.error.code == 0 ? (const char *)file.data : nullptr;
+    job->depfile_size = file.error.code == 0 ? file.size : 0;
     smith_state_record_deps(exec, edge, smith_plan_stat_path(output), tracked, tracked_count);
     return true;
 }
@@ -398,9 +398,9 @@ static void smith_run_remove_partial(SmithExec *exec, const SmithEdge *edge) {
     for (uint32_t k = 0; k < edge->output_count; k++) {
         const SmithNode *node = &exec->graph.nodes[smith_plan_output(exec, edge, k)];
         int64_t fresh = smith_plan_stat_path(node->path);
-        if (edge->depfile != nullptr || node->mtime != fresh) (void)smith_files_remove(&exec->io->files, node->path);
+        if (edge->depfile != nullptr || node->mtime != fresh) (void)smith_world_remove(node->path);
     }
-    if (edge->depfile != nullptr) (void)smith_files_remove(&exec->io->files, edge->depfile);
+    if (edge->depfile != nullptr) (void)smith_world_remove(edge->depfile);
 }
 
 // ---------------------------------------------------------------- finishing a job
@@ -569,7 +569,7 @@ static SmithJob *smith_run_free_job(SmithExec *exec) {
 }
 
 // Makes the folder a path is in, as ninja does for every output before its command runs.
-static void smith_run_make_parents(SmithExec *exec, const char *path) {
+static void smith_run_make_parents(const char *path) {
     const char *slash = strrchr(path, '/');
     if (slash == nullptr || slash == path) return;
     char folder[smith_exec_name_max];
@@ -577,7 +577,7 @@ static void smith_run_make_parents(SmithExec *exec, const char *path) {
     if (length >= sizeof folder) return;
     memcpy(folder, path, length);
     folder[length] = '\0';
-    (void)smith_files_make_folder(&exec->io->files, folder);
+    (void)smith_world_make_folder(folder);
 }
 
 static void smith_run_start(SmithExec *exec, SmithJob *job, uint32_t number) {
@@ -587,8 +587,8 @@ static void smith_run_start(SmithExec *exec, SmithJob *job, uint32_t number) {
     if (!exec->options.dry_run && strncmp(edge->command, ".smith/program ", 15) != 0) smith_slots_need();
     if (!exec->options.dry_run) {
         for (uint32_t k = 0; k < edge->output_count; k++)
-            smith_run_make_parents(exec, exec->graph.nodes[smith_plan_output(exec, edge, k)].path);
-        if (edge->depfile != nullptr) smith_run_make_parents(exec, edge->depfile);
+            smith_run_make_parents(exec->graph.nodes[smith_plan_output(exec, edge, k)].path);
+        if (edge->depfile != nullptr) smith_run_make_parents(edge->depfile);
     }
     if (job->arena.capacity == 0) job->arena = smith_arena_carve(exec->arena, smith_exec_job_arena);
     SmithArena arena = job->arena;
@@ -720,7 +720,7 @@ static int smith_run_plan(SmithExec *exec) {
 static int smith_run_plan_steps(SmithExec *exec) {
     uint32_t *stack = smith_exec_push(exec, (exec->graph.node_count + exec->graph.link_count + 8) * sizeof(uint32_t),
                                       alignof(uint32_t));
-    exec->origin = smith_clock_now(&exec->io->clock);
+    exec->origin = smith_world_clock();
     exec->failures_left = exec->options.failures_allowed;
     exec->failures = 0;
     exec->first_failed[0] = '\0';

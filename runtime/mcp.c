@@ -28,6 +28,7 @@
 #include <smith/json.h>
 #include <smith/mem.h>
 #include "dap.h"
+#include "world.c"
 
 #include <errno.h>
 #include <limits.h>

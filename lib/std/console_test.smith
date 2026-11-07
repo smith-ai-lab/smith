@@ -75,12 +75,19 @@ Fake make_fake(const char *input) {
     return fake;
 }
 
+// Whether a read answered the count (not an error).
+Bool count_is(console::Count result, Usize expected) {
+    if (result != .ok) return false;
+    return result.ok == expected;
+}
+
 Bool succeeded(console::Written written) {
     return written == .ok;
 }
 
-Bool is_error(console::Written written, console::Error error) {
-    return written == .error && written.error == error;
+Bool is_error(console::Written written, console::Error expected) {
+    if (written != .error) return false;
+    return written.error == expected;
 }
 
 export void test_console_print_writes_its_typed_pieces_to_stdout() {
@@ -109,7 +116,7 @@ export void test_console_print_has_no_4_kib_limit() {
     Fake fake = make_fake("");
     console::Handler *before = console::set_handler(&fake.base);
     defer console::set_handler(before);
-    test::check_condition(succeeded(console::print("[", (const char *)big, "]")));
+    test::check_condition(succeeded(console::print("[", &big[0], "]")));
     test::check_equal(fake.out_size, 10002);
     test::check_condition(fake.out[0] == '[' && fake.out[1] == 'a' && fake.out[10001] == ']');
 }
@@ -144,11 +151,11 @@ export void test_console_read_answers_what_is_available_then_zero_at_the_end() {
     defer console::set_handler(before);
     U8 buffer[2] = {};
     console::Count first = console::read(buffer[0:2]);
-    test::check_condition(first == .ok && first.ok == 2 && buffer[0] == 'a' && buffer[1] == 'b');
+    test::check_condition(count_is(first, 2) && buffer[0] == 'a' && buffer[1] == 'b');
     console::Count second = console::read(buffer[0:2]);
-    test::check_condition(second == .ok && second.ok == 1 && buffer[0] == 'c');
+    test::check_condition(count_is(second, 1) && buffer[0] == 'c');
     console::Count third = console::read(buffer[0:2]);
-    test::check_condition(third == .ok && third.ok == 0);
+    test::check_condition(count_is(third, 0));
 }
 
 // The line read, copied: the text is the caller's to free, so a test frees it.
@@ -156,15 +163,16 @@ Bool line_is(console::LineResult result, const char *expected, Bool end) {
     if (result != .ok) return false;
     console::Line line = result.ok;
     Bool same = countof(line.text) == c::strlen(expected) && c::strcmp(line.text.data, expected) == 0;
-    mem::free(line.text.data);
+    mem::free((void *)(Usize)line.text.data);
     return same && line.end == end;
 }
 
 // The length of the line read, which is then given back; 0 for an error.
 Usize line_length(console::LineResult result) {
     if (result != .ok) return 0;
-    Usize length = countof(result.ok.text);
-    mem::free(result.ok.text.data);
+    console::Line line = result.ok;
+    Usize length = countof(line.text);
+    mem::free((void *)(Usize)line.text.data);
     return length;
 }
 

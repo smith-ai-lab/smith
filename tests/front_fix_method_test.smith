@@ -5,6 +5,8 @@ module front_fix_method_test;
 
 import front::ast;
 import front::fix;
+import front::fix_method;
+import front::parse as core;
 import front::parser;
 import front::types;
 import front::types_decl;
@@ -114,4 +116,21 @@ export void test_front_fix_method_without_a_loader_nothing_is_rewritten() {
     fix::Fixed got = fix::fix_text("t.smith", source);
     test::check_equal(got.text, source);
     test::check_equal(got.applied, (Usize)0);
+}
+
+// `t[0]` over a tuple: the checker rejects it, and `fix_method::tuple_edits` reads each such index off the checked
+// module as the edit that writes `.0` in place of `[0]`. A slice index and a non-literal index have none.
+export void test_front_fix_method_a_tuple_index_is_written_as_an_element() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn first(t: (i32, f32), xs: []i32, n: usize) -> i32:\n    xs[n] + xs[0] + t[1].to(i32) + t[0]\n";
+    parser::Parsed parsed = fix::parse_for_fix("t.smith", source);
+    test::check_equal(countof(parsed.errors), (Usize)0);
+    types::Checked checked = types_decl::check_module_with(&parsed.module, types::lp64(), nullptr);
+    core::Errors found = fix_method::tuple_edits(&checked);
+    test::check_equal(countof(found), (Usize)2);
+    test::check(same(found[0].fix[0].text, ".1"));
+    test::check(same(found[1].fix[0].text, ".0"));
 }

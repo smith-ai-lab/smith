@@ -1434,6 +1434,8 @@ static void smith_time_flag(int *argc, char **argv, int first) {
     }
 }
 
+// The files, the clock and the memory the executor and `smith mcp` use: plain libc calls.
+#include "runtime/world.c"
 // The executor that runs the build graph, in place of ninja.
 #include "runtime/executor.c"
 // The lowering of .smith files, and the header pass that needs no compiler.
