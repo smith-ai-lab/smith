@@ -119,6 +119,30 @@ static Usize read_at(Str text, Usize from, Str subject, Str variant) {
     return countof(text);
 }
 
+// Whether `name` is a word in the function that has the byte `at`, other than as a variant (`.name`): a local, a
+// parameter or a call of that name would be shadowed by the binding, so the chain stays as it is (as the `if` rule's).
+static Bool function_uses(Str source, Usize at, Str name) {
+    Usize start = at;
+    while (start > 0) {
+        Usize prev = start - 1;
+        while (prev > 0 && source[prev - 1] != '\n')
+            prev -= 1;
+        start = prev;
+        if (source[start] != ' ' && source[start] != '\n') break;
+    }
+    Usize stop = line_end(source, at) + 1;
+    while (stop < countof(source) && (source[stop] == ' ' || source[stop] == '\n'))
+        stop = line_end(source, stop) + 1;
+    if (stop > countof(source)) stop = countof(source);
+    for (Usize i = start; i + countof(name) <= stop; i++) {
+        if (i > 0 && (word_char(source[i - 1]) || source[i - 1] == '.')) continue;
+        if (!starts_with(source[i:stop], name)) continue;
+        if (i + countof(name) < stop && word_char(source[i + countof(name)])) continue;
+        return true;
+    }
+    return false;
+}
+
 static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
     out = mem::realloc(out, countof(out) + 1);
     core::Edits fix = {};
@@ -135,7 +159,7 @@ static core::Errors add(core::Errors out, Usize start, Usize stop, Str text) {
 }
 
 // The fixes for one chain whose line starts at `base` in the source.
-static core::Errors chain(core::Errors out, Str line, Usize base, Usize from) {
+static core::Errors chain(core::Errors out, Str source, Str line, Usize base, Usize from) {
     Piece parts[8];
     Usize count = 0;
     if (!pieces_of(line, from, parts, &count) || count < 2) return out;
@@ -153,6 +177,7 @@ static core::Errors chain(core::Errors out, Str line, Usize base, Usize from) {
         if (read_at(line[from:a], 0, subject, variant) < countof(line[from:a])) continue;
         Usize first = read_at(line, parts[i].stop, subject, variant);
         if (first >= countof(line)) continue;
+        if (function_uses(source, base + a, variant)) continue;
         Str head = types::message_of(format::push(".", variant, "(", variant, ") := ", subject));
         out = add(out, base + a, base + b, head);
         Usize at = parts[i].stop;
@@ -176,7 +201,7 @@ export core::Errors edits(Str source) {
         while (k < countof(line) && line[k] == ' ')
             k += 1;
         Usize from = value_start(line, k);
-        if (from < countof(line)) out = chain(out, line, at, from);
+        if (from < countof(line)) out = chain(out, source, line, at, from);
         at = end + 1;
     }
     return out;
