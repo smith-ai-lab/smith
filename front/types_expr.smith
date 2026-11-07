@@ -6056,6 +6056,15 @@ static void call_before(types::Checked *c, Work *w, Frame f) {
     // `mem.alloc(T, n)` is the builtin, `mem.alloc(T)` the generic of std.mem (#2527)
     const types::Symbol *template =
         builtins::names_alloc(c, callee, countof(e->kind.call.args)) ? nullptr : generic_callee(c, callee);
+    if (template != nullptr && e->kind == .call && has_spread(e->kind.call.args)) {
+        // `inner(0, rest...)` in a generic: the spread becomes the pack's elements before the instance is found
+        ast::ExprRef spreads[:] = e->kind.call.args;
+        push(w, e, f.expected, 9);
+        for (Usize i = countof(spreads); i > 0; i--) {
+            if (is_spread(spreads[i - 1])) push(w, spread_value(spreads[i - 1]), nullptr, 0);
+        }
+        return;
+    }
     if (template != nullptr) {
         generic_before(c, w, f, template);
         return;
@@ -6319,7 +6328,10 @@ static void after(types::Checked *c, Work *w, Frame f) {
         } else if (f.stage == 11) {
             enum_variant_after(c, f);
         } else if (f.stage == 8) {
-            types::set_type(c, e, typ(c, types::method_of(c, e)));
+            const ast::Expr *made = types::method_of(c, e);
+            types::set_type(c, e, typ(c, made));
+            Usize at = types::instance_called(c, made);
+            if (at < c->instance_count) types::use_instance(c, e, at); // the emitter asks for the call as written
         } else if (f.stage == 6) {
             stream_after(c, f);
         } else if (f.stage == 5) {
