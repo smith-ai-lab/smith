@@ -71,7 +71,8 @@ export void test_categorical_frequencies_and_tables(random::Key key) {
         cells[used++] = observed[i];
     }
     test::check_less(chi_square(cells, expected, used), chi_limit(used - 1));
-    categorical::Table one = categorical::make((const F64[_]){3.5}, 1);
+    const F64 one_weight[1] = {3.5};
+    categorical::Table one = categorical::make(&one_weight[0], 1);
     for (U64 i = 0; i < 100; i++) {
         test::check_equal(categorical::sample(take(stream), one), 0);
     }
@@ -80,7 +81,8 @@ export void test_categorical_frequencies_and_tables(random::Key key) {
         test::check_equal(same.probability[i], table.probability[i]);
         test::check_equal(same.alias[i], table.alias[i]);
     }
-    categorical::Table tiny = categorical::make((const F64[_]){0.0, 1.0}, 2);
+    const F64 tiny_weights[2] = {0.0, 1.0};
+    categorical::Table tiny = categorical::make(&tiny_weights[0], 2);
     for (U64 i = 0; i < 1000; i++) {
         test::check_equal(categorical::sample(take(stream), tiny), 1);
     }
@@ -139,12 +141,15 @@ static U64 tap_constant(const random::Tap *tap, U64 key, U64 n, U64 bits) {
 
 // The zero word gives the simplest value: column 0 and its own coin, as without a hook.
 export void test_categorical_zero_word_gives_column_0() {
-    ConstantTap zero = {.tap = {tap_constant}, .word = 0};
+    ConstantTap zero;
+    zero.tap.word = tap_constant;
+    zero.word = 0;
     arena::Arena a = test::memory(1 << 12);
     arena::ArenaAllocator allocator = arena::allocator(&a);
     mem::Allocator *before = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(before);
-    categorical::Table table = categorical::make((const F64[_]){1.0, 2.0, 3.0}, 3);
+    const F64 weights_1[3] = {1.0, 2.0, 3.0};
+    categorical::Table table = categorical::make(&weights_1[0], 3);
     random::Key key = random::key_make(seed + 13);
     key.tap = &zero.tap;
     test::check_equal(categorical::sample(key, table), 0);
