@@ -828,6 +828,21 @@ static state::Status member_finish(state::Emitter *e, const state::ThenGeneral *
         base.llvm = c::LLVMBuildLoad2(e->builder, base.ty.llvm, base.llvm, "pointer");
         record = *pointee;
     }
+    if (record.kind == .option && record.kind.option.element != nullptr && e->options.checked != nullptr) {
+        // `named.count` where the checker narrowed `named: ?str` to `str` (`if named != .none:`, #2481): the payload,
+        // in a temporary that has an address (a `?*T` is its pointer already).
+        types::TypeRef seen = types::type_of(e->options.checked, w->expr->kind.member.base);
+        if (seen != nullptr && seen->kind != .option) {
+            state::Ty inner = *record.kind.option.element;
+            c::LLVMValueRef whole = c::LLVMBuildLoad2(e->builder, record.llvm, base.llvm, "option");
+            c::LLVMValueRef got = whole;
+            if (inner.kind != .pointer) got = c::LLVMBuildExtractValue(e->builder, whole, 1, "payload");
+            c::LLVMValueRef slot = state::new_alloca(e, inner, "narrowed");
+            c::LLVMBuildStore(e->builder, got, slot);
+            base.llvm = slot;
+            record = inner;
+        }
+    }
     if (record.kind == .slice && !w->flag && state::same_text(name, "data")) {
         // `xs.data`: the place of the slice's first word, a pointer to its elements (#2456).
         c::LLVMValueRef first = c::LLVMBuildStructGEP2(e->builder, record.llvm, base.llvm, 0, "data");
