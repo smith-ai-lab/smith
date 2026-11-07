@@ -266,6 +266,13 @@ static void recover_line(parse::Parser *p) {
 // that follows it). A `;` or a `,` is an error with a fix that removes it; anything else on the line is an error.
 static void end_line(parse::Parser *p, Str what) {
     lex::Token token = parse::peek(p);
+    // In the middle of a line a `;` still separates two statements, as after an expression (`x: u32 = 1; return x`).
+    Bool between = token.kind == lex::semicolon && !token.line_break && parse::peek_at(p, 1).kind != lex::right_brace &&
+                   parse::peek_at(p, 1).kind != lex::end_of_file;
+    if (between && what[0] == 'd') {
+        parse::advance(p);
+        return;
+    }
     if (token.kind == lex::semicolon || token.kind == lex::comma) {
         Str mark = token.kind == lex::semicolon ? ";" : ",";
         char message[:] = format::push("a ", what, " ends with the line, not `", mark, "`: remove it");
@@ -1691,6 +1698,12 @@ static Str uninitialized_tail(const Prefixes *pre, Str written, Bool suffixed) {
     return as_str(format::push(" = ", zero));
 }
 
+// A statement after the `;` on its line (`U32 x = 1; return x;`): the `;` separates them and stays.
+static Bool separates_statements(const parse::Parser *p, lex::Token semicolon) {
+    lex::TokenKind after = parse::peek(p).kind;
+    return !semicolon.line_break && after != lex::right_brace && after != lex::end_of_file;
+}
+
 // `T a = v;` is `a: T = v`, `T a;` is `mut a: T = undefined` (`= 0` for a static or a file's number, which C
 // zeroes), `auto a = v;` is `a := v`, `constexpr T N = v;` is `const N: T = v` and `constexpr Type N = T;` is
 // `N := T`; the `;` goes. The position is after the `;`. An array suffix, `extern` and
@@ -1758,7 +1771,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     }
     parse::Edits edits = {};
     edits = with_edit(edits, edit(head.type_start, to, text));
-    edits = with_edit(edits, edit(last.span.start, last.span.end, ""));
+    if (!separates_statements(p, last)) edits = with_edit(edits, edit(last.span.start, last.span.end, ""));
     for (Usize i = 0; i < countof(list_edits); i += 1)
         edits = with_edit(edits, list_edits[i]);
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
