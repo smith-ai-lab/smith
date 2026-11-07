@@ -1,23 +1,18 @@
-// front::fix_const, the fix-its for "this drops const" (#2648).
+// front::fix_const, the fix-it for a local that C fills through its address (#2648).
 //
-//   ty: state.Ty = undefined                  mut ty: state.Ty = undefined
-//   scalar_type(e, "Bool", &ty)               scalar_type(e, "Bool", &ty)
+//   ty: state.Ty = undefined             mut ty: state.Ty = undefined
+//   state.scalar_type(e, "Bool", &ty)    state.scalar_type(e, "Bool", &ty)
 //
-//   r: *mut ast.TypeExpr = function.result    r: *ast.TypeExpr = function.result
+// C's `T x = {};` followed by `f(&x)` is an out-parameter: `f` fills `x`. In smith a name is constant unless it is
+// `mut`, so `&x` is a `*T` and the checker says "this drops const" where `f` wants a `*mut T`. The fixer's own checker
+// does not report it for a callee in another module, so the rule reads the text: a local written `name: T = undefined`
+// (what `{}` of a struct that C fills becomes) whose address `&name` is taken later in the same function is `mut`.
 //
-// C's `const` is not transitive: a pointer read through a `const` struct is still a pointer to mutable data. In smith
-// a name is constant unless it is `mut`, and a field read through a constant is constant too, so the checker says
-// "this drops const" in two places the fixer can mend from the text:
-//   - `&name` given where a `*mut T` is wanted: the local C wrote as `T name;` is declared `mut`;
-//   - a local written `name: *mut T = <read through a constant>`: it holds the immutable pointer, `*T`, because the
-//     value that is given is one. A function that writes through the local gets the next error (a hand fix).
-//
-//   fix_const::edits(source, checked)   one fix for each such error
+//   fix_const::edits(source)   one fix for each such local
 module front::fix_const;
 
 import front::ast;
 import front::parse as core;
-import front::types;
 import std::mem;
 
 static Bool starts_with(Str text, Str prefix) {
@@ -27,135 +22,78 @@ static Bool starts_with(Str text, Str prefix) {
     return true;
 }
 
-static Bool contains(Str text, Str needle) {
-    for (Usize i = 0; i + countof(needle) <= countof(text); i++)
-        if (starts_with(text[i:countof(text)], needle)) return true;
-    return false;
+static Bool ends_with(Str text, Str suffix) {
+    if (countof(text) < countof(suffix)) return false;
+    return starts_with(text[countof(text) - countof(suffix):countof(text)], suffix);
 }
 
 static Bool word_char(char ch) {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
 }
 
-// Whether `text` is one name.
-static Bool is_name(Str text) {
-    if (countof(text) == 0 || (text[0] >= '0' && text[0] <= '9')) return false;
-    for (Usize i = 0; i < countof(text); i++)
-        if (!word_char(text[i])) return false;
-    return true;
-}
-
-// The start of the line that holds byte `at`.
-static Usize line_start(Str source, Usize at) {
-    while (at > 0 && source[at - 1] != '\n')
-        at -= 1;
+// The end of the line that starts at `at`.
+static Usize line_end(Str source, Usize at) {
+    while (at < countof(source) && source[at] != '\n')
+        at += 1;
     return at;
 }
 
-// The start of the line that declares the local `name`, as `name: T = v` or `name := v` after its indent and before
-// `use`; `countof(source)` when there is none, or when it is already `mut`.
-static Usize declaration_of(Str source, Str name, Usize use) {
-    Usize found = countof(source);
+// The name of the local that `line` declares as `name: T = undefined`, with no `mut`; empty when it is not one.
+static Str undefined_local(Str line) {
+    if (!ends_with(line, " = undefined")) return "";
+    Usize k = 0;
+    while (k < countof(line) && line[k] == ' ')
+        k += 1;
+    Usize from = k;
+    while (k < countof(line) && word_char(line[k]))
+        k += 1;
+    if (k == from || k >= countof(line) || line[k] != ':') return "";
+    Str name = line[from:k];
+    if (countof(name) == 3 && starts_with(name, "mut")) return "";
+    return name;
+}
+
+// Whether `&name` (not `&name2`) is in `text`.
+static Bool takes_address(Str text, Str name) {
+    for (Usize i = 0; i + 1 + countof(name) <= countof(text); i++) {
+        if (text[i] != '&' || !starts_with(text[i + 1:countof(text)], name)) continue;
+        Usize after = i + 1 + countof(name);
+        if (after >= countof(text) || !word_char(text[after])) return true;
+    }
+    return false;
+}
+
+export core::Errors edits(Str source) {
+    core::Errors out = {};
     Usize at = 0;
-    while (at < use) {
-        Usize end = at;
-        while (end < countof(source) && source[end] != '\n')
-            end += 1;
-        Usize k = at;
-        while (k < end && source[k] == ' ')
-            k += 1;
-        if (k == at) found = countof(source); // a line at column 0 starts another declaration: not this function's
-        Usize stop = k + countof(name);
-        if (stop + 1 < end && starts_with(source[k:end], name)) {
-            // `name:` or `name :=`, not `name = v` or `name.field`
-            if (source[stop] == ':' || (source[stop] == ' ' && source[stop + 1] == ':')) found = k;
+    while (at < countof(source)) {
+        Usize end = line_end(source, at);
+        Str name = undefined_local(source[at:end]);
+        if (countof(name) > 0) {
+            // the rest of the function: up to the next line at column 0
+            Usize stop = end + 1;
+            while (stop < countof(source) && (source[stop] == ' ' || source[stop] == '\n'))
+                stop = line_end(source, stop) + 1;
+            Usize body = stop < countof(source) ? stop : countof(source);
+            if (end < body && takes_address(source[end:body], name)) {
+                Usize k = at;
+                while (source[k] == ' ')
+                    k += 1;
+                core::Edits fix = {};
+                fix = mem::realloc(fix, 1);
+                ast::Span here = {.start = (U32)k, .end = (U32)k};
+                Str word = "mut ";
+                fix[0] = (core::Edit){.span = here, .text = word};
+                core::ParseError made = {};
+                made.span = fix[0].span;
+                Str why = "a local that C fills through its address is `mut`";
+                made.message = why;
+                made.fix = fix;
+                out = mem::realloc(out, countof(out) + 1);
+                out[countof(out) - 1] = made;
+            }
         }
         at = end + 1;
-    }
-    return found;
-}
-
-static core::ParseError made(ast::Span at, Str text, Str why) {
-    core::Edits fix = {};
-    fix = mem::realloc(fix, 1);
-    fix[0] = (core::Edit){.span = at, .text = text};
-    core::ParseError found = {};
-    found.span = at;
-    found.message = why;
-    found.fix = fix;
-    return found;
-}
-
-// `&name` given to a `*mut` parameter: the declaration of `name` gets `mut` in front.
-static Bool address_fix(Str source, types::Error found, core::Errors *out) {
-    Str text = source[found.span.start:found.span.end];
-    if (countof(text) < 2 || text[0] != '&' || !is_name(text[1:countof(text)])) return false;
-    Usize decl = declaration_of(source, text[1:countof(text)], found.span.start);
-    if (decl >= countof(source)) return false;
-    if (decl >= 4 && starts_with(source[decl - 4:decl], "mut ")) return false;
-    ast::Span at = {.start = (U32)decl, .end = (U32)decl};
-    *out = mem::realloc(*out, countof(*out) + 1);
-    (*out)[countof(*out) - 1] = made(at, "mut ", "a local whose address goes to a `*mut` parameter is `mut`");
-    return true;
-}
-
-// `name: *mut T = <constant read>`: the local holds the immutable pointer.
-static Bool pointer_fix(Str source, types::Error found, core::Errors *out) {
-    Usize begin = line_start(source, found.span.start);
-    Str head = source[begin:found.span.start];
-    Usize colon = 0;
-    while (colon < countof(head) && head[colon] != ':')
-        colon += 1;
-    if (colon >= countof(head)) return false;
-    for (Usize i = colon; i + 5 <= countof(head); i++) {
-        if (!starts_with(head[i:countof(head)], "*mut ")) continue;
-        if (contains(head[colon:i], "=") || contains(head[colon:i], "(")) return false;
-        ast::Span at = {.start = (U32)(begin + i), .end = (U32)(begin + i + 5)};
-        *out = mem::realloc(*out, countof(*out) + 1);
-        (*out)[countof(*out) - 1] = made(at, "*", "a pointer read through a constant is a `*T`");
-        return true;
-    }
-    return false;
-}
-
-// A parameter `name: *T` given where a `*mut T` is wanted: the function's header says `name: *mut T`.
-static Bool parameter_fix(Str source, types::Error found, core::Errors *out) {
-    Str name = source[found.span.start:found.span.end];
-    if (!is_name(name)) return false;
-    // the nearest line at column 0 above is the function's header
-    Usize at = found.span.start;
-    while (at > 0) {
-        at = line_start(source, at - 1);
-        if (at < countof(source) && source[at] != ' ' && source[at] != '\n') break;
-        if (at == 0) break;
-    }
-    Usize end = at;
-    while (end < countof(source) && source[end] != '\n')
-        end += 1;
-    Str line = source[at:end];
-    for (Usize i = 1; i + countof(name) + 3 <= countof(line); i++) {
-        if (line[i - 1] != '(' && line[i - 1] != ' ') continue;
-        if (!starts_with(line[i:countof(line)], name)) continue;
-        Usize colon = i + countof(name);
-        if (!starts_with(line[colon:countof(line)], ": *")) continue;
-        if (starts_with(line[colon + 3:countof(line)], "mut ")) return false;
-        ast::Span here = {.start = (U32)(at + colon + 3), .end = (U32)(at + colon + 3)};
-        *out = mem::realloc(*out, countof(*out) + 1);
-        (*out)[countof(*out) - 1] = made(here, "mut ", "a parameter given where a `*mut` is wanted is `*mut T`");
-        return true;
-    }
-    return false;
-}
-
-export core::Errors edits(Str source, const types::Checked *c) {
-    core::Errors out = {};
-    for (Usize i = 0; i < c->error_count; i++) {
-        types::Error found = c->errors[i];
-        if (countof(found.fix) > 0 || found.span.end > countof(source) || found.span.start >= found.span.end) continue;
-        if (!starts_with(found.message, "expected ") || !contains(found.message, ": this drops const")) continue;
-        if (address_fix(source, found, &out)) continue;
-        if (parameter_fix(source, found, &out)) continue;
-        pointer_fix(source, found, &out);
     }
     return out;
 }
