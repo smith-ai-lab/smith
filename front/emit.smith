@@ -1117,7 +1117,7 @@ static state::Status declare_instance(state::Emitter *e, const types::Instance *
     if (d->kind != .function) {
         return state::fail("not a function", d->span);
     }
-    Str name = d->kind.function.name;
+    Str name = state::instance_name(instance);
     types::TypeRef signature = instance->signature;
     Usize count = countof(types::slots_of(signature).items);
     if (count > 64) return state::not_emitted("more than 64 parameters", d->span);
