@@ -4300,10 +4300,11 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
     if (f.expected != nullptr && f.expected->kind == .tuple && e->span.end > e->span.start + 1) {
         // C's `{1, 2.0f}` where a tuple is expected: the fixer writes `[...]` without the expected type, so the fix is
         // here: the same items in parentheses (a one-element tuple needs its comma).
+        Str open = "(";
+        Str close = countof(items) == 1 ? ",)" : ")";
         syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
-        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start + 1}, .text = "("};
-        fix[1] = (syntax::Edit){.span = {.start = e->span.end - 1, .end = e->span.end},
-                                .text = countof(items) == 1 ? ",)" : ")"};
+        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start + 1}, .text = open};
+        fix[1] = (syntax::Edit){.span = {.start = e->span.end - 1, .end = e->span.end}, .text = close};
         types::fail_fix(c, e->span,
                         msg(format::push("a `[...]` is an array, but a tuple `", types::show(f.expected),
                                          "` is expected: write the items in parentheses, `(a, b)`")),
