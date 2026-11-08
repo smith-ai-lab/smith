@@ -1377,6 +1377,9 @@ static core::Errors with_optionals(core::Errors out, Str source, const ast::Modu
     core::Errors optionals = fix_optional::edits(source, module, c);
     for (Usize i = 0; i < countof(optionals); i++)
         out = add(out, optionals[i]);
+    core::Errors assigned = fix_optional::reassigned(source, module);
+    for (Usize i = 0; i < countof(assigned); i++)
+        out = add(out, assigned[i]);
     return out;
 }
 

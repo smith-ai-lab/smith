@@ -32,3 +32,15 @@ export void test_front_fix_optional_a_tested_parameter_handed_an_option_is_an_op
                     "    if n.next == .none:\n        return 0\n    return size(n.next)\nfn make() -> Node:\n"
                     "    n := Node(v = 1)\n    return n\n");
 }
+
+export void test_front_fix_optional_an_assigned_option_parameter_is_read_through_a_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("fn skip(mut old: ?*mut Node) -> *mut Node:\n    if old == .none:\n        return nullptr\n"
+                         "    while old.v == 0:\n        old = old.next\n    return old\n");
+    check_text(got, "fn skip(old: ?*mut Node) -> *mut Node:\n    if old == .none:\n        return nullptr\n"
+                    "    mut old_some: *mut Node = old\n    while old_some.v == 0:\n        old_some = old_some.next\n"
+                    "    return old_some\n");
+}

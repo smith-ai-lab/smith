@@ -17,6 +17,7 @@ module front::fix_optional;
 import front::ast;
 import front::parse as core;
 import front::types;
+import std::format;
 import std::mem;
 
 static Bool word_char(char ch) {
@@ -111,6 +112,127 @@ export core::Errors edits(Str source, const ast::Module *module, const types::Ch
             found.message =
                 "a pointer parameter that is tested against nullptr and is handed an option is an option: `?*T`";
             found.fix = fix;
+            out[countof(out) - 1] = found;
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A parameter that is an option and is assigned later
+
+static Usize line_start(Str s, Usize at) {
+    while (at > 0 && s[at - 1] != '\n')
+        at -= 1;
+    return at;
+}
+
+static Usize line_end(Str s, Usize at) {
+    while (at < countof(s) && s[at] != '\n')
+        at += 1;
+    return at;
+}
+
+static Usize indent_of(Str s, Usize start) {
+    Usize k = start;
+    while (k < countof(s) && s[k] == ' ')
+        k += 1;
+    return k - start;
+}
+
+static Bool blank(Str s, Usize start, Usize end) {
+    return indent_of(s, start) == end - start;
+}
+
+// The end of the guard `if name == .none:` that opens the body (the first statement of the lines from `at`), when its
+// block ends in a `return`; else zero.
+static Usize guard_end(Str source, Usize at, Usize limit, Str name) {
+    Usize ls = line_start(source, at);
+    while (ls < limit && blank(source, ls, line_end(source, ls)))
+        ls = line_end(source, ls) + 1;
+    Usize base = indent_of(source, ls);
+    Str head = source[ls + base:line_end(source, ls)];
+    Str want = "if ";
+    if (!starts_with(head, want)) return 0;
+    Str rest = head[3:countof(head)];
+    if (!starts_with(rest, name)) return 0;
+    if (!same(rest[countof(name):countof(rest)], " == .none:")) return 0;
+    Usize end = line_end(source, ls);
+    Usize last = end;
+    Usize k = end + 1;
+    while (k < limit) {
+        Usize e = line_end(source, k);
+        if (!blank(source, k, e)) {
+            if (indent_of(source, k) <= base) break;
+            last = e;
+        }
+        k = e + 1;
+    }
+    Usize from = line_start(source, last);
+    Str tail = source[from + indent_of(source, from):last];
+    if (last == end || !starts_with(tail, "return")) return 0;
+    return last;
+}
+
+// The edits of the option parameter `p` of `d` that the body assigns: it is no longer `mut`, and after the guard
+// a local `mut name_some: *T = name` takes its place for the rest of the body.
+static core::Edits reassigned_fix(Str source, const ast::Decl *d, const ast::Param *p) {
+    core::Edits none = {};
+    if (d->kind != .function) return none;
+    Usize body_start = d->kind.function.body->span.start;
+    Usize body_end = d->kind.function.body->span.end;
+    Usize at = body_start;
+    if (at < countof(source) && source[at] == '{') return none; // still braced: a later pass
+    if (at < countof(source) && source[at] == ':') at = line_end(source, at) + 1;
+    Usize end = guard_end(source, at, body_end, p->name);
+    if (end == 0 || !starts_with(source[p->span.start:countof(source)], "mut ")) return none;
+    Str local = types::message_of(format::push(p->name, "_some"));
+    Str pointer = source[p->type->span.start + 1:p->type->span.end];
+    Usize first = line_start(source, at);
+    while (first < body_end && blank(source, first, line_end(source, first)))
+        first = line_end(source, first) + 1;
+    Usize base = indent_of(source, first);
+    Str pad = "";
+    for (Usize i = 0; i < base; i++)
+        pad = types::message_of(format::push(pad, " "));
+    core::Edits out = {};
+    out = mem::realloc(out, 2);
+    ast::Span drop = {.start = p->span.start, .end = p->span.start + 4};
+    Str nothing = "";
+    out[0] = (core::Edit){.span = drop, .text = nothing};
+    ast::Span here = {.start = (U32)end, .end = (U32)end};
+    Str decl = types::message_of(format::push("\n", pad, "mut ", local, ": ", pointer, " = ", p->name));
+    out[1] = (core::Edit){.span = here, .text = decl};
+    for (Usize i = end; i + countof(p->name) <= body_end; i++) {
+        if (!starts_with(source[i:countof(source)], p->name)) continue;
+        if (word_char(source[i - 1]) || source[i - 1] == '.') continue;
+        if (word_char(source[i + countof(p->name)])) continue;
+        ast::Span name_span = {.start = (U32)i, .end = (U32)(i + countof(p->name))};
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = (core::Edit){.span = name_span, .text = local};
+    }
+    return out;
+}
+
+// The fixes of the option parameters of `module` that their function assigns.
+export core::Errors reassigned(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .function || d->kind.function.body == nullptr) continue;
+        ast::Param params[:] = d->kind.function.params;
+        for (Usize k = 0; k < countof(params); k++) {
+            const ast::Param *p = &params[k];
+            if (!p->is_mut || p->type == nullptr || p->type->span.end <= p->type->span.start) continue;
+            if (source[p->type->span.start] != '?') continue;
+            core::Edits fix = reassigned_fix(source, d, p);
+            if (countof(fix) == 0) continue;
+            core::ParseError found = {};
+            found.span = p->span;
+            found.message =
+                "an option parameter that is assigned later is read through a local once it is known to hold a value";
+            found.fix = fix;
+            out = mem::realloc(out, countof(out) + 1);
             out[countof(out) - 1] = found;
         }
     }
