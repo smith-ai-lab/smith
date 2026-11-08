@@ -151,8 +151,8 @@ export void test_front_types_instance_scope_a_fix_in_a_nested_std_generic_is_kep
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     deep_tree = module_named("deep.smith", "pub fn inner(x: auto) -> bool: x\n", "std.deep");
-    util_tree = module_named("util.smith", "import std.deep\n\npub fn outer(x: auto) -> bool: deep.inner(x)\n",
-                             "std.util");
+    util_tree =
+        module_named("util.smith", "import std.deep\n\npub fn outer(x: auto) -> bool: deep.inner(x)\n", "std.util");
     parser::Parsed p = parser::parse_new("t.smith", "import std.util\n\nfn f() -> bool: util.outer(3)\n");
     test::check_equal(countof(p.errors), (Usize)0);
     types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
