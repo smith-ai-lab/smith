@@ -75,19 +75,21 @@ static Usize errors_with(Str prelude, Str source, Str first) {
     return count;
 }
 
-static constexpr Str helpers = "pub fn twice(x: i32) -> i32: x * 2\n\nfn hidden(x: i32) -> i32: x\n";
+static Str helpers() {
+    return "pub fn twice(x: i32) -> i32: x * 2\n\nfn hidden(x: i32) -> i32: x\n";
+}
 
 export void test_front_types_prelude_names_are_seen_without_an_import() {
-    test::check_equal(errors_with(helpers, "fn f() -> i32: twice(3)\n", ""), (Usize)0);
+    test::check_equal(errors_with(helpers(), "fn f() -> i32: twice(3)\n", ""), (Usize)0);
 }
 
 export void test_front_types_prelude_a_module_name_wins_over_the_prelude() {
-    test::check_equal(errors_with(helpers, "fn twice(x: i32) -> bool: x > 0\n\nfn f() -> bool: twice(3)\n", ""),
+    test::check_equal(errors_with(helpers(), "fn twice(x: i32) -> bool: x > 0\n\nfn f() -> bool: twice(3)\n", ""),
                       (Usize)0);
 }
 
 export void test_front_types_prelude_private_names_stay_hidden() {
-    test::check_condition(errors_with(helpers, "fn f() -> i32: hidden(3)\n", "unknown name") > 0);
+    test::check_condition(errors_with(helpers(), "fn f() -> i32: hidden(3)\n", "unknown name") > 0);
 }
 
 export void test_front_types_prelude_without_one_the_name_is_unknown() {
