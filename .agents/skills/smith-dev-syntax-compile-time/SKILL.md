@@ -46,9 +46,10 @@ n := countof(fields(Point))
 fn log(msg: str, rest...):                      # untyped: any types
     write(msg)
     for x in rest: show(&x)                     # unrolled
+    for (i, x) in enumerate(rest): sep(i)       # unrolled, `i` a compile-time usize (D20)
 fn total(nums: i32...) -> i32: ...              # typed: every argument is i32
 fn widest(nums: int...) -> usize: ...           # a concept: each keeps its own type
 fn trace(rest...): log("trace", rest...)        # forwarding spreads the pack
 ```
 
-A pack is always compile-time: `countof(nums)`, `nums[i]` with a compile-time `i`, an unrolled `for`, and forwarding with `nums...`. It cannot hold a run-time slice; a run-time list is `nums: []i32`. Leftover named arguments are `; kw...` ([smith-dev-syntax-functions](../smith-dev-syntax-functions/SKILL.md)).
+A pack is always compile-time: `countof(nums)`, `nums[i]` with a compile-time `i` (the `i` of `for (i, x) in enumerate(nums):` is one; owner, 2026-11-07: "A"), an unrolled `for`, and forwarding with `nums...`. It cannot hold a run-time slice; a run-time list is `nums: []i32`. Leftover named arguments are `; kw...` ([smith-dev-syntax-functions](../smith-dev-syntax-functions/SKILL.md)).

@@ -75,7 +75,7 @@ struct Prefixes {
     U32 constexpr_start; // the `constexpr` token, and where the token after it starts (a fix deletes the span)
     U32 constexpr_end;
     U32 constexpr_after;
-    U32 static_start; // a local's `static` token, and where the token after it starts (see `drop_static`)
+    U32 static_start; // the `static` token, and where the token after it starts (see `drop_local_static`)
     U32 static_after;
     Bool unused; // a lone `[[maybe_unused]]` group: the fix of the declaration deletes it and prefixes `_`
     U32 unused_start;
@@ -892,7 +892,7 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             pre.constexpr_end = word.end;
             pre.constexpr_after = parse::peek_at(p, 1).span.start;
         }
-        if (!top && kind == lex::kw_static) {
+        if (kind == lex::kw_static) {
             pre.static_start = parse::peek(p).span.start;
             pre.static_after = parse::peek_at(p, 1).span.start;
         }
@@ -1303,6 +1303,14 @@ struct Head {
     lex::Token name;
 };
 
+// The dimensions in front of the element type: `[4]u8`. A volatile element of an array is the array's `volatile [4]u8`;
+// of a slice, `[]volatile u8`.
+static Str with_dims(Str dims, Str type) {
+    Bool volatile_element = countof(type) > 9 && same_text(type[0:9], "volatile ");
+    if (!volatile_element || countof(dims) == 0 || same_text(dims, "[]")) return as_str(format::push(dims, type));
+    return as_str(format::push("volatile ", dims, type[9:]));
+}
+
 // The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
 // comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as
 // smith writes them in front of the type, the first one outermost: `[3]`, `[][2]`.
@@ -1393,7 +1401,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
-    type = as_str(format::push(dims, type));
+    type = with_dims(dims, type);
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
@@ -1505,6 +1513,8 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
         edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
     }
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    // A private function has no `static` in smith's own syntax: the name is private without it.
+    if (pre->is_static) edits = with_edit(edits, edit(pre->static_start, pre->static_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");
     warn(p, head.type_start, end, message, edits);
@@ -1537,12 +1547,16 @@ static void rename_type(parse::Parser *p, Usize open, Usize close, Usize to) {
 
 // Whether the initializer is an untyped list of `.field = value` items that ends at the `;`, for a variable of a
 // named type: then `P p = {.x = 1};` is `let p = P(x = 1)`.
-static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
-    if (type->kind != .named || equal_end == 0 || !p->named_list.plain) return false;
+static Bool list_is_init(const parse::Parser *p, U32 equal_end, U32 semicolon) {
+    if (equal_end == 0 || !p->named_list.plain) return false;
     const parse::NamedList *list = &p->named_list;
     return list->open.start >= equal_end && list->close.end <= semicolon &&
            same_text(trimmed(source_between(p, equal_end, list->open.start)), "") &&
            same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
+}
+
+static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
+    return type->kind == .named && list_is_init(p, equal_end, semicolon);
 }
 
 // The warning of a positional list `{1, 2}` that writes it as the array `[1, 2]` loses its fix when the declaration
@@ -1551,6 +1565,18 @@ static void drop_array_fix(parse::Parser *p, U32 open) {
     for (Usize i = 0; i < countof(p->warnings); i += 1) {
         if (p->warnings[i].span.start == open) p->warnings[i].fix = (parse::Edits){};
     }
+}
+
+// A positional list that is the whole initializer of a variable of a tuple type is the tuple value:
+// `struct { I32, F32 } a = {1, 2.0f};` is `a: (i32, f32) = (1, 2.0f)`. The edits of its braces, else `otherwise`.
+static parse::Edits tuple_list(parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon,
+                               parse::Edits otherwise) {
+    if (type->kind != .tuple || !p->named_list.positional || !list_is_init(p, equal_end, semicolon)) return otherwise;
+    parse::Edits edits = p->named_list.edits;
+    edits = with_edit(edits, edit(p->named_list.open.start, p->named_list.open.end, "("));
+    edits = with_edit(edits, edit(p->named_list.close.start, p->named_list.close.end, ")"));
+    drop_array_fix(p, p->named_list.open.start);
+    return edits;
 }
 
 // The edits that turn the braces of that list into the call `Type(...)`; the dots' edits come with it.
@@ -1871,10 +1897,10 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str lead = variable_lead(pre, type_value);
     if (zero_later && !pre->is_constexpr) lead = "mut ";
     Str untyped = untyped_of(lead);
-    written = as_str(format::push(dims.text, written));
+    written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = item_edits;
+    parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
     if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
         text = as_str(format::push(lead, name, untyped));
         list_edits = named_list_edits(p, written);
@@ -2076,7 +2102,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ", dims.text, written);
+    char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");

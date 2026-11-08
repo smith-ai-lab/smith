@@ -54,7 +54,7 @@ export void test_front_fix_struct_fields_with_several_names() {
 
 export void test_front_fix_static_assert_with_joined_strings() {
     expect_fixed("module m;\nstatic_assert(1, \"one \"\n                  \"two\");\n",
-                 "static_assert(1, \"one \"\n                  \"two\");\n");
+                 "static_assert(1 != 0, \"one \"\n                  \"two\");\n");
 }
 
 export void test_front_fix_bit_int_type_parses() {
@@ -158,8 +158,8 @@ export void test_front_fix_old_result_declaration_is_a_try() {
                  "static Result(Usize, Usize) g(Usize a) {\n    Result(Usize, Usize) e = f(a);\n"
                  "    if (e == .error) return {.error = e.error};\n    Usize after = e.ok;\n"
                  "    return {.ok = after + 1};\n}\n",
-                 "static fn f(a: usize) -> Result(usize, usize):\n    return .ok(a)\n"
-                 "static fn g(a: usize) -> Result(usize, usize):\n    ok := try f(a)\n"
+                 "fn f(a: usize) -> Result(usize, usize):\n    return .ok(a)\n"
+                 "fn g(a: usize) -> Result(usize, usize):\n    ok := try f(a)\n"
                  "    after: usize = ok\n    return .ok(after + 1)\n");
 }
 
@@ -170,7 +170,7 @@ export void test_front_fix_leaving_variant_test_is_a_binding_in_a_file_with_old_
                  "leaf;\n} Kind;\n"
                  "static Usize c(Kind k) {\n    if (k != .function) return 0;\n    return k.function.params;\n}\n",
                  "pub struct Func:\n    pub params: usize\npub enum Kind:\n    function: Func\n    leaf\n"
-                 "static fn c(k: Kind) -> usize:\n    .function(function) := k else:\n        return 0\n"
+                 "fn c(k: Kind) -> usize:\n    .function(function) := k else:\n        return 0\n"
                  "    return function.params\n");
 }
 
@@ -182,7 +182,7 @@ export void test_front_fix_leaving_or_chain_binds_every_later_read() {
         "static Bool a(Kind k) {\n    if (k != .member || k.member.arrow) return false;\n"
         "    if (k.member.name == 3) return false;\n    return true;\n}\n",
         "pub struct Mem:\n    pub arrow: bool\n    pub name: usize\npub enum Kind:\n    member: Mem\n    leaf\n"
-        "static fn a(k: Kind) -> bool:\n    .member(member) := k else:\n        return false\n    \n"
+        "fn a(k: Kind) -> bool:\n    .member(member) := k else:\n        return false\n    \n"
         "    if member.arrow:\n        return false\n    if member.name == 3:\n        return false\n    return "
         "true\n");
 }

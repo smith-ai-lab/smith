@@ -2206,8 +2206,9 @@ static Bool builtin_cast(const parse::Parser *p) {
     lex::TokenKind next = parse::peek_at(p, 2).kind;
     if (starts_bare_operand(next)) return true;
     // A capitalized name may be a constant: `(MAX) - 1` and `(F)(x)` are no casts, a built-in type's are.
-    return builtin && (next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
-                       next == lex::kw_sizeof || next == lex::kw_alignof);
+    return builtin &&
+           (next == lex::left_paren || next == lex::minus || next == lex::tilde || next == lex::bang ||
+            next == lex::star || next == lex::ampersand || next == lex::kw_sizeof || next == lex::kw_alignof);
 }
 
 // Whether `(T *)operand` is ahead, the `(` taken: C's pointer type, written after the type, which smith's own syntax

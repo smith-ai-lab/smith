@@ -35,6 +35,7 @@ import c <sys/event.h>
 
 - Every attribute is a struct, written with call syntax on the line before what it marks. With no arguments the parentheses are left off (`@inline`, not `@inline()`; `smith fmt` drops them).
 - Built-ins are lowercase with no namespace: `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@c_name("x")`, `@when(cond)`, `@effects(...)`. A new one (`@hot`, `@unroll`) exists once its own feature ticket decides it. `[[std::x]]` becomes `@x`.
+- `@align(N)` (D18, #2669) sets the alignment of a global, a local or a field: `N` is a compile-time power of two (otherwise "the alignment must be a power of two known at compile time"), and it appears at most once on a declaration. `alignas(N)` in C becomes `@align(N)`.
 - `@when(cond)`: a top-level declaration, struct field or import that exists only where the compile-time `cond` holds; it is the only top-level compile-time choice, there is no `if constexpr` (owner, 2026-11-04). A header imported under an untaken `@when` is never read. For each supported target (macOS and Linux), two live declarations of a name are an error, and so is a use with none. The generated header writes `#if`, around the `#include` for an import. Inside a function, a compile-time `if` chooses the code instead.
 - `[[nodiscard]]` is gone (an unused result is an error); `[[maybe_unused]]` becomes a `_` prefix on the name.
 
