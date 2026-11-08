@@ -43,12 +43,12 @@ export void test_front_fix_alloc_copy_in_auto_is_a_generic() {
 // imports std.mem once.
 export void test_front_fix_alloc_a_compound_literal_of_a_typeof_is_mem_zeroed() {
     expect_fixed("module m;\nexport typeof(a) zero_like(auto a) {\n    return (typeof(a)){0};\n}\n",
-                 "import std.mem\npub fn zero_like(a: auto) -> typeof(a):\n    return mem.zeroed(typeof(a))\n");
+                 "import std.mem\npub fn zero_like[T](a: T) -> T:\n    return mem.zeroed(typeof(a))\n");
 }
 
 export void test_front_fix_alloc_an_empty_compound_literal_of_a_typeof_keeps_the_import() {
     expect_fixed("module m;\nimport std::mem;\nexport typeof(a) zero_like(auto a) {\n    return (typeof(a)){};\n}\n",
-                 "import std.mem\npub fn zero_like(a: auto) -> typeof(a):\n    return mem.zeroed(typeof(a))\n");
+                 "import std.mem\npub fn zero_like[T](a: T) -> T:\n    return mem.zeroed(typeof(a))\n");
 }
 
 export void test_front_fix_alloc_a_compound_literal_of_a_type_parameter_is_mem_zeroed() {

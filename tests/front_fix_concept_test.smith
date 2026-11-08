@@ -57,3 +57,15 @@ export void test_front_fix_concept_a_slice_of_auto_gives_the_predicate_its_eleme
         "    for i in range(1, countof(xs)):\n        if less(xs[i], xs[i - 1]):\n            return false\n"
         "    return true\n");
 }
+
+// An `auto` whose type is written again in the signature is an inferred parameter: `[T](x: T, y: T) -> T`.
+export void test_front_fix_concept_a_type_written_again_in_the_signature_is_an_inferred_parameter() {
+    expect_fixed("module m;\nexport inline typeof(x) pow(auto x, typeof(x) y) {\n    return "
+                 "__builtin_elementwise_pow(x, y);\n}\n",
+                 "pub inline fn pow[T](x: T, y: T) -> T:\n    return __builtin_elementwise_pow(x, y)\n");
+}
+
+export void test_front_fix_concept_two_autos_with_their_own_types_in_the_signature_get_two_letters() {
+    expect_fixed("module m;\nexport typeof(a) first(auto a, auto b, typeof(b) c) {\n    return a;\n}\n",
+                 "pub fn first[T, U](a: T, b: U, c: U) -> T:\n    return a\n");
+}
