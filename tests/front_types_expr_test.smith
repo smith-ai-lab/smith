@@ -885,6 +885,24 @@ export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_t
     expect(r.error_count, 2);
 }
 
+// A pointer beside `nullptr`, in either order and without a target type, is the `?*T`: the pointer itself, null for
+// `.none` (#2643).
+export void test_front_types_expr_an_if_of_a_pointer_and_nullptr_is_an_optional_pointer() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef p = types::pointer_to(&r.table, ty(&r, "I32"), false);
+    declare(&r, "p", .variable, p, false);
+    types::TypeRef maybe = types::option_of(&r.table, p);
+    test::check_condition(
+        types_expr::infer(&r, as_value(branch(flag(true), braces(ast::name("p")), braces(nothing())))) == maybe);
+    test::check_condition(
+        types_expr::infer(&r, as_value(branch(flag(true), braces(nothing()), braces(ast::name("p"))))) == maybe);
+    expect(r.error_count, 0);
+}
+
 export void test_front_types_expr_a_branch_with_no_value_makes_the_whole_void() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -1141,6 +1159,23 @@ export void test_front_types_expr_an_array_literal_splices_a_tuple_or_an_array()
     test::check_condition(
         says(last(&r), "cannot spread a value of type `I32` into an array: only a pack, a tuple or an array has a "
                        "count known here; spread one of those, or build the slice with a loop"));
+}
+
+export void test_front_types_expr_a_bracket_list_where_a_tuple_is_expected_is_fixed_to_parentheses() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Slot two[2] = {{.type = ty(&r, "I32")}, {.type = ty(&r, "F32")}};
+    types::TypeRef pair = types::tuple_of(&r.table, two);
+    ast::ExprRef items[2] = {num(1), real(2.0)};
+    ast::Expr *list_expr = ast::array_literal(items);
+    list_expr->span = (ast::Span){.start = 10, .end = 18};
+    types_expr::check(&r, list_expr, pair);
+    test::check_condition(says(last(&r), "a `[...]` is an array, but a tuple `(I32, F32)` is expected: write the items "
+                                         "in parentheses, `(a, b)`"));
+    expect(r.error_count, 1);
 }
 
 export void test_front_types_expr_an_array_literal_is_an_array_of_its_elements() {

@@ -439,7 +439,7 @@ export void test_front_fix_zero_a_c_layout_struct_leaves_its_pointers_unset() {
 
 export void test_front_fix_zero_a_zero_compound_literal_is_mem_zeroed() {
     expect_fixed("module m;\nexport typeof(a) zero_like(auto a) {\n    return (typeof(a)){0};\n}\n",
-                 "import std.mem\npub fn zero_like(a: auto) -> typeof(a):\n    return mem.zeroed(typeof(a))\n");
+                 "import std.mem\npub fn zero_like[T](a: T) -> T:\n    return mem.zeroed(typeof(a))\n");
 }
 
 // A pointer field a construction leaves out is `?*T = .none` when its value goes to a local that is tested against

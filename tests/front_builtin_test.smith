@@ -222,12 +222,27 @@ export void test_front_builtin_isnan_and_isfinite() {
                          "    0\n");
 }
 
-export void test_front_builtin_overflow_refuses_mixed_types() {
-    refused("mixed",
+// The operands and the result are three integers of any widths and signs; the answer is the exact sum cut to the result
+// (`200 + 100` in a `u8` overflows and leaves 44).
+export void test_front_builtin_overflow_takes_operands_and_a_result_of_different_types() {
+    passes("mixed", "pub fn check() -> i32:\n"
+                    "    mut r: u8 = 0\n"
+                    "    a: u8 = 200\n"
+                    "    b: u32 = 100\n"
+                    "    if not __builtin_add_overflow(a, b, &r):\n        return 1\n"
+                    "    if r != 44:\n        return 2\n"
+                    "    mut wide: u64 = 0\n"
+                    "    if __builtin_add_overflow(a, b, &wide):\n        return 3\n"
+                    "    if wide != 300:\n        return 4\n"
+                    "    0\n");
+}
+
+export void test_front_builtin_overflow_refuses_a_float_operand() {
+    refused("float_operand",
             "pub fn check() -> i32:\n"
             "    let mut r: i32 = 0\n"
             "    let a: i32 = 1\n"
-            "    let b: i64 = 1\n"
+            "    let b: f64 = 1.0\n"
             "    let _ = __builtin_add_overflow(a, b, &r)\n"
             "    0\n",
             "`__builtin_add_overflow` takes");
@@ -336,4 +351,16 @@ export void test_front_builtin_snprintf_conditional_string() {
                           "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
                           "    _ := __builtin_snprintf(&out[0], 16, \"%s\", if flag: \"a\" else: \"b\")\n"
                           "    0\n");
+}
+
+// A variadic argument that is a bare literal is a C string, and an `if` that picks numbers or a pointer keeps the type
+// of its branches.
+export void test_front_builtin_snprintf_each_variadic_argument_is_typed_by_itself() {
+    passes("snprintf_each",
+           "pub fn check(flag: bool) -> i32:\n"
+           "    let mut out: [32]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
+           "0, 0, 0, 0, 0, 0]\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%s %d\", \"text\", if flag: 1 else: 2)\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%d %s\", if flag: 3 else: 4, if flag: \"a\" else: \"b\")\n"
+           "    0\n");
 }
