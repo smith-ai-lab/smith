@@ -39,6 +39,6 @@ warning 0-11: `long double` has no sized type in smith: write the type by hand (
 fixed: long double (0 passes, 1 left)
 
 volatile I32
-warning 0-12: `volatile` and `restrict` have no spelling in smith's own syntax: remove them (no fix)
-fixed: volatile I32 (0 passes, 1 left)
+warning 0-12: write the type `volatile I32` as `volatile i32` in smith's own syntax
+fixed: volatile i32 (1 passes, 0 left)
 

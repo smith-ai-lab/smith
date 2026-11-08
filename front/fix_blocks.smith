@@ -594,6 +594,7 @@ static Usize close_paren(lex::Tokens tokens, Usize open) {
 struct Init {
     Str name;
     Str value;
+    Bool pointer; // written `*name = value`: its type is the first one's base type and a `*`
 };
 
 typedef typeof(Init[:]) Inits;
@@ -646,10 +647,15 @@ static Str steps_text(Str source, lex::Tokens tokens, Usize from, Usize to) {
 static Bool read_more(Str source, lex::Tokens tokens, Usize from, Usize to, Header *h) {
     while (from < to) {
         Usize comma = find_flat(tokens, from, to, lex::comma);
-        if (comma < from + 3 || tokens[from].kind != lex::name || tokens[from + 1].kind != lex::equal) return false;
+        Usize skip = tokens[from].kind == lex::star ? 1 : 0;
+        if (comma < from + skip + 3 || tokens[from + skip].kind != lex::name ||
+            tokens[from + skip + 1].kind != lex::equal)
+            return false;
+        Usize n = from + skip;
         h->more = mem::realloc(h->more, countof(h->more) + 1);
-        h->more[countof(h->more) - 1] = (Init){.name = source[tokens[from].span.start:tokens[from].span.end],
-                                               .value = source[tokens[from + 2].span.start:tokens[comma - 1].span.end]};
+        h->more[countof(h->more) - 1] = (Init){.name = source[tokens[n].span.start:tokens[n].span.end],
+                                               .value = source[tokens[n + 2].span.start:tokens[comma - 1].span.end],
+                                               .pointer = skip == 1};
         from = comma + 1;
     }
     return true;
@@ -762,6 +768,15 @@ static Usize unbraced_end(Str source, Usize header_end, Usize indent, Usize *bod
     return end;
 }
 
+// The type of the declarators after the first: the first one's type without its `*`s, and a `*` for `*name`.
+static Str more_type(Str first, Bool pointer) {
+    Usize end = countof(first);
+    while (end > 0 && (first[end - 1] == '*' || first[end - 1] == ' '))
+        end -= 1;
+    Str base = first[0:end];
+    return pointer ? as_str(format::push(base, " *")) : base;
+}
+
 // What the header becomes: the declaration of the counter on its own line, then `while condition`.
 static Str while_head(Header h, Bool declare, Usize indent) {
     Str out = "";
@@ -773,9 +788,13 @@ static Str while_head(Header h, Bool declare, Usize indent) {
             Str kind = "";
             if (h.has_type && !mem::equal(h.type, automatic)) kind = as_str(format::push(": ", h.type));
             line = as_str(format::push("mut ", h.name, kind, " = ", h.value));
-            for (Usize i = 0; i < countof(h.more); i++)
+            for (Usize i = 0; i < countof(h.more); i++) {
+                Str more = "";
+                if (h.has_type && !mem::equal(h.type, automatic))
+                    more = as_str(format::push(": ", more_type(h.type, h.more[i].pointer)));
                 line = as_str(
-                    format::push(line, "\n", spaces(indent), "mut ", h.more[i].name, kind, " = ", h.more[i].value));
+                    format::push(line, "\n", spaces(indent), "mut ", h.more[i].name, more, " = ", h.more[i].value));
+            }
         } else {
             for (Usize i = 0; i < countof(h.more); i++)
                 line = as_str(format::push(line, "\n", spaces(indent), h.more[i].name, " = ", h.more[i].value));

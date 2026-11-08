@@ -75,7 +75,7 @@ struct Prefixes {
     U32 constexpr_start; // the `constexpr` token, and where the token after it starts (a fix deletes the span)
     U32 constexpr_end;
     U32 constexpr_after;
-    U32 static_start; // a local's `static` token, and where the token after it starts (see `drop_static`)
+    U32 static_start; // the `static` token, and where the token after it starts (see `drop_local_static`)
     U32 static_after;
     Bool unused; // a lone `[[maybe_unused]]` group: the fix of the declaration deletes it and prefixes `_`
     U32 unused_start;
@@ -892,7 +892,7 @@ static Prefixes parse_prefixes(parse::Parser *p, Bool top) {
             pre.constexpr_end = word.end;
             pre.constexpr_after = parse::peek_at(p, 1).span.start;
         }
-        if (!top && kind == lex::kw_static) {
+        if (kind == lex::kw_static) {
             pre.static_start = parse::peek(p).span.start;
             pre.static_after = parse::peek_at(p, 1).span.start;
         }
@@ -1303,6 +1303,14 @@ struct Head {
     lex::Token name;
 };
 
+// The dimensions in front of the element type: `[4]u8`. A volatile element of an array is the array's `volatile [4]u8`;
+// of a slice, `[]volatile u8`.
+static Str with_dims(Str dims, Str type) {
+    Bool volatile_element = countof(type) > 9 && same_text(type[0:9], "volatile ");
+    if (!volatile_element || countof(dims) == 0 || same_text(dims, "[]")) return as_str(format::push(dims, type));
+    return as_str(format::push("volatile ", dims, type[9:]));
+}
+
 // The array suffixes after a parameter's name, `xs[3]` or `m[:][2]`: the tokens `at` to `to` lose them, the new end
 // comes back (0 when a suffix has no fix: `[const :]`, and `[]` outside a parameter) and `dims` is the same suffixes as
 // smith writes them in front of the type, the first one outermost: `[3]`, `[][2]`.
@@ -1393,7 +1401,7 @@ static Str new_parameter(const parse::Parser *p, Usize from, Usize to) {
     Str raw = trimmed(source_between(p, p->tokens[at].span.start, p->tokens[to - 2].span.end));
     if (same_text(raw, "auto")) return as_str(format::push(prefix, name, ": auto")); // `auto x` is `x: auto` (#2224)
     if ((is_const || type_param) && same_text(raw, "Type")) return as_str(format::push(prefix, name, ": type"));
-    type = as_str(format::push(dims, type));
+    type = with_dims(dims, type);
     // An array parameter is a pointer in C, writable unless its elements are `const`: `mut`, or `&xs[0]` is read-only.
     if (countof(dims) > 2 && dims[1] != ']' && !mentions_const(raw)) prefix = as_str(format::push(prefix, "mut "));
     if (is_const) return as_str(format::push(prefix, "const ", name, ": ", type));
@@ -1505,6 +1513,8 @@ static Bool fix_function(parse::Parser *p, const Prefixes *pre, Head head, Usize
         edits = with_edit(edits, edit(p->tokens[close + 1].span.start, p->tokens[close + 1].span.end, ""));
     }
     if (pre->is_constexpr) edits = with_edit(edits, edit(pre->constexpr_start, pre->constexpr_after, ""));
+    // A private function has no `static` in smith's own syntax: the name is private without it.
+    if (pre->is_static) edits = with_edit(edits, edit(pre->static_start, pre->static_after, ""));
     edits = with_unused(pre, edits);
     char message[:] = format::push("a function is written `", written, " { ... }`: the types follow the names");
     warn(p, head.type_start, end, message, edits);
@@ -1887,7 +1897,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     Str lead = variable_lead(pre, type_value);
     if (zero_later && !pre->is_constexpr) lead = "mut ";
     Str untyped = untyped_of(lead);
-    written = as_str(format::push(dims.text, written));
+    written = with_dims(dims.text, written);
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
     parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
@@ -2092,7 +2102,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
     }
     Str word = parse::text(p, name);
     Str written = trimmed(source_between(p, start, name.span.start));
-    char text[:] = format::push(is_public ? "pub " : "", word, ": ", dims.text, written);
+    char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
     char message[:] = format::push("a field is written `", text, "`, one to a line, with no `;`");

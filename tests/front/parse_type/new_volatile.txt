@@ -1,0 +1,28 @@
+*volatile i32
+(module m
+  (variable t (pointer (named i32 volatile))))
+
+*volatile mut u8
+(module m
+  (variable t (pointer mut (named u8 volatile))))
+
+volatile u64
+(module m
+  (variable t (named u64 volatile)))
+
+volatile [4]u8
+(module m
+  (variable t (array volatile (named u8) (integer 4))))
+
+[]volatile u8
+(module m
+  (variable t (slice (named u8 volatile))))
+
+[]volatile mut u8
+(module m
+  (variable t (slice (named u8 volatile))))
+
+volatile *u8
+(module m
+  (variable t (pointer volatile (named u8))))
+
