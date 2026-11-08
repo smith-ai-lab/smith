@@ -32,11 +32,16 @@ runs:
         if [ "$tag" != "$newest" ]; then
           echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-        # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id.
+        # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id. The API
+        # answers with a redirect to a signed URL: ask for it with the token, then fetch it without (a curl that sends the
+        # token on to the other host got a 401 on the owner's Mac, #2835). A 401 is not retried.
+        api=https://api.github.com/repos/smith-ai-lab/smith/releases/assets
         for f in "$name" "$name.sha256"; do
           id=$(jq -r --arg t "$tag" --arg n "$f" '.[]|select(.tag_name==$t)|.assets[]|select(.name==$n)|.id' .smith/stage0/releases.json)
-          curl "$@" --retry-delay 3 --retry-all-errors -L -H "Accept: application/octet-stream" \
-            -o ".smith/stage0/$f" "https://api.github.com/repos/smith-ai-lab/smith/releases/assets/$id"
+          reply=$(curl "$@" --retry-delay 3 -o /dev/null -w '%{http_code} %{redirect_url}' \
+            -H "Accept: application/octet-stream" "$api/$id")
+          [ "${reply%% *}" = 302 ] || { echo "fetch-smith: $api/$id answered ${reply%% *}, not a redirect" >&2; exit 1; }
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -L -o ".smith/stage0/$f" "${reply#* }"
         done
         want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
         if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
