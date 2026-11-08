@@ -220,3 +220,24 @@ export void test_front_generic_a_call_inside_a_generic_is_recorded_per_outer_ins
     }
     test::check_equal(inside, (Usize)2);
 }
+
+// A question about types joined with `and`, `or` and `not` picks one branch of an instance, as one question does: the
+// branch it drops is not checked (`piece.to(i64)` of a `str`), and the emitter is told which one is kept (#1902).
+export void test_front_generic_joined_type_questions_keep_one_branch() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn sink(x: i64) -> i64:\n    return x\n\n"
+                 "fn put(piece: auto) -> i64:\n"
+                 "    if is_integer(typeof(piece)) and is_signed(typeof(piece)):\n"
+                 "        return sink(piece.to(i64))\n"
+                 "    else if not is_integer(typeof(piece)) or typeof(piece) == u8:\n"
+                 "        return 100\n"
+                 "    else:\n"
+                 "        return 7\n\n"
+                 "fn run() -> i64:\n    return put(\"a\") + put(3) + put(2.to(u32))\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_equal(r.instance_count, (Usize)3);
+}

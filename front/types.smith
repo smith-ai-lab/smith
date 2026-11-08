@@ -1260,6 +1260,8 @@ export struct NodeType {
     Bool has_length;   // an array length written as constants (`[k.SIDE * 2]u8`): the value is `length`
     U64 length;
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
+    Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
+    Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
 };
 
 // A test of a payload enumeration's variant, `if k == .v:` or `if k != .v: return`, kept for the fix of the reads `k.v`
@@ -1509,6 +1511,34 @@ export TypeRef type_of_in(const Checked *r, const ast::Expr *node, Usize instanc
     const NodeType *entry = find_in(r, node, instance);
     if (entry == nullptr) return nullptr;
     return entry->type;
+}
+
+// Records that the condition of an `if` is a question about types (`is_integer(typeof(x)) and ...`) that the checker
+// answered: only the branch it picks is checked, and only that branch is emitted (#1902).
+export void set_decided(Checked *r, const ast::Expr *condition, Bool keeps_then) {
+    NodeType *entry = entry_in(r, condition, r->current);
+    entry->decided = true;
+    entry->keeps_then = keeps_then;
+    if (r->current == max_instances) return;
+    entry = entry_in(r, condition, max_instances);
+    entry->decided = true;
+    entry->keeps_then = keeps_then;
+}
+
+// Whether the checker answered the condition of an `if` in the body of `instance`, and which branch it kept.
+export Bool decided_in(const Checked *r, const ast::Expr *condition, Usize instance, Bool *keeps_then) {
+    const NodeType *entry = find_in(r, condition, instance);
+    if (entry == nullptr || !entry->decided) return false;
+    *keeps_then = entry->keeps_then;
+    return true;
+}
+
+// The same for the body being checked now (outside a check: the latest answer).
+export Bool decided(const Checked *r, const ast::Expr *condition, Bool *keeps_then) {
+    const NodeType *entry = find_here(r, condition);
+    if (entry == nullptr || !entry->decided) return false;
+    *keeps_then = entry->keeps_then;
+    return true;
 }
 
 // What the emitter needs to know about a cast: whether it asserts that the value fits (checked in every build, and
@@ -3202,11 +3232,252 @@ static void reflect_fail(ast::Span span, Str message) {
     failf(reflecting, span, message);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// D20 (owner, 2026-11-07: "A"): `for (i, x) in enumerate(list)` over a pack, `fields(T)` or `parameters(F)` is unrolled
+// as `for x in list` is, since each element has its own type, and `i` is a compile-time `usize` in each copy: the copy
+// is a block of `const i: usize = <at>`, then `x := rest.<at>` for a pack (`x` stands for `fields(T)[<at>]` in a list,
+// which `ast_clone` expands after), then the body.
+
+static Str enumerated_pack;
+static Usize enumerated_count = 0;
+static Bool enumerated_any = false;
+static Str substituted_name;
+static Str substituted_index;
+static ast::Expr *substituted_list = nullptr;
+static Usize substituted_at = 0;
+
+static Str single_name_of(const ast::Expr *e) {
+    Str none = {};
+    if (e == nullptr || e->kind != .name || countof(e->kind.name.path.segments) != 1) return none;
+    return e->kind.name.path.segments[0].text;
+}
+
+static Usize typed_subjects = 0;
+
+// The type of the variable `typeof(v)` names, or null: the new syntax may read the operand `v` as a type name.
+static TypeRef typeof_variable(const Checked *r, const ast::Expr *operand) {
+    Str name = single_name_of(operand);
+    if (operand == nullptr) return nullptr;
+    if (operand->kind == .type_value && operand->kind.type_value.type != nullptr &&
+        operand->kind.type_value.type->kind == .named &&
+        countof(operand->kind.type_value.type->kind.named.path.segments) == 1) {
+        name = operand->kind.type_value.type->kind.named.path.segments[0].text;
+    }
+    if (countof(name) == 0) return nullptr;
+    const Symbol *found = lookup(&r->scopes, name);
+    if (found != nullptr && found->kind == .variable) return found->type;
+    // Before an instance's parameters are declared, an `auto` parameter `v` is bound as `$auto.v` (`bind_given`).
+    found = lookup(&r->scopes, msg(format::push("$auto.", name)));
+    if (found == nullptr) return nullptr;
+    return found->type;
+}
+
+// The type of `v`, `p.*` or `p.f` (a field through a pointer too), a few steps from a variable: the subject of
+// `fields(typeof(p.*))` in an instance (`tests/smith-lang/cases/generic-fields-pointee`).
+static TypeRef typeof_path(const Checked *r, const ast::Expr *operand) {
+    const ast::Expr *steps[8];
+    Usize n = 0;
+    const ast::Expr *at = operand;
+    while (at != nullptr && n < countof(steps)) {
+        const ast::Expr *inner = nullptr;
+        if (at->kind == .unary && at->kind.unary.op == .dereference) inner = at->kind.unary.operand;
+        if (at->kind == .member) inner = at->kind.member.base;
+        if (inner == nullptr) break;
+        steps[n++] = at;
+        at = inner;
+    }
+    TypeRef t = typeof_variable(r, at);
+    for (Usize i = n; i > 0 && t != nullptr; i--) {
+        const ast::Expr *step = steps[i - 1];
+        if (t->kind == .pointer && step->kind == .unary) {
+            t = element_of(t);
+            continue;
+        }
+        if (t->kind == .pointer) t = element_of(t);
+        if (t->kind != .record || step->kind != .member) return nullptr;
+        TypeRef field = nullptr;
+        for (Usize k = 0; k < countof(slots_of(t).items); k++)
+            if (same_text(slots_of(t).items[k].name, step->kind.member.name)) field = slots_of(t).items[k].type;
+        t = field;
+    }
+    return t;
+}
+
+// The name `fields(...)` looks its subject up by: the last name of `T` or `geometry.Point`. A subject written as a type
+// that is no name, `typeof(v)` or `typeof(p.*)` in an instance, is resolved here and named by a symbol of its own in
+// the instance's scope, so the record is found by its type and not by a name the instance's module may not see.
+static Str reflected_subject(const ast::Expr *arg) {
+    Str none = {};
+    if (arg->kind == .name) {
+        Usize n = countof(arg->kind.name.path.segments);
+        return n == 0 ? none : arg->kind.name.path.segments[n - 1].text;
+    }
+    if (arg->kind != .type_value || arg->kind.type_value.type == nullptr) return none;
+    const ast::TypeExpr *written = arg->kind.type_value.type;
+    if (written->kind == .named) {
+        Usize n = countof(written->kind.named.path.segments);
+        return n == 0 ? none : written->kind.named.path.segments[n - 1].text;
+    }
+    if (reflecting == nullptr || written->kind != .type_of) return none;
+    Usize errors = reflecting->error_count;
+    Bool was_new = reflecting->new_syntax;
+    reflecting->new_syntax = true;
+    TypeRef t = typeof_path(reflecting, written->kind.type_of.operand);
+    if (t == nullptr) t = resolve(reflecting, written);
+    reflecting->new_syntax = was_new;
+    reflecting->error_count = errors;
+    if (t == nullptr || t->kind != .record) return none;
+    typed_subjects += 1;
+    char chars[:] = format::push("#typeof", typed_subjects);
+    Str name = chars;
+    if (!declare(&reflecting->scopes, (Symbol){.name = name, .kind = .type_name, .type = t})) return none;
+    return name;
+}
+
+// `fields(typeof(v))` in an instance as `fields(#typeofN)`, the name `reflected_subject` gave its record.
+static const ast::Expr *typed_subject(const ast::Expr *e) {
+    if (reflecting == nullptr || e->kind != .call || countof(e->kind.call.args) != 1) return e;
+    if (!same_text(single_name_of(e->kind.call.callee), "fields")) return e;
+    const ast::Expr *arg = e->kind.call.args[0];
+    if (arg->kind != .type_value || arg->kind.type_value.type == nullptr) return e;
+    if (arg->kind.type_value.type->kind != .type_of) return e;
+    Str name = reflected_subject(arg);
+    if (countof(name) == 0) return e;
+    ast::Expr *subject = ast::expr({.type_value = {.type = ast::named(name)}});
+    subject->span = arg->span;
+    ast::ExprRef args[1] = {subject};
+    ast::Expr *call = ast::call(e->kind.call.callee, args);
+    call->span = e->span;
+    enumerated_any = true;
+    return call;
+}
+
+// The number of elements of the list of an enumerated loop, when it is the pack or a reflection list known here.
+static Bool enumerated_length(const ast::Expr *list, Bool *is_pack, Usize *count) {
+    Str name = single_name_of(list);
+    *is_pack = countof(name) > 0 && countof(enumerated_pack) > 0 && same_text(name, enumerated_pack);
+    if (*is_pack) {
+        *count = enumerated_count;
+        return true;
+    }
+    if (reflecting == nullptr || list->kind != .call || countof(list->kind.call.args) != 1) return false;
+    Str kind = single_name_of(list->kind.call.callee);
+    if (!same_text(kind, "fields") && !same_text(kind, "parameters")) return false;
+    Str subject = reflected_subject(list->kind.call.args[0]);
+    return countof(subject) > 0 && reflect_count(kind, subject, count);
+}
+
+static const ast::Stmt *kept_statement(const ast::Stmt *s) {
+    return s;
+}
+
+// In a copy of the body: the loop's element name over a list is `fields(T)[<at>]`, and an index by the loop's index
+// name is by `<at>` (`rest[i]` is `rest.<at>`, `fields(T)[i]` is `fields(T)[<at>]`).
+static const ast::Expr *substituted(const ast::Expr *e) {
+    Str name = single_name_of(e);
+    ast::Expr *entry = nullptr;
+    if (countof(name) > 0 && substituted_list != nullptr && same_text(name, substituted_name)) {
+        entry = ast::expr({.index = {.base = substituted_list, .index = ast::integer(substituted_at)}});
+    } else if (e->kind == .index && countof(substituted_index) > 0 &&
+               same_text(single_name_of(e->kind.index.index), substituted_index)) {
+        Str base = single_name_of(e->kind.index.base);
+        if (countof(base) > 0 && same_text(base, enumerated_pack)) {
+            char chars[:] = format::push(substituted_at);
+            Str at = chars;
+            entry = ast::expr({.member = {.base = e->kind.index.base, .name = at}});
+        } else {
+            entry = ast::expr({.index = {.base = e->kind.index.base, .index = ast::integer(substituted_at)}});
+        }
+    }
+    if (entry == nullptr) return e;
+    entry->span = e->span;
+    return entry;
+}
+
+// `const name: usize = at`, or `name := pack.at`.
+static ast::Stmt *enumerated_binding(ast::Identifier name, Usize at, Str pack) {
+    ast::Expr *init = ast::integer(at);
+    ast::TypeExpr *type = ast::named("usize");
+    if (countof(pack) > 0) {
+        char chars[:] = format::push(at);
+        Str index = chars;
+        init = ast::expr({.member = {.base = ast::name(pack), .name = index}});
+        type = ast::make_type((ast::TypeKind){});
+        type->kind = .auto_type;
+    }
+    init->span = name.span;
+    ast::DeclKind kind = {
+        .variable = {
+            .name = name.text, .type = type, .init = init, .is_constexpr = countof(pack) == 0, .is_new = true}};
+    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    d->span = name.span;
+    ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
+    s->span = name.span;
+    return s;
+}
+
+// One copy of the body of the enumerated loop `s` for the element `at`.
+static ast::Stmt *enumerated_copy(const ast::Stmt *s, ast::Expr *list, Bool is_pack, Usize at) {
+    if (s->kind != .for_in) return nullptr;
+    ast::Identifier names[:] = s->kind.for_in.names;
+    ast::StmtRef *items = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 3, alignof(ast::StmtRef));
+    Usize n = 0;
+    Str none = {};
+    if (!same_text(names[0].text, "_")) items[n++] = enumerated_binding(names[0], at, none);
+    if (is_pack && !same_text(names[1].text, "_")) items[n++] = enumerated_binding(names[1], at, single_name_of(list));
+    substituted_name = names[1].text;
+    substituted_index = same_text(names[0].text, "_") ? none : names[0].text;
+    substituted_list = is_pack || same_text(names[1].text, "_") ? nullptr : list;
+    substituted_at = at;
+    items[n++] = ast_clone::clone_stmt_rewriting(s->kind.for_in.body, kept_statement, substituted);
+    substituted_list = nullptr;
+    substituted_index = none;
+    ast::StmtRef copied[:] = items[0:n];
+    ast::Stmt *copy = ast::block(copied);
+    copy->span = s->span;
+    return copy;
+}
+
+static const ast::Stmt *enumerated(const ast::Stmt *s) {
+    if (s->kind != .for_in || !s->kind.for_in.is_tuple || countof(s->kind.for_in.names) != 2) return s;
+    const ast::Expr *iterable = s->kind.for_in.iterable;
+    if (iterable->kind != .call || countof(iterable->kind.call.args) != 1) return s;
+    if (!same_text(single_name_of(iterable->kind.call.callee), "enumerate")) return s;
+    ast::Expr *list = iterable->kind.call.args[0];
+    Bool is_pack = false;
+    Usize count = 0;
+    if (!enumerated_length(list, &is_pack, &count)) return s;
+    enumerated_any = true;
+    ast::StmtRef *copies = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), count, alignof(ast::StmtRef));
+    for (Usize at = 0; at < count; at++)
+        copies[at] = enumerated_copy(s, list, is_pack, at);
+    ast::StmtRef all[:] = copies[0:count];
+    ast::Stmt *block = ast::block(all);
+    block->span = s->span;
+    return block;
+}
+
+// Unrolls each enumerated loop of the function `d` in place (over `pack`, when it names one of `count` elements).
+static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
+    if (d->kind != .function || d->kind.function.body == nullptr) return false;
+    enumerated_pack = pack;
+    enumerated_count = count;
+    enumerated_any = false;
+    ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, typed_subject);
+    Str none = {};
+    enumerated_pack = none;
+    if (!enumerated_any) return false;
+    *d = *copy;
+    return true;
+}
+
 // Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
 export Bool expand_reflection(Checked *r, ast::Decl *function) {
     reflecting = r;
+    Str none = {};
+    Bool unrolled = unroll_enumerated(function, none, 0);
     ast_clone::set_reflection_source(reflect_count, reflect_at, reflect_fail);
-    Bool expanded = ast_clone::expand_reflection_lists(function);
+    Bool expanded = ast_clone::expand_reflection_lists(function) || unrolled;
     reflecting = nullptr;
     return expanded;
 }
@@ -3293,7 +3564,9 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
             TypeRef pack = given[bound].type;
             if (pack == nullptr) break;
             if (pack->kind != .tuple) break;
-            return ast_clone::clone_decl_unrolling(template, params[i].name, countof(slots_of(pack).items));
+            ast::Decl *copy = ast_clone::clone_decl_unrolling(template, params[i].name, countof(slots_of(pack).items));
+            (void)unroll_enumerated(copy, params[i].name, countof(slots_of(pack).items));
+            return copy;
         }
         if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
     }

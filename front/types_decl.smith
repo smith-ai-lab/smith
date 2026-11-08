@@ -1441,6 +1441,60 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// Whether `e` is `and`, `or` or `not`, the connectives a compile-time question about a type is joined with.
+static Bool connective(const ast::Expr *e) {
+    if (e->kind == .unary) return e->kind.unary.op == .logical_not;
+    if (e->kind != .binary) return false;
+    return e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or;
+}
+
+// The answer of a condition made of questions about types (`is_integer(typeof(x)) and is_signed(typeof(x))`,
+// `typeof(x) == *char or typeof(x) == []char`), joined by `and`, `or` and `not`; false when a part is not such a
+// question or its type is not known yet. An instance keeps the branch the answer picks, as for one question (#1902).
+static Bool query_answer(types::Checked *r, const ast::Expr *test, Bool *answer) {
+    const ast::Expr *nodes[32];
+    Bool opened[32];
+    Bool values[32];
+    Usize n = 1;
+    Usize have = 0;
+    nodes[0] = test;
+    opened[0] = false;
+    while (n > 0) {
+        const ast::Expr *e = nodes[n - 1];
+        if (!connective(e)) {
+            n -= 1;
+            Bool value = false;
+            if (have == countof(values) || !types_builtin::query_value(r, e, &value)) return false;
+            values[have++] = value;
+        } else if (!opened[n - 1]) {
+            opened[n - 1] = true;
+            if (n + 2 > countof(nodes)) return false;
+            if (e->kind == .unary) {
+                nodes[n] = e->kind.unary.operand;
+                opened[n++] = false;
+            } else if (e->kind == .binary) {
+                nodes[n] = e->kind.binary.right;
+                opened[n++] = false;
+                nodes[n] = e->kind.binary.left;
+                opened[n++] = false;
+            }
+        } else {
+            n -= 1;
+            if (e->kind == .unary) {
+                values[have - 1] = !values[have - 1];
+            } else if (e->kind == .binary) {
+                Bool left = values[have - 2]; // the left side is answered first
+                Bool right = values[have - 1];
+                have -= 1;
+                values[have - 1] = e->kind.binary.op == .logical_and ? left && right : left || right;
+            }
+        }
+    }
+    if (have != 1) return false;
+    *answer = values[0];
+    return true;
+}
+
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind != .if_stmt) {
         return;
@@ -1462,7 +1516,8 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     Bool answer = false;
-    if (types_builtin::query_value(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+    if (query_answer(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+        types::set_decided(r, test, answer);
         const ast::Stmt *live = answer ? then_branch : else_branch;
         if (live != nullptr) push(live, nullptr, enter);
         return;
