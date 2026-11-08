@@ -1053,7 +1053,7 @@ static void keep_writable_pointers(ast::Module *mended, const ast::Module *origi
         ast::Decl *d = mended->decls[i];
         if (d->kind != .function) continue;
         const ast::Decl *was = function_taking(original, d->kind.function.name, countof(d->kind.function.params));
-        if (was == nullptr) continue;
+        if (was == nullptr || was->kind != .function) continue;
         for (Usize k = 0; k < countof(d->kind.function.params); k++) {
             ast::TypeExpr *now = d->kind.function.params[k].type;
             const ast::TypeExpr *before = was->kind.function.params[k].type;
