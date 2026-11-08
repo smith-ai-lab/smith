@@ -46,3 +46,14 @@ export void test_front_fix_concept_a_call_used_as_a_test_is_a_predicate_of_the_e
                  "\npub fn take_while[T](xs: []T, pred: fn(T) -> bool) -> usize:\n    mut n: usize = 0\n"
                  "    while n < countof(xs) and pred(xs[n]):\n        n += 1\n    return n\n");
 }
+
+// A `[]auto` slice is `[T](xs: []T)`, and then the call used as a test takes the element: `less` takes two.
+export void test_front_fix_concept_a_slice_of_auto_gives_the_predicate_its_element() {
+    expect_fixed(
+        "module m;\nexport Bool ordered(const auto xs[:], auto less) {\n"
+        "    for (Usize i = 1; i < countof(xs); i++) {\n        if (less(xs[i], xs[i - 1])) return false;\n    }\n"
+        "    return true;\n}\n",
+        "pub fn ordered[T](xs: []T, less: fn(T, T) -> bool) -> bool:\n"
+        "    for i in range(1, countof(xs)):\n        if less(xs[i], xs[i - 1]):\n            return false\n"
+        "    return true\n");
+}

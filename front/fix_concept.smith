@@ -52,6 +52,7 @@ struct Uses {
     Bool arithmetic; // `+`, `-`, `*`, `/` with it
     Bool pointer;    // `name.*`
     Bool predicate;  // `if name(...)`
+    Usize arguments; // how many it is called with
     Bool neutral;    // reflected on or handed on
     Bool other;      // anything else: indexed, compared, a field
 };
@@ -68,6 +69,14 @@ static Bool is_integer_op(Str s, Usize i) {
     if (at(s, i, "<<") || at(s, i, ">>")) return true;
     if (at(s, i, "&&") || at(s, i, "||")) return false;
     return s[i] == '%' || s[i] == '&' || s[i] == '|' || s[i] == '^';
+}
+
+// Whether an assignment (`+=`, `-=`, `=`) stands at `i`: `p += 1` may step a pointer as well as a number.
+static Bool is_assignment(Str s, Usize i) {
+    if (i >= countof(s)) return false;
+    if (at(s, i, "==")) return false;
+    if (s[i] == '=') return true;
+    return i + 1 < countof(s) && s[i + 1] == '=' && (s[i] == '+' || s[i] == '-' || s[i] == '*' || s[i] == '/');
 }
 
 static Bool is_arithmetic_op(Str s, Usize i) {
@@ -88,16 +97,35 @@ static Bool is_handed_on(Str s, Usize pos, Usize length) {
     return opens && closes;
 }
 
+// The number of arguments of the call whose `(` is at `open`.
+static Usize arguments_of(Str s, Usize open) {
+    Usize depth = 0;
+    Usize count = 1;
+    for (Usize i = open; i < countof(s); i++) {
+        if (s[i] == '(' || s[i] == '[') depth += 1;
+        if (s[i] == ')' || s[i] == ']') {
+            depth -= 1;
+            if (depth == 0) return i == open + 1 ? 0 : count;
+        }
+        if (s[i] == ',' && depth == 1) count += 1;
+    }
+    return count;
+}
+
 // What the use of the name at `pos` (of `length` bytes) is, added to `uses`.
 static Uses classify(Uses uses, Str s, Usize pos, Usize length) {
     Usize after = skip_forward(s, pos + length);
     Usize before = skip_back(s, pos);
     if (at(s, after, ".*")) {
         uses.pointer = true;
+    } else if ((at(s, pos + length, ".") && !at(s, pos + length, ".[")) || at(s, after, "[") ||
+               is_assignment(s, after)) {
+        uses.other = true; // `x.to(usize)`, `x.name`, `xs[0]`, `p += 1`: a member, a conversion, an index, a step
     } else if (at(s, after, "(") &&
                (word_before(s, pos, "if") || word_before(s, pos, "not") || word_before(s, pos, "while") ||
                 word_before(s, pos, "and") || word_before(s, pos, "or"))) {
         uses.predicate = true;
+        uses.arguments = arguments_of(s, after);
     } else if (is_integer_op(s, after) || (before > 0 && is_integer_op(s, before - 1) && before >= 1)) {
         uses.integer = true;
     } else if (is_arithmetic_op(s, after) || (before > 0 && is_arithmetic_op(s, before - 1))) {
@@ -125,7 +153,12 @@ static Uses uses_of(Str body, Str name) {
 static Str concept_of(Uses uses, Bool has_element) {
     if (uses.other) return "";
     if (uses.pointer) return uses.integer || uses.arithmetic || uses.predicate ? "" : "pointer";
-    if (uses.predicate) return !has_element || uses.integer || uses.arithmetic ? "" : "fn(T) -> bool";
+    if (uses.predicate) {
+        if (!has_element || uses.integer || uses.arithmetic) return "";
+        if (uses.arguments == 2) return "fn(T, T) -> bool";
+        if (uses.arguments == 1) return "fn(T) -> bool";
+        return "";
+    }
     if (uses.integer)
         return ""; // `int` is `i32` while a file is mended (types::c_type_fix): waits for the checker part
     if (uses.arithmetic) return "num";

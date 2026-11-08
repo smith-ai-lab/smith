@@ -96,7 +96,7 @@ export void test_front_fix_generic_mut_the_field_bound_in_an_index_loop_names_th
 export void test_front_fix_generic_mut_a_slice_of_auto_makes_the_function_a_template() {
     expect_fixed("module m;\nexport I64 total(const auto xs[:]) {\n    I64 sum = 0;\n"
                  "    for (Usize i = 0; i < countof(xs); i++)\n        sum += xs[i];\n    return sum;\n}\n",
-                 "pub fn total(xs: []auto) -> i64:\n    mut sum: i64 = 0\n    for i in range(0, countof(xs)):\n"
+                 "pub fn total[T](xs: []T) -> i64:\n    mut sum: i64 = 0\n    for i in range(0, countof(xs)):\n"
                  "        sum += xs[i]\n    return sum\n");
 }
 
