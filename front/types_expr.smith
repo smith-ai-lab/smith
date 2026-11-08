@@ -5276,6 +5276,18 @@ static Bool adapts(types::Checked *c, const ast::Expr *leaf, types::TypeRef to) 
     return literal_like(leaf) && retype(c, leaf, to);
 }
 
+// A pointer beside `nullptr`, or either beside the `?*T` they make: `*first` becomes that `?*T`. The `?*T` is the
+// pointer itself, null is its `.none`.
+static Bool absent_pointer(types::Checked *c, types::TypeRef *first, types::TypeRef t) {
+    types::TypeRef pointer = nullptr;
+    types::TypeRef head = *first;
+    if (head == c->table.null_type && t->kind == .pointer) pointer = t;
+    if (t == c->table.null_type && head->kind == .pointer) pointer = head;
+    if (pointer == nullptr) return false;
+    *first = types::option_of(&c->table, pointer);
+    return true;
+}
+
 // The last frame: the branches have the one type. With an expected type each was checked against it already; without
 // one the first branch with a value decides, and an unsuffixed literal after it takes its type.
 static void value_join(types::Checked *c, Frame f) {
@@ -5297,6 +5309,8 @@ static void value_join(types::Checked *c, Frame f) {
             no_value = true;
         } else if (first == nullptr) {
             first = t;
+        } else if (f.expected == nullptr && t != first && absent_pointer(c, &first, t)) {
+            continue; // a pointer and `nullptr`: the value is the `?*T` (#2643)
         } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
             types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
                          "` and `", types::show(t),
