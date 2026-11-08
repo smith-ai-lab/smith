@@ -1657,7 +1657,8 @@ static void keep_owned_rows() {
 
 // #2832: how many rows the shards will have to measure (a row with no cache entry), so the workflow sizes the shards
 // from it. Printed by the fix job as `frontend_coverage: rows to measure: M of T`.
-static void print_plan(void) {
+static Bool fix_only_done() {
+    if (c::getenv("SMITH_COVERAGE_FIX_ONLY") == nullptr) return false;
     Usize missing = 0;
     Usize total = 0;
     for (Usize i = 0; i < tree_count; i++) {
@@ -1675,6 +1676,7 @@ static void print_plan(void) {
         }
     }
     console::print_error("frontend_coverage: rows to measure: ", missing, " of ", total, "\n");
+    return true;
 }
 
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
@@ -1729,10 +1731,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
                          job_limit, " at once\n");
     // #2832: the job that fills the cache of fixed files for the shards stops here: no table is made.
-    if (c::getenv("SMITH_COVERAGE_FIX_ONLY") != nullptr) {
-        print_plan();
-        return 0;
-    }
+    if (fix_only_done()) return 0;
     link_roots(scratch);
     phase_start = clock::monotonic();
     for (Usize i = 0; i < tree_count; i++) {
