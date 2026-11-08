@@ -1841,7 +1841,9 @@ static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char
     // build program was compiled with stay put (#2706).
     char own[PATH_MAX];
     snprintf(own, sizeof own, "lib/std/%s.smith", name);
-    job->own = smith_file_has_bytes(own, text, text_size);
+    // Only in smith's own tree (include/smith_core.h is there): another project that links lib/std, such as the units
+    // project, has no such build step, and its headers keep the form they had.
+    job->own = access("include/smith_core.h", R_OK) == 0 && smith_file_has_bytes(own, text, text_size);
     if (job->own) snprintf(job->source, sizeof job->source, "%s", own);
 }
 
