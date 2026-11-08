@@ -83,6 +83,18 @@ export void test_front_generics_infer_an_auto_parameter_beside_bracketed_generic
     test::check_condition(countof(r.instances) > 0 || r.instance_count > 0);
 }
 
+// The fixed arguments of a call of an `auto` function are conformed to the instance's slots: a read-only pointer for a
+// `*mut` parameter is refused as in any call.
+export void test_front_generics_infer_a_fixed_argument_of_an_auto_call_is_conformed() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn put(out: *mut i32, extra: auto):\n    out.* = 1\n\nfn run(p: *i32):\n    put(p, 3)\n";
+    types::Checked r = checked(source);
+    test::check_condition(countof(errors_of(&r)) > 0);
+}
+
 export void test_front_generics_infer_a_pointer_binds_the_pointee() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
