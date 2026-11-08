@@ -62,28 +62,48 @@ jobs:
 
           pr_id() { gh api "repos/$REPO/pulls/$PR" --jq .node_id; }
 
+          # takes the PR out of the queue; nothing to do when it is not in it
+          dequeue_pr() {
+            local entry
+            entry=$(gh api graphql -f query='
+              query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
+              -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || return 1
+            [ -z "$entry" ] && return 0
+            gh api graphql -f query='
+              mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
+              -f id="$entry" --silent
+          }
+
+          # the queue's PR numbers, front first
+          queue_order() {
+            gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+              query($owner: String!, $name: String!) {
+                repository(owner: $owner, name: $name) {
+                  mergeQueue(branch: "main") { entries(first: 30) { nodes { position pullRequest { number } } } }
+                }
+              }' --jq '[.data.repository.mergeQueue.entries.nodes | sort_by(.position)[] | "#\(.pullRequest.number)"] | join(" ")'
+          }
+
           do_op() {
             case "$OP" in
               jump|enqueue)
                 needs_pr
                 local jump=false
                 [ "$OP" = jump ] && jump=true
+                # a PR already in the queue cannot be enqueued again: take it out first (jump, 2026-11-08)
+                [ "$jump" = true ] && { dequeue_pr || return 1; }
                 gh api graphql -f query='
                   mutation($id: ID!, $jump: Boolean) {
                     enqueuePullRequest(input: {pullRequestId: $id, jump: $jump}) {
-                      mergeQueueEntry { position }
+                      mergeQueueEntry { id }
                     }
-                  }' -f id="$(pr_id)" -F jump="$jump" --jq '.data.enqueuePullRequest.mergeQueueEntry.position // "no-entry"' ;;
+                  }' -f id="$(pr_id)" -F jump="$jump" --silent || return 1
+                # the mutation's own position is not reliable: read the queue
+                echo "queue: $(queue_order)" ;;
               dequeue)
                 needs_pr
-                local entry
-                entry=$(gh api graphql -f query='
-                  query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
-                  -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || return 1
-                if [ -z "$entry" ]; then echo "not-queued"; return 0; fi
-                gh api graphql -f query='
-                  mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
-                  -f id="$entry" --jq '"dequeued"' ;;
+                dequeue_pr || return 1
+                echo "queue: $(queue_order)" ;;
               cancel-pr-runs)
                 local n=0 run pr files
                 for run in $(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&status=queued&per_page=100" --paginate --jq '.workflow_runs[] | "\(.id):\(.pull_requests[0].number // 0)"'); do
