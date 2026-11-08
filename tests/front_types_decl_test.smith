@@ -445,3 +445,16 @@ export void test_front_types_decl_a_type_question_keeps_one_branch_of_an_instanc
           "return countof(x);\n    }\n}\nUsize run() {\n    I32 n = 0;\n    return size(n);\n}\n",
           "countof", "");
 }
+
+// `volatile` is a type prefix (#2669): `*volatile T` keeps its qualifier, a `*T` is handed where a `*volatile T` is
+// wanted, and the other way drops it, as dropping const does.
+export void test_front_types_decl_volatile_is_kept_and_never_dropped() {
+    reading_new = true;
+    clean("pub fn read(p: *volatile i32) -> i32:\n    return p.*\n");
+    clean("pub fn bump() -> i32:\n    mut x: volatile i32 = 3\n    x = x + 1\n    return x\n");
+    clean("fn read(p: *volatile i32) -> i32:\n    return p.*\nfn f(p: *i32) -> i32:\n    return read(p)\n");
+    clean("fn first(xs: []volatile u8) -> u8:\n    return xs[0]\n");
+    fails("fn read(p: *i32) -> i32:\n    return p.*\nfn f(p: *volatile i32) -> i32:\n    return read(p)\n",
+          "this drops volatile", "make the target's element volatile");
+    reading_new = false;
+}
