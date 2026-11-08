@@ -89,3 +89,17 @@ export void test_front_compile_a_chain_of_imports_is_no_cycle() {
     test::check_equal(countof(report.text), (Usize)0);
     remove_all(folder);
 }
+
+// An error in the body of an instance of an imported generic is reported at that module's file and line, not at the
+// file that calls it (#2669): `1 - x` is `util.smith`'s.
+export void test_front_compile_an_error_in_an_imported_instance_names_its_module() {
+    Str folder = folder_for("instance");
+    write_text(as_str(format::push(folder, "/src/util.smith")), "pub fn wrap(x: auto) -> f64:\n    return 1 - x\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")), "import util\n\npub fn f() -> f64: util.wrap(0.5)\n");
+    compile::Report made = compile_one(folder, "main");
+    test::check_equal(made.ok, false);
+    Str want = as_str(format::push(folder, "/src/util.smith:2:12: error: "));
+    Usize n = countof(want) < countof(made.text) ? countof(want) : countof(made.text);
+    test::check_equal(made.text[0:n], want);
+    remove_all(folder);
+}
