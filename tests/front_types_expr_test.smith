@@ -1143,6 +1143,23 @@ export void test_front_types_expr_an_array_literal_splices_a_tuple_or_an_array()
                        "count known here; spread one of those, or build the slice with a loop"));
 }
 
+export void test_front_types_expr_a_bracket_list_where_a_tuple_is_expected_is_fixed_to_parentheses() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::Slot two[2] = {{.type = ty(&r, "I32")}, {.type = ty(&r, "F32")}};
+    types::TypeRef pair = types::tuple_of(&r.table, two);
+    ast::ExprRef items[2] = {num(1), real(2.0)};
+    ast::Expr *list_expr = ast::array_literal(items);
+    list_expr->span = (ast::Span){.start = 10, .end = 18};
+    types_expr::check(&r, list_expr, pair);
+    test::check_condition(says(last(&r), "a `[...]` is an array, but a tuple `(I32,F32)` is expected: write the items "
+                                         "in parentheses, `(a, b)`"));
+    expect(r.error_count, 1);
+}
+
 export void test_front_types_expr_an_array_literal_is_an_array_of_its_elements() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
