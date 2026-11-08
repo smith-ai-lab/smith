@@ -1,0 +1,52 @@
+name: fetch-smith
+description: >
+  Downloads the newest published smith release that has this platform's tarball (#2746, #2796), checks its SHA-256
+  and puts its `bin/` first on PATH, so `smith build` can build this tree. It lists the latest releases and takes the
+  first one with `smith-<os>-<arch>.tar.xz`; when that is not the newest release (the Linux job of a release failed,
+  and `publish` goes on without it), it prints one line naming both tags. The lag rule (knowledge/smith-bootstrap.md)
+  lets a release newer than the checkout build it.
+
+runs:
+  using: composite
+  steps:
+    - name: Download the newest release
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -eu
+        os=$(uname -s | tr A-Z a-z)
+        arch=$(uname -m)
+        name="smith-$os-$arch.tar.xz"
+        mkdir -p .smith/stage0
+        set -- -fsS --retry 10
+        [ -z "${GITHUB_TOKEN:-}" ] || set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"
+        # The newest releases first; the first one that has this platform's asset wins.
+        curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" -o .smith/stage0/releases.json
+        newest=$(jq -r '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
+        tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
+        if [ -z "$tag" ]; then
+          echo "fetch-smith: none of the 30 newest releases has $name" >&2
+          exit 1
+        fi
+        if [ "$tag" != "$newest" ]; then
+          echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+        # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id. The API
+        # answers with a redirect to a signed URL: ask for it with the token, then fetch it without (a curl that sends the
+        # token on to the other host got a 401 on the owner's Mac, #2835). A 401 is not retried.
+        api=https://api.github.com/repos/smith-ai-lab/smith/releases/assets
+        for f in "$name" "$name.sha256"; do
+          id=$(jq -r --arg t "$tag" --arg n "$f" '.[]|select(.tag_name==$t)|.assets[]|select(.name==$n)|.id' .smith/stage0/releases.json)
+          reply=$(curl "$@" --retry-delay 3 -o /dev/null -w '%{http_code} %{redirect_url}' \
+            -H "Accept: application/octet-stream" "$api/$id")
+          [ "${reply%% *}" = 302 ] || { echo "fetch-smith: $api/$id answered ${reply%% *}, not a redirect" >&2; exit 1; }
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -L -o ".smith/stage0/$f" "${reply#* }"
+        done
+        want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
+        if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
+        else got=$(shasum -a 256 ".smith/stage0/$name" | cut -d' ' -f1); fi
+        [ "$want" = "$got" ] || { echo "fetch-smith: checksum of $tag/$name differs" >&2; exit 1; }
+        tar -xJf ".smith/stage0/$name" -C .smith/stage0
+        echo "fetch-smith: using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "$PWD/.smith/stage0/bin" >>"$GITHUB_PATH"
