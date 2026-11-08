@@ -1372,6 +1372,9 @@ static Bool hash_fixer_objects(const char *smith) {
         if (listed.ok[i].folder) continue;
         typeof(const char[:]) name = view_of((const char *)listed.ok[i].name.data);
         if (!ends_with(name, ".o") && !ends_with(name, ".pack")) continue;
+        // commit.o holds the commit being built (-DSMITH_COMMIT, build_commit_object), so it differs in every build
+        // and a key that included it never matched main's cache of fixed files (#2832). The fixer does not read it.
+        if (same(name, "commit.o")) continue;
         Bool front = starts_with(name, "front_");
         if (front && !fixer_object(name)) continue;
         if (front) fixer_objects += 1;
