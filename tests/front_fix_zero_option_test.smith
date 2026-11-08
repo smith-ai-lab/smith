@@ -24,5 +24,23 @@ export void test_front_fix_zero_option_a_field_given_to_a_parameter_that_tests_n
                  "export I32 last(const Node *n) {\n    if (n->next == nullptr) return n->v;\n"
                  "    return last(n->next);\n}\n"
                  "export I32 f(const Node *n) {\n    return count(n->next);\n}\n",
-                 "");
+                 "pub struct Node:\n"
+                 "    pub next: ?*Node = .none\n"
+                 "    pub v: i32\n"
+                 "\n"
+                 "fn count(n: ?*Node) -> i32:\n"
+                 "    if n == .none:\n"
+                 "        return 0\n"
+                 "    return 1 + n.v\n"
+                 "\n"
+                 "pub fn make(v: i32) -> Node:\n"
+                 "    return Node(v = v)\n"
+                 "\n"
+                 "pub fn last(n: *Node) -> i32:\n"
+                 "    next := n.next else:\n"
+                 "        return n.v\n"
+                 "    return last(next)\n"
+                 "\n"
+                 "pub fn f(n: *Node) -> i32:\n"
+                 "    return count(n.next)\n");
 }
