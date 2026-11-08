@@ -17,12 +17,13 @@ on:
           - cancel-pr-runs
           - rerun-failed
           - set-build-entries
+          - set-pr-budget
       pr:
         description: "Pull request number (jump, dequeue, enqueue, rerun-failed)"
         required: false
         type: string
       value:
-        description: "set-build-entries: max_entries_to_build, 1 to 5"
+        description: "set-build-entries: max_entries_to_build, 1 to 5; set-pr-budget: Linux jobs of PR checks at once, 0 to 20"
         required: false
         type: string
 
@@ -137,6 +138,16 @@ jobs:
                       rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
                   > /tmp/ruleset.json
                 gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "max_entries_to_build=$VALUE" ;;
+              set-pr-budget)
+                # the most Linux jobs of pull request checks at once (#2856): ci-dispatch.yml reads the repository
+                # variable PR_BUDGET (6 when unset) on every pass, so the change takes effect at the next pass
+                case "$VALUE" in [0-9]|1[0-9]|20) ;; *) echo "value must be 0 to 20"; return 2 ;; esac
+                if gh api "repos/$REPO/actions/variables/PR_BUDGET" --silent 2>/dev/null; then
+                  gh api -X PATCH "repos/$REPO/actions/variables/PR_BUDGET" -f name=PR_BUDGET -f value="$VALUE" --silent || return 1
+                else
+                  gh api -X POST "repos/$REPO/actions/variables" -f name=PR_BUDGET -f value="$VALUE" --silent || return 1
+                fi
+                echo "PR_BUDGET=$(gh api "repos/$REPO/actions/variables/PR_BUDGET" --jq .value)" ;;
               *) echo "unknown op"; return 2 ;;
             esac
           }

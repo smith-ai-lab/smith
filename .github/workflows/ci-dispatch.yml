@@ -1,0 +1,120 @@
+# Starts the pull requests' checks under a budget (#2856, knowledge/ci-hosted.md). GitHub has no job priority and
+# hands runners out first come, first served: on 2026-11-08 about 25 pull request runs took all 20 Linux runners while a
+# merge queue run waited 15 minutes for its coverage shards. So a pull request event starts no check itself: this job
+# (seconds, one small runner) starts `ci.yml` with `workflow_dispatch` on the PR's head branch for the PRs that wait
+# longest, while
+#   - no merge queue job waits for a runner, and
+#   - the Linux jobs of the running PR checks plus the new one stay within the budget (repo variable PR_BUDGET, 6 when
+#     unset; the lead sets it with queue-ops `set-pr-budget`).
+# A PR that cannot start now is not running and holds no runner: the next pass starts it. A pass runs on every pull
+# request event, when any `ci` run ends (room freed) and every 5 minutes as the backstop, and scans every open PR, so a
+# pass that is dropped (one runs, one waits) loses nothing. The dispatched run's last job is `ci`, the required check,
+# on the PR's head sha. A PR from a fork is never started: workflow_dispatch needs a ref in this repository.
+name: ci-dispatch
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# one pass at a time, so two passes never both see room for the same slot
+concurrency:
+  group: ci-dispatch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write # dispatch ci.yml, force-cancel superseded runs
+  checks: read
+  pull-requests: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BUDGET: ${{ vars.PR_BUDGET || '6' }}
+      # the most Linux jobs of one PR check at once (the build-and-test job and the checks job; `changes` and `ci` are
+      # short and run before and after them)
+      PER_RUN: "2"
+    steps:
+      - name: Start the waiting PR checks that fit
+        shell: bash
+        run: |
+          set -u
+          api() { gh api -X GET "$@"; }
+          log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          case "$BUDGET" in ''|*[!0-9]*) BUDGET=6 ;; esac
+
+          # A queue job that waits for a runner stops every start: queue runs come first. A job is listed only once
+          # the jobs it needs are done, so `queued` means it waits for a runner (#2848).
+          queue_waits=0
+          for run in $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=in_progress \
+              -f per_page=50 --jq '.workflow_runs[].id' 2>/dev/null) \
+              $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=queued -f per_page=50 \
+              --jq '.workflow_runs[] | "q\(.id)"' 2>/dev/null); do
+            case "$run" in q*) queue_waits=1; break ;; esac
+            n=$(api "repos/$REPO/actions/runs/$run/jobs" -f filter=latest -f per_page=100 \
+              --jq '[.jobs[] | select(.status == "queued")] | length' 2>/dev/null || echo 0)
+            [ "${n:-0}" -gt 0 ] && { queue_waits=1; break; }
+          done
+
+          # The live PR checks: each counts as its live Linux jobs, and at least PER_RUN until it ends, so a run whose
+          # heavy jobs have not been created yet keeps its slots.
+          used=0; live=" "
+          for status in queued in_progress waiting pending requested; do
+            for row in $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=workflow_dispatch -f status="$status" \
+                -f per_page=100 --jq '.workflow_runs[] | "\(.id):\(.head_sha)"' 2>/dev/null); do
+              id=${row%%:*}; sha=${row#*:}
+              case "$live" in *" $id:"*) continue ;; esac
+              live="$live$id:$sha "
+              n=$(api "repos/$REPO/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
+                --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest") or index("Linux"))] | length' \
+                2>/dev/null || echo "$PER_RUN")
+              [ "${n:-0}" -lt "$PER_RUN" ] && n=$PER_RUN
+              used=$((used + n))
+            done
+          done
+
+          # The open PRs to main from this repository, longest waiting first, with their head shas.
+          prs=$(api "repos/$REPO/pulls" -f state=open -f base=main -f sort=updated -f direction=asc -f per_page=100 \
+            --paginate --jq ".[] | select(.head.repo.full_name == \"$REPO\") | \"\(.number):\(.head.sha):\(.head.ref)\"")
+          heads=" $(printf '%s\n' "$prs" | cut -d: -f2 | tr '\n' ' ')"
+
+          # A live check of a sha that is no PR's head any more (a push replaced it) is force-cancelled: it frees its
+          # slots, and a force-cancelled run leaves no `ci` check run behind (a plain cancel leaves a red one).
+          for row in $live; do
+            id=${row%%:*}; sha=${row#*:}
+            case "$heads" in *" $sha "*) continue ;; esac
+            # a run of a sha that is no open PR's head: superseded, or the PR closed
+            gh api -X POST "repos/$REPO/actions/runs/$id/force-cancel" --silent 2>/dev/null \
+              && { log "cancelled run $id of superseded ${sha:0:7}"; used=$((used - PER_RUN)); live=${live/" $row "/" "}; }
+          done
+          [ "$used" -lt 0 ] && used=0
+
+          started=0; waiting=0
+          for row in $prs; do
+            pr=${row%%:*}; rest=${row#*:}; sha=${rest%%:*}; ref=${rest#*:}
+            # a check of this head is live
+            case "$live" in *":$sha "*) continue ;; esac
+            # this head has its `ci` (passed, failed, or running); a cancelled one counts as none
+            has=$(api "repos/$REPO/commits/$sha/check-runs" -f check_name=ci -f app_id=15368 -f filter=latest \
+              --jq '[.check_runs[] | select(.status != "completed" or (.conclusion != "cancelled" and .conclusion != "skipped"))] | length' \
+              2>/dev/null || echo 1)
+            [ "${has:-1}" -gt 0 ] && continue
+            if [ "$queue_waits" = 1 ] || [ $((used + PER_RUN)) -gt "$BUDGET" ]; then
+              waiting=$((waiting + 1)); continue
+            fi
+            if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f ref="$ref" -f "inputs[pr]=$pr" --silent; then
+              log "started the check of #$pr (${sha:0:7})"
+              used=$((used + PER_RUN)); started=$((started + 1)); live="$live0:$sha "
+            fi
+          done
+          log "ci-dispatch: budget $BUDGET, used $used, queue job waiting: $queue_waits, started $started, still waiting $waiting"
