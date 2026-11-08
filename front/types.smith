@@ -2017,6 +2017,7 @@ static const ast::TypeExpr *child(const ast::TypeExpr *node, Usize i) {
     if (node->kind == .block_type) return node->kind.block_type.element;
     if (node->kind == .function) {
         if (i < countof(node->kind.function.params)) return node->kind.function.params[i];
+        if (node->kind.function.result == nullptr) return nullptr;
         return node->kind.function.result;
     }
     if (node->kind == .tuple) return node->kind.tuple.elements[i];
