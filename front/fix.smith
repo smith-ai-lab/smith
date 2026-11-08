@@ -715,7 +715,13 @@ static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
         if (after_question(tokens, i - 1)) return false;
         return next != lex::dot && next != lex::arrow && next != lex::right_bracket;
     }
-    return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
+    if (tokens[i - 1].kind != lex::arrow || i < 2 || tokens[i - 2].kind != lex::right_paren) return false;
+    // `f(x)->type = v` and `f(x)->type + 1` read a field: the result type of a function head ends in `{`, `:`, `;`, `,`
+    // or `)`.
+    if (i + 1 >= countof(tokens)) return true;
+    lex::TokenKind next = tokens[i + 1].kind;
+    return next == lex::left_brace || next == lex::colon || next == lex::semicolon || next == lex::comma ||
+           next == lex::right_paren;
 }
 
 // Whether the `{` at `tokens[j]` opens the body of a `struct` or a `union`: `struct {`, `struct Name {`.

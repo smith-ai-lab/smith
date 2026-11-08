@@ -196,3 +196,11 @@ export void test_front_fix_field_named_type_is_ty_beside_a_ty_of_the_texts_own()
         "pub struct Sig:\n    pub function: usize\n    pub ty: usize\nfn f(sig: *mut Sig, ty: usize) -> usize:\n"
         "    sig.ty = ty\n    return sig.ty\n");
 }
+
+// `f(x)->type = v` is a field written through a call's result, not the `-> type` of a function head (#2648).
+export void test_front_fix_field_named_type_after_a_call_is_ty() {
+    expect_fixed("module m;\nstruct S {\n    Usize type;\n};\nS *find(Usize n) {\n    return nullptr;\n}\n"
+                 "static void f(Usize n, Usize type) {\n    find(n)->type = type;\n}\n",
+                 "struct S:\n    ty: usize\nfn find(n: usize) -> *mut S:\n    return nullptr\nfn f(n: usize, ty: "
+                 "usize):\n    find(n).ty = ty\n");
+}
