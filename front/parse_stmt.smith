@@ -444,6 +444,11 @@ static Bool ends_value(lex::TokenKind next) {
            next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot;
 }
 
+// A comparison after a capitalized name that is a value (`T == i8 or T == i16`): never a declared name.
+static Bool compares(lex::TokenKind next) {
+    return next == lex::equal_equal || next == lex::bang_equal || next == lex::less_equal || next == lex::greater_equal;
+}
+
 // `[[clang::musttail]] return f(x);` (#2709): a call in tail position is always a guaranteed tail call in smith's own
 // syntax, so the attribute is deleted and the `return` is read as any other.
 static Bool is_word(Str text, Str word) {
@@ -484,6 +489,7 @@ static Bool starts_declaration(const parse::Parser *p) {
         parse::peek_at(p, 2).kind != lex::star && !group_then_declarator(p, 1))
         return false;
     if (kind == lex::type_name && p->new_syntax && ends_value(parse::peek_at(p, 1).kind)) return false;
+    if (kind == lex::type_name && p->new_syntax && compares(parse::peek_at(p, 1).kind)) return false;
     if (kind == lex::type_name || declaration_keyword(kind)) return true;
     if (kind == lex::left_bracket) return parse::peek_at(p, 1).kind == lex::left_bracket;
     if (kind == lex::at) return p->new_syntax; // `@align(16)` on the line before a local (D18)
