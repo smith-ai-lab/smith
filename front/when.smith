@@ -525,21 +525,17 @@ export Bool uses_when(const ast::Module *m) {
     return has_when(m) || has_body_ifs(m);
 }
 
-// Pushes `list` on the stack of declarations still to read, last first so that the first comes off first.
-static typeof(ast::DeclRef[:]) push_reversed(ast::DeclRef pending[:], ast::DeclRef list[:]) {
-    for (Usize i = countof(list); i > 0; i--) {
-        pending = mem::realloc(pending, countof(pending) + 1);
-        pending[countof(pending) - 1] = list[i - 1];
-    }
-    return pending;
-}
-
 // The declarations of the module with each file-scope `if` replaced by the declarations of the branch its condition
 // picks on `os` (#2191). An `if` whose condition this module cannot read stays, and the checker reports it. The nested
 // ones are an explicit stack, so there is no recursion.
 static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
-    ast::DeclRef start[:] = {};
-    ast::DeclRef pending[:] = push_reversed(start, decls);
+    // the declarations still to read, a list pushed last first so that its first comes off first; pushed here, not by a
+    // helper, since a slice a helper writes and returns has no `[]mut` result in the fixed file
+    ast::DeclRef pending[:] = {};
+    for (Usize i = countof(decls); i > 0; i--) {
+        pending = mem::realloc(pending, countof(pending) + 1);
+        pending[countof(pending) - 1] = decls[i - 1];
+    }
     ast::DeclRef out[:] = {};
     for (Usize step = 0; step < (1U << 24) && countof(pending) > 0; step++) {
         ast::DeclRef d = pending[countof(pending) - 1];
@@ -548,7 +544,11 @@ static typeof(ast::DeclRef[:]) without_ifs(ast::DeclRef decls[:], Os os) {
         Bool value = false;
         if (d->kind == .if_constexpr) value = holds(d->kind.if_constexpr.condition, os, &ok);
         if (d->kind == .if_constexpr && ok) {
-            pending = push_reversed(pending, value ? d->kind.if_constexpr.then_decls : d->kind.if_constexpr.else_decls);
+            ast::DeclRef list[:] = value ? d->kind.if_constexpr.then_decls : d->kind.if_constexpr.else_decls;
+            for (Usize i = countof(list); i > 0; i--) {
+                pending = mem::realloc(pending, countof(pending) + 1);
+                pending[countof(pending) - 1] = list[i - 1];
+            }
             continue;
         }
         out = mem::realloc(out, countof(out) + 1);

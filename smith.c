@@ -3996,19 +3996,66 @@ static int smith_build_main_front(int count, char **args, const char *self) {
     return smith_build_main(used, rewritten, self, nullptr);
 }
 
-// When smith's own tree fails to build with a smith that is not .smith/stage0/bin/smith, says so (#2719): the tree
-// builds only with the newest release (smith-dev-build, the lag rule), and a stale smith's error does not say that. It
-// reads only this smith's own path and commit.
+// The commit of the newest release (#2787): `releases/latest/download/<file>` redirects to
+// `releases/download/stage0-<full commit>/<file>` (release/publish.smith names the tag), and one request that does not
+// follow the redirect reads that tag (a tag page or releases.atom is refused by the agent proxy, #2545). Run only
+// after a failed build. False when curl is missing, the request fails or the answer has no tag.
+static bool smith_newest_release_commit(char *out) {
+    static const char url[] = "https://github.com/smith-ai-lab/smith/releases/latest/download/smith-release";
+    int pipes[2];
+    if (pipe(pipes) != 0) return false;
+    posix_spawn_file_actions_t actions;
+    SMITH_ASSERT(posix_spawn_file_actions_init(&actions) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_adddup2(&actions, pipes[1], 1) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0) == 0);
+    SMITH_ASSERT(posix_spawn_file_actions_addclose(&actions, pipes[0]) == 0);
+    char *args[] = {(char *)"curl",       (char *)"-s", (char *)"-o", (char *)"/dev/null",
+                    (char *)"--max-time", (char *)"10", (char *)"-w", (char *)"%{redirect_url}",
+                    (char *)url,          nullptr};
+    pid_t pid = 0;
+    int spawned = posix_spawnp(&pid, "curl", &actions, nullptr, args, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    char text[512];
+    size_t length = 0;
+    if (spawned == 0) {
+        ssize_t got = 0;
+        // Each read adds to length and the buffer is full at sizeof text - 1, so the loop ends.
+        while (length < sizeof text - 1 && (got = read(pipes[0], text + length, sizeof text - 1 - length)) > 0)
+            length += (size_t)got;
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) length = 0;
+    }
+    close(pipes[0]);
+    text[length] = '\0';
+    const char *tag = strstr(text, "/stage0-");
+    if (tag == nullptr || strspn(tag + 8, "0123456789abcdef") < 40) return false;
+    memcpy(out, tag + 8, 40);
+    out[40] = '\0';
+    return true;
+}
+
+// When smith's own tree fails to build with a smith older than the newest release, says so (#2719, #2787): the tree
+// builds only with the newest release (smith-dev-build, the lag rule), and a stale smith's error does not say that.
+// The request for the newest commit is made here, after a failure, never on a build that succeeds. A smith that
+// knows no commit says what it can; one whose commit is the newest, or when the newest cannot be read, says nothing.
 static void smith_stale_hint(const char *self, const char *target) {
     if (target != nullptr && strcmp(target, "stage0") == 0) return;
     if (access("smith.c", R_OK) != 0 || access("build.c", R_OK) != 0 || access("runtime/executor_run.c", R_OK) != 0)
         return;
-    char stage0[PATH_MAX];
-    if (realpath(".smith/stage0/bin/smith", stage0) != nullptr && strcmp(stage0, self) == 0) return;
+    char newest[41];
+    if (smith_commit[0] == '\0') {
+        fprintf(stderr,
+                "smith: %s knows no commit; smith's tree builds with the newest release: run `smith build stage0` and "
+                "put .smith/stage0/bin first on PATH\n",
+                self);
+        return;
+    }
+    if (!smith_newest_release_commit(newest) || strcmp(newest, smith_commit) == 0) return;
     fprintf(stderr,
-            "smith: built by %s (%s%s); smith's tree builds with the newest release: run smith build stage0 and put "
+            "smith: this smith (%s) is older than the newest release (%s); run `smith build stage0` and put "
             ".smith/stage0/bin first on PATH\n",
-            self, smith_commit[0] != '\0' ? "commit " : "no commit known", smith_commit);
+            smith_commit, newest);
 }
 
 static int smith_dispatch(const SmithVerb *verb, int argc, char **argv, const char *self) {
