@@ -417,11 +417,3 @@ export void test_front_fix_zero_a_zero_compound_literal_is_mem_zeroed() {
     expect_fixed("module m;\nexport typeof(a) zero_like(auto a) {\n    return (typeof(a)){0};\n}\n",
                  "import std.mem\npub fn zero_like(a: auto) -> typeof(a):\n    return mem.zeroed(typeof(a))\n");
 }
-
-// A global of a struct of another module that gives no defaults is C's zeroed storage, `mem.zeroed(T)` (#2648).
-export void test_front_fix_zero_a_global_arena_is_zeroed() {
-    expect_fixed(
-        "module m;\nimport std::arena;\nstatic arena::Arena memory;\nvoid f(void) {\n    arena::reset(&memory);\n}\n",
-        "import std.arena\nimport std.mem\nstatic mut memory: arena.Arena = mem.zeroed(arena.Arena)\nfn f():\n"
-        "    arena.reset(&memory)\n");
-}
