@@ -47,13 +47,45 @@ static c::LLVMValueRef named_intrinsic(state::Emitter *e, Str prefix, Str base, 
     return made;
 }
 
-// `__builtin_add_overflow(a, b, &r)`: stores the wrapped result in `r` and says whether it overflowed.
+// The operand `x` widened to the integer type `to` (a sign extension for a signed operand, a zero extension else).
+static c::LLVMValueRef widened_to(state::Emitter *e, state::Value x, c::LLVMTypeRef to) {
+    return c::LLVMBuildIntCast2(e->builder, x.llvm, to, state::is_signed(x.ty) ? 1 : 0, "");
+}
+
+// `__builtin_add_overflow(a, b, &r)`: stores the wrapped result in `r` and says whether it overflowed. The operands
+// and `r` may be of different integer types, as in C: the operation is done in a type that holds both operands (two
+// operands of one signedness: the wider; mixed: a signed type twice the wider's width), and the result is converted
+// to `r`'s type, which also counts as an overflow when the converted value is not the same number.
 static c::LLVMValueRef overflow(state::Emitter *e, table::Entry entry, state::Value *v) {
-    c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
-    c::LLVMValueRef pair = named_intrinsic(e, state::is_signed(v[0].ty) ? "s" : "u", entry.intrinsic, ".with.overflow",
-                                           v[0].ty.llvm, args, 2);
-    c::LLVMBuildStore(e->builder, c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped"), v[2].llvm);
-    return c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    state::Ty *target = nullptr;
+    state::Value out = v[2];
+    if (out.ty.kind == .pointer) target = out.ty.kind.pointer.element;
+    if (target == nullptr || (target->kind != .integer) || v[0].ty.kind != .integer || v[1].ty.kind != .integer) {
+        c::LLVMValueRef args[2] = {v[0].llvm, v[1].llvm};
+        c::LLVMValueRef pair = named_intrinsic(e, state::is_signed(v[0].ty) ? "s" : "u", entry.intrinsic,
+                                               ".with.overflow", v[0].ty.llvm, args, 2);
+        c::LLVMBuildStore(e->builder, c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped"), v[2].llvm);
+        return c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    }
+    Bool signed_math = state::is_signed(v[0].ty) || state::is_signed(v[1].ty);
+    Usize wide = state::width(v[0].ty) > state::width(v[1].ty) ? state::width(v[0].ty) : state::width(v[1].ty);
+    if (state::is_signed(v[0].ty) != state::is_signed(v[1].ty)) wide *= 2;
+    c::LLVMTypeRef common = c::LLVMIntTypeInContext(e->context, (U32)wide);
+    c::LLVMValueRef args[2] = {widened_to(e, v[0], common), widened_to(e, v[1], common)};
+    c::LLVMValueRef pair =
+        named_intrinsic(e, signed_math ? "s" : "u", entry.intrinsic, ".with.overflow", common, args, 2);
+    c::LLVMValueRef value = c::LLVMBuildExtractValue(e->builder, pair, 0, "wrapped");
+    c::LLVMValueRef lost = c::LLVMBuildExtractValue(e->builder, pair, 1, "overflow");
+    if (state::width(*target) != wide || state::is_signed(*target) != signed_math) {
+        c::LLVMValueRef narrowed = c::LLVMBuildIntCast2(e->builder, value, target->llvm, signed_math ? 1 : 0, "");
+        c::LLVMValueRef back =
+            c::LLVMBuildIntCast2(e->builder, narrowed, common, state::is_signed(*target) ? 1 : 0, "");
+        c::LLVMValueRef changed = c::LLVMBuildICmp(e->builder, c::LLVMIntNE, back, value, "changed");
+        lost = c::LLVMBuildOr(e->builder, lost, changed, "overflow");
+        value = narrowed;
+    }
+    c::LLVMBuildStore(e->builder, value, v[2].llvm);
+    return lost;
 }
 
 // `__builtin_bit_cast(T, x)`: the bytes of `x` read back as a `T`, through a temporary.
