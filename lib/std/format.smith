@@ -571,12 +571,10 @@ void put(Writer *writer, auto piece, Usize count) {
         put_char(writer, ']');
     } else if constexpr (is_record(typeof(piece))) {
         put_char(writer, '{');
-        Bool first = true;
         for constexpr (Usize i = 0; i < countof(fields(typeof(piece))); i++) {
-            if (!first) {
+            if (i > 0) {
                 put_string(writer, ", ");
             }
-            first = false;
             put_string(writer, fields(typeof(piece))[i].name);
             put_string(writer, " = ");
             if constexpr (is_array(typeof(piece.[fields(typeof(piece))[i]]))) {
@@ -700,36 +698,28 @@ void no_rule(constexpr Type Slot) {
     }
 }
 
-// The first piece by the rule of its type, then the rest. Slot is char[n] for the n-th piece, counting from 1, so the
-// error of a piece with no rule can name it without an index (a loop over the pack has no number for the piece).
-void write_pieces(Writer *writer, constexpr Type Slot, auto first, auto... rest) {
-    if constexpr (is_bool(typeof(first)) || is_integer(typeof(first)) || is_float(typeof(first))) {
-        put(writer, first, 0);
-    } else if constexpr (typeof(first) == char * || typeof(first) == const char * ||
-                         typeof(first) == struct smith_array_char_n ||
-                         typeof(first) == struct smith_array_const_char_n) {
-        put(writer, first, 0);
-    } else if constexpr (typeof(first) == Hex || typeof(first) == Fixed || typeof(first) == General) {
-        put(writer, first, 0);
-    } else if constexpr (typeof(first) == Scientific || typeof(first) == Padded) {
-        put(writer, first, 0);
-    } else if constexpr (is_record(typeof(first))) {
-        put(writer, first, 0);
-    } else {
-        no_rule(Slot);
-    }
-    if constexpr (countof(rest) > 0) {
-        write_pieces(writer, char[sizeof(Slot) + 1], rest...);
-    }
-}
-
 // The arguments as text into buffer, which has room for capacity characters; a capacity of 0 writes nothing (buffer may
 // be null) and only measures. See the rules at the top of this file. A piece with no rule is an error that says which
-// one it is (piece 3 is the third piece after buffer and capacity, counting from 1).
+// one it is (piece 3 is the third piece after buffer and capacity, counting from 1): `char[i + 1]` is the n-th piece's
+// slot, whose size `no_rule` reads.
 export Written write(char *buffer, Usize capacity, auto... args) {
     Writer writer = {buffer, capacity, 0};
-    if constexpr (countof(args) > 0) {
-        write_pieces(&writer, char[1], args...);
+    for constexpr (Usize i = 0; i < countof(args); i++) {
+        if constexpr (is_bool(typeof(args[i])) || is_integer(typeof(args[i])) || is_float(typeof(args[i]))) {
+            put(&writer, args[i], 0);
+        } else if constexpr (typeof(args[i]) == char * || typeof(args[i]) == const char * ||
+                             typeof(args[i]) == struct smith_array_char_n ||
+                             typeof(args[i]) == struct smith_array_const_char_n) {
+            put(&writer, args[i], 0);
+        } else if constexpr (typeof(args[i]) == Hex || typeof(args[i]) == Fixed || typeof(args[i]) == General) {
+            put(&writer, args[i], 0);
+        } else if constexpr (typeof(args[i]) == Scientific || typeof(args[i]) == Padded) {
+            put(&writer, args[i], 0);
+        } else if constexpr (is_record(typeof(args[i]))) {
+            put(&writer, args[i], 0);
+        } else {
+            no_rule(char[i + 1]);
+        }
     }
     return finish(&writer);
 }

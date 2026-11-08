@@ -580,6 +580,9 @@ jobs:
             test-flags: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write # the timing step rewrites the body of #2751
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -641,6 +644,62 @@ jobs:
             ~/.cache/smith/lint
             ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+      - name: Time the build (tracked on #2751)
+        # Linux only, after every cache is saved, so the timing never changes what is saved or delays it. It records
+        # numbers and gates nothing: a failure here must not fail main's push. Hosted runners vary by about 15%
+        # (knowledge/build-times.md, Tracked on main). The result goes to #2751's body, never a comment. The cold case moves build/, .smith/ (not stage0/) and the step
+        # cache aside; the cases after it reuse the cold tree, and the originals go back at the end.
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          aside="$RUNNER_TEMP/aside"; mkdir -p "$aside/smith-dir"
+          log="$RUNNER_TEMP/time"; : >"$log.cold"
+          [ -d build ] && mv build "$aside/build"
+          for f in .smith/* .smith/.[!.]*; do
+            [ -e "$f" ] && [ "$f" != .smith/stage0 ] && mv "$f" "$aside/smith-dir/"
+          done
+          [ -d ~/.cache/smith/steps ] && mv ~/.cache/smith/steps "$aside/steps"
+          run() { # run <case>: wall seconds into $secs, --time output into $log.<case>
+            local t0=$SECONDS
+            "$SMITH" build --time >"$log.$1" 2>&1 || true
+            secs=$((SECONDS - t0))
+          }
+          run cold;    cold=$secs
+          run noop;    noop=$secs
+          echo '# timing' >>front/types_expr.smith
+          run front;   front=$secs
+          git checkout -- front/types_expr.smith
+          echo '/* timing */' >>runtime/executor.c
+          run runtime; runtime=$secs
+          git checkout -- runtime/executor.c
+          rm -rf build; find .smith -mindepth 1 -maxdepth 1 ! -name stage0 -exec rm -rf {} +
+          rm -rf ~/.cache/smith/steps
+          [ -d "$aside/build" ] && mv "$aside/build" build
+          for f in "$aside"/smith-dir/* "$aside"/smith-dir/.[!.]*; do [ -e "$f" ] && mv "$f" .smith/; done
+          [ -d "$aside/steps" ] && mv "$aside/steps" ~/.cache/smith/steps
+          slow=$(grep -E '^time: +step ' "$log.cold" | sed 's/^time: *//' | head -n 10)
+          {
+            echo "### Build times (dev profile, hosted ubuntu-latest, about 15% run to run)"
+            echo "| case | wall s |"; echo "|---|---|"
+            echo "| cold | $cold |"; echo "| no-op | $noop |"
+            echo "| front/ edit | $front |"; echo "| runtime/ edit | $runtime |"
+            echo; echo "Slowest steps of the cold build:"; echo '```'; echo "$slow"; echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          # the tracking issue's body is the only record (no comments): the text above `<!-- latest -->` stays, the
+          # latest table replaces what follows it, and the last 10 one-line rows are kept under `<!-- rows -->`
+          row="- \`$(git rev-parse --short=7 HEAD)\` $(date -u +%F) cold=$cold noop=$noop front=$front runtime=$runtime"
+          old=$(gh api repos/${{ github.repository }}/issues/2751 --jq .body)
+          head=${old%%<!-- latest -->*}
+          rows=$(printf '%s\n' "$old" | sed -n '/<!-- rows -->/,$p' | sed 1d | grep '^- `' | head -n 9 || true)
+          {
+            printf '%s\n' "$head<!-- latest -->"
+            echo "Latest, \`$(git rev-parse --short=7 HEAD)\` $(date -u +%F): cold $cold s, no-op $noop s, front/ edit $front s, runtime/ edit $runtime s. Slowest steps of the cold build:"
+            echo '```'; echo "$slow"; echo '```'
+            echo "<!-- rows -->"; echo "$row"; [ -n "$rows" ] && echo "$rows"
+          } >"$RUNNER_TEMP/body.md"
+          gh api -X PATCH repos/${{ github.repository }}/issues/2751 -F body=@"$RUNNER_TEMP/body.md" >/dev/null
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>

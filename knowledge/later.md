@@ -119,6 +119,8 @@ Ideas that are not on the roadmap of #73, one line each with the closed issue th
 - #2436: std.process: wait for whichever child ends first, then use it in the frontend-coverage ring
 
 ## Tooling and infrastructure
+- #2706 (option C): split the step `headers of the tests` (3.4 s, rerun whenever `smith-cc` changes) into one step per test folder, so only the tests whose imports changed rerun; needs import tracking in the executor
+- #2706 (front `.body` objects): the second build recompiles four front objects because an importer writes a missing `.body` in the middle of its own compile, and the executor records the step's start, so the body is newer than the object; writing the `.body` in each header step (`-DSMITH_WRITE_BODY`, branch speed-front-objects) made the second build 0.7 s (from 16.9 s) but the cold build 7 to 16 s slower, so it was not merged; #2755's cache restore hides the cold cost
 - #291: No shell: the build and CI scripts become functions and tasks of the build file
 - #419: lint: smith lint shows a project's .warnings as advisory output, never as a failure
 - #535: Learn from data: record every smith run agents make, and rank the friction by what it costs

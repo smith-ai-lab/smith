@@ -54,7 +54,7 @@ export void test_front_fix_struct_fields_with_several_names() {
 
 export void test_front_fix_static_assert_with_joined_strings() {
     expect_fixed("module m;\nstatic_assert(1, \"one \"\n                  \"two\");\n",
-                 "static_assert(1, \"one \"\n                  \"two\");\n");
+                 "static_assert(1 != 0, \"one \"\n                  \"two\");\n");
 }
 
 export void test_front_fix_bit_int_type_parses() {

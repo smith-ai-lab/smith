@@ -6,9 +6,11 @@ module std::task_test;
 
 import <dirent.h>;
 import <errno.h>;
+import <fcntl.h>;
 import <sys/socket.h>;
 import <sys/un.h>;
 import <smith/handlers.h>;
+import <smith/trace.h>;
 import <time.h>;
 import <sys/wait.h>;
 import <unistd.h>;

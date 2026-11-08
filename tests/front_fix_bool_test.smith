@@ -26,3 +26,9 @@ export void test_front_fix_bool_a_literal_given_to_a_c_integer_is_a_number() {
     expect_fixed("module m;\nextern void flag(int on, int n);\nvoid f(void) {\n    flag(false, 1);\n}\n",
                  "extern fn flag(on: i32, n: i32)\nfn f():\n    flag(0, 1)\n");
 }
+
+export void test_front_fix_bool_a_number_where_a_bool_is_wanted_is_compared_with_zero() {
+    expect_fixed(
+        "module m;\nBool f(Usize n, Usize m) {\n    Bool a = n;\n    Bool b = n + m;\n    return a && b;\n}\n",
+        "fn f(n: usize, m: usize) -> bool:\n    a: bool = n != 0\n    b: bool = (n + m) != 0\n    return a and b\n");
+}

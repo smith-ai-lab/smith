@@ -1537,12 +1537,16 @@ static void rename_type(parse::Parser *p, Usize open, Usize close, Usize to) {
 
 // Whether the initializer is an untyped list of `.field = value` items that ends at the `;`, for a variable of a
 // named type: then `P p = {.x = 1};` is `let p = P(x = 1)`.
-static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
-    if (type->kind != .named || equal_end == 0 || !p->named_list.plain) return false;
+static Bool list_is_init(const parse::Parser *p, U32 equal_end, U32 semicolon) {
+    if (equal_end == 0 || !p->named_list.plain) return false;
     const parse::NamedList *list = &p->named_list;
     return list->open.start >= equal_end && list->close.end <= semicolon &&
            same_text(trimmed(source_between(p, equal_end, list->open.start)), "") &&
            same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
+}
+
+static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
+    return type->kind == .named && list_is_init(p, equal_end, semicolon);
 }
 
 // The warning of a positional list `{1, 2}` that writes it as the array `[1, 2]` loses its fix when the declaration
@@ -1551,6 +1555,18 @@ static void drop_array_fix(parse::Parser *p, U32 open) {
     for (Usize i = 0; i < countof(p->warnings); i += 1) {
         if (p->warnings[i].span.start == open) p->warnings[i].fix = (parse::Edits){};
     }
+}
+
+// A positional list that is the whole initializer of a variable of a tuple type is the tuple value:
+// `struct { I32, F32 } a = {1, 2.0f};` is `a: (i32, f32) = (1, 2.0f)`. The edits of its braces, else `otherwise`.
+static parse::Edits tuple_list(parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon,
+                               parse::Edits otherwise) {
+    if (type->kind != .tuple || !p->named_list.positional || !list_is_init(p, equal_end, semicolon)) return otherwise;
+    parse::Edits edits = p->named_list.edits;
+    edits = with_edit(edits, edit(p->named_list.open.start, p->named_list.open.end, "("));
+    edits = with_edit(edits, edit(p->named_list.close.start, p->named_list.close.end, ")"));
+    drop_array_fix(p, p->named_list.open.start);
+    return edits;
 }
 
 // The edits that turn the braces of that list into the call `Type(...)`; the dots' edits come with it.
@@ -1874,7 +1890,7 @@ static void fix_variable(parse::Parser *p, const Prefixes *pre, Head head, ast::
     written = as_str(format::push(dims.text, written));
     Str text = as_str(format::push(lead, name, ": ", written, " ="));
     U32 to = equal_end;
-    parse::Edits list_edits = item_edits;
+    parse::Edits list_edits = tuple_list(p, type, equal_end, last.span.start, item_edits);
     if (named_list_init(p, type, equal_end, last.span.start) && !(p->named_list.positional && countof(dims.text) > 0)) {
         text = as_str(format::push(lead, name, untyped));
         list_edits = named_list_edits(p, written);
