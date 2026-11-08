@@ -98,6 +98,14 @@ static size_t smith_tc_find_all(const uint8_t *file, size_t length, const uint8_
     return found;
 }
 
+// The value of a hex digit, -1 for any other character.
+static int smith_tc_hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 // The digest of the smith under test (#2833). Its build-id and the commit it was built from are in the file, so they
 // change with every commit; counted as they are, no test that runs smith could pass from the cache on another commit,
 // and the key of every test held the build-id. Here both are blanked (they are zeros in what is hashed), so the digest
@@ -119,17 +127,18 @@ static bool smith_tc_hash_self(const char *path, char hex[smith_sha256_hex_size]
     size_t size[2 * smith_tc_blank_max];
     size_t count = 0;
     size_t commit_size = strlen(smith_commit);
-    count += smith_tc_find_all(file, length, (const uint8_t *)smith_commit, commit_size, at + count,
-                               smith_tc_blank_max);
+    count +=
+        smith_tc_find_all(file, length, (const uint8_t *)smith_commit, commit_size, at + count, smith_tc_blank_max);
     for (size_t i = 0; i < count; i++)
         size[i] = commit_size;
     char id_hex[2 * smith_platform_id_bytes + 1];
     uint8_t id[smith_platform_id_bytes];
     bool have_id = smith_platform_file_id(path, id_hex);
     for (size_t k = 0; have_id && k < smith_platform_id_bytes; k++) { // the id's bytes, from its hex
-        unsigned value = 0;
-        have_id = sscanf(id_hex + 2 * k, "%2x", &value) == 1;
-        id[k] = (uint8_t)value;
+        int high = smith_tc_hex_value(id_hex[2 * k]);
+        int low = smith_tc_hex_value(id_hex[2 * k + 1]);
+        have_id = high >= 0 && low >= 0;
+        id[k] = (uint8_t)(high * 16 + low);
     }
     if (have_id) {
         size_t first = count;
@@ -213,9 +222,9 @@ static const char *smith_tc_file_digest(size_t index) {
 // checkout, or how loud the run is, are not.
 static bool smith_tc_env_keyed(const char *entry) {
     static const char *const skipped[] = {
-        "SMITH_SELF=",       "SMITH_REPO=",    "SMITH_ARGS=",        "SMITH_CORES=",  "SMITH_SLOTS=",
-        "SMITH_PRIORITY=",   "SMITH_VERBOSE=", "SMITH_READS_LOG=",   "SMITH_ACCOUNT", "SMITH_COVERAGE",
-        "SMITH_RECORDS",     "SMITH_OUTPUT=",  "SMITH_RESULT_CACHE", "SMITH_QUIET",   "SMITH_LINT_CACHE=",
+        "SMITH_SELF=",       "SMITH_REPO=",    "SMITH_ARGS=",        "SMITH_CORES=",    "SMITH_SLOTS=",
+        "SMITH_PRIORITY=",   "SMITH_VERBOSE=", "SMITH_READS_LOG=",   "SMITH_ACCOUNT",   "SMITH_COVERAGE",
+        "SMITH_RECORDS",     "SMITH_OUTPUT=",  "SMITH_RESULT_CACHE", "SMITH_QUIET",     "SMITH_LINT_CACHE=",
         "SMITH_TEST_CACHE=", "SMITH_SLOT",     "SMITH_START",        "SMITH_BUILD_ID=", nullptr};
     if (strncmp(entry, "SMITH_", 6) != 0) return false;
     for (size_t i = 0; skipped[i] != nullptr; i++) { // a short fixed list
