@@ -906,8 +906,16 @@ static void job_finish() {
         copy_text(message[0:message_size], ran.text);
         add_entry(view_of(tree[job->file]), "fixer", message[0:message_size], "");
         fixed_ok[job->file] = false;
+        // A fixer that ended by a plain failure (status 1 to 126) fails the same way again on the same inputs: its
+        // message is cached next to the entry, as `<key>.fail`. A signal or a ulimit kill (128 and up) depends on the
+        // machine, and is never cached (#2832).
+        if (ran.status > 0 && ran.status < 127 && job->cache_length > 0 && job->cache_length + 6 < path_size * 2) {
+            char failure[path_size * 2];
+            (void)format::write(failure, sizeof failure, (const char *)job->cache, ".fail");
+            Usize n = length_of(view_of((const char *)message));
+            (void)files::write_file(view_of(failure), ((const U8 *)message)[0:n], files::Replace);
+        }
     } else if (job->cache_length > 0) {
-        // A file that fails to fix is never cached.
         files::BytesResult fixed = files::read_file(text_of(tree[job->file][0:path_size]));
         if (fixed != .error) {
             (void)files::write_file(job->cache[0:job->cache_length], fixed.ok, files::Replace);
@@ -1264,6 +1272,21 @@ static void fix_cached(const char *smith, Usize i) {
             cache_hits += 1;
             return;
         }
+    }
+    // a fix that failed on these same inputs before (#2832)
+    char failure[path_size * 2];
+    (void)format::write(failure, sizeof failure, (const char *)entry, ".fail");
+    files::BytesResult known = files::read_file(view_of(failure));
+    if (known != .error) {
+        defer mem::free(known.ok.data);
+        char message[message_size];
+        typeof(char[:]) saved = mem::view(known.ok, char);
+        copy_text(message[0:message_size], text_of(saved));
+        entry_file = i;
+        add_entry(view_of(tree[i]), "fixer", message[0:message_size], "");
+        fixed_ok[i] = false;
+        cache_hits += 1;
+        return;
     }
     cache_misses += 1;
     fix(smith, i, entry[0:e.length]);
