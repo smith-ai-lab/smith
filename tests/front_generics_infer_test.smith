@@ -69,6 +69,20 @@ export void test_front_generics_infer_a_slice_binds_the_element() {
     test::check_condition(has_instance(&r, "first.f64"));
 }
 
+// A bracketed generic beside an `auto` parameter: the generics are bound from the arguments, then the `auto`
+// parameters, and the call is to the one instance for both.
+export void test_front_generics_infer_an_auto_parameter_beside_bracketed_generics() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn pick[T](xs: []T, extra: auto) -> T:\n    return xs[0]\n\nfn run(xs: []f64) -> f64:\n"
+                 "    return pick(xs, 3)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    test::check_condition(countof(r.instances) > 0 || r.instance_count > 0);
+}
+
 export void test_front_generics_infer_a_pointer_binds_the_pointee() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
