@@ -1541,6 +1541,7 @@ typedef struct {
     U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
     Bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
                    // tests is no error
+    Bool misses;   // --misses: print how many tests the cache leaves to run and their --costs seconds, run none (#2833)
     Bool no_cache; // --no-cache: run the tests that passed before and have not changed too (#2686)
     const char *others; // --others <runner>: the other runner of the run; a filter that selects none of ours but some
                         // of its tests (it is asked with --list) is no error either
@@ -3689,6 +3690,8 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             options->macos = 2;
         } else if (c::strcmp(flag, "--partial") == 0) {
             options->partial = true;
+        } else if (c::strcmp(flag, "--misses") == 0) {
+            options->misses = true;
         } else if (c::strcmp(flag, "--no-cache") == 0) {
             options->no_cache = true;
         } else if (c::strcmp(flag, "--cheapest") == 0) {
@@ -4298,6 +4301,19 @@ void cache_store(const Plan *plan) {
     c::rmdir(&cache_folder[0]);
 }
 
+// --misses (#2833): the tests the store leaves to run, and the CPU seconds the --costs file gives them (0.4 for one it
+// does not know, as --shard assumes), as `misses: <tests> tests, <seconds> s (<cached> from the store)`. CI sizes the
+// number of test parts from it. Nothing runs and nothing is stored.
+void say_misses(Plan *plan, const Options *options) {
+    const char *costs_file = options->costs;
+    F64 *cost = read_costs(plan, costs_file != nullptr ? costs_file : "");
+    F64 total = 0;
+    for (Usize i = 0; i < plan->count; i++)
+        total += cost[i] >= 0 ? cost[i] : shard_cost_unknown;
+    say("misses: %zu tests, %.1f s (%zu from the store)\n", plan->count, total, cached_total);
+    cache_store(plan);
+}
+
 Plan *make_plan(const Options *options) {
     Plan *plan = (Plan *)map_bytes((1) * sizeof(Plan), map_private);
     plan->options = options;
@@ -4501,6 +4517,10 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     if (options.list) {
         for (Usize i = 0; i < plan->count; i++)
             say("%s\n", plan->tests[plan->order[i]]->name);
+        return 0;
+    }
+    if (options.misses) {
+        say_misses(plan, &options);
         return 0;
     }
     if (plan->count == 0 && options.filter != nullptr && cached_total == 0) {
