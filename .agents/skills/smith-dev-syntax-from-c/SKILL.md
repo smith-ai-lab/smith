@@ -44,7 +44,8 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `auto... rest`, `rest...`, `countof(rest)` | `rest...` (or `nums: i32...`), `rest...`, `countof(rest)` |
 | `mem::alloc_slice(I32, n)` | `mem.alloc(i32, n)` after `import std.mem`: a type is an ordinary argument |
 | `T f(constexpr Usize n)` | `fn f(const n: usize) -> T:` |
-| `auto f(auto x)` | `fn f[T](x: T):`, or a concept in the type's place: `fn f(x: num):` |
+| `auto f(auto x)` | the concept the body models, in the type's place: `fn f(x: num):` (only arithmetic), `p: pointer` (read through `p.*`), `pred: fn(T) -> bool` (called with an element, the result a test); `fn f[T](x: T, y: T)` when the type is used again in the signature (`typeof(x)`); `any` only for a value that can really be any type (owner, 2026-11-08: "We want to use the concept you are actually trying to model. Unless it can really be any type"). The fixer infers it from the body and lists the sites it cannot (`any` and `int` wait for `std.prelude`, #2669) |
+| `alignas(N) T x` | `@align(N)` on the line before the declaration (D18; owner, 2026-11-07: "Yeah, I think using an attribute makes sense"), [smith-dev-syntax-attributes](../smith-dev-syntax-attributes/SKILL.md) |
 | `Lambda(F)` parameter | `fn(A) -> R` |
 | `[[nodiscard]]`, `[[maybe_unused]] I32 x`, `[[clang::musttail]] return f(x);` | nothing (an unused result is an error), `_x`, `return f(x)` (a call in tail position is always a tail call, #2709) |
 | `[[std::affine]]`, `[[gnu::always_inline]]`, `[[std::c_name("X")]]` | `@affine`, `@inline`, `@c_name("X")`: `[[std::x]]` becomes `@x` |
@@ -58,4 +59,4 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `union`, `goto` and labels | a payload `enum`; `defer`, `break`, `continue`, `match` |
 | `&mut x`, `impl`, `x?`, `.iter().map()` (other languages) | errors naming `&x`, a module's functions, `try x`, `for` |
 
-Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Module-level asm is the `asm` literal ([smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md)); asm inside a function, atomics, bitfields, `alignas` and `[[gnu::format(...)]]` wait until after the switch-over.
+Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Module-level asm is the `asm` literal ([smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md)); asm inside a function, atomics, bitfields and `[[gnu::format(...)]]` wait until after the switch-over.
