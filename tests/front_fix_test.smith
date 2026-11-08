@@ -860,3 +860,16 @@ export void test_a_top_level_block_whose_condition_did_not_read_does_not_crash()
                                  "        if (m.value > high) return {.error = Range};\n    }\n}\n");
     test::check_condition(countof(fixed.text) > 0);
 }
+
+// `t[0]` over a tuple is `t.0` in a file the checker also rejects elsewhere (#2648): `tuple_edits` runs on any module.
+export void test_a_tuple_index_is_an_element_in_a_file_with_other_errors() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text(
+        "t.smith", "module m;\nstatic I32 take(struct { I32, F32 } t) {\n    return t[0];\n}\nstatic I32 other() {\n"
+                   "    return missing_name;\n}\n");
+    test::check_condition(contains_text(fixed.text, "t.0"));
+    test::check_condition(!contains_text(fixed.text, "t[0]"));
+}
