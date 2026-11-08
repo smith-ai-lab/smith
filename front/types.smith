@@ -1091,8 +1091,9 @@ export struct Scopes {
     Usize count;
     Usize marks[:];
     Usize depth;
-    Str prefix;  // while the body of a generic's instance from another module is checked: that module's prefix
-    Usize floor; // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
+    Str prefix;   // while the body of a generic's instance from another module is checked: that module's prefix
+    Usize floor;  // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
+    Bool prelude; // `std.prelude` is declared (as `std::prelude::name`): a bare name nothing else declares is its
 };
 
 export void push_scope(Scopes *s) {
@@ -1166,8 +1167,29 @@ export void narrow(Scopes *s, Symbol symbol) {
     s->count += 1;
 }
 
+export Bool is_public(const Symbol *s);
+
+static Bool has_separator(Str name) {
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return true;
+    }
+    return false;
+}
+
+// The public declaration `name` of `std.prelude`, which every module sees without an import (#2669): its concepts and
+// loop helpers. Only a name nothing else declares reaches it, so a module's own `range` wins. Null without a prelude.
+static const Symbol *prelude_symbol(const Scopes *s, Str name) {
+    if (!s->prelude || countof(name) == 0 || has_separator(name)) return nullptr;
+    Str full = msg(format::push("std::prelude::", name));
+    for (Usize i = s->count; i > 0; i--) {
+        const Symbol *found = &s->symbols[i - 1];
+        if (same_text(found->name, full)) return is_public(found) ? found : nullptr;
+    }
+    return nullptr;
+}
+
 // The innermost symbol called `name`, or null. In the body of a generic instance from another module the body's own
-// names come first, then the module's (`util::name`), then the names of the module being checked.
+// names come first, then the module's (`util::name`), then the names of the module being checked, then the prelude's.
 export const Symbol *lookup(const Scopes *s, Str name) {
     if (countof(s->prefix) > 0) {
         for (Usize i = s->count; i > s->floor; i--) {
@@ -1181,7 +1203,7 @@ export const Symbol *lookup(const Scopes *s, Str name) {
     for (Usize i = s->count; i > 0; i--) {
         if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
     }
-    return nullptr;
+    return prelude_symbol(s, name);
 }
 
 // The symbol `name` stands for in a type position (`want_type`) or a value position: a C header has a struct tag and a
@@ -1230,6 +1252,7 @@ export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
     for (Usize i = s->count; i > 0; i--) {
         if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
     }
+    if (countof(path.segments) == 1) return prelude_symbol(s, path.segments[0].text);
     return nullptr;
 }
 
@@ -2058,6 +2081,9 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
         return build_slice_of(r, node, w->values[base].type);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
+    // `iter(T)`, the result of a generator in smith's own syntax (#1428), is the stream of `T`
+    if (r->new_syntax && same_text(name, "iter") && args == 1 && n == 1)
+        return stream_of(&r->table, w->values[base].type);
     if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
     Bool is_lambda = same_text(name, "Lambda");
@@ -4405,6 +4431,31 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
     return count;
 }
 
+// `std.prelude` (lib/std/prelude.smith), read with the imports of every module but itself when the loader has it
+// (#2669): its public names are seen without an import, after every other name (`prelude_symbol`). A module the
+// prelude imports is not read; it imports none.
+static Bool is_prelude(const ast::Module *m) {
+    return countof(m->name.segments) == 2 && same_text(m->name.segments[0].text, "std") &&
+           same_text(m->name.segments[1].text, "prelude");
+}
+
+static Usize collect_prelude(Checked *r, const ast::Module *m, Pending list[:], Usize count) {
+    Str prefix = "std::prelude::";
+    if (r->options.load == nullptr || is_prelude(m) || count == countof(list)) return count;
+    if (has_prefix(list, count, prefix)) {
+        r->scopes.prelude = true;
+        return count;
+    }
+    load_failure_text = "";
+    const ast::Module *loaded = r->options.load("std.prelude");
+    if (loaded == nullptr) {
+        return count;
+    }
+    list[count] = (Pending){.prefix = prefix, .module = loaded};
+    r->scopes.prelude = true;
+    return count + 1;
+}
+
 // Declares the public and private declarations of the imported modules, each under its prefix, before the module's
 // own (#1677). A generic function is not declared (its use reports itself).
 static void declare_headers(Checked *r, const ast::Module *m);
@@ -4652,7 +4703,9 @@ export Checked check(const ast::Module *m, Options o) {
     }
     Pending pending[:] = mem::alloc_slice(Pending, o.load == nullptr ? 0 : max_modules);
     declare_headers(&r, m);
-    declare_imported(&r, pending, collect_imports(&r, m, pending));
+    Usize imported = collect_imports(&r, m, pending);
+    imported = collect_prelude(&r, m, pending, imported);
+    declare_imported(&r, pending, imported);
     declare_from_names(&r, m);
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_nominal(&r, m->decls[i]);
