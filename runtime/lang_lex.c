@@ -1200,8 +1200,10 @@ int smith_lang_main(int count, char **args, bool header) {
                                : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;
     const char *output = nullptr;
+    bool body = false; // -DSMITH_WRITE_BODY: the module's .body is written beside its header (smith_lang_make_body)
     smith_lang_reset();
     for (int i = 0; i < count; i++) { // bounded by the arguments
+        body = body || strcmp(args[i], "-DSMITH_WRITE_BODY") == 0;
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             output = args[++i];
         } else if (header && args[i][0] == '-') { // a compile flag: -I dir, -Dname, -std=...
@@ -1225,11 +1227,13 @@ int smith_lang_main(int count, char **args, bool header) {
         snprintf(fallback, sizeof fallback, "%s.h", file);
         return smith_lang_run_raw(&(SmithRawRun){.path = file, .header = true, .header_path = fallback, .ask = true});
     }
-    return smith_lang_run_raw(&(SmithRawRun){.path = file,
-                                             .header = header,
-                                             .header_path = header ? output : nullptr,
-                                             .print_lowered = !header,
-                                             .ask = header});
+    int status = smith_lang_run_raw(&(SmithRawRun){.path = file,
+                                                   .header = header,
+                                                   .header_path = header ? output : nullptr,
+                                                   .print_lowered = !header,
+                                                   .ask = header});
+    if (status == 0 && header && body && output != nullptr) (void)smith_lang_make_body(file, output);
+    return status;
 }
 
 #ifdef SMITH_CORE

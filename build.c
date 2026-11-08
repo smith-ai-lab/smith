@@ -213,6 +213,9 @@ static const BuildProtocol build_protocols[] = {
 constexpr size_t build_protocol_count = sizeof build_protocols / sizeof build_protocols[0];
 
 static constexpr char build_library_folder[] = "lib/std"; // the libraries written in .smith
+// Asks a header step to write the module's .body too (smith_lang_make_body), so that no importer makes it in the middle
+// of its compile. A smith before that change reads it as a define (#2706).
+static constexpr char build_write_body[] = "-DSMITH_WRITE_BODY";
 
 // The generator is a program of smith's own code (protocol/generate.smith, on lib/json.c), built here and not shipped:
 // like release/pack.smith, a tool of the build. arena, contract, text and mem are the modules of smith, compiled from
@@ -366,7 +369,7 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         const char *header = smith_fmt(b, ".smith/include/smith/%s.h", name);
         const char *source = smith_fmt(b, "%s/%s.smith", build_library_folder, name);
         SmithStep step = {
-            .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
+            .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, build_write_body, nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs =
                 smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),
@@ -1069,8 +1072,9 @@ static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *
         const char *object = smith_fmt(b, "%s/front_%s.o", folder, name);
         const char *depfile = smith_fmt(b, "%s/front_%s.d", folder, name);
         SmithStep made = {
-            .command = smith_cat(b, smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr), flags,
-                                 extra, nullptr),
+            .command = smith_cat(
+                b, smith_list(b, config->cc, "--smith-header", source, "-o", header, build_write_body, nullptr), flags,
+                extra, nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs = before,
             .outputs = smith_list(b, header, nullptr),

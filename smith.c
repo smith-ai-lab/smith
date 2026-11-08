@@ -1734,6 +1734,77 @@ bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings) {
     return good;
 }
 
+// Whether two files have the same bytes.
+static bool smith_files_equal(const char *left, const char *right) {
+    FILE *a = fopen(left, "rb");
+    FILE *b = fopen(right, "rb");
+    bool same = a != nullptr && b != nullptr;
+    while (same) { // bounded by the files
+        unsigned char x[4096];
+        unsigned char y[4096];
+        size_t got_x = fread(x, 1, sizeof x, a);
+        size_t got_y = fread(y, 1, sizeof y, b);
+        same = got_x == got_y && memcmp(x, y, got_x) == 0;
+        if (got_x == 0 || got_x < sizeof x) break;
+    }
+    if (a != nullptr) fclose(a);
+    if (b != nullptr) fclose(b);
+    return same;
+}
+
+// Writes `<header minus .h>.body` of a module from `smith cc -fsyntax-only` of its source, the file an importer reads
+// to run the module's functions at compile time. The importer makes it itself, in the middle of its own compile, when
+// it is not there, and then the object is older than a file it read (the executor records when a step started): written
+// by the header step, it is there before any importer starts (#2706). Only when `-DSMITH_WRITE_BODY` is among the
+// flags, which a smith before this one takes for a plain define. The file is replaced only when its bytes change.
+bool smith_lang_make_body(const char *source, const char *header) {
+    size_t length = strlen(header);
+    char self[PATH_MAX];
+    char body[PATH_MAX];
+    char scratch[PATH_MAX + 32];
+    char folder[PATH_MAX];
+    if (length < 3 || strcmp(header + length - 2, ".h") != 0 || !smith_self_path(self)) return false;
+    snprintf(body, sizeof body, "%.*s.body", (int)(length - 2), header);
+    snprintf(scratch, sizeof scratch, "%s.%d.tmp", body, (int)getpid());
+    snprintf(folder, sizeof folder, "%s", source);
+    char *slash = strrchr(folder, '/');
+    if (slash != nullptr) {
+        *slash = 0;
+    } else {
+        snprintf(folder, sizeof folder, ".");
+    }
+    char *args[smith_header_flags_max + 8];
+    size_t count = 0;
+    args[count++] = self;
+    args[count++] = (char *)"cc";
+    args[count++] = (char *)"-fsyntax-only";
+    args[count++] = (char *)"-w";
+    args[count++] = (char *)"-iquote";
+    args[count++] = folder;
+    for (size_t i = 0; i < smith_header_flag_count; i++) // bounded by the flags
+        args[count++] = (char *)smith_header_flags[i];
+    args[count++] = (char *)source;
+    args[count] = nullptr;
+    setenv("SMITH_LANG_BODY", scratch, 1);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid = 0;
+    int status = -1;
+    if (posix_spawn(&pid, self, &actions, nullptr, args, environ) == 0) {
+        int waited = -1;
+        for (int i = 0; i < 1000 && waited < 0; i++) // only a signal interrupts the wait
+            waited = waitpid(pid, &status, 0);
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    unsetenv("SMITH_LANG_BODY");
+    bool good = WIFEXITED(status) && WEXITSTATUS(status) == 0 && access(scratch, R_OK) == 0;
+    if (good && !smith_files_equal(scratch, body)) good = rename(scratch, body) == 0;
+    unlink(scratch);
+    return good;
+}
+
 static int smith_build_spawn(const char *program, char *const *args) {
     return smith_spawn_with(program, args, nullptr);
 }

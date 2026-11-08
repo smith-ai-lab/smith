@@ -97,6 +97,7 @@ void smith_time_step(const char *kind, const char *what, uint64_t nanoseconds, b
 constexpr size_t smith_build_args_max = 4096;
 
 bool smith_lang_ask_compiler(const SmithLang *lang, const char **spellings);
+bool smith_lang_make_body(const char *source, const char *header);
 
 void smith_write_embedded_headers(const char *self);
 
