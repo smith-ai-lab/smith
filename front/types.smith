@@ -501,24 +501,26 @@ export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
 
 // `t` with a `volatile` element: `*volatile T`, `[]volatile T`, `[n]volatile T`; `t` itself for another kind.
 export TypeRef with_volatile(Table *t, TypeRef of) {
-    TyKind made = of->kind;
     if (of->kind == .pointer) {
-        made = (TyKind){.pointer = {.element = of->kind.pointer.element,
-                                    .pointee_const = of->kind.pointer.pointee_const,
-                                    .pointee_volatile = true}};
-    } else if (of->kind == .array) {
-        made = (TyKind){.array = {.element = of->kind.array.element,
-                                  .count = of->kind.array.count,
-                                  .pointee_const = of->kind.array.pointee_const,
-                                  .pointee_volatile = true}};
-    } else if (of->kind == .slice) {
-        made = (TyKind){.slice = {.element = of->kind.slice.element,
-                                  .pointee_const = of->kind.slice.pointee_const,
-                                  .pointee_volatile = true}};
-    } else {
-        return of;
+        TyKind made = {.pointer = {.element = of->kind.pointer.element,
+                                   .pointee_const = of->kind.pointer.pointee_const,
+                                   .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
     }
-    return intern(t, (Ty){.kind = made});
+    if (of->kind == .array) {
+        TyKind made = {.array = {.element = of->kind.array.element,
+                                 .count = of->kind.array.count,
+                                 .pointee_const = of->kind.array.pointee_const,
+                                 .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
+    }
+    if (of->kind == .slice) {
+        TyKind made = {.slice = {.element = of->kind.slice.element,
+                                 .pointee_const = of->kind.slice.pointee_const,
+                                 .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
+    }
+    return of;
 }
 
 // `[,]T` (count 2), `[,,]T` (count 3): a block whose sizes are known at run time.
@@ -1115,7 +1117,7 @@ export struct Symbol {
     const ast::Decl *decl;
     Bool is_const;
     Bool is_volatile; // a variable written `volatile T` (`mut sink: volatile u64 = 0`): every read and write is made
-    Bool is_new; // declared in smith's own syntax (`let x = v`, `x: T = v`, `mut x`, a parameter `x: T`)
+    Bool is_new;      // declared in smith's own syntax (`let x = v`, `x: T = v`, `mut x`, a parameter `x: T`)
     Bool exported;
     // Where a fix-it mends it (#1516): the binding's span (empty: it has none, so no fix), whether a fix may put
     // `mut` before its name, the type as written (null: none) and the initializer (null: none).

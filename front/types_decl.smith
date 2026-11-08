@@ -329,13 +329,17 @@ static Bool drops_volatile(types::TypeRef from, types::TypeRef to) {
     return both && types::points_to_volatile(from) && !types::points_to_volatile(to);
 }
 
+// Refuses a conversion the converter allows but that drops `volatile`; whether it did.
+static Bool volatile_refused(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    if (!drops_volatile(from, to)) return false;
+    types::failf(c, e->span, "expected ", types::show(to), ", found ", types::show(from),
+                 ": this drops volatile; make the target's element volatile");
+    return true;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
-    if (verdict.ok && drops_volatile(from, to)) {
-        types::failf(c, e->span, "expected ", types::show(to), ", found ", types::show(from),
-                     ": this drops volatile; make the target's element volatile");
-        return false;
-    }
+    if (verdict.ok && volatile_refused(c, e, from, to)) return false;
     if (verdict.ok) {
         return true;
     }
