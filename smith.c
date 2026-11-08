@@ -1843,7 +1843,11 @@ static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char
     snprintf(own, sizeof own, "lib/std/%s.smith", name);
     // Only in smith's own tree (include/smith_core.h is there): another project that links lib/std, such as the units
     // project, has no such build step, and its headers keep the form they had.
-    job->own = access("include/smith_core.h", R_OK) == 0 && smith_file_has_bytes(own, text, text_size);
+    // and only for a module the build writes the header of itself (the marks `// smith-build: link` and `header`): the
+    // others keep the form of this writer, which their importers were built against.
+    job->own = access("include/smith_core.h", R_OK) == 0 && smith_file_has_bytes(own, text, text_size) &&
+               (memmem(text, text_size, "// smith-build: link", 20) != nullptr ||
+                memmem(text, text_size, "// smith-build: header", 22) != nullptr);
     if (job->own) snprintf(job->source, sizeof job->source, "%s", own);
 }
 
