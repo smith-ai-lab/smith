@@ -350,15 +350,15 @@ static types::TypeRef wrong(types::Checked *c, ast::Span span, Entry entry, Str 
 }
 
 static types::TypeRef check_overflow(types::Checked *c, const ast::Expr *e, Entry entry, ast::ExprRef args[:]) {
-    Str wanted = "two integers of one type and a pointer to a third of that type; write `(a, b, &result)`";
+    Str wanted = "two integers and a pointer to a third integer, of any widths; write `(a, b, &result)`";
     if (countof(args) != 3) return wrong(c, e->span, entry, wanted);
     types::TypeRef a = value_type(c, args[0]);
     types::TypeRef b = value_type(c, args[1]);
     types::TypeRef r = value_type(c, args[2]);
     if (a == c->table.invalid || b == c->table.invalid || r == c->table.invalid) return c->table.invalid;
     if (is_open(a) || is_open(b)) return c->table.bool_type;
-    if (a->kind != .integer || b != a || r->kind != .pointer || types::element_of(r) != a)
-        return wrong(c, e->span, entry, wanted);
+    if (a->kind != .integer || b->kind != .integer || r->kind != .pointer || types::element_of(r)->kind != .integer)
+        return wrong(c, e->span, entry, wanted); // C's three types are independent: the result is exact (#2650)
     return c->table.bool_type;
 }
 
