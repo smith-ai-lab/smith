@@ -2311,7 +2311,8 @@ static const ast::Param *declared_param(const Symbol *s, Usize at) {
     const ast::Decl *decl = s->decl;
     if (decl == nullptr) return nullptr;
     if (decl->kind != .function) return nullptr;
-    return &decl->kind.function.params[at];
+    const ast::Param params[:] = decl->kind.function.params;
+    return &params[at];
 }
 
 // The prefix an import symbol stands for, else an empty text.
@@ -3010,15 +3011,16 @@ static Bool is_used_in_types(const ast::Param *p) {
 }
 
 // Whether the expression (an array's count, a value argument of a type function) names `name`.
-static Bool names_in(const ast::Expr *e, Str name) {
+static Bool names_in(const ast::Expr *e, Str wanted) {
     const ast::Expr *todo[32];
     Usize n = 0;
     if (e != nullptr) todo[n++] = e;
     while (n > 0) {
         const ast::Expr *x = todo[--n];
-        if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
-            same_text(x->kind.name.path.segments[0].text, name))
-            return true;
+        if (x->kind == .name) {
+            ast::Path path = x->kind.name.path;
+            if (countof(path.segments) == 1 && same_text(path.segments[0].text, wanted)) return true;
+        }
         if (x->kind == .binary && n + 2 <= countof(todo)) {
             todo[n++] = x->kind.binary.left;
             todo[n++] = x->kind.binary.right;
@@ -3107,13 +3109,23 @@ export Bool is_auto_param(const ast::Param *p) {
     return is_auto_slice(p->type) || p->type->kind == .auto_type;
 }
 
+// Whether a written slice type's element is `const` (`const T[:]`).
+static Bool const_element(const ast::TypeExpr *t) {
+    if (t->kind != .slice) return false;
+    return t->kind.slice.element->qualifiers.is_const;
+}
+
+// The slice of `given`'s element, `const` when `given`'s is or `fixed` says so; null when `given` is no slice.
+static TypeRef slice_with(Checked *r, TypeRef given, Bool fixed) {
+    if (given->kind != .slice) return nullptr;
+    return slice_of(&r->table, given->kind.slice.element, given->kind.slice.pointee_const || fixed);
+}
+
 // The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
 // `auto` its element with the parameter's `const` added; null when the argument is not a slice.
 export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
     if (!is_auto_slice(p->type) || p->type->kind != .slice) return given;
-    if (given->kind != .slice) return nullptr;
-    Bool fixed = given->kind.slice.pointee_const || p->type->kind.slice.element->qualifiers.is_const;
-    return slice_of(&r->table, given->kind.slice.element, fixed);
+    return slice_with(r, given, const_element(p->type));
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
@@ -3388,7 +3400,7 @@ static ast::Expr *substituted_list = nullptr;
 static Usize substituted_at = 0;
 
 static Str single_name_of(const ast::Expr *e) {
-    Str none = {};
+    Str none = "";
     if (e == nullptr || e->kind != .name || countof(e->kind.name.path.segments) != 1) return none;
     return e->kind.name.path.segments[0].text;
 }
@@ -3448,7 +3460,7 @@ static TypeRef typeof_path(const Checked *r, const ast::Expr *operand) {
 // that is no name, `typeof(v)` or `typeof(p.*)` in an instance, is resolved here and named by a symbol of its own in
 // the instance's scope, so the record is found by its type and not by a name the instance's module may not see.
 static Str reflected_subject(const ast::Expr *arg) {
-    Str none = {};
+    Str none = "";
     if (arg->kind == .name) {
         Usize n = countof(arg->kind.name.path.segments);
         return n == 0 ? none : arg->kind.name.path.segments[n - 1].text;
@@ -3563,7 +3575,7 @@ static ast::Stmt *enumerated_copy(const ast::Stmt *s, ast::Expr *list, Bool is_p
     ast::Identifier names[:] = s->kind.for_in.names;
     ast::StmtRef *items = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 3, alignof(ast::StmtRef));
     Usize n = 0;
-    Str none = {};
+    Str none = "";
     if (!same_text(names[0].text, "_")) items[n++] = enumerated_binding(names[0], at, none);
     if (is_pack && !same_text(names[1].text, "_")) items[n++] = enumerated_binding(names[1], at, single_name_of(list));
     substituted_name = names[1].text;
@@ -3605,7 +3617,7 @@ static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
     enumerated_count = count;
     enumerated_any = false;
     ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, typed_subject);
-    Str none = {};
+    Str none = "";
     enumerated_pack = none;
     if (!enumerated_any) return false;
     *d = *copy;
@@ -3615,7 +3627,7 @@ static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
 // Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
 export Bool expand_reflection(Checked *r, ast::Decl *function) {
     reflecting = r;
-    Str none = {};
+    Str none = "";
     Bool unrolled = unroll_enumerated(function, none, 0);
     ast_clone::set_reflection_source(reflect_count, reflect_at, reflect_fail);
     Bool expanded = ast_clone::expand_reflection_lists(function) || unrolled;
@@ -4419,13 +4431,14 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
                                  .exported = d->exported || d->is_pub};
                 declare_in_module(r, symbol, d->span);
             }
-            if (r->options.load == nullptr) continue;
+            ModuleLoader load = r->options.load;
+            if (load == nullptr) continue;
             Str prefix = prefix_of_import(d);
             if (has_prefix(list, count, prefix)) continue;
             load_failure_text = "";
             const ast::Module *loaded =
-                r->options.load(msg(format::push(joined(path, ".")))
-                                    .data); // a copy: one name is a slice of the source, with no terminator
+                load(msg(format::push(joined(path, ".")))
+                         .data); // a copy: one name is a slice of the source, with no terminator
             if (loaded == nullptr && countof(load_failure_text) > 0) {
                 if (at != m && countof(at->name.segments) > 0) {
                     failf(r, d->span, "`", joined(at->name, "."), "` imports `", joined(path, "."),
@@ -4466,13 +4479,14 @@ static Bool is_prelude(const ast::Module *m) {
 
 static Usize collect_prelude(Checked *r, const ast::Module *m, Pending list[:], Usize count) {
     Str prefix = "std::prelude::";
-    if (r->options.load == nullptr || is_prelude(m) || count == countof(list)) return count;
+    ModuleLoader load = r->options.load;
+    if (load == nullptr || is_prelude(m) || count == countof(list)) return count;
     if (has_prefix(list, count, prefix)) {
         r->scopes.prelude = true;
         return count;
     }
     load_failure_text = "";
-    const ast::Module *loaded = r->options.load("std.prelude");
+    const ast::Module *loaded = load("std.prelude");
     if (loaded == nullptr) {
         return count;
     }
