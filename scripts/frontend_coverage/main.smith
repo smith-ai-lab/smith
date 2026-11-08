@@ -1386,7 +1386,8 @@ static void fix_again(const char *smith, const char *root, const char *scratch, 
     files::BytesResult loaded = files::read_file(from[0:a.length]);
     if (loaded == .error) return;
     defer mem::free(loaded.ok.data);
-    if (files::write_file(to[0:b.length], loaded.ok, files::Replace) == .error) return;
+    files::CountResult put = files::write_file(to[0:b.length], loaded.ok, files::Replace);
+    if (put == .error) return;
     char name[33];
     char entry[path_size * 2];
     hex_of(name[0:33], fix_key(i));
