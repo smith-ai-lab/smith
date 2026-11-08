@@ -718,6 +718,15 @@ static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
     return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
 }
 
+// Whether the `{` at `tokens[j]` opens the body of a `struct` or a `union`: `struct {`, `struct Name {`.
+static Bool opens_record(lex::Tokens tokens, Usize j) {
+    if (j == 0) return false;
+    lex::TokenKind last = tokens[j - 1].kind;
+    if (last == lex::kw_struct || last == lex::kw_union) return true;
+    return j >= 2 && (last == lex::name || last == lex::type_name) &&
+           (tokens[j - 2].kind == lex::kw_struct || tokens[j - 2].kind == lex::kw_union);
+}
+
 static Str rename_type_names(Str source) {
     lex::Lexed lexed = lex::tokenize(source);
     if (lexed == .error) return source;
@@ -737,10 +746,25 @@ static Str rename_type_names(Str source) {
     if (!any) return source;
     Str out = "";
     Usize at = 0;
+    // The braces a name is in, innermost last: whether each is a `struct` or `union` body. A field `type;` there is
+    // `ty` like every use after `.` or `->`, so a declaration and the uses of another file agree even when this text
+    // has a `ty` of its own (#2648).
+    constexpr Usize limit = 64;
+    Bool in_record[limit];
+    Usize depth = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::right_brace && depth > 0) depth -= 1;
+        if (tokens[i].kind == lex::left_brace) {
+            if (depth < limit) in_record[depth] = opens_record(tokens, i);
+            depth += 1;
+        }
         if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), type_word)) continue;
         if (is_keyword_use(tokens, i)) continue;
         Bool member = i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow);
+        if (!member && depth > 0 && depth <= limit && in_record[depth - 1] && i + 1 < countof(tokens)) {
+            lex::TokenKind next = tokens[i + 1].kind;
+            member = next == lex::semicolon || next == lex::left_bracket || next == lex::colon;
+        }
         out = as_str(format::push(out, source[at:tokens[i].span.start], member || !own_ty ? "ty" : "ty_"));
         at = tokens[i].span.end;
     }

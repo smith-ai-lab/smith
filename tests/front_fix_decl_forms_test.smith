@@ -186,3 +186,13 @@ export void test_front_fix_leaving_or_chain_binds_every_later_read() {
         "    if member.arrow:\n        return false\n    if member.name == 3:\n        return false\n    return "
         "true\n");
 }
+
+// A field named `type` is `ty` even when the text has a `ty` of its own, as the uses of it from another file are
+// (#2648): `Signature.type` was `ty_` while `sig->type` was `ty`.
+export void test_front_fix_field_named_type_is_ty_beside_a_ty_of_the_texts_own() {
+    expect_fixed(
+        "module m;\nexport struct Sig {\n    Usize function;\n    Usize type;\n};\n"
+        "static Usize f(Sig *sig, Usize ty) {\n    sig->type = ty;\n    return sig->type;\n}\n",
+        "pub struct Sig:\n    pub function: usize\n    pub ty: usize\nfn f(sig: *mut Sig, ty: usize) -> usize:\n"
+        "    sig.ty = ty\n    return sig.ty\n");
+}
