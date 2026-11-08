@@ -1519,14 +1519,25 @@ export struct CastCheck {
     TypeRef target_type;
 };
 
+static NodeType *entry_for(Checked *r, const ast::Expr *node, Usize instance) {
+    Usize capacity = countof(r->nodes);
+    if (capacity == 0) return nullptr;
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr) {
+        if (r->nodes[at].node == node && r->nodes[at].instance == instance) return &r->nodes[at];
+        at = (at + 1) & (capacity - 1);
+    }
+    return nullptr;
+}
+
 static NodeType *entry_of(Checked *r, const ast::Expr *node) {
-    return (NodeType *)find_in(r, node, r->current);
+    return entry_for(r, node, r->current);
 }
 
 // The entry that holds the latest record of `node`, when `entry_of` is one of an instance.
 static NodeType *latest_of(Checked *r, const ast::Expr *node) {
     if (r->current == max_instances) return nullptr;
-    return (NodeType *)find_in(r, node, max_instances);
+    return entry_for(r, node, max_instances);
 }
 
 // Records that the call `node`, written `x.f(args)`, is the call `rewritten`, `f(x, args)` or `f(&x, args)`.
