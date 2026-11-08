@@ -247,6 +247,11 @@ export typedef Result(Usize, Error) CountResult;
     c::smith_failure_format(c::SmithFailure_Check, "%s", message);
 }
 
+// The code of a TLS reason.
+I32 tls_code(I32 reason) {
+    return tls_base + reason;
+}
+
 // The value of an internal code the world can answer. The codes of a bug stop the program.
 Error error_from(I32 code) {
     if (code >= tls_base) {
@@ -470,11 +475,6 @@ Isize write_plain(I32 descriptor, const void *buffer, Usize size, I32 *code) {
 if constexpr (target::os != target::macos) {
     // NOLINTNEXTLINE(smith-preprocessor)
     constexpr I32 dlopen_flags = c::RTLD_NOW | c::RTLD_LOCAL;
-
-    // The code of a TLS reason.
-    I32 tls_code(I32 reason) {
-        return tls_base + reason;
-    }
 
     // OpenSSL is loaded with dlopen when the first TLS connection is made, never linked: a program that makes no
     // connection pays nothing at start, and a machine without OpenSSL runs everything else. The functions are looked
