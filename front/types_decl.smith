@@ -2103,7 +2103,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     for (Usize i = 0; i < r->guard_count; i++) {
         types::Guard *g = &r->guards[i];
         if (g->option && g->null_error > 0 && (!g->head_sent || g->spoiled)) {
-            r->errors[g->null_error - 1].fix = g->null_fix;
+            types::set_fix(r, g->null_error - 1, g->null_fix);
         }
     }
     state.result = outer;

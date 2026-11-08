@@ -20,6 +20,16 @@ static Bool same(const char *a, Str b) {
     return a[countof(b)] == '\0';
 }
 
+// Whether `text` is `util::`.
+static Bool same_prefix(Str text) {
+    Str want = "util::";
+    if (countof(text) != countof(want)) return false;
+    for (Usize i = 0; i < countof(want); i++) {
+        if (text[i] != want[i]) return false;
+    }
+    return true;
+}
+
 static const ast::Module *load(const char *path) {
     if (same(path, "util")) return util_tree;
     return nullptr;
@@ -58,4 +68,32 @@ export void test_front_types_instance_scope_a_local_of_an_imported_generic_hides
 
 export void test_front_types_instance_scope_a_local_that_hides_its_own_global_is_still_refused() {
     test::check_condition(errors_with("", "memory: i32 = 3\n\nfn f() -> i32:\n    memory: i32 = 4\n    memory\n") > 0);
+}
+
+// An error in the body of an instance of `util`'s generic keeps its fix with `util` (#2669): the edits are offsets in
+// util's text, so the caller's file gets none, and the fixer applies them when it mends `util`.
+export void test_front_types_instance_scope_a_fix_in_an_imported_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed u = parser::parse_new("util.smith", "pub fn truthy(x: auto) -> bool: x\n");
+    test::check_equal(countof(u.errors), (Usize)0);
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 1);
+    Str name = "util";
+    parts[0] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = u.module;
+    copy->name.segments = parts;
+    util_tree = copy;
+    parser::Parsed p = parser::parse_new("t.smith", "import util\n\nfn f() -> bool: util.truthy(3)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    if (r.error_count != 1) return;
+    types::Error got = r.errors[0];
+    test::check_equal(countof(got.fix), (Usize)0);
+    test::check_equal(countof(got.module_fix), (Usize)1);
+    test::check_condition(countof(got.fix_module) == 6 && same_prefix(got.fix_module));
 }

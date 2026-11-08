@@ -1327,6 +1327,11 @@ export struct Error {
     ast::Span related;   // where
     Str related_message; // and what the note says
     syntax::Edits fix;   // the edits `smith lint --fix` applies together (#1516); empty: none
+    // An error found in the body of an instance of a generic from another module (#2669): its fix edits that module's
+    // text, not this file's, so it is kept apart from `fix`. `fix_module` is that module's prefix (`std::math_trig::`)
+    // and the spans of `module_fix` are offsets in the text the module was read from (as an import, mended).
+    Str fix_module;
+    syntax::Edits module_fix;
     // A construction that leaves a field out (#2329): the call, the record, and which fields (bit k for field k) it
     // gives. The fixer writes the zero values (`front::fix_zero`), which the checker cannot spell without its imports.
     const ast::Expr *left_out_call;
@@ -1499,18 +1504,28 @@ export Str message_of(char chars[:]) {
 }
 
 // Appends an error that was made elsewhere.
+// Gives the error at `at` its fix. The spans of a generic's body from another module are that module's: its edits
+// would land in this file (#2386), so they are kept with the module they mend, for the fixer to apply when it mends
+// that module (#2669).
+export void set_fix(Checked *r, Usize at, syntax::Edits fix) {
+    Error *made = &r->errors[at];
+    if (countof(r->prefix) == 0) {
+        made->fix = fix;
+        return;
+    }
+    made->fix_module = r->prefix;
+    made->module_fix = fix;
+}
+
 export void add_error(Checked *r, Error error) {
     fail(r, error.span, error.message);
-    r->errors[r->error_count - 1].fix = error.fix;
+    set_fix(r, r->error_count - 1, error.fix);
 }
 
 // Records an error that carries a fix: the edits that mend it, applied together or not at all.
 export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix) {
     fail(r, span, message);
-    // The spans of a generic's body from another module are that module's: its edits would land in this file (#2386).
-    if (countof(r->prefix) == 0) {
-        r->errors[r->error_count - 1].fix = fix;
-    }
+    set_fix(r, r->error_count - 1, fix);
 }
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
