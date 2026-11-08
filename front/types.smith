@@ -1522,8 +1522,13 @@ static NodeType *entry_in(Checked *r, const ast::Expr *node, Usize instance) {
 // record outside every instance (`max_instances`) always holds the latest one, which is what a reader that does not
 // name an instance gets, as before.
 export void set_type(Checked *r, const ast::Expr *node, TypeRef type) {
-    entry_in(r, node, r->current)->type = type;
-    if (r->current != max_instances) entry_in(r, node, max_instances)->type = type;
+    // through a named record: the fixer renames the field `type` (a word of smith's syntax) only on a name's access
+    NodeType *here = entry_in(r, node, r->current);
+    here->type = type;
+    if (r->current != max_instances) {
+        NodeType *latest = entry_in(r, node, max_instances);
+        latest->type = type;
+    }
 }
 
 // The type recorded for an expression in the body of the instance being checked (outside a check: the latest), or null
