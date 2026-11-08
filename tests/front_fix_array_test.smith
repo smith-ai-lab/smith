@@ -89,3 +89,9 @@ export void test_front_fix_array_a_lone_zero_for_a_struct_is_the_empty_list() {
     expect("struct Counts { I32 a; I32 b; };\nvoid f(void) {\n    Counts c = {0};\n}\n",
            "struct Counts:\n    a: i32\n    b: i32\nfn f():\n    c: Counts = Counts(a = 0, b = 0)\n");
 }
+
+// A C lambda as an item of a brace list is a lambda, not an index designator (#2649).
+export void test_front_fix_array_a_lambda_in_a_brace_list_is_not_a_designator() {
+    expect("void f(void) {\n    I32 xs[_] = {1, [](I32 a) { return a; }};\n}\n",
+           "fn f():\n    xs: [_]i32 = [1, fn(a: i32): a]\n");
+}

@@ -479,7 +479,10 @@ struct ListFix {
     Bool complex;
 };
 
-// One designator: `.x` or `[2]`, or none when neither is at the position.
+static Bool at_old_lambda(const parse::Parser *p);
+
+// One designator: `.x` or `[2]`, or none when neither is at the position. A `[` that opens a lambda (`[](I32 a) {...}`
+// as an item) is no index.
 static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count, ListFix *fix) {
     if (parse::at(p, lex::dot) &&
         (parse::peek_at(p, 1).kind == lex::name || parse::peek_at(p, 1).kind == lex::type_name)) {
@@ -490,7 +493,7 @@ static Bool designator(parse::Parser *p, ast::Designator ds[:], Usize *count, Li
         *count += 1;
         return true;
     }
-    if (parse::at(p, lex::left_bracket)) {
+    if (parse::at(p, lex::left_bracket) && !at_old_lambda(p)) {
         fix->complex = true;
         parse::advance(p);
         ast::Designator d = {.index = {.index = parse::expression(p)}};
