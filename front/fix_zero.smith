@@ -1457,7 +1457,7 @@ static core::Errors option_param_edits(core::Errors out, Str source, const ast::
             start -= 1;
         if (start == stop || (start > 0 && (source[start - 1] == '.' || source[start - 1] == ':'))) continue;
         const ast::Decl *callee = option_function_named(module, source[start:stop]);
-        if (callee == nullptr || index >= countof(callee->kind.function.params)) continue;
+        if (callee == nullptr || callee->kind != .function || index >= countof(callee->kind.function.params)) continue;
         const ast::Param *param = &callee->kind.function.params[index];
         if (param->is_pack || param->is_keyword || param->type == nullptr || param->type->kind != .pointer) continue;
         U32 at = param->type->span.start;
@@ -1465,9 +1465,10 @@ static core::Errors option_param_edits(core::Errors out, Str source, const ast::
         if (!option_tests_for_null(source[callee->span.start:callee->span.end], param->name)) continue;
         core::Edits fix = {};
         fix = mem::realloc(fix, 1);
-        fix[0] = (core::Edit){.span = {.start = at, .end = at}, .text = "?"};
+        Str mark = "?";
+        fix[0] = (core::Edit){.span = {.start = at, .end = at}, .text = mark};
         core::ParseError made = {};
-        made.span = {.start = at, .end = at};
+        made.span = fix[0].span;
         made.message = "a parameter that is tested for null and given an option is `?*T`";
         made.fix = fix;
         out = mem::realloc(out, countof(out) + 1);
