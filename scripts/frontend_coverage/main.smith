@@ -1594,6 +1594,8 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     console::print_error("frontend_coverage: fix phase ", fix_ms, " ms\n");
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
                          job_limit, " at once\n");
+    // #2832: the job that fills the cache of fixed files for the shards stops here: no table is made.
+    if (c::getenv("SMITH_COVERAGE_FIX_ONLY") != nullptr) return 0;
     link_roots(scratch);
     phase_start = clock::monotonic();
     for (Usize i = 0; i < tree_count; i++) {
