@@ -257,7 +257,7 @@ export Bool starts_new_type(const parse::Parser *p, Usize offset) {
     lex::TokenKind after = parse::peek_at(p, at).kind;
     return after == lex::star || after == lex::question || after == lex::left_bracket || after == lex::left_paren ||
            after == lex::kw_fn || after == lex::kw_fn_once || after == lex::kw_type || after == lex::type_name ||
-           after == lex::name || after == lex::kw_mut || is_keyword_type(after);
+           after == lex::name || after == lex::kw_mut || after == lex::kw_volatile || is_keyword_type(after);
 }
 
 static ast::Path read_path(parse::Parser *p, Bool in_type);
@@ -889,14 +889,17 @@ static ast::TypeExpr *applied(parse::Parser *p, U32 start, ast::Qualifiers q, as
 // Whether the type at the position is written in the new syntax and only there (`read` uses it).
 static Bool at_new_type(const parse::Parser *p) {
     lex::TokenKind kind = parse::peek(p).kind;
+    if (kind == lex::kw_volatile) return starts_new_type(p, 1);
     return starts_new_type(p, 0) || kind == lex::left_bracket || kind == lex::left_paren || kind == lex::kw_type;
 }
 
 // `*T` or `*mut T`: the position is at the `*`.
 static ast::TypeExpr *new_pointer(parse::Parser *p, U32 start) {
     parse::advance(p);
+    Bool is_volatile = parse::accept(p, lex::kw_volatile);
     Bool is_mut = parse::accept(p, lex::kw_mut);
     ast::TypeExpr *pointee = parse::type(p);
+    if (pointee != nullptr && is_volatile) pointee->qualifiers.is_volatile = true;
     ast::Qualifiers none = {};
     return node(start, p, none, {.pointer = {.pointee = pointee, .is_mut = is_mut}});
 }
@@ -923,8 +926,10 @@ static ast::TypeExpr *new_brackets(parse::Parser *p, U32 start) {
     parse::expect(p, lex::right_bracket, "`]` to end the array size");
     // `[]mut T` is a writable slice; the node records it in `is_mut`, and a plain `[]T` is read-only.
     Bool is_mut = false;
+    Bool is_volatile = parse::accept(p, lex::kw_volatile);
     if (countof(dims) == 1 && dims[0] == nullptr) is_mut = parse::accept(p, lex::kw_mut);
     ast::TypeExpr *element = parse::type(p);
+    if (element != nullptr && is_volatile) element->qualifiers.is_volatile = true;
     ast::Qualifiers none = {};
     if (countof(dims) > 1) return node(start, p, none, {.block_type = {.element = element, .dims = dims}});
     if (dims[0] == nullptr) return node(start, p, none, {.slice = {.element = element, .is_mut = is_mut}});
@@ -979,6 +984,14 @@ static ast::TypeExpr *new_function(parse::Parser *p, U32 start) {
     return node(start, p, none, {.function = {.params = params, .result = result, .is_once = is_once}});
 }
 
+// `volatile [5]u8`, `volatile *T`: the type that follows is volatile. The position is at the `volatile`.
+static ast::TypeExpr *new_volatile(parse::Parser *p) {
+    parse::advance(p);
+    ast::TypeExpr *inner = parse::type(p);
+    if (inner != nullptr) inner->qualifiers.is_volatile = true;
+    return inner;
+}
+
 // One type of the new syntax; the position is at its first token.
 static ast::TypeExpr *new_type(parse::Parser *p) {
     U32 start = parse::peek(p).span.start;
@@ -994,6 +1007,8 @@ static ast::TypeExpr *new_type(parse::Parser *p) {
     case lex::kw_type:
         parse::advance(p);
         return spelled(p, start, (ast::Qualifiers){});
+    case lex::kw_volatile:
+        return new_volatile(p);
     default:
         return new_function(p, start);
     }
@@ -1036,6 +1051,8 @@ struct Rewrite {
     Bool pointee_const; // the next star points at a const type (`const T *`, or `T *const *`): `*T`, else `*mut T` in a
                         // cast
     Bool casting;       // the type is a cast's: a star that points at a non-const type is `*mut`
+    Bool volatile_next; // the next star points at a volatile type (`volatile T *`): `*volatile T`; none left, `volatile
+                        // T`
 };
 
 // The source text of the tokens from `from` up to but not including `to`.
@@ -1113,10 +1130,15 @@ static Str keyword_type(Str w) {
     return "";
 }
 
-// `volatile` and `restrict` have no spelling yet; `const` is the default and is dropped.
+// `const` is the default and is dropped; `volatile` is written where `mut` sits (`*volatile T`, `volatile T`);
+// `restrict` has no spelling yet.
 static void note_qualifier(lex::TokenKind kind, Rewrite *r) {
     if (kind == lex::kw_const) return;
-    r->problem = "`volatile` and `restrict` have no spelling in smith's own syntax: remove them";
+    if (kind == lex::kw_volatile) {
+        r->volatile_next = true;
+        return;
+    }
+    r->problem = "`restrict` has no spelling in smith's own syntax: remove it";
 }
 
 static Bool is_word_at(const lex::Tokens tokens, Str source, Usize i, const char *word) {
@@ -1262,7 +1284,10 @@ static Str head_of(const parse::Parser *p, const OldType *t, const ast::TypeExpr
 // same type as `[3,4]`).
 static void flush_run(Rewrite *r) {
     if (r->dims == 0) return;
-    r->prefix = format::push("[", r->run, "]", r->prefix);
+    // `volatile U8 xs[:]`: the elements of the slice are volatile, `[]volatile u8`.
+    Bool elements = r->volatile_next && r->dims == 1 && countof(r->run) == 0;
+    r->prefix = format::push("[", r->run, "]", elements ? "volatile " : "", r->prefix);
+    if (elements) r->volatile_next = false;
     char none[:] = {};
     r->run = none;
     r->dims = 0;
@@ -1285,7 +1310,10 @@ static Usize scan_bracket(const parse::Parser *p, Usize open, Usize end, Rewrite
     while (from < close && is_qualifier(p->tokens[from].kind)) {
         // `restrict` on a slice goes when the function states its slices apart in a `requires` (#2463)
         Bool dropped = p->tokens[from].kind == lex::kw_restrict && p->apart;
-        if (!dropped) note_qualifier(p->tokens[from].kind, r);
+        if (p->tokens[from].kind == lex::kw_volatile)
+            r->problem = "`volatile` between brackets has no meaning";
+        else if (!dropped)
+            note_qualifier(p->tokens[from].kind, r);
         from += 1;
     }
     Str size = "";
@@ -1307,8 +1335,9 @@ static void scan_suffixes(const parse::Parser *p, const OldType *t, Rewrite *r) 
         flush_run(r);
         if (kind == lex::star) {
             Bool writable = r->casting && !r->pointee_const;
-            r->prefix = format::push(writable ? "*mut " : "*", r->prefix);
+            r->prefix = format::push("*", r->volatile_next ? "volatile " : "", writable ? "mut " : "", r->prefix);
             r->pointee_const = false;
+            r->volatile_next = false;
         } else if (is_qualifier(kind)) {
             if (kind == lex::kw_const) r->pointee_const = true;
             note_qualifier(kind, r);
@@ -1342,13 +1371,20 @@ static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExp
         return;
     }
     char none[:] = format::push("");
-    Rewrite r = {.prefix = none, .run = none, .dims = 0, .problem = "", .pointee_const = false, .casting = p->in_cast};
+    Rewrite r = {.prefix = none,
+                 .run = none,
+                 .dims = 0,
+                 .problem = "",
+                 .pointee_const = false,
+                 .casting = p->in_cast,
+                 .volatile_next = false};
     for (Usize i = t->first; i < t->base; i += 1) {
         if (p->tokens[i].kind == lex::kw_const) r.pointee_const = true;
         note_qualifier(p->tokens[i].kind, &r);
     }
     Str head = head_of(p, t, base, &r);
     scan_suffixes(p, t, &r);
+    if (r.volatile_next) r.prefix = format::push("volatile ", r.prefix);
     Str old_text = source_of(p, t->first, t->end);
     ast::Span span = {.start = p->tokens[t->first].span.start, .end = p->tokens[t->end - 1].span.end};
     Str shown = frozen(format::push(r.prefix, head));

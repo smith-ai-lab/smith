@@ -1325,6 +1325,23 @@ static core::ParseError undefined_fix(const ast::Expr *call) {
     return found;
 }
 
+// The fix of a global `static arena::Arena memory;` that is written `arena.Arena()`: `mem.zeroed(arena.Arena)`.
+static core::ParseError zeroed_global_fix(Str source, const ast::Expr *call) {
+    core::ParseError none = {};
+    if (call->kind != .call) return none;
+    const ast::Expr *callee = call->kind.call.callee;
+    core::Edits fix = {};
+    fix = mem::realloc(fix, 1);
+    Str written = source[callee->span.start:callee->span.end];
+    fix[0] = (core::Edit){.span = call->span, .text = types::message_of(format::push("mem.zeroed(", written, ")"))};
+    core::ParseError found = {};
+    found.span = call->span;
+    found.message = "a global of a struct of another module is C's zeroed storage, `mem.zeroed(T)`";
+    found.fix = fix;
+    zeroed_written = true;
+    return found;
+}
+
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
     Bool filled = false;
@@ -1343,6 +1360,13 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
             // the storage C gave (#2643).
             last = error.left_out_call;
             out = add(out, undefined_fix(error.left_out_call));
+            continue;
+        }
+        if (!from_header && countof(types::owner_of(record)) > 0 && global_zero(module, error.left_out_call)) {
+            // A global `static arena::Arena memory;` of a struct of another module that gives no defaults: C's zeroed
+            // storage is `mem.zeroed(T)` (D10, #2648).
+            last = error.left_out_call;
+            out = add(out, zeroed_global_fix(source, error.left_out_call));
             continue;
         }
         if (!from_header && (countof(types::owner_of(record)) > 0 || own < local.count)) continue;
