@@ -3598,8 +3598,8 @@ static int build_frontend_coverage(SmithRun *run) {
         return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
     }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
-    // -Dfix_only=1 (#2832): only the fix phase runs, filling .smith/frontend-coverage/fixed (a cache of the fixed files,
-    // keyed by what each depends on) for the shards to reuse; no table is made.
+    // -Dfix_only=1 (#2832): only the fix phase runs, filling .smith/frontend-coverage/fixed (the fixed files, keyed by
+    // what each depends on) for the shards to reuse; no table is made.
     const bool fix_only = run->args[6][0] != '\0';
     if (fix_only) setenv("SMITH_COVERAGE_FIX_ONLY", "1", 1);
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
