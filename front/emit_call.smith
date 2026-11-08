@@ -991,6 +991,10 @@ export void mark_tail_call(state::Emitter *e, c::LLVMValueRef value) {
     c::LLVMValueRef caller = c::LLVMGetBasicBlockParent(here);
     if (c::LLVMGetCalledFunctionType(value) != c::LLVMGlobalGetValueType(caller)) return;
     if (c::LLVMGetInstructionCallConv(value) != c::LLVMGetFunctionCallConv(caller)) return;
+    // A struct or array result comes back through a hidden pointer on most targets: LLVM cannot make that call a
+    // `musttail` (`return fixed(memory, capacity)` of `std.arena.carve` aborted the compiler).
+    c::LLVMTypeKind result = c::LLVMGetTypeKind(c::LLVMGetReturnType(c::LLVMGetCalledFunctionType(value)));
+    if (result == c::LLVMStructTypeKind || result == c::LLVMArrayTypeKind) return;
     if (c::LLVMIsAFunction(c::LLVMGetCalledValue(value)) != nullptr &&
         c::LLVMGetIntrinsicID(c::LLVMGetCalledValue(value)) != 0)
         return;
