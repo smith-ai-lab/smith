@@ -134,7 +134,7 @@ export void test_build_steps_explain_names_the_first_cause_down_a_chain() {
 }
 
 export void test_build_steps_explain_names_the_header_behind_a_step_down_a_chain() {
-    scratch::Project p = scratch::make("p", "steps_explain_leaf");
+    scratch::Project p = scratch::make("p", "steps_depfile");
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(memory_size);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
