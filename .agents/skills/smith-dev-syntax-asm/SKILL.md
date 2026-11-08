@@ -7,7 +7,6 @@ description: "New syntax: strings with holes `\"x=${x}\"` and `\"\"\"` (D22, bui
 
 **Decided, not yet built (D22, #2727):** backticks leave the language. A tag is a name before a string, and assembly is written `asm"""` ... `"""`, with escapes like any string. Until #2727 merges, the parser reads only the backtick form below; write that in tests today.
 
-- **Strings (D22, built by #2727 after the switch-over; until then a string has escapes but no holes):** `"..."` is the only string literal, with the usual escapes and holes: `console.println("x=${x}")`, `"addr=${format.hex(p)}"`. Only `${` opens a hole (`\${` writes it; a lone `$` is text). A string with holes is typed pieces, not a `str`: `format.string("id=${id}")` makes one, from the current allocator. `"""` writes a string over several lines, dropping the newline after it and the lines' common indentation.
 
 ```smith
 @when(target.arch == .x86_64 and target.os == .linux)

@@ -39,3 +39,19 @@ export void test_front_fix_const_a_longer_name_is_not_the_local() {
 export void test_front_fix_const_a_mut_local_and_another_function_are_left() {
     expect_inserts("fn f():\n    mut ty: i32 = undefined\n    g(&ty)\nfn h():\n    g(&ty)\n", 0, 0);
 }
+
+export void test_front_fix_const_an_initialized_local_whose_field_address_is_taken_is_mut() {
+    expect_inserts("fn f(s: str):\n    parsed: parser.Parsed = parser.parse_new(\"t\", s)\n"
+                   "    types_decl.check_module(&parsed.module)\n",
+                   1, 18);
+}
+
+export void test_front_fix_const_a_nullptr_out_parameter_local_is_mut() {
+    expect_inserts("fn g(context: c.LLVMContextRef):\n    module: c.LLVMModuleRef = nullptr\n"
+                   "    c.LLVMParseIRInContext(context, &module)\n",
+                   1, 37);
+}
+
+export void test_front_fix_const_the_address_of_an_element_does_not_make_the_array_mut() {
+    expect_inserts("fn f():\n    xs: [3]f64 = [1.0, 2.0, 3.0]\n    g(&xs[0])\n", 0, 0);
+}
