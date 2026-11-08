@@ -1849,15 +1849,20 @@ export Str written_concept(const ast::TypeExpr *t) {
 
 static Bool is_type_name(const ast::TypeExpr *written);
 
+// The one statement of a block of one, the statement itself when it is not a block, null for a longer block.
+static const ast::Stmt *only_statement(const ast::Stmt *body) {
+    if (body->kind != .block) return body;
+    ast::StmtRef items[:] = body->kind.block.items;
+    if (countof(items) != 1) return nullptr;
+    return items[0];
+}
+
 // The one expression a statement gives as a function's value: `return e`, the expression `e`, or a block of one of
 // those; else null.
-static const ast::Expr *single_value(const ast::Stmt *body) {
+static const ast::Expr *single_value(const ast::Stmt *written) {
+    if (written == nullptr) return nullptr;
+    const ast::Stmt *body = only_statement(written);
     if (body == nullptr) return nullptr;
-    if (body->kind == .block) {
-        ast::StmtRef items[:] = body->kind.block.items;
-        if (countof(items) != 1) return nullptr;
-        body = items[0];
-    }
     if (body->kind == .return_stmt) return body->kind.return_stmt.value;
     if (body->kind == .expression) return body->kind.expression.value;
     return nullptr;

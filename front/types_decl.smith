@@ -362,13 +362,12 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (drops_const && countof(fix) == 0 && addressed != nullptr) {
         const ast::Expr *place = addressed;
         while (member_base(place) != nullptr) {
-            const ast::Expr *base = member_base(place);
-            types::TypeRef owner = types::type_of(c, base);
+            place = member_base(place);
+            types::TypeRef owner = types::type_of(c, place);
             if (owner != nullptr && owner->kind == .pointer) {
-                fix = types_expr::pointer_fix(c, base);
+                fix = types_expr::pointer_fix(c, place);
                 break;
             }
-            place = base;
         }
     }
     if (from->kind == .pointer && to->kind == .pointer && !types::points_to_const(from) && !types::points_to_const(to))
