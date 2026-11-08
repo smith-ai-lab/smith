@@ -2937,9 +2937,98 @@ static Bool is_type_name(const ast::TypeExpr *written) {
            (same_text(path.segments[0].text, "Type") || same_text(path.segments[0].text, "type"));
 }
 
-// Whether a parameter is known at compile time in smith's own syntax: `T: type` or `const n: usize`.
+// The value parameters used in a type of their function's signature (`n` in `fn table(n: usize) -> [n]f32:`), by
+// where the name is written: a copy of a template (an instance) shares the source texts and the spans, so its
+// parameters are found too. Filled by `mark_used_in_types` when a function is declared; a fixed table, since it
+// outlives the allocator of any one check (past its room a parameter stays a run-time one).
+struct UsedInTypes {
+    const char *name;
+    ast::Span span;
+};
+
+static UsedInTypes used_in_types[4096];
+static Usize used_in_types_count = 0;
+
+static Bool is_used_in_types(const ast::Param *p) {
+    if (countof(p->name) == 0) return false;
+    for (Usize i = 0; i < used_in_types_count; i++) {
+        const UsedInTypes *u = &used_in_types[i];
+        if (u->name == &p->name[0] && u->span.start == p->span.start && u->span.end == p->span.end) return true;
+    }
+    return false;
+}
+
+// Whether the expression (an array's count, a value argument of a type function) names `name`.
+static Bool names_in(const ast::Expr *e, Str name) {
+    const ast::Expr *todo[32];
+    Usize n = 0;
+    if (e != nullptr) todo[n++] = e;
+    while (n > 0) {
+        const ast::Expr *x = todo[--n];
+        if (x->kind == .name && countof(x->kind.name.path.segments) == 1 &&
+            same_text(x->kind.name.path.segments[0].text, name))
+            return true;
+        if (x->kind == .binary && n + 2 <= countof(todo)) {
+            todo[n++] = x->kind.binary.left;
+            todo[n++] = x->kind.binary.right;
+        }
+        if (x->kind == .unary && n < countof(todo)) todo[n++] = x->kind.unary.operand;
+    }
+    return false;
+}
+
+// Whether the written type uses `name` as a value: `[n]f32`, `[n, 3]T`, `Array(f32, n)`, anywhere inside it.
+static Bool type_uses(const ast::TypeExpr *t, Str name) {
+    const ast::TypeExpr *todo[32];
+    Usize n = 0;
+    if (t != nullptr) todo[n++] = t;
+    while (n > 0) {
+        const ast::TypeExpr *x = todo[--n];
+        if (x == nullptr) continue;
+        if (x->kind == .array && names_in(x->kind.array.count, name)) return true;
+        if (x->kind == .block_type) {
+            for (Usize i = 0; i < countof(x->kind.block_type.dims); i++)
+                if (names_in(x->kind.block_type.dims[i], name)) return true;
+        }
+        if (x->kind == .applied) {
+            for (Usize i = 0; i < countof(x->kind.applied.args); i++) {
+                const ast::TypeArg *arg = &x->kind.applied.args[i];
+                if (*arg == .value && names_in(arg->value.value, name)) return true;
+            }
+        }
+        Usize children = 1;
+        if (x->kind == .function) children = countof(x->kind.function.params) + 1;
+        if (x->kind == .tuple) children = countof(x->kind.tuple.elements);
+        if (x->kind == .applied) children = countof(x->kind.applied.args);
+        for (Usize i = 0; i < children && n < countof(todo); i++) {
+            const ast::TypeExpr *inner = child(x, i);
+            if (inner != nullptr) todo[n++] = inner;
+        }
+    }
+    return false;
+}
+
+// Marks the value parameters of a function in smith's own syntax that a type of its signature uses: they are known at
+// compile time, with one instance per value (owner, 2026-11-08: "Yeah, drop const from parameters").
+static void mark_used_in_types(ast::Param list[:], const ast::TypeExpr *result_type) {
+    for (Usize i = 0; i < countof(list); i++) {
+        const ast::Param *p = &list[i];
+        if (!p->is_new || p->is_rest || p->is_pack || p->is_gather || p->is_const || countof(p->name) == 0) continue;
+        if (p->type == nullptr || is_type_name(p->type) || is_used_in_types(p)) continue;
+        Bool used = type_uses(result_type, p->name);
+        for (Usize k = 0; k < countof(list) && !used; k++)
+            if (k != i) used = type_uses(list[k].type, p->name);
+        if (!used) continue;
+        if (used_in_types_count == countof(used_in_types)) return;
+        used_in_types[used_in_types_count] = (UsedInTypes){.name = &p->name[0], .span = p->span};
+        used_in_types_count += 1;
+    }
+}
+
+// Whether a parameter is known at compile time in smith's own syntax: `T: type`, a value a type of the signature uses
+// (`n` in `fn table(n: usize) -> [n]f32:`), or the old marker `const n: usize`, kept until the parser stops writing it.
 export Bool is_compile_time(const ast::Param *p) {
-    return p->is_new && (is_type_name(p->type) || p->is_const) && !p->is_rest;
+    return p->is_new && (is_type_name(p->type) || p->is_const || is_used_in_types(p)) && !p->is_rest;
 }
 
 // Whether a compile-time parameter is a type (`T: type`), else a constant (`const n: usize`).
@@ -3005,6 +3094,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     if (is_new_function(d) && countof(list) > 0 && !is_type_name(list[0].type)) {
         reject_conversion_name(r, d->span, name, "function");
     }
+    mark_used_in_types(list, result_type);
     if (is_template(d, list, result_type)) {
         declare_template(r, d, name, list);
         return;
