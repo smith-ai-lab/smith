@@ -97,6 +97,12 @@ static state::Status infer_type(state::Emitter *e, const ast::Stmt *s, state::Ty
         const ast::Stmt *last = last_line(top);
         if (last == nullptr) continue;
         if (last->kind == .expression) {
+            // A `nullptr` leaf has no type of its own: the other branches' pointer is the value's (`?*T` is the
+            // pointer).
+            types::TypeRef leaf = e->options.checked != nullptr
+                                      ? types::type_of(e->options.checked, last->kind.expression.value)
+                                      : nullptr;
+            if (leaf != nullptr && leaf->kind == .null_type) continue;
             state::TyResult typed = state::type_of_node(e, last->kind.expression.value);
             if (typed == .error) {
                 return {.error = typed.error};

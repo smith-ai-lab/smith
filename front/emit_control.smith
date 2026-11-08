@@ -506,7 +506,8 @@ static state::Status option_test_finish(state::Emitter *e, const state::ThenExpr
     option_operand(e, w->expr, &wants_some);
     state::Value o = state::pop_value(e);
     c::LLVMValueRef tag = o.llvm;
-    if (!(o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer)) // `?*T` is the pointer itself
+    // `?*T` is the pointer itself (an `if` of a pointer and `nullptr` is emitted as the plain pointer)
+    if (o.ty.kind != .pointer && !(o.ty.kind == .option && o.ty.kind.option.element->kind == .pointer))
         tag = c::LLVMBuildExtractValue(e->builder, o.llvm, 0, "tag");
     c::LLVMValueRef zero = c::LLVMConstNull(c::LLVMTypeOf(tag));
     Bool same = w->expr->kind == .binary &&
