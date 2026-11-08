@@ -36,16 +36,26 @@ jobs:
     timeout-minutes: 3
     permissions:
       actions: read
+      pull-requests: read
     outputs:
       deferred: ${{ steps.ask.outputs.deferred }}
     env:
       GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
     steps:
       - id: ask
         name: Ask whether the merge queue is running
         run: |
           deferred=false
+          # a change to `.github/` is never deferred: CI changes must test themselves, and the re-run workflow only
+          # exists on main once they have merged (#2822)
+          own=false
+          files=
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename' 2>/dev/null) || files=
+          fi
+          if printf '%s\n' "$files" | grep -q '^[.]github/'; then own=true; fi
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$own" = false ]; then
             for status in queued in_progress; do
               n=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" -f event=merge_group \
                 -f status="$status" -f per_page=1 --jq .total_count 2>/dev/null) || n=0
@@ -53,7 +63,7 @@ jobs:
             done
           fi
           echo "deferred=$deferred" >>"$GITHUB_OUTPUT"
-          echo "queue-first: deferred=$deferred" >>"$GITHUB_STEP_SUMMARY"
+          echo "queue-first: deferred=$deferred (touches .github/: $own)" >>"$GITHUB_STEP_SUMMARY"
       - name: Deferred
         # the step `rerun-deferred.yml` looks for in a failed run's jobs: it passes only in a deferred run
         if: steps.ask.outputs.deferred == 'true'
