@@ -1854,7 +1854,7 @@ static Bool is_type_name(const ast::TypeExpr *written);
 static const ast::Expr *single_value(const ast::Stmt *body) {
     if (body == nullptr) return nullptr;
     if (body->kind == .block) {
-        const ast::Stmt *items[:] = body->kind.block.items;
+        ast::StmtRef items[:] = body->kind.block.items;
         if (countof(items) != 1) return nullptr;
         body = items[0];
     }
