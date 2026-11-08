@@ -199,3 +199,42 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
                    "row := Row(kind = 1)\n    return row.kind\n");
     }
 }
+
+// A mended import is read once its statements end at the line break, including one that ends in `p.*` (a `*p` in
+// today's syntax): `out.* = s.*` then `out.n = 1` did not parse, the import was dropped, and the importer was fixed
+// without its types (#2648). `mine` is the out-parameter the import's function fills, so it is `mut` and starts
+// undefined (`{}` stays when the import is not read).
+export void test_front_fix_loader_a_mended_import_with_a_deref_at_a_line_end_is_read() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_deref.smith";
+    Str user_path = "/tmp/front_fix_loader_deref_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_deref;\nexport struct Sym { Int n; };\n"
+                                              "[[gnu::always_inline]] static Int twice(Int n) {\n    return n * 2;\n}\n"
+                                              "export void copy(Sym *out, const Sym *s) {\n    if (s == nullptr) {\n"
+                                              "        return;\n    }\n    *out = *s;\n    out->n = 1;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_deref_user;\nimport front_fix_loader_deref;\n"
+                                            "static void f() {\n"
+                                            "    front_fix_loader_deref::Sym mine = {};\n"
+                                            "    front_fix_loader_deref::Sym other = {};\n"
+                                            "    front_fix_loader_deref::copy(&mine, &other);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    test::check_equal(fix::fix_run(paths, 1), 0);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_deref\nfn f():\n    mut mine: front_fix_loader_deref.Sym = undefined\n"
+                        "    mut other: front_fix_loader_deref.Sym = undefined\n"
+                        "    front_fix_loader_deref.copy(&mine, &other)\n");
+    }
+}

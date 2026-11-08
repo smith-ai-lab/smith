@@ -1069,6 +1069,9 @@ static Str mended_import(Str path, Str source) {
     return mended.text;
 }
 
+// What `read_import` could not read, one line each, for `fix_run` to report (#2648).
+static Str import_problems = "";
+
 // The module of the file at `path`, read and mended as an import (#2561), or null when it does not read.
 static const ast::Module *read_import(Str path) {
     files::BytesResult loaded = files::read_file(path);
@@ -1085,7 +1088,13 @@ static const ast::Module *read_import(Str path) {
         // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
         // where `F32 *value` is writable.
         parsed = parse_for_fix(path, mended_import(path, source));
-        if (countof(parsed.errors) > 0) return nullptr;
+        if (countof(parsed.errors) > 0) {
+            // The importers are fixed without this module's types, whatever they hold: the run says so and fails.
+            import_problems =
+                as_str(format::push(import_problems, path, ": the import does not read after it is mended: ",
+                                    parsed.errors[0].message, " (at byte ", (I64)parsed.errors[0].span.start, ")\n"));
+            return nullptr;
+        }
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = parsed.module;
@@ -1162,6 +1171,7 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
     types::ModuleLoader outside = loader;
     loader = load_from_folders;
     loaded_count = 0; // the modules of an earlier run are read again: a test may have changed the files
+    import_problems = "";
     defer loader = outside;
     defer loaded_count = 0;
     fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
@@ -1174,6 +1184,11 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
         if (countof(fixed.clash) == 0) continue;
         Str problem = as_str(format::push(path, ":", fixed.clash, "\n"));
         (void)c::write(2, problem.data, countof(problem));
+        status = 1;
+    }
+    if (countof(import_problems) > 0) {
+        (void)c::write(2, import_problems.data, countof(import_problems));
+        import_problems = "";
         status = 1;
     }
     fix_variants::Words renamed = fix_variants::rename_all(texts);
