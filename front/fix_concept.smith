@@ -1,0 +1,177 @@
+// front::fix_concept, the fix-it for an `auto` parameter (#2668): the new syntax has no `auto`; a parameter is typed by
+// the concept it is used as ("We want to use the concept you are actually trying to model. Unless it can really be any
+// type"). The concept is read from the body of the function:
+//
+//   `n % 8`, `n << 2`, `n & m`          integer operations only                       left (see below)
+//   `x + x`, `x * 2`, `x / y`           arithmetic only                               `x: num`
+//   `p.*`                               read through                                  `p: pointer`
+//   `if pred(item):`                    called with an element, the result a test     `pred: fn(T) -> bool`
+//   `typeof(v)`, `v.[f]`, `f(v)`        reflected on or handed on unchanged           left until `any` resolves
+//
+// `any` is not written yet (the checker has no type `any` until std.prelude, #2669) and neither is `int`: while a file
+// is mended the checker reads `int` as the C type and fixes it to `i32` (`types::c_type_fix`). Those sites stay `auto`
+// and are listed with the rest.
+//
+// A parameter used any other way (indexed, compared, a field read) is left as `auto` and the checker reports it: the
+// site is listed for a hand fix. A predicate needs the element type, so it is written only where the function already
+// has an inferred parameter `[T]`. Only the type `auto` of a `name: auto` parameter is changed; a concept the old text
+// named is already the type.
+//
+//   fix_concept::edits(source, module)   one fix for each `auto` parameter whose concept is read from the body
+module front::fix_concept;
+
+import front::ast;
+import front::parse as core;
+import front::types;
+import std::mem;
+
+static Bool at(Str s, Usize i, Str pattern) {
+    if (i + countof(pattern) > countof(s)) return false;
+    return mem::equal(s[i:i + countof(pattern)], pattern);
+}
+
+static Bool word_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+}
+
+static Usize skip_back(Str s, Usize i) {
+    while (i > 0 && (s[i - 1] == ' ' || s[i - 1] == '\t'))
+        i -= 1;
+    return i;
+}
+
+static Usize skip_forward(Str s, Usize i) {
+    while (i < countof(s) && (s[i] == ' ' || s[i] == '\t'))
+        i += 1;
+    return i;
+}
+
+// How the body uses the parameter, as the set of what it was seen doing.
+struct Uses {
+    Bool integer;    // `%`, `<<`, `>>`, `&`, `|`, `^` with it
+    Bool arithmetic; // `+`, `-`, `*`, `/` with it
+    Bool pointer;    // `name.*`
+    Bool predicate;  // `if name(...)`
+    Bool neutral;    // reflected on or handed on
+    Bool other;      // anything else: indexed, compared, a field
+};
+
+// Whether the text before `pos` ends with the word `word`.
+static Bool word_before(Str s, Usize pos, Str word) {
+    Usize end = skip_back(s, pos);
+    if (end < countof(word) || !at(s, end - countof(word), word)) return false;
+    return end == countof(word) || !word_char(s[end - countof(word) - 1]);
+}
+
+static Bool is_integer_op(Str s, Usize i) {
+    if (i >= countof(s)) return false;
+    if (at(s, i, "<<") || at(s, i, ">>")) return true;
+    if (at(s, i, "&&") || at(s, i, "||")) return false;
+    return s[i] == '%' || s[i] == '&' || s[i] == '|' || s[i] == '^';
+}
+
+static Bool is_arithmetic_op(Str s, Usize i) {
+    if (i >= countof(s)) return false;
+    if (at(s, i, "+=") || at(s, i, "-=") || at(s, i, "*=") || at(s, i, "/=")) return true;
+    if (at(s, i, "->")) return false;
+    return s[i] == '+' || s[i] == '-' || s[i] == '*' || s[i] == '/';
+}
+
+// Whether the use is reflected on or handed on unchanged: `typeof(v)`, `v.[f]`, `return v`, an argument `f(v)`.
+static Bool is_handed_on(Str s, Usize pos, Usize length) {
+    Usize after = skip_forward(s, pos + length);
+    Usize before = skip_back(s, pos);
+    if (word_before(s, pos, "typeof") || word_before(s, pos, "return") || at(s, after, ".[")) return true;
+    if (before == 0 || after >= countof(s)) return false;
+    Bool opens = s[before - 1] == '(' || s[before - 1] == ',';
+    Bool closes = s[after] == ',' || s[after] == ')';
+    return opens && closes;
+}
+
+// What the use of the name at `pos` (of `length` bytes) is, added to `uses`.
+static Uses classify(Uses uses, Str s, Usize pos, Usize length) {
+    Usize after = skip_forward(s, pos + length);
+    Usize before = skip_back(s, pos);
+    if (at(s, after, ".*")) {
+        uses.pointer = true;
+    } else if (at(s, after, "(") &&
+               (word_before(s, pos, "if") || word_before(s, pos, "not") || word_before(s, pos, "while") ||
+                word_before(s, pos, "and") || word_before(s, pos, "or"))) {
+        uses.predicate = true;
+    } else if (is_integer_op(s, after) || (before > 0 && is_integer_op(s, before - 1) && before >= 1)) {
+        uses.integer = true;
+    } else if (is_arithmetic_op(s, after) || (before > 0 && is_arithmetic_op(s, before - 1))) {
+        uses.arithmetic = true;
+    } else if (is_handed_on(s, pos, length)) {
+        uses.neutral = true;
+    } else {
+        uses.other = true;
+    }
+    return uses;
+}
+
+static Uses uses_of(Str body, Str name) {
+    Uses uses = {};
+    for (Usize i = 0; i + countof(name) <= countof(body); i++) {
+        if (!at(body, i, name)) continue;
+        if (i > 0 && (word_char(body[i - 1]) || body[i - 1] == '.')) continue;
+        if (i + countof(name) < countof(body) && word_char(body[i + countof(name)])) continue;
+        uses = classify(uses, body, i, countof(name));
+    }
+    return uses;
+}
+
+// The concept the uses ask for, or empty when they ask for none.
+static Str concept_of(Uses uses, Bool has_element) {
+    if (uses.other) return "";
+    if (uses.pointer) return uses.integer || uses.arithmetic || uses.predicate ? "" : "pointer";
+    if (uses.predicate) return !has_element || uses.integer || uses.arithmetic ? "" : "fn(T) -> bool";
+    if (uses.integer)
+        return ""; // `int` is `i32` while a file is mended (types::c_type_fix): waits for the checker part
+    if (uses.arithmetic) return "num";
+    return ""; // `any` waits for std.prelude (#2669): the checker has no type `any` yet, and `auto` passes today
+}
+
+static core::Edits push(core::Edits edits, Usize from, Usize to, Str text) {
+    edits = mem::realloc(edits, countof(edits) + 1);
+    edits[countof(edits) - 1] = (core::Edit){.span = {.start = (U32)from, .end = (U32)to}, .text = text};
+    return edits;
+}
+
+// The end of the body of the function that starts at `from`: the brace-less new syntax ends at the declaration.
+static Usize own_end(const ast::Decl *d, Usize limit) {
+    return d->span.end < limit ? d->span.end : limit;
+}
+
+export core::Errors edits(Str source, const ast::Module *module) {
+    core::Errors out = {};
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind != .function) continue;
+        const ast::Stmt *function_body = d->kind.function.body;
+        if (function_body == nullptr) continue;
+        ast::Param params[:] = d->kind.function.params;
+        Usize end = own_end(d, countof(source));
+        Usize body = function_body->span.start;
+        if (body >= end) continue;
+        Bool has_element = false;
+        for (Usize k = d->span.start; k + 3 < body; k++)
+            if (at(source, k, "[T]")) has_element = true;
+        for (Usize k = 0; k < countof(params); k++) {
+            const ast::TypeExpr *type = params[k].type;
+            if (type == nullptr || type->kind != .auto_type || params[k].is_pack || params[k].is_rest) continue;
+            Usize param_end = params[k].span.end;
+            if (param_end < 4 || param_end > body || !at(source, param_end - 4, "auto")) continue;
+            if (param_end < 6 || !at(source, param_end - 6, ": ")) continue;
+            Str concept = concept_of(uses_of(source[body:end], params[k].name), has_element);
+            if (countof(concept) == 0) continue;
+            core::Edits edits = push((core::Edits){}, param_end - 4, param_end, concept);
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = (core::ParseError){
+                .span = {.start = (U32)(param_end - 4), .end = (U32)param_end},
+                .message = types::message_of("an `auto` parameter is typed by the concept its body uses it as"),
+                .fix = edits};
+        }
+    }
+    return out;
+}
