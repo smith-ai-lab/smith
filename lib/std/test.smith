@@ -983,7 +983,7 @@ void check_slices(auto a, typeof(a) b) {
     if (countof(a) != countof(b)) {
         fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
     }
-    check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
+    check_part("", countof(a) != 0 ? &a[0] : nullptr, countof(b) != 0 ? &b[0] : nullptr, countof(a));
 }
 
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
@@ -4288,9 +4288,9 @@ void cache_store(const Plan *plan) {
         __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
         c::unlink(path);
     }
-    static const char *const files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
-    for (Usize i = 0; files[i] != nullptr; i++) {
-        __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], files[i]);
+    static const char *const cache_files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
+    for (Usize i = 0; cache_files[i] != nullptr; i++) {
+        __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], cache_files[i]);
         c::unlink(path);
     }
     __builtin_snprintf(path, sizeof path, "%s/reads", &cache_folder[0]);

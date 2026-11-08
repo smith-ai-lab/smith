@@ -16,9 +16,13 @@ on:
     # test that fails here while the cache said it passed is a p0 bug in a key (knowledge/ci-hosted.md)
     - cron: "17 3 * * *"
 
-# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other.
+# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other. A push
+# to main has a group of its own per commit: with one group for the branch, GitHub keeps only the newest *pending* run,
+# so while the queue landed a PR every ~30 min and a run took longer, each pending run was cancelled by the next push
+# with no job started, and `warm` (the step cache) never ran (#2792). The jobs that must run once at a time keep their
+# own groups (`release-macos`, `release-linux`).
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -1163,8 +1167,8 @@ jobs:
           # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
           name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
           base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
-          curl -fsSL --retry 3 -o "$tmp/$name" "$base/$name"
-          curl -fsSL --retry 3 -o "$tmp/$name.sha256" "$base/$name.sha256"
+          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name" "$base/$name"
+          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name.sha256" "$base/$name.sha256"
           [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
             || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
           tar -C "$tmp" -xJf "$tmp/$name"
