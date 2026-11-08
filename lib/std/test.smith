@@ -2029,11 +2029,12 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
 char cache_folder[path_capacity]; // the folder of this run; empty when the cache is not used
 Usize cached_total = 0;           // the tests left out of the plan because they are unchanged
 
-// Whether this run uses the cache: not for a listing, a debugger, a golden update, a part of a shard (the miss sets
-// would partition the tests differently), a run that records coverage, or one inside a test that is itself cached.
+// Whether this run uses the cache: not for a listing, a debugger, a golden update, a run that records coverage, or one
+// inside a test that is itself cached. A part of a shard does (#2833): make_plan splits the whole plan first, so every
+// part gets the same split whatever is cached, and each part leaves out only its own unchanged tests.
 Bool cache_wanted(const Options *options) {
     if (options->list || options->in_process || options->update || options->no_cache) return false;
-    if (options->shard_count > 0 || c::getenv("SMITH_COVERAGE_DIR") != nullptr) return false;
+    if (c::getenv("SMITH_COVERAGE_DIR") != nullptr) return false;
     const char *mode = c::getenv("SMITH_RESULT_CACHE");
     if (mode != nullptr && (c::strcmp(mode, "off") == 0 || c::strcmp(mode, "0") == 0)) return false;
     const char *self = c::getenv("SMITH_SELF");
@@ -4313,8 +4314,8 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
-    cache_filter(plan, options);
     if (options->shard_count > 0 && !shard_built(options)) shard_plan(plan, options);
+    cache_filter(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
     for (Usize i = 0; i < plan->count; i++)

@@ -62,7 +62,8 @@ jobs:
 
           pr_id() { gh api "repos/$REPO/pulls/$PR" --jq .node_id; }
 
-          # takes the PR out of the queue; nothing to do when it is not in it
+          # takes the PR out of the queue; nothing to do when it is not in it. The entry lookup is only the
+          # in-queue test: dequeuePullRequest takes the PULL REQUEST's node id, not the entry's (2026-11-08)
           dequeue_pr() {
             local entry
             entry=$(gh api graphql -f query='
@@ -71,7 +72,7 @@ jobs:
             [ -z "$entry" ] && return 0
             gh api graphql -f query='
               mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
-              -f id="$entry" --silent
+              -f id="$(pr_id)" --silent
           }
 
           # the queue's PR numbers, front first
@@ -92,14 +93,19 @@ jobs:
                 [ "$OP" = jump ] && jump=true
                 # a PR already in the queue cannot be enqueued again: take it out first (jump, 2026-11-08)
                 [ "$jump" = true ] && { dequeue_pr || return 1; }
+                # print what GitHub says about the entry (position, jump) and the queue now and 10 s later: the
+                # mutation's position alone was not reliable (jump put a PR third, 2026-11-08)
                 gh api graphql -f query='
                   mutation($id: ID!, $jump: Boolean) {
                     enqueuePullRequest(input: {pullRequestId: $id, jump: $jump}) {
-                      mergeQueueEntry { id }
+                      mergeQueueEntry { id position jump state }
                     }
-                  }' -f id="$(pr_id)" -F jump="$jump" --silent || return 1
-                # the mutation's own position is not reliable: read the queue
-                echo "queue: $(queue_order)" ;;
+                  }' -f id="$(pr_id)" -F jump="$jump" \
+                  --jq '.data.enqueuePullRequest.mergeQueueEntry | "entry: position=\(.position) jump=\(.jump) state=\(.state)"' \
+                  || return 1
+                echo "queue: $(queue_order)"
+                sleep 10
+                echo "queue after 10 s: $(queue_order)" ;;
               dequeue)
                 needs_pr
                 dequeue_pr || return 1

@@ -14,6 +14,10 @@ on:
   merge_group:
   push:
     branches: [main]
+  schedule:
+    # the nightly full run (#2833): restores no test results, so every test runs once and the run stores them all. A
+    # test that fails here while the cache said it passed is a p0 bug in a key (knowledge/ci-hosted.md)
+    - cron: "17 3 * * *"
 
 # A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other. A push
 # to main has a group of its own per commit: with one group for the branch, GitHub keeps only the newest *pending* run,
@@ -463,6 +467,10 @@ jobs:
           bin=$("$SMITH" build nvim | tail -n 1)
           echo "$bin" >>"$GITHUB_PATH"
           "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: ./.github/actions/test-cache
+        with:
+          os: linux
+          fresh: ${{ github.event_name == 'schedule' }}
       - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
         shell: bash
         run: |
@@ -491,6 +499,18 @@ jobs:
               while IFS= read -r line; do echo "::error::$line"; done
           fi
           exit $rc
+      - name: Keep the test store for the cache job
+        # the store holds what was restored plus the entries this part added; an entry is one test that passed, so a
+        # part that failed elsewhere still adds valid ones (#2833)
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule')
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-store-linux-${{ matrix.shard }}-of-${{ matrix.count }}
+          path: ~/.cache/smith/tests
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: ignore
       - name: Upload the logs
         if: always()
         continue-on-error: true
@@ -509,6 +529,53 @@ jobs:
             echo "FAILED TESTS of this shard:"
             cat "$RUNNER_TEMP/failed.txt"
           fi
+  save-test-cache:
+    # publishes the test-result store of a merge queue run or the nightly one as the prerelease `test-cache-<sha7>`
+    # (#2833). Releases are immutable, so a new tag per commit with the store in one `gh release create`, the 3 newest
+    # kept, like the step cache (#2772). Only a queue run saves, and what it ran is the tree that lands; a pull
+    # request run only reads. A failure here never fails the run.
+    needs: [changes, test-linux]
+    if: ${{ always() && (github.event_name == 'merge_group' || github.event_name == 'schedule') && needs.changes.outputs.scope == 'full' && needs.test-linux.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: test-store-linux-*
+          path: ${{ runner.temp }}/stores
+      - name: Publish the store
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          merged="$RUNNER_TEMP/merged"; mkdir -p "$merged"
+          for part in "$RUNNER_TEMP"/stores/*/; do [ -d "$part" ] && cp -a "$part". "$merged"/; done
+          # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
+          find "$merged" -type f -mtime +14 -delete
+          n=$(find "$merged" -type f | wc -l)
+          if [ "$n" -eq 0 ]; then echo "no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          tar -C "$merged" -c . | gzip -1 >"$out/smith-tests-linux.tar.gz"
+          echo "$GITHUB_SHA" >"$out/smith-tests.sha"
+          tag="test-cache-${GITHUB_SHA:0:7}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "$out"/smith-tests-linux.tar.gz "$out"/smith-tests.sha --prerelease --latest=false \
+              --target "$GITHUB_SHA" --title "test cache $tag" \
+              --notes "The test-result store (#2686) of the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2833). Not a release of smith."
+          fi
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^test-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          echo "published $tag: $n entries, $(du -h "$out/smith-tests-linux.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
