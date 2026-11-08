@@ -45,7 +45,7 @@ export void test_front_fix_generic_mut_a_pointer_handed_to_a_mut_field_in_a_pack
                  "export Usize write(char *buffer, Usize capacity, auto... args) {\n"
                  "    Writer writer = {buffer, capacity};\n    put(&writer, 'a');\n    return writer.capacity;\n}\n",
                  "pub struct Writer:\n    pub out: *mut char\n    pub capacity: usize\n\n"
-                 "static fn put(writer: *Writer, c: char):\n    writer.out[0] = c\n\n"
+                 "fn put(writer: *Writer, c: char):\n    writer.out[0] = c\n\n"
                  "pub fn write(buffer: *mut char, capacity: usize, args...) -> usize:\n"
                  "    writer := Writer(buffer, capacity)\n    put(&writer, 'a')\n    return writer.capacity\n");
 }
