@@ -616,19 +616,22 @@ jobs:
           if-no-files-found: warn
       - name: Publish the step cache and the count's table as release assets
         # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
-        # by name), but it can download a release asset. One rolling prerelease `step-cache` (never `stage0-*`, never
-        # "latest") holds the step folder as smith-steps-linux.tar.gz (+ .sha, the commit it was built from) and the
-        # count's per-file table of this commit as frontend-coverage.tar.gz; each push to main replaces them (#2755).
-        # A failure here must not fail main's push
+        # by name), but it can download a release asset. The repository's releases are immutable (a release takes its
+        # assets when it is created and never again, #2772), so each push to main creates its own prerelease
+        # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
+        # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
+        # them in order), smith-steps-linux.sha (the commit it was built from) and, when the queue run of this commit
+        # made one, frontend-coverage.tar.gz (the count's per-file table). The 3 newest releases stay. A failure here
+        # must not fail main's push
         if: runner.os == 'Linux'
         continue-on-error: true
         shell: bash
         run: |
           set -eu
           out="$RUNNER_TEMP/assets"; mkdir -p "$out"
-          tar -C ~/.cache/smith/steps -c . | gzip -1 >"$out/smith-steps-linux.tar.gz"
+          tar -C ~/.cache/smith/steps -c . | gzip -1 | split -b 1900M -d - "$out/smith-steps-linux.tar.gz."
           echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
-          files=("$out/smith-steps-linux.tar.gz" "$out/smith-steps-linux.sha")
+          files=("$out"/smith-steps-linux.tar.gz.* "$out/smith-steps-linux.sha")
           # the queue run of this very commit saved the count (a documents-only merge runs none)
           id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
           if [ -n "$id" ]; then
@@ -638,10 +641,20 @@ jobs:
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
           fi
-          gh release view step-cache >/dev/null 2>&1 || gh release create step-cache --prerelease --latest=false \
-            --title "step cache (rolling)" --notes "Main's step cache and the count's table, replaced on every push to main (#2755). Not a release of smith." --target "$GITHUB_SHA"
-          gh release upload step-cache "${files[@]}" --clobber
-          echo "latest release: $(gh api repos/$GITHUB_REPOSITORY/releases/latest --jq .tag_name)" | tee -a "$GITHUB_STEP_SUMMARY"
+          ls -l "${files[@]}" | awk '{print $5, $9}'
+          tag="step-cache-${GITHUB_SHA:0:7}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "step cache $tag" --notes "Main's step cache and the count's table at $GITHUB_SHA (#2772). Not a release of smith."
+          fi
+          # keep the 3 newest (the old rolling `step-cache` of #2755 goes first); a refused delete only warns
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^step-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          gh release delete step-cache --cleanup-tag --yes 2>/dev/null || true
+          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
