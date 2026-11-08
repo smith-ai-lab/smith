@@ -3598,6 +3598,10 @@ static int build_frontend_coverage(SmithRun *run) {
         return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
     }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
+    // -Dfix_only=1 (#2832): only the fix phase runs, filling .smith/frontend-coverage/fixed (the fixed files, keyed by
+    // what each depends on) for the shards to reuse; no table is made.
+    const bool fix_only = run->args[6][0] != '\0';
+    if (fix_only) setenv("SMITH_COVERAGE_FIX_ONLY", "1", 1);
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
     if (access("compile_commands.json", R_OK) == 0) {
@@ -3617,7 +3621,7 @@ static int build_frontend_coverage(SmithRun *run) {
                                  : smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, nullptr),
         .log = results,
         .stdout_only = true});
-    if (status != 0) return status;
+    if (status != 0 || fix_only) return status;
     return files[0] != '\0' && shard[0] == '\0'
                ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
                : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
@@ -3652,6 +3656,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
                                "frontend-coverage: shard <k>/<n> of the files and what they import (#2697)"),
             smith_option_value(b, "merge", "",
                                "frontend-coverage: join the shards' results.tsv, comma separated (#2697)"),
+            smith_option_value(b, "fix_only", "", "frontend-coverage: only fill the cache of fixed files (#2832)"),
             nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };

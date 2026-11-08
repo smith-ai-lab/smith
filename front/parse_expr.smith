@@ -1033,9 +1033,47 @@ static ast::Expr *generic_select(parse::Parser *p) {
     return make(parse::span_from(p, start), {.generic_select = {.control = control, .assocs = assocs}});
 }
 
+// Whether the position is at a variant pattern and its `:=` in smith's own syntax, `.v(x) :=`, `.v :=` or `.v(mut x)
+// :=`: a pattern as a conjunct of an `and` chain in a bool position (D16).
+static Bool at_pattern_test(const parse::Parser *p) {
+    if (!p->new_syntax || !parse::at(p, lex::dot) || parse::peek_at(p, 1).kind != lex::name) return false;
+    Usize at = 2;
+    if (parse::peek_at(p, at).kind == lex::left_paren) {
+        at += 1;
+        if (parse::peek_at(p, at).kind == lex::kw_mut) at += 1;
+        if (parse::peek_at(p, at).kind != lex::name || parse::peek_at(p, at + 1).kind != lex::right_paren) return false;
+        at += 2;
+    }
+    return parse::peek_at(p, at).kind == lex::colon_equal;
+}
+
+// `.v(x) := value`, the value ending at the next `and`: the chain goes on after it. The position is at the `.`.
+static ast::Expr *pattern_test(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    Str name = parse::text(p, parse::advance(p));
+    Str binding = "";
+    Bool is_mut = false;
+    if (parse::accept(p, lex::left_paren)) {
+        is_mut = parse::accept(p, lex::kw_mut);
+        binding = parse::text(p, parse::advance(p));
+        parse::advance(p);
+    }
+    parse::advance(p);
+    ast::Pattern pattern = ast::pattern(name, binding);
+    pattern.is_mut = is_mut;
+    pattern.span = parse::span_from(p, start);
+    Bool outer = p->stop_and;
+    p->stop_and = true;
+    ast::Expr *value = parse::expression(p);
+    p->stop_and = outer;
+    if (value == nullptr) return nullptr;
+    return make(parse::span_from(p, start), {.pattern_test = {.pattern = pattern, .value = value}});
+}
+
 // A primary expression at the position, or null after an error. Parentheses are the caller's.
 static ast::Expr *primary(parse::Parser *p) {
     lex::Token token = parse::peek(p);
+    if (at_pattern_test(p)) return pattern_test(p);
     switch (token.kind) {
     case lex::integer:
         return integer_literal(p);

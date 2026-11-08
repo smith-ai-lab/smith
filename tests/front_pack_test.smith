@@ -270,3 +270,46 @@ export void test_front_pack_old_dots_have_a_fix() {
     expect_text(fix[0].text, "...");
     expect_text(after, ") -> i32:\n    a\n");
 }
+
+// D20: `for (i, x) in enumerate(rest)` unrolls as `for x in rest`, `i` a compile-time `usize` in each copy.
+export void test_front_pack_enumerate_unrolls_with_a_compile_time_index() {
+    Str source = "fn weighted(rest...) -> i32:\n"
+                 "    mut sum: i32 = 0\n"
+                 "    for (i, x) in enumerate(rest):\n"
+                 "        sum = sum + x.to(i32) * (i.to(i32) + 1)\n"
+                 "    sum\n"
+                 "\n"
+                 "fn again(rest...) -> i32:\n"
+                 "    mut sum: i32 = 0\n"
+                 "    for (i, _) in enumerate(rest):\n"
+                 "        sum = sum + rest[i].to(i32)\n"
+                 "    sum\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    weighted(1, 'a', 2.0) + weighted() + again(3, 4.0)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)(1 + 97 * 2 + 2 * 3 + 7));
+}
+
+// D20 over a reflection list: `for (i, f) in enumerate(fields(T))` unrolls as `for f in fields(T)`, in a plain function
+// and in an instance.
+export void test_front_pack_enumerate_over_fields_unrolls() {
+    Str source = "struct Point:\n"
+                 "    x: i32\n"
+                 "    y: i32\n"
+                 "\n"
+                 "fn weighted(p: Point) -> i32:\n"
+                 "    mut total: i32 = 0\n"
+                 "    for (i, f) in enumerate(fields(Point)):\n"
+                 "        total = total + p.[f] * (i.to(i32) + 1)\n"
+                 "    total\n"
+                 "\n"
+                 "fn named(v: auto) -> i32:\n"
+                 "    mut total: i32 = 0\n"
+                 "    for (i, f) in enumerate(fields(typeof(v))):\n"
+                 "        total = total + v.[f] * (i.to(i32) + 10)\n"
+                 "    total\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    weighted(Point(3, 4)) + named(Point(1, 2))\n";
+    test::check_equal(run(source, "front::test::run"), (I32)(3 + 8 + 10 + 22));
+}
