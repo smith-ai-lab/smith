@@ -225,13 +225,16 @@ static Str construct_array(Str element, types::TypeRef t) {
 
 // The text that gives the fields of `record` that `given` marks not (and that have no default) their zero values,
 // each after a comma: `, b = 0, c = nullptr`. Empty when a field cannot be given.
-static Str omitted(types::TypeRef record, U64 given) {
+static Str omitted(types::TypeRef record, U64 given, U64 skip, Bool header) {
     if (record->kind != .record || types::is_union_record(record) || !types::is_complete(record)) return "";
     Str out = "";
     for (Usize k = 0; k < countof(types::slots_of(record).items); k++) {
         if ((given & ((U64)1 << k)) != 0 || types::slots_of(record).items[k].default_value != nullptr) continue;
+        if (k < 64 && (skip & ((U64)1 << k)) != 0) continue; // an option by D23: its struct gives it `= .none`
         types::TypeRef field = types::slots_of(record).items[k].type;
+        if (!header && field->kind == .pointer) return ""; // a pointer has no zero in smith (owner, D23)
         Str zero = flat_zero(field);
+        if (field->kind == .option) zero = ".none";
         if (countof(zero) == 0) zero = construct_one(types::show(field), field);
         if (countof(zero) == 0 || !nameable(types::slots_of(record).items[k].name)) return "";
         out = types::message_of(format::push(out, ", ", types::slots_of(record).items[k].name, " = ", zero));
@@ -239,12 +242,12 @@ static Str omitted(types::TypeRef record, U64 given) {
     return out;
 }
 
-// The fix of the construction `e` that leaves fields out: their zero values after the last argument. Only for a
-// struct this module cannot give defaults, one a C header declares (#2530: a smith struct gets them in its
-// declaration).
-static core::ParseError left_out_fix(const ast::Expr *e, types::TypeRef record, U64 given) {
+// The fix of the construction `e` that leaves fields out: their zero values after the last argument, written at the
+// construction and never as a struct default (owner, #2648: "be explicit about them at the call site"). `skip` marks
+// the fields of the record that become options; a pointer of a smith struct has no zero, the error stays.
+static core::ParseError left_out_fix(const ast::Expr *e, types::TypeRef record, U64 given, U64 skip, Bool header) {
     core::ParseError none = {};
-    Str text = omitted(record, given);
+    Str text = omitted(record, given, skip, header);
     if (countof(text) == 0 || !(e->kind == .call)) return none;
     ast::ExprRef args[:] = e->kind.call.args;
     U32 at = e->span.end - 1; // before the `)`
@@ -1133,23 +1136,6 @@ static types::TypeRef field_type(types::Checked *c, const ast::FieldDecl *f) {
     return t;
 }
 
-// A record of the module that a field left out holds is built with `R()`, so every field of it is left out too, a
-// few records deep.
-static void nest(Wanted *w, types::Checked *c) {
-    for (Usize pass = 0; pass < 4; pass++) {
-        for (Usize r = 0; r < w->count; r++) {
-            ast::FieldDecl fields[:] = w->records[r].fields;
-            for (Usize k = 0; k < countof(fields) && k < fields_max; k++) {
-                if ((w->left[r] & ((U64)1 << k)) == 0 || fields[k].type == nullptr) continue;
-                types::TypeRef t = field_type(c, &fields[k]);
-                if (t == nullptr || t->kind != .record || countof(types::owner_of(t)) > 0) continue;
-                Usize e = record_index(w, types::name_of(t));
-                if (e < w->count) w->left[e] = all_fields(&w->records[e]);
-            }
-        }
-    }
-}
-
 // Whether the written type is a pointer or a function, or a name the module declares as one (`TypeRef := *Ty`, C's
 // `typedef const Ty *TypeRef;`). From the declarations alone, so that the struct's file and its importers agree.
 static Bool pointer_like(const ast::Module *module, const ast::TypeExpr *t) {
@@ -1205,43 +1191,6 @@ static Bool has_plain_pointer(const ast::Module *module, types::Checked *c, cons
     return false;
 }
 
-// The zero of the field `f` written as its default; empty when smith has none to write: a pointer, a function, a type
-// with no zero spelling (#2530 points 3 and 4). A pointer that a read tests against null is an option instead
-// (`nullable`, #2557); any other stays an error: `front.emit_state.Work`, whose pointers are null for some kinds and
-// read with no test, becomes a payload enum by hand (#2555, lead on #2543), and a struct with the same pattern goes
-// there too rather than unwrapping each read.
-static Str default_of(const ast::Module *module, Str source, types::Checked *c, const ast::FieldDecl *f,
-                      const Wanted *w, Bool *filled) {
-    types::TypeRef t = field_type(c, f);
-    if (t == nullptr) return "";
-    if (t->kind == .text) return "\"\"";
-    if (t->kind == .option) return ".none";
-    if (t->kind == .pointer) return "";
-    Str zero = "";
-    if (t->kind == .record && countof(types::owner_of(t)) == 0 && record_index(w, types::name_of(t)) < w->count) {
-        // `R()` needs a default for every field of R, and a pointer that no read tests against null has none: C fills
-        // it before use, so the member is `undefined` like a local (lead on #2613, as D2 option B)
-        zero = types::message_of(format::push(types::name_of(t), "()"));
-        if (has_plain_pointer(module, c, w, record_index(w, types::name_of(t)))) zero = "undefined";
-    } else if (t->kind == .record) {
-        Bool defaulted = countof(types::slots_of(t).items) > 0;
-        for (Usize k = 0; k < countof(types::slots_of(t).items); k++)
-            if (types::slots_of(t).items[k].default_value == nullptr) defaulted = false;
-        zero = defaulted ? types::message_of(format::push(types::show(t), "()")) : construct(types::show(t), t);
-    } else if (t->kind == .array) {
-        Str written = source[f->type->span.start:f->type->span.end];
-        Usize close = 0;
-        for (Usize k = 0; k < countof(written); k++)
-            if (written[k] == ']') close = k;
-        if (close + 1 < countof(written)) zero = construct_array(written[close + 1:countof(written)], t);
-        if (countof(zero) > 0 && !mentions(zero, "nullptr")) *filled = true;
-    } else {
-        zero = scalar_zero(t);
-    }
-    if (mentions(zero, "nullptr")) return "";
-    return zero;
-}
-
 // The fix that writes the pointer field `f` as an option with no value: `next: ?*Node = .none`.
 static core::ParseError nullable_fix(const ast::FieldDecl *f) {
     core::Edits fix = {};
@@ -1257,15 +1206,21 @@ static core::ParseError nullable_fix(const ast::FieldDecl *f) {
     return found;
 }
 
-// The defaults of the fields of the module's records that some construction leaves out, one insertion after each
-// field's type: `count: usize = 0`.
-static core::Errors defaults(Str source, const ast::Module *module, types::Checked *c, core::Errors out, Bool *filled) {
+// What the module's records leave out and test, from the checker, the text and the files that import it.
+static Wanted wanted_of(Str source, const ast::Module *module, types::Checked *c) {
     Wanted w = records_of(module);
-    if (w.count == 0) return out;
+    if (w.count == 0) return w;
     from_checker(&w, c);
     scan_file(&w, source, "", true);
     from_siblings(&w, module);
-    nest(&w, c);
+    return w;
+}
+
+// The fields of the module's records that become options: a pointer a construction leaves out and a read tests,
+// `next: ?*Node = .none`, one insertion before and one after the field's type. No other field gets a default here:
+// the zero of a left-out field is written at each construction (owner, #2648), a default is a hand decision.
+static core::Errors defaults(const ast::Module *module, Wanted *wp, core::Errors out) {
+    Wanted w = *wp;
     for (Usize r = 0; r < w.count; r++) {
         ast::FieldDecl fields[:] = w.records[r].fields;
         U64 nulls = nullable(module, &w, r);
@@ -1277,18 +1232,6 @@ static core::Errors defaults(Str source, const ast::Module *module, types::Check
                 out = add(out, nullable_fix(f));
                 continue;
             }
-            Str zero = default_of(module, source, c, f, &w, filled);
-            if (countof(zero) == 0) continue;
-            core::Edits fix = {};
-            fix = mem::realloc(fix, 1);
-            U32 at = f->type->span.end;
-            fix[0] =
-                (core::Edit){.span = {.start = at, .end = at}, .text = types::message_of(format::push(" = ", zero))};
-            core::ParseError found = {};
-            found.span = f->span;
-            found.message = "a field that a construction leaves out gets its zero as its default";
-            found.fix = fix;
-            out = add(out, found);
         }
     }
     return out;
@@ -1453,8 +1396,8 @@ static core::ParseError zeroed_global_fix(Str source, const ast::Expr *call) {
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
     Bool filled = false;
-    out = defaults(source, module, c, out, &filled);
-    Wanted local = records_of(module);
+    Wanted local = wanted_of(source, module, c);
+    out = defaults(module, &local, out);
     const ast::Expr *last = nullptr;
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error error = c->errors[i];
@@ -1477,13 +1420,18 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
             out = add(out, zeroed_global_fix(source, error.left_out_call));
             continue;
         }
-        if (!from_header && (countof(types::owner_of(record)) > 0 || own < local.count)) continue;
+        U64 becomes_option = 0;
+        if (!from_header && countof(types::owner_of(record)) == 0 && own < local.count)
+            becomes_option = nullable(module, &local, own);
         last = error.left_out_call;
-        core::ParseError given_zero = left_out_fix(error.left_out_call, record, error.left_out_given);
+        core::ParseError given_zero =
+            left_out_fix(error.left_out_call, record, error.left_out_given, becomes_option, from_header);
+        if (!from_header && countof(given_zero.fix) == 0) continue; // a pointer or a union: the error stays
         if (countof(given_zero.fix) == 0 && global_zero(module, error.left_out_call)) {
             out = add(out, undefined_fix(error.left_out_call)); // a C union or struct of a global: C's zeroed storage
             continue;
         }
+        if (countof(given_zero.fix) > 0 && mentions(given_zero.fix[0].text, "array.filled")) filled = true;
         out = add(out, given_zero);
     }
     Work w = {};

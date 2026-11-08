@@ -167,7 +167,7 @@ export void test_front_fix_loader_a_rest_import_result_is_discarded() {
 }
 
 // #2648: a struct of another module that holds a `str` is zeroed field by field, `Place(file = "", line = 0)`, as
-// the field's default in the struct that holds it (front/cimport.smith's `PlaceRow`).
+// the value given at the construction that leaves it out (front/cimport.smith's `PlaceRow`; owner, #2648).
 export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
     arena::Arena memory = test::memory(1U << 22);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
@@ -193,9 +193,9 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
         files::Bytes bytes = back.ok;
         char chars[:] = mem::view(bytes, char);
         Str got = chars;
-        check_text(got,
-                   "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place = "
-                   "front_fix_zero_place.Place(file = \"\", line = 0)\nfn f() -> u32:\n    "
-                   "row := Row(kind = 1)\n    return row.kind\n");
+        check_text(
+            got, "import front_fix_zero_place\nstruct Row:\n    kind: u32\n    place: front_fix_zero_place.Place\n"
+                 "fn f() -> u32:\n    row := Row(kind = 1, place = front_fix_zero_place.Place(file = \"\", line = 0))\n"
+                 "    return row.kind\n");
     }
 }

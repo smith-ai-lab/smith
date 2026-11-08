@@ -500,7 +500,7 @@ export void test_an_empty_compound_literal_is_rewritten_to_a_call() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
         "t.smith", "module m;\ntypedef struct { int a; } Node;\nstatic Node make(void) { return (Node){}; }\n");
-    check_text(fixed.text, "struct Node:\n    a: i32 = 0\nfn make() -> Node:\n    return Node()\n");
+    check_text(fixed.text, "struct Node:\n    a: i32\nfn make() -> Node:\n    return Node(a = 0)\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }

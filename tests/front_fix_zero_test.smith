@@ -52,11 +52,12 @@ export void test_front_fix_zero_a_read_between_the_writes_takes_the_default() {
         "struct Q:\n    a: i32\n    b: i32\nfn f():\n    mut z: Q = Q(a = 0, b = 0)\n    z.a = 1\n    z.b = z.a\n");
 }
 
-export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() {
+// A pointer has no zero (owner, D23): the construction that leaves it out stays the error, and no default is written.
+export void test_front_fix_zero_a_construction_that_leaves_a_pointer_out_stays_the_error() {
     expect_fixed(
         "module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n    char *p;\n};\n"
         "E make(int k) {\n    return (E){.k = k};\n}\n",
-        "struct S:\n    a: i32 = 0\n    b: i32 = 0\nstruct E:\n    k: i32\n    s: S = S()\n    p: *char\n"
+        "struct S:\n    a: i32\n    b: i32\nstruct E:\n    k: i32\n    s: S\n    p: *char\n"
         "fn make(k: i32) -> E:\n    return E(k = k)\n");
 }
 
@@ -158,6 +159,13 @@ export void test_front_fix_zero_fills_a_static_array_of_a_named_length() {
         "    buf[0] = 1\n");
 }
 
+export void test_front_fix_zero_fills_the_fields_a_designated_list_leaves_out() {
+    expect_fixed("module m;\nstruct S {\n    int a;\n    int b;\n};\nstruct E {\n    int k;\n    S s;\n};\n"
+                 "E make(int k) {\n    return (E){.k = k};\n}\n",
+                 "struct S:\n    a: i32\n    b: i32\nstruct E:\n    k: i32\n    s: S\n"
+                 "fn make(k: i32) -> E:\n    return E(k = k, s = S(a = 0, b = 0))\n");
+}
+
 export void test_front_fix_zero_fills_a_long_global_array() {
     expect_fixed("module m;\nstatic int table[1000];\n",
                  "import std.array\nstatic mut table: [1000]i32 = array.filled(i32, 1000, 0)\n");
@@ -176,29 +184,31 @@ export void test_front_fix_a_local_static_const_table_loses_its_static() {
                  "fn f():\n    t: [2]f64 = [1.0, 2.0]\n    g(&t[0])\n");
 }
 
-// #2530 (the owner, 2026-11-06): a field that a construction leaves out gets C's zero written as its default in the
-// struct, and the construction stays as written. A number is `0` or `0.0`, a `bool` `false`, a `str` `""`, a slice
-// `[]`, an option `.none`, an enumeration its variant of value 0, a fixed array `array.filled`, a struct of the module
-// `S()` (its own fields get defaults too). A pointer gets none: it is left to become `?*T`.
-export void test_front_fix_zero_left_out_fields_get_defaults_in_the_struct() {
+// Owner, #2648: "we don't want to do zeros initialization ... you should be explicit about them at the call site". A
+// field that a construction leaves out gets its zero written in that construction, and the struct keeps no default
+// (one is a hand decision). A number is `0` or `0.0`, a `bool` `false`, a `str` `""`, a slice `[]`, an option `.none`,
+// an enumeration its variant of value 0, a fixed array of those `[0, 0, 0]`, a struct of the module `S(...)`.
+export void test_front_fix_zero_left_out_fields_are_given_at_the_construction() {
     expect_fixed(
         "enum Mode:\n    off\n    on\nstruct In:\n    n: i32\nstruct W:\n    a: i32\n    f: f64\n    ok: bool\n"
         "    name: str\n    xs: []i32\n    maybe: ?i32\n    mode: Mode\n    grid: [3]i32\n    inner: In\n"
-        "    p: *i32\nfn make() -> W:\n    return W(a = 1)\n",
-        "import std.array\nenum Mode:\n    off\n    on\nstruct In:\n    n: i32 = 0\nstruct W:\n    a: i32\n"
-        "    f: f64 = 0.0\n    ok: bool = false\n    name: str = \"\"\n    xs: []i32 = []\n    maybe: ?i32 = .none\n"
-        "    mode: Mode = .off\n    grid: [3]i32 = array.filled(i32, 3, 0)\n    inner: In = In()\n    p: *i32\n"
-        "fn make() -> W:\n    return W(a = 1)\n");
+        "fn make() -> W:\n    return W(a = 1)\n",
+        "enum Mode:\n    off\n    on\nstruct In:\n    n: i32\nstruct W:\n    a: i32\n"
+        "    f: f64\n    ok: bool\n    name: str\n    xs: []i32\n    maybe: ?i32\n    mode: Mode\n"
+        "    grid: [3]i32\n    inner: In\n"
+        "fn make() -> W:\n    return W(a = 1, f = 0.0, ok = false, name = \"\", xs = [], maybe = .none, mode = .off, "
+        "grid = [0, 0, 0], inner = In(n = 0))\n");
 }
 
-// Only the fields some construction leaves out get a default; a field every construction gives keeps none.
+// A struct is left as written when all its constructions give every field.
 export void test_front_fix_zero_a_field_every_construction_gives_gets_no_default() {
     Str source = "struct P:\n    x: i32\n    y: i32\nfn make() -> P:\n    return P(x = 1, y = 2)\n";
     expect_fixed(source, source);
 }
 
-// A construction in another file of the folder (`a.P(x = 1)` after `import fixdef.a`) gives the struct its defaults.
-export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_default() {
+// A construction in another file of the folder (`a.P(x = 1)` after `import fixdef.a`) does not change the struct: the
+// zero goes in that construction, when its own file is fixed.
+export void test_front_fix_zero_a_construction_in_a_neighbouring_file_leaves_the_struct() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -209,13 +219,13 @@ export void test_front_fix_zero_a_construction_in_a_neighbouring_file_gives_the_
     test::check(fix::store("/tmp/front_fix_zero_test_neighbour/b.smith", user));
     fix::Fixed fixed =
         fix::fix_text("/tmp/front_fix_zero_test_neighbour/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
-    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32\n";
     test::check_equal(fixed.text, want);
 }
 
-// A construction in a file of another folder (`tests/b.smith` builds `lib/a.smith`'s `P`) gives the default too: the
-// fixer reads every file under the working folder that imports the module (#2543).
-export void test_front_fix_zero_a_construction_in_another_folder_gives_the_default() {
+// A construction in a file of another folder (`tests/b.smith` builds `lib/a.smith`'s `P`) leaves the struct as it is
+// too.
+export void test_front_fix_zero_a_construction_in_another_folder_leaves_the_struct() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
@@ -230,7 +240,7 @@ export void test_front_fix_zero_a_construction_in_another_folder_gives_the_defau
     test::check_equal(c::chdir("/tmp/front_fix_zero_test_tree"), 0);
     fix::Fixed fixed = fix::fix_text("lib/a.smith", "pub struct P:\n    pub x: i32\n    pub y: i32\n");
     test::check_equal(c::chdir(home), 0);
-    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32 = 0\n";
+    Str want = "pub struct P:\n    pub x: i32\n    pub y: i32\n";
     test::check_equal(fixed.text, want);
 }
 
@@ -375,14 +385,14 @@ export void test_front_fix_zero_a_tag_that_is_also_a_function_starts_with_mem_ze
                  "    if stat.stat(path, &info) != 0:\n        return before\n    return info.st_size.to(i32)\n");
 }
 
-// A member that C zeroes, of a struct with a pointer and a function pointer nothing tests against null, is
-// `undefined`: `Step()` would need a default for each pointer, and a pointer is never null in smith (lead, #2613).
-export void test_front_fix_zero_a_member_with_plain_pointers_is_undefined() {
+// A member of a struct with a pointer and a function pointer nothing tests against null has no zero (owner, D23): the
+// construction that leaves it out stays the error, and no default or `undefined` is written.
+export void test_front_fix_zero_a_member_with_plain_pointers_stays_the_error() {
     expect_fixed("module m;\nstruct Step {\n    const char *name;\n    int (*run)(int);\n    int n;\n};\n"
                  "struct Owner {\n    int id;\n    Step step;\n};\n"
                  "void f(Owner *o) {\n    Owner x = {.id = 1};\n    g(&x);\n}\n",
-                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32 = 0\n"
-                 "struct Owner:\n    id: i32\n    step: Step = undefined\n"
+                 "struct Step:\n    name: *char\n    run: fn(i32) -> i32\n    n: i32\n"
+                 "struct Owner:\n    id: i32\n    step: Step\n"
                  "fn f(o: *Owner):\n    x := Owner(id = 1)\n    g(&x)\n");
 }
 
