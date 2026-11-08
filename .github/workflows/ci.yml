@@ -999,7 +999,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .smith/frontend-coverage/fixed
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^step-cache-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^(step-cache|count-fixed)-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
           if [ -z "$tag" ]; then echo "fixed files: none saved yet"; exit 0; fi
           d=$(mktemp -d)
           gh release download "$tag" -D "$d" -p count-fixed.tar.gz
@@ -1234,6 +1234,49 @@ jobs:
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
+
+  count-fixed-save:
+    # the queue run saves the fixed files of its own head commit (#2832). Main's `warm` publishes them with the step cache
+    # about 11 minutes after a merge, so the very next queue run always started cold (the fix job: 19 minutes instead of
+    # a few). A group's head commit is the tree main becomes if the group merges, so a run that passed (`ci` is green and
+    # the fix job ran) puts its `count-fixed` artifact in a prerelease `count-fixed-<sha7>`, which the fix job restores
+    # from like a `step-cache-*` one. Only a passing run saves, and a cache entry is keyed by what it depends on, so one
+    # for a group that never merges costs nothing. It does not gate the merge: it needs `ci` and nothing needs it. The 3
+    # newest `count-fixed-*` stay.
+    needs: [ci, frontend-coverage-fix]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.ci.result == 'success' && needs.frontend-coverage-fix.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: count-fixed-${{ github.sha }}
+          path: ${{ runner.temp }}/f/fixed
+      - name: Release the fixed files
+        # a failure only leaves the next run cold
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          tar -C "$RUNNER_TEMP/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
+          tag="count-fixed-${GITHUB_SHA:0:7}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "$out/count-fixed.tar.gz" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "count fixed $tag" --notes "The fixed files of the count at $GITHUB_SHA (#2832). Not a release of smith."
+          fi
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^count-fixed-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
