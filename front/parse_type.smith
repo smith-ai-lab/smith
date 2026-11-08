@@ -1041,6 +1041,10 @@ static Bool c_declarator_ahead(const parse::Parser *p) {
 // `long double`, a variadic function type) is a warning with no edit that says what to do. A type inside another is
 // read first, so its warning comes first and wins an overlap; the next pass of `smith lint --fix` mends the outer one.
 
+// Set while an import is mended for the checker (`fix::mended_import`): every star that points at a non-const type is
+// written `*mut`, as in a cast, so the mended text keeps which pointers are writable and which are `const` (#2648).
+export Bool writable_stars = false;
+
 // The type being written in smith's own syntax: what goes before the base, the brackets of the run being read (`dims`
 // of them), and what is wrong with the type when it has no spelling.
 struct Rewrite {
@@ -1334,7 +1338,7 @@ static void scan_suffixes(const parse::Parser *p, const OldType *t, Rewrite *r) 
         }
         flush_run(r);
         if (kind == lex::star) {
-            Bool writable = r->casting && !r->pointee_const;
+            Bool writable = (r->casting || writable_stars) && !r->pointee_const;
             r->prefix = format::push("*", r->volatile_next ? "volatile " : "", writable ? "mut " : "", r->prefix);
             r->pointee_const = false;
             r->volatile_next = false;
