@@ -1525,8 +1525,9 @@ static core::Errors writable_field_edits(core::Errors out, Str source, const ast
         const ast::FieldDecl *field = read_only_field_named(module, name);
         if (field == nullptr) continue;
         Bool slice = field->type->kind == .slice;
-        Bool star_first = slice || field->type->kind.pointer.pointee->span.start > field->type->span.start;
-        if (!star_first) continue;
+        if (!slice && (field->type->kind != .pointer ||
+                       field->type->kind.pointer.pointee->span.start <= field->type->span.start))
+            continue;
         U32 at = field->type->span.start + (slice ? 2 : 1);
         if (option_seen(out, at)) continue;
         core::Edits fix = {};
