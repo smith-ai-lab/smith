@@ -1,0 +1,37 @@
+name: batch-wait
+description: >
+  The light wait of a merge-queue run (#2851): while a later queue group is built on this one, the run waits on this
+  one runner and builds nothing; with HEADGREEN the later group's passing run merges this entry with it, and this
+  run is cancelled when its branch goes. Once no later group is built on it (the later ones failed or left), it
+  returns and the run builds the full checks of its own tree. It never makes `ci` pass by itself. The logic is
+  wait.sh, tested by test.sh against made-up queue branches. Needs `actions: write`; does nothing on other events.
+
+outputs:
+  batch:
+    description: "alone (no wait), waited (waited, now the last entry), capped (waited an hour, builds anyway); empty on other events"
+    value: ${{ steps.wait.outputs.batch }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait while a later queue group is built on this one
+      id: wait
+      if: github.event_name == 'merge_group'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO_URL: https://github.com/${{ github.repository }}
+        OWN_REF: ${{ github.ref }}
+        HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+      run: |
+        start=$(date +%s); rc=0
+        out=$(bash "$GITHUB_ACTION_PATH/wait.sh") || rc=$?
+        if [ "$rc" = 3 ]; then
+          echo "batch: group $OWN_REF left the queue (merged with a later group, or dropped): cancelling run $GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run cancel "$GITHUB_RUN_ID"
+          sleep 60
+          exit 1
+        fi
+        [ "$rc" = 0 ] || exit "$rc"
+        echo "$out" >>"$GITHUB_OUTPUT"
+        echo "${out/=/: } (waited $(( $(date +%s) - start )) s)" | tee -a "$GITHUB_STEP_SUMMARY"

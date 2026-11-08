@@ -36,10 +36,18 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    # 3 minutes of work plus the 20-minute cap of `yield-to-queue` (#2356)
-    timeout-minutes: 25
+    # 3 minutes of work plus the 20-minute cap of `yield-to-queue` (#2356, a pull request) or the 60-minute cap of
+    # `batch-wait` (#2851, a queue entry)
+    timeout-minutes: 75
+    # `batch-wait` cancels the run of a group that left the queue
+    permissions:
+      contents: read
+      actions: write
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
+      batch: ${{ steps.batch.outputs.batch }}
+      prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
@@ -62,6 +70,16 @@ jobs:
         # a pull request's run waits (at most 20 minutes) while a queue run waits for runners, before any heavy job
         # starts (#2356, knowledge/ci-hosted.md); first, so the picks below are made when the jobs are about to start
         uses: ./.github/actions/yield-to-queue
+      - name: Wait while a later queue entry is built on this one
+        # batching (#2851, knowledge/ci-hosted.md): with HEADGREEN a later group's passing run merges every entry ahead
+        # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
+        # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
+        # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
+        id: batch
+        uses: ./.github/actions/batch-wait
+      - name: Test the batch wait
+        if: github.event_name == 'pull_request'
+        run: bash .github/actions/batch-wait/test.sh
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -112,6 +130,16 @@ jobs:
           fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: The pull requests this queue entry tests
+        id: prs
+        if: github.event_name == 'merge_group'
+        # every entry ahead of this one and this one: the squash commits on top of main, each subject ending in (#N)
+        run: |
+          git fetch -q origin main
+          prs=$(git log --format=%s "$(git merge-base HEAD origin/main)..HEAD" | grep -oE '[(]#[0-9]+[)]$' | tr -d '()' | tac | paste -sd ' ' -)
+          echo "prs=$prs" >>"$GITHUB_OUTPUT"
+          echo "tests: $prs" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Does the change touch the warm job
         id: warm
@@ -662,8 +690,11 @@ jobs:
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
+          BATCH: ${{ needs.changes.outputs.batch }}
+          PRS: ${{ needs.changes.outputs.prs }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           case " $RESULTS " in
           *" failure "* | *" cancelled "*)
             echo "::error::a CI job failed or was cancelled"
