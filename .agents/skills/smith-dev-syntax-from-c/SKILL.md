@@ -53,8 +53,9 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | `#define F(x) ...`, `#pragma`, `#error "..."` | a function or a generic, an attribute, `static_assert(...)` |
 | `extern I32 errno;`, `extern int f(void);` | `extern mut errno: i32`, `extern fn f() -> i32` |
 | `static I32 count;` at file scope | `mut count: i32 = 0` |
+| `volatile T *p`, `volatile T x`, `T *volatile p`, `(volatile T *)x`, `const volatile void *` | `p: *volatile t`, `x: volatile t`, `p: volatile *t`, `x.cast(*volatile mut t)`, `*volatile void` (the owner, 2026-11-07: "Let's go with option 1"; `__asm__ volatile` stays as it is) |
 | `__asm__("...");` at file scope | `asm`...`` with `@when`, raw text over several lines |
 | `union`, `goto` and labels | a payload `enum`; `defer`, `break`, `continue`, `match` |
 | `&mut x`, `impl`, `x?`, `.iter().map()` (other languages) | errors naming `&x`, a module's functions, `try x`, `for` |
 
-Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Module-level asm is the `asm` literal ([smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md)); asm inside a function, `volatile`, atomics, bitfields, `alignas` and `[[gnu::format(...)]]` wait until after the switch-over.
+Forms with no row are not settled: the "Not settled yet" section of each tour skill lists them. Module-level asm is the `asm` literal ([smith-dev-syntax-asm](../smith-dev-syntax-asm/SKILL.md)); asm inside a function, atomics, bitfields, `alignas` and `[[gnu::format(...)]]` wait until after the switch-over.
