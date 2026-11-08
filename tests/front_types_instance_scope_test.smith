@@ -1,0 +1,199 @@
+// Tests of the names an instance of an imported generic sees when it declares one (#2669): its own body's and its
+// module's names only, so a local of the generic never "hides" a global of the module that calls it. Each scenario is
+// source text in smith's own syntax checked by front::types_decl with a loader that hands out the module `util`.
+module front_types_instance_scope_test;
+
+import front::ast;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static const ast::Module *util_tree = nullptr;
+
+static Bool same(const char *a, Str b) {
+    for (Usize i = 0; i < countof(b); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return a[countof(b)] == '\0';
+}
+
+// Whether `text` is `util::`.
+static Bool same_prefix(Str text) {
+    Str want = "util::";
+    if (countof(text) != countof(want)) return false;
+    for (Usize i = 0; i < countof(want); i++) {
+        if (text[i] != want[i]) return false;
+    }
+    return true;
+}
+
+static const ast::Module *deep_tree = nullptr;
+
+static const ast::Module *load(const char *path) {
+    if (same(path, "deep") || same(path, "std.deep")) return deep_tree;
+    if (same(path, "std.util")) return util_tree;
+    if (same(path, "util")) return util_tree;
+    return nullptr;
+}
+
+// The errors of `source` with `util` written as `library`.
+static Usize errors_with(Str library, Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed u = parser::parse_new("util.smith", library);
+    test::check_equal(countof(u.errors), (Usize)0);
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 1);
+    Str name = "util";
+    parts[0] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = u.module;
+    copy->name.segments = parts;
+    util_tree = copy;
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    return r.error_count;
+}
+
+static Str library() {
+    return "pub fn keep(x: auto) -> i32:\n    memory: i32 = 7\n    memory\n";
+}
+
+export void test_front_types_instance_scope_a_local_of_an_imported_generic_hides_no_global_of_the_caller() {
+    test::check_equal(
+        errors_with(library(), "import util\n\nmemory: i32 = 3\n\nfn f() -> i32: util.keep(1) + memory\n"), (Usize)0);
+}
+
+export void test_front_types_instance_scope_a_local_that_hides_its_own_global_is_still_refused() {
+    test::check_condition(errors_with("", "memory: i32 = 3\n\nfn f() -> i32:\n    memory: i32 = 4\n    memory\n") > 0);
+}
+
+// An error in the body of an instance of `util`'s generic keeps its fix with `util` (#2669): the edits are offsets in
+// util's text, so the caller's file gets none, and the fixer applies them when it mends `util`.
+export void test_front_types_instance_scope_a_fix_in_an_imported_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed u = parser::parse_new("util.smith", "pub fn truthy(x: auto) -> bool: x\n");
+    test::check_equal(countof(u.errors), (Usize)0);
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 1);
+    Str name = "util";
+    parts[0] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = u.module;
+    copy->name.segments = parts;
+    util_tree = copy;
+    parser::Parsed p = parser::parse_new("t.smith", "import util\n\nfn f() -> bool: util.truthy(3)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    if (r.error_count != 1) return;
+    types::Error got = r.errors[0];
+    test::check_equal(countof(got.fix), (Usize)0);
+    test::check_equal(countof(got.module_fix), (Usize)1);
+    test::check_condition(countof(got.fix_module) == 6 && same_prefix(got.fix_module));
+}
+
+static const ast::Module *module_named(Str file, Str source, Str name) {
+    parser::Parsed u = parser::parse_new(file, source);
+    test::check_equal(countof(u.errors), (Usize)0);
+    Bool in_std = countof(name) > 4 && name[0] == 's' && name[1] == 't' && name[2] == 'd' && name[3] == '.';
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, in_std ? 2 : 1);
+    Str lead = "std";
+    if (in_std) {
+        parts[0] = (ast::Identifier){.text = lead};
+        parts[1] = (ast::Identifier){.text = name[4:countof(name)]};
+    } else {
+        parts[0] = (ast::Identifier){.text = name};
+    }
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = u.module;
+    copy->name.segments = parts;
+    return copy;
+}
+
+// The same through two modules: the instance of `util.outer` calls `deep.inner`, whose instance needs the fix; the
+// fix is `deep`'s.
+export void test_front_types_instance_scope_a_fix_in_a_nested_imported_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    deep_tree = module_named("deep.smith", "pub fn inner(x: auto) -> bool: x\n", "deep");
+    util_tree = module_named("util.smith", "import deep\n\npub fn outer(x: auto) -> bool: deep.inner(x)\n", "util");
+    parser::Parsed p = parser::parse_new("t.smith", "import util\n\nfn f() -> bool: util.outer(3)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    deep_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    for (Usize i = 0; i < r.error_count; i++) {
+        types::Error got = r.errors[i];
+        test::check_equal(countof(got.fix), (Usize)0);
+        test::check_equal(countof(got.module_fix), (Usize)1);
+        Str want = "deep::";
+        test::check_equal(countof(got.fix_module), countof(want));
+    }
+}
+
+// The same with the modules of std, as `math.lerp` calls `math_trig.lerp`: the fix is `std::deep::`'s.
+export void test_front_types_instance_scope_a_fix_in_a_nested_std_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    deep_tree = module_named("deep.smith", "pub fn inner(x: auto) -> bool: x\n", "std.deep");
+    util_tree =
+        module_named("util.smith", "import std.deep\n\npub fn outer(x: auto) -> bool: deep.inner(x)\n", "std.util");
+    parser::Parsed p = parser::parse_new("t.smith", "import std.util\n\nfn f() -> bool: util.outer(3)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    deep_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    for (Usize i = 0; i < r.error_count; i++) {
+        types::Error got = r.errors[i];
+        test::check_equal(countof(got.fix), (Usize)0);
+        test::check_equal(countof(got.module_fix), (Usize)1);
+        Str want = "std::deep::";
+        test::check_equal(countof(got.fix_module), countof(want));
+    }
+}
+
+// `math.lerp` as the fixer reads it: an auto wrapper calling `deep::inner` (a `::` path, today's syntax), a `num`
+// generic whose `1 - t` needs `1.0`. The path is looked up through the wrapper's module, `std::util::deep`.
+export void test_front_types_instance_scope_a_literal_fix_in_a_nested_std_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    deep_tree = module_named(
+        "deep.smith",
+        "pub inline fn inner(a: num, b: typeof(a), t: typeof(a)) -> typeof(a):\n    return a * (1 - t) + b * t\n",
+        "std.deep");
+    util_tree = module_named("util.smith",
+                             "import std.deep\n\npub inline fn outer(a: auto, b: typeof(a), t: typeof(a)) -> "
+                             "typeof(a):\n    return deep::inner(a, b, t)\n",
+                             "std.util");
+    parser::Parsed p = parser::parse_new("t.smith", "import std.util\n\nfn f() -> f64: util.outer(0.0, 10.0, 0.25)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    deep_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    for (Usize i = 0; i < r.error_count; i++) {
+        types::Error got = r.errors[i];
+        test::check_equal(countof(got.fix), (Usize)0);
+        test::check_equal(countof(got.module_fix), (Usize)1);
+        Str want = "std::deep::";
+        test::check_equal(countof(got.fix_module), countof(want));
+    }
+}

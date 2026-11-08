@@ -1,0 +1,49 @@
+// The line a failed build of smith's own tree ends with when the smith running it is older than the newest release
+// (#2787). The fixture looks like smith's tree and fails; a curl of its own, first on PATH, answers the request for the
+// newest release's commit, so no test touches the network.
+// smith-covers: smith.c tests/build_fixtures/stale_tree/
+module build_stale_hint_test;
+
+import std::test;
+import scratch;
+
+static const char *const fake_curl_head = "printf '#!/bin/sh\\nprintf %%s %s\\n' ";
+static const char *const stale_line = "is older than the newest release";
+
+// A fixture project whose PATH starts with a curl that prints a redirect to the release of `commit`.
+static scratch::Run failing_build(const scratch::Project *p, const char *commit) {
+    char command[512];
+    __builtin_snprintf(command, sizeof command,
+                       "mkdir -p fake && %s\"'https://github.com/x/y/releases/download/stage0-%s/f'\" > fake/curl && "
+                       "chmod +x fake/curl && PATH=\"$PWD/fake:$PATH\" smith build 2>&1",
+                       fake_curl_head, commit);
+    return scratch::sh(p, command);
+}
+
+export void test_build_stale_hint_an_older_smith_names_smith_build_stage0() {
+    scratch::Project p = scratch::make("p", "stale_tree");
+    defer scratch::clean(&p);
+    const char *version = scratch::capture(&p, "smith version");
+    defer scratch::release(version);
+    if (!scratch::contains(version, " commit ")) return; // a smith built with one cc command knows no commit
+    scratch::Run run = failing_build(&p, "0123456789abcdef0123456789abcdef01234567");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_failure("stale: the failing step fails the build", &run);
+    scratch::expect_contains("stale: the line names the newest release", run.out,
+                             "older than the newest release (0123456789abcdef0123456789abcdef01234567)");
+    scratch::expect_contains("stale: the line names the fix", run.out, "run `smith build stage0`");
+}
+
+export void test_build_stale_hint_the_newest_smith_says_nothing() {
+    scratch::Project p = scratch::make("p", "stale_tree");
+    defer scratch::clean(&p);
+    const char *commit = scratch::capture(&p, "smith version | sed 's/.*commit //' | tr -d '\\n'");
+    defer scratch::release(commit);
+    if (commit[0] == '\0') return;
+    scratch::Run run = failing_build(&p, commit);
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_failure("newest: the failing step fails the build", &run);
+    scratch::expect_lacks("newest: no line about an older smith", run.out, stale_line);
+}

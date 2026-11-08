@@ -566,6 +566,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .variant) return dispatch_variant(e, x, hint);
     if (x->kind == .tuple_lit) return tupled::literal(e, x, hint);
     if (x->kind == .lambda) return lambdas::lambda(e, x, hint);
+    if (x->kind == .pattern_test) return state::fail("not yet supported: a pattern in an expression", x->span); // #2650
     if (x->kind == .stmt_expr) return dispatch_stmt_expr(e, x, hint);
     if (x->kind == .floating) return arith::float_literal(e, x, hint);
     if (x->kind == .cast) {
