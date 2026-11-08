@@ -95,3 +95,39 @@ export void test_front_types_prelude_private_names_stay_hidden() {
 export void test_front_types_prelude_without_one_the_name_is_unknown() {
     test::check_condition(errors_with("", "fn f() -> i32: twice(3)\n", "unknown name") > 0);
 }
+
+// `pick` asks a concept function about its argument's type: each instance keeps one branch, so the `f32` instance never
+// reads `return x` and the `i32` one never reads `y: f32 = x`.
+static Str picks() {
+    return "pub fn pick(x: auto) -> i32:\n    if floaty(typeof(x)):\n        y: f32 = x\n        return 1\n"
+           "    else:\n        return x\n\npub fn main() -> i32:\n    a: f32 = 1.0\n    return pick(a) + pick(3)\n";
+}
+
+export void test_front_types_prelude_a_concept_function_decides_the_branch() {
+    Str source =
+        "fn floaty(T: type) -> bool: is_float(T)\n\n"
+        "pub fn pick(x: auto) -> i32:\n    if floaty(typeof(x)):\n        y: f32 = x\n        return 1\n"
+        "    else:\n        return x\n\npub fn main() -> i32:\n    a: f32 = 1.0\n    return pick(a) + pick(3)\n";
+    test::check_equal(errors_with("", source, ""), (Usize)0);
+}
+
+export void test_front_types_prelude_a_concept_of_the_prelude_decides_the_branch() {
+    test::check_equal(errors_with("pub fn floaty(T: type) -> bool: is_float(T)\n", picks(), ""), (Usize)0);
+}
+
+// A function of a value is no concept: both branches are read, and each instance fails in one of them.
+export void test_front_types_prelude_a_function_of_a_value_decides_nothing() {
+    test::check_condition(errors_with("pub fn floaty(n: i32) -> bool: n > 0\n", picks(), "") > 0);
+}
+
+// A concept that calls concepts, and one of two types, answered on one stack: `number(f32)` and not `either(f32, i32)`.
+export void test_front_types_prelude_concepts_call_concepts() {
+    Str source = "fn floaty(T: type) -> bool: is_float(T)\n\n"
+                 "fn number(T: type) -> bool: floaty(T) or is_integer(T)\n\n"
+                 "fn either(A: type, B: type) -> bool: floaty(A) and not floaty(B)\n\n"
+                 "pub fn two(x: auto) -> i32:\n"
+                 "    if number(typeof(x)) and not either(typeof(x), i32):\n        return x\n"
+                 "    else:\n        return 2\n\n"
+                 "pub fn main() -> i32:\n    a: f32 = 1.0\n    return two(3) + two(a)\n";
+    test::check_equal(errors_with("", source, ""), (Usize)0);
+}

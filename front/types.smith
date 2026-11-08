@@ -1806,6 +1806,40 @@ export Str written_concept(const ast::TypeExpr *t) {
     return lowercase_concept(written);
 }
 
+static Bool is_type_name(const ast::TypeExpr *written);
+
+// The one expression a statement gives as a function's value: `return e`, the expression `e`, or a block of one of
+// those; else null.
+static const ast::Expr *single_value(const ast::Stmt *body) {
+    if (body != nullptr && body->kind == .block && countof(body->kind.block.items) == 1)
+        body = body->kind.block.items[0];
+    if (body == nullptr) return nullptr;
+    if (body->kind == .return_stmt) return body->kind.return_stmt.value;
+    if (body->kind == .expression) return body->kind.expression.value;
+    return nullptr;
+}
+
+// Whether the written type is the bare name `bool`.
+static Bool is_bool_name(const ast::TypeExpr *written) {
+    if (written == nullptr || written->kind != .named) return false;
+    ast::Path path = written->kind.named.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "bool");
+}
+
+// The body of a concept function, a question about types answered at compile time: `fn floaty(T: type) -> bool:
+// is_float(T)`, every parameter a `type`, the result `bool`, the body one expression (the prelude's `signed`, a
+// user's `shape`). Null for any other declaration.
+export const ast::Expr *concept_body(const ast::Decl *d) {
+    if (d == nullptr || d->kind != .function || !d->kind.function.is_new) return nullptr;
+    if (!is_bool_name(d->kind.function.result) || countof(d->kind.function.params) == 0) return nullptr;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_rest || params[i].is_pack || params[i].is_gather || !is_type_name(params[i].type))
+            return nullptr;
+    }
+    return single_value(d->kind.function.body);
+}
+
 // Whether the type satisfies the concept: `int` any integer, `signed` and `unsigned` by sign, `float`, `num` either,
 // `pointer` any pointer (#1821).
 export Bool concept_holds(Str concept, TypeRef t) {
