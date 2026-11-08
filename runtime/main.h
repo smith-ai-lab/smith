@@ -46,7 +46,7 @@ typedef struct {
 
 #define SMITH_LIBRARY(library, is_lang) SMITH_LIBRARY_FLAGS(library, is_lang, nullptr)
 
-extern const SmithLibrary smith_libraries[32];
+extern const SmithLibrary smith_libraries[33];
 
 // `--time` and SMITH_TIME=1 (#2681): where the time goes, printed to stderr after the normal output as
 // `time: <phase> <ms> ms`, nested phases indented. One monotonic clock read per phase, and none at all when it is off.

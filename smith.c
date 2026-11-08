@@ -1144,6 +1144,12 @@ static constexpr unsigned char smith_optimize_asm_header[] = {
 static constexpr unsigned char smith_optimize_asm_source[] = {
 #embed "lib/optimize_asm.c"
 };
+static constexpr unsigned char smith_net_tls_header[] = {
+#embed "include/smith/net_tls.h"
+};
+static constexpr unsigned char smith_net_tls_source[] = {
+#embed "lib/net_tls.c"
+};
 static constexpr unsigned char smith_wrapping_source[] = {
 #embed "lib/std/wrapping.smith"
 };
@@ -1211,6 +1217,7 @@ const SmithLibrary smith_libraries[] = {
     SMITH_LIBRARY(mem, true),
     SMITH_LIBRARY(process, true),
     SMITH_LIBRARY(net, true),
+    SMITH_LIBRARY(net_tls, false),
     SMITH_LIBRARY(optimize, true),
     SMITH_LIBRARY(optimize_asm, false),
     SMITH_LIBRARY_FLAGS(random, true, "-ffp-contract=off\n"),
