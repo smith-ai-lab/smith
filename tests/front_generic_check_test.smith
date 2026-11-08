@@ -197,3 +197,26 @@ export void test_front_generic_a_concept_value_takes_a_literal_and_an_operator_a
     types::Checked r = checked(source);
     test::check_equal(countof(errors_of(&r)), (Usize)0);
 }
+
+export void test_front_generic_a_call_inside_a_generic_is_recorded_per_outer_instance() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str source = "fn inner(T: type, a: T) -> T:\n    return a\n\n"
+                 "fn outer(T: type, a: T) -> T:\n    return inner(T, a)\n\n"
+                 "fn run() -> i32:\n    let y: f64 = outer(f64, 1.5)\n    return outer(i32, 3)\n";
+    types::Checked r = checked(source);
+    test::check_equal(countof(errors_of(&r)), (Usize)0);
+    Usize inside = 0;
+    for (Usize i = 0; i < r.use_count; i++) {
+        if (r.uses[i].outer >= r.instance_count) continue;
+        inside += 1;
+        for (Usize k = i + 1; k < r.use_count; k++) {
+            if (r.uses[k].call != r.uses[i].call) continue;
+            test::check_condition(r.uses[k].outer != r.uses[i].outer);
+            test::check_condition(r.uses[k].instance != r.uses[i].instance);
+        }
+    }
+    test::check_equal(inside, (Usize)2);
+}

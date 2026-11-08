@@ -1,0 +1,55 @@
+// Tests of the fixer's `volatile` (#2649, decided by the owner 2026-11-07): a type prefix where `mut` sits, `*volatile
+// T`, `volatile u64`, `volatile [4]u8`, `[]volatile u8`, `*volatile mut T` in a cast.
+module front_fix_volatile_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect(Str before, Str after) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed result = fix::fix_text("t.smith", before);
+    test::check_equal(result.text, after);
+    fix::Fixed again = fix::fix_text("t.smith", result.text);
+    test::check_equal(again.text, after);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+export void test_front_fix_volatile_a_pointer_to_a_volatile_value() {
+    expect("void f(volatile I32 *p) {\n    g(p);\n}\n", "fn f(p: *volatile i32):\n    g(p)\n");
+}
+
+export void test_front_fix_volatile_a_const_volatile_void_pointer() {
+    expect("void f(const volatile void *value) {\n    g(value);\n}\n", "fn f(value: *volatile void):\n    g(value)\n");
+}
+
+export void test_front_fix_volatile_a_volatile_local_is_a_prefix() {
+    expect("void f(void) {\n    volatile U64 sink = 0;\n    sink = 1;\n}\n",
+           "fn f():\n    mut sink: volatile u64 = 0\n    sink = 1\n");
+}
+
+export void test_front_fix_volatile_a_volatile_array_local() {
+    expect("void f(void) {\n    volatile U8 big[131072];\n}\n",
+           "fn f():\n    mut big: volatile [131072]u8 = undefined\n");
+}
+
+export void test_front_fix_volatile_a_cast_to_a_volatile_pointer() {
+    expect("void f(void *x) {\n    volatile U8 *p = (volatile U8 *)x;\n}\n",
+           "fn f(x: *void):\n    p: *volatile u8 = x.cast(*volatile mut u8)\n");
+}
+
+export void test_front_fix_volatile_a_volatile_global() {
+    expect("volatile c::sig_atomic_t stop;\n", "mut stop: volatile c.sig_atomic_t = undefined\n");
+}
+
+export void test_front_fix_volatile_a_volatile_pointer_itself() {
+    expect("void f(U8 *volatile own) {\n    g(own);\n}\n", "fn f(own: volatile *u8):\n    g(own)\n");
+}
+
+export void test_front_fix_volatile_a_slice_of_volatile_elements() {
+    expect("void f(volatile U8 xs[:]) {\n    g(xs);\n}\n", "fn f(xs: []volatile u8):\n    g(xs)\n");
+}
