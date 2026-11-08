@@ -1033,9 +1033,39 @@ static ast::Expr *generic_select(parse::Parser *p) {
     return make(parse::span_from(p, start), {.generic_select = {.control = control, .assocs = assocs}});
 }
 
+// Whether the position is at `requires(name:` in smith's own syntax: the compile-time test of a block (D12).
+static Bool at_requires(const parse::Parser *p) {
+    if (!p->new_syntax || !parse::at(p, lex::name) || !text::is(parse::text(p, parse::peek(p)), "requires"))
+        return false;
+    return parse::peek_at(p, 1).kind == lex::left_paren && parse::peek_at(p, 2).kind == lex::name &&
+           parse::peek_at(p, 3).kind == lex::colon;
+}
+
+// `requires(s: *T, n: usize): body`, the body an indented block or one expression: true when the body type-checks.
+// The position is at `requires`.
+static ast::Expr *requires_expr(parse::Parser *p) {
+    U32 start = parse::advance(p).span.start;
+    parse::advance(p);
+    ast::Param params[:] = {};
+    while (!parse::at(p, lex::right_paren) && !parse::at(p, lex::end_of_file)) {
+        params = mem::realloc(params, countof(params) + 1);
+        params[countof(params) - 1] = fn_param(p);
+        if (!parse::accept(p, lex::comma)) break;
+    }
+    if (!expect_ok(p, lex::right_paren, "`)` to end the parameters")) return nullptr;
+    if (!expect_ok(p, lex::colon, "`:` to start the body of `requires`")) return nullptr;
+    Bool outer = p->void_body;
+    p->void_body = false;
+    ast::Stmt *body = layout_body(p);
+    p->void_body = outer;
+    if (body == nullptr) return nullptr;
+    return make(parse::span_from(p, start), {.requires_expr = {.params = params, .body = body}});
+}
+
 // A primary expression at the position, or null after an error. Parentheses are the caller's.
 static ast::Expr *primary(parse::Parser *p) {
     lex::Token token = parse::peek(p);
+    if (at_requires(p)) return requires_expr(p);
     switch (token.kind) {
     case lex::integer:
         return integer_literal(p);

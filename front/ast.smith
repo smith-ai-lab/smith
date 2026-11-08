@@ -413,6 +413,10 @@ export typedef enum {
         Expr *control;
         GenericAssoc assocs[:];
     } generic_select; // C's `_Generic(control, T: a, default: b)`
+    struct {
+        Param params[:];
+        Stmt *body;
+    } requires_expr; // `requires(s: *T): body`: a compile-time bool, true when the body type-checks; never runs
 } ExprKind;
 
 export struct Expr {
@@ -1289,6 +1293,10 @@ static void expr_children_more(Items *items, Expr *e) {
         add_result(items, e->kind.lambda.result);
         add_stmt(items, e->kind.lambda.body, false);
     }
+    if (e->kind == .requires_expr) {
+        add_params(items, e->kind.requires_expr.params);
+        add_stmt(items, e->kind.requires_expr.body, false);
+    }
     if (e->kind == .try_expr) {
         add_expr(items, e->kind.try_expr.operand, false);
     }
@@ -1375,6 +1383,7 @@ static void expr_children(Items *items, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
+    case .requires_expr:
     case .named_arg:
     case .tuple_lit:
     case .array_lit:
@@ -1817,6 +1826,9 @@ static void expr_head_more(Output *text, Expr *e) {
             put_word(text, e->kind.lambda.captures[i].text);
         }
     }
+    if (e->kind == .requires_expr) {
+        put(text, "requires");
+    }
     if (e->kind == .try_expr) {
         put(text, "try");
     }
@@ -1901,6 +1913,7 @@ static void expr_head(Output *text, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
+    case .requires_expr:
     case .named_arg:
     case .tuple_lit:
     case .array_lit:

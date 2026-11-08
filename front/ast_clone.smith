@@ -368,6 +368,10 @@ static void visit_expr(Work *work, ast::Expr *e) {
         e->kind.lambda.result = take_type(work, e->kind.lambda.result);
         e->kind.lambda.body = take_stmt(work, e->kind.lambda.body);
     }
+    if (e->kind == .requires_expr) {
+        e->kind.requires_expr.params = take_params(work, e->kind.requires_expr.params);
+        e->kind.requires_expr.body = take_stmt(work, e->kind.requires_expr.body);
+    }
     if (e->kind == .try_expr) e->kind.try_expr.operand = take_expr(work, e->kind.try_expr.operand);
     if (e->kind == .reflect_member) {
         e->kind.reflect_member.base = take_expr(work, e->kind.reflect_member.base);

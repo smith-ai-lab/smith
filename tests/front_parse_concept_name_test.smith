@@ -33,3 +33,9 @@ export void test_front_parse_concept_name_a_comparison_of_a_type_is_a_statement(
     expect_no_error("pub fn num(T: type) -> bool:\n    T == i8 or T == i16\n");
     expect_no_error("pub fn num(T: type) -> bool:\n    x := 1\n    T != i8\n");
 }
+
+// `requires(s: *T): body` is an expression of its own (a compile-time bool), with an indented or a one-line body.
+export void test_front_parse_concept_name_requires_has_params_and_a_body() {
+    expect_no_error("pub fn shape(T: type) -> bool:\n    requires(s: *T):\n        _: f64 = s.area()\n");
+    expect_no_error("pub fn shape(T: type) -> bool: requires(s: *T): s.area()\n");
+}
