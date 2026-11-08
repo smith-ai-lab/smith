@@ -47,7 +47,8 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 3 minutes of work plus the 10-minute cap of a queue run's wait for the groups ahead (`yield-to-queue`, #2833)
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: write # yield-to-queue: force-cancel its own run
@@ -75,6 +76,8 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/yield-to-queue
+        with:
+          queue-wait: "true"
       - name: The pull request
         # a PR check is a `workflow_dispatch` run (#2856): what a `pull_request` event carried (the base, the body) is
         # read from the PR the dispatcher named
