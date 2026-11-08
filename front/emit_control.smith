@@ -425,6 +425,25 @@ static c::LLVMValueRef slice_equal(state::Emitter *e, state::Ty element, state::
     return result;
 }
 
+// `a == b` of two `?T` (#2650): the same tag, and equal payloads when both are `.some`. Null when the payload is not
+// a number, a Bool or a pointer. `?*T` is the pointer itself.
+static c::LLVMValueRef option_equal(state::Emitter *e, state::Value left, state::Value right) {
+    if (left.ty.kind != .option) return nullptr;
+    state::Ty element = *left.ty.kind.option.element;
+    if (element.kind != .integer && element.kind != .boolean && element.kind != .pointer) return nullptr;
+    if (element.kind == .pointer) return c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, left.llvm, right.llvm, "");
+    c::LLVMValueRef tag_left = c::LLVMBuildExtractValue(e->builder, left.llvm, 0, "tag");
+    c::LLVMValueRef tag_right = c::LLVMBuildExtractValue(e->builder, right.llvm, 0, "tag");
+    c::LLVMValueRef value_left = c::LLVMBuildExtractValue(e->builder, left.llvm, 1, "value");
+    c::LLVMValueRef value_right = c::LLVMBuildExtractValue(e->builder, right.llvm, 1, "value");
+    c::LLVMValueRef tags = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, tag_left, tag_right, "same_tag");
+    c::LLVMValueRef values = c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, value_left, value_right, "same_value");
+    c::LLVMValueRef none =
+        c::LLVMBuildICmp(e->builder, c::LLVMIntEQ, tag_left, c::LLVMConstNull(c::LLVMTypeOf(tag_left)), "none");
+    c::LLVMValueRef agree = c::LLVMBuildOr(e->builder, none, values, "");
+    return c::LLVMBuildAnd(e->builder, tags, agree, "");
+}
+
 static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w) {
     if (w->expr->kind != .binary) {
         return state::fail("not a comparison", w->span);
@@ -454,6 +473,14 @@ static state::Status compare_finish(state::Emitter *e, const state::ThenExpr *w)
     if (left.ty.kind == .slice && left.ty.kind.slice.element != nullptr && (op == .equal || op == .not_equal)) {
         c::LLVMValueRef same = slice_equal(e, *left.ty.kind.slice.element, left, right);
 
+        if (op == .not_equal) same = c::LLVMBuildNot(e->builder, same, "");
+        state::push_value(e, (state::Value){.llvm = same, .ty = bool_type(e)});
+        return state::success();
+    }
+    if (left.ty.kind == .option && (op == .equal || op == .not_equal)) {
+        c::LLVMValueRef same = option_equal(e, left, right);
+
+        if (same == nullptr) return state::failf(w->span, "comparison of ", left.ty.name);
         if (op == .not_equal) same = c::LLVMBuildNot(e->builder, same, "");
         state::push_value(e, (state::Value){.llvm = same, .ty = bool_type(e)});
         return state::success();

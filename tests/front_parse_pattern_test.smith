@@ -1,0 +1,42 @@
+// Tests of a variant pattern as a conjunct in expression position (D16, #2649): `return .v(v) := k and v.x` parses to
+// a `pattern_test` of the chain, wherever a bool is expected. Typing it is the checker's.
+module front_parse_pattern_test;
+
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The first error of a file in smith's own syntax, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+static void expect_no_error(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str want = "no error";
+    test::check_equal(first_error(source), want);
+}
+
+export void test_front_parse_pattern_a_return_of_a_pattern_chain() {
+    expect_no_error("fn f(k: Kind) -> bool:\n    return .v(v) := k and v.x\n");
+}
+
+export void test_front_parse_pattern_an_initializer_and_an_argument() {
+    expect_no_error("fn f(k: Kind) -> bool:\n    z := .v(v) := k and v.f == 1\n    z\n");
+    expect_no_error("fn f(k: Kind):\n    g(.v(v) := k and v.f == 1)\n");
+}
+
+export void test_front_parse_pattern_a_pattern_without_a_payload_or_with_mut() {
+    expect_no_error("fn f(k: Kind) -> bool:\n    return .empty := k\n");
+    expect_no_error("fn f(k: Kind) -> bool:\n    return .v(mut v) := k and v.x\n");
+}
+
+export void test_front_parse_pattern_a_chain_of_two_patterns() {
+    expect_no_error("fn f(a: Kind, b: Kind) -> bool:\n    return .v(x) := a and .w(y) := b and x.n == y.n\n");
+}
