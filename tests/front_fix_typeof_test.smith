@@ -128,10 +128,11 @@ export void test_front_fix_typeof_a_type_predicate_on_the_parameter_keeps_auto()
                  "            c.puts(\"a\")\n    else:\n        c.puts(\"b\")\n");
 }
 
-// A function's span can reach into the next function: that function's `countof(a)` does not make this `auto` a slice.
+// A function's span can reach into the next function: that function's `countof(a)` does not make this `auto` a slice
+// (it is `T`, the type its other parameter names).
 export void test_front_fix_typeof_the_next_function_does_not_make_an_auto_a_slice() {
     expect_fixed("module m;\nstatic void same(auto a, typeof(a) b) {\n    use(a, b);\n}\n"
                  "static Usize size(Usize *a) {\n    return countof(a);\n}\n",
-                 "fn same(a: auto, b: typeof(a)):\n    use(a, b)\nfn size(a: *usize) -> usize:\n    "
+                 "fn same[T](a: T, b: T):\n    use(a, b)\nfn size(a: *usize) -> usize:\n    "
                  "return countof(a)\n");
 }
