@@ -1,0 +1,47 @@
+name: yield-to-queue
+description: >
+  A pull request's check gives its runner back while a merge queue job waits for one (#2856). GitHub has no job
+  priority and hands runners out first come, first served, so a PR check job can take the runner a queue job was
+  waiting for. Each heavy job of a PR check (a `workflow_dispatch` run that ci-dispatch.yml started) calls this first:
+  one check, no waiting. If a `merge_group` run of `ci.yml` is queued, or has a job queued, it force-cancels its own
+  run, which leaves no `ci` check run behind (a plain cancel lets the always() `ci` job run and fail, a red `ci`), and
+  ci-dispatch.yml starts the check again once there is room. A self-cancelled run is never a result. An API failure
+  counts as no queue job waiting. Needs `GH_TOKEN` with `actions: write`. Does nothing on any other event.
+
+runs:
+  using: composite
+  steps:
+    - name: Give the runner back while a queue job waits
+      if: github.event_name == 'workflow_dispatch'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        repo=$GITHUB_REPOSITORY
+        # a merge_group run that is queued, or that has a job queued (a job is listed once the jobs it needs are done,
+        # so `queued` means it waits for a runner); a failed call counts as none
+        waits() {
+          local n run
+          n=$(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status=queued \
+            -f per_page=1 --jq .total_count 2>/dev/null) || n=0
+          [ "${n:-0}" != 0 ] && return 0
+          for run in $(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group \
+              -f status=in_progress -f per_page=50 --jq '.workflow_runs[].id' 2>/dev/null); do
+            n=$(gh api -X GET "repos/$repo/actions/runs/$run/jobs" -f filter=latest -f per_page=100 \
+              --jq '[.jobs[] | select(.status == "queued")] | length' 2>/dev/null) || n=0
+            [ "${n:-0}" != 0 ] && return 0
+          done
+          return 1
+        }
+        if ! waits; then
+          echo "yield-to-queue: no merge queue job waits" >>"$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        echo "yield-to-queue: a merge queue job waits for a runner: this check gives its runner back, and ci-dispatch starts it again" | tee -a "$GITHUB_STEP_SUMMARY"
+        if gh api -X POST "repos/$repo/actions/runs/$GITHUB_RUN_ID/force-cancel" --silent; then
+          # the cancel ends this job within seconds; never go on to the heavy steps
+          sleep 120
+          exit 1
+        fi
+        # a refused cancel must not fail the check (a red `ci` is a result, and nothing would start it again)
+        echo "::warning::yield-to-queue: force-cancel refused; the check goes on"

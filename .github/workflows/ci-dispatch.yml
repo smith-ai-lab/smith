@@ -69,14 +69,16 @@ jobs:
           # The live PR checks: each counts as its live Linux jobs, and at least PER_RUN until it ends, so a run whose
           # heavy jobs have not been created yet keeps its slots.
           used=0; live=" "
+          # (`pull_request` runs too: the checks started before #2856 merged, until they end)
           for status in queued in_progress waiting pending requested; do
-            for row in $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=workflow_dispatch -f status="$status" \
-                -f per_page=100 --jq '.workflow_runs[] | "\(.id):\(.head_sha)"' 2>/dev/null); do
+            for row in $(for event in workflow_dispatch pull_request; do
+                api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=$event -f status="$status" \
+                  -f per_page=100 --jq '.workflow_runs[] | "\(.id):\(.head_sha)"' 2>/dev/null; done); do
               id=${row%%:*}; sha=${row#*:}
               case "$live" in *" $id:"*) continue ;; esac
               live="$live$id:$sha "
               n=$(api "repos/$REPO/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
-                --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest") or index("Linux"))] | length' \
+                --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest"))] | length' \
                 2>/dev/null || echo "$PER_RUN")
               [ "${n:-0}" -lt "$PER_RUN" ] && n=$PER_RUN
               used=$((used + n))
@@ -86,6 +88,10 @@ jobs:
           # The open PRs to main from this repository, longest waiting first, with their head shas.
           prs=$(api "repos/$REPO/pulls" -f state=open -f base=main -f sort=updated -f direction=asc -f per_page=100 \
             --paginate --jq ".[] | select(.head.repo.full_name == \"$REPO\") | \"\(.number):\(.head.sha):\(.head.ref)\"")
+          # a PR from a fork is noted and skipped: workflow_dispatch needs a ref in this repository (lead, 2026-11-08)
+          forks=$(api "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+            --jq ".[] | select(.head.repo.full_name != \"$REPO\") | \"#\(.number)\"" | tr '\n' ' ')
+          [ -n "$forks" ] && log "not started, from a fork (push the branch here to check it): $forks"
           heads=" $(printf '%s\n' "$prs" | cut -d: -f2 | tr '\n' ' ')"
 
           # A live check of a sha that is no PR's head any more (a push replaced it) is force-cancelled: it frees its
@@ -114,7 +120,7 @@ jobs:
             fi
             if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f ref="$ref" -f "inputs[pr]=$pr" --silent; then
               log "started the check of #$pr (${sha:0:7})"
-              used=$((used + PER_RUN)); started=$((started + 1)); live="$live0:$sha "
+              used=$((used + PER_RUN)); started=$((started + 1)); live="${live}0:$sha "
             fi
           done
           log "ci-dispatch: budget $BUDGET, used $used, queue job waiting: $queue_waits, started $started, still waiting $waiting"

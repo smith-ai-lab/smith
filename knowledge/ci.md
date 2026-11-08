@@ -11,7 +11,7 @@ tags: [ci, process]
 for what it changed, never the full check; no git hook runs anything on a push, everything runs in CI (owner,
 2026-10-29).
 
-**CI is GitHub's.** `.github/workflows/ci.yml` runs a light check on the pull request (the build, fmt/docs/prove, lint, the tests the change reaches, the Mac only for Mac-only files) and the full suite in the merge queue, on hosted runners
+**CI is GitHub's.** `.github/workflows/ci.yml` runs a light check on the pull request (the build, fmt/docs/prove/lint, the tests the change reaches, the Mac only for Mac-only files; started by ci-dispatch.yml under a budget, never ahead of the queue, [ci-hosted](ci-hosted.md)) and the full suite in the merge queue, on hosted runners
 ([ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
