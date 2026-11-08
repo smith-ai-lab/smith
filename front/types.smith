@@ -1297,6 +1297,30 @@ static Bool is_path(Str name, ast::Path path) {
 }
 
 // The innermost symbol whose whole name is `path`, or null (`c::printf` is the name `c::printf`).
+static Str prefix_of_symbol(const Symbol *s);
+
+// `math_trig::lerp` in the body of an instance of std.math's generic, read in today's syntax as an import is: the
+// first name is a module std.math imports (the symbol `std::math::math_trig`), so the rest is a name of that module
+// (`std::math_trig::lerp`), as `math_trig.lerp` reads through `through_modules` (#2669). Null when it is not one.
+static const Symbol *through_own_import(const Scopes *s, ast::Path path) {
+    if (countof(path.segments) < 2) return nullptr;
+    Str module_name = msg(format::push(s->prefix, path.segments[0].text));
+    const Symbol *module = nullptr;
+    for (Usize i = s->floor; i > 0 && module == nullptr; i--) {
+        const Symbol *at = &s->symbols[i - 1];
+        if (at->kind == .module_name && same_text(at->name, module_name)) module = at;
+    }
+    if (module == nullptr) return nullptr;
+    Str full = prefix_of_symbol(module);
+    if (countof(full) == 0) return nullptr;
+    for (Usize k = 1; k < countof(path.segments); k++)
+        full = msg(format::push(full, k > 1 ? "::" : "", path.segments[k].text));
+    for (Usize i = s->floor; i > 0; i--) {
+        if (same_text(s->symbols[i - 1].name, full)) return &s->symbols[i - 1];
+    }
+    return nullptr;
+}
+
 export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
     if (countof(s->prefix) > 0) {
         for (Usize i = s->count; i > s->floor; i--) {
@@ -1309,6 +1333,8 @@ export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
         for (Usize i = s->floor; i > 0; i--) {
             if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
         }
+        const Symbol *through = through_own_import(s, path);
+        if (through != nullptr) return through;
     }
     for (Usize i = s->count; i > 0; i--) {
         if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];

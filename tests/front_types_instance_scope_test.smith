@@ -167,3 +167,33 @@ export void test_front_types_instance_scope_a_fix_in_a_nested_std_generic_is_kep
         test::check_equal(countof(got.fix_module), countof(want));
     }
 }
+
+// `math.lerp` as the fixer reads it: an auto wrapper calling `deep::inner` (a `::` path, today's syntax), a `num`
+// generic whose `1 - t` needs `1.0`. The path is looked up through the wrapper's module, `std::util::deep`.
+export void test_front_types_instance_scope_a_literal_fix_in_a_nested_std_generic_is_kept_with_its_module() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    deep_tree = module_named(
+        "deep.smith",
+        "pub inline fn inner(a: num, b: typeof(a), t: typeof(a)) -> typeof(a):\n    return a * (1 - t) + b * t\n",
+        "std.deep");
+    util_tree = module_named("util.smith",
+                             "import std.deep\n\npub inline fn outer(a: auto, b: typeof(a), t: typeof(a)) -> "
+                             "typeof(a):\n    return deep::inner(a, b, t)\n",
+                             "std.util");
+    parser::Parsed p = parser::parse_new("t.smith", "import std.util\n\nfn f() -> f64: util.outer(0.0, 10.0, 0.25)\n");
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    deep_tree = nullptr;
+    test::check_equal(r.error_count, (Usize)1);
+    for (Usize i = 0; i < r.error_count; i++) {
+        types::Error got = r.errors[i];
+        test::check_equal(countof(got.fix), (Usize)0);
+        test::check_equal(countof(got.module_fix), (Usize)1);
+        Str want = "std::deep::";
+        test::check_equal(countof(got.fix_module), countof(want));
+    }
+}
