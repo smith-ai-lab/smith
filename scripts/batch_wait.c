@@ -26,13 +26,14 @@ constexpr int line_size = 1024;
 constexpr int later_size = 4096;
 constexpr int command_size = 2048;
 
-typedef enum { Read_Failed, Read_Own_Gone, Read_Last, Read_Later } Read;
+typedef enum { Read_Failed, Read_Gone, Read_Last, Read_Later } Read;
 
 static int setting(const char *name, int fallback) {
     const char *value = getenv(name);
     if (value == nullptr || value[0] == '\0') return fallback;
-    int n = atoi(value);
-    return n < 0 ? fallback : n;
+    char *end = nullptr;
+    long n = strtol(value, &end, 10);
+    return end == value || *end != '\0' || n < 0 || n > 86400 ? fallback : (int)n;
 }
 
 static int ends_with(const char *text, const char *suffix) {
@@ -47,7 +48,8 @@ static Read read_queue(const char *own, const char *head, const char *url, char 
     char command[command_size];
     int n = snprintf(command, sizeof command, "%s '%s' 'refs/heads/gh-readonly-queue/main/*'",
                      ls != nullptr && ls[0] != '\0' ? ls : "git ls-remote", url);
-    if (n < 0 || n >= (int)sizeof command) return Read_Failed;
+    if (n < 0 || n >= (int)sizeof command || strchr(url, '\'') != nullptr) return Read_Failed;
+    // NOLINTNEXTLINE(bugprone-command-processor): git (or the test's fake), with the url checked for quotes
     FILE *pipe = popen(command, "r");
     if (pipe == nullptr) return Read_Failed;
     char suffix[128];
@@ -59,7 +61,8 @@ static Read read_queue(const char *own, const char *head, const char *url, char 
         line[strcspn(line, "\r\n")] = '\0';
         const char *tab = strchr(line, '\t');
         const char *ref = tab != nullptr ? tab + 1 : line;
-        if (strcmp(ref, own) == 0) own_seen = 1;
+        if (strcmp(ref, own) == 0)
+            own_seen = 1;
         else if (strstr(ref, "/main/pr-") != nullptr && ends_with(ref, suffix) &&
                  strlen(later) + strlen(ref) + 2 < (size_t)later_size) {
             if (later[0] != '\0') strcat(later, " ");
@@ -67,7 +70,7 @@ static Read read_queue(const char *own, const char *head, const char *url, char 
         }
     }
     if (pclose(pipe) != 0) return Read_Failed;
-    if (!own_seen) return Read_Own_Gone;
+    if (!own_seen) return Read_Gone;
     return later[0] != '\0' ? Read_Later : Read_Last;
 }
 
@@ -94,7 +97,7 @@ int main(int argc, char **argv) {
     for (int pass = 0; pass <= 2 * polls + 2; pass++) {
         Read read = read_queue(argv[1], argv[2], argv[3], later);
         if (read == Read_Failed) return finish(waited ? "waited" : "alone", "ls-remote failed; running full checks");
-        if (read == Read_Own_Gone) {
+        if (read == Read_Gone) {
             if (++misses >= 2) {
                 fprintf(stderr, "batch-wait: %s is gone (merged or dropped)\n", argv[1]);
                 return exit_gone;

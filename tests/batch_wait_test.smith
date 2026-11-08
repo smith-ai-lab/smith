@@ -63,7 +63,8 @@ export void test_batch_wait_alone_builds_at_once_and_a_merged_entry_cancels() {
     scratch::Run merged = wait(&p, states, "60");
     scratch::expect_status("batch_wait: merged with a later group, it cancels", 3, &merged);
     scratch::expect_text("batch_wait: and prints no batch", "", merged.out);
-    scratch::expect_contains("batch_wait: it logged the wait", merged.err, "waiting on refs/heads/gh-readonly-queue/main/pr-2-A");
+    scratch::expect_contains("batch_wait: it logged the wait", merged.err,
+                             "waiting on refs/heads/gh-readonly-queue/main/pr-2-A");
     scratch::expect_contains("batch_wait: and the branch gone", merged.err, "pr-1-M is gone (merged or dropped)");
     // a group further back (pr-3 on B) is not built on entry 1
     __builtin_snprintf(states, sizeof states, "%s%s", own, three);
