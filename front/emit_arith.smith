@@ -80,7 +80,8 @@ static void close_failure(state::Emitter *e, c::LLVMBasicBlockRef next, Str name
     c::LLVMValueRef callee = nullptr;
     c::LLVMTypeRef type = nullptr;
     report_callee(e, name, args, count, &callee, &type);
-    c::LLVMBuildCall2(e->builder, type, callee, args, (U32)count, "");
+    // A check function's own casts and index checks (`fail_cast` widening its value) would call it again: they trap.
+    if (callee != e->function) c::LLVMBuildCall2(e->builder, type, callee, args, (U32)count, "");
     c::LLVMBuildBr(e->builder, trap_block(e));
     c::LLVMPositionBuilderAtEnd(e->builder, next);
 }

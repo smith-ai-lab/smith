@@ -580,6 +580,9 @@ jobs:
             test-flags: ""
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write # the timing step rewrites the body of #2751
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -598,6 +601,18 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
+      - name: Upload the step cache for cloud runners
+        # the Actions cache cannot be read from outside Actions, so a cloud runner (smith-dev-runner, step 3) downloads
+        # the same folder as an artifact. Only this job on main writes it; 3 days keep it inside free storage, and the
+        # folder is already pruned to SMITH_CACHE_MAX by the build above (#2690)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smith-steps-linux-${{ github.sha }}
+          path: ~/.cache/smith/steps
+          retention-days: 3
+          compression-level: 1
+          if-no-files-found: warn
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
@@ -629,6 +644,62 @@ jobs:
             ~/.cache/smith/lint
             ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+      - name: Time the build (tracked on #2751)
+        # Linux only, after every cache is saved, so the timing never changes what is saved or delays it. It records
+        # numbers and gates nothing: a failure here must not fail main's push. Hosted runners vary by about 15%
+        # (knowledge/build-times.md, Tracked on main). The result goes to #2751's body, never a comment. The cold case moves build/, .smith/ (not stage0/) and the step
+        # cache aside; the cases after it reuse the cold tree, and the originals go back at the end.
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          aside="$RUNNER_TEMP/aside"; mkdir -p "$aside/smith-dir"
+          log="$RUNNER_TEMP/time"; : >"$log.cold"
+          [ -d build ] && mv build "$aside/build"
+          for f in .smith/* .smith/.[!.]*; do
+            [ -e "$f" ] && [ "$f" != .smith/stage0 ] && mv "$f" "$aside/smith-dir/"
+          done
+          [ -d ~/.cache/smith/steps ] && mv ~/.cache/smith/steps "$aside/steps"
+          run() { # run <case>: wall seconds into $secs, --time output into $log.<case>
+            local t0=$SECONDS
+            "$SMITH" build --time >"$log.$1" 2>&1 || true
+            secs=$((SECONDS - t0))
+          }
+          run cold;    cold=$secs
+          run noop;    noop=$secs
+          echo '# timing' >>front/types_expr.smith
+          run front;   front=$secs
+          git checkout -- front/types_expr.smith
+          echo '/* timing */' >>runtime/executor.c
+          run runtime; runtime=$secs
+          git checkout -- runtime/executor.c
+          rm -rf build; find .smith -mindepth 1 -maxdepth 1 ! -name stage0 -exec rm -rf {} +
+          rm -rf ~/.cache/smith/steps
+          [ -d "$aside/build" ] && mv "$aside/build" build
+          for f in "$aside"/smith-dir/* "$aside"/smith-dir/.[!.]*; do [ -e "$f" ] && mv "$f" .smith/; done
+          [ -d "$aside/steps" ] && mv "$aside/steps" ~/.cache/smith/steps
+          slow=$(grep -E '^time: +step ' "$log.cold" | sed 's/^time: *//' | head -n 10)
+          {
+            echo "### Build times (dev profile, hosted ubuntu-latest, about 15% run to run)"
+            echo "| case | wall s |"; echo "|---|---|"
+            echo "| cold | $cold |"; echo "| no-op | $noop |"
+            echo "| front/ edit | $front |"; echo "| runtime/ edit | $runtime |"
+            echo; echo "Slowest steps of the cold build:"; echo '```'; echo "$slow"; echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          # the tracking issue's body is the only record (no comments): the text above `<!-- latest -->` stays, the
+          # latest table replaces what follows it, and the last 10 one-line rows are kept under `<!-- rows -->`
+          row="- \`$(git rev-parse --short=7 HEAD)\` $(date -u +%F) cold=$cold noop=$noop front=$front runtime=$runtime"
+          old=$(gh api repos/${{ github.repository }}/issues/2751 --jq .body)
+          head=${old%%<!-- latest -->*}
+          rows=$(printf '%s\n' "$old" | sed -n '/<!-- rows -->/,$p' | sed 1d | grep '^- `' | head -n 9 || true)
+          {
+            printf '%s\n' "$head<!-- latest -->"
+            echo "Latest, \`$(git rev-parse --short=7 HEAD)\` $(date -u +%F): cold $cold s, no-op $noop s, front/ edit $front s, runtime/ edit $runtime s. Slowest steps of the cold build:"
+            echo '```'; echo "$slow"; echo '```'
+            echo "<!-- rows -->"; echo "$row"; [ -n "$rows" ] && echo "$rows"
+          } >"$RUNNER_TEMP/body.md"
+          gh api -X PATCH repos/${{ github.repository }}/issues/2751 -F body=@"$RUNNER_TEMP/body.md" >/dev/null
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
@@ -833,7 +904,9 @@ jobs:
               grep -E '^  failed at ' "$out"
               echo '```'
               echo
-              echo 'Top 20 causes, by the files each stops first (first, count, files, cause):'
+              echo "Total errors and files failing: $(grep '^frontend-errors: ' "$out" | tail -n 1 | sed 's/^frontend-errors: //' || true)"
+              echo
+              echo 'Top 20 causes, by the files each alone blocks, then the files each stops first (count, first, files, cause):'
               echo '```'
               awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+ +[0-9]+  / {print; n++} n==20 {exit}' "$out"
               echo '```'
@@ -847,10 +920,15 @@ jobs:
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
-          # the top 20 causes, one fixed line each (#2247): frontend-cause: <first> <files> <count> <cause>
-          grep '^frontend-cause: ' "$out" 2>/dev/null
+          # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
+          errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
+          if [ -n "$errs" ]; then echo "frontend-errors: $GITHUB_SHA ${errs#frontend-errors: }"; fi
+          # the top 20 causes, one fixed line each (#2247, #2731): frontend-cause: <alone> <first> <files> <count> <cause>
+          grep '^frontend-cause: ' "$out" 2>/dev/null || true
+          # the top 10 pairs of causes that are a file's only two (#2731): frontend-pair: <files> <cause a> | <cause b>
+          grep '^frontend-pair: ' "$out" 2>/dev/null || true
           # the top 15 names behind `unknown name` and `unknown type` (#2413): frontend-name: <first> <files> <count> <kind> <name>
-          grep '^frontend-name: ' "$out" 2>/dev/null
+          grep '^frontend-name: ' "$out" 2>/dev/null || true
       - name: Save the table
         if: always()
         uses: actions/upload-artifact@v4
