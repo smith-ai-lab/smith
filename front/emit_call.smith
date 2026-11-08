@@ -310,8 +310,14 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
 // call.
 static const ast::Expr *method_form(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return x;
-    const ast::Expr *made = types::method_of(e->options.checked, x);
-    return made != nullptr ? made : x;
+    // A call may be rewritten more than once: `inner(0, rest...)` becomes `inner(0, rest.0, rest.1)`, which becomes
+    // `inner(0, (rest.0, rest.1))` with the pack gathered.
+    for (Usize step = 0; step < 8; step++) {
+        const ast::Expr *made = types::method_of(e->options.checked, x);
+        if (made == nullptr || made == x) break;
+        x = made;
+    }
+    return x;
 }
 
 // The function of the type's module a method call `x.f(a)` names, when `f` is not one of the current module: the
