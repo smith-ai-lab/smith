@@ -116,11 +116,15 @@ static Usize arguments_of(Str s, Usize open) {
 static Uses classify(Uses uses, Str s, Usize pos, Usize length) {
     Usize after = skip_forward(s, pos + length);
     Usize before = skip_back(s, pos);
+    // `x.to(usize)`, `x.name`, `xs[0]`, `p += 1`: a member, a conversion, an index, a step: no concept is read from it
+    Usize next = pos + length;
+    Bool member = at(s, next, ".") && !at(s, next, ".[") && !at(s, next, ".*");
+    if (member || at(s, after, "[") || is_assignment(s, after)) {
+        uses.other = true;
+        return uses;
+    }
     if (at(s, after, ".*")) {
         uses.pointer = true;
-    } else if ((at(s, pos + length, ".") && !at(s, pos + length, ".[")) || at(s, after, "[") ||
-               is_assignment(s, after)) {
-        uses.other = true; // `x.to(usize)`, `x.name`, `xs[0]`, `p += 1`: a member, a conversion, an index, a step
     } else if (at(s, after, "(") &&
                (word_before(s, pos, "if") || word_before(s, pos, "not") || word_before(s, pos, "while") ||
                 word_before(s, pos, "and") || word_before(s, pos, "or"))) {
