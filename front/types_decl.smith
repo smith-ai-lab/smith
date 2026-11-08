@@ -320,6 +320,8 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
 static const ast::Expr *member_base(const ast::Expr *e);
 static const ast::Expr *additive_left(const ast::Expr *e);
 
+static syntax::Edits nonzero_fix(const ast::Expr *e);
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
     if (verdict.ok) {
@@ -384,8 +386,25 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
         Str question = "?";
         fix[0] = (syntax::Edit){.span = {.start = at, .end = at}, .text = question};
     }
+    // A number where a Bool is wanted: the fix writes the comparison the message names, `x != 0`; an operand that is
+    // not a postfix expression goes in parentheses first, `(a + b) != 0`.
+    if (from->kind == .integer && to->kind == .bool_type && countof(fix) == 0) fix = nonzero_fix(e);
     types::fail_fix(c, e->span, verdict.message, fix);
     return false;
+}
+
+// `x` where a Bool is wanted and `x` is an integer: ` != 0` after it, with parentheses around an operand that is not a
+// name, member, call, index or literal.
+static syntax::Edits nonzero_fix(const ast::Expr *e) {
+    Bool postfix =
+        e->kind == .name || e->kind == .member || e->kind == .call || e->kind == .index || e->kind == .integer;
+    Str test = postfix ? " != 0" : ") != 0";
+    Str open = "(";
+    syntax::Edits edits = mem::alloc_slice(syntax::Edit, 0);
+    edits = mem::realloc(edits, postfix ? 1 : 2);
+    edits[0] = (syntax::Edit){.span = {.start = e->span.end, .end = e->span.end}, .text = test};
+    if (!postfix) edits[1] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start}, .text = open};
+    return edits;
 }
 
 // `(Void)x` written as a statement discards a value; smith writes that `_ := x`. The fix replaces the cast's head,
