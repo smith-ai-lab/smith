@@ -810,12 +810,41 @@ static Bool null_tested_at(Str source, lex::Tokens t, Usize i) {
            same(lex::text(source, t[base - 2]), lex::text(source, t[i]));
 }
 
+// Whether the text tests the name `local` against null anywhere: `local != nullptr`, `local == .none`, `!local`.
+static Bool local_tested(Str source, lex::Tokens t, Str local) {
+    for (Usize i = 0; i < countof(t); i++) {
+        if (t[i].kind != lex::name || !same(lex::text(source, t[i]), local)) continue;
+        if (i > 0 && t[i - 1].kind == lex::bang) return true;
+        if (i + 2 < countof(t) && (t[i + 1].kind == lex::equal_equal || t[i + 1].kind == lex::bang_equal) &&
+            null_word(source, t, i + 2))
+            return true;
+    }
+    return false;
+}
+
+// Whether the field read that ends at `t[i]` gives its value to a local (`n = x->f`, `n := x.f`, `T *n = x->f`) that
+// the text tests against null: the null of the field flows through the local (#2648).
+static Bool flows_to_tested_local(Str source, lex::Tokens t, Usize i) {
+    Usize start = i - 1; // the member operator before the field; the chain before it back to its first name
+    while (start >= 2 && is_word(t[start - 1].kind) && is_member(t[start - 2].kind))
+        start -= 2;
+    if (start < 3 || !is_word(t[start - 1].kind)) return false;
+    Usize base = start - 1; // the first name of the chain
+    if (t[base - 1].kind != lex::equal && t[base - 1].kind != lex::colon_equal) return false;
+    if (base < 2 || t[base - 2].kind != lex::name) return false;
+    Usize after = i + 1;
+    if (after < countof(t) &&
+        (t[after].kind == lex::left_paren || t[after].kind == lex::left_bracket || is_member(t[after].kind)))
+        return false;
+    return local_tested(source, t, lex::text(source, t[base - 2]));
+}
+
 // The fields of the module's records that `source` tests against null, by name: a read of a field of that name
-// anywhere in the text counts (#2557).
+// anywhere in the text counts (#2557), and so does one whose value goes to a local that is tested (#2648).
 static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[records_max]) {
     for (Usize i = 2; i < countof(t); i++) {
         if (!is_word(t[i].kind) || !(t[i - 1].kind == lex::dot || t[i - 1].kind == lex::arrow)) continue;
-        if (!null_tested_at(source, t, i)) continue;
+        if (!null_tested_at(source, t, i) && !flows_to_tested_local(source, t, i)) continue;
         Str field = lex::text(source, t[i]);
         for (Usize r = 0; r < w->count; r++) {
             Usize f = field_index(&w->records[r], field);

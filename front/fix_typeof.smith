@@ -177,15 +177,6 @@ static Usize own_end(Str s, Usize from, Usize to) {
     return to;
 }
 
-// Whether `text` spells a type by `typeof(name` and does not pick what to do by it.
-static Bool used_typed(Str text, Str name) {
-    if (dispatches(text, name)) return false;
-    for (Usize i = 0; i < countof(text); i++) {
-        if (at(text, i, "typeof(") && at(text, i + 7, name) && !in_literal(text, i)) return true;
-    }
-    return false;
-}
-
 // Whether `text` uses `typeof(name` and reads `name` as a slice.
 static Bool used_as_slice(Str text, Str name) {
     if (dispatches(text, name)) return false;
@@ -222,6 +213,16 @@ static Bool is_slice_pointer(Str param) {
     return n >= 6 && at(param, n - 6, "[]auto");
 }
 
+// Whether a parameter other than `skip` is a slice of `auto` (`xs: []auto`).
+static Bool has_other_slice(Str source, ast::Param params[:], Usize skip) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (i == skip || params[i].span.end > countof(source) || params[i].span.start >= params[i].span.end) continue;
+        Str param = source[params[i].span.start:params[i].span.end];
+        if (!is_slice_pointer(param) && (ends_with(param, ": []auto") || ends_with(param, ": []mut auto"))) return true;
+    }
+    return false;
+}
+
 // The fix of the generic function `d`: its `auto` parameter, its name's `[T]` and every `typeof` of the parameter.
 static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     core::ParseError none = {};
@@ -241,6 +242,8 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
                                                     ends_with(param, ": [][]auto"));
         }
         if (!is_auto && !is_slice) continue;
+        // a `[]auto` slice is the generic one; the plain `auto` beside it (`pred`, `less`) is a concept, not a type
+        if (is_auto && has_other_slice(source, params, i)) continue;
         if (found != countof(params) || params[i].is_rest) return none; // one `auto`, no pack
         found = i;
         slice_auto = is_slice;
@@ -251,7 +254,8 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     end = own_end(source, params[found].span.end, end);
     Str name = params[found].name;
     Str text = source[start:end];
-    if (slice_auto ? !used_typed(text, name) : !used_as_slice(text, name)) return none;
+    // `xs: []auto` is a slice of any element whatever the body does with it: `[T]` and `[]T` (#2668)
+    if (!slice_auto && !used_as_slice(text, name)) return none;
     if (word_then(text, 0, "T", "")) return none;
     Usize param_end = params[found].span.end;
     if (param_end < 4 || param_end > end || !at(source, param_end - 4, "auto")) return none;
