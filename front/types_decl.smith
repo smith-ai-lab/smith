@@ -322,8 +322,20 @@ static const ast::Expr *additive_left(const ast::Expr *e);
 
 static syntax::Edits nonzero_fix(const ast::Expr *e);
 
+// Whether `from` to `to` drops a `volatile` element: `*volatile T` handed where `*T` is wanted, as dropping const.
+static Bool drops_volatile(types::TypeRef from, types::TypeRef to) {
+    Bool both = (from->kind == .pointer && to->kind == .pointer) || (from->kind == .slice && to->kind == .slice) ||
+                (from->kind == .array && to->kind == .pointer);
+    return both && types::points_to_volatile(from) && !types::points_to_volatile(to);
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
+    if (verdict.ok && drops_volatile(from, to)) {
+        types::failf(c, e->span, "expected ", types::show(to), ", found ", types::show(from),
+                     ": this drops volatile; make the target's element volatile");
+        return false;
+    }
     if (verdict.ok) {
         return true;
     }
@@ -696,6 +708,10 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
         symbol.written = d->kind.variable.type;
         symbol.init = d->kind.variable.init;
+    }
+    if (d->kind == .variable) {
+        const ast::TypeExpr *written = d->kind.variable.type;
+        symbol.is_volatile = written != nullptr && written->qualifiers.is_volatile;
     }
     if (!types::declare(&r->scopes, symbol)) {
         types::failf(r, d->span, "`", name, "` is already declared in this scope; choose another name");

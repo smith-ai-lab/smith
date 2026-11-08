@@ -128,15 +128,18 @@ export typedef enum {
     struct {
         TypeRef element;
         Bool pointee_const;
+        Bool pointee_volatile; // `*volatile T`: every read and write through it is made (#2669)
     } pointer;
     struct {
         TypeRef element;
         U64 count;
         Bool pointee_const;
+        Bool pointee_volatile;
     } array;
     struct {
         TypeRef element;
         Bool pointee_const;
+        Bool pointee_volatile;
     } slice;
     struct {
         ast::Text name;
@@ -295,6 +298,7 @@ export Bool is_affine_record(TypeRef t);
 export Bool is_payload_enum(TypeRef t);
 export Bool is_complete(TypeRef t);
 export Bool points_to_const(TypeRef t);
+export Bool points_to_volatile(TypeRef t);
 export Bool is_variadic(TypeRef t);
 export TypeRef element_of(TypeRef t);
 export TypeRef error_of(TypeRef t);
@@ -343,6 +347,7 @@ static Bool same_shape(const Ty *a, const Ty *b) {
     if (!same_variant(a, b)) return false;
     if (bits_of(a) != bits_of(b) || signed_of(a) != signed_of(b) || count_of(a) != count_of(b)) return false;
     if (points_to_const(a) != points_to_const(b) || is_variadic(a) != is_variadic(b)) return false;
+    if (points_to_volatile(a) != points_to_volatile(b)) return false;
     if (!same_part(a, element_of(a), b, element_of(b)) || !same_part(a, error_of(a), b, error_of(b))) return false;
     if (!same_text(name_of(a), name_of(b))) return false;
     return same_slots(slots_of(a).items, slots_of(b).items);
@@ -491,6 +496,28 @@ static void add_va_list(Table *t) {
 
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
     TyKind made = {.slice = {.element = element, .pointee_const = element_const}};
+    return intern(t, (Ty){.kind = made});
+}
+
+// `t` with a `volatile` element: `*volatile T`, `[]volatile T`, `[n]volatile T`; `t` itself for another kind.
+export TypeRef with_volatile(Table *t, TypeRef of) {
+    TyKind made = of->kind;
+    if (of->kind == .pointer) {
+        made = (TyKind){.pointer = {.element = of->kind.pointer.element,
+                                    .pointee_const = of->kind.pointer.pointee_const,
+                                    .pointee_volatile = true}};
+    } else if (of->kind == .array) {
+        made = (TyKind){.array = {.element = of->kind.array.element,
+                                  .count = of->kind.array.count,
+                                  .pointee_const = of->kind.array.pointee_const,
+                                  .pointee_volatile = true}};
+    } else if (of->kind == .slice) {
+        made = (TyKind){.slice = {.element = of->kind.slice.element,
+                                  .pointee_const = of->kind.slice.pointee_const,
+                                  .pointee_volatile = true}};
+    } else {
+        return of;
+    }
     return intern(t, (Ty){.kind = made});
 }
 
@@ -718,6 +745,14 @@ export Bool points_to_const(TypeRef t) {
     if (t->kind == .pointer) return t->kind.pointer.pointee_const;
     if (t->kind == .array) return t->kind.array.pointee_const;
     if (t->kind == .slice) return t->kind.slice.pointee_const;
+    return false;
+}
+
+// Whether a pointer, array or slice has a `volatile` element (`*volatile T`); false for any other kind.
+export Bool points_to_volatile(TypeRef t) {
+    if (t->kind == .pointer) return t->kind.pointer.pointee_volatile;
+    if (t->kind == .array) return t->kind.array.pointee_volatile;
+    if (t->kind == .slice) return t->kind.slice.pointee_volatile;
     return false;
 }
 
@@ -994,14 +1029,17 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         push_piece(stack, top, word(" *"));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .array) {
         push_piece(stack, top, word(msg(format::push("[", count_of(t), "]"))));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .slice) {
         push_piece(stack, top, word("[:]"));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .block) {
         push_piece(stack, top, word(count_of(t) == 2 ? "[,]" : "[,,]"));
         push_piece(stack, top, of(element_of(t)));
@@ -1076,6 +1114,7 @@ export struct Symbol {
     TypeRef type;
     const ast::Decl *decl;
     Bool is_const;
+    Bool is_volatile; // a variable written `volatile T` (`mut sink: volatile u64 = 0`): every read and write is made
     Bool is_new; // declared in smith's own syntax (`let x = v`, `x: T = v`, `mut x`, a parameter `x: T`)
     Bool exported;
     // Where a fix-it mends it (#1516): the binding's span (empty: it has none, so no fix), whether a fix may put
@@ -2484,18 +2523,26 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
     return false;
 }
 
+// `made` with a `volatile` element when the element is written `volatile T` (`*volatile i32`).
+static TypeRef volatile_if(Checked *r, const ast::TypeExpr *element, TypeRef made) {
+    if (element == nullptr || !element->qualifiers.is_volatile) return made;
+    return with_volatile(&r->table, made);
+}
+
 // Makes the type of a composite node from its children's, which are `n` values from `base`.
 static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
     if (any_invalid(r, w, base, n)) return r->table.invalid;
     if (node->kind == .pointer) {
         Bool is_const = node->kind.pointer.pointee->qualifiers.is_const;
         if (r->new_syntax) is_const = !node->kind.pointer.is_mut; // smith's own `*T` is read-only, `*mut T` writable
-        return pointer_to(&r->table, w->values[base].type, is_const);
+        TypeRef made = pointer_to(&r->table, w->values[base].type, is_const);
+        return volatile_if(r, node->kind.pointer.pointee, made);
     }
     if (node->kind == .slice) {
         Bool is_const = node->kind.slice.element->qualifiers.is_const;
         if (r->new_syntax) is_const = !node->kind.slice.is_mut; // smith's own `[]T` is read-only, `[]mut T` writable
-        return slice_of(&r->table, w->values[base].type, is_const);
+        TypeRef made = slice_of(&r->table, w->values[base].type, is_const);
+        return volatile_if(r, node->kind.slice.element, made);
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
@@ -2504,7 +2551,8 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
             const Symbol *bound = lookup(&r->scopes, count_name); // `n` of an instance
             if (bound != nullptr && bound->has_value) {
                 Bool bound_const = node->kind.array.element->qualifiers.is_const;
-                return array_of(&r->table, w->values[base].type, bound->value, bound_const);
+                TypeRef made = array_of(&r->table, w->values[base].type, bound->value, bound_const);
+                return volatile_if(r, node->kind.array.element, made);
             }
         }
         U64 length = 0;
@@ -2517,7 +2565,8 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         }
         Bool is_const = node->kind.array.element->qualifiers.is_const;
         set_length(r, count, length);
-        return array_of(&r->table, w->values[base].type, length, is_const);
+        TypeRef made = array_of(&r->table, w->values[base].type, length, is_const);
+        return volatile_if(r, node->kind.array.element, made);
     }
     if (node->kind == .option) return option_of(&r->table, w->values[base].type);
     if (node->kind == .block_type) return build_block(r, node->span, node->kind.block_type.dims, w->values[base].type);
@@ -4020,6 +4069,7 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
                      .type = type,
                      .decl = d,
                      .is_const = is_const,
+                     .is_volatile = written->qualifiers.is_volatile,
                      .is_new = is_new,
                      .exported = d->exported};
     // The type as written, for the fix that makes a pointer global `*mut` where it is written through (#2611).
