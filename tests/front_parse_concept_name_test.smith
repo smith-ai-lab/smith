@@ -1,0 +1,35 @@
+// Tests of the prelude's concept names in smith's own syntax (#2649): `int`, `float`, `signed` and `unsigned` name
+// functions, and a comparison of a type name (`T == i8 or T == i16`) is a statement, not a declaration.
+module front_parse_concept_name_test;
+
+import front::parser;
+import std::arena;
+import std::mem;
+import std::test;
+
+// The first error of a file in smith's own syntax, or `no error`.
+static Str first_error(Str source) {
+    parser::Parsed parsed = parser::parse_new("x.smith", source);
+    if (countof(parsed.errors) == 0) return "no error";
+    return parsed.errors[0].message;
+}
+
+static void expect_no_error(Str source) {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str want = "no error";
+    test::check_equal(first_error(source), want);
+}
+
+export void test_front_parse_concept_name_a_function_named_int() {
+    expect_no_error("pub fn int(T: type) -> bool: true\n");
+    expect_no_error("pub fn float(T: type) -> bool: true\n");
+    expect_no_error("pub fn signed(T: type) -> bool: true\npub fn unsigned(T: type) -> bool: true\n");
+}
+
+export void test_front_parse_concept_name_a_comparison_of_a_type_is_a_statement() {
+    expect_no_error("pub fn num(T: type) -> bool:\n    T == i8 or T == i16\n");
+    expect_no_error("pub fn num(T: type) -> bool:\n    x := 1\n    T != i8\n");
+}
