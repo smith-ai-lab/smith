@@ -236,6 +236,19 @@ static void test_failures(void) {
     end_case(&c);
 }
 
+// An https download that fails is tried again (#2792): the first scripted server breaks, the second one is whole.
+static void test_retry(void) {
+    Case c;
+    start_case(&c);
+    setenv("SMITH_DOWNLOAD_TRIES", "2", 1);
+    serve_archive(&c.net, "pkg.example", test_archive_size + 10, true);
+    serve_archive(&c.net, "pkg.example", test_archive_size, false);
+    assert(fetch(&c, "https://pkg.example/pkg.tar.gz", c.hash));
+    check_installed(&c);
+    end_case(&c);
+    setenv("SMITH_DOWNLOAD_TRIES", "1", 1);
+}
+
 static void test_wrong_hash(void) {
     Case c;
     start_case(&c);
@@ -282,10 +295,13 @@ int main(int argc, char **argv) {
     (void)smith_mem_set_allocator(&allocator.base);
     load_archive(argv[1]);
     test_scratch = argv[2];
+    setenv("SMITH_DOWNLOAD_TRIES", "1", 1); // the scripted failures below are final; the retry has its own case
+    setenv("SMITH_DOWNLOAD_DELAY", "0", 1);
     test_download();
     test_fetch_without_a_hash();
     test_redirects();
     test_failures();
+    test_retry();
     test_wrong_hash();
     test_offline_and_leftovers();
     puts("package: all checks passed");

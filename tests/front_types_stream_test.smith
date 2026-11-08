@@ -89,6 +89,14 @@ export void test_front_types_stream_yield_in_a_generator_is_accepted() {
           "     n -= 1\n");
 }
 
+// `iter(T)` is the result of a generator in smith's own syntax (#1428), the same type as `stream::Stream(T)`.
+export void test_front_types_stream_iter_is_the_result_of_a_generator() {
+    clean("fn count_to(n: usize) -> iter(usize):\n    mut i: usize = 0\n    while i < n:\n        yield i\n"
+          "        i += 1\n\nfn total() -> usize:\n    mut s: usize = 0\n    for x in count_to(4):\n        s += x\n"
+          "    s\n");
+    fails("fn names() -> iter(i32):\n    yield \"a\"\n", "Str", "I32");
+}
+
 export void test_front_types_stream_yield_converts_to_the_element() {
     fails("fn names() -> stream::Stream(i32):\n    yield \"a\"\n", "Str", "I32");
 }
