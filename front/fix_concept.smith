@@ -200,7 +200,14 @@ export core::Errors edits(Str source, const ast::Module *module) {
             Usize param_end = params[k].span.end;
             if (param_end < 4 || param_end > body || !at(source, param_end - 4, "auto")) continue;
             if (param_end < 6 || !at(source, param_end - 6, ": ")) continue;
-            Str concept = concept_of(uses_of(source[body:end], params[k].name), has_element);
+            // its type is written again in the signature (`-> typeof(x)`): `fix_typeof` makes it an inferred parameter
+            Str pname = params[k].name;
+            Bool again = false;
+            for (Usize j = d->span.start; j + 8 + countof(pname) <= body; j++)
+                if (at(source, j, "typeof(") && at(source, j + 7, pname) && source[j + 7 + countof(pname)] == ')')
+                    again = true;
+            if (again) continue;
+            Str concept = concept_of(uses_of(source[body:end], pname), has_element);
             if (countof(concept) == 0) continue;
             core::Edits edits = push((core::Edits){}, param_end - 4, param_end, concept);
             out = mem::realloc(out, countof(out) + 1);
