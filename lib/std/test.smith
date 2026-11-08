@@ -983,7 +983,7 @@ void check_slices(auto a, typeof(a) b) {
     if (countof(a) != countof(b)) {
         fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
     }
-    check_part("", countof(a) ? &a[0] : nullptr, countof(b) ? &b[0] : nullptr, countof(a));
+    check_part("", countof(a) != 0 ? &a[0] : nullptr, countof(b) != 0 ? &b[0] : nullptr, countof(a));
 }
 
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
@@ -1541,6 +1541,7 @@ typedef struct {
     U8 macos;      // --macos-only (1): only the macOS-only tests; --skip-macos (2): all the others; 0: every test
     Bool partial;  // --partial: this runner is one of several `smith test` runs, so a filter that selects none of its
                    // tests is no error
+    Bool misses;   // --misses: print how many tests the cache leaves to run and their --costs seconds, run none (#2833)
     Bool no_cache; // --no-cache: run the tests that passed before and have not changed too (#2686)
     const char *others; // --others <runner>: the other runner of the run; a filter that selects none of ours but some
                         // of its tests (it is asked with --list) is no error either
@@ -2029,11 +2030,12 @@ void coverage_end(const Test *test, Bool passed, F64 cpu) {
 char cache_folder[path_capacity]; // the folder of this run; empty when the cache is not used
 Usize cached_total = 0;           // the tests left out of the plan because they are unchanged
 
-// Whether this run uses the cache: not for a listing, a debugger, a golden update, a part of a shard (the miss sets
-// would partition the tests differently), a run that records coverage, or one inside a test that is itself cached.
+// Whether this run uses the cache: not for a listing, a debugger, a golden update, a run that records coverage, or one
+// inside a test that is itself cached. A part of a shard does (#2833): make_plan splits the whole plan first, so every
+// part gets the same split whatever is cached, and each part leaves out only its own unchanged tests.
 Bool cache_wanted(const Options *options) {
     if (options->list || options->in_process || options->update || options->no_cache) return false;
-    if (options->shard_count > 0 || c::getenv("SMITH_COVERAGE_DIR") != nullptr) return false;
+    if (c::getenv("SMITH_COVERAGE_DIR") != nullptr) return false;
     const char *mode = c::getenv("SMITH_RESULT_CACHE");
     if (mode != nullptr && (c::strcmp(mode, "off") == 0 || c::strcmp(mode, "0") == 0)) return false;
     const char *self = c::getenv("SMITH_SELF");
@@ -3688,6 +3690,8 @@ Bool parse_options(I32 argc, char **argv, Options *options) {
             options->macos = 2;
         } else if (c::strcmp(flag, "--partial") == 0) {
             options->partial = true;
+        } else if (c::strcmp(flag, "--misses") == 0) {
+            options->misses = true;
         } else if (c::strcmp(flag, "--no-cache") == 0) {
             options->no_cache = true;
         } else if (c::strcmp(flag, "--cheapest") == 0) {
@@ -4287,14 +4291,27 @@ void cache_store(const Plan *plan) {
         __builtin_snprintf(path, sizeof path, "%s/reads/%s.txt", &cache_folder[0], &clean[0]);
         c::unlink(path);
     }
-    static const char *const files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
-    for (Usize i = 0; files[i] != nullptr; i++) {
-        __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], files[i]);
+    static const char *const cache_files[_] = {"names", "options", "hits", "keys", "passed", nullptr};
+    for (Usize i = 0; cache_files[i] != nullptr; i++) {
+        __builtin_snprintf(path, sizeof path, "%s/%s", &cache_folder[0], cache_files[i]);
         c::unlink(path);
     }
     __builtin_snprintf(path, sizeof path, "%s/reads", &cache_folder[0]);
     c::rmdir(path);
     c::rmdir(&cache_folder[0]);
+}
+
+// --misses (#2833): the tests the store leaves to run, and the CPU seconds the --costs file gives them (0.4 for one it
+// does not know, as --shard assumes), as `misses: <tests> tests, <seconds> s (<cached> from the store)`. CI sizes the
+// number of test parts from it. Nothing runs and nothing is stored.
+void say_misses(Plan *plan, const Options *options) {
+    const char *costs_file = options->costs;
+    F64 *cost = read_costs(plan, costs_file != nullptr ? costs_file : "");
+    F64 total = 0;
+    for (Usize i = 0; i < plan->count; i++)
+        total += cost[i] >= 0 ? cost[i] : shard_cost_unknown;
+    say("misses: %zu tests, %.1f s (%zu from the store)\n", plan->count, total, cached_total);
+    cache_store(plan);
 }
 
 Plan *make_plan(const Options *options) {
@@ -4313,8 +4330,8 @@ Plan *make_plan(const Options *options) {
         plan->tests[plan->count] = test;
         plan->count += 1;
     }
-    cache_filter(plan, options);
     if (options->shard_count > 0 && !shard_built(options)) shard_plan(plan, options);
+    cache_filter(plan, options);
     plan->runs = (Run *)map_bytes((plan->count) * sizeof(Run), map_private);
     plan->order = (Usize *)map_bytes((plan->count + 1) * sizeof(Usize), map_private);
     for (Usize i = 0; i < plan->count; i++)
@@ -4500,6 +4517,10 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     if (options.list) {
         for (Usize i = 0; i < plan->count; i++)
             say("%s\n", plan->tests[plan->order[i]]->name);
+        return 0;
+    }
+    if (options.misses) {
+        say_misses(plan, &options);
         return 0;
     }
     if (plan->count == 0 && options.filter != nullptr && cached_total == 0) {
