@@ -1358,6 +1358,10 @@ export struct Error {
     // and the spans of `module_fix` are offsets in the text the module was read from (as an import, mended).
     Str fix_module;
     syntax::Edits module_fix;
+    // The prefix of the module whose text `span` is in (`std::test::`) when the error was found while checking that
+    // module's declarations or an instance of its generic; empty for the file being checked. The driver reports such an
+    // error at that module's file and line, not one past the end of the importer (#2669).
+    Str module;
     // A construction that leaves a field out (#2329): the call, the record, and which fields (bit k for field k) it
     // gives. The fixer writes the zero values (`front::fix_zero`), which the checker cannot spell without its imports.
     const ast::Expr *left_out_call;
@@ -1498,8 +1502,11 @@ export void fail(Checked *r, ast::Span span, Str message) {
         if (capacity < 8) capacity = 8;
         r->errors = mem::realloc(r->errors, capacity);
     }
-    r->errors[r->error_count] = (Error){
-        .message = msg(format::push(message)), .span = span, .left_out_call = nullptr, .left_out_record = nullptr};
+    r->errors[r->error_count] = (Error){.message = msg(format::push(message)),
+                                        .span = span,
+                                        .module = r->prefix,
+                                        .left_out_call = nullptr,
+                                        .left_out_record = nullptr};
     r->error_count += 1;
 }
 
