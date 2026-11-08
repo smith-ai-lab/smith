@@ -1100,8 +1100,8 @@ jobs:
           # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
           name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
           base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
-          curl -fsSL --retry 3 -o "$tmp/$name" "$base/$name"
-          curl -fsSL --retry 3 -o "$tmp/$name.sha256" "$base/$name.sha256"
+          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name" "$base/$name"
+          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name.sha256" "$base/$name.sha256"
           [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
             || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
           tar -C "$tmp" -xJf "$tmp/$name"

@@ -18,15 +18,16 @@ runs:
         name="smith-$os-$arch.tar.xz"
         base=https://github.com/smith-ai-lab/smith/releases/latest/download
         mkdir -p .smith/stage0
+        # a download from GitHub gets a 504 now and then: retry for about 2 minutes (8 tries, 5 s apart; #2792)
         # The first redirect of releases/latest/download/<name> names the tag of the newest published release.
-        url=$(curl -sS --retry 3 -o /dev/null -w '%{redirect_url}' "$base/$name")
+        url=$(curl -sS --retry 8 --retry-delay 5 --retry-all-errors -o /dev/null -w '%{redirect_url}' "$base/$name")
         tag=$(echo "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
         if [ -z "$tag" ]; then
           echo "fetch-smith: the newest release has no $name yet (published about an hour after its commit); not using an older one" >&2
           exit 1
         fi
-        curl -fsSL --retry 3 -o ".smith/stage0/$name" "$base/$name"
-        curl -fsSL --retry 3 -o ".smith/stage0/$name.sha256" "$base/$name.sha256"
+        curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o ".smith/stage0/$name" "$base/$name"
+        curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o ".smith/stage0/$name.sha256" "$base/$name.sha256"
         want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
         if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
         else got=$(shasum -a 256 ".smith/stage0/$name" | cut -d' ' -f1); fi
