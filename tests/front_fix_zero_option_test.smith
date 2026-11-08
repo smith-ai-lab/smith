@@ -1,0 +1,28 @@
+// Tests of the fix-it for an option given to a pointer parameter that tests for null (#2648, front/fix_zero.smith).
+module front_fix_zero_option_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+    fix::Fixed second = fix::fix_text("t.smith", first.text);
+    test::check_equal(second.applied, (Usize)0);
+}
+
+export void test_front_fix_zero_option_a_field_given_to_a_parameter_that_tests_null_makes_it_an_option() {
+    expect_fixed("module m;\nexport struct Node {\n    Node *next;\n    I32 v;\n};\n"
+                 "static I32 count(const Node *n) {\n    if (n == nullptr) return 0;\n    return 1 + n->v;\n}\n"
+                 "export Node make(I32 v) {\n    return (Node){.v = v};\n}\n"
+                 "export I32 last(const Node *n) {\n    if (n->next == nullptr) return n->v;\n"
+                 "    return last(n->next);\n}\n"
+                 "export I32 f(const Node *n) {\n    return count(n->next);\n}\n",
+                 "");
+}
