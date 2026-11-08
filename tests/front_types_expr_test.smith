@@ -1155,7 +1155,7 @@ export void test_front_types_expr_a_bracket_list_where_a_tuple_is_expected_is_fi
     ast::Expr *list_expr = ast::array_literal(items);
     list_expr->span = (ast::Span){.start = 10, .end = 18};
     types_expr::check(&r, list_expr, pair);
-    test::check_condition(says(last(&r), "a `[...]` is an array, but a tuple `(I32,F32)` is expected: write the items "
+    test::check_condition(says(last(&r), "a `[...]` is an array, but a tuple `(I32, F32)` is expected: write the items "
                                          "in parentheses, `(a, b)`"));
     expect(r.error_count, 1);
 }
