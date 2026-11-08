@@ -108,3 +108,9 @@ export void test_front_fix_generic_mut_an_index_loop_over_fields_that_uses_the_i
                  "pub fn names(value: auto):\n    for (i, f) in enumerate(fields(typeof(value))):\n        if i > 0:\n"
                  "            put(\", \")\n        put(f.name)\n");
 }
+
+// A pointer parameter whose name is longer than the rest of the body is not a slice past the end of the source.
+export void test_front_fix_generic_mut_a_long_pointer_name_in_a_short_body_does_not_overrun() {
+    expect_fixed("module m;\nexport I32 view(auto xs, void *memory, Usize n) {\n    return xs;\n}\n",
+                 "pub fn view(xs: auto, memory: *void, n: usize) -> i32:\n    return xs\n");
+}
