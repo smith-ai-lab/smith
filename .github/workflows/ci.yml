@@ -8,6 +8,11 @@ name: ci
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      pr:
+        type: string
+        required: false
   merge_group:
   push:
     branches: [main]
