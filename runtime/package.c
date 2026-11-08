@@ -212,8 +212,19 @@ void smith_package_remove(const char *path) {
 
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
+// A download from github.com gets a 504 now and then: an https one is tried up to 8 times, 5 s apart, on any error
+// (about 2 minutes, as fetch-smith does, #2792). A file:// one is local and tried once.
 static bool smith_package_download(const char *url, const char *destination, SmithPackageFault *error) {
+    constexpr int tries_max = 8;
+    constexpr unsigned delay_seconds = 5;
+    int tries = strncmp(url, "https://", 8) == 0 ? tries_max : 1;
     SmithHttpResult result = smith_http_get(url, destination);
+    for (int tried = 1; result.error.code != 0 && tried < tries; tried++) {
+        fprintf(stderr, "smith: %s failed (%s), trying again in %u s (%d of %d)\n", url, result.error.message,
+                delay_seconds, tried, tries_max - 1);
+        sleep(delay_seconds);
+        result = smith_http_get(url, destination);
+    }
     if (result.error.code == 0) return true;
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
