@@ -95,3 +95,8 @@ export void test_front_fix_array_a_lambda_in_a_brace_list_is_not_a_designator() 
     expect("void f(void) {\n    I32 xs[_] = {1, [](I32 a) { return a; }};\n}\n",
            "fn f():\n    xs: [_]i32 = [1, fn(a: i32): a]\n");
 }
+
+// `int`, `unsigned` and `float` after `name:` or `->` are the prelude's concepts, not C's types: no fix (#2649).
+export void test_front_fix_array_a_concept_name_in_a_new_type_position_is_kept() {
+    expect("fn twice(x: int, y: float) -> int:\n    return x\n", "fn twice(x: int, y: float) -> int:\n    return x\n");
+}

@@ -1362,8 +1362,20 @@ static Bool glued(const parse::Parser *p, U32 end) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
+// `int`, `signed`, `unsigned` and `float` alone after `name:` or `->` are the prelude's concepts in smith's own
+// syntax (`fn twice(x: int) -> int:`), not C's types: nothing to write.
+static Bool is_concept_word(const parse::Parser *p, const OldType *t) {
+    if (t->end != t->first + 1 || t->first == 0) return false;
+    lex::TokenKind kind = p->tokens[t->first].kind;
+    if (kind != lex::kw_int && kind != lex::kw_signed && kind != lex::kw_unsigned && kind != lex::kw_float) return false;
+    lex::TokenKind before = p->tokens[t->first - 1].kind;
+    if (before == lex::arrow) return true;
+    return before == lex::colon && t->first >= 2 && p->tokens[t->first - 2].kind == lex::name;
+}
+
 // Records the warning of an old type: the edit that writes it in smith's own syntax, or a message alone.
 static void warn_old_type(parse::Parser *p, const OldType *t, const ast::TypeExpr *base) {
+    if (is_concept_word(p, t)) return;
     // `const name: T = v` is a constant already written in smith's own syntax, which an old-syntax read of a file that
     // still holds other old forms takes for the type `const name`: no warning, or its fix would drop the `const`.
     if (p->tokens[t->first].kind == lex::kw_const && t->end < countof(p->tokens) &&
