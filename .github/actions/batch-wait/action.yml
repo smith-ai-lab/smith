@@ -4,7 +4,7 @@ description: >
   one runner and builds nothing; with HEADGREEN the later group's passing run merges this entry with it, and this
   run is cancelled when its branch goes. Once no later group is built on it (the later ones failed or left), it
   returns and the run builds the full checks of its own tree. It never makes `ci` pass by itself. The logic is
-  wait.sh, tested by test.sh against made-up queue branches. Needs `actions: write`; does nothing on other events.
+  scripts/batch_wait.c, tested by tests/batch_wait_test.smith against made-up queue branches. Needs `actions: write`; does nothing on other events.
 
 outputs:
   batch:
@@ -25,7 +25,8 @@ runs:
         HEAD_SHA: ${{ github.event.merge_group.head_sha }}
       run: |
         start=$(date +%s); rc=0
-        out=$(bash "$GITHUB_ACTION_PATH/wait.sh") || rc=$?
+        cc -std=gnu2x -O1 scripts/batch_wait.c -o "$RUNNER_TEMP/batch_wait"
+        out=$("$RUNNER_TEMP/batch_wait" "$OWN_REF" "$HEAD_SHA" "$REPO_URL") || rc=$?
         if [ "$rc" = 3 ]; then
           echo "batch: group $OWN_REF left the queue (merged with a later group, or dropped): cancelling run $GITHUB_RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
           gh run cancel "$GITHUB_RUN_ID"

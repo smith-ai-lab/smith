@@ -77,9 +77,6 @@ jobs:
         # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
         id: batch
         uses: ./.github/actions/batch-wait
-      - name: Test the batch wait
-        if: github.event_name == 'pull_request'
-        run: bash .github/actions/batch-wait/test.sh
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
