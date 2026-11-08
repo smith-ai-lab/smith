@@ -61,9 +61,9 @@ typedef struct {
     const nw_parameters_configure_protocol_block_t *configure_default;
     const nw_content_context_t *context_message;
     dispatch_queue_t queue;
-} SmithNetTls_Api;
+} SmithNetTlsApi;
 
-static SmithNetTls_Api smith_net_tls_table;
+static SmithNetTlsApi smith_net_tls_table;
 
 // What the callbacks of a connection (on the dispatch queue) share with the calls (on the caller's thread): the block
 // the caller gave. The semaphores order the writes of one before the reads of the other.
@@ -74,14 +74,14 @@ typedef struct {
     int stage;
     int failure;  // the internal code of what the callbacks saw, 0 for none
     size_t taken; // how much the last receive copied
-} SmithNetTls_State;
+} SmithNetTlsState;
 
 size_t smith_net_tls_state_size(void) {
-    return sizeof(SmithNetTls_State);
+    return sizeof(SmithNetTlsState);
 }
 
 size_t smith_net_tls_state_align(void) {
-    return alignof(SmithNetTls_State);
+    return alignof(SmithNetTlsState);
 }
 
 // Looks a symbol up and stores its address in the pointer at destination. dlsym returns an address that is data or a
@@ -89,28 +89,29 @@ size_t smith_net_tls_state_align(void) {
 static bool smith_net_tls_symbol(void *library, const char *name, void *destination) {
     void *address = dlsym(library, name);
     if (address == nullptr) return false;
-    memcpy(destination, &address, sizeof address);
+    memcpy(destination, (const void *)&address, sizeof address);
     return true;
 }
 
-static bool smith_net_tls_load_symbols(void *library, SmithNetTls_Api *api) {
-    return smith_net_tls_symbol(library, "nw_endpoint_create_host", &api->endpoint_create_host) &&
-           smith_net_tls_symbol(library, "nw_parameters_create_secure_tcp", &api->parameters_create_secure_tcp) &&
-           smith_net_tls_symbol(library, "nw_connection_create", &api->connection_create) &&
-           smith_net_tls_symbol(library, "nw_connection_set_queue", &api->set_queue) &&
-           smith_net_tls_symbol(library, "nw_connection_set_state_changed_handler", &api->set_state_handler) &&
-           smith_net_tls_symbol(library, "nw_connection_start", &api->start) &&
-           smith_net_tls_symbol(library, "nw_connection_cancel", &api->cancel) &&
-           smith_net_tls_symbol(library, "nw_connection_send", &api->send) &&
-           smith_net_tls_symbol(library, "nw_connection_receive", &api->receive) &&
-           smith_net_tls_symbol(library, "nw_error_get_error_domain", &api->error_domain) &&
-           smith_net_tls_symbol(library, "nw_error_get_error_code", &api->error_code) &&
+static bool smith_net_tls_load_symbols(void *library, SmithNetTlsApi *api) {
+    return smith_net_tls_symbol(library, "nw_endpoint_create_host", (void *)&api->endpoint_create_host) &&
+           smith_net_tls_symbol(library, "nw_parameters_create_secure_tcp",
+                                (void *)&api->parameters_create_secure_tcp) &&
+           smith_net_tls_symbol(library, "nw_connection_create", (void *)&api->connection_create) &&
+           smith_net_tls_symbol(library, "nw_connection_set_queue", (void *)&api->set_queue) &&
+           smith_net_tls_symbol(library, "nw_connection_set_state_changed_handler", (void *)&api->set_state_handler) &&
+           smith_net_tls_symbol(library, "nw_connection_start", (void *)&api->start) &&
+           smith_net_tls_symbol(library, "nw_connection_cancel", (void *)&api->cancel) &&
+           smith_net_tls_symbol(library, "nw_connection_send", (void *)&api->send) &&
+           smith_net_tls_symbol(library, "nw_connection_receive", (void *)&api->receive) &&
+           smith_net_tls_symbol(library, "nw_error_get_error_domain", (void *)&api->error_domain) &&
+           smith_net_tls_symbol(library, "nw_error_get_error_code", (void *)&api->error_code) &&
            smith_net_tls_symbol(library, "_nw_parameters_configure_protocol_default_configuration",
-                                &api->configure_default) &&
-           smith_net_tls_symbol(library, "_nw_content_context_default_message", &api->context_message);
+                                (void *)&api->configure_default) &&
+           smith_net_tls_symbol(library, "_nw_content_context_default_message", (void *)&api->context_message);
 }
 
-static bool smith_net_tls_load(SmithNetTls_Api *api) {
+static bool smith_net_tls_load(SmithNetTlsApi *api) {
     void *library = dlopen("/System/Library/Frameworks/Network.framework/Network", RTLD_NOW | RTLD_LOCAL);
     if (library == nullptr || !smith_net_tls_load_symbols(library, api)) return false;
     api->queue = dispatch_queue_create("smith.net", nullptr); // a serial queue
@@ -119,7 +120,7 @@ static bool smith_net_tls_load(SmithNetTls_Api *api) {
 
 // The TLS functions, loaded on the first call by whichever thread asks first (the callbacks run on another thread and
 // read the table): null when the system has none.
-static const SmithNetTls_Api *smith_net_tls_api(void) {
+static const SmithNetTlsApi *smith_net_tls_api(void) {
     if (smith_net_tls_state_load() == 0 && smith_net_tls_state_claim()) {
         bool loaded = smith_net_tls_load(&smith_net_tls_table);
         smith_net_tls_state_store(loaded ? SmithNetTls_Loaded : SmithNetTls_Missing);
@@ -151,7 +152,7 @@ static int smith_net_tls_reason(int status) {
 }
 
 // A Network.framework error as an internal code.
-static int smith_net_tls_code(const SmithNetTls_Api *api, nw_error_t error) {
+static int smith_net_tls_code(const SmithNetTlsApi *api, nw_error_t error) {
     int code = api->error_code(error);
     switch (api->error_domain(error)) {
     case nw_error_domain_posix:
@@ -167,8 +168,8 @@ static int smith_net_tls_code(const SmithNetTls_Api *api, nw_error_t error) {
 
 // The state callback: ready or failed ends the connect (a failure cancels the connection first, so the last state
 // follows), and the last state (cancelled) ends the close.
-static void smith_net_tls_on_state(SmithNetTls_State *state, nw_connection_state_t value, nw_error_t error) {
-    const SmithNetTls_Api *api = &smith_net_tls_table;
+static void smith_net_tls_on_state(SmithNetTlsState *state, nw_connection_state_t value, nw_error_t error) {
+    const SmithNetTlsApi *api = &smith_net_tls_table;
     if (value == nw_connection_state_ready) {
         state->stage = SmithNetTls_Ready;
         dispatch_semaphore_signal(state->gate);
@@ -184,7 +185,7 @@ static void smith_net_tls_on_state(SmithNetTls_State *state, nw_connection_state
 }
 
 void smith_net_tls_close(void **session, void *block) {
-    SmithNetTls_State *state = block;
+    SmithNetTlsState *state = block;
     if (state == nullptr || state->handle == nullptr) return;
     smith_net_tls_table.cancel(state->handle);
     for (int waits = 0; state->stage != SmithNetTls_Cancelled && waits < SmithNetTls_Tries; waits++) {
@@ -198,10 +199,10 @@ void smith_net_tls_close(void **session, void *block) {
 }
 
 int smith_net_tls_connect(void **session, void *block, const char *host, uint16_t port) {
-    const SmithNetTls_Api *api = smith_net_tls_api();
+    const SmithNetTlsApi *api = smith_net_tls_api();
     *session = nullptr;
     if (api == nullptr) return ENOSYS;
-    SmithNetTls_State *state = block;
+    SmithNetTlsState *state = block;
     memset(state, 0, sizeof *state);
     state->gate = dispatch_semaphore_create(0);
     state->flow = dispatch_semaphore_create(0);
@@ -241,7 +242,7 @@ static size_t smith_net_tls_copy(dispatch_data_t content, uint8_t *buffer, size_
 }
 
 // The receive callback: what arrived, the error or the end.
-static void smith_net_tls_on_received(SmithNetTls_State *state, bool *end, dispatch_data_t content, bool complete,
+static void smith_net_tls_on_received(SmithNetTlsState *state, bool *end, dispatch_data_t content, bool complete,
                                       nw_error_t error, uint8_t *buffer, size_t capacity) {
     state->taken = smith_net_tls_copy(content, buffer, capacity);
     if (error != nullptr) {
@@ -253,8 +254,8 @@ static void smith_net_tls_on_received(SmithNetTls_State *state, bool *end, dispa
 }
 
 ptrdiff_t smith_net_tls_write(void *block, const void *buffer, size_t size, int *code) {
-    SmithNetTls_State *state = block;
-    const SmithNetTls_Api *api = &smith_net_tls_table;
+    SmithNetTlsState *state = block;
+    const SmithNetTlsApi *api = &smith_net_tls_table;
     state->failure = 0;
     dispatch_data_t data = dispatch_data_create(buffer, size, api->queue, nullptr); // copies the bytes
     api->send(state->handle, data, *api->context_message, true, ^(nw_error_t error) {
@@ -276,7 +277,7 @@ ptrdiff_t smith_net_tls_write(void *block, const void *buffer, size_t size, int 
 static ptrdiff_t smith_net_tls_receive(void *block, bool *end, void *buffer, size_t size, int64_t timeout_ns,
                                        int *code) {
     if (*end) return 0;
-    SmithNetTls_State *state = block;
+    SmithNetTlsState *state = block;
     state->taken = 0;
     state->failure = 0;
     smith_net_tls_table.receive(
