@@ -1189,6 +1189,14 @@ jobs:
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
           if [ -z "$before" ]; then echo "no count on main's last 20 commits: nothing to compare with"; exit 0; fi
+          # the files whose result changed against main (#2832): path, old stage, new stage (a file's stage is its
+          # first row's; `-` is a file the table does not have)
+          if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
+            echo "files whose result changed against main (path, main, now):"
+            awk -F'\t' 'FNR==1 {f++} !((f, $1) in st) {st[f, $1]=$2; all[$1]=1}
+              END {for (p in all) {a=((1,p) in st)?st[1,p]:"-"; b=((2,p) in st)?st[2,p]:"-"; if (a!=b) print "  " p "\t" a "\t" b}}' \
+              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | sort | head -n 200
+          fi
           if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
           why=$([ -n "$pr" ] && gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
