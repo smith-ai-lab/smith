@@ -5,13 +5,19 @@ description: >
   20+ minutes for one while two pull request runs held them. `changes` calls this first, and every heavy job needs
   `changes`, so a waiting run holds one small runner and the queue's jobs get the rest. It checks every 30 s that no
   `merge_group` run of `ci.yml` is `queued` or `waiting`, and goes ahead after the cap, writing that to the job summary.
-  Does nothing on any other event than `pull_request`. An API failure counts as an empty queue, so a bad call never
+  A merge-queue run also waits, for the groups ahead of it (#2833): while an earlier `merge_group` run of `ci.yml` has a
+  job still queued for a runner, this run's `changes` waits, so the front group gets the runners first (2026-11-08
+  17:48: the front group held 2 running jobs and 18 queued while the two groups behind it held 17 runners). Capped at
+  `queue-cap-minutes`. Does nothing on any other event than `pull_request` and `merge_group`. An API failure counts as an empty queue, so a bad call never
   stalls a run. Needs `GH_TOKEN` (`actions: read` is enough, also for a fork) and `GH_REPO`.
 
 inputs:
   cap-minutes:
     description: The longest wait, in minutes
     default: "20"
+  queue-cap-minutes:
+    description: The longest a merge-queue run waits for the groups ahead of it, in minutes
+    default: "10"
 
 runs:
   using: composite
@@ -53,3 +59,43 @@ runs:
         done
         waited=$(($(date +%s) - start))
         echo "yield-to-queue: waited ${waited}s for the merge queue's runs to take their runners" >>"$GITHUB_STEP_SUMMARY"
+
+    - name: Wait while a group ahead still has jobs waiting for runners
+      if: github.event_name == 'merge_group'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CAP: ${{ inputs.queue-cap-minutes }}
+      run: |
+        repo=${GH_REPO:-$GITHUB_REPOSITORY}
+        mine=$(gh api "repos/$repo/actions/runs/$GITHUB_RUN_ID" --jq .created_at 2>/dev/null) || mine=
+        if [ -z "$mine" ]; then echo "yield-to-queue: own run unknown, no wait" >>"$GITHUB_STEP_SUMMARY"; exit 0; fi
+        # jobs of the earlier merge_group runs (created before this one, not finished) that wait for a runner; a job
+        # exists in the list only once the jobs it needs are done, so `queued` means it waits for a runner. A failed
+        # call counts as 0.
+        queued() {
+          local n=0 id c status
+          for status in queued in_progress; do
+            for id in $(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status="$status" \
+              -f per_page=20 --jq ".workflow_runs[]|select(.created_at < \"$mine\")|.id" 2>/dev/null); do
+              c=$(gh api -X GET "repos/$repo/actions/runs/$id/jobs" -f per_page=100 \
+                --jq '[.jobs[]|select(.status=="queued")]|length' 2>/dev/null) || c=0
+              n=$((n + ${c:-0}))
+            done
+          done
+          echo "$n"
+        }
+        start=$(date +%s)
+        n=$(queued)
+        while [ "$n" != 0 ]; do
+          waited=$(($(date +%s) - start))
+          if [ "$waited" -ge $((CAP * 60)) ]; then
+            echo "yield-to-queue: $n job(s) of earlier groups still wait after the ${CAP}-minute cap: going ahead (waited ${waited}s)" >>"$GITHUB_STEP_SUMMARY"
+            echo "::warning::yield-to-queue: cap of ${CAP} minutes reached with $n job(s) of earlier groups waiting"
+            exit 0
+          fi
+          echo "$n job(s) of earlier groups wait for runners; ${waited}s waited"
+          sleep 20
+          n=$(queued)
+        done
+        echo "yield-to-queue: groups ahead had no job waiting for a runner after $(($(date +%s) - start)) s" >>"$GITHUB_STEP_SUMMARY"
