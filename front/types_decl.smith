@@ -2116,7 +2116,10 @@ static void check_instances(types::Checked *r) {
         r->scopes.prefix = instance.prefix;
         r->scopes.floor = r->scopes.count;
         types::bind_instance(r, &instance);
+        Usize outer_instance = r->current;
+        r->current = i;
         check_function(r, instance.decl, instance.signature);
+        r->current = outer_instance;
         r->prefix = outer;
         r->scopes.prefix = outer_scopes;
         r->scopes.floor = outer_floor;

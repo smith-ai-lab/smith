@@ -78,3 +78,8 @@ export void test_front_fix_array_a_cast_of_a_dereference_in_an_argument() {
 export void test_front_fix_array_a_brace_list_for_a_tuple_local_is_a_tuple() {
     expect("void f(void) {\n    struct { I32, F32 } a = {1, 2.0f};\n}\n", "fn f():\n    a: (i32, f32) = (1, 2.0f)\n");
 }
+
+// A private function has no `static` in the new syntax (#2649).
+export void test_front_fix_array_a_static_function_is_private() {
+    expect("static I32 where(I32 a) {\n    return a;\n}\n", "fn where(a: i32) -> i32:\n    return a\n");
+}
