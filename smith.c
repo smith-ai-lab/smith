@@ -1775,6 +1775,7 @@ typedef struct {
     const unsigned char *text; // the module's source, where its imports are found
     size_t text_size;
     bool skip; // the header is written already (or copied): no process
+    bool own;  // smith's own tree: written with the flags of the build's header step
     pid_t pid;
 } SmithHeaderJob;
 
@@ -1790,7 +1791,23 @@ static bool smith_header_job_start(SmithHeaderJob *job, const char *self) {
     snprintf(job->scratch, sizeof job->scratch, "%s.%d.tmp", job->header, (int)getpid());
     char *const args[] = {(char *)self, (char *)"cc", (char *)"--smith-header", job->source, (char *)"-o",
                           job->scratch, nullptr};
-    return posix_spawn(&job->pid, self, nullptr, nullptr, args, environ) == 0;
+    // The build's header steps of smith's own tree pass these (build_smith_flags), and a header written without them
+    // differs in its includes: the same flags here keep the bytes, and so the build program, as they are (#2706).
+    char *const own_args[] = {(char *)self,
+                              (char *)"cc",
+                              (char *)"--smith-header",
+                              job->source,
+                              (char *)"-o",
+                              job->scratch,
+                              (char *)"-std=gnu23",
+                              (char *)"-D_GNU_SOURCE",
+                              (char *)"-I",
+                              (char *)"include",
+                              (char *)"-I",
+                              (char *)".smith/include",
+                              (char *)"-std=gnu2y",
+                              nullptr};
+    return posix_spawn(&job->pid, self, nullptr, nullptr, job->own ? own_args : args, environ) == 0;
 }
 
 static bool smith_header_job_finish(SmithHeaderJob *job) {
@@ -1819,6 +1836,19 @@ static void smith_header_job_add(SmithHeaderJob *jobs, size_t *count, const char
     job->text_size = text_size;
     snprintf(job->source, sizeof job->source, "%s/std/%s.smith", source_folder, name);
     snprintf(job->header, sizeof job->header, ".smith/include/smith/%s.h", name);
+    // The header names its source in a comment and in each generic. smith's own build writes the headers from lib/std,
+    // so when that file is the embedded source this names it too: the bytes are then the same and the headers the
+    // build program was compiled with stay put (#2706).
+    char own[PATH_MAX];
+    snprintf(own, sizeof own, "lib/std/%s.smith", name);
+    // Only in smith's own tree (include/smith_core.h is there): another project that links lib/std, such as the units
+    // project, has no such build step, and its headers keep the form they had.
+    // and only for a module the build writes the header of itself (the marks `// smith-build: link` and `header`): the
+    // others keep the form of this writer, which their importers were built against.
+    job->own = access("include/smith_core.h", R_OK) == 0 && smith_file_has_bytes(own, text, text_size) &&
+               (memmem(text, text_size, "// smith-build: link", 20) != nullptr ||
+                memmem(text, text_size, "// smith-build: header", 22) != nullptr);
+    if (job->own) snprintf(job->source, sizeof job->source, "%s", own);
 }
 
 // SMITH_HEADERS_FROM names a folder of headers (another project's .smith/include/smith) that a project copies instead
