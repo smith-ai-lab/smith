@@ -307,7 +307,8 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
     if (array == nullptr) return edits;
     if (array->kind != .name) return edits;
     const types::Symbol *s = types::lookup_path(&c->scopes, array->kind.name.path);
-    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr) return edits;
+    if (s == nullptr || s->kind != .variable || !s->is_new) return edits;
+    if (s->written == nullptr) return edits;
     const ast::TypeExpr *element = array_element_written(s->written);
     if (element == nullptr || !is_plain_pointer(element)) return edits;
     edits = mem::realloc(edits, 1);
