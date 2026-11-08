@@ -1015,7 +1015,8 @@ static Bool is_type_alias_form(Str name, const ast::Expr *init) {
 //
 // A mended import (`mended`) was written with `*mut` for each writable pointer and `*T` for each `const` one
 // (`parse_type::writable_stars`), so its functions and parameters stay in smith's own syntax, where `*T` is read-only:
-// all `is_new = false` made `const Checked *c` writable and every `const` argument of the importer a `*mut` fix (#2648).
+// all `is_new = false` made `const Checked *c` writable and every `const` argument of the importer a `*mut` fix
+// (#2648).
 static void as_todays_syntax(ast::Module *module, Bool mended) {
     for (Usize i = 0; i < countof(module->decls); i++) {
         ast::Decl *d = module->decls[i];
