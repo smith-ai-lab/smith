@@ -1,0 +1,24 @@
+# A call in tail position whose result is a struct is an ordinary call: LLVM cannot make it a `musttail` where the
+# struct comes back through a hidden pointer, and the compiler used to abort on it (`std.arena.carve`).
+
+struct Pair:
+    a: i64
+    b: i64
+    c: i64
+    d: i64
+    e: i64
+    f: i64
+    g: i64
+    h: i64
+
+fn make(x: i64, y: i64) -> Pair:
+    return Pair(a = x, b = y, c = x + y, d = 1, e = 2, f = 3, g = 4, h = 5)
+
+fn again(x: i64, y: i64) -> Pair:
+    return make(x, y)
+
+pub fn check() -> i32:
+    p := again(3, 4)
+    if p.a != 3 or p.b != 4 or p.c != 7 or p.h != 5:
+        return 1
+    0
