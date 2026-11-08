@@ -1,0 +1,59 @@
+// Tests of the fix-it for an `auto` parameter (#2668): the concept its body uses it as, or `auto` left for a hand fix.
+module front_fix_concept_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void expect_fixed(Str before, Str want) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed first = fix::fix_text("t.smith", before);
+    test::check_equal(first.text, want);
+}
+
+export void test_front_fix_concept_arithmetic_only_is_num() {
+    expect_fixed("module m;\nexport auto twice(auto x) {\n    return x + x;\n}\n",
+                 "pub fn twice(x: num) -> auto:\n    return x + x\n");
+}
+
+export void test_front_fix_concept_integer_operations_stay_auto_until_int_is_written() {
+    expect_fixed("module m;\nexport auto low(auto x, auto m) {\n    return x & m;\n}\n",
+                 "pub fn low(x: auto, m: auto) -> auto:\n    return x & m\n");
+}
+
+export void test_front_fix_concept_a_read_through_is_pointer() {
+    expect_fixed("module m;\nexport auto get(auto p) {\n    return *p;\n}\n",
+                 "pub fn get(p: pointer) -> auto:\n    return p.*\n");
+}
+
+export void test_front_fix_concept_a_value_handed_on_stays_auto_until_any_resolves() {
+    expect_fixed("module m;\nexport void pass(auto v) {\n    sink(v);\n}\n", "pub fn pass(v: auto):\n    sink(v)\n");
+}
+
+export void test_front_fix_concept_a_parameter_used_otherwise_stays_auto() {
+    expect_fixed("module m;\nexport void first(auto v) {\n    sink(v.name);\n}\n",
+                 "pub fn first(v: auto):\n    sink(v.name)\n");
+}
+
+// A predicate needs the element type, so it is written where the function already has an inferred `[T]`.
+export void test_front_fix_concept_a_call_used_as_a_test_is_a_predicate_of_the_element() {
+    expect_fixed("module m;\n\npub fn take_while[T](xs: []T, pred: auto) -> usize:\n    mut n: usize = 0\n"
+                 "    while n < countof(xs) and pred(xs[n]):\n        n += 1\n    return n\n",
+                 "\npub fn take_while[T](xs: []T, pred: fn(T) -> bool) -> usize:\n    mut n: usize = 0\n"
+                 "    while n < countof(xs) and pred(xs[n]):\n        n += 1\n    return n\n");
+}
+
+// A `[]auto` slice is `[T](xs: []T)`, and then the call used as a test takes the element: `less` takes two.
+export void test_front_fix_concept_a_slice_of_auto_gives_the_predicate_its_element() {
+    expect_fixed(
+        "module m;\nexport Bool ordered(const auto xs[:], auto less) {\n"
+        "    for (Usize i = 1; i < countof(xs); i++) {\n        if (less(xs[i], xs[i - 1])) return false;\n    }\n"
+        "    return true;\n}\n",
+        "pub fn ordered[T](xs: []T, less: fn(T, T) -> bool) -> bool:\n"
+        "    for i in range(1, countof(xs)):\n        if less(xs[i], xs[i - 1]):\n            return false\n"
+        "    return true\n");
+}
