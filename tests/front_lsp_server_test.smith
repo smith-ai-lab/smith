@@ -94,3 +94,22 @@ export void test_lsp_shutdown_then_exit_finishes() {
     test::check_equal(countof(quiet), 0);
     test::check(lsp_server::finished());
 }
+
+// Every slot taken (an editor with many files open, or tests that never close theirs): the newest document still
+// answers, in place of being dropped.
+export void test_lsp_the_newest_document_is_kept_when_every_slot_is_taken() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    for (Usize i = 0; i < 12; i++) {
+        Str open = as_str(
+            format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{"
+                         "\"uri\":\"file:///t/many",
+                         i, ".smith\",\"text\":\"fn f():\\n    pass\\n\"}}}"));
+        (void)lsp_server::handle(open);
+    }
+    Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/semanticTokens/full\","
+                                 "\"params\":{\"textDocument\":{\"uri\":\"file:///t/many11.smith\"}}}");
+    test::check(!has(out, "\"result\":null"));
+}

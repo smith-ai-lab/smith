@@ -1,0 +1,18 @@
+# A pack spread into another function's pack (`inner(0, rest...)`) is gathered into that pack's tuple as an explicit
+# call `inner(0, 1, 2, 3)` is.
+
+fn inner(a: i32, rest...) -> i32:
+    mut total := a
+    for x in rest:
+        total += x
+    total
+
+fn outer(rest...) -> i32:
+    return inner(10, rest...)
+
+pub fn check() -> i32:
+    if outer(1, 2, 3) != 16:
+        return 1
+    if inner(0, 4, 5) != 9:
+        return 2
+    0

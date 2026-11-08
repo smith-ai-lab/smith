@@ -310,8 +310,14 @@ static Bool imported_callee(state::Emitter *e, const ast::Expr *callee, const as
 // call.
 static const ast::Expr *method_form(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return x;
-    const ast::Expr *made = types::method_of(e->options.checked, x);
-    return made != nullptr ? made : x;
+    // A call may be rewritten more than once: `inner(0, rest...)` becomes `inner(0, rest.0, rest.1)`, which becomes
+    // `inner(0, (rest.0, rest.1))` with the pack gathered.
+    for (Usize step = 0; step < 8; step++) {
+        const ast::Expr *made = types::method_of(e->options.checked, x);
+        if (made == nullptr || made == x) break;
+        x = made;
+    }
+    return x;
 }
 
 // The function of the type's module a method call `x.f(a)` names, when `f` is not one of the current module: the
@@ -358,7 +364,13 @@ static Str instance_key(const types::Instance *instance) {
 
 static const types::Instance *instance_call(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return nullptr;
-    Usize at = types::instance_called(e->options.checked, x);
+    // A generic's body is one tree whatever its instances: ask for the call as the instance being emitted records it.
+    Usize outer = types::max_instances;
+    for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
+        if (&e->options.checked->instances[i] == e->instance) outer = i;
+    }
+    Usize at = types::instance_called_in(e->options.checked, x, outer);
+    if (at >= e->options.checked->instance_count) at = types::instance_called(e->options.checked, x);
     if (at >= e->options.checked->instance_count) return nullptr;
     return &e->options.checked->instances[at];
 }
@@ -985,6 +997,10 @@ export void mark_tail_call(state::Emitter *e, c::LLVMValueRef value) {
     c::LLVMValueRef caller = c::LLVMGetBasicBlockParent(here);
     if (c::LLVMGetCalledFunctionType(value) != c::LLVMGlobalGetValueType(caller)) return;
     if (c::LLVMGetInstructionCallConv(value) != c::LLVMGetFunctionCallConv(caller)) return;
+    // A struct or array result comes back through a hidden pointer on most targets: LLVM cannot make that call a
+    // `musttail` (`return fixed(memory, capacity)` of `std.arena.carve` aborted the compiler).
+    c::LLVMTypeKind result = c::LLVMGetTypeKind(c::LLVMGetReturnType(c::LLVMGetCalledFunctionType(value)));
+    if (result == c::LLVMStructTypeKind || result == c::LLVMArrayTypeKind) return;
     if (c::LLVMIsAFunction(c::LLVMGetCalledValue(value)) != nullptr &&
         c::LLVMGetIntrinsicID(c::LLVMGetCalledValue(value)) != 0)
         return;

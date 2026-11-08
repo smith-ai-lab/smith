@@ -885,6 +885,24 @@ export void test_front_types_expr_an_if_value_needs_a_bool_and_branches_of_one_t
     expect(r.error_count, 2);
 }
 
+// A pointer beside `nullptr`, in either order and without a target type, is the `?*T`: the pointer itself, null for
+// `.none` (#2643).
+export void test_front_types_expr_an_if_of_a_pointer_and_nullptr_is_an_optional_pointer() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked r = fresh();
+    types::TypeRef p = types::pointer_to(&r.table, ty(&r, "I32"), false);
+    declare(&r, "p", .variable, p, false);
+    types::TypeRef maybe = types::option_of(&r.table, p);
+    test::check_condition(
+        types_expr::infer(&r, as_value(branch(flag(true), braces(ast::name("p")), braces(nothing())))) == maybe);
+    test::check_condition(
+        types_expr::infer(&r, as_value(branch(flag(true), braces(nothing()), braces(ast::name("p"))))) == maybe);
+    expect(r.error_count, 0);
+}
+
 export void test_front_types_expr_a_branch_with_no_value_makes_the_whole_void() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

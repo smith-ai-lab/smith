@@ -113,8 +113,43 @@ static Str with_line(Str source, Str message, ast::Span related) {
     return message;
 }
 
+// The modules `read_module` read for the current check, by prefix (`std::test::`), with their path and text: an error
+// the checker found in one of them is reported at its own file and line (#2669).
+constexpr Usize read_max = 256;
+static Str read_prefixes[read_max];
+static Str read_paths[read_max];
+static Str read_sources[read_max];
+static Usize read_count = 0;
+
+static void remember_module(Str dotted, Str path, Str source) {
+    if (read_count == read_max) return;
+    Str prefix = "";
+    for (Usize i = 0; i < countof(dotted); i++) {
+        Str piece = dotted[i:i + 1];
+        if (dotted[i] == '.') piece = "::";
+        prefix = as_str(format::push(prefix, piece));
+    }
+    read_prefixes[read_count] = as_str(format::push(prefix, "::"));
+    read_paths[read_count] = path;
+    read_sources[read_count] = source;
+    read_count += 1;
+}
+
+// The index of the module read under `prefix`, or `read_count` when none was.
+static Usize read_index(Str prefix) {
+    for (Usize i = 0; i < read_count; i++) {
+        if (roots::same(read_prefixes[i], prefix)) return i;
+    }
+    return read_count;
+}
+
 // The report of one error of the checker: its line, then its note when it has one.
 static Str error_lines(Str file, Str source, const types::Error *e) {
+    Usize at = read_index(e->module);
+    if (countof(e->module) > 0 && at < read_count) { // found in an import's text: reported there
+        file = read_paths[at];
+        source = read_sources[at];
+    }
     Str message = e->has_related ? with_line(source, e->message, e->related) : e->message;
     Str text = diagnostic(file, source, e->span, "error", message);
     if (e->has_related) {
@@ -339,6 +374,7 @@ static const ast::Module *read_module(const char *dotted) {
         if (countof(name_module(&parsed.module, path, named_by)) > 0) return nullptr;
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
+        remember_module(relative, path, source);
         return copy;
     }
     return load_embedded(relative);
@@ -1007,6 +1043,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     import_roots = folders;
     header_folder = folder_of(path);
     import_nanoseconds = 0;
+    read_count = 0;
     lint_inputs(source);
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
