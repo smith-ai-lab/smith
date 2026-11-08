@@ -256,6 +256,16 @@ static core::Errors result_literals(Str source, Usize start, Usize end, core::Er
     return out;
 }
 
+// Whether a parameter is a type (`T: type`): the function is generic over it.
+static Bool has_type_param(Str source, ast::Param params[:]) {
+    for (Usize i = 0; i < countof(params); i++) {
+        const ast::TypeExpr *type = params[i].type;
+        if (type == nullptr || type->span.end > countof(source) || type->span.start >= type->span.end) continue;
+        if (same(source[type->span.start:type->span.end], "type")) return true;
+    }
+    return false;
+}
+
 static core::Errors scan(Str source, Usize start, Usize end, core::Errors out) {
     for (Usize at = start; at < end; at++) {
         if (!starts_word(source[at]) || (at > 0 && word_char(source[at - 1]))) continue;
@@ -581,6 +591,11 @@ export core::Errors edits(Str source, const ast::Module *module) {
         const ast::Stmt *function_body = d->kind.function.body;
         const ast::TypeExpr *function_result = d->kind.function.result;
         ast::Param params[:] = d->kind.function.params;
+        if (function_body != nullptr && !is_generic(d) && has_type_param(source, params) &&
+            has_result_type(source, function_result)) {
+            Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+            if (function_body->span.start < end) out = result_literals(source, function_body->span.start, end, out);
+        }
         if (function_body != nullptr && is_generic(d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
