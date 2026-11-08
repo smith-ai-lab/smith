@@ -1253,6 +1253,7 @@ export struct Error {
 // One entry of the side table.
 export struct NodeType {
     const ast::Expr *node;
+    Usize instance; // the instance whose body holds the node, or `max_instances` (also the latest record) (#2669)
     TypeRef type;
     Bool cast_checked; // a written cast that can lose a value: the emitter checks it at run time (K1, #1328)
     TypeRef cast_from; // the operand's type, when `cast_checked`
@@ -1450,31 +1451,64 @@ static void grow_nodes(Checked *r) {
     }
 }
 
-// Records the type of an expression.
-export void set_type(Checked *r, const ast::Expr *node, TypeRef type) {
-    if ((r->node_count + 1) * 2 > countof(r->nodes)) grow_nodes(r);
-    Usize capacity = countof(r->nodes);
-    Usize at = slot_of(node, capacity);
-    while (r->nodes[at].node != nullptr && r->nodes[at].node != node) {
-        at = (at + 1) & (capacity - 1);
-    }
-    if (r->nodes[at].node == nullptr) {
-        r->node_count += 1;
-    }
-    r->nodes[at].node = node;
-    r->nodes[at].type = type;
-}
-
-// The type recorded for an expression, or null when there is none.
-export TypeRef type_of(const Checked *r, const ast::Expr *node) {
+// The entry of `node` recorded in the body of `instance` (`max_instances`: outside every instance, and the latest
+// record of any instance), or null.
+static const NodeType *find_in(const Checked *r, const ast::Expr *node, Usize instance) {
     Usize capacity = countof(r->nodes);
     if (capacity == 0) return nullptr;
     Usize at = slot_of(node, capacity);
     while (r->nodes[at].node != nullptr) {
-        if (r->nodes[at].node == node) return r->nodes[at].type;
+        if (r->nodes[at].node == node && r->nodes[at].instance == instance) return &r->nodes[at];
         at = (at + 1) & (capacity - 1);
     }
     return nullptr;
+}
+
+// The entry a reader of the body being checked sees: the instance's own, else the one recorded outside every instance
+// (a global's initializer, a signature).
+static const NodeType *find_here(const Checked *r, const ast::Expr *node) {
+    const NodeType *entry = find_in(r, node, r->current);
+    if (entry == nullptr && r->current != max_instances) entry = find_in(r, node, max_instances);
+    return entry;
+}
+
+// The entry of `node` for `instance`, made when there is none.
+static NodeType *entry_in(Checked *r, const ast::Expr *node, Usize instance) {
+    if ((r->node_count + 1) * 2 > countof(r->nodes)) grow_nodes(r);
+    Usize capacity = countof(r->nodes);
+    Usize at = slot_of(node, capacity);
+    while (r->nodes[at].node != nullptr && !(r->nodes[at].node == node && r->nodes[at].instance == instance)) {
+        at = (at + 1) & (capacity - 1);
+    }
+    if (r->nodes[at].node == nullptr) {
+        r->node_count += 1;
+        r->nodes[at].node = node;
+        r->nodes[at].instance = instance;
+    }
+    return &r->nodes[at];
+}
+
+// Records the type of an expression. In the body of an instance of a generic the type is that instance's (#2669); the
+// record outside every instance (`max_instances`) always holds the latest one, which is what a reader that does not
+// name an instance gets, as before.
+export void set_type(Checked *r, const ast::Expr *node, TypeRef type) {
+    entry_in(r, node, r->current)->type = type;
+    if (r->current != max_instances) entry_in(r, node, max_instances)->type = type;
+}
+
+// The type recorded for an expression in the body of the instance being checked (outside a check: the latest), or null
+// when there is none.
+export TypeRef type_of(const Checked *r, const ast::Expr *node) {
+    const NodeType *entry = find_here(r, node);
+    if (entry == nullptr) return nullptr;
+    return entry->type;
+}
+
+// The type recorded for an expression in the body of `instance`, or null.
+export TypeRef type_of_in(const Checked *r, const ast::Expr *node, Usize instance) {
+    const NodeType *entry = find_in(r, node, instance);
+    if (entry == nullptr) return nullptr;
+    return entry->type;
 }
 
 // What the emitter needs to know about a cast: whether it asserts that the value fits (checked in every build, and
@@ -1485,15 +1519,25 @@ export struct CastCheck {
     TypeRef target_type;
 };
 
-static NodeType *entry_of(Checked *r, const ast::Expr *node) {
+static NodeType *entry_for(Checked *r, const ast::Expr *node, Usize instance) {
     Usize capacity = countof(r->nodes);
     if (capacity == 0) return nullptr;
     Usize at = slot_of(node, capacity);
     while (r->nodes[at].node != nullptr) {
-        if (r->nodes[at].node == node) return &r->nodes[at];
+        if (r->nodes[at].node == node && r->nodes[at].instance == instance) return &r->nodes[at];
         at = (at + 1) & (capacity - 1);
     }
     return nullptr;
+}
+
+static NodeType *entry_of(Checked *r, const ast::Expr *node) {
+    return entry_for(r, node, r->current);
+}
+
+// The entry that holds the latest record of `node`, when `entry_of` is one of an instance.
+static NodeType *latest_of(Checked *r, const ast::Expr *node) {
+    if (r->current == max_instances) return nullptr;
+    return entry_for(r, node, max_instances);
 }
 
 // Records that the call `node`, written `x.f(args)`, is the call `rewritten`, `f(x, args)` or `f(&x, args)`.
@@ -1505,6 +1549,8 @@ export void set_method(Checked *r, const ast::Expr *node, const ast::Expr *rewri
         entry = entry_of(r, node);
     }
     if (entry != nullptr) entry->method = rewritten;
+    NodeType *latest = latest_of(r, node);
+    if (latest != nullptr) latest->method = rewritten;
 }
 
 // Records that the array length `node`, written as constants, has the value `length`.
@@ -1517,33 +1563,26 @@ export void set_length(Checked *r, const ast::Expr *node, U64 length) {
     if (entry == nullptr) return;
     entry->has_length = true;
     entry->length = length;
+    NodeType *latest = latest_of(r, node);
+    if (latest != nullptr) {
+        latest->has_length = true;
+        latest->length = length;
+    }
 }
 
 // The value of an array length that the checker folded; false when `node` is not one.
 export Bool length_of(const Checked *r, const ast::Expr *node, U64 *out) {
-    Usize capacity = countof(r->nodes);
-    if (capacity == 0) return false;
-    Usize at = slot_of(node, capacity);
-    while (r->nodes[at].node != nullptr) {
-        if (r->nodes[at].node == node) {
-            *out = r->nodes[at].length;
-            return r->nodes[at].has_length;
-        }
-        at = (at + 1) & (capacity - 1);
-    }
-    return false;
+    const NodeType *entry = find_here(r, node);
+    if (entry == nullptr) return false;
+    *out = entry->length;
+    return entry->has_length;
 }
 
 // The call a method call stands for, or null when `node` is not a method call.
 export const ast::Expr *method_of(const Checked *r, const ast::Expr *node) {
-    Usize capacity = countof(r->nodes);
-    if (capacity == 0) return nullptr;
-    Usize at = slot_of(node, capacity);
-    while (r->nodes[at].node != nullptr) {
-        if (r->nodes[at].node == node) return r->nodes[at].method;
-        at = (at + 1) & (capacity - 1);
-    }
-    return nullptr;
+    const NodeType *entry = find_here(r, node);
+    if (entry == nullptr) return nullptr;
+    return entry->method;
 }
 
 // Marks the cast `node` (whose type is already recorded) as needing a run-time check; `from` is its operand's type.
@@ -1552,23 +1591,19 @@ export void mark_cast_checked(Checked *r, const ast::Expr *node, TypeRef from) {
     if (entry == nullptr) return;
     entry->cast_checked = true;
     entry->cast_from = from;
+    NodeType *latest = latest_of(r, node);
+    if (latest != nullptr) {
+        latest->cast_checked = true;
+        latest->cast_from = from;
+    }
 }
 
 // Whether the cast `node` needs a run-time check, with its source and target type; `needed` is false for every other
 // node and for a cast that cannot lose anything.
 export CastCheck cast_checked(const Checked *r, const ast::Expr *node) {
-    Usize capacity = countof(r->nodes);
-    if (capacity == 0) return (CastCheck){.target_type = nullptr};
-    Usize at = slot_of(node, capacity);
-    while (r->nodes[at].node != nullptr) {
-        if (r->nodes[at].node == node) {
-            const NodeType *entry = &r->nodes[at];
-            if (!entry->cast_checked) return (CastCheck){.target_type = nullptr};
-            return (CastCheck){.needed = true, .from = entry->cast_from, .target_type = entry->type};
-        }
-        at = (at + 1) & (capacity - 1);
-    }
-    return (CastCheck){.target_type = nullptr};
+    const NodeType *entry = find_here(r, node);
+    if (entry == nullptr || !entry->cast_checked) return (CastCheck){.target_type = nullptr};
+    return (CastCheck){.needed = true, .from = entry->cast_from, .target_type = entry->type};
 }
 
 // ---------------------------------------------------------------------------------------------------------------
