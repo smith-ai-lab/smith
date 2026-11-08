@@ -71,6 +71,31 @@ export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
     expect("fn f():\n    x := 1\n    p := &x\n    p.* = 2\n", "fn f():\n    mut x := 1\n    p := &x\n    p.* = 2\n", 1);
 }
 
+// A number where a Bool is wanted (#2647): `not n` is `n == 0`, an operand of `and` or `or` is tested `!= 0`.
+export void test_front_fix_mut_not_a_number_is_a_comparison_with_zero() {
+    expect("fn f(n: usize) -> bool:\n    return not n\n", "fn f(n: usize) -> bool:\n    return n == 0\n", 1);
+}
+
+export void test_front_fix_mut_a_number_operand_of_and_is_tested_against_zero() {
+    expect("fn f(n: usize, ok: bool) -> bool:\n    return n and ok\n",
+           "fn f(n: usize, ok: bool) -> bool:\n    return n != 0 and ok\n", 1);
+    expect("fn f(n: usize, m: usize, ok: bool) -> bool:\n    return ok or n + m\n",
+           "fn f(n: usize, m: usize, ok: bool) -> bool:\n    return ok or (n + m) != 0\n", 1);
+}
+
+// The lead's repro: a C `while (n && p[0])` and `return !n;` come out checked (#2647).
+export void test_front_fix_mut_a_c_test_of_a_number_comes_out_without_errors() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed("module m;\nstatic Bool f(Usize n, const char *p) {\n    while (n && p[0]) {\n        n -= 1;\n    "
+                    "}\n    return !n;\n}\n",
+                    &count);
+    test::check_equal(errors_in(got), (Usize)0);
+}
+
 export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
     expect("fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n",
            "fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n", 0);
