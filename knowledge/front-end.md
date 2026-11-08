@@ -360,6 +360,9 @@ std spells a few operations the way clang does, and the checker knows them as in
 
 **Control flow** (`emit_control.smith`, #1131): `if`/`else`, `while`, `do while`, `for`, `break`, `continue` (through `Emitter.loops`), `&&` and `||` (short circuit with a phi), `!`, `?:`.
 - A condition is a `Bool`: an integer condition is an Error, "a condition is a Bool; write `x != 0`". A function whose end is reached without `return` branches to the `trap` block.
+- A number where a Bool is wanted (`expected Bool, found Usize`) has a fix: ` != 0` after the expression, `(a + b) != 0` for one that is not a name, member, call, index or literal (`nonzero_fix` in `types_decl`, #2669).
+- A call inside a generic is recorded once per instance of the function that holds it (`InstanceUse.outer`, `types::instance_called_in`, #2669); the emitter asks with the instance it is emitting.
+- `@align(N)` (D18, #2669): one argument, a compile-time power of two, otherwise "the alignment must be a power of two known at compile time"; at most once on a declaration (`check_align` in `types_attr`). Test: `tests/front_attr_test.smith`.
 - `defer body` (#1583) waits on `Emitter.defers` with its scope depth and runs on every way out: the end of its block (newest first, skipped when the end is unreachable), `return` (after its value is computed, before `ret`), and `break`/`continue` (the defers deeper than the loop's `scope_depth`, then the jump); a deferred body is emitted once per way out.
 - `switch`, `goto` and labels are `not emitted yet`.
 - `for x in xs` (`emit_iter`) lowers to the plain indexed loop with no stream object: blocks `forcond`, `forbody`, `forstep`, `endfor` and a hidden counter in the entry block.

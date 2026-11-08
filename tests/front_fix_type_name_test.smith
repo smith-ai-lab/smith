@@ -26,7 +26,7 @@ export void test_front_fix_type_name_after_a_slice_colon() {
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Str f(Str source, U32 start) {\n    ast::Span type "
                                                 "= g();\n    Str p = source[start:type.end];\n    return p;\n}\n");
-    check_text(fixed.text, "static fn f(source: str, start: u32) -> str:\n    ty: ast.Span = g()\n    p: str = "
+    check_text(fixed.text, "fn f(source: str, start: u32) -> str:\n    ty: ast.Span = g()\n    p: str = "
                            "source[start:ty.end]\n    return p\n");
 }
 

@@ -1,6 +1,6 @@
 ---
 name: smith-dev-syntax-types
-description: "New syntax (#1428): the types (`i32`, `str`, `*T`, `*mut T`, `*void` for C only, `?T`, `?*T`, `[5]T`, `[]T`, `[]mut T`, `[5, 3]T`, `[, 3]T`, tuples `(i32, f64)`, named tuples `(count: i32, ms: f64)`, `fn(A) -> R`, `fn_once`, `type`, `vec(T, N)` and swizzles), sub-slices `xs[a:b]`, `countof`/`sizeof`/`alignof`. Load when writing a type in the new syntax."
+description: "New syntax (#1428): the types (`i32`, `str`, `*T`, `*mut T`, `*void` for C only, `?T`, `?*T`, `[5]T`, `[]T`, `[]mut T`, `volatile T`, `*volatile T`, `[5, 3]T`, `[, 3]T`, tuples `(i32, f64)`, named tuples `(count: i32, ms: f64)`, `fn(A) -> R`, `fn_once`, `type`, `vec(T, N)` and swizzles), sub-slices `xs[a:b]`, `countof`/`sizeof`/`alignof`. Load when writing a type in the new syntax."
 ---
 
 # Types
@@ -16,6 +16,7 @@ Part of the tour [smith-dev-syntax](../smith-dev-syntax/SKILL.md); the spec is #
 | option | `?T` (`.some(x)`, `.none`, or a plain value where `?T` is expected) |
 | fixed array | `[5]T` |
 | slice | `[]T` read-only, `[]mut T` writable elements |
+| volatile | a prefix where `mut` sits, lowered to C's `volatile`: `*volatile i32` (volatile pointee), `*volatile mut T` (writable too), `mut sink: volatile u64 = 0`, `volatile [4]u8`, `[]volatile u8` (volatile elements), `volatile *u8` (the pointer itself), `x.cast(*volatile u8)`. The owner (2026-11-07): "Let's go with option 1". |
 | contiguous block | `[5, 3]T`, `[, 3]T`, `[,]T` (an empty slot is known at run time; not `_`); `[5][3]T` is the same type and `smith fmt` writes `[5, 3]T` |
 | nesting | `[][]T` a slice of slices (jagged), `[5][]T` five slices |
 | tuple | `(i32, f64)`, `(T,)` one element, `()` empty; elements `t.0`, `t.1` |

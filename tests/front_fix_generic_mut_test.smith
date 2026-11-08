@@ -45,7 +45,7 @@ export void test_front_fix_generic_mut_a_pointer_handed_to_a_mut_field_in_a_pack
                  "export Usize write(char *buffer, Usize capacity, auto... args) {\n"
                  "    Writer writer = {buffer, capacity};\n    put(&writer, 'a');\n    return writer.capacity;\n}\n",
                  "pub struct Writer:\n    pub out: *mut char\n    pub capacity: usize\n\n"
-                 "static fn put(writer: *Writer, c: char):\n    writer.out[0] = c\n\n"
+                 "fn put(writer: *Writer, c: char):\n    writer.out[0] = c\n\n"
                  "pub fn write(buffer: *mut char, capacity: usize, args...) -> usize:\n"
                  "    writer := Writer(buffer, capacity)\n    put(&writer, 'a')\n    return writer.capacity\n");
 }
@@ -107,4 +107,10 @@ export void test_front_fix_generic_mut_an_index_loop_over_fields_that_uses_the_i
                  "        put(f.name);\n    }\n}\n",
                  "pub fn names(value: auto):\n    for (i, f) in enumerate(fields(typeof(value))):\n        if i > 0:\n"
                  "            put(\", \")\n        put(f.name)\n");
+}
+
+// A pointer parameter whose name is longer than the rest of the body is not a slice past the end of the source.
+export void test_front_fix_generic_mut_a_long_pointer_name_in_a_short_body_does_not_overrun() {
+    expect_fixed("module m;\nexport I32 view(auto xs, void *memory, Usize n) {\n    return xs;\n}\n",
+                 "pub fn view(xs: auto, memory: *void, n: usize) -> i32:\n    return xs\n");
 }

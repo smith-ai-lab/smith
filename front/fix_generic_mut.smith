@@ -266,6 +266,7 @@ static Bool wanted_mut(const ast::Module *module, Str source, Usize at, Usize fl
 // Whether the body (from `start` to `end`) writes through the pointer called `name`, or hands it whole to a `*mut`.
 static Bool pointer_written(const ast::Module *module, Str source, Usize start, Usize end, Str name) {
     for (Usize at = start; at < end; at++) {
+        if (at + countof(name) > end) break;
         if (!starts_word(source[at]) || !is_whole_word(source, at, countof(name), start)) continue;
         if (!same(source[at:at + countof(name)], name)) continue;
         Usize after = at + countof(name);

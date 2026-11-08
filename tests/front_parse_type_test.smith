@@ -337,3 +337,11 @@ export void test_parse_type_old_forms_are_warnings_not_errors() {
     test::check_equal(countof(p.errors), 0);
     test::check_equal(countof(p.warnings), 1);
 }
+
+// `volatile` sits where `mut` sits (#2649, decided by the owner 2026-11-07).
+export void test_parse_type_new_volatile() {
+    check_golden_in("tests/front/parse_type/new_volatile.txt",
+                    "*volatile i32\n*volatile mut u8\nvolatile u64\nvolatile [4]u8\n[]volatile u8\n[]volatile mut u8\n"
+                    "volatile *u8",
+                    true);
+}

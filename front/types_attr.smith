@@ -232,6 +232,26 @@ export Bool ceiling_of(const ast::Attribute list[:], U32 *mask) {
     return found;
 }
 
+// `@align(N)` (D18, #2669): one argument, a compile-time power of two.
+static void check_align(types::Checked *r, const ast::Attribute *a) {
+    U64 value = 0;
+    if (countof(a->args) != 1 || !types::fold_length(r, a->args[0], &value) || value == 0 ||
+        (value & (value - 1)) != 0) {
+        types::fail(r, a->span, "the alignment must be a power of two known at compile time");
+    }
+}
+
+// `@align` more than once on one declaration.
+static void check_align_once(types::Checked *r, ast::Attribute list[:]) {
+    Bool seen = false;
+    for (Usize i = 0; i < countof(list); i++) {
+        const ast::Attribute *a = &list[i];
+        if (!a->is_new || countof(a->name.segments) != 1 || !same_text(a->name.segments[0].text, "align")) continue;
+        if (seen) types::fail(r, a->span, "`@align` appears at most once on a declaration");
+        seen = true;
+    }
+}
+
 // One `@name` attribute.
 static void check_attribute(types::Checked *r, const ast::Attribute *a) {
     if (!a->is_new || countof(a->name.segments) == 0) return;
@@ -245,6 +265,10 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
         }
         return;
     }
+    if (same_text(name, "align")) {
+        check_align(r, a);
+        return;
+    }
     const types::Symbol *symbol = types::lookup(&r->scopes, name);
     if (symbol == nullptr || symbol->kind != .type_name) {
         if (is_built_in(name)) return;
@@ -253,7 +277,7 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
             "`; the built-in ones are `@inline`, `@noinline`, `@cold`, `@pure`, `@affine`, `@capability`, "
             "`@c_name(...)`, ",
             "`@attribute`, `@effects(...)`, `@when(...)`, `@returns_owned(...)`, `@returns_borrowed(...)` and ",
-            "`@returns_internal`, and your own are structs marked `@attribute`");
+            "`@returns_internal`, `@align(N)`, and your own are structs marked `@attribute`");
         return;
     }
     Bool marked = false;
@@ -267,6 +291,7 @@ static void check_attribute(types::Checked *r, const ast::Attribute *a) {
 }
 
 static void check_all(types::Checked *r, ast::Attribute list[:]) {
+    check_align_once(r, list);
     for (Usize i = 0; i < countof(list); i++)
         check_attribute(r, &list[i]);
 }
