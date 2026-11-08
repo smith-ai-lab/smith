@@ -358,7 +358,13 @@ static Str instance_key(const types::Instance *instance) {
 
 static const types::Instance *instance_call(state::Emitter *e, const ast::Expr *x) {
     if (e->options.checked == nullptr) return nullptr;
-    Usize at = types::instance_called(e->options.checked, x);
+    // A generic's body is one tree whatever its instances: ask for the call as the instance being emitted records it.
+    Usize outer = types::max_instances;
+    for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
+        if (&e->options.checked->instances[i] == e->instance) outer = i;
+    }
+    Usize at = types::instance_called_in(e->options.checked, x, outer);
+    if (at >= e->options.checked->instance_count) at = types::instance_called(e->options.checked, x);
     if (at >= e->options.checked->instance_count) return nullptr;
     return &e->options.checked->instances[at];
 }

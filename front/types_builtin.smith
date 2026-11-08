@@ -442,6 +442,7 @@ static Bool letter_fits(U8 letter, types::TypeRef t, types::TypeRef want) {
     if (is_open(t)) return true;
     if (letter == 'p') return t->kind == .pointer || is_pointer_option(t);
     if (letter == 'z' || letter == 'i') return t->kind == .integer;
+    if (letter == 'd') return t->kind == .floating; // C widens an F32 to the F64 a `d` parameter takes: exact
     return t == want;
 }
 

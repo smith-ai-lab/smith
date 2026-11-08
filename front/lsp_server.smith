@@ -147,7 +147,9 @@ static Str cleared(Str uri) {
 }
 
 // The open documents, by uri: a request such as hover names a document by its uri and position only. Fixed sizes keep
-// the text out of the arena that `run` resets after each message; a document past the limits is not kept.
+// the text out of the arena that `run` resets after each message; a document past the size limits is not kept. With
+// every slot taken, the newest document replaces the one opened longest ago: dropping it would leave the file being
+// edited without highlighting, hover or completion, while an editor has long stopped asking about the oldest.
 constexpr Usize max_documents = 8;
 constexpr Usize max_uri = 512;
 constexpr Usize max_text = 1 << 18;
@@ -161,6 +163,7 @@ struct Document {
 };
 
 static Document documents[max_documents];
+static Usize next_victim = 0; // the slot that goes next when all are taken
 
 static Document *find_document(Str uri) {
     for (Usize i = 0; i < max_documents; i++) {
@@ -179,7 +182,10 @@ static void store_document(Str uri, Str text) {
     Document *slot = find_document(uri);
     for (Usize i = 0; slot == nullptr && i < max_documents; i++)
         if (!documents[i].used) slot = &documents[i];
-    if (slot == nullptr) return;
+    if (slot == nullptr) {
+        slot = &documents[next_victim];
+        next_victim = (next_victim + 1) % max_documents;
+    }
     slot->used = true;
     slot->uri_length = countof(uri);
     slot->text_length = countof(text);
