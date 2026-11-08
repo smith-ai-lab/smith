@@ -1039,7 +1039,8 @@ static void as_todays_syntax(ast::Module *module) {
 static const ast::Decl *function_taking(const ast::Module *module, Str name, Usize count) {
     for (Usize i = 0; i < countof(module->decls); i++) {
         const ast::Decl *d = module->decls[i];
-        if (d->kind == .function && countof(d->kind.function.params) == count && mem::equal(d->kind.function.name, name))
+        if (d->kind == .function && countof(d->kind.function.params) == count &&
+            mem::equal(d->kind.function.name, name))
             return d;
     }
     return nullptr;
