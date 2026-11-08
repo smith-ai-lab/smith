@@ -3653,9 +3653,8 @@ static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
     ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, typed_subject);
     Str none = "";
     enumerated_pack = none;
-    if (!enumerated_any) return false;
-    *d = *copy;
-    return true;
+    if (enumerated_any) *d = *copy;
+    return enumerated_any;
 }
 
 // Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
