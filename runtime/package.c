@@ -236,6 +236,8 @@ static bool smith_package_download(const char *url, const char *destination, Smi
         result = smith_http_get(url, destination);
     }
     if (result.error.code == 0) return true;
+    // one greppable line for a failure that is GitHub's or the network's, not smith's (#2825)
+    if (tries > 1) fprintf(stderr, "external: %s %d after %u tries\n", url, result.status, tries);
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
 
