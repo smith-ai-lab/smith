@@ -17,6 +17,8 @@ module front::fix_generic_mut;
 
 import front::ast;
 import front::parse as core;
+import front::types;
+import std::format;
 import std::mem;
 
 // Whether the type is `auto` or a pointer, slice or array of it (`xs: []auto`, `const auto xs[:]`).
@@ -405,6 +407,24 @@ static Usize body_end(Str s, Usize header_end, Usize indent) {
     return end;
 }
 
+// The edits that write each `list[index]` of s[from:to] as `name`, counted in `uses`. Whether the loop reads `index`
+// any other way (`i > 0`, `char[i + 1]`): then it needs the index (D20).
+static Bool index_uses(Str s, Str list, Str index, Str name, Usize range[2], core::Edits *out, Usize *uses) {
+    Bool counted = false;
+    for (Usize k = range[0]; k + countof(index) <= range[1]; k++) {
+        if (!text_at(s, k, index) || word_char(s[k - 1]) || s[k - 1] == '.') continue;
+        if (k + countof(index) < countof(s) && word_char(s[k + countof(index)])) continue;
+        Usize before = countof(list) + 1;
+        if (k < before || !text_at(s, k - before, list) || s[k - 1] != '[' || s[k + countof(index)] != ']') {
+            counted = true;
+            continue;
+        }
+        *out = edit_push(*out, k - before, k + countof(index) + 1, name);
+        *uses += 1;
+    }
+    return counted;
+}
+
 // The edits for the loop whose header starts at `p` (after its indent) and ends at `header_end`, or none.
 static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize header_end, Usize indent) {
     core::Edits none = {};
@@ -450,19 +470,19 @@ static core::Edits loop_edits(const ast::Module *module, Str s, Usize p, Usize h
     if (!bound && has_word(s, header_end, end, name)) return none;
     core::Edits out = {};
     Usize uses = 0;
-    for (Usize k = scan_from; k + countof(index) <= end; k++) {
-        if (!text_at(s, k, index) || word_char(s[k - 1]) || s[k - 1] == '.') continue;
-        if (k + countof(index) < countof(s) && word_char(s[k + countof(index)])) continue;
-        Usize before = countof(list) + 1;
-        if (k < before || !text_at(s, k - before, list) || s[k - 1] != '[' || s[k + countof(index)] != ']') return none;
-        out = edit_push(out, k - before, k + countof(index) + 1, name);
-        uses += 1;
-    }
+    Bool counted = index_uses(s, list, index, name, (Usize[2]){scan_from, end}, &out, &uses);
     if (bound) {
         uses += 1;
         out = edit_push(out, bound_start, bound_end, "");
     }
     if (uses == 0) return none;
+    if (counted) { // D20: `for (i, arg) in enumerate(P):`, `i` a compile-time `usize`
+        out = edit_push(out, name_start, name_start, "(");
+        out = edit_push(out, name_start + countof(index), list_start,
+                        types::message_of(format::push(", ", name, ") in enumerate(")));
+        out = edit_push(out, close, header_end, "):");
+        return out;
+    }
     out = edit_push(out, name_start, name_start + countof(index), name);
     out = edit_push(out, name_start + countof(index), list_start, " in ");
     out = edit_push(out, close, header_end, ":");

@@ -942,25 +942,76 @@ static size_t build_library_objects(SmithBuild *b, const BuildConfig *config, co
     return count;
 }
 
-// The modules of front/ that smith links; emit_jit is a test helper and cimport needs the edge files of track C.
-static const char *const build_front_modules[] = {
-    "ast",           "ast_clone",       "when",          "lex",           "parse",
-    "parse_expr",    "parse_type",      "parse_stmt",    "parse_decl",    "parser",
-    "types",         "types_expr",      "types_convert", "types_decl",    "types_attr",
-    "types_stream",  "types_undefined", "types_builtin", "lint",          "affine",
-    "affine_loops",  "types_fn",        "types_iter",    "emit_state",    "emit",
-    "emit_arith",    "emit_builtin",    "emit_control",  "emit_call",     "emit_memory",
-    "emit_debug",    "emit_object",     "roots",         "fix",           "cimport",
-    "compile",       "emit_option",     "emit_match",    "emit_value",    "emit_iter",
-    "emit_tuple",    "emit_lambda",     "emit_vector",   "emit_stream",   "emit_recursion",
-    "fix_directive", "fix_blocks",      "fix_equal",     "fix_generic_c", "fix_generic_mut",
-    "fix_method",    "fix_zero",        "fix_opaque",    "fix_payload",   "fix_array",
-    "fix_bool",      "fix_const",       "fix_chain",     "fix_guard",     "fix_place",
-    "fix_typeof",    "lsp_server",      "lsp_hover",     "lsp_semantic",  "lsp_definition",
-    "lsp_symbols",   "lsp_completion",  "format_space",  "format",        "effects_table",
-    "fix_variants",  "fix_alloc",       "fix_build",
+// The files of front/ that smith does not link, one per line and sorted: emit_jit is a test helper, and the effects
+// passes and the C import cache are built by their tests. Every other front/*.smith is a module of the front end, so a
+// new file needs no edit here (#2228).
+static const char *const build_front_unlinked[] = {
+    "cimport_cache", "effects_c", "effects_cache", "effects_ceiling", "effects_pass", "emit_jit",
 };
-constexpr size_t build_front_module_count = sizeof build_front_modules / sizeof build_front_modules[0];
+
+static bool build_front_is_unlinked(const char *name, size_t length) {
+    for (size_t i = 0; i < sizeof build_front_unlinked / sizeof build_front_unlinked[0]; i++)
+        if (strlen(build_front_unlinked[i]) == length && strncmp(build_front_unlinked[i], name, length) == 0)
+            return true;
+    return false;
+}
+
+constexpr size_t build_front_max = 160;
+constexpr size_t build_front_deps_max = 48;
+
+// The front/ modules that import front::<name> are found by their `import front::` lines; one module's imports, as
+// indexes into names (an import of a file that is not a module, or of itself, is dropped).
+static size_t build_front_read_imports(const char *path, const char *const *names, size_t count, size_t *deps) {
+    FILE *file = fopen(path, "r");
+    if (file == nullptr) return 0;
+    char line[256];
+    size_t found = 0;
+    while (fgets(line, sizeof line, file) != nullptr) {
+        if (strncmp(line, "import front::", 14) != 0) continue;
+        size_t length = strcspn(line + 14, "; \n");
+        for (size_t i = 0; i < count && found < build_front_deps_max; i++)
+            if (strlen(names[i]) == length && strncmp(names[i], line + 14, length) == 0) deps[found++] = i;
+    }
+    fclose(file);
+    return found;
+}
+
+// The modules of front/ in import order: each comes after every module it imports, which is the order the header steps
+// need (a module's header step depends on the headers before it). Found by listing front/ (#2228); a cycle of imports
+// stops the build.
+static const char *const *build_front_modules(SmithBuild *b) {
+    const char *const *found = smith_glob(b, smith_list(b, "front/*.smith", nullptr));
+    const char *names[build_front_max];
+    size_t count = 0;
+    for (size_t i = 0; found[i] != nullptr && count < build_front_max; i++) {
+        const char *name = found[i] + strlen("front/");
+        size_t length = strlen(name) - strlen(".smith");
+        if (!build_front_is_unlinked(name, length)) names[count++] = smith_fmt(b, "%.*s", (int)length, name);
+    }
+    size_t deps[build_front_max][build_front_deps_max];
+    size_t dep_count[build_front_max];
+    for (size_t i = 0; i < count; i++)
+        dep_count[i] = build_front_read_imports(smith_fmt(b, "front/%s.smith", names[i]), names, count, deps[i]);
+    bool placed[build_front_max] = {false};
+    const char *const *order = smith_list(b, nullptr);
+    for (size_t done = 0; done < count;) {
+        size_t before = done;
+        for (size_t i = 0; i < count; i++) {
+            bool ready = !placed[i];
+            for (size_t d = 0; ready && d < dep_count[i]; d++)
+                ready = placed[deps[i][d]] || deps[i][d] == i;
+            if (!ready) continue;
+            placed[i] = true;
+            order = smith_cat(b, order, smith_list(b, names[i], nullptr), nullptr);
+            done += 1;
+        }
+        if (done == before) {
+            fputs("smith: the modules of front/ import each other in a cycle\n", stderr);
+            exit(1);
+        }
+    }
+    return order;
+}
 
 // Objects of the header modules the front end calls (ascii, format, clock), each a compile step beside the header
 // steps.
@@ -1010,8 +1061,9 @@ static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *
     const char *const *before =
         smith_cat(b, smith_list(b, build_compiler_file(b, config), nullptr), config->headers, nullptr);
     const char *const *objects = smith_list(b, nullptr);
-    for (size_t i = 0; i < build_front_module_count; i++) {
-        const char *name = build_front_modules[i];
+    const char *const *modules = build_front_modules(b);
+    for (size_t i = 0; modules[i] != nullptr; i++) {
+        const char *name = modules[i];
         const char *source = smith_fmt(b, "front/%s.smith", name);
         const char *header = smith_fmt(b, ".smith/include/front/%s.h", name);
         const char *object = smith_fmt(b, "%s/front_%s.o", folder, name);
@@ -1150,13 +1202,10 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
 
 // Whether front/<name>.smith is linked into smith: its header is made by its smith_object, not by the tests' step.
 static bool build_front_linked(const char *source) {
-    for (size_t i = 0; i < build_front_module_count; i++) {
-        if (strncmp(source, "front/", 6) == 0 &&
-            strncmp(source + 6, build_front_modules[i], strlen(build_front_modules[i])) == 0 &&
-            strcmp(source + 6 + strlen(build_front_modules[i]), ".smith") == 0)
-            return true;
-    }
-    return false;
+    if (strncmp(source, "front/", 6) != 0) return false;
+    size_t length = strlen(source + 6);
+    if (length < strlen(".smith") || strcmp(source + 6 + length - strlen(".smith"), ".smith") != 0) return false;
+    return !build_front_is_unlinked(source + 6, length - strlen(".smith"));
 }
 
 static const char *build_test_header(SmithBuild *b, const char *source) {

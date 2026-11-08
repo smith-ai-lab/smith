@@ -598,6 +598,18 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-steps-${{ runner.os }}-${{ github.sha }}
+      - name: Upload the step cache for cloud runners
+        # the Actions cache cannot be read from outside Actions, so a cloud runner (smith-dev-runner, step 3) downloads
+        # the same folder as an artifact. Only this job on main writes it; 3 days keep it inside free storage, and the
+        # folder is already pruned to SMITH_CACHE_MAX by the build above (#2690)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: smith-steps-linux-${{ github.sha }}
+          path: ~/.cache/smith/steps
+          retention-days: 3
+          compression-level: 1
+          if-no-files-found: warn
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
@@ -833,7 +845,9 @@ jobs:
               grep -E '^  failed at ' "$out"
               echo '```'
               echo
-              echo 'Top 20 causes, by the files each stops first (first, count, files, cause):'
+              echo "Total errors and files failing: $(grep '^frontend-errors: ' "$out" | tail -n 1 | sed 's/^frontend-errors: //' || true)"
+              echo
+              echo 'Top 20 causes, by the files each alone blocks, then the files each stops first (count, first, files, cause):'
               echo '```'
               awk '/^failures by cause/ {on=1; next} on && /^ *[0-9]+ +[0-9]+ +[0-9]+  / {print; n++} n==20 {exit}' "$out"
               echo '```'
@@ -847,10 +861,15 @@ jobs:
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
           if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
-          # the top 20 causes, one fixed line each (#2247): frontend-cause: <first> <files> <count> <cause>
-          grep '^frontend-cause: ' "$out" 2>/dev/null
+          # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
+          errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
+          if [ -n "$errs" ]; then echo "frontend-errors: $GITHUB_SHA ${errs#frontend-errors: }"; fi
+          # the top 20 causes, one fixed line each (#2247, #2731): frontend-cause: <alone> <first> <files> <count> <cause>
+          grep '^frontend-cause: ' "$out" 2>/dev/null || true
+          # the top 10 pairs of causes that are a file's only two (#2731): frontend-pair: <files> <cause a> | <cause b>
+          grep '^frontend-pair: ' "$out" 2>/dev/null || true
           # the top 15 names behind `unknown name` and `unknown type` (#2413): frontend-name: <first> <files> <count> <kind> <name>
-          grep '^frontend-name: ' "$out" 2>/dev/null
+          grep '^frontend-name: ' "$out" 2>/dev/null || true
       - name: Save the table
         if: always()
         uses: actions/upload-artifact@v4

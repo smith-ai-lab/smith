@@ -127,3 +127,11 @@ export void test_front_fix_typeof_a_type_predicate_on_the_parameter_keeps_auto()
                  "pub fn zero(x: auto):\n    if is_slice(typeof(x)):\n        if x.count[0] > 0:\n"
                  "            c.puts(\"a\")\n    else:\n        c.puts(\"b\")\n");
 }
+
+// A function's span can reach into the next function: that function's `countof(a)` does not make this `auto` a slice.
+export void test_front_fix_typeof_the_next_function_does_not_make_an_auto_a_slice() {
+    expect_fixed("module m;\nstatic void same(auto a, typeof(a) b) {\n    use(a, b);\n}\n"
+                 "static Usize size(Usize *a) {\n    return countof(a);\n}\n",
+                 "static fn same(a: auto, b: typeof(a)):\n    use(a, b)\nstatic fn size(a: *usize) -> usize:\n    "
+                 "return countof(a)\n");
+}

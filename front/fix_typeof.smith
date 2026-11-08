@@ -159,6 +159,24 @@ static Bool ends_with(Str text, Str tail) {
     return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):], tail);
 }
 
+// The end of the function whose parameters end at `from`: the brace that closes its body, so a declaration's span
+// that reaches into the next function does not count that function's uses (`check_part` before a `countof(a)`).
+static Usize own_end(Str s, Usize from, Usize to) {
+    Usize i = from;
+    while (i < to && !(s[i] == '{' && !in_literal(s, i)))
+        i += 1;
+    Usize depth = 0;
+    for (; i < to; i++) {
+        if (in_literal(s, i)) continue;
+        if (s[i] == '{') depth += 1;
+        if (s[i] == '}') {
+            depth -= 1;
+            if (depth == 0) return i + 1;
+        }
+    }
+    return to;
+}
+
 // Whether `text` spells a type by `typeof(name` and does not pick what to do by it.
 static Bool used_typed(Str text, Str name) {
     if (dispatches(text, name)) return false;
@@ -230,6 +248,7 @@ static core::ParseError generic_fix(Str source, const ast::Decl *d) {
     if (found == countof(params) || d->kind.function.body == nullptr) return none;
     Usize start = d->span.start;
     Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    end = own_end(source, params[found].span.end, end);
     Str name = params[found].name;
     Str text = source[start:end];
     if (slice_auto ? !used_typed(text, name) : !used_as_slice(text, name)) return none;
@@ -277,6 +296,7 @@ static core::ParseError pointer_fix(Str source, const ast::Decl *d) {
     if (found == countof(params)) return none;
     Usize start = d->span.start;
     Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
+    end = own_end(source, params[found].span.end, end);
     Str fname = d->kind.function.name;
     Usize name_end = end;
     for (Usize i = start; i + 3 + countof(fname) < end; i++) {
