@@ -41,17 +41,14 @@ export void test_front_fix_zero_option_a_field_given_to_a_parameter_that_tests_n
                  "    return count(n.next)\n");
 }
 
-export void test_front_fix_zero_option_a_slice_field_handed_to_realloc_is_a_writable_slice() {
-    expect_fixed("module m;\nimport std::mem;\nstruct Frame {\n    I32 v;\n};\n"
+export void test_front_fix_zero_option_a_slice_field_handed_to_a_writing_parameter_is_a_writable_slice() {
+    expect_fixed("module m;\nstruct Frame {\n    I32 v;\n};\n"
                  "struct State {\n    Frame work[:];\n    Usize top;\n};\nstatic State state;\n"
-                 "static void push(I32 v) {\n    if (state.top == countof(state.work)) {\n"
-                 "        state.work = mem::realloc(state.work, state.top * 2 + 4);\n    }\n"
-                 "    state.work[state.top] = (Frame){.v = v};\n}\n",
-                 "import std.mem\n"
+                 "static void fill(Frame xs[:]) {\n    xs[0] = (Frame){.v = 1};\n}\n"
+                 "static void push(void) {\n    fill(state.work);\n}\n",
                  "struct Frame:\n    v: i32\n"
                  "struct State:\n    work: []mut Frame = []\n    top: usize = 0\n"
                  "static mut state: State = State()\n"
-                 "fn push(v: i32):\n    if state.top == countof(state.work):\n"
-                 "        state.work = mem.realloc(state.work, state.top * 2 + 4)\n"
-                 "    state.work[state.top] = Frame(v = v)\n");
+                 "fn fill(xs: []mut Frame):\n    xs[0] = Frame(v = 1)\n"
+                 "fn push():\n    fill(state.work)\n");
 }
