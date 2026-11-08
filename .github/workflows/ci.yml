@@ -355,9 +355,11 @@ jobs:
           SMITH_OUTPUT: full
         run: |
           count=8
-          if line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: '); then
-            secs=$(printf '%s' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p')
-            if [ -n "$secs" ]; then count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8; fi
+          # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
+          line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: ' || true)
+          if [ -n "$line" ]; then
+            secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
+            count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
           fi
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "jobs=$(( count + 2 ))" >>"$GITHUB_OUTPUT"
