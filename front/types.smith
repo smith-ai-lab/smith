@@ -930,10 +930,15 @@ static void put_number(Output *text, U64 number) {
 }
 
 // A piece still to write: a type, or a word.
+// A piece of `show`'s output: a type to expand, or a word written as it is. A word's type is `no_type`, never null, so
+// the field reads as a plain pointer in smith's own syntax too.
 struct Piece {
     TypeRef type;
     Str word;
+    Bool is_word;
 };
+
+static const Ty no_type = {.kind = .invalid};
 
 static void push_piece(Piece stack[:], Usize *top, Piece piece) {
     stack[*top] = piece;
@@ -941,11 +946,11 @@ static void push_piece(Piece stack[:], Usize *top, Piece piece) {
 }
 
 static Piece word(Str text) {
-    return (Piece){.word = text};
+    return (Piece){.type = &no_type, .word = text, .is_word = true};
 }
 
 static Piece of(TypeRef type) {
-    return (Piece){.type = type};
+    return (Piece){.type = type, .word = "", .is_word = false};
 }
 
 // A tuple `(A, B)`: one piece per slot, a written name before its type (`count: i32`), and `(A,)` for one.
@@ -1039,12 +1044,12 @@ export Str show(TypeRef t) {
         Piece piece = stack[top];
         TypeRef shown = piece.type;
         Usize pushes = 0;
-        if (shown != nullptr) pushes = 2 * countof(slots_of(shown).items);
+        if (!piece.is_word) pushes = 2 * countof(slots_of(shown).items);
         while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
         }
-        if (shown == nullptr) {
+        if (piece.is_word) {
             put(&text, piece.word);
             continue;
         }
