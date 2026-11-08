@@ -5402,6 +5402,9 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
+    } else if (e->kind == .pattern_test) {
+        types::failf(c, e->span, "not yet supported: a pattern in an expression"); // typed by #2669 (D16)
+        poison(c, e);
     } else {
         return false;
     }
