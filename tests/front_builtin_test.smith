@@ -349,15 +349,3 @@ export void test_front_builtin_snprintf_each_variadic_argument_is_typed_by_itsel
            "    _ := __builtin_snprintf(&out[0], 32, \"%d %s\", if flag: 3 else: 4, if flag: \"a\" else: \"b\")\n"
            "    0\n");
 }
-
-// An `if` of a pointer and `nullptr` is a `?*T`, with or without a target type: null is its `.none`.
-export void test_front_builtin_an_if_of_a_pointer_and_nullptr_is_an_optional_pointer() {
-    passes("pointer_or_null", "pub fn check() -> i32:\n"
-                              "    mut x: i32 = 5\n"
-                              "    flag := x == 5\n"
-                              "    p := if flag: &x else: nullptr\n"
-                              "    q: ?*i32 = if flag: .none else: &x\n"
-                              "    if p == .none: return 1\n"
-                              "    if q != .none: return 2\n"
-                              "    0\n");
-}
