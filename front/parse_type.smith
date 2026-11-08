@@ -1365,9 +1365,10 @@ static Bool glued(const parse::Parser *p, U32 end) {
 // `int`, `signed`, `unsigned` and `float` alone after `name:` or `->` are the prelude's concepts in smith's own
 // syntax (`fn twice(x: int) -> int:`), not C's types: nothing to write.
 static Bool is_concept_word(const parse::Parser *p, const OldType *t) {
-    if (t->end != t->first + 1 || t->first == 0) return false;
+    if (t->end != t->first + 1 || t->first == 0 || p->old_lambda_result) return false;
     lex::TokenKind kind = p->tokens[t->first].kind;
-    if (kind != lex::kw_int && kind != lex::kw_signed && kind != lex::kw_unsigned && kind != lex::kw_float) return false;
+    if (kind != lex::kw_int && kind != lex::kw_signed && kind != lex::kw_unsigned && kind != lex::kw_float)
+        return false;
     lex::TokenKind before = p->tokens[t->first - 1].kind;
     if (before == lex::arrow) return true;
     return before == lex::colon && t->first >= 2 && p->tokens[t->first - 2].kind == lex::name;

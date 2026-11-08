@@ -86,13 +86,14 @@ export struct Parser {
     NamedLists listed; // every such list so far: the items of `T xs[2] = {{.a = 1}, {.a = 2}};` take the type of `xs`
     Bool void_body;    // the body being read is a function written with no result: its last line is not a value (#2669)
     Bool stop_and;     // the next expression ends at a top-level `&&`: the value of `if .v(x) := value && rest:` (D12)
-    Bool head;      // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
-                    // at its top level, so a `{` opens the body (#961)
-    Bool for_init;  // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
-    Bool in_value;  // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
-    Bool in_cast;   // a cast's type is being read: `T *` is `*mut T` there (a cast to a writable pointer), `const T *`
-                    // is `*T`
-    Bool in_result; // a function's result type is being read: `-> slice_of(T, n)` is a type function applied
+    Bool head;     // the next expression is a condition head (`if`, `while`, `for ... in`, `match`): no trailing block
+                   // at its top level, so a `{` opens the body (#961)
+    Bool for_init; // a declaration is the init of a `for (...)`: its `;` stays, it separates the header's parts
+    Bool in_value; // an `if` is read as a value (an argument, an operand): a `,` or `)` ends its branch statement
+    Bool in_cast;  // a cast's type is being read: `T *` is `*mut T` there (a cast to a writable pointer), `const T *`
+                   // is `*T`
+    Bool old_lambda_result; // the result type of a lambda in today's form is being read: `int` there is C's
+    Bool in_result;         // a function's result type is being read: `-> slice_of(T, n)` is a type function applied
     Bool new_syntax; // the tokens come from lex::tokenize_new: `.`, `(`, `[` and `{` also start smith's own forms
                      // (#1446)
     Names modules;   // the names that the imports read so far bind (`import std.format` binds `format`): `m.to(x)` on

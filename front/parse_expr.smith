@@ -771,7 +771,9 @@ static ast::Expr *lambda(parse::Parser *p) {
         parse::expect(p, lex::right_paren, "`)` to end the parameters");
     }
     if (countof(p->errors) == errors_before) lambda_warning(p, start, bracket_end, params, has_parens);
+    p->old_lambda_result = true;
     ast::TypeExpr *result = parse::accept(p, lex::arrow) ? parse::type(p) : nullptr;
+    p->old_lambda_result = false;
     // A pass that mended the body before the header leaves `[](I32 a): a`: the `:` and the layout body of the new form.
     Bool mended_body = p->layout && parse::at(p, lex::colon);
     if (!mended_body && !parse::at(p, lex::left_brace)) {

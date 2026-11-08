@@ -2115,7 +2115,7 @@ static Bool fix_field(parse::Parser *p, U32 start, lex::Token name, lex::Token s
         return false;
     }
     Str word = parse::text(p, name);
-    Str written = trimmed(source_between(p, start, name.span.start));
+    Str written = trimmed(parse::mended(p, start, name.span.start));
     char text[:] = format::push(is_public ? "pub " : "", word, ": ", with_dims(dims.text, written));
     edits = with_edit(edits, edit(start, countof(dims.text) > 0 ? dims.end : name.span.end, text));
     edits = with_edit(edits, edit(semi.span.start, semi.span.end, ""));
