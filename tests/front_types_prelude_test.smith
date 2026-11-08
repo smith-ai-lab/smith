@@ -1,0 +1,133 @@
+// Tests of the prelude (#2669): `std.prelude` is seen in every module without an import, its public names after every
+// other name, so a module's own declaration of a name wins and a private one of the prelude stays hidden. Each
+// scenario is source text in smith's own syntax checked by front::types_decl with a loader that hands out a prelude
+// written here, in an arena set as the current allocator.
+module front_types_prelude_test;
+
+import front::ast;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static const ast::Module *prelude_tree = nullptr;
+
+static Bool same(const char *a, Str b) {
+    for (Usize i = 0; i < countof(b); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return a[countof(b)] == '\0';
+}
+
+static Bool same_text(Str a, Str b) {
+    if (countof(a) != countof(b)) return false;
+    for (Usize i = 0; i < countof(a); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return true;
+}
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        if (same_text(text[i:i + countof(needle)], needle)) return true;
+    }
+    return false;
+}
+
+// The loader: the prelude written by the test (or none), and no other module.
+static const ast::Module *load(const char *path) {
+    if (same(path, "std.prelude")) return prelude_tree;
+    return nullptr;
+}
+
+static void set_prelude(Str source) {
+    parser::Parsed p = parser::parse_new("lib/std/prelude.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 2);
+    Str lead = "std";
+    Str name = "prelude";
+    parts[0] = (ast::Identifier){.text = lead};
+    parts[1] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = p.module;
+    copy->name.segments = parts;
+    prelude_tree = copy;
+}
+
+static Usize errors_with(Str prelude, Str source, Str first) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    prelude_tree = nullptr;
+    if (countof(prelude) > 0) set_prelude(prelude);
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    Usize count = r.error_count;
+    if (countof(first) > 0) {
+        test::check_condition(count > 0);
+        if (count > 0) test::check_condition(has(r.errors[0].message, first));
+    }
+    prelude_tree = nullptr;
+    return count;
+}
+
+static Str helpers() {
+    return "pub fn twice(x: i32) -> i32: x * 2\n\nfn hidden(x: i32) -> i32: x\n";
+}
+
+export void test_front_types_prelude_names_are_seen_without_an_import() {
+    test::check_equal(errors_with(helpers(), "fn f() -> i32: twice(3)\n", ""), (Usize)0);
+}
+
+export void test_front_types_prelude_a_module_name_wins_over_the_prelude() {
+    test::check_equal(errors_with(helpers(), "fn twice(x: i32) -> bool: x > 0\n\nfn f() -> bool: twice(3)\n", ""),
+                      (Usize)0);
+}
+
+export void test_front_types_prelude_private_names_stay_hidden() {
+    test::check_condition(errors_with(helpers(), "fn f() -> i32: hidden(3)\n", "unknown name") > 0);
+}
+
+export void test_front_types_prelude_without_one_the_name_is_unknown() {
+    test::check_condition(errors_with("", "fn f() -> i32: twice(3)\n", "unknown name") > 0);
+}
+
+// `pick` asks a concept function about its argument's type: each instance keeps one branch, so the `f32` instance never
+// reads `return x` and the `i32` one never reads `y: f32 = x`.
+static Str picks() {
+    return "pub fn pick(x: auto) -> i32:\n    if floaty(typeof(x)):\n        y: f32 = x\n        return 1\n"
+           "    else:\n        return x\n\npub fn main() -> i32:\n    a: f32 = 1.0\n    return pick(a) + pick(3)\n";
+}
+
+export void test_front_types_prelude_a_concept_function_decides_the_branch() {
+    Str source =
+        "fn floaty(T: type) -> bool: is_float(T)\n\n"
+        "pub fn pick(x: auto) -> i32:\n    if floaty(typeof(x)):\n        y: f32 = x\n        return 1\n"
+        "    else:\n        return x\n\npub fn main() -> i32:\n    a: f32 = 1.0\n    return pick(a) + pick(3)\n";
+    test::check_equal(errors_with("", source, ""), (Usize)0);
+}
+
+export void test_front_types_prelude_a_concept_of_the_prelude_decides_the_branch() {
+    test::check_equal(errors_with("pub fn floaty(T: type) -> bool: is_float(T)\n", picks(), ""), (Usize)0);
+}
+
+// A function of a value is no concept: both branches are read, and each instance fails in one of them.
+export void test_front_types_prelude_a_function_of_a_value_decides_nothing() {
+    test::check_condition(errors_with("pub fn floaty(n: i32) -> bool: n > 0\n", picks(), "") > 0);
+}
+
+// A concept that calls concepts, and one of two types, answered on one stack: `number(f32)` and not `either(f32, i32)`.
+export void test_front_types_prelude_concepts_call_concepts() {
+    Str source = "fn floaty(T: type) -> bool: is_float(T)\n\n"
+                 "fn number(T: type) -> bool: floaty(T) or is_integer(T)\n\n"
+                 "fn either(A: type, B: type) -> bool: floaty(A) and not floaty(B)\n\n"
+                 "pub fn two(x: auto) -> i32:\n"
+                 "    if number(typeof(x)) and not either(typeof(x), i32):\n        return x\n"
+                 "    else:\n        return 2\n\n"
+                 "pub fn main() -> i32:\n    a: f32 = 1.0\n    return two(3) + two(a)\n";
+    test::check_equal(errors_with("", source, ""), (Usize)0);
+}
