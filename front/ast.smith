@@ -413,6 +413,11 @@ export typedef enum {
         Expr *control;
         GenericAssoc assocs[:];
     } generic_select; // C's `_Generic(control, T: a, default: b)`
+    struct {
+        Pattern pattern;
+        Expr *value;
+    } pattern_test; // `.v(x) := value` as a conjunct of an `and` chain in a bool position: true when the value has the
+                    // variant, `x` in scope in the conjuncts after it (D16)
 } ExprKind;
 
 export struct Expr {
@@ -1289,6 +1294,10 @@ static void expr_children_more(Items *items, Expr *e) {
         add_result(items, e->kind.lambda.result);
         add_stmt(items, e->kind.lambda.body, false);
     }
+    if (e->kind == .pattern_test) {
+        add(items, {.pattern = &e->kind.pattern_test.pattern});
+        add_expr(items, e->kind.pattern_test.value, false);
+    }
     if (e->kind == .try_expr) {
         add_expr(items, e->kind.try_expr.operand, false);
     }
@@ -1375,6 +1384,7 @@ static void expr_children(Items *items, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
+    case .pattern_test:
     case .named_arg:
     case .tuple_lit:
     case .array_lit:
@@ -1817,6 +1827,9 @@ static void expr_head_more(Output *text, Expr *e) {
             put_word(text, e->kind.lambda.captures[i].text);
         }
     }
+    if (e->kind == .pattern_test) {
+        put(text, "pattern_test");
+    }
     if (e->kind == .try_expr) {
         put(text, "try");
     }
@@ -1901,6 +1914,7 @@ static void expr_head(Output *text, Expr *e) {
     case .reflect_member:
     case .expand:
     case .generic_select:
+    case .pattern_test:
     case .named_arg:
     case .tuple_lit:
     case .array_lit:
