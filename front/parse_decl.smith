@@ -3627,6 +3627,12 @@ static ast::Decl *finish_braced_function(parse::Parser *p, const Prefixes *pre, 
     return make(p, start, pre, kind);
 }
 
+// `int`, `float`, `signed` and `unsigned`: C's keyword types, and in smith's own syntax the names of the prelude's
+// concepts.
+static Bool is_concept_keyword(lex::TokenKind kind) {
+    return kind == lex::kw_int || kind == lex::kw_float || kind == lex::kw_signed || kind == lex::kw_unsigned;
+}
+
 // `fn name(a: i32, mut b: i32) -> r { body }`, the `-> r` optional (no result is none, not `void`); the position is at
 // `fn`.
 static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 start) {
@@ -3634,8 +3640,9 @@ static ast::Decl *parse_new_function(parse::Parser *p, const Prefixes *pre, U32 
     Usize errors_before = countof(p->errors);
     lex::Token name = parse::peek(p);
     ParamList generics = {};
-    // `type` is a keyword only where a type is expected: `fn type(p: *Parser)` names a function.
-    if (!is_name(name.kind) && name.kind != lex::kw_type) {
+    // `type` is a keyword only where a type is expected: `fn type(p: *Parser)` names a function. The same holds for
+    // the prelude's concepts, which C spells with keywords: `pub fn int(T: type) -> bool: true`.
+    if (!is_name(name.kind) && name.kind != lex::kw_type && !is_concept_keyword(name.kind)) {
         Str form = p->layout ? "fn name(a: i32) -> i32:" : "fn name(a: i32) -> i32 { ... }";
         parse::error(p, name.span, as_str(format::push("a function has a name: write `", form, "`")));
     } else {

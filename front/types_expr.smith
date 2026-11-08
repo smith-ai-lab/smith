@@ -4297,6 +4297,22 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     ast::ExprRef items[:] = e->kind.array_lit.items;
+    if (f.expected != nullptr && f.expected->kind == .tuple && e->span.end > e->span.start + 1) {
+        // C's `{1, 2.0f}` where a tuple is expected: the fixer writes `[...]` without the expected type, so the fix is
+        // here: the same items in parentheses (a one-element tuple needs its comma).
+        Str open = "(";
+        Str close = ")";
+        if (countof(items) == 1) close = ",)";
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
+        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start + 1}, .text = open};
+        fix[1] = (syntax::Edit){.span = {.start = e->span.end - 1, .end = e->span.end}, .text = close};
+        types::fail_fix(c, e->span,
+                        msg(format::push("a `[...]` is an array, but a tuple `", types::show(f.expected),
+                                         "` is expected: write the items in parentheses, `(a, b)`")),
+                        fix);
+        poison(c, e);
+        return;
+    }
     types::TypeRef wanted = nullptr;
     if (f.expected != nullptr &&
         (f.expected->kind == .array || f.expected->kind == .slice || f.expected->kind == .vector)) {
@@ -5260,6 +5276,18 @@ static Bool adapts(types::Checked *c, const ast::Expr *leaf, types::TypeRef to) 
     return literal_like(leaf) && retype(c, leaf, to);
 }
 
+// A pointer beside `nullptr`, or either beside the `?*T` they make: `*first` becomes that `?*T`. The `?*T` is the
+// pointer itself, null is its `.none`.
+static Bool absent_pointer(types::Checked *c, types::TypeRef *first, types::TypeRef t) {
+    types::TypeRef pointer = nullptr;
+    types::TypeRef head = *first;
+    if (head == c->table.null_type && t->kind == .pointer) pointer = t;
+    if (t == c->table.null_type && head->kind == .pointer) pointer = head;
+    if (pointer == nullptr) return false;
+    *first = types::option_of(&c->table, pointer);
+    return true;
+}
+
 // The last frame: the branches have the one type. With an expected type each was checked against it already; without
 // one the first branch with a value decides, and an unsuffixed literal after it takes its type.
 static void value_join(types::Checked *c, Frame f) {
@@ -5281,6 +5309,8 @@ static void value_join(types::Checked *c, Frame f) {
             no_value = true;
         } else if (first == nullptr) {
             first = t;
+        } else if (f.expected == nullptr && t != first && absent_pointer(c, &first, t)) {
+            continue; // a pointer and `nullptr`: the value is the `?*T` (#2643)
         } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
             types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
                          "` and `", types::show(t),
@@ -5402,6 +5432,9 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
+    } else if (e->kind == .pattern_test) {
+        types::failf(c, e->span, "not yet supported: a pattern in an expression"); // typed by #2669 (D16)
+        poison(c, e);
     } else {
         return false;
     }
@@ -5730,6 +5763,55 @@ static Bool bind_from_arguments(types::Checked *c, const ast::Expr *e, const typ
     return true;
 }
 
+// The binding a compile-time parameter takes from its argument: the type written, or the constant. False, with the
+// error, when the argument is neither.
+static Bool compile_time_binding(types::Checked *c, const ast::Param *p, const ast::Expr *arg, types::Binding *out) {
+    if (types::is_type_parameter(p)) {
+        types::TypeRef t = type_argument(c, p, arg);
+        if (t == nullptr) return false;
+        *out = (types::Binding){.is_type = true, .type = t};
+        return true;
+    }
+    U64 value = 0;
+    if (!value_argument(c, p, arg, &value)) return false;
+    *out = (types::Binding){.value = value};
+    return true;
+}
+
+// The bindings of the compile-time and `auto` parameters of a template, in the order they are written, appended to
+// `given` from `*bound`: the constant or type of each compile-time parameter, the type of each `auto` argument. False,
+// with the error, when one cannot be bound.
+static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::ExprRef args[:], types::Binding given[:],
+                                 Usize *bound) {
+    for (Usize i = 0; i < countof(params); i++) {
+        if (types::is_compile_time(&params[i])) {
+            if (!compile_time_binding(c, &params[i], argument_value(args[i]), &given[*bound])) return false;
+            *bound += 1;
+            continue;
+        }
+        if (!types::is_auto_param(&params[i])) continue;
+        types::TypeRef t = typ(c, argument_value(args[i]));
+        if (t == invalid(c) || (params[i].is_pack && !pack_satisfies(c, &params[i], argument_value(args[i])))) {
+            return false;
+        }
+        Str concept = types::written_concept(params[i].type);
+        if (params[i].is_new && !params[i].is_pack && countof(concept) > 0 && !types::concept_holds(concept, t)) {
+            types::failf(c, args[i]->span, "`", params[i].name, "` takes a `", concept, "`, but this argument is `",
+                         types::show(t), "`");
+            return false;
+        }
+        t = types::auto_binding(c, &params[i], t);
+        if (t == nullptr) {
+            types::failf(c, args[i]->span, "`", params[i].name,
+                         "` is a slice of `auto`, but this argument is not a slice");
+            return false;
+        }
+        given[*bound] = (types::Binding){.is_type = true, .type = t};
+        *bound += 1;
+    }
+    return true;
+}
+
 // Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
 // the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
 // binds last, and only a generic no other argument binds.
@@ -5739,11 +5821,11 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     const ast::Expr *callee = e->kind.call.callee;
     ast::Param params[:] = template->decl->kind.function.params;
     ast::Param generics[:] = template->decl->kind.function.generics;
+    ast::ExprRef args[:] = e->kind.call.args;
     for (Usize i = 0; i < countof(params); i++) {
-        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i]) || params[i].is_pack ||
-            params[i].is_gather) {
+        if (params[i].is_pack || params[i].is_gather) {
             types::failf(c, params[i].span, "not yet: `", template->name,
-                         "` has both bracketed generics and compile-time, `auto` or rest parameters");
+                         "` has both bracketed generics and rest parameters");
             poison(c, e);
             return;
         }
@@ -5770,7 +5852,16 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
         poison(c, e);
         return;
     }
-    Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), bound);
+    // the bracketed generics come first, then the compile-time and `auto` parameters in the order written (#2669)
+    types::Binding given[:] = mem::alloc_slice(types::Binding, countof(generics) + countof(params));
+    Usize taken = countof(generics);
+    for (Usize i = 0; i < countof(generics); i++)
+        given[i] = bound[i];
+    if (!bind_auto_parameters(c, params, args, given, &taken)) {
+        poison(c, e);
+        return;
+    }
+    Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:taken]);
     if (at >= c->instance_count) {
         poison(c, e);
         return;
@@ -5780,26 +5871,12 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     call_after(c, f);
 }
 
-// The binding a compile-time parameter takes from its argument: the type written, or the constant. False, with the
-// error, when the argument is neither.
-static Bool compile_time_binding(types::Checked *c, const ast::Param *p, const ast::Expr *arg, types::Binding *out) {
-    if (types::is_type_parameter(p)) {
-        types::TypeRef t = type_argument(c, p, arg);
-        if (t == nullptr) return false;
-        *out = (types::Binding){.is_type = true, .type = t};
-        return true;
-    }
-    U64 value = 0;
-    if (!value_argument(c, p, arg, &value)) return false;
-    *out = (types::Binding){.value = value};
-    return true;
-}
-
 // Stage 4 of a call of a function with `auto` parameters: the instance for the types the arguments have.
 static void auto_resolved(types::Checked *c, Frame f) {
     const ast::Expr *e = f.node;
     if (!(e->kind == .call)) return;
-    const types::Symbol *template = generic_callee(c, e->kind.call.callee);
+    const ast::Expr *callee = e->kind.call.callee;
+    const types::Symbol *template = generic_callee(c, callee);
     if (template == nullptr || !(template->decl->kind == .function)) {
         poison(c, e);
         return;
@@ -5812,44 +5889,16 @@ static void auto_resolved(types::Checked *c, Frame f) {
     ast::Param params[:] = template->decl->kind.function.params;
     types::Binding given[:] = mem::alloc_slice(types::Binding, countof(params));
     Usize bound = 0;
-    for (Usize i = 0; i < countof(params); i++) {
-        if (types::is_compile_time(&params[i])) {
-            if (!compile_time_binding(c, &params[i], argument_value(args[i]), &given[bound])) {
-                poison(c, e);
-                return;
-            }
-            bound += 1;
-            continue;
-        }
-        if (!types::is_auto_param(&params[i])) continue;
-        types::TypeRef t = typ(c, argument_value(args[i]));
-        if (t == invalid(c) || (params[i].is_pack && !pack_satisfies(c, &params[i], argument_value(args[i])))) {
-            poison(c, e);
-            return;
-        }
-        Str concept = types::written_concept(params[i].type);
-        if (params[i].is_new && !params[i].is_pack && countof(concept) > 0 && !types::concept_holds(concept, t)) {
-            types::failf(c, args[i]->span, "`", params[i].name, "` takes a `", concept, "`, but this argument is `",
-                         types::show(t), "`");
-            poison(c, e);
-            return;
-        }
-        t = types::auto_binding(c, &params[i], t);
-        if (t == nullptr) {
-            types::failf(c, args[i]->span, "`", params[i].name,
-                         "` is a slice of `auto`, but this argument is not a slice");
-            poison(c, e);
-            return;
-        }
-        given[bound] = (types::Binding){.is_type = true, .type = t};
-        bound += 1;
+    if (!bind_auto_parameters(c, params, args, given, &bound)) {
+        poison(c, e);
+        return;
     }
     Usize at = types::instance_of(c, template->decl, types::module_prefix(template->name), given[0:bound]);
     if (at >= c->instance_count) {
         poison(c, e);
         return;
     }
-    types::set_type(c, e->kind.call.callee, c->instances[at].signature);
+    types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
     call_after(c, f);
 }
@@ -6259,6 +6308,31 @@ static void enum_variant_after(types::Checked *c, Frame f) {
     finish(c, f.node, t, f.expected);
 }
 
+// Whether the branch of an `if` that is a value is a string literal: a statement holding one, or a block ending in one.
+static Bool branch_is_literal(const ast::Stmt *branch) {
+    if (branch == nullptr) return false;
+    if (branch->kind == .block && countof(branch->kind.block.items) > 0) {
+        branch = branch->kind.block.items[countof(branch->kind.block.items) - 1];
+    }
+    return branch->kind == .expression && branch->kind.expression.value->kind == .string;
+}
+
+// Whether a variadic argument of `__builtin_snprintf` is a string literal, or an `if` with a literal in a branch: each
+// is a C string there (`%s`). An `if` that picks numbers keeps the type its branches have (#2427).
+static Bool picks_a_literal(const ast::Expr *value) {
+    if (value->kind == .string) return true;
+    if (value->kind == .conditional) {
+        return argument_value(value->kind.conditional.then_value)->kind == .string ||
+               argument_value(value->kind.conditional.else_value)->kind == .string;
+    }
+    if (value->kind != .stmt_expr) return false;
+    const ast::Stmt *stmt = value->kind.stmt_expr.stmt;
+    if (stmt->kind == .if_stmt) {
+        return branch_is_literal(stmt->kind.if_stmt.then_branch) || branch_is_literal(stmt->kind.if_stmt.else_branch);
+    }
+    return true; // a `match` or a block: as before
+}
+
 // The arguments of a clang builtin, last first: `array.filled(u8, 4, 0)`: the value takes the element type; a format
 // is a C string, and so is a `%s` argument that is an `if` picking a literal (#2427).
 static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *e, ast::ExprRef args[:],
@@ -6278,7 +6352,7 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
         if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);
-        if (builtin.shape == .format && i > 3 && (value->kind == .conditional || value->kind == .stmt_expr)) {
+        if (builtin.shape == .format && i > 3 && picks_a_literal(value)) {
             expected = builtins::format_pointer(c);
         }
         // `__builtin_strstr(p, "text")`: a literal given to a C string function is a C string
