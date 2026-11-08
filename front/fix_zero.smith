@@ -26,6 +26,7 @@ import front::lex;
 import front::parse as core;
 import front::types;
 import std::arena;
+import std::console;
 import std::files;
 import std::format;
 import std::mem;
@@ -1380,6 +1381,7 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
     for (Usize i = 0; i < c->error_count; i++) {
         types::Error error = c->errors[i];
         types::TypeRef record = error.left_out_record;
+        console::print_error("DBG err ", i, " call=", error.left_out_call != nullptr, " rec=", record != nullptr, " msg=", error.message, "\n");
         if (error.left_out_call == nullptr || error.left_out_call == last || record == nullptr) continue;
         Bool from_header = same(types::owner_of(record), "c::");
         Usize own = record_index(&local, types::name_of(record));
