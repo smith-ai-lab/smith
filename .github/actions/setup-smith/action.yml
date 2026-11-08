@@ -82,6 +82,19 @@ runs:
         key: smith-steps-${{ runner.os }}-${{ github.sha }}
         restore-keys: smith-steps-${{ runner.os }}-
 
+    - name: Restore the packages and tools
+      # a job that takes the build of `build-linux` restores no step cache, but still needs the packages the tests
+      # fetch (the tree-sitter CLI, Neovim): main's `warm` saves them apart, a small cache (#2825), so such a job
+      # reaches github.com for a package only when this cache lacks it
+      if: inputs.artifact != ''
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/smith/packages
+          ~/.cache/smith/tools
+        key: smith-tools-${{ runner.os }}-${{ github.sha }}
+        restore-keys: smith-tools-${{ runner.os }}-
+
     - name: Fetch the previous smith
       if: inputs.artifact == ''
       uses: ./.github/actions/fetch-smith
