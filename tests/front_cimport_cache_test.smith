@@ -397,6 +397,8 @@ export void test_cimport_cache_stdio_h_hit_takes_under_a_tenth_of_the_miss() {
     test::check_condition(slice::equal(dump(&miss), dump(&hit)));
     // POSIX gives clock() in millionths of a second, whatever the system's tick.
     I64 miss_us = (I64)(middle - start);
-    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, fastest of 5 hits ", best_hit_us, " us of CPU").data);
+    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, fastest of 5 hits ", best_hit_us,
+                         " us of CPU")
+                .data);
     test::check_condition(best_hit_us * 10 < miss_us);
 }
