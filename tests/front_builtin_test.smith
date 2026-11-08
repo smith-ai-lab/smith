@@ -286,6 +286,8 @@ export void test_front_builtin_clzll_and_math() {
                     "    if __builtin_clzll(x) != 63:\n        return 1\n"
                     "    let two: i32 = 2\n"
                     "    if __builtin_ldexp(1.5, two) != 6.0:\n        return 2\n"
+                    "    let half: f32 = 1.5\n"
+                    "    if __builtin_ldexp(half, two) != 6.0:\n        return 3\n"
                     "    0\n");
 }
 
@@ -334,4 +336,28 @@ export void test_front_builtin_snprintf_conditional_string() {
                           "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
                           "    _ := __builtin_snprintf(&out[0], 16, \"%s\", if flag: \"a\" else: \"b\")\n"
                           "    0\n");
+}
+
+// A variadic argument that is a bare literal is a C string, and an `if` that picks numbers or a pointer keeps the type
+// of its branches.
+export void test_front_builtin_snprintf_each_variadic_argument_is_typed_by_itself() {
+    passes("snprintf_each",
+           "pub fn check(flag: bool) -> i32:\n"
+           "    let mut out: [32]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
+           "0, 0, 0, 0, 0, 0]\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%s %d\", \"text\", if flag: 1 else: 2)\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%d %s\", if flag: 3 else: 4, if flag: \"a\" else: \"b\")\n"
+           "    0\n");
+}
+
+// An `if` of a pointer and `nullptr` is a `?*T`, with or without a target type: null is its `.none`.
+export void test_front_builtin_an_if_of_a_pointer_and_nullptr_is_an_optional_pointer() {
+    passes("pointer_or_null", "pub fn check() -> i32:\n"
+                              "    mut x: i32 = 5\n"
+                              "    flag := x == 5\n"
+                              "    p := if flag: &x else: nullptr\n"
+                              "    q: ?*i32 = if flag: .none else: &x\n"
+                              "    if p == .none: return 1\n"
+                              "    if q != .none: return 2\n"
+                              "    0\n");
 }

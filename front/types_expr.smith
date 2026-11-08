@@ -4297,6 +4297,22 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
         return;
     }
     ast::ExprRef items[:] = e->kind.array_lit.items;
+    if (f.expected != nullptr && f.expected->kind == .tuple && e->span.end > e->span.start + 1) {
+        // C's `{1, 2.0f}` where a tuple is expected: the fixer writes `[...]` without the expected type, so the fix is
+        // here: the same items in parentheses (a one-element tuple needs its comma).
+        Str open = "(";
+        Str close = ")";
+        if (countof(items) == 1) close = ",)";
+        syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
+        fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start + 1}, .text = open};
+        fix[1] = (syntax::Edit){.span = {.start = e->span.end - 1, .end = e->span.end}, .text = close};
+        types::fail_fix(c, e->span,
+                        msg(format::push("a `[...]` is an array, but a tuple `", types::show(f.expected),
+                                         "` is expected: write the items in parentheses, `(a, b)`")),
+                        fix);
+        poison(c, e);
+        return;
+    }
     types::TypeRef wanted = nullptr;
     if (f.expected != nullptr &&
         (f.expected->kind == .array || f.expected->kind == .slice || f.expected->kind == .vector)) {
@@ -5260,6 +5276,18 @@ static Bool adapts(types::Checked *c, const ast::Expr *leaf, types::TypeRef to) 
     return literal_like(leaf) && retype(c, leaf, to);
 }
 
+// A pointer beside `nullptr`, or either beside the `?*T` they make: `*first` becomes that `?*T`. The `?*T` is the
+// pointer itself, null is its `.none`.
+static Bool absent_pointer(types::Checked *c, types::TypeRef *first, types::TypeRef t) {
+    types::TypeRef pointer = nullptr;
+    types::TypeRef head = *first;
+    if (head == c->table.null_type && t->kind == .pointer) pointer = t;
+    if (t == c->table.null_type && head->kind == .pointer) pointer = head;
+    if (pointer == nullptr) return false;
+    *first = types::option_of(&c->table, pointer);
+    return true;
+}
+
 // The last frame: the branches have the one type. With an expected type each was checked against it already; without
 // one the first branch with a value decides, and an unsuffixed literal after it takes its type.
 static void value_join(types::Checked *c, Frame f) {
@@ -5281,6 +5309,8 @@ static void value_join(types::Checked *c, Frame f) {
             no_value = true;
         } else if (first == nullptr) {
             first = t;
+        } else if (f.expected == nullptr && t != first && absent_pointer(c, &first, t)) {
+            continue; // a pointer and `nullptr`: the value is the `?*T` (#2643)
         } else if (f.expected == nullptr && t != first && !adapts(c, p.leaves[i], first)) {
             types::failf(c, p.leaves[i]->span, "the branches of this value have the types `", types::show(first),
                          "` and `", types::show(t),
@@ -6259,6 +6289,31 @@ static void enum_variant_after(types::Checked *c, Frame f) {
     finish(c, f.node, t, f.expected);
 }
 
+// Whether the branch of an `if` that is a value is a string literal: a statement holding one, or a block ending in one.
+static Bool branch_is_literal(const ast::Stmt *branch) {
+    if (branch == nullptr) return false;
+    if (branch->kind == .block && countof(branch->kind.block.items) > 0) {
+        branch = branch->kind.block.items[countof(branch->kind.block.items) - 1];
+    }
+    return branch->kind == .expression && branch->kind.expression.value->kind == .string;
+}
+
+// Whether a variadic argument of `__builtin_snprintf` is a string literal, or an `if` with a literal in a branch: each
+// is a C string there (`%s`). An `if` that picks numbers keeps the type its branches have (#2427).
+static Bool picks_a_literal(const ast::Expr *value) {
+    if (value->kind == .string) return true;
+    if (value->kind == .conditional) {
+        return argument_value(value->kind.conditional.then_value)->kind == .string ||
+               argument_value(value->kind.conditional.else_value)->kind == .string;
+    }
+    if (value->kind != .stmt_expr) return false;
+    const ast::Stmt *stmt = value->kind.stmt_expr.stmt;
+    if (stmt->kind == .if_stmt) {
+        return branch_is_literal(stmt->kind.if_stmt.then_branch) || branch_is_literal(stmt->kind.if_stmt.else_branch);
+    }
+    return true; // a `match` or a block: as before
+}
+
 // The arguments of a clang builtin, last first: `array.filled(u8, 4, 0)`: the value takes the element type; a format
 // is a C string, and so is a `%s` argument that is an `if` picking a literal (#2427).
 static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *e, ast::ExprRef args[:],
@@ -6278,7 +6333,7 @@ static void push_builtin_arguments(types::Checked *c, Work *w, const ast::Expr *
         if (builtin.shape == .filled && i == 3) expected = builtins::filled_element(c, e);
         if (builtin.shape == .format && i == 3) expected = builtins::format_pointer(c);
         const ast::Expr *value = argument_value(args[i - 1]);
-        if (builtin.shape == .format && i > 3 && (value->kind == .conditional || value->kind == .stmt_expr)) {
+        if (builtin.shape == .format && i > 3 && picks_a_literal(value)) {
             expected = builtins::format_pointer(c);
         }
         // `__builtin_strstr(p, "text")`: a literal given to a C string function is a C string
