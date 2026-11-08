@@ -12,9 +12,13 @@ on:
   push:
     branches: [main]
 
-# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other.
+# A new push to a pull request replaces its older run; the merge queue's runs and main's never cancel each other. A push
+# to main has a group of its own per commit: with one group for the branch, GitHub keeps only the newest *pending* run,
+# so while the queue landed a PR every ~30 min and a run took longer, each pending run was cancelled by the next push
+# with no job started, and `warm` (the step cache) never ran (#2792). The jobs that must run once at a time keep their
+# own groups (`release-macos`, `release-linux`).
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
