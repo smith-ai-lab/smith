@@ -1035,6 +1035,35 @@ static void as_todays_syntax(ast::Module *module) {
     }
 }
 
+// The function of `module` named `name` that takes `count` parameters, or null.
+static const ast::Decl *function_taking(const ast::Module *module, Str name, Usize count) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .function && countof(d->kind.function.params) == count &&
+            mem::equal(d->kind.function.name, name))
+            return d;
+    }
+    return nullptr;
+}
+
+// Mending writes a `Checked *r` and a `const Checked *r` alike as `r: *Checked`, so the module read back has lost which
+// of its pointers a function writes through. The text before mending still has the `const`: a pointer parameter that
+// was not const there is `*mut T` here (#2648), as `types::failf(r, ..)` of a read-only `r` must be asked to be.
+static void keep_writable_pointers(ast::Module *mended, const ast::Module *original) {
+    for (Usize i = 0; i < countof(mended->decls); i++) {
+        ast::Decl *d = mended->decls[i];
+        if (d->kind != .function) continue;
+        const ast::Decl *was = function_taking(original, d->kind.function.name, countof(d->kind.function.params));
+        if (was == nullptr || was->kind != .function) continue;
+        for (Usize k = 0; k < countof(d->kind.function.params); k++) {
+            ast::TypeExpr *now = d->kind.function.params[k].type;
+            const ast::TypeExpr *before = was->kind.function.params[k].type;
+            if (now == nullptr || before == nullptr || now->kind != .pointer || before->kind != .pointer) continue;
+            if (!before->kind.pointer.pointee->qualifiers.is_const) now->kind.pointer.is_mut = true;
+        }
+    }
+}
+
 // The text of an import that does not parse, mended by the parse errors' fixes alone (#2561). The mending of
 // front/types.smith, front/ast_clone.smith, std.mem and the others took 6 s in every fixer that imports them, and the
 // count of `frontend-coverage` (one fixer per file) no longer fitted in its 20 minutes (#2586). With
@@ -1078,7 +1107,10 @@ static const ast::Module *read_import(Str path) {
     // reads as the fixed module does (#2561).
     Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
     parser::Parsed parsed = parse_for_fix(path, source);
+    Bool mended = false;
+    ast::Module original = parsed.module;
     if (countof(parsed.errors) > 0) {
+        mended = true;
         // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
         // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
         // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
@@ -1089,7 +1121,11 @@ static const ast::Module *read_import(Str path) {
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = parsed.module;
-    if (has_module_line(source)) as_todays_syntax(copy);
+    if (mended) keep_writable_pointers(copy, &original);
+    // A module mended above is written in smith's own syntax now, where `*T` is read-only and `*mut T` writable: marked
+    // as today's syntax it would read a `*T` (a C `const T *`) as a writable pointer, and a call passing a read-only
+    // pointer would ask for a `*mut` the callee never wrote (#2648).
+    if (has_module_line(source) && !mended) as_todays_syntax(copy);
     // a pointer field its own fix makes `?*T = .none` is one here too, so the reads of it are mended (#2557)
     fix_zero::nullable_fields(copy, source);
     return copy;
