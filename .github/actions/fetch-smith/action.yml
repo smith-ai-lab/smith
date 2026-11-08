@@ -1,30 +1,38 @@
 name: fetch-smith
 description: >
-  Downloads the newest published smith release (#2746), checks its SHA-256 and puts its `bin/` first on PATH, so
-  `smith build` can build this tree. It asks `releases/latest/download/<name>` (the URL `smith build stage0` uses,
-  #2719; no feed, no API, no login, #829) and reads the tag from that URL's redirect. If the newest release has no
-  tarball for this platform yet it fails; it never falls back to an older release. The lag rule
-  (knowledge/smith-bootstrap.md) lets a release newer than the checkout build it.
+  Downloads the newest published smith release that has this platform's tarball (#2746, #2796), checks its SHA-256
+  and puts its `bin/` first on PATH, so `smith build` can build this tree. It lists the latest releases and takes the
+  first one with `smith-<os>-<arch>.tar.xz`; when that is not the newest release (the Linux job of a release failed,
+  and `publish` goes on without it), it prints one line naming both tags. The lag rule (knowledge/smith-bootstrap.md)
+  lets a release newer than the checkout build it.
 
 runs:
   using: composite
   steps:
     - name: Download the newest release
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -eu
         os=$(uname -s | tr A-Z a-z)
         arch=$(uname -m)
         name="smith-$os-$arch.tar.xz"
-        base=https://github.com/smith-ai-lab/smith/releases/latest/download
         mkdir -p .smith/stage0
-        # The first redirect of releases/latest/download/<name> names the tag of the newest published release.
-        url=$(curl -sS --retry 3 -o /dev/null -w '%{redirect_url}' "$base/$name")
-        tag=$(echo "$url" | sed -n 's|.*/releases/download/\([^/]*\)/.*|\1|p')
+        set -- -fsS --retry 3
+        [ -z "${GITHUB_TOKEN:-}" ] || set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"
+        # The newest releases first; the first one that has this platform's asset wins.
+        curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" -o .smith/stage0/releases.json
+        newest=$(jq -r '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
+        tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
         if [ -z "$tag" ]; then
-          echo "fetch-smith: the newest release has no $name yet (published about an hour after its commit); not using an older one" >&2
+          echo "fetch-smith: none of the 30 newest releases has $name" >&2
           exit 1
         fi
+        if [ "$tag" != "$newest" ]; then
+          echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+        base=https://github.com/smith-ai-lab/smith/releases/download/$tag
         curl -fsSL --retry 3 -o ".smith/stage0/$name" "$base/$name"
         curl -fsSL --retry 3 -o ".smith/stage0/$name.sha256" "$base/$name.sha256"
         want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
