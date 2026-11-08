@@ -19,7 +19,7 @@ runs:
         arch=$(uname -m)
         name="smith-$os-$arch.tar.xz"
         mkdir -p .smith/stage0
-        set -- -fsS --retry 3
+        set -- -fsS --retry 10 --retry-delay 3 --retry-all-errors
         [ -z "${GITHUB_TOKEN:-}" ] || set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"
         # The newest releases first; the first one that has this platform's asset wins.
         curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" -o .smith/stage0/releases.json
@@ -33,8 +33,8 @@ runs:
           echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
         base=https://github.com/smith-ai-lab/smith/releases/download/$tag
-        curl -fsSL --retry 3 -o ".smith/stage0/$name" "$base/$name"
-        curl -fsSL --retry 3 -o ".smith/stage0/$name.sha256" "$base/$name.sha256"
+        curl -fsSL --retry 10 --retry-delay 3 --retry-all-errors -o ".smith/stage0/$name" "$base/$name"
+        curl -fsSL --retry 10 --retry-delay 3 --retry-all-errors -o ".smith/stage0/$name.sha256" "$base/$name.sha256"
         want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
         if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
         else got=$(shasum -a 256 ".smith/stage0/$name" | cut -d' ' -f1); fi
