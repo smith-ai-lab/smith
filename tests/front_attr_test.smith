@@ -234,3 +234,20 @@ export void test_front_attr_a_struct_called_with_names_is_a_construction() {
     Str point = "struct Point:\n    x: i32\n    y: i32\n";
     clean(join(point, "fn make(a: i32, b: i32) -> Point:\n    return Point(a, b)\n"));
 }
+
+export void test_front_attr_align_takes_a_power_of_two_on_a_global_and_a_field() {
+    clean("@align(64)\nmut table: [8]u8 = undefined\n");
+    clean("n := 16\n@align(n)\nmut table: [8]u8 = undefined\n");
+    clean("struct S:\n    @align(16)\n    x: u8\n");
+}
+
+export void test_front_attr_align_refuses_a_value_that_is_not_a_power_of_two_and_a_repeat() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    types::Checked three = check_text("@align(3)\nmut table: [8]u8 = undefined\n");
+    test::check_condition(has(errors_of(&three), "the alignment must be a power of two known at compile time"));
+    types::Checked twice = check_text("@align(8)\n@align(16)\nmut table: [8]u8 = undefined\n");
+    test::check_condition(has(errors_of(&twice), "`@align` appears at most once on a declaration"));
+}
