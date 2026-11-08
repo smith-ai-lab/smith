@@ -4301,7 +4301,8 @@ static void array_literal_before(types::Checked *c, Work *w, Frame f) {
         // C's `{1, 2.0f}` where a tuple is expected: the fixer writes `[...]` without the expected type, so the fix is
         // here: the same items in parentheses (a one-element tuple needs its comma).
         Str open = "(";
-        Str close = countof(items) == 1 ? ",)" : ")";
+        Str close = ")";
+        if (countof(items) == 1) close = ",)";
         syntax::Edits fix = mem::realloc((syntax::Edits){}, 2);
         fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = e->span.start + 1}, .text = open};
         fix[1] = (syntax::Edit){.span = {.start = e->span.end - 1, .end = e->span.end}, .text = close};
