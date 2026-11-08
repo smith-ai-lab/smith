@@ -89,7 +89,7 @@ export void test_front_fix_std_gnu_format_is_dropped() {
 export void test_front_fix_std_attribute_group_is_a_gnu_attribute() {
     expect_fixed("module m;\nstatic __attribute__((always_inline, unused)) void check(Bool condition) {\n    "
                  "work(condition);\n}\n",
-                 "static @inline fn check(condition: bool):\n    work(condition)\n");
+                 "@inline fn check(condition: bool):\n    work(condition)\n");
 }
 
 export void test_front_fix_std_capability_struct() {

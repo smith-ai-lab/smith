@@ -39,7 +39,7 @@ export void test_front_types_import_typedef_list_alias_gets_mut_in_one_run() {
                            "module front_types_import_typedef_b;\nimport front_types_import_typedef_a;\n"
                            "static void f(front_types_import_typedef_a::Nodes xs) {\n"
                            "    front_types_import_typedef_a::Nodes ys = xs;\n    ys = xs;\n}\n");
-    Str want = "import front_types_import_typedef_a\nstatic fn f(xs: front_types_import_typedef_a.Nodes):\n"
+    Str want = "import front_types_import_typedef_a\nfn f(xs: front_types_import_typedef_a.Nodes):\n"
                "    mut ys: front_types_import_typedef_a.Nodes = xs\n    ys = xs\n";
     test::check_equal(got, want);
 }
@@ -58,7 +58,7 @@ export void test_front_types_import_typedef_left_out_field_keeps_the_type() {
                      "static void f() {\n"
                      "    front_types_import_typedef_c::Node node = (front_types_import_typedef_c::Node){.n = 1};\n"
                      "    node.m = 2;\n}\n");
-    Str want = "import front_types_import_typedef_c\nstatic fn f():\n"
+    Str want = "import front_types_import_typedef_c\nfn f():\n"
                "    mut node: front_types_import_typedef_c.Node = front_types_import_typedef_c.Node(n = 1)\n"
                "    node.m = 2\n";
     test::check_equal(got, want);

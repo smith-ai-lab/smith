@@ -581,7 +581,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     permissions:
-      contents: read
+      contents: write # the release-asset step replaces the assets of the rolling `step-cache` prerelease (#2755)
+      actions: read # ... and reads the count's artifact of this commit
       issues: write # the timing step rewrites the body of #2751
     env:
       GH_TOKEN: ${{ github.token }}
@@ -613,6 +614,34 @@ jobs:
           retention-days: 3
           compression-level: 1
           if-no-files-found: warn
+      - name: Publish the step cache and the count's table as release assets
+        # a cloud runner cannot download an Actions artifact (its zip is served from a host the session's proxy refuses
+        # by name), but it can download a release asset. One rolling prerelease `step-cache` (never `stage0-*`, never
+        # "latest") holds the step folder as smith-steps-linux.tar.gz (+ .sha, the commit it was built from) and the
+        # count's per-file table of this commit as frontend-coverage.tar.gz; each push to main replaces them (#2755).
+        # A failure here must not fail main's push
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          tar -C ~/.cache/smith/steps -c . | gzip -1 >"$out/smith-steps-linux.tar.gz"
+          echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
+          files=("$out/smith-steps-linux.tar.gz" "$out/smith-steps-linux.sha")
+          # the queue run of this very commit saved the count (a documents-only merge runs none)
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          if [ -n "$id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/c.zip"
+            mkdir "$out/c"; unzip -q "$out/c.zip" -d "$out/c"
+            echo "$GITHUB_SHA" >"$out/c/sha"
+            tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
+            files+=("$out/frontend-coverage.tar.gz")
+          fi
+          gh release view step-cache >/dev/null 2>&1 || gh release create step-cache --prerelease --latest=false \
+            --title "step cache (rolling)" --notes "Main's step cache and the count's table, replaced on every push to main (#2755). Not a release of smith." --target "$GITHUB_SHA"
+          gh release upload step-cache "${files[@]}" --clobber
+          echo "latest release: $(gh api repos/$GITHUB_REPOSITORY/releases/latest --jq .tag_name)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Restore the lint and proof caches
         # Linux only: the checks that restore them run on Linux (`check-lint`, `check-fmt-prove`, #2237). The newest
         # entry is the last main's, so the runs below only redo what the merge changed
@@ -655,6 +684,8 @@ jobs:
         run: |
           set -u
           aside="$RUNNER_TEMP/aside"; mkdir -p "$aside/smith-dir"
+          # $SMITH lives in build/, which the cold case moves aside: time with a copy of it
+          cp "$SMITH" "$RUNNER_TEMP/smith-timed"; timed="$RUNNER_TEMP/smith-timed"
           log="$RUNNER_TEMP/time"; : >"$log.cold"
           [ -d build ] && mv build "$aside/build"
           for f in .smith/* .smith/.[!.]*; do
@@ -663,7 +694,7 @@ jobs:
           [ -d ~/.cache/smith/steps ] && mv ~/.cache/smith/steps "$aside/steps"
           run() { # run <case>: wall seconds into $secs, --time output into $log.<case>
             local t0=$SECONDS
-            "$SMITH" build --time >"$log.$1" 2>&1 || true
+            "$timed" build --time >"$log.$1" 2>&1 || true
             secs=$((SECONDS - t0))
           }
           run cold;    cold=$secs
@@ -697,7 +728,7 @@ jobs:
             printf '%s\n' "$head<!-- latest -->"
             echo "Latest, \`$(git rev-parse --short=7 HEAD)\` $(date -u +%F): cold $cold s, no-op $noop s, front/ edit $front s, runtime/ edit $runtime s. Slowest steps of the cold build:"
             echo '```'; echo "$slow"; echo '```'
-            echo "<!-- rows -->"; echo "$row"; [ -n "$rows" ] && echo "$rows"
+            echo "<!-- rows -->"; echo "$row"; if [ -n "$rows" ]; then echo "$rows"; fi
           } >"$RUNNER_TEMP/body.md"
           gh api -X PATCH repos/${{ github.repository }}/issues/2751 -F body=@"$RUNNER_TEMP/body.md" >/dev/null
 
