@@ -97,6 +97,10 @@ static c::LLVMValueRef coerced(state::Emitter *e, state::Value v, U8 letter) {
     if (letter == 'i')
         return c::LLVMBuildIntCast2(e->builder, v.llvm, c::LLVMInt32TypeInContext(e->context),
                                     state::is_signed(v.ty) ? 1 : 0, "");
+    if (letter == 'd' && v.ty.kind == .floating && state::width(v.ty) < 64)
+        return c::LLVMBuildFPExt(e->builder, v.llvm, c::LLVMDoubleTypeInContext(e->context), "double");
+    if (letter == 'f' && v.ty.kind == .floating && state::width(v.ty) > 32)
+        return c::LLVMBuildFPTrunc(e->builder, v.llvm, c::LLVMFloatTypeInContext(e->context), "float");
     return v.llvm;
 }
 
