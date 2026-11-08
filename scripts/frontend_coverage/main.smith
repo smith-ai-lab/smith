@@ -1376,6 +1376,58 @@ static Bool ends_with(const char text[:], const char tail[:]) {
     return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):countof(text)], tail);
 }
 
+// Fixes file `i` again from its original: the copy in the scratch tree is replaced by the original first, and the
+// cache entry of its fix is made again from the result (#2669).
+static void fix_again(const char *smith, const char *root, const char *scratch, Usize i) {
+    char from[path_size * 2];
+    char to[path_size * 2];
+    format::Written a = format::write(from, sizeof from, root, "/", (const char *)tree[i]);
+    format::Written b = format::write(to, sizeof to, scratch, "/", (const char *)tree[i]);
+    files::BytesResult loaded = files::read_file(from[0:a.length]);
+    if (loaded == .error) return;
+    defer mem::free(loaded.ok.data);
+    if (files::write_file(to[0:b.length], loaded.ok, files::Replace) == .error) return;
+    char name[33];
+    char entry[path_size * 2];
+    hex_of(name[0:33], fix_key(i));
+    format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name);
+    fix(smith, i, entry[0:e.length]);
+}
+
+// A fix the checker finds in an instance of another module's generic belongs to that module and is found only while an
+// importer is fixed (front::fix, #2669): the fixers share them in `foreign.tsv` of the imports folder. A module named
+// there may have been fixed before its importer found them, whatever the order of the files, so each is fixed again.
+static void fix_foreign(const char *smith, const char *root, const char *scratch, const char *imports) {
+    char path[path_size * 2];
+    format::Written w = format::write(path, sizeof path, imports, "/foreign.tsv");
+    files::BytesResult loaded = files::read_file(path[0:w.length]);
+    if (loaded == .error) return;
+    defer mem::free(loaded.ok.data);
+    typeof(char[:]) all = mem::view(loaded.ok, char);
+    static Bool again[files_max];
+    for (Usize i = 0; i < tree_count; i++)
+        again[i] = false;
+    Usize at = 0;
+    while (at < countof(all)) {
+        Usize stop = at;
+        while (stop < countof(all) && all[stop] != '\n')
+            stop += 1;
+        Usize tab = at;
+        while (tab < stop && all[tab] != '\t')
+            tab += 1;
+        typeof(const char[:]) tail = all[at:tab];
+        at = stop + 1;
+        for (Usize i = 0; i < tree_count && countof(tail) > 0; i++) {
+            typeof(const char[:]) file = view_of(tree[i]);
+            if (again[i] || !fixed_ok[i] || !is_smith(tree[i]) || !ends_with(file, tail)) continue;
+            if (countof(file) > countof(tail) && file[countof(file) - countof(tail) - 1] != '/') continue;
+            again[i] = true;
+            fix_again(smith, root, scratch, i);
+        }
+    }
+    jobs_drain();
+}
+
 static Bool starts_with(const char text[:], const char head[:]) {
     return countof(text) >= countof(head) && same(text[0:countof(head)], head);
 }
@@ -1743,6 +1795,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
         fix_cached(smith, i);
     }
     jobs_drain();
+    fix_foreign(smith, root, scratch, imports);
     U64 fix_ms = (clock::monotonic() - phase_start) / clock::millisecond;
     console::print_error("frontend_coverage: fix phase ", fix_ms, " ms\n");
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
