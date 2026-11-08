@@ -1211,6 +1211,21 @@ export const Symbol *lookup(const Scopes *s, Str name) {
     return prelude_symbol(s, name);
 }
 
+// `lookup` as a declaration sees it, to tell whether a new name hides another: in the body of a generic instance from
+// another module only the body's own names and that module's (`util::name`) count, not those of the module being
+// checked, which the body cannot see by its own name (#2669). Elsewhere it is `lookup`.
+export const Symbol *lookup_own(const Scopes *s, Str name) {
+    if (countof(s->prefix) == 0) return lookup(s, name);
+    for (Usize i = s->count; i > s->floor; i--) {
+        if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
+    }
+    Str own = msg(format::push(s->prefix, name));
+    for (Usize i = s->floor; i > 0; i--) {
+        if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
+    }
+    return nullptr;
+}
+
 // The symbol `name` stands for in a type position (`want_type`) or a value position: a C header has a struct tag and a
 // function of one name (`struct stat` and `stat()`, #2610), kept apart here by position. Falls back to the other kind
 // when only that one exists, so every other name reads as before.

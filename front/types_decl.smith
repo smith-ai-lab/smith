@@ -658,7 +658,7 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     if (!is_new_variable(d) || is_discard(name)) {
         return false;
     }
-    const types::Symbol *earlier = types::lookup(&r->scopes, name);
+    const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
     if (earlier != nullptr && earlier->kind == .module_name) {
         types::failf(r, d->span, "`", name, "` hides the module `", name,
                      "`; shadowing is an error: assign with `=`, or choose another name");
@@ -871,7 +871,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         if (is_discard(name)) {
             continue;
         }
-        const types::Symbol *earlier = types::lookup(&r->scopes, name);
+        const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
         if (earlier != nullptr && earlier->kind == .variable) {
             types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error: ",
                          "assign with `=`, or choose another name");
@@ -1560,7 +1560,7 @@ static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef 
         types::failf(r, else_branch->span, "the `else` of a binding must leave: end it with `return`, ",
                      "`break`, `continue` or a call that never returns");
     }
-    const types::Symbol *earlier = types::lookup(&r->scopes, pattern.binding);
+    const types::Symbol *earlier = types::lookup_own(&r->scopes, pattern.binding);
     if (countof(pattern.binding) > 0 && earlier != nullptr && earlier->kind == .variable) {
         types::failf(r, pattern.span, "`", pattern.binding,
                      "` hides a variable of the same name; shadowing is an error, choose another name");

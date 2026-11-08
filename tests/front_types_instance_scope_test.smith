@@ -1,0 +1,61 @@
+// Tests of the names an instance of an imported generic sees when it declares one (#2669): its own body's and its
+// module's names only, so a local of the generic never "hides" a global of the module that calls it. Each scenario is
+// source text in smith's own syntax checked by front::types_decl with a loader that hands out the module `util`.
+module front_types_instance_scope_test;
+
+import front::ast;
+import front::parser;
+import front::types;
+import front::types_decl;
+import std::arena;
+import std::mem;
+import std::test;
+
+static const ast::Module *util_tree = nullptr;
+
+static Bool same(const char *a, Str b) {
+    for (Usize i = 0; i < countof(b); i++) {
+        if (a[i] != b[i]) return false;
+    }
+    return a[countof(b)] == '\0';
+}
+
+static const ast::Module *load(const char *path) {
+    if (same(path, "util")) return util_tree;
+    return nullptr;
+}
+
+// The errors of `source` with `util` written as `library`.
+static Usize errors_with(Str library, Str source) {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    parser::Parsed u = parser::parse_new("util.smith", library);
+    test::check_equal(countof(u.errors), (Usize)0);
+    ast::Identifier parts[:] = mem::alloc_slice(ast::Identifier, 1);
+    Str name = "util";
+    parts[0] = (ast::Identifier){.text = name};
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = u.module;
+    copy->name.segments = parts;
+    util_tree = copy;
+    parser::Parsed p = parser::parse_new("t.smith", source);
+    test::check_equal(countof(p.errors), (Usize)0);
+    types::Checked r = types_decl::check_module_with(&p.module, types::lp64(), load);
+    util_tree = nullptr;
+    return r.error_count;
+}
+
+static Str library() {
+    return "pub fn keep(x: auto) -> i32:\n    memory: i32 = 7\n    memory\n";
+}
+
+export void test_front_types_instance_scope_a_local_of_an_imported_generic_hides_no_global_of_the_caller() {
+    test::check_equal(
+        errors_with(library(), "import util\n\nmemory: i32 = 3\n\nfn f() -> i32: util.keep(1) + memory\n"), (Usize)0);
+}
+
+export void test_front_types_instance_scope_a_local_that_hides_its_own_global_is_still_refused() {
+    test::check_condition(errors_with("", "memory: i32 = 3\n\nfn f() -> i32:\n    memory: i32 = 4\n    memory\n") > 0);
+}
