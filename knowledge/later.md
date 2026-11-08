@@ -119,6 +119,7 @@ Ideas that are not on the roadmap of #73, one line each with the closed issue th
 - #2436: std.process: wait for whichever child ends first, then use it in the frontend-coverage ring
 
 ## Tooling and infrastructure
+- #2706 (option C): split the step `headers of the tests` (3.4 s, rerun whenever `smith-cc` changes) into one step per test folder, so only the tests whose imports changed rerun; needs import tracking in the executor
 - #291: No shell: the build and CI scripts become functions and tasks of the build file
 - #419: lint: smith lint shows a project's .warnings as advisory output, never as a failure
 - #535: Learn from data: record every smith run agents make, and rank the friction by what it costs
