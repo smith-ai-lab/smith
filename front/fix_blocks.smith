@@ -590,6 +590,14 @@ static Usize close_paren(lex::Tokens tokens, Usize open) {
     return open;
 }
 
+// A further declarator of the init: `chunk = 0` of `usize at = 0, chunk = 0`.
+struct Init {
+    Str name;
+    Str value;
+};
+
+typedef typeof(Init[:]) Inits;
+
 // The header of a C `for (init; condition; step)`.
 struct Header {
     Bool ok;
@@ -600,8 +608,9 @@ struct Header {
     Str name;
     Str type;
     Str value;
+    Inits more; // the declarators after the first, which share its type
     Str condition;
-    Str step;
+    Str step; // the steps of the header, one to a line
 };
 
 // The step as the new syntax writes it: `i++` is `i += 1`.
@@ -621,6 +630,31 @@ static Str step_text(Str source, lex::Tokens tokens, Usize from, Usize to) {
     return source[tokens[from].span.start:tokens[to - 1].span.end];
 }
 
+// The steps `a++, b--` between `from` and `to`, one to a line.
+static Str steps_text(Str source, lex::Tokens tokens, Usize from, Usize to) {
+    Str out = "";
+    while (from < to) {
+        Usize comma = find_flat(tokens, from, to, lex::comma);
+        Str one = step_text(source, tokens, from, comma);
+        out = countof(out) == 0 ? one : as_str(format::push(out, "\n", one));
+        from = comma + 1;
+    }
+    return out;
+}
+
+// The declarators `b = 1, c = 2` after the first one of an init, from `from` to `to`; false for any other form.
+static Bool read_more(Str source, lex::Tokens tokens, Usize from, Usize to, Header *h) {
+    while (from < to) {
+        Usize comma = find_flat(tokens, from, to, lex::comma);
+        if (comma < from + 3 || tokens[from].kind != lex::name || tokens[from + 1].kind != lex::equal) return false;
+        h->more = mem::realloc(h->more, countof(h->more) + 1);
+        h->more[countof(h->more) - 1] = (Init){.name = source[tokens[from].span.start:tokens[from].span.end],
+                                               .value = source[tokens[from + 2].span.start:tokens[comma - 1].span.end]};
+        from = comma + 1;
+    }
+    return true;
+}
+
 // The init `T name = value` (or `name = value`) of the header, between `from` and `to`.
 static void read_init(Str source, lex::Tokens tokens, Usize from, Usize to, Header *h) {
     if (from >= to) {
@@ -628,7 +662,9 @@ static void read_init(Str source, lex::Tokens tokens, Usize from, Usize to, Head
         return;
     }
     Usize equal = find_flat(tokens, from, to, lex::equal);
-    if (find_flat(tokens, from, to, lex::comma) != to) return;
+    Usize comma = find_flat(tokens, from, to, lex::comma);
+    if (comma != to && (equal >= comma || !read_more(source, tokens, comma + 1, to, h))) return;
+    to = comma;
     if (equal == to) {
         // A statement that is not a declaration (`at += 7`): written as it is, before the loop.
         h->has_init = true;
@@ -657,12 +693,11 @@ static Header read_header(Str source, lex::Tokens tokens, Usize at) {
     Usize second = find_flat(tokens, first + 1, close, lex::semicolon);
     if (close == at + 1 || first == close || second == close) return h;
     if (find_flat(tokens, second + 1, close, lex::semicolon) != close) return h;
-    if (find_flat(tokens, second + 1, close, lex::comma) != close) return h;
     h.close = close;
     read_init(source, tokens, at + 2, first, &h);
     h.condition = "true";
     if (second > first + 1) h.condition = source[tokens[first + 1].span.start:tokens[second - 1].span.end];
-    h.step = step_text(source, tokens, second + 1, close);
+    h.step = steps_text(source, tokens, second + 1, close);
     return h;
 }
 
@@ -738,6 +773,12 @@ static Str while_head(Header h, Bool declare, Usize indent) {
             Str kind = "";
             if (h.has_type && !mem::equal(h.type, automatic)) kind = as_str(format::push(": ", h.type));
             line = as_str(format::push("mut ", h.name, kind, " = ", h.value));
+            for (Usize i = 0; i < countof(h.more); i++)
+                line = as_str(
+                    format::push(line, "\n", spaces(indent), "mut ", h.more[i].name, kind, " = ", h.more[i].value));
+        } else {
+            for (Usize i = 0; i < countof(h.more); i++)
+                line = as_str(format::push(line, "\n", spaces(indent), h.more[i].name, " = ", h.more[i].value));
         }
         out = as_str(format::push(line, "\n", spaces(indent)));
     }
@@ -770,6 +811,18 @@ static Bool continues_loop(lex::Tokens tokens, Braces braces, Usize open, Usize 
 
 // The step is written before each `continue` of the loop, since the jump would skip the step at the end. False when
 // one of them does not start its line, where nothing can be put before it.
+// The steps, one to a line, each line indented `indent`.
+static Str step_lines(Str steps, Usize indent) {
+    Str out = "";
+    Usize from = 0;
+    for (Usize i = 0; i < countof(steps); i++) {
+        if (steps[i] != '\n') continue;
+        out = as_str(format::push(out, steps[from:i], "\n", spaces(indent)));
+        from = i + 1;
+    }
+    return as_str(format::push(out, steps[from:countof(steps)]));
+}
+
 static Bool step_before_continues(Str source, lex::Tokens tokens, Braces braces, Header h, Usize which, Cuts *cuts) {
     Usize open = braces[which].open;
     for (Usize i = open + 1; i < braces[which].close; i++) {
@@ -778,7 +831,8 @@ static Bool step_before_continues(Str source, lex::Tokens tokens, Braces braces,
     }
     for (Usize i = open + 1; i < braces[which].close; i++) {
         if (tokens[i].kind != lex::kw_continue || !continues_loop(tokens, braces, open, i)) continue;
-        Str line = as_str(format::push(h.step, "\n", spaces(indent_of(source, tokens[i].span.start))));
+        Usize at_indent = indent_of(source, tokens[i].span.start);
+        Str line = as_str(format::push(step_lines(h.step, at_indent), "\n", spaces(at_indent)));
         add_cut(cuts, tokens[i].span.start, tokens[i].span.start, line);
     }
     return true;
@@ -795,7 +849,8 @@ static Bool braced_for(Str source, lex::Tokens tokens, Braces braces, Header h, 
     if (one_line || !multi_line_ready(tokens, braces[which])) return false;
     if (has_continue(tokens, open, close) && !step_before_continues(source, tokens, braces, h, which, cuts))
         return false;
-    Str line = as_str(format::push(spaces(indent_of(source, tokens[open + 1].span.start)), h.step));
+    Usize body_at = indent_of(source, tokens[open + 1].span.start);
+    Str line = as_str(format::push(spaces(body_at), step_lines(h.step, body_at)));
     braces[which].tail =
         tokens[close - 1].line_break ? as_str(format::push(line, "\n")) : as_str(format::push("\n", line));
     return true;
@@ -809,7 +864,7 @@ static Bool unbraced_for(Str source, lex::Tokens tokens, Header h, Usize indent,
     if (end == 0) return false;
     if (countof(h.step) == 0) return true;
     if (has_continue_before(tokens, h.close, end)) return false;
-    add_cut(cuts, end, end, as_str(format::push(spaces(body_indent), h.step, "\n")));
+    add_cut(cuts, end, end, as_str(format::push(spaces(body_indent), step_lines(h.step, body_indent), "\n")));
     return true;
 }
 
@@ -831,6 +886,10 @@ static void one_for(Str source, lex::Tokens tokens, Braces braces, Usize at, Dec
     if (!declare) return;
     *seen = mem::realloc(*seen, countof(*seen) + 1);
     (*seen)[countof(*seen) - 1] = (Declared){.name = h.name, .scope = scope};
+    for (Usize i = 0; i < countof(h.more); i++) {
+        *seen = mem::realloc(*seen, countof(*seen) + 1);
+        (*seen)[countof(*seen) - 1] = (Declared){.name = h.more[i].name, .scope = scope};
+    }
 }
 
 // Every C `for (init; condition; step)` that starts its line, outside the functions left alone.
