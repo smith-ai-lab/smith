@@ -1345,6 +1345,7 @@ export const Usize max_header_bindings = 32;
 export struct InstanceUse {
     const ast::Expr *call;
     Usize instance;
+    Usize outer; // the instance whose body holds the call, or `max_instances` for a call outside any instance
 };
 
 export struct Checked {
@@ -1355,6 +1356,7 @@ export struct Checked {
     Usize instance_count;
     InstanceUse uses[:]; // the calls of generic functions, each with its instance
     Usize use_count;
+    Usize current; // the instance whose body is being checked, or `max_instances` (#2669)
     Bool new_body;   // the function being checked has a parameter or a local in smith's own syntax (so far)
     Bool new_syntax; // the type being resolved is written in smith's own syntax (`x: int`): lowercase names, concepts
     Bool in_header;  // the declarations of a C header are being declared: a repeated name is not an error
@@ -3061,12 +3063,25 @@ export void use_instance(Checked *r, const ast::Expr *call, Usize instance) {
         if (capacity < 8) capacity = 8;
         r->uses = mem::realloc(r->uses, capacity);
     }
-    r->uses[r->use_count] = (InstanceUse){.call = call, .instance = instance};
+    r->uses[r->use_count] = (InstanceUse){.call = call, .instance = instance, .outer = r->current};
     r->use_count += 1;
 }
 
-// The index of the instance `call` calls, or `max_instances` when it calls no generic function.
+// The index of the instance `call` calls inside the body of the instance `outer` (`max_instances` for a call outside
+// every instance), or `max_instances` when it calls no generic function. A generic's body is one tree whatever its
+// instances, so one call node is recorded once per instance of the function that holds it (#2669).
+export Usize instance_called_in(const Checked *r, const ast::Expr *call, Usize outer) {
+    for (Usize i = 0; i < r->use_count; i++) {
+        if (r->uses[i].call == call && r->uses[i].outer == outer) return r->uses[i].instance;
+    }
+    return max_instances;
+}
+
+// The same for the body being checked now. Outside a check (the emitter) `current` is `max_instances`, and a call
+// recorded in an instance answers with the first record, as before, until the emitter asks `instance_called_in`.
 export Usize instance_called(const Checked *r, const ast::Expr *call) {
+    Usize at = instance_called_in(r, call, r->current);
+    if (at < max_instances) return at;
     for (Usize i = 0; i < r->use_count; i++) {
         if (r->uses[i].call == call) return r->uses[i].instance;
     }
@@ -4231,6 +4246,7 @@ export Checked check(const ast::Module *m, Options o) {
     Checked r = {.options = o,
                  .table = start(o.target),
                  .bindings = mem::alloc_slice(HeaderBinding, max_header_bindings),
+                 .current = max_instances,
                  .module = nullptr};
     if (o.target.pointer_bytes == 0) {
         fail(&r, (ast::Span){}, "the target has no pointer width; pass a target such as types::lp64() in the options");
