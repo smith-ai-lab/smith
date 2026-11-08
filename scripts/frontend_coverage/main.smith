@@ -1655,6 +1655,28 @@ static void keep_owned_rows() {
     entry_count = kept;
 }
 
+// #2832: how many rows the shards will have to measure (a row with no cache entry), so the workflow sizes the shards
+// from it. Printed by the fix job as `frontend_coverage: rows to measure: M of T`.
+static void print_plan(void) {
+    Usize missing = 0;
+    Usize total = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (!fixed_ok[i] || !owned[i]) continue;
+        char name[33];
+        char entry[path_size * 2];
+        hex_of(name[0:33], row_key(i));
+        format::Written e = format::write(entry, sizeof entry, cache_folder, "/", (const char *)name, ".row");
+        files::BytesResult cached = files::read_file(entry[0:e.length]);
+        total += 1;
+        if (cached == .error) {
+            missing += 1;
+        } else {
+            mem::free(cached.ok.data);
+        }
+    }
+    console::print_error("frontend_coverage: rows to measure: ", missing, " of ", total, "\n");
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1707,7 +1729,10 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
                          job_limit, " at once\n");
     // #2832: the job that fills the cache of fixed files for the shards stops here: no table is made.
-    if (c::getenv("SMITH_COVERAGE_FIX_ONLY") != nullptr) return 0;
+    if (c::getenv("SMITH_COVERAGE_FIX_ONLY") != nullptr) {
+        print_plan();
+        return 0;
+    }
     link_roots(scratch);
     phase_start = clock::monotonic();
     for (Usize i = 0; i < tree_count; i++) {
