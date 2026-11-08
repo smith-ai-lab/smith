@@ -5815,12 +5815,11 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
 static Bool conform_fixed_arguments(types::Checked *c, ast::Param params[:], ast::ExprRef args[:],
                                     types::TypeRef signature) {
     types::Members slots = types::slots_of(signature);
-    if (countof(slots.items) != countof(params) || countof(args) != countof(params)) return true;
-    for (Usize i = 0; i < countof(params); i++) {
-        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i]) || params[i].is_pack ||
-            params[i].is_gather) {
-            continue;
-        }
+    if (countof(args) != countof(params)) return true;
+    for (Usize i = 0; i < countof(params) && i < countof(slots.items); i++) {
+        if (params[i].is_pack || params[i].is_gather)
+            break; // the slots after a pack no longer line up with the parameters
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) continue;
         const ast::Expr *arg = argument_value(args[i]);
         types::TypeRef found = typ(c, arg);
         types::TypeRef wanted = slots.items[i].type;
