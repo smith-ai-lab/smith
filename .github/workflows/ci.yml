@@ -6,6 +6,8 @@ name: ci
 # `--macos-only` tests; a documents-only change: docs and their tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
+# A pull request runs a light check (#2822): the build, fmt/docs/prove, lint and only the tests `smith test --changed`
+# reaches, in 2 parts; the Mac only when the diff touches what only the Mac sees. The merge queue runs everything.
 on:
   pull_request:
   merge_group:
@@ -32,6 +34,8 @@ jobs:
     timeout-minutes: 25
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      # whether `macos` runs: always, except on a pull request whose diff touches nothing only the Mac sees (#2822)
+      mac_run: ${{ steps.scope.outputs.mac_run }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
@@ -89,6 +93,7 @@ jobs:
           workflows='^[.]github/workflows/'
           gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
+          changed=
           # a push to main is a commit the merge queue already checked: it only publishes the release
           if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
@@ -102,8 +107,18 @@ jobs:
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
             if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
           fi
+          # A pull request runs the Mac only where the diff reaches what only the Mac sees: shim/, Objective-C, the TLS
+          # file, a `@when(target.os == .macos)` line, or the workflows and actions (#2822). A docs scope keeps it (it
+          # is where the docs check runs); the queue runs it always, so a green pull request is not a green queue.
+          mac_run=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$scope" = full ] && [ -n "$changed" ]; then
+            mac_run=false
+            if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_run=true; fi
+            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_run=true; fi
+          fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
+          echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope (macos: $mac_run)" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Does the change touch the warm job
         id: warm
@@ -152,13 +167,16 @@ jobs:
           flags="--skip-macos"
           macflags="--macos-only --shard 1/1"
           count=8
+          # A pull request runs the tests `smith test --changed` reaches, in 2 parts (#2822); the queue runs all of
+          # them in 8. A wide selection (smith's core, the test runner) is still wide: the queue is the gate.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then flags="--skip-macos --changed"; count=2; fi
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
           done
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
-          echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+          echo "tests: $count Linux parts ($flags), one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
@@ -183,11 +201,13 @@ jobs:
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
     needs: [changes, pack]
-    # On pull requests too: a green PR should mean a green queue run, and each queue failure fails every group behind
-    # it. Capacity is never saved by dropping a check (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac
-    # runners. We should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS
-    # slots are full, `pick-mac` sends the job to the owner's Mac. From 2026-11-03 it had run in the merge queue only.
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
+    # The queue runs it always; a pull request runs it only when its diff reaches what only the Mac sees, or when the
+    # change is documents (where the docs check runs) (#2822): the free plan runs about 20 jobs at once, and a pull
+    # request that cannot reach the Mac's code leaves it to the queue. Before #2822 it ran on every pull request so that
+    # a green PR meant a green queue run (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac runners. We
+    # should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS slots are
+    # full, `pick-mac` sends the job to the owner's Mac.
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.mac_run == 'true' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
     runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
     # does all of it in about 4 (#1709). The job's limit counts time spent queued for a slot: at 30 minutes, jobs waiting
@@ -556,6 +576,7 @@ jobs:
           SCOPE: ${{ needs.changes.outputs.scope }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
+          MAC_RUN: ${{ needs.changes.outputs.mac_run }}
           TEST_LINUX: ${{ needs.test-linux.result }}
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
@@ -578,6 +599,8 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
+          # a pull request whose diff cannot reach the Mac's code did not run `macos` on purpose (#2822)
+          if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
