@@ -142,6 +142,8 @@ struct State {
     const ast::Decl *declaring; // the local whose initializer is being checked, for the fix on its written type
     const ast::Decl *last_decl; // the local the statement entered last declared, null when it declared none
     const ast::Decl *prev_decl; // the local declared by the statement before the one being entered (#2506)
+    U32 statement_start;        // where the statement being entered starts when a line can be put before it (a
+                                // declaration, an expression, a `return`), else 0 (#2647)
 };
 
 constexpr Usize max_tails = 32;
@@ -1341,6 +1343,40 @@ static Bool note_field_chain_guard(types::Checked *r, const ast::Stmt *s, const 
     return true;
 }
 
+// `if a.f != .none: a.f.x else: d` used as a value (#2647): the statement that holds it cannot take `f := a.f` in the
+// test, so the option is read into a local on the line before that statement, which the test and the first branch use.
+static Bool note_inline_guard(types::Checked *r, const ast::Stmt *s);
+
+static void note_inline_guard_hook(types::Checked *r, const ast::Stmt *s) {
+    (void)note_inline_guard(r, s);
+}
+
+static Bool note_inline_guard(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind != .if_stmt) return false;
+    const ast::Expr *test = s->kind.if_stmt.condition;
+    const ast::Stmt *then_branch = s->kind.if_stmt.then_branch;
+    if (state.statement_start == 0 || null_test(test, false) == nullptr || test->kind != .binary) return false;
+    const ast::Expr *left = binary_left(test);
+    Str field = member_name(left);
+    if (countof(field) == 0 || name_taken(r, field)) return false;
+    for (Usize i = 0; i < r->guard_count; i++) {
+        types::Guard *g = &r->guards[i];
+        Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
+        if (covered && g->option && types::same_text(g->variant, field)) return false;
+    }
+    Str read = fixed_source[left->span.start:left->span.end];
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(state.statement_start, state.statement_start,
+                      msg(format::push(field, " := ", read, "\n", indent_at(state.statement_start))));
+    head[1] = edit_of(left->span.start, left->span.end, field);
+    types::Guard guard = {.base = member_base(left), .variant = field, .option = true, .test = test};
+    guard.reads = then_branch->span;
+    guard.head = head;
+    add_guard(r, guard);
+    return true;
+}
+
 // A test of a field that is an option (#2557): `if a.f != nullptr:` guards its `then`, written `if f := a.f:`, and
 // `if a.f == nullptr: return X` with no `else` guards the rest of the block, written `f := a.f else: return X`. Each
 // read `a.f` the test guards is `f`, the field's own name (#2455: no invented names); a name `f` in scope leaves the
@@ -1801,6 +1837,11 @@ static void match_statement(types::Checked *r, const ast::Stmt *s) {
 static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     state.prev_decl = state.last_decl;
     state.last_decl = nullptr;
+    // The line a binding for an `if` used as a value goes before: the start of the statement that holds it (#2647).
+    if (countof(fixed_source) > 0 && starts_line(s->span.start)) {
+        Bool plain = s->kind == .expression || s->kind == .declaration || s->kind == .return_stmt;
+        state.statement_start = plain ? s->span.start : 0;
+    }
     if (s->kind == .expression) {
         expression_statement(r, s);
     } else if (s->kind == .declaration) {
@@ -2136,7 +2177,8 @@ export void install() {
                                               .convert = convert_hook,
                                               .cast_rule = cast_hook,
                                               .lambda_body = lambda_hook,
-                                              .statement = value_block_statement});
+                                              .statement = value_block_statement,
+                                              .value_if = note_inline_guard_hook});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).

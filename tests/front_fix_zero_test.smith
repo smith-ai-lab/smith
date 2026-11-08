@@ -256,6 +256,16 @@ export void test_front_fix_zero_a_tested_pointer_is_an_option_and_its_tested_rea
                  "fn clear(n: *mut Node):\n    n.next = .none\n");
 }
 
+// A test of the field in a conditional expression binds the field on the line before the statement (#2647).
+export void test_front_fix_zero_a_tested_pointer_in_a_conditional_expression_binds_before_the_statement() {
+    expect_fixed("module m;\nstruct Node {\n    I32 value;\n    Node *next;\n};\n"
+                 "Node make(I32 v) {\n    return (Node){.value = v};\n}\n"
+                 "I32 first(const Node *n) {\n    return n->next != nullptr ? n->next->value : 0;\n}\n",
+                 "struct Node:\n    value: i32\n    next: ?*Node = .none\n"
+                 "fn make(v: i32) -> Node:\n    return Node(value = v)\n"
+                 "fn first(n: *Node) -> i32:\n    next := n.next\n    return if next != .none: next.value else: 0\n");
+}
+
 // A read of the option with no test before it is left as it is (#2557): it is an error to mend by hand.
 export void test_front_fix_zero_a_read_with_no_test_is_not_unwrapped() {
     expect_fixed("module m;\nstruct Node {\n    I32 value;\n    Node *next;\n};\n"
