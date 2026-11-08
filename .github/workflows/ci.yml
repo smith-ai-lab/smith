@@ -339,6 +339,31 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - uses: ./.github/actions/test-cache
+        with:
+          os: linux
+          fresh: ${{ github.event_name == 'schedule' }}
+      - name: Size the test parts
+        # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
+        # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
+        # pays about 4 minutes of setup whatever it runs, so a part gets about 500 CPU seconds (2 minutes on 4 cores),
+        # at most 8 parts and at least 1. Any failure keeps the 8 parts of `changes`.
+        id: size
+        continue-on-error: true
+        shell: bash
+        env:
+          SMITH_OUTPUT: full
+        run: |
+          count=8
+          # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
+          line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: ' || true)
+          if [ -n "$line" ]; then
+            secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
+            count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
+          fi
+          echo "count=$count" >>"$GITHUB_OUTPUT"
+          echo "jobs=$(( count + 2 ))" >>"$GITHUB_OUTPUT"
+          echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
@@ -350,7 +375,7 @@ jobs:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
           fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-          linux-jobs: "10"
+          linux-jobs: ${{ steps.size.outputs.jobs || '10' }}
       - name: Give each job its runner
         id: runners
         if: ${{ always() }}
@@ -358,13 +383,19 @@ jobs:
         env:
           MATRIX: ${{ needs.changes.outputs.linux }}
           MAC: ${{ steps.pick.outputs.linux-mac }}
+          COUNT: ${{ steps.size.outputs.count }}
         run: |
+          # fewer parts than `changes` planned: the same matrix cut to the count sized above (#2833)
+          case "$COUNT" in ''|*[!0-9]*) COUNT=8 ;; esac
+          MATRIX=$(printf '%s' "$MATRIX" | jq -c --argjson n "$COUNT" \
+            '.include |= (map(select(.shard <= $n)) | map(.count = $n))')
+          [ "$COUNT" -gt 8 ] && COUNT=8
           # hosted first; the Mac takes the last jobs in this order: parts 8, 7, ..., then lint, then fmt-prove. An empty
           # or failed pick is 0: everything hosted.
           hosted='"ubuntu-latest"'; mac='["self-hosted","Linux","X64"]'
           n=${MAC:-0}; case "$n" in *[!0-9]*) n=0 ;; esac
           [ "$n" -gt 10 ] && n=10
-          parts=$(( n > 8 ? 8 : n )); rest=$(( n - parts ))
+          parts=$(( n > COUNT ? COUNT : n )); rest=$(( n - parts ))
           lint=$hosted; fmt=$hosted
           [ "$rest" -ge 1 ] && lint=$mac
           [ "$rest" -ge 2 ] && fmt=$mac
