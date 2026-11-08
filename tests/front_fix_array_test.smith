@@ -83,3 +83,9 @@ export void test_front_fix_array_a_brace_list_for_a_tuple_local_is_a_tuple() {
 export void test_front_fix_array_a_static_function_is_private() {
     expect("static I32 where(I32 a) {\n    return a;\n}\n", "fn where(a: i32) -> i32:\n    return a\n");
 }
+
+// `Counts c = {0};` zeroes every field, as `= {}` does: no stray field defaults (#2649).
+export void test_front_fix_array_a_lone_zero_for_a_struct_is_the_empty_list() {
+    expect("struct Counts { I32 a; I32 b; };\nvoid f(void) {\n    Counts c = {0};\n}\n",
+           "struct Counts:\n    a: i32\n    b: i32\nfn f():\n    c: Counts = Counts(a = 0, b = 0)\n");
+}
