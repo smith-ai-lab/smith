@@ -620,7 +620,9 @@ if constexpr (target::os == target::macos) {
         return c::smith_net_tls_read_within(connection->state, &connection->end, buffer, size, timeout_ns, code);
     }
 
-    // Whether the TLS session is up.
+    // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
+    // size check reads the dropped tokens as part of it), hence the NOLINT.
+    // NOLINTNEXTLINE(readability-function-size)
     Bool secure_live(const Connection *connection) {
         return c::smith_net_tls_live(connection->session);
     }
