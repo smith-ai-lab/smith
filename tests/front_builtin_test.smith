@@ -286,6 +286,8 @@ export void test_front_builtin_clzll_and_math() {
                     "    if __builtin_clzll(x) != 63:\n        return 1\n"
                     "    let two: i32 = 2\n"
                     "    if __builtin_ldexp(1.5, two) != 6.0:\n        return 2\n"
+                    "    let half: f32 = 1.5\n"
+                    "    if __builtin_ldexp(half, two) != 6.0:\n        return 3\n"
                     "    0\n");
 }
 
