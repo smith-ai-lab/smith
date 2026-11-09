@@ -1,0 +1,72 @@
+// Tests of what the fixer keeps across its passes and files (#2913): a C header is read through clang once per process
+// (`front::header_table`) and read again once its file changes, and an imported generic instantiated in later passes
+// still carries its fixes.
+module front_fix_passes_test;
+
+import front::fix;
+import std::arena;
+import std::files;
+import std::mem;
+import std::test;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+// Fixing a file that calls an imported generic on two types over several passes (the old forms first, the checker
+// after): each instance gives its local `mut`, and a second run has nothing left.
+export void test_front_fix_passes_an_imported_generic_is_instantiated_on_every_pass() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_passes_gen.smith";
+    Str user_path = "/tmp/front_fix_passes_user.smith";
+    test::check_equal(fix::store(module_path, "pub fn reset(p: *mut auto):\n    p.* = p.*\n"), true);
+    test::check_equal(fix::store(user_path,
+                                 "module front_fix_passes_user;\nimport front_fix_passes_gen;\n"
+                                 "static void f() {\n    I32 a = 1;\n    front_fix_passes_gen::reset(&a);\n}\n"
+                                 "static void g() {\n    F64 b = 2.0;\n    front_fix_passes_gen::reset(&b);\n"
+                                 "}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        break;
+    }
+    Str got = as_str(mem::view(back.ok, char));
+    check_text(got, "import front_fix_passes_gen\nfn f():\n    mut a: i32 = 1\n    front_fix_passes_gen.reset(&a)\n"
+                    "fn g():\n    mut b: f64 = 2.0\n    front_fix_passes_gen.reset(&b)\n");
+    fix::Fixed again = fix::fix_text(user_path, got);
+    test::check_equal(again.applied, (Usize)0);
+}
+
+static Str fixed_beside(Str header_text, Str source) {
+    test::check_equal(fix::store("/tmp/front_fix_passes_h/kept.h", header_text), true);
+    fix::Fixed fixed = fix::fix_text("/tmp/front_fix_passes_h/t.smith", source);
+    return fixed.text;
+}
+
+// A header kept from an earlier `fix_text` is read again once its file has changed: the second fix finds the function
+// the header declares only now.
+export void test_front_fix_passes_a_changed_header_is_read_again() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    (void)files::make_folder("/tmp/front_fix_passes_h");
+    Str first = fixed_beside("int kept_first(void);\n", "import c \"kept.h\"\n\nfn f() -> i32:\n    c.kept_first()\n");
+    check_text(first, "import c \"kept.h\"\n\nfn f() -> i32:\n    kept.kept_first()\n");
+    Str second = fixed_beside("int kept_first(void);\nint kept_second(void);\n",
+                              "import c \"kept.h\"\n\nfn f() -> i32:\n    c.kept_second()\n");
+    check_text(second, "import c \"kept.h\"\n\nfn f() -> i32:\n    kept.kept_second()\n");
+}

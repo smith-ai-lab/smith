@@ -65,7 +65,7 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   no more than before (system = under `/usr`, `/lib`, the macOS SDK and Xcode, smith's embedded runtime, or a folder the
   command names with `-isystem`, `-isysroot`, `--sysroot`, `SDKROOT`; a folder named with `-I`, `-iquote`, `-idirafter`,
   `-F` is the project's even then). A project file is keyed by content (with its folder a token, so the generated module
-  map of two folders is one file), a system file by path, size and time.
+  map of two folders is one file), a system file by path, size and time (smith's own unpacked copy of clang, `~/.local/share/smith/clang/llvm-<identity>/`, by path and size only: a job unpacks it afresh, so its times are new every job, and its folder is named for what it holds, #2833).
 - **A hit is what a rebuild makes.** A compile that writes debug info (`-g`) is given `-ffile-prefix-map=<project folder>=.`
   by the manifest (build.c's `smith_render_command`, for smith's own build and every project's alike; a command that
   names a prefix map itself keeps its own), so the object holds no folder: a `debug` object is shared by every worktree

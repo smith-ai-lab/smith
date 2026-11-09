@@ -132,3 +132,38 @@ export void test_frontend_coverage_shards_cover_every_file_once_and_merge_into_t
     scratch::release(run.out);
     scratch::release(run.err);
 }
+
+// #2924: a fix the checker finds in an instance of a generic belongs to the module that holds it, keyed by the text the
+// importer's fixer read (#2669). That text was read from the scratch tree, where the module's own fixer may already
+// have rewritten it or not, so the same files passed or failed with the order and timing of the fixers (one fixer at a
+// time fixed `main` before `same` and `conv` before `main`). A file is fixed once its imports are. The files sit in
+// the `src` folder of a case, as in the tree: beside the root, `import conv` finds them through the pristine link.
+export void test_frontend_coverage_a_generics_fix_does_not_depend_on_the_order_of_the_fixers() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, "scripts/frontend_coverage/main.smith", "main.smith");
+    scratch::Run made = scratch::sh(&p, "mkdir -p repo/local/src repo/derived/src");
+    scratch::release(made.out);
+    scratch::release(made.err);
+    scratch::copy_tree(&p, "tests/smith-lang/cases/generic-slice-local/src/conv.smith", "repo/local/src/conv.smith");
+    scratch::copy_tree(&p, "tests/smith-lang/cases/generic-slice-local/src/main.smith", "repo/local/src/main.smith");
+    scratch::copy_tree(&p, "tests/smith-lang/cases/generic-slice-derived/src/same.smith",
+                       "repo/derived/src/same.smith");
+    scratch::copy_tree(&p, "tests/smith-lang/cases/generic-slice-derived/src/main.smith",
+                       "repo/derived/src/main.smith");
+    scratch::Run run = scratch::sh(
+        &p, "S=$(command -v smith) && git -C repo init -q && git -C repo add -A && "
+            "for j in 1 2 4; do SMITH_COVERAGE_JOBS=$j smith run -- run \"$S\" \"$PWD/repo\" \"$PWD/j$j\" > j$j.tsv; "
+            "echo \"jobs $j: $(grep -c 'main.smith.pass' j$j.tsv) of 2, $(grep -c 'main.smith.check' j$j.tsv) "
+            "failed\"; done");
+    scratch::expect_contains("frontend_coverage: one fixer at a time fixes both generics", run.out,
+                             "jobs 1: 2 of 2, 0 failed\n");
+    scratch::expect_contains("frontend_coverage: two at once", run.out, "jobs 2: 2 of 2, 0 failed\n");
+    scratch::expect_contains("frontend_coverage: and four", run.out, "jobs 4: 2 of 2, 0 failed\n");
+    scratch::release(run.out);
+    scratch::release(run.err);
+}

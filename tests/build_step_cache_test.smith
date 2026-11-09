@@ -16,6 +16,7 @@ import std::mem;
 import std::test;
 import scratch;
 import <smith_core_step_cache.h>;
+import <sys/stat.h>;
 import <time.h>;
 
 constexpr Usize memory_size = (Usize)4 << 20; // 4 MiB
@@ -59,11 +60,13 @@ static scratch::Project project(const char *name) {
 // One `smith build` of the folder with the cache in `cache` (nullptr: the cache turned off), whose commands run at
 // `time`. The depfiles name the headers `directory` + "util.h" and "other.h" (a folder's own absolute paths when it is
 // given, else relative ones).
-static Build build_in(const scratch::Project p, const char *cache, I64 time, const char *directory) {
+// As build_in, and util.c's depfile also names `extra` (a file's path, or "").
+static Build build_reading(const scratch::Project p, const char *cache, I64 time, const char *directory,
+                           const char *extra) {
     const char *util = format::push(directory, "util.h").data;
     const char *other = format::push(directory, "other.h").data;
     const char *const depends[_] = {format::push("main.o: main.c ", other, " ", util).data,
-                                    format::push("util.o: util.c ", util).data,
+                                    format::push("util.o: util.c ", util, " ", extra).data,
                                     format::push("other.o: other.c ", other).data, nullptr};
     c::SmithCoreStepCache step = {.plan = {.folder = p.dir,
                                            .manifest = ".smith/build.ninja",
@@ -78,6 +81,10 @@ static Build build_in(const scratch::Project p, const char *cache, I64 time, con
     test::check_equal(c::smith_core_step_cache(&step, text, output_capacity, &ran, &served), true);
     Build done = {text, ran, served};
     return done;
+}
+
+static Build build_in(const scratch::Project p, const char *cache, I64 time, const char *directory) {
+    return build_reading(p, cache, time, directory, "");
 }
 
 static Build build(const scratch::Project p, const char *cache, I64 time) {
@@ -203,6 +210,49 @@ export void test_build_step_cache_results_over_the_cap_are_removed() {
     defer scratch::clean(&d);
     Build capped = build(d, a.cache, 1000);
     expect_counts("cap: over the cap nothing is left to serve", 3, 0, &capped);
+}
+
+constexpr U64 two_results = 40000; // bytes: a result is 16 KB on disk, so two fit and five do not
+
+// 5b. The cap drops the least recently used first, whatever the age (#2833): an entry a build used a minute ago
+// survives when it was made ten days ago, the ones nobody used go, and their manifests go with them (a manifest is a
+// file for each key, 122,000 of them in the CI cache before this).
+export void test_build_step_cache_the_cap_drops_the_least_recently_used_first() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::own_cache(&a);
+    (void)build(a, a.cache, 1000);
+    // everything made so far was last used ten days ago
+    const char *age = format::push("find ", a.cache, "/steps/m ", a.cache, "/steps/r -mindepth 2 -maxdepth 2 ",
+                                   "-exec touch -d '10 days ago' {} +")
+                          .data;
+    scratch::Run aged = scratch::sh(&a, age);
+    test::check_equal(aged.status, 0);
+    // other.h changes: main.o and other.o compile again (two new results made now; util.o is up to date and its
+    // result is not read)
+    put(a, "other.h", "int other(void);\nint more(void);\n", 2000);
+    Build second = build(a, a.cache, 3000);
+    expect_counts("lru: two compile again", 2, 0, &second);
+    I64 now = (I64)c::time(nullptr);
+    test::check_equal(c::smith_core_step_cache_prune(a.cache, two_results, now), true);
+    scratch::Run manifests = scratch::sh(&a, format::push("ls ", a.cache, "/steps/m/*/* | wc -l").data);
+    scratch::expect_contains("lru: the manifest of the unused result goes with it, the two used stay", manifests.out,
+                             "2");
+    // what was made now stays, whatever the age of the rest: a build of the new header is served its two results, the
+    // third (util.o, ten days unused) is compiled again, and the old header's results are gone
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    put(b, "other.h", "int other(void);\nint more(void);\n", 2000);
+    Build recent = build(b, a.cache, 3000);
+    expect_counts("lru: the recent results survive, the one nobody used is gone", 1, 2, &recent);
+    scratch::Project d = project("d");
+    defer scratch::clean(&d);
+    Build old = build(d, a.cache, 3000);
+    expect_counts("lru: the old header's results are gone", 2, 1, &old);
 }
 
 // 6. A precompiled header is served only when it is made and read with -fvalidate-ast-input-files-content: it records
@@ -451,4 +501,27 @@ export void test_build_step_cache_no_file_smith_c_reads_names_a_time_macro() {
     scratch::expect_text("files of smith.c's compile that name a time macro", "",
                          scratch::capture(&p, "cd \"$SMITH_REPO\" && grep -l -e '__TIME__' -e '__DATE__' -e "
                                               "'__TIMESTAMP__' smith.c runtime/*.c runtime/*.h scripts/pack.h"));
+}
+
+// 4. smith's unpacked clang: a job unpacks it again, so its files have a new time and the same name and size, and a
+// compile that read one of them is served all the same (#2833; its folder is named for the pack's identity).
+export void test_build_step_cache_clang_unpacked_afresh_is_the_same_file() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    scratch::own_cache(&a);
+    // outside both folders, as the unpacked clang is
+    (void)c::mkdir(a.cache, 0o755);
+    test::check_condition(c::smith_core_plan_write(a.cache, "smith/clang/llvm-x/stddef.h", "typedef int t;\n", 100));
+    const char *header = format::push(a.cache, "/smith/clang/llvm-x/stddef.h").data;
+    Build first = build_reading(a, a.cache, 1000, "", header);
+    expect_counts("clang: the first job compiles all three", 3, 0, &first);
+    test::check_condition(c::smith_core_plan_write(a.cache, "smith/clang/llvm-x/stddef.h", "typedef int t;\n", 5000));
+    Build second = build_reading(b, a.cache, 6000, "", header);
+    expect_counts("clang: the next job, its clang unpacked again, is served all three", 0, 3, &second);
 }

@@ -1,10 +1,18 @@
 name: fetch-smith
 description: >
   Downloads the newest published smith release that has this platform's tarball (#2746, #2796), checks its SHA-256
-  and puts its `bin/` first on PATH, so `smith build` can build this tree. It lists the latest releases and takes the
-  first one with `smith-<os>-<arch>.tar.xz`; when that is not the newest release (the Linux job of a release failed,
+  and puts its `bin/` first on PATH, so `smith build` can build this tree. It takes `releases/latest` (the newest stage0) when it has
+  `smith-<os>-<arch>.tar.xz`, else the newest of 100 listed that has it; when that is not the newest release (the Linux job of a release failed,
   and `publish` goes on without it), it prints one line naming both tags. The lag rule (knowledge/smith-bootstrap.md)
   lets a release newer than the checkout build it.
+
+inputs:
+  tag:
+    description: >
+      a release to take instead of the newest (`stage0-<commit>`): waited for about 6 minutes, and the step fails
+      if it is not published with this platform's tarball by then. Main's `warm` names its own commit's, so the step cache is built with the smith every job after
+      it fetches (#2833)
+    default: ""
 
 runs:
   using: composite
@@ -13,6 +21,7 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        WANT: ${{ inputs.tag }}
       run: |
         set -eu
         os=$(uname -s | tr A-Z a-z)
@@ -30,16 +39,43 @@ runs:
           echo "external: $url curl exit $status after 10 tries: $(tail -n 1 "$RUNNER_TEMP/fetch-smith.err")" >&2
           return "$status"
         }
-        # The newest releases first; the first one that has this platform's asset wins.
-        get "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" "$@" -o .smith/stage0/releases.json
-        newest=$(jq -r '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
-        tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
-        if [ -z "$tag" ]; then
-          echo "fetch-smith: none of the 30 newest releases has $name" >&2
-          exit 1
+        # The newest published release is `releases/latest` (every other release here is a prerelease or a draft). The
+        # list is no substitute: it puts the drafts first (24 stale `stage0-*` drafts on 2026-11-09) and the rest in no
+        # order of date, so its first 30 left out the newest release for hours and jobs built with older ones (#2833).
+        # When the newest has no tarball for this platform (its Linux job failed), the newest of 100 listed that has one.
+        get "https://api.github.com/repos/smith-ai-lab/smith/releases/latest" "$@" -o .smith/stage0/latest.json
+        newest=$(jq -r 'select(.tag_name|startswith("stage0-"))|.tag_name' .smith/stage0/latest.json)
+        if jq -e --arg n "$name" 'any(.assets[]; .name==$n)' .smith/stage0/latest.json >/dev/null; then
+          tag=$newest
+          jq -s . .smith/stage0/latest.json >.smith/stage0/releases.json
+        else
+          get "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=100" "$@" -o .smith/stage0/releases.json
+          tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
+          if [ -z "$tag" ]; then
+            echo "fetch-smith: none of the 100 listed releases has $name" >&2
+            exit 1
+          fi
+          echo "fetch-smith: the newest release ${newest:-?} has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-        if [ "$tag" != "$newest" ]; then
-          echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+        # A release asked for by name (main's `warm`: its own commit's, which `latest` may not show for a moment) is
+        # waited for, about 6 minutes, and never replaced: a cache built with another smith misses in every job after
+        # it, unseen (#2833). A published release without this platform's tarball (its Linux job failed) fails too
+        if [ -n "${WANT:-}" ] && [ "$WANT" != "$tag" ]; then
+          tag=
+          for _ in $(seq 36); do
+            if curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases/tags/$WANT" -o .smith/stage0/want.json 2>/dev/null; then
+              if jq -e '.draft|not' .smith/stage0/want.json >/dev/null; then
+                jq -e --arg n "$name" 'any(.assets[]; .name==$n)' .smith/stage0/want.json >/dev/null && tag=$WANT
+                break
+              fi
+            fi
+            sleep 10
+          done
+          if [ -z "$tag" ]; then
+            echo "fetch-smith: $WANT is not published with $name after about 6 minutes" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+          jq -s . .smith/stage0/want.json >.smith/stage0/releases.json
         fi
         # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id. The API
         # answers with a redirect to a signed URL: ask for it with the token, then fetch it without (a curl that sends the
