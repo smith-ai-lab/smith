@@ -6,6 +6,15 @@ description: >
   and `publish` goes on without it), it prints one line naming both tags. The lag rule (knowledge/smith-bootstrap.md)
   lets a release newer than the checkout build it.
 
+inputs:
+  tag:
+    description: >
+      the release to use instead of the newest (`stage0-<commit>`, #2833). The release is looked up by its tag and
+      waited for, up to 6 minutes, since the listing of releases (and the tag's lookup) lags a release `publish` made
+      seconds before; the step fails when it never appears or has no tarball for this platform, rather than using an
+      older one. Empty: the newest release that has the tarball
+    default: ""
+
 runs:
   using: composite
   steps:
@@ -13,6 +22,7 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        STAGE0_TAG: ${{ inputs.tag }}
       run: |
         set -eu
         os=$(uname -s | tr A-Z a-z)
@@ -30,8 +40,27 @@ runs:
           echo "external: $url curl exit $status after 10 tries: $(tail -n 1 "$RUNNER_TEMP/fetch-smith.err")" >&2
           return "$status"
         }
-        # The newest releases first; the first one that has this platform's asset wins.
-        get "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" "$@" -o .smith/stage0/releases.json
+        if [ -n "$STAGE0_TAG" ]; then
+          # The release asked for, by its tag: a just-published release is not in the listing for a minute or more
+          # (warm fetched stage0-d6bcd6c 50 s after stage0-78a4f9a was published and warmed the cache with the wrong
+          # smith, #2833). Wait up to 6 minutes (36 tries, 10 s apart); a release without the tarball is not waited for.
+          found=""
+          for try in $(seq 1 36); do
+            if curl -fsS "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases/tags/$STAGE0_TAG" -o "$RUNNER_TEMP/stage0-release.json" 2>/dev/null &&
+              [ "$(jq -r '.draft' "$RUNNER_TEMP/stage0-release.json")" = false ]; then
+              found=yes
+              break
+            fi
+            sleep 10
+          done
+          [ -n "$found" ] || { echo "fetch-smith: release $STAGE0_TAG did not appear in 6 minutes" >&2; exit 1; }
+          jq -e --arg n "$name" 'any(.assets[]; .name==$n)' "$RUNNER_TEMP/stage0-release.json" >/dev/null ||
+            { echo "fetch-smith: release $STAGE0_TAG has no $name" >&2; exit 1; }
+          jq -s '.' "$RUNNER_TEMP/stage0-release.json" >.smith/stage0/releases.json
+        else
+          # The newest releases first; the first one that has this platform's asset wins.
+          get "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" "$@" -o .smith/stage0/releases.json
+        fi
         newest=$(jq -r '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
         tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
         if [ -z "$tag" ]; then

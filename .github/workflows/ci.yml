@@ -978,6 +978,9 @@ jobs:
         with:
           tests: "true"
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
+          # the release `publish` just made, by its tag: the listing lags it, and warm took the stage0 before it
+          # (stage0-d6bcd6c at 10:48Z, 50 s after stage0-78a4f9a was published) and warmed the cache with the wrong smith
+          stage0-tag: ${{ github.event_name == 'push' && needs.publish.result == 'success' && format('stage0-{0}', github.sha) || '' }}
       - name: Fetch what the test jobs download (#2825)
         # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
         # this cache (the test parts, check-fmt-prove, check-lint, release-linux) are all Linux
