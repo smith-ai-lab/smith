@@ -22,7 +22,7 @@
 // A batch has one deadline, never restarted (#2925; owner, 2026-11-09: "Whatever gets in gets in. We wait no more
 // then n minutes then we start."). The batch is the groups in a row ahead of this one that have not started their full
 // build (a heavy job, any job but `changes`, in progress or done); its first group's run was created at T, and the
-// deadline is T + window_seconds (300 s). A group that is last waits for the deadline, or for a later group, and builds
+// deadline is T + window_seconds (60 s). A group that is last waits for the deadline, or for a later group, and builds
 // at once if the deadline is past; the group ahead walks back by the chain of `pr-<N>-<sha>` branches. A run that
 // cannot be read counts this group's own start as T, as before. It logs `batch: deadline <time> (batch from <ref>)`
 // once and `batch: deadline reached, building`. BATCH_WAIT_NOW (an epoch) and BATCH_WAIT_TICK (seconds per pass) fake
@@ -51,7 +51,7 @@ constexpr int chain_depth = 32;
 // since the lead enqueues in bursts and the queue creates their groups one after another (2026-11-09: 3 of 4 groups
 // in a burst started alone and built in full). It is one deadline per batch, counted from the batch's first run and
 // never restarted (#2925). BATCH_WAIT_WINDOW replaces it (the test).
-constexpr int window_seconds = 300;
+constexpr int window_seconds = 60;
 
 typedef enum { Read_Failed, Read_Gone, Read_Last, Read_Later } Read;
 
