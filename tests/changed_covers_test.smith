@@ -121,7 +121,7 @@ export void test_a_tree_test_runs_when_a_file_is_added_deleted_or_renamed() {
     scratch::expect_contains("added", changed("A\t.github/actions/find.sh"),
                              "tests/tree_test.smith: it reads the file list, and .github/actions/find.sh was added");
     scratch::expect_contains("deleted", changed("D\truntime/other.c"), "tests/tree_test.smith: it reads the file list");
-    scratch::expect_contains("renamed", changed("D\ta.txt\nA\tb.txt"), "tests/tree_test.smith: it reads the file list");
+    scratch::expect_contains("renamed", changed("D\truntime/other.c\nA\truntime/moved.c"), "tests/tree_test.smith: it reads the file list");
     scratch::expect_lacks("modified", changed("M\truntime/other.c"), "tree_test.smith:");
 }
 
