@@ -1,10 +1,12 @@
 name: test-cache
 description: >
-  Restores the test-result store (`~/.cache/smith/tests`, #2686) from the newest `test-cache-<sha7>` prerelease, which
-  the `save-test-cache` job of a merge queue run publishes (#2833). `smith test` then leaves out every test whose key
-  (its code, what it read, the smith under test) matches an entry that passed. A missing or unreadable release only
-  leaves the store empty: every test runs. A cache entry never changes a result and a failure is never stored.
-  `fresh: true` (the nightly full run) restores nothing, so every test runs and the run stores them all.
+  Restores the test-result store (`~/.cache/smith/tests`, #2686) from the newest commit's `test-cache-<sha7>-*`
+  prereleases, which every job that runs tests in a merge queue run publishes with `./.github/actions/test-cache/save`
+  (#2833, #2870): each Linux part and the macOS job its own, and this action extracts all of that commit's stores of
+  the OS. `smith test` then leaves out every test whose key (its code, what it read, the smith under test) matches an
+  entry that passed. A missing or unreadable release only leaves the store empty: every test runs. A cache entry never
+  changes a result and a failure is never stored. `fresh: true` (the nightly full run) restores nothing, so every test
+  runs and the run stores them all.
 
 inputs:
   os:
@@ -26,12 +28,22 @@ runs:
       run: |
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"; mkdir -p "$dir"
         if [ "$FRESH" = true ]; then echo "test store: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+        # the newest commit that published a store of this OS, and every store of it: one per job that ran tests (a
+        # part's store holds what it restored plus what it added, so a set with a part missing is still a whole store).
+        # The tag is `test-cache-<sha7>-<job>`; `test-cache-<sha7>` (one release, both OSes, before #2870) reads too.
         # REST, plain HTTPS download (retried: release downloads return 504 now and then, #2792)
-        url=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" \
-          --jq "[.[]|select(.tag_name|test(\"^test-cache-\"))]|sort_by(.created_at)|last|.assets[]|select(.name==\"smith-tests-$OS.tar.gz\")|.url" 2>/dev/null || true)
-        if [ -n "$url" ] && gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
-          tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir"; then
-          echo "test store: restored $(find "$dir" -type f | wc -l) entries" | tee -a "$GITHUB_STEP_SUMMARY"
+        urls=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=60" --jq "
+          [.[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
+            |{sha: .tag_name[11:18], at: .created_at, urls: [.assets[]|select(.name==\"smith-tests-$OS.tar.gz\")|.url]}
+            |select(.urls|length > 0)] as \$r
+          | (\$r|sort_by(.at)|last|.sha) as \$s | \$r[]|select(.sha == \$s)|.urls[]" 2>/dev/null || true)
+        got=0
+        for url in $urls; do
+          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
+            tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir" && got=$((got + 1))
+        done
+        if [ "$got" -gt 0 ]; then
+          echo "test store: restored $(find "$dir" -type f | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores" | tee -a "$GITHUB_STEP_SUMMARY"
         else
           echo "test store: none (every test runs)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
