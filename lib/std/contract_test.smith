@@ -1,3 +1,4 @@
+// dry run of #2856 (ci-dispatch); this PR is closed unmerged
 // Tests of std::contract, in smith's own test library; tests/contract_header_test.smith builds them in a scratch
 // project as lib/std/contract_test.smith. A failed contract stops the program as an assert does, which
 // test::expect_abort expects.
