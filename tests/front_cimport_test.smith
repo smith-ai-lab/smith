@@ -186,6 +186,25 @@ static Bool is_integer_constant(const Header *h, Str name, Str type, U64 magnitu
     return value->kind == .integer && value->kind.integer.value == magnitude;
 }
 
+// An extern variable of the header (`stdout`, `stderr`) is a global with a type, no value, and `extern`.
+export void test_cimport_stdio_h_has_stdout_and_stderr_as_extern_variables() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Header h = read(&memory, "stdio.h", false);
+    test::check_equal(countof(h.error), 0);
+    Str want_type = "*FILE";
+    for (Usize i = 0; i < 2; i++) {
+        const ast::Decl *d = find_constant(&h, i == 0 ? "stdout" : "stderr");
+        test::check_condition(d != nullptr && d->kind == .variable);
+        if (d == nullptr || d->kind != .variable) return;
+        test::check_condition(d->from_c && d->is_extern && !d->kind.variable.is_constexpr);
+        test::check_condition(d->kind.variable.init == nullptr);
+        test::check_condition(slice::equal(type_text(d->kind.variable.type), want_type));
+    }
+}
+
 export void test_cimport_stdio_h_has_eof_seek_set_and_bufsiz_as_constants() {
     arena::Arena memory = test::memory(1U << 24);
     arena::ArenaAllocator allocator = arena::allocator(&memory);

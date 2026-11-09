@@ -128,15 +128,18 @@ export typedef enum {
     struct {
         TypeRef element;
         Bool pointee_const;
+        Bool pointee_volatile; // `*volatile T`: every read and write through it is made (#2669)
     } pointer;
     struct {
         TypeRef element;
         U64 count;
         Bool pointee_const;
+        Bool pointee_volatile;
     } array;
     struct {
         TypeRef element;
         Bool pointee_const;
+        Bool pointee_volatile;
     } slice;
     struct {
         ast::Text name;
@@ -205,10 +208,16 @@ export struct Builtin {
     TypeRef type;
 };
 
+export struct ShapeSlot {
+    TypeRef type; // null: an empty slot
+};
+
 export struct Table {
     Target target;
     Entry entries[:];
     Usize count;
+    ShapeSlot shapes[:]; // the structural entries, by `shape_hash` (open addressing): `intern`'s index
+    Usize shaped;
     Builtin builtins[:];
     TypeRef invalid;
     TypeRef automatic;
@@ -295,6 +304,7 @@ export Bool is_affine_record(TypeRef t);
 export Bool is_payload_enum(TypeRef t);
 export Bool is_complete(TypeRef t);
 export Bool points_to_const(TypeRef t);
+export Bool points_to_volatile(TypeRef t);
 export Bool is_variadic(TypeRef t);
 export TypeRef element_of(TypeRef t);
 export TypeRef error_of(TypeRef t);
@@ -343,6 +353,7 @@ static Bool same_shape(const Ty *a, const Ty *b) {
     if (!same_variant(a, b)) return false;
     if (bits_of(a) != bits_of(b) || signed_of(a) != signed_of(b) || count_of(a) != count_of(b)) return false;
     if (points_to_const(a) != points_to_const(b) || is_variadic(a) != is_variadic(b)) return false;
+    if (points_to_volatile(a) != points_to_volatile(b)) return false;
     if (!same_part(a, element_of(a), b, element_of(b)) || !same_part(a, error_of(a), b, error_of(b))) return false;
     if (!same_text(name_of(a), name_of(b))) return false;
     return same_slots(slots_of(a).items, slots_of(b).items);
@@ -361,15 +372,93 @@ static Ty *add_entry(Table *t, Ty value) {
     return node;
 }
 
-// The type with the shape of `candidate`: the one made before, or a new one. A linear search: a module has tens of
-// distinct types.
-static TypeRef intern(Table *t, Ty candidate) {
-    for (Usize i = 0; i < t->count; i++) {
-        const Ty *known = t->entries[i].type;
-        if (known->kind == .record || known->kind == .enumeration) continue;
-        if (same_shape(known, &candidate)) return known;
+// A number for each kind, for `shape_hash`.
+static U64 kind_code(const Ty *a) {
+    if (a->kind == .invalid) return 1;
+    if (a->kind == .automatic) return 2;
+    if (a->kind == .void_type) return 3;
+    if (a->kind == .bool_type) return 4;
+    if (a->kind == .text) return 5;
+    if (a->kind == .null_type) return 6;
+    if (a->kind == .type_type) return 7;
+    if (a->kind == .integer) return 8;
+    if (a->kind == .floating) return 9;
+    if (a->kind == .pointer) return 10;
+    if (a->kind == .slice) return 11;
+    if (a->kind == .array) return 12;
+    if (a->kind == .function) return 13;
+    if (a->kind == .option) return 14;
+    if (a->kind == .result_type) return 15;
+    if (a->kind == .fn_value) return 16;
+    if (a->kind == .concept_type) return 17;
+    if (a->kind == .block) return 18;
+    if (a->kind == .stream) return 19;
+    if (a->kind == .tuple) return 20;
+    if (a->kind == .vector) return 21;
+    return 22;
+}
+
+static U64 mix(U64 h, U64 v) {
+    return (h ^ v) * 0x100000001B3ULL;
+}
+
+static U64 mix_text(U64 h, Str text) {
+    U64 at = mix(h, countof(text));
+    for (Usize i = 0; i < countof(text); i++) {
+        at = mix(at, (U64)(U8)text[i]);
     }
-    return add_entry(t, candidate);
+    return at;
+}
+
+// A hash of what `same_shape` compares, so that two types it calls the same hash the same (a part that is the type
+// itself, as the accessors answer for a kind with none, hashes as no part).
+static U64 shape_hash(const Ty *a) {
+    U64 h = mix(0xcbf29ce484222325ULL, kind_code(a));
+    h = mix(h, bits_of(a));
+    h = mix(h, count_of(a));
+    h = mix(h, (signed_of(a) ? 1U : 0U) | (points_to_const(a) ? 2U : 0U) | (is_variadic(a) ? 4U : 0U) |
+                   (points_to_volatile(a) ? 8U : 0U));
+    TypeRef element = element_of(a);
+    TypeRef error = error_of(a);
+    h = mix(h, element == a ? 0 : (U64)(Usize)element);
+    h = mix(h, error == a ? 0 : (U64)(Usize)error);
+    h = mix_text(h, name_of(a));
+    Slot slots[:] = slots_of(a).items;
+    for (Usize i = 0; i < countof(slots); i++) {
+        h = mix_text(mix(h, (U64)(Usize)slots[i].type), slots[i].name);
+    }
+    return h;
+}
+
+// The slot of `intern`'s index where `candidate` is, or the empty one where it goes.
+static Usize shape_slot(const Table *t, const Ty *candidate) {
+    Usize mask = countof(t->shapes) - 1;
+    Usize i = (Usize)shape_hash(candidate) & mask;
+    while (t->shapes[i].type != nullptr && !same_shape(t->shapes[i].type, candidate))
+        i = (i + 1) & mask;
+    return i;
+}
+
+static void grow_shapes(Table *t) {
+    Usize capacity = countof(t->shapes) == 0 ? 256 : countof(t->shapes) * 2;
+    ShapeSlot old[:] = t->shapes;
+    t->shapes = mem::alloc_slice(ShapeSlot, capacity);
+    for (Usize i = 0; i < countof(old); i++) {
+        if (old[i].type != nullptr) t->shapes[shape_slot(t, old[i].type)] = old[i];
+    }
+    mem::free(old.data);
+}
+
+// The type with the shape of `candidate`: the one made before, or a new one. Records and enumerations are nominal and
+// never in the index. A module that imports std declares thousands of types, so the search is by hash (#2888).
+static TypeRef intern(Table *t, Ty candidate) {
+    if (2 * (t->shaped + 1) > countof(t->shapes)) grow_shapes(t);
+    Usize at = shape_slot(t, &candidate);
+    if (t->shapes[at].type != nullptr) return t->shapes[at].type;
+    Ty *made = add_entry(t, candidate);
+    t->shapes[at].type = made;
+    t->shaped += 1;
+    return made;
 }
 
 static void add_builtin(Table *t, Str name, TypeRef type) {
@@ -492,6 +581,30 @@ static void add_va_list(Table *t) {
 export TypeRef slice_of(Table *t, TypeRef element, Bool element_const) {
     TyKind made = {.slice = {.element = element, .pointee_const = element_const}};
     return intern(t, (Ty){.kind = made});
+}
+
+// `t` with a `volatile` element: `*volatile T`, `[]volatile T`, `[n]volatile T`; `t` itself for another kind.
+export TypeRef with_volatile(Table *t, TypeRef of) {
+    if (of->kind == .pointer) {
+        TyKind made = {.pointer = {.element = of->kind.pointer.element,
+                                   .pointee_const = of->kind.pointer.pointee_const,
+                                   .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
+    }
+    if (of->kind == .array) {
+        TyKind made = {.array = {.element = of->kind.array.element,
+                                 .count = of->kind.array.count,
+                                 .pointee_const = of->kind.array.pointee_const,
+                                 .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
+    }
+    if (of->kind == .slice) {
+        TyKind made = {.slice = {.element = of->kind.slice.element,
+                                 .pointee_const = of->kind.slice.pointee_const,
+                                 .pointee_volatile = true}};
+        return intern(t, (Ty){.kind = made});
+    }
+    return of;
 }
 
 // `[,]T` (count 2), `[,,]T` (count 3): a block whose sizes are known at run time.
@@ -721,6 +834,14 @@ export Bool points_to_const(TypeRef t) {
     return false;
 }
 
+// Whether a pointer, array or slice has a `volatile` element (`*volatile T`); false for any other kind.
+export Bool points_to_volatile(TypeRef t) {
+    if (t->kind == .pointer) return t->kind.pointer.pointee_volatile;
+    if (t->kind == .array) return t->kind.array.pointee_volatile;
+    if (t->kind == .slice) return t->kind.slice.pointee_volatile;
+    return false;
+}
+
 // Whether a function type takes C's `...`; false for any other kind.
 export Bool is_variadic(TypeRef t) {
     if (t->kind != .function) return false;
@@ -930,10 +1051,15 @@ static void put_number(Output *text, U64 number) {
 }
 
 // A piece still to write: a type, or a word.
+// A piece of `show`'s output: a type to expand, or a word written as it is. A word's type is `no_type`, never null, so
+// the field reads as a plain pointer in smith's own syntax too.
 struct Piece {
     TypeRef type;
     Str word;
+    Bool is_word;
 };
+
+static const Ty no_type = {.kind = .invalid};
 
 static void push_piece(Piece stack[:], Usize *top, Piece piece) {
     stack[*top] = piece;
@@ -941,11 +1067,11 @@ static void push_piece(Piece stack[:], Usize *top, Piece piece) {
 }
 
 static Piece word(Str text) {
-    return (Piece){.word = text};
+    return (Piece){.type = &no_type, .word = text, .is_word = true};
 }
 
 static Piece of(TypeRef type) {
-    return (Piece){.type = type};
+    return (Piece){.type = type, .word = "", .is_word = false};
 }
 
 // A tuple `(A, B)`: one piece per slot, a written name before its type (`count: i32`), and `(A,)` for one.
@@ -989,14 +1115,17 @@ static void expand(Piece stack[:], Usize *top, Output *text, TypeRef t) {
         push_piece(stack, top, word(" *"));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .array) {
         push_piece(stack, top, word(msg(format::push("[", count_of(t), "]"))));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .slice) {
         push_piece(stack, top, word("[:]"));
         push_piece(stack, top, of(element_of(t)));
         if (points_to_const(t)) put(text, "const ");
+        if (points_to_volatile(t)) put(text, "volatile ");
     } else if (t->kind == .block) {
         push_piece(stack, top, word(count_of(t) == 2 ? "[,]" : "[,,]"));
         push_piece(stack, top, of(element_of(t)));
@@ -1039,12 +1168,12 @@ export Str show(TypeRef t) {
         Piece piece = stack[top];
         TypeRef shown = piece.type;
         Usize pushes = 0;
-        if (shown != nullptr) pushes = 2 * countof(slots_of(shown).items);
+        if (!piece.is_word) pushes = 2 * countof(slots_of(shown).items);
         while (top + 8 + pushes + 2 * layout_depth > capacity) {
             capacity *= 2;
             stack = mem::realloc(stack, capacity);
         }
-        if (shown == nullptr) {
+        if (piece.is_word) {
             put(&text, piece.word);
             continue;
         }
@@ -1071,7 +1200,8 @@ export struct Symbol {
     TypeRef type;
     const ast::Decl *decl;
     Bool is_const;
-    Bool is_new; // declared in smith's own syntax (`let x = v`, `x: T = v`, `mut x`, a parameter `x: T`)
+    Bool is_volatile; // a variable written `volatile T` (`mut sink: volatile u64 = 0`): every read and write is made
+    Bool is_new;      // declared in smith's own syntax (`let x = v`, `x: T = v`, `mut x`, a parameter `x: T`)
     Bool exported;
     // Where a fix-it mends it (#1516): the binding's span (empty: it has none, so no fix), whether a fix may put
     // `mut` before its name, the type as written (null: none) and the initializer (null: none).
@@ -1085,14 +1215,33 @@ export struct Symbol {
     Bool narrowed; // a `?T` name known not to be `.none` here, typed `T` (#2481): `x.some` is `x`
 };
 
+// An index of the names of `symbols[0:indexed)` (#2888): a module that imports std holds tens of thousands of symbols
+// (the C headers' above all), and a scan of all of them for each declaration and each name made the check quadratic.
+// A name hashes to a bucket; `heads[b]` is one more than the highest index in bucket `b` (0: none), and `next[i]` one
+// more than the next lower index in the bucket of symbol `i`, so a walk meets the newest first, as the scan did.
+//
+// The index is a cache and never decides: it is used only while `data` is still where the symbols are, and it follows
+// `count` before each search (`index_follow`): the symbols past `indexed` are added, and when `count` went below it
+// (a scope ended) the newest are taken out again, by the hash kept for each. A symbol is only ever written at `count`
+// or over one of the same name (a forward-declared struct), so the names below `indexed` are those it was built from.
+export struct ScopeIndex {
+    const Symbol *data;
+    Usize indexed;
+    U32 heads[:];
+    U32 next[:];
+    U32 hashes[:];
+};
+
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
 export struct Scopes {
     Symbol symbols[:];
     Usize count;
     Usize marks[:];
     Usize depth;
-    Str prefix;  // while the body of a generic's instance from another module is checked: that module's prefix
-    Usize floor; // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
+    Str prefix;   // while the body of a generic's instance from another module is checked: that module's prefix
+    Usize floor;  // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
+    Bool prelude; // `std.prelude` is declared (as `std::prelude::name`): a bare name nothing else declares is its
+    ScopeIndex *index; // null until a scope has enough names to need one; a copy of the struct shares it
 };
 
 export void push_scope(Scopes *s) {
@@ -1117,16 +1266,109 @@ static Usize scope_start(const Scopes *s) {
     return s->marks[s->depth - 1];
 }
 
-// Adds `symbol` to the innermost scope; false, and nothing added, when that scope has the name already.
-export Bool declare(Scopes *s, Symbol symbol) {
-    for (Usize i = scope_start(s); i < s->count; i++) {
-        if (same_text(s->symbols[i].name, symbol.name)) return false;
+// A scope with this many symbols gets an index; fewer are scanned.
+constexpr Usize index_gap = 256;
+
+static U32 name_hash(Str name) {
+    U32 h = 2166136261U;
+    for (Usize i = 0; i < countof(name); i++)
+        h = (h ^ (U32)(U8)name[i]) * 16777619U;
+    return h;
+}
+
+// Puts symbol `i` at the head of its bucket; the index has room for it.
+static void index_add(const Scopes *s, Usize i) {
+    ScopeIndex *x = s->index;
+    U32 hash = name_hash(s->symbols[i].name);
+    Usize b = hash & (countof(x->heads) - 1);
+    x->hashes[i] = hash;
+    x->next[i] = x->heads[b];
+    x->heads[b] = (U32)(i + 1);
+}
+
+// Builds the index over every symbol of `s`.
+static void index_build(const Scopes *s) {
+    ScopeIndex *x = s->index;
+    Usize buckets = 1024;
+    while (buckets < 2 * countof(s->symbols))
+        buckets *= 2;
+    if (countof(x->heads) != buckets) {
+        mem::free(x->heads.data);
+        x->heads = mem::alloc_slice(U32, buckets);
+    } else {
+        for (Usize b = 0; b < buckets; b++)
+            x->heads[b] = 0;
     }
+    if (countof(x->next) < countof(s->symbols)) {
+        mem::free(x->next.data);
+        mem::free(x->hashes.data);
+        x->next = mem::alloc_slice(U32, countof(s->symbols));
+        x->hashes = mem::alloc_slice(U32, countof(s->symbols));
+    }
+    for (Usize i = 0; i < s->count; i++)
+        index_add(s, i);
+    x->data = s->symbols.data;
+    x->indexed = s->count;
+}
+
+// Brings the index to `symbols[0:count)`: the symbols added since are put in, those taken out since (a scope ended) are
+// taken out newest first, which leaves each bucket as it was before them. A moved array is indexed again.
+static void index_follow(const Scopes *s) {
+    ScopeIndex *x = s->index;
+    if (x->data != s->symbols.data || countof(x->next) < countof(s->symbols)) {
+        index_build(s);
+        return;
+    }
+    while (x->indexed > s->count) {
+        x->indexed -= 1;
+        x->heads[x->hashes[x->indexed] & (countof(x->heads) - 1)] = x->next[x->indexed];
+    }
+    while (x->indexed < s->count) {
+        index_add(s, x->indexed);
+        x->indexed += 1;
+    }
+}
+
+// One more than the highest index below `upper` whose symbol is called `name`; 0 when none is.
+static Usize find_below(const Scopes *s, Str name, Usize upper) {
+    if (upper > s->count) upper = s->count;
+    if (s->index == nullptr) {
+        for (Usize i = upper; i > 0; i--) {
+            if (same_text(s->symbols[i - 1].name, name)) return i;
+        }
+        return 0;
+    }
+    index_follow(s);
+    const ScopeIndex *x = s->index;
+    U32 at = x->heads[name_hash(name) & (countof(x->heads) - 1)];
+    while (at != 0) {
+        Usize i = at - 1;
+        if (i < upper && same_text(s->symbols[i].name, name)) return i + 1;
+        at = x->next[i];
+    }
+    return 0;
+}
+
+// The innermost symbol below `upper` called `name`, or null.
+static const Symbol *named_below(const Scopes *s, Str name, Usize upper) {
+    Usize found = find_below(s, name, upper);
+    return found == 0 ? nullptr : &s->symbols[found - 1];
+}
+
+// Room for one more symbol. A scope that grew large enough gets an index (its first use builds it).
+static void make_room(Scopes *s) {
     if (s->count == countof(s->symbols)) {
         Usize capacity = countof(s->symbols) * 2;
         if (capacity < 64) capacity = 64;
         s->symbols = mem::realloc(s->symbols, capacity);
     }
+    if (s->index == nullptr && s->count >= index_gap) s->index = mem::alloc(ScopeIndex);
+}
+
+// Adds `symbol` to the innermost scope; false, and nothing added, when that scope has the name already.
+export Bool declare(Scopes *s, Symbol symbol) {
+    if (find_below(s, symbol.name, s->count) > scope_start(s)) return false;
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
     return true;
@@ -1139,15 +1381,11 @@ static Bool names_type(const Symbol *s) {
 }
 
 static Bool declare_beside(Scopes *s, Symbol symbol) {
-    for (Usize i = scope_start(s); i < s->count; i++) {
-        if (same_text(s->symbols[i].name, symbol.name) && names_type(&s->symbols[i]) == names_type(&symbol))
-            return false;
+    Usize start = scope_start(s);
+    for (Usize at = find_below(s, symbol.name, s->count); at > start; at = find_below(s, symbol.name, at - 1)) {
+        if (names_type(&s->symbols[at - 1]) == names_type(&symbol)) return false;
     }
-    if (s->count == countof(s->symbols)) {
-        Usize capacity = countof(s->symbols) * 2;
-        if (capacity < 64) capacity = 64;
-        s->symbols = mem::realloc(s->symbols, capacity);
-    }
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
     return true;
@@ -1157,79 +1395,108 @@ static Bool declare_beside(Scopes *s, Symbol symbol) {
 // `.none` from here to the end of the scope has the type `T` (#2481). `lookup` finds the newest, so the narrowed one
 // wins.
 export void narrow(Scopes *s, Symbol symbol) {
-    if (s->count == countof(s->symbols)) {
-        Usize capacity = countof(s->symbols) * 2;
-        if (capacity < 64) capacity = 64;
-        s->symbols = mem::realloc(s->symbols, capacity);
-    }
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
 }
 
+export Bool is_public(const Symbol *s);
+
+static Bool has_separator(Str name) {
+    for (Usize i = 0; i + 1 < countof(name); i++) {
+        if (name[i] == ':' && name[i + 1] == ':') return true;
+    }
+    return false;
+}
+
+// The public declaration `name` of `std.prelude`, which every module sees without an import (#2669): its concepts and
+// loop helpers. Only a name nothing else declares reaches it, so a module's own `range` wins. Null without a prelude.
+static const Symbol *prelude_symbol(const Scopes *s, Str name) {
+    if (!s->prelude || countof(name) == 0 || has_separator(name)) return nullptr;
+    Str full = msg(format::push("std::prelude::", name));
+    const Symbol *found = named_below(s, full, s->count);
+    if (found == nullptr) return nullptr;
+    return is_public(found) ? found : nullptr;
+}
+
 // The innermost symbol called `name`, or null. In the body of a generic instance from another module the body's own
-// names come first, then the module's (`util::name`), then the names of the module being checked.
+// names come first, then the module's (`util::name`), then the names of the module being checked, then the prelude's.
 export const Symbol *lookup(const Scopes *s, Str name) {
     if (countof(s->prefix) > 0) {
-        for (Usize i = s->count; i > s->floor; i--) {
-            if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
-        }
+        Usize body = find_below(s, name, s->count);
+        if (body > s->floor) return &s->symbols[body - 1];
         Str own = msg(format::push(s->prefix, name));
-        for (Usize i = s->floor; i > 0; i--) {
-            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
-        }
+        const Symbol *module = named_below(s, own, s->floor);
+        if (module != nullptr) return module;
     }
-    for (Usize i = s->count; i > 0; i--) {
-        if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
-    }
-    return nullptr;
+    const Symbol *found = named_below(s, name, s->count);
+    if (found != nullptr) return found;
+    return prelude_symbol(s, name);
+}
+
+// `lookup` as a declaration sees it, to tell whether a new name hides another: in the body of a generic instance from
+// another module only the body's own names and that module's (`util::name`) count, not those of the module being
+// checked, which the body cannot see by its own name (#2669). Elsewhere it is `lookup`.
+export const Symbol *lookup_own(const Scopes *s, Str name) {
+    if (countof(s->prefix) == 0) return lookup(s, name);
+    Usize body = find_below(s, name, s->count);
+    if (body > s->floor) return &s->symbols[body - 1];
+    Str own = msg(format::push(s->prefix, name));
+    return named_below(s, own, s->floor);
 }
 
 // The symbol `name` stands for in a type position (`want_type`) or a value position: a C header has a struct tag and a
 // function of one name (`struct stat` and `stat()`, #2610), kept apart here by position. Falls back to the other kind
 // when only that one exists, so every other name reads as before.
 export const Symbol *lookup_as(const Scopes *s, Str name, Bool want_type) {
-    for (Usize i = s->count; i > 0; i--) {
-        const Symbol *found = &s->symbols[i - 1];
-        if (same_text(found->name, name) && names_type(found) == want_type) return found;
+    for (Usize at = find_below(s, name, s->count); at > 0; at = find_below(s, name, at - 1)) {
+        const Symbol *found = &s->symbols[at - 1];
+        if (names_type(found) == want_type) return found;
     }
     return lookup(s, name);
 }
 
-// Whether `name` is the segments of `path` joined by `::`.
-static Bool is_path(Str name, ast::Path path) {
-    Usize at = 0;
-    for (Usize i = 0; i < countof(path.segments); i++) {
-        Str segment = path.segments[i].text;
-        if (i > 0) {
-            if (at + 2 > countof(name) || name[at] != ':' || name[at + 1] != ':') return false;
-            at += 2;
-        }
-        if (at + countof(segment) > countof(name)) return false;
-        for (Usize k = 0; k < countof(segment); k++) {
-            if (name[at + k] != segment[k]) return false;
-        }
-        at += countof(segment);
+// The innermost symbol whose whole name is `path`, or null (`c::printf` is the name `c::printf`).
+static Str prefix_of_symbol(const Symbol *s);
+
+// `math_trig::lerp` in the body of an instance of std.math's generic, read in today's syntax as an import is: the
+// first name is a module std.math imports (the symbol `std::math::math_trig`), so the rest is a name of that module
+// (`std::math_trig::lerp`), as `math_trig.lerp` reads through `through_modules` (#2669). Null when it is not one.
+static const Symbol *through_own_import(const Scopes *s, ast::Path path) {
+    if (countof(path.segments) < 2) return nullptr;
+    Str module_name = msg(format::push(s->prefix, path.segments[0].text));
+    const Symbol *module = nullptr;
+    for (Usize at = find_below(s, module_name, s->floor); at > 0 && module == nullptr;
+         at = find_below(s, module_name, at - 1)) {
+        const Symbol *candidate = &s->symbols[at - 1];
+        if (candidate->kind == .module_name) module = candidate;
     }
-    return at == countof(name);
+    if (module == nullptr) return nullptr;
+    Str full = prefix_of_symbol(module);
+    if (countof(full) == 0) return nullptr;
+    for (Usize k = 1; k < countof(path.segments); k++)
+        full = msg(format::push(full, k > 1 ? "::" : "", path.segments[k].text));
+    return named_below(s, full, s->floor);
 }
 
-// The innermost symbol whose whole name is `path`, or null (`c::printf` is the name `c::printf`).
 export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
+    if (countof(path.segments) == 0) return nullptr;
+    // A symbol's whole name is the path when it is the segments joined by `::` (`is_path`).
+    Str joined_path = path.segments[0].text;
+    for (Usize k = 1; k < countof(path.segments); k++)
+        joined_path = msg(format::push(joined_path, "::", path.segments[k].text));
     if (countof(s->prefix) > 0) {
-        for (Usize i = s->count; i > s->floor; i--) {
-            if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
-        }
-        Str joined_path = path.segments[0].text;
-        for (Usize k = 1; k < countof(path.segments); k++)
-            joined_path = msg(format::push(joined_path, "::", path.segments[k].text));
+        Usize body = find_below(s, joined_path, s->count);
+        if (body > s->floor) return &s->symbols[body - 1];
         Str own = msg(format::push(s->prefix, joined_path));
-        for (Usize i = s->floor; i > 0; i--) {
-            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
-        }
+        const Symbol *module = named_below(s, own, s->floor);
+        if (module != nullptr) return module;
+        const Symbol *through = through_own_import(s, path);
+        if (through != nullptr) return through;
     }
-    for (Usize i = s->count; i > 0; i--) {
-        if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
-    }
+    const Symbol *found = named_below(s, joined_path, s->count);
+    if (found != nullptr) return found;
+    if (countof(path.segments) == 1) return prelude_symbol(s, path.segments[0].text);
     return nullptr;
 }
 
@@ -1243,6 +1510,15 @@ export struct Error {
     ast::Span related;   // where
     Str related_message; // and what the note says
     syntax::Edits fix;   // the edits `smith lint --fix` applies together (#1516); empty: none
+    // An error found in the body of an instance of a generic from another module (#2669): its fix edits that module's
+    // text, not this file's, so it is kept apart from `fix`. `fix_module` is that module's prefix (`std::math_trig::`)
+    // and the spans of `module_fix` are offsets in the text the module was read from (as an import, mended).
+    Str fix_module;
+    syntax::Edits module_fix;
+    // The prefix of the module whose text `span` is in (`std::test::`) when the error was found while checking that
+    // module's declarations or an instance of its generic; empty for the file being checked. The driver reports such an
+    // error at that module's file and line, not one past the end of the importer (#2669).
+    Str module;
     // A construction that leaves a field out (#2329): the call, the record, and which fields (bit k for field k) it
     // gives. The fixer writes the zero values (`front::fix_zero`), which the checker cannot spell without its imports.
     const ast::Expr *left_out_call;
@@ -1260,6 +1536,8 @@ export struct NodeType {
     Bool has_length;   // an array length written as constants (`[k.SIDE * 2]u8`): the value is `length`
     U64 length;
     const ast::Expr *method; // a method call `x.f(a)`: the call `f(x, a)` it stands for, which has the types (#1795)
+    Bool decided;            // the condition of an `if` that asks about types: one branch is kept (#1902)
+    Bool keeps_then;         // when `decided`: the `then` branch is the one kept, else the `else` branch
 };
 
 // A test of a payload enumeration's variant, `if k == .v:` or `if k != .v: return`, kept for the fix of the reads `k.v`
@@ -1381,8 +1659,11 @@ export void fail(Checked *r, ast::Span span, Str message) {
         if (capacity < 8) capacity = 8;
         r->errors = mem::realloc(r->errors, capacity);
     }
-    r->errors[r->error_count] = (Error){
-        .message = msg(format::push(message)), .span = span, .left_out_call = nullptr, .left_out_record = nullptr};
+    r->errors[r->error_count] = (Error){.message = msg(format::push(message)),
+                                        .span = span,
+                                        .module = r->prefix,
+                                        .left_out_call = nullptr,
+                                        .left_out_record = nullptr};
     r->error_count += 1;
 }
 
@@ -1413,18 +1694,28 @@ export Str message_of(char chars[:]) {
 }
 
 // Appends an error that was made elsewhere.
+// Gives the error at `at` its fix. The spans of a generic's body from another module are that module's: its edits
+// would land in this file (#2386), so they are kept with the module they mend, for the fixer to apply when it mends
+// that module (#2669).
+export void set_fix(Checked *r, Usize at, syntax::Edits fix) {
+    Error *made = &r->errors[at];
+    if (countof(r->prefix) == 0) {
+        made->fix = fix;
+        return;
+    }
+    made->fix_module = r->prefix;
+    made->module_fix = fix;
+}
+
 export void add_error(Checked *r, Error error) {
     fail(r, error.span, error.message);
-    r->errors[r->error_count - 1].fix = error.fix;
+    set_fix(r, r->error_count - 1, error.fix);
 }
 
 // Records an error that carries a fix: the edits that mend it, applied together or not at all.
 export void fail_fix(Checked *r, ast::Span span, Str message, syntax::Edits fix) {
     fail(r, span, message);
-    // The spans of a generic's body from another module are that module's: its edits would land in this file (#2386).
-    if (countof(r->prefix) == 0) {
-        r->errors[r->error_count - 1].fix = fix;
-    }
+    set_fix(r, r->error_count - 1, fix);
 }
 
 // An error whose message is the pieces `args`, as `format::push` takes them.
@@ -1492,8 +1783,13 @@ static NodeType *entry_in(Checked *r, const ast::Expr *node, Usize instance) {
 // record outside every instance (`max_instances`) always holds the latest one, which is what a reader that does not
 // name an instance gets, as before.
 export void set_type(Checked *r, const ast::Expr *node, TypeRef type) {
-    entry_in(r, node, r->current)->type = type;
-    if (r->current != max_instances) entry_in(r, node, max_instances)->type = type;
+    // through a named record: the fixer renames the field `type` (a word of smith's syntax) only on a name's access
+    NodeType *here = entry_in(r, node, r->current);
+    here->type = type;
+    if (r->current != max_instances) {
+        NodeType *latest = entry_in(r, node, max_instances);
+        latest->type = type;
+    }
 }
 
 // The type recorded for an expression in the body of the instance being checked (outside a check: the latest), or null
@@ -1509,6 +1805,34 @@ export TypeRef type_of_in(const Checked *r, const ast::Expr *node, Usize instanc
     const NodeType *entry = find_in(r, node, instance);
     if (entry == nullptr) return nullptr;
     return entry->type;
+}
+
+// Records that the condition of an `if` is a question about types (`is_integer(typeof(x)) and ...`) that the checker
+// answered: only the branch it picks is checked, and only that branch is emitted (#1902).
+export void set_decided(Checked *r, const ast::Expr *condition, Bool keeps_then) {
+    NodeType *entry = entry_in(r, condition, r->current);
+    entry->decided = true;
+    entry->keeps_then = keeps_then;
+    if (r->current == max_instances) return;
+    entry = entry_in(r, condition, max_instances);
+    entry->decided = true;
+    entry->keeps_then = keeps_then;
+}
+
+// Whether the checker answered the condition of an `if` in the body of `instance`, and which branch it kept.
+export Bool decided_in(const Checked *r, const ast::Expr *condition, Usize instance, Bool *keeps_then) {
+    const NodeType *entry = find_in(r, condition, instance);
+    if (entry == nullptr || !entry->decided) return false;
+    *keeps_then = entry->keeps_then;
+    return true;
+}
+
+// The same for the body being checked now (outside a check: the latest answer).
+export Bool decided(const Checked *r, const ast::Expr *condition, Bool *keeps_then) {
+    const NodeType *entry = find_here(r, condition);
+    if (entry == nullptr || !entry->decided) return false;
+    *keeps_then = entry->keeps_then;
+    return true;
 }
 
 // What the emitter needs to know about a cast: whether it asserts that the value fits (checked in every build, and
@@ -1726,6 +2050,48 @@ export Str written_concept(const ast::TypeExpr *t) {
     Str written = t->kind.named.path.segments[0].text;
     if (is_own_concept(written)) return written;
     return lowercase_concept(written);
+}
+
+static Bool is_type_name(const ast::TypeExpr *written);
+
+// The one statement of a block of one, the statement itself when it is not a block, null for a longer block.
+static const ast::Stmt *only_statement(const ast::Stmt *body) {
+    if (body->kind != .block) return body;
+    ast::StmtRef items[:] = body->kind.block.items;
+    if (countof(items) != 1) return nullptr;
+    return items[0];
+}
+
+// The one expression a statement gives as a function's value: `return e`, the expression `e`, or a block of one of
+// those; else null.
+static const ast::Expr *single_value(const ast::Stmt *written) {
+    if (written == nullptr) return nullptr;
+    const ast::Stmt *body = only_statement(written);
+    if (body == nullptr) return nullptr;
+    if (body->kind == .return_stmt) return body->kind.return_stmt.value;
+    if (body->kind == .expression) return body->kind.expression.value;
+    return nullptr;
+}
+
+// Whether the written type is the bare name `bool`.
+static Bool is_bool_name(const ast::TypeExpr *written) {
+    if (written == nullptr || written->kind != .named) return false;
+    ast::Path path = written->kind.named.path;
+    return countof(path.segments) == 1 && same_text(path.segments[0].text, "bool");
+}
+
+// The body of a concept function, a question about types answered at compile time: `fn floaty(T: type) -> bool:
+// is_float(T)`, every parameter a `type`, the result `bool`, the body one expression (the prelude's `signed`, a
+// user's `shape`). Null for any other declaration.
+export const ast::Expr *concept_body(const ast::Decl *d) {
+    if (d == nullptr || d->kind != .function || !d->kind.function.is_new) return nullptr;
+    if (!is_bool_name(d->kind.function.result) || countof(d->kind.function.params) == 0) return nullptr;
+    ast::Param params[:] = d->kind.function.params;
+    for (Usize i = 0; i < countof(params); i++) {
+        if (params[i].is_rest || params[i].is_pack || params[i].is_gather || !is_type_name(params[i].type))
+            return nullptr;
+    }
+    return single_value(d->kind.function.body);
 }
 
 // Whether the type satisfies the concept: `int` any integer, `signed` and `unsigned` by sign, `float`, `num` either,
@@ -2028,6 +2394,9 @@ static TypeRef build_applied(Checked *r, const ast::TypeExpr *node, ast::Path ap
         return build_slice_of(r, node, w->values[base].type);
     if (same_text(name, "Option") && args == 1 && n == 1) return option_of(&r->table, w->values[base].type);
     if (same_text(name, "stream::Stream") && args == 1 && n == 1) return stream_of(&r->table, w->values[base].type);
+    // `iter(T)`, the result of a generator in smith's own syntax (#1428), is the stream of `T`
+    if (r->new_syntax && same_text(name, "iter") && args == 1 && n == 1)
+        return stream_of(&r->table, w->values[base].type);
     if ((same_text(name, "Checked") || same_text(name, "Result")) && args == 2 && n == 2)
         return result_of(&r->table, w->values[base].type, w->values[base + 1].type);
     Bool is_lambda = same_text(name, "Lambda");
@@ -2230,7 +2599,8 @@ static const ast::Param *declared_param(const Symbol *s, Usize at) {
     const ast::Decl *decl = s->decl;
     if (decl == nullptr) return nullptr;
     if (decl->kind != .function) return nullptr;
-    return &decl->kind.function.params[at];
+    const ast::Param params[:] = decl->kind.function.params;
+    return &params[at];
 }
 
 // The prefix an import symbol stands for, else an empty text.
@@ -2368,18 +2738,26 @@ export Bool constant_case(const Checked *r, const ast::Expr *root, U64 *out) {
     return false;
 }
 
+// `made` with a `volatile` element when the element is written `volatile T` (`*volatile i32`).
+static TypeRef volatile_if(Checked *r, const ast::TypeExpr *element, TypeRef made) {
+    if (element == nullptr || !element->qualifiers.is_volatile) return made;
+    return with_volatile(&r->table, made);
+}
+
 // Makes the type of a composite node from its children's, which are `n` values from `base`.
 static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize base, Usize n) {
     if (any_invalid(r, w, base, n)) return r->table.invalid;
     if (node->kind == .pointer) {
         Bool is_const = node->kind.pointer.pointee->qualifiers.is_const;
         if (r->new_syntax) is_const = !node->kind.pointer.is_mut; // smith's own `*T` is read-only, `*mut T` writable
-        return pointer_to(&r->table, w->values[base].type, is_const);
+        TypeRef made = pointer_to(&r->table, w->values[base].type, is_const);
+        return volatile_if(r, node->kind.pointer.pointee, made);
     }
     if (node->kind == .slice) {
         Bool is_const = node->kind.slice.element->qualifiers.is_const;
         if (r->new_syntax) is_const = !node->kind.slice.is_mut; // smith's own `[]T` is read-only, `[]mut T` writable
-        return slice_of(&r->table, w->values[base].type, is_const);
+        TypeRef made = slice_of(&r->table, w->values[base].type, is_const);
+        return volatile_if(r, node->kind.slice.element, made);
     }
     if (node->kind == .array) {
         const ast::Expr *count = node->kind.array.count;
@@ -2388,7 +2766,8 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
             const Symbol *bound = lookup(&r->scopes, count_name); // `n` of an instance
             if (bound != nullptr && bound->has_value) {
                 Bool bound_const = node->kind.array.element->qualifiers.is_const;
-                return array_of(&r->table, w->values[base].type, bound->value, bound_const);
+                TypeRef made = array_of(&r->table, w->values[base].type, bound->value, bound_const);
+                return volatile_if(r, node->kind.array.element, made);
             }
         }
         U64 length = 0;
@@ -2401,7 +2780,8 @@ static TypeRef build(Checked *r, const ast::TypeExpr *node, const Walk *w, Usize
         }
         Bool is_const = node->kind.array.element->qualifiers.is_const;
         set_length(r, count, length);
-        return array_of(&r->table, w->values[base].type, length, is_const);
+        TypeRef made = array_of(&r->table, w->values[base].type, length, is_const);
+        return volatile_if(r, node->kind.array.element, made);
     }
     if (node->kind == .option) return option_of(&r->table, w->values[base].type);
     if (node->kind == .block_type) return build_block(r, node->span, node->kind.block_type.dims, w->values[base].type);
@@ -2637,9 +3017,8 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         set_marks(made, marks_affine(d), from_c ? from_header : record_c_name(d));
         // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
         Symbol *earlier = nullptr;
-        for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
-            if (same_text(r->scopes.symbols[i - 1].name, name)) earlier = &r->scopes.symbols[i - 1];
-        }
+        Usize found = find_below(&r->scopes, name, r->scopes.count);
+        if (found > 0) earlier = &r->scopes.symbols[found - 1];
         if (earlier != nullptr && earlier->kind == .type_name && declared_by_record(earlier)) {
             if (forward) return;
             if (declared_opaque(earlier)) {
@@ -2890,6 +3269,9 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
             r->new_syntax = false;
         }
         items[i] = (Slot){.name = item->name, .type = carried, .value = next};
+        // The payload as written, for a fix that edits it (`*T` to `*mut T`, #2647): only where the source being
+        // mended is the module's own, so the span reaches the right text.
+        if (has_payload && countof(r->prefix) == 0) items[i].written = item->payload;
         next += 1;
     }
     Ty *made = own(&r->table, symbol->type);
@@ -2907,9 +3289,99 @@ static Bool is_type_name(const ast::TypeExpr *written) {
            (same_text(path.segments[0].text, "Type") || same_text(path.segments[0].text, "type"));
 }
 
-// Whether a parameter is known at compile time in smith's own syntax: `T: type` or `const n: usize`.
+// The value parameters used in a type of their function's signature (`n` in `fn table(n: usize) -> [n]f32:`), by
+// where the name is written: a copy of a template (an instance) shares the source texts and the spans, so its
+// parameters are found too. Filled by `mark_used_in_types` when a function is declared; a fixed table, since it
+// outlives the allocator of any one check (past its room a parameter stays a run-time one).
+struct UsedInTypes {
+    const char *name;
+    ast::Span span;
+};
+
+static UsedInTypes used_in_types[4096];
+static Usize used_in_types_count = 0;
+
+static Bool is_used_in_types(const ast::Param *p) {
+    if (countof(p->name) == 0) return false;
+    for (Usize i = 0; i < used_in_types_count; i++) {
+        const UsedInTypes *u = &used_in_types[i];
+        if (u->name == &p->name[0] && u->span.start == p->span.start && u->span.end == p->span.end) return true;
+    }
+    return false;
+}
+
+// Whether the expression (an array's count, a value argument of a type function) names `name`.
+static Bool names_in(const ast::Expr *e, Str wanted) {
+    const ast::Expr *todo[32];
+    Usize n = 0;
+    if (e != nullptr) todo[n++] = e;
+    while (n > 0) {
+        const ast::Expr *x = todo[--n];
+        if (x->kind == .name) {
+            ast::Path path = x->kind.name.path;
+            if (countof(path.segments) == 1 && same_text(path.segments[0].text, wanted)) return true;
+        }
+        if (x->kind == .binary && n + 2 <= countof(todo)) {
+            todo[n++] = x->kind.binary.left;
+            todo[n++] = x->kind.binary.right;
+        }
+        if (x->kind == .unary && n < countof(todo)) todo[n++] = x->kind.unary.operand;
+    }
+    return false;
+}
+
+// Whether the written type uses `name` as a value: `[n]f32`, `[n, 3]T`, `Array(f32, n)`, anywhere inside it.
+static Bool type_uses(const ast::TypeExpr *t, Str name) {
+    const ast::TypeExpr *todo[32];
+    Usize n = 0;
+    if (t != nullptr) todo[n++] = t;
+    while (n > 0) {
+        const ast::TypeExpr *x = todo[--n];
+        if (x == nullptr) continue;
+        if (x->kind == .array && names_in(x->kind.array.count, name)) return true;
+        if (x->kind == .block_type) {
+            for (Usize i = 0; i < countof(x->kind.block_type.dims); i++)
+                if (names_in(x->kind.block_type.dims[i], name)) return true;
+        }
+        if (x->kind == .applied) {
+            for (Usize i = 0; i < countof(x->kind.applied.args); i++) {
+                const ast::TypeArg *arg = &x->kind.applied.args[i];
+                if (*arg == .value && names_in(arg->value.value, name)) return true;
+            }
+        }
+        Usize children = 1;
+        if (x->kind == .function) children = countof(x->kind.function.params) + 1;
+        if (x->kind == .tuple) children = countof(x->kind.tuple.elements);
+        if (x->kind == .applied) children = countof(x->kind.applied.args);
+        for (Usize i = 0; i < children && n < countof(todo); i++) {
+            const ast::TypeExpr *inner = child(x, i);
+            if (inner != nullptr) todo[n++] = inner;
+        }
+    }
+    return false;
+}
+
+// Marks the value parameters of a function in smith's own syntax that a type of its signature uses: they are known at
+// compile time, with one instance per value (owner, 2026-11-08: "Yeah, drop const from parameters").
+static void mark_used_in_types(ast::Param list[:], const ast::TypeExpr *result_type) {
+    for (Usize i = 0; i < countof(list); i++) {
+        const ast::Param *p = &list[i];
+        if (!p->is_new || p->is_rest || p->is_pack || p->is_gather || p->is_const || countof(p->name) == 0) continue;
+        if (p->type == nullptr || is_type_name(p->type) || is_used_in_types(p)) continue;
+        Bool used = type_uses(result_type, p->name);
+        for (Usize k = 0; k < countof(list) && !used; k++)
+            if (k != i) used = type_uses(list[k].type, p->name);
+        if (!used) continue;
+        if (used_in_types_count == countof(used_in_types)) return;
+        used_in_types[used_in_types_count] = (UsedInTypes){.name = &p->name[0], .span = p->span};
+        used_in_types_count += 1;
+    }
+}
+
+// Whether a parameter is known at compile time in smith's own syntax: `T: type`, a value a type of the signature uses
+// (`n` in `fn table(n: usize) -> [n]f32:`), or the old marker `const n: usize`, kept until the parser stops writing it.
 export Bool is_compile_time(const ast::Param *p) {
-    return p->is_new && (is_type_name(p->type) || p->is_const) && !p->is_rest;
+    return p->is_new && (is_type_name(p->type) || p->is_const || is_used_in_types(p)) && !p->is_rest;
 }
 
 // Whether a compile-time parameter is a type (`T: type`), else a constant (`const n: usize`).
@@ -2937,13 +3409,23 @@ export Bool is_auto_param(const ast::Param *p) {
     return is_auto_slice(p->type) || p->type->kind == .auto_type;
 }
 
+// Whether a written slice type's element is `const` (`const T[:]`).
+static Bool const_element(const ast::TypeExpr *t) {
+    if (t->kind != .slice) return false;
+    return t->kind.slice.element->qualifiers.is_const;
+}
+
+// The slice of `given`'s element, `const` when `given`'s is or `fixed` says so; null when `given` is no slice.
+static TypeRef slice_with(Checked *r, TypeRef given, Bool fixed) {
+    if (given->kind != .slice) return nullptr;
+    return slice_of(&r->table, given->kind.slice.element, given->kind.slice.pointee_const || fixed);
+}
+
 // The type an `auto` parameter is bound to for an argument of type `given`: the argument's type, and for a slice of
 // `auto` its element with the parameter's `const` added; null when the argument is not a slice.
 export TypeRef auto_binding(Checked *r, const ast::Param *p, TypeRef given) {
     if (!is_auto_slice(p->type) || p->type->kind != .slice) return given;
-    if (given->kind != .slice) return nullptr;
-    Bool fixed = given->kind.slice.pointee_const || p->type->kind.slice.element->qualifiers.is_const;
-    return slice_of(&r->table, given->kind.slice.element, fixed);
+    return slice_with(r, given, const_element(p->type));
 }
 
 // A function with a body and a compile-time or `auto` parameter, whose result is not a type, is a template (#1908,
@@ -2975,6 +3457,7 @@ static void declare_function(Checked *r, const ast::Decl *d, Str name, ast::Para
     if (is_new_function(d) && countof(list) > 0 && !is_type_name(list[0].type)) {
         reject_conversion_name(r, d->span, name, "function");
     }
+    mark_used_in_types(list, result_type);
     if (is_template(d, list, result_type)) {
         declare_template(r, d, name, list);
         return;
@@ -3202,11 +3685,251 @@ static void reflect_fail(ast::Span span, Str message) {
     failf(reflecting, span, message);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// D20 (owner, 2026-11-07: "A"): `for (i, x) in enumerate(list)` over a pack, `fields(T)` or `parameters(F)` is unrolled
+// as `for x in list` is, since each element has its own type, and `i` is a compile-time `usize` in each copy: the copy
+// is a block of `const i: usize = <at>`, then `x := rest.<at>` for a pack (`x` stands for `fields(T)[<at>]` in a list,
+// which `ast_clone` expands after), then the body.
+
+static Str enumerated_pack;
+static Usize enumerated_count = 0;
+static Bool enumerated_any = false;
+static Str substituted_name;
+static Str substituted_index;
+static ast::Expr *substituted_list = nullptr;
+static Usize substituted_at = 0;
+
+static Str single_name_of(const ast::Expr *e) {
+    Str none = "";
+    if (e == nullptr || e->kind != .name || countof(e->kind.name.path.segments) != 1) return none;
+    return e->kind.name.path.segments[0].text;
+}
+
+static Usize typed_subjects = 0;
+
+// The type of the variable `typeof(v)` names, or null: the new syntax may read the operand `v` as a type name.
+static TypeRef typeof_variable(const Checked *r, const ast::Expr *operand) {
+    Str name = single_name_of(operand);
+    if (operand == nullptr) return nullptr;
+    if (operand->kind == .type_value && operand->kind.type_value.type != nullptr &&
+        operand->kind.type_value.type->kind == .named &&
+        countof(operand->kind.type_value.type->kind.named.path.segments) == 1) {
+        name = operand->kind.type_value.type->kind.named.path.segments[0].text;
+    }
+    if (countof(name) == 0) return nullptr;
+    const Symbol *found = lookup(&r->scopes, name);
+    if (found != nullptr && found->kind == .variable) return found->type;
+    // Before an instance's parameters are declared, an `auto` parameter `v` is bound as `$auto.v` (`bind_given`).
+    found = lookup(&r->scopes, msg(format::push("$auto.", name)));
+    if (found == nullptr) return nullptr;
+    return found->type;
+}
+
+// The type of `v`, `p.*` or `p.f` (a field through a pointer too), a few steps from a variable: the subject of
+// `fields(typeof(p.*))` in an instance (`tests/smith-lang/cases/generic-fields-pointee`).
+static TypeRef typeof_path(const Checked *r, const ast::Expr *operand) {
+    const ast::Expr *steps[8];
+    Usize n = 0;
+    const ast::Expr *at = operand;
+    while (at != nullptr && n < countof(steps)) {
+        const ast::Expr *inner = nullptr;
+        if (at->kind == .unary && at->kind.unary.op == .dereference) inner = at->kind.unary.operand;
+        if (at->kind == .member) inner = at->kind.member.base;
+        if (inner == nullptr) break;
+        steps[n++] = at;
+        at = inner;
+    }
+    TypeRef t = typeof_variable(r, at);
+    for (Usize i = n; i > 0 && t != nullptr; i--) {
+        const ast::Expr *step = steps[i - 1];
+        if (t->kind == .pointer && step->kind == .unary) {
+            t = element_of(t);
+            continue;
+        }
+        if (t->kind == .pointer) t = element_of(t);
+        if (t->kind != .record || step->kind != .member) return nullptr;
+        TypeRef field = nullptr;
+        for (Usize k = 0; k < countof(slots_of(t).items); k++)
+            if (same_text(slots_of(t).items[k].name, step->kind.member.name)) field = slots_of(t).items[k].type;
+        t = field;
+    }
+    return t;
+}
+
+// The name `fields(...)` looks its subject up by: the last name of `T` or `geometry.Point`. A subject written as a type
+// that is no name, `typeof(v)` or `typeof(p.*)` in an instance, is resolved here and named by a symbol of its own in
+// the instance's scope, so the record is found by its type and not by a name the instance's module may not see.
+static Str reflected_subject(const ast::Expr *arg) {
+    Str none = "";
+    if (arg->kind == .name) {
+        Usize n = countof(arg->kind.name.path.segments);
+        return n == 0 ? none : arg->kind.name.path.segments[n - 1].text;
+    }
+    if (arg->kind != .type_value || arg->kind.type_value.type == nullptr) return none;
+    const ast::TypeExpr *written = arg->kind.type_value.type;
+    if (written->kind == .named) {
+        Usize n = countof(written->kind.named.path.segments);
+        return n == 0 ? none : written->kind.named.path.segments[n - 1].text;
+    }
+    if (reflecting == nullptr || written->kind != .type_of) return none;
+    Usize errors = reflecting->error_count;
+    Bool was_new = reflecting->new_syntax;
+    reflecting->new_syntax = true;
+    TypeRef t = typeof_path(reflecting, written->kind.type_of.operand);
+    if (t == nullptr) t = resolve(reflecting, written);
+    reflecting->new_syntax = was_new;
+    reflecting->error_count = errors;
+    if (t == nullptr || t->kind != .record) return none;
+    typed_subjects += 1;
+    char chars[:] = format::push("#typeof", typed_subjects);
+    Str name = chars;
+    if (!declare(&reflecting->scopes, (Symbol){.name = name, .kind = .type_name, .type = t})) return none;
+    return name;
+}
+
+// `fields(typeof(v))` in an instance as `fields(#typeofN)`, the name `reflected_subject` gave its record.
+static const ast::Expr *typed_subject(const ast::Expr *e) {
+    if (reflecting == nullptr || e->kind != .call || countof(e->kind.call.args) != 1) return e;
+    if (!same_text(single_name_of(e->kind.call.callee), "fields")) return e;
+    const ast::Expr *arg = e->kind.call.args[0];
+    if (arg->kind != .type_value || arg->kind.type_value.type == nullptr) return e;
+    if (arg->kind.type_value.type->kind != .type_of) return e;
+    Str name = reflected_subject(arg);
+    if (countof(name) == 0) return e;
+    ast::Expr *subject = ast::expr({.type_value = {.type = ast::named(name)}});
+    subject->span = arg->span;
+    ast::ExprRef args[1] = {subject};
+    ast::Expr *call = ast::call(e->kind.call.callee, args);
+    call->span = e->span;
+    enumerated_any = true;
+    return call;
+}
+
+// The number of elements of the list of an enumerated loop, when it is the pack or a reflection list known here.
+static Bool enumerated_length(const ast::Expr *list, Bool *is_pack, Usize *count) {
+    Str name = single_name_of(list);
+    *is_pack = countof(name) > 0 && countof(enumerated_pack) > 0 && same_text(name, enumerated_pack);
+    if (*is_pack) {
+        *count = enumerated_count;
+        return true;
+    }
+    if (reflecting == nullptr || list->kind != .call || countof(list->kind.call.args) != 1) return false;
+    Str kind = single_name_of(list->kind.call.callee);
+    if (!same_text(kind, "fields") && !same_text(kind, "parameters")) return false;
+    Str subject = reflected_subject(list->kind.call.args[0]);
+    return countof(subject) > 0 && reflect_count(kind, subject, count);
+}
+
+static const ast::Stmt *kept_statement(const ast::Stmt *s) {
+    return s;
+}
+
+// In a copy of the body: the loop's element name over a list is `fields(T)[<at>]`, and an index by the loop's index
+// name is by `<at>` (`rest[i]` is `rest.<at>`, `fields(T)[i]` is `fields(T)[<at>]`).
+static const ast::Expr *substituted(const ast::Expr *e) {
+    Str name = single_name_of(e);
+    ast::Expr *entry = nullptr;
+    if (countof(name) > 0 && substituted_list != nullptr && same_text(name, substituted_name)) {
+        entry = ast::expr({.index = {.base = substituted_list, .index = ast::integer(substituted_at)}});
+    } else if (e->kind == .index && countof(substituted_index) > 0 &&
+               same_text(single_name_of(e->kind.index.index), substituted_index)) {
+        Str base = single_name_of(e->kind.index.base);
+        if (countof(base) > 0 && same_text(base, enumerated_pack)) {
+            char chars[:] = format::push(substituted_at);
+            Str at = chars;
+            entry = ast::expr({.member = {.base = e->kind.index.base, .name = at}});
+        } else {
+            entry = ast::expr({.index = {.base = e->kind.index.base, .index = ast::integer(substituted_at)}});
+        }
+    }
+    if (entry == nullptr) return e;
+    entry->span = e->span;
+    return entry;
+}
+
+// `const name: usize = at`, or `name := pack.at`.
+static ast::Stmt *enumerated_binding(ast::Identifier name, Usize at, Str pack) {
+    ast::Expr *init = ast::integer(at);
+    ast::TypeExpr *type = ast::named("usize");
+    if (countof(pack) > 0) {
+        char chars[:] = format::push(at);
+        Str index = chars;
+        init = ast::expr({.member = {.base = ast::name(pack), .name = index}});
+        type = ast::make_type((ast::TypeKind){});
+        type->kind = .auto_type;
+    }
+    init->span = name.span;
+    ast::DeclKind kind = {
+        .variable = {
+            .name = name.text, .type = type, .init = init, .is_constexpr = countof(pack) == 0, .is_new = true}};
+    ast::Decl *d = ast::decl((ast::Decl){}, kind);
+    d->span = name.span;
+    ast::Stmt *s = ast::stmt({.declaration = {.decl = d}});
+    s->span = name.span;
+    return s;
+}
+
+// One copy of the body of the enumerated loop `s` for the element `at`.
+static ast::Stmt *enumerated_copy(const ast::Stmt *s, ast::Expr *list, Bool is_pack, Usize at) {
+    if (s->kind != .for_in) return nullptr;
+    ast::Identifier names[:] = s->kind.for_in.names;
+    ast::StmtRef *items = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), 3, alignof(ast::StmtRef));
+    Usize n = 0;
+    Str none = "";
+    if (!same_text(names[0].text, "_")) items[n++] = enumerated_binding(names[0], at, none);
+    if (is_pack && !same_text(names[1].text, "_")) items[n++] = enumerated_binding(names[1], at, single_name_of(list));
+    substituted_name = names[1].text;
+    substituted_index = same_text(names[0].text, "_") ? none : names[0].text;
+    substituted_list = is_pack || same_text(names[1].text, "_") ? nullptr : list;
+    substituted_at = at;
+    items[n++] = ast_clone::clone_stmt_rewriting(s->kind.for_in.body, kept_statement, substituted);
+    substituted_list = nullptr;
+    substituted_index = none;
+    ast::StmtRef copied[:] = items[0:n];
+    ast::Stmt *copy = ast::block(copied);
+    copy->span = s->span;
+    return copy;
+}
+
+static const ast::Stmt *enumerated(const ast::Stmt *s) {
+    if (s->kind != .for_in || !s->kind.for_in.is_tuple || countof(s->kind.for_in.names) != 2) return s;
+    const ast::Expr *iterable = s->kind.for_in.iterable;
+    if (iterable->kind != .call || countof(iterable->kind.call.args) != 1) return s;
+    if (!same_text(single_name_of(iterable->kind.call.callee), "enumerate")) return s;
+    ast::Expr *list = iterable->kind.call.args[0];
+    Bool is_pack = false;
+    Usize count = 0;
+    if (!enumerated_length(list, &is_pack, &count)) return s;
+    enumerated_any = true;
+    ast::StmtRef *copies = (ast::StmtRef *)mem::alloc_array_raw(sizeof(ast::StmtRef), count, alignof(ast::StmtRef));
+    for (Usize at = 0; at < count; at++)
+        copies[at] = enumerated_copy(s, list, is_pack, at);
+    ast::StmtRef all[:] = copies[0:count];
+    ast::Stmt *block = ast::block(all);
+    block->span = s->span;
+    return block;
+}
+
+// Unrolls each enumerated loop of the function `d` in place (over `pack`, when it names one of `count` elements).
+static Bool unroll_enumerated(ast::Decl *d, Str pack, Usize count) {
+    if (d->kind != .function || d->kind.function.body == nullptr) return false;
+    enumerated_pack = pack;
+    enumerated_count = count;
+    enumerated_any = false;
+    ast::Decl *copy = ast_clone::clone_decl_rewriting(d, enumerated, typed_subject);
+    Str none = "";
+    enumerated_pack = none;
+    if (enumerated_any) *d = *copy;
+    return enumerated_any;
+}
+
 // Expands the `fields(T)` and `parameters(F)` of a function in place, with the names of the scopes now in force.
 export Bool expand_reflection(Checked *r, ast::Decl *function) {
     reflecting = r;
+    Str none = "";
+    Bool unrolled = unroll_enumerated(function, none, 0);
     ast_clone::set_reflection_source(reflect_count, reflect_at, reflect_fail);
-    Bool expanded = ast_clone::expand_reflection_lists(function);
+    Bool expanded = ast_clone::expand_reflection_lists(function) || unrolled;
     reflecting = nullptr;
     return expanded;
 }
@@ -3293,7 +4016,9 @@ static ast::Decl *clone_instance(const ast::Decl *template, Binding given[:]) {
             TypeRef pack = given[bound].type;
             if (pack == nullptr) break;
             if (pack->kind != .tuple) break;
-            return ast_clone::clone_decl_unrolling(template, params[i].name, countof(slots_of(pack).items));
+            ast::Decl *copy = ast_clone::clone_decl_unrolling(template, params[i].name, countof(slots_of(pack).items));
+            (void)unroll_enumerated(copy, params[i].name, countof(slots_of(pack).items));
+            return copy;
         }
         if (is_auto_param(&params[i]) || is_compile_time(&params[i])) bound += 1;
     }
@@ -3561,6 +4286,7 @@ static void declare_variable(Checked *r, const ast::Decl *d, Str name, const ast
                      .type = type,
                      .decl = d,
                      .is_const = is_const,
+                     .is_volatile = written->qualifiers.is_volatile,
                      .is_new = is_new,
                      .exported = d->exported};
     // The type as written, for the fix that makes a pointer global `*mut` where it is written through (#2611).
@@ -4005,13 +4731,14 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
                                  .exported = d->exported || d->is_pub};
                 declare_in_module(r, symbol, d->span);
             }
-            if (r->options.load == nullptr) continue;
+            ModuleLoader load = r->options.load;
+            if (load == nullptr) continue;
             Str prefix = prefix_of_import(d);
             if (has_prefix(list, count, prefix)) continue;
             load_failure_text = "";
             const ast::Module *loaded =
-                r->options.load(msg(format::push(joined(path, ".")))
-                                    .data); // a copy: one name is a slice of the source, with no terminator
+                load(msg(format::push(joined(path, ".")))
+                         .data); // a copy: one name is a slice of the source, with no terminator
             if (loaded == nullptr && countof(load_failure_text) > 0) {
                 if (at != m && countof(at->name.segments) > 0) {
                     failf(r, d->span, "`", joined(at->name, "."), "` imports `", joined(path, "."),
@@ -4040,6 +4767,32 @@ static Usize collect_imports(Checked *r, const ast::Module *m, Pending list[:]) 
         }
     }
     return count;
+}
+
+// `std.prelude` (lib/std/prelude.smith), read with the imports of every module but itself when the loader has it
+// (#2669): its public names are seen without an import, after every other name (`prelude_symbol`). A module the
+// prelude imports is not read; it imports none.
+static Bool is_prelude(const ast::Module *m) {
+    return countof(m->name.segments) == 2 && same_text(m->name.segments[0].text, "std") &&
+           same_text(m->name.segments[1].text, "prelude");
+}
+
+static Usize collect_prelude(Checked *r, const ast::Module *m, Pending list[:], Usize count) {
+    Str prefix = "std::prelude::";
+    ModuleLoader load = r->options.load;
+    if (load == nullptr || is_prelude(m) || count == countof(list)) return count;
+    if (has_prefix(list, count, prefix)) {
+        r->scopes.prelude = true;
+        return count;
+    }
+    load_failure_text = "";
+    const ast::Module *loaded = load("std.prelude");
+    if (loaded == nullptr) {
+        return count;
+    }
+    list[count] = (Pending){.prefix = prefix, .module = loaded};
+    r->scopes.prelude = true;
+    return count + 1;
 }
 
 // Declares the public and private declarations of the imported modules, each under its prefix, before the module's
@@ -4180,6 +4933,24 @@ static Str default_binding(Checked *r, const ast::Module *m, const ast::Decl *im
 
 // Declares what each `import <h>;` of `m` brings, as `c::name` (#1762): the header's declarations in the three passes
 // a module's own take.
+// The headers this check has declared (#2888). Every header declares under `c::` and the first declaration of a name
+// stays (`declare_beside`), so declaring a header a second time adds nothing: a module that imports one already
+// declared only binds its name. The loader gives the same tree for the same header, so the tree is the identity.
+constexpr Usize declared_headers_max = 512;
+static const ast::Module *declared_header_list[declared_headers_max];
+static Usize declared_header_count = 0;
+
+static Bool header_declared(const ast::Module *header) {
+    for (Usize i = 0; i < declared_header_count; i++) {
+        if (declared_header_list[i] == header) return true;
+    }
+    if (declared_header_count < declared_headers_max) {
+        declared_header_list[declared_header_count] = header;
+        declared_header_count += 1;
+    }
+    return false;
+}
+
 static void declare_headers(Checked *r, const ast::Module *m) {
     if (r->options.headers == nullptr) return;
     r->in_header = true;
@@ -4217,6 +4988,7 @@ static void declare_headers(Checked *r, const ast::Module *m) {
             r->bindings[r->binding_count] = (HeaderBinding){.name = binding, .header = header};
             r->binding_count++;
         }
+        if (header_declared(header)) continue;
         r->prefix = "c::"; // a type in a header names another by its bare name: it is looked up as `c::name`
         for (Usize i = 0; i < countof(header->decls); i++)
             declare_nominal(r, header->decls[i]);
@@ -4288,8 +5060,11 @@ export Checked check(const ast::Module *m, Options o) {
         return r;
     }
     Pending pending[:] = mem::alloc_slice(Pending, o.load == nullptr ? 0 : max_modules);
+    declared_header_count = 0;
     declare_headers(&r, m);
-    declare_imported(&r, pending, collect_imports(&r, m, pending));
+    Usize imported = collect_imports(&r, m, pending);
+    imported = collect_prelude(&r, m, pending, imported);
+    declare_imported(&r, pending, imported);
     declare_from_names(&r, m);
     for (Usize i = 0; i < countof(m->decls); i++)
         declare_nominal(&r, m->decls[i]);

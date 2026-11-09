@@ -1,0 +1,76 @@
+// One process, many files (#2888): `smith cc --front-end=new` with several files reads each imported module and C
+// header once, and a file compiled with others gives the same object and the same diagnostics as compiled alone. A
+// file's C headers are read with its own compile command's flags, so two files with different defines do not share
+// one; a generic of an imported module is instantiated in each file; an error in an imported module is reported in
+// every file that imports it. smith-covers: front/compile.smith front/types.smith runtime/front_flag.c
+module cc_shared_files_test;
+
+import std::test;
+import scratch;
+
+// A module with a generic and a function, a quoted header and three files that import them: two that compile and one
+// with an error of its own.
+static void write_project(const scratch::Project *p) {
+    scratch::write(p, "zz.h", "int zz_count(int x);\n");
+    scratch::write(p, "util.smith", "pub fn twice(x: auto) -> f64:\n    return x + x\n\npub fn one() -> i32: 1\n");
+    scratch::write(p, "a.smith",
+                   "import util\nimport c \"zz.h\"\nimport c <stdio.h>\n\npub fn a(x: i32) -> i32:\n"
+                   "    return zz.zz_count(x) + util.one()\n\npub fn a2(x: f64) -> f64: util.twice(x)\n");
+    scratch::write(p, "b.smith",
+                   "import util\nimport c \"zz.h\"\n\npub fn b(x: f64) -> f64:\n    return util.twice(x * 2.0)\n");
+    scratch::write(p, "c.smith", "import util\n\npub fn c(x: i32) -> i32:\n    return util.twice(x) + y\n");
+}
+
+// Each file alone (its own folder, so the objects do not collide), then all three in one process: the objects are
+// the same bytes and the diagnostics the same text.
+export void test_cc_shared_files_files_compiled_together_give_what_they_give_alone() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    write_project(&p);
+    scratch::Run run = scratch::sh(
+        &p, "mkdir alone && for f in a b c; do smith cc --front-end=new -c $f.smith -o alone/$f.o 2>>alone.err; done; "
+            "smith cc --front-end=new -c a.smith b.smith c.smith 2>together.err; echo status $?; "
+            "cmp alone/a.o a.o && cmp alone/b.o b.o && echo objects same; test ! -e c.o && echo no c.o; "
+            "cmp alone.err together.err && echo diagnostics same; cat together.err");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the error makes the command fail", run.out, "status 1");
+    scratch::expect_contains("the objects", run.out, "objects same");
+    scratch::expect_contains("the failed file", run.out, "no c.o");
+    scratch::expect_contains("the diagnostics", run.out, "diagnostics same");
+    scratch::expect_contains("the file's own error", run.out, "c.smith:4:");
+}
+
+// An error inside an imported module is that module's, and each file that imports it reports it, the second one too.
+export void test_cc_shared_files_an_error_in_an_imported_module_is_reported_in_each_file() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "bad.smith", "pub fn wrap(x: auto) -> f64:\n    return 1 - x\n");
+    scratch::write(&p, "a.smith", "import bad\n\npub fn a() -> f64: bad.wrap(0.5)\n");
+    scratch::write(&p, "b.smith", "import bad\n\npub fn b() -> f64: bad.wrap(1.5)\n");
+    scratch::Run run =
+        scratch::sh(&p, "smith cc --front-end=new -c a.smith b.smith 2>&1 | grep -c 'bad.smith:2:12: error'");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("one report for each file", run.out, "2\n");
+}
+
+// Two files whose compile commands define different macros read one header as each defines it.
+export void test_cc_shared_files_files_with_different_defines_read_the_header_each_their_way() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "zz.h", "#ifdef ZZ_ONE\nint zz_one(void);\n#else\nint zz_two(void);\n#endif\n");
+    scratch::write(&p, "one.smith", "import c \"zz.h\"\n\npub fn one() -> i32: zz.zz_one()\n");
+    scratch::write(&p, "two.smith", "import c \"zz.h\"\n\npub fn two() -> i32: zz.zz_two()\n");
+    scratch::write(&p, "compile_commands.json",
+                   "[\n  {\n    \"directory\": \".\",\n    \"file\": \"one.smith\",\n    \"arguments\": [\n"
+                   "      \"smith-cc\",\n      \"-DZZ_ONE\",\n      \"-c\",\n      \"one.smith\"\n    ]\n  },\n"
+                   "  {\n    \"directory\": \".\",\n    \"file\": \"two.smith\",\n    \"arguments\": [\n"
+                   "      \"smith-cc\",\n      \"-c\",\n      \"two.smith\"\n    ]\n  }\n]\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --front-end=new -c one.smith two.smith 2>&1; echo status $?; "
+                                       "smith cc --front-end=new -c two.smith one.smith 2>&1; echo status $?");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_lacks("no diagnostics", run.out, "error");
+    scratch::expect_lacks("both orders compile", run.out, "status 1");
+}
