@@ -14,7 +14,12 @@
 // group and the job. Without that, the 2026-11-09 waits (runs 42582094132, 42582096340) lasted the cap while later
 // groups failed one after another. A failed read of the run or its jobs is "no failure": the wait goes on.
 //
-// A group that is last waits the batching window (window_seconds) first, so later groups of a burst can form.
+// With the ruleset `main`'s `max_entries_to_build` at 1 (#2925) no later group can be built while this one runs, so
+// the window and the polling can only wait: it logs `batch: alone (build entries 1)`, prints `batch=alone` and
+// returns at once. The ruleset is read with `gh api` (repos/R/rulesets, then the one named main); 2 or more, or a
+// failed read, waits as below. (The knob is the ruleset, set with queue-ops `set-build-entries`, #2922.)
+//
+// A group that is last waits the batching window (window_seconds, 60 s) first, so later groups of a burst can form.
 // Prints `batch=alone` (no later group), `batch=waited` (waited, now last) or `batch=capped` (waited BATCH_WAIT_CAP
 // seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's 120-minute check
 // timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads BATCH_WAIT_MISS_SLEEP seconds
@@ -32,10 +37,10 @@ constexpr int exit_usage = 2;
 constexpr int line_size = 1024;
 constexpr int later_size = 4096;
 constexpr int command_size = 2048;
-// the batching window (#2851): a group waits this long for later groups before it decides it is alone, since the
-// lead enqueues in bursts and the queue creates their groups one after another (2026-11-09: 3 of 4 groups in a burst
-// started alone and built in full). BATCH_WAIT_WINDOW replaces it (the test).
-constexpr int window_seconds = 300;
+// the batching window (#2851, 60 s since #2925; it was 300): a group waits this long for later groups before it decides
+// it is alone, since the lead enqueues in bursts and the queue creates their groups one after another (2026-11-09: 3 of
+// 4 groups in a burst started alone and built in full). BATCH_WAIT_WINDOW replaces it (the test).
+constexpr int window_seconds = 60;
 
 typedef enum { Read_Failed, Read_Gone, Read_Last, Read_Later } Read;
 
@@ -134,6 +139,29 @@ static int later_failed(const char *url, const char *later) {
     return 0;
 }
 
+// The `max_entries_to_build` of the merge_queue rule of the ruleset named main, or 0 when a read failed.
+static int build_entries(const char *url) {
+    const char *gh = getenv("BATCH_WAIT_GH");
+    const char *tool = gh != nullptr && gh[0] != '\0' ? gh : "gh";
+    const char *repo = strstr(url, "github.com/");
+    repo = repo != nullptr ? repo + strlen("github.com/") : url;
+    if (strchr(repo, '\'') != nullptr) return 0;
+    char command[command_size];
+    char id[line_size];
+    int n = snprintf(command, sizeof command,
+                     "%s api 'repos/%s/rulesets' --jq '[.[]|select(.name==\"main\")|.id]|first // empty'", tool, repo);
+    if (n < 0 || n >= (int)sizeof command || !first_line(command, id) || strpbrk(id, "' ;|&$") != nullptr) return 0;
+    n = snprintf(command, sizeof command,
+                 "%s api 'repos/%s/rulesets/%s' --jq '[.rules[]|select(.type==\"merge_queue\")|"
+                 ".parameters.max_entries_to_build]|first // empty'",
+                 tool, repo, id);
+    char value[line_size];
+    if (n < 0 || n >= (int)sizeof command || !first_line(command, value)) return 0;
+    char *end = nullptr;
+    long entries = strtol(value, &end, 10);
+    return end == value || *end != '\0' || entries < 1 || entries > 100 ? 0 : (int)entries;
+}
+
 static int finish(const char *state, const char *why) {
     fprintf(stderr, "batch-wait: %s\n", why);
     printf("batch=%s\n", state);
@@ -144,6 +172,11 @@ int main(int argc, char **argv) {
     if (argc != 4) {
         fprintf(stderr, "usage: batch_wait OWN_REF HEAD_SHA REPO_URL\n");
         return exit_usage;
+    }
+    if (build_entries(argv[3]) == 1) {
+        fprintf(stderr, "batch: alone (build entries 1)\n");
+        printf("batch=alone\n");
+        return 0;
     }
     int poll = setting("BATCH_WAIT_POLL", 30);
     int cap = setting("BATCH_WAIT_CAP", 3600);

@@ -17,7 +17,8 @@ constexpr const char *setup =
     "printf '%s\\n' 'n=$(cat \"$Q.n\" 2>/dev/null || echo 1); line=$(sed -n \"${n}p\" \"$Q\"); "
     "[ -z \"$line\" ] && line=$(tail -n 1 \"$Q\"); echo $((n + 1)) > \"$Q.n\"; [ \"$line\" = FAIL ] && exit 1; "
     "for r in $line; do [ \"$r\" = - ] || printf \"0\\t%s\\n\" \"$r\"; done; exit 0' > fake_ls; "
-    "printf '%s\\n' 'case \"$*\" in *jobs*) cat \"$G.jobs\" 2>/dev/null; exit 0;; *runs*) cat \"$G.run\" 2>/dev/null; "
+    "printf '%s\\n' 'case \"$*\" in *rulesets/*) cat \"$G.entries\" 2>/dev/null; exit 0;; *rulesets*) echo 7; exit 0;; "
+    "*jobs*) cat \"$G.jobs\" 2>/dev/null; exit 0;; *runs*) cat \"$G.run\" 2>/dev/null; "
     "exit 0;; esac; exit 1' > fake_gh";
 
 // Runs batch_wait as entry 1 (own branch pr-1-M, group head A) with the queue states `states` (one line per poll,
@@ -180,4 +181,35 @@ export void test_batch_wait_builds_at_once_when_a_later_group_has_a_failed_job()
     made = scratch::sh(&p, "rm g.run");
     scratch::Run unread = wait(&p, states, "2");
     scratch::expect_text("batch_wait: an unreadable run is no failure", "batch=capped\n", unread.out);
+}
+
+export void test_batch_wait_skips_the_window_when_the_queue_builds_one_entry() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    queue(&p);
+    char states[512];
+    __builtin_snprintf(states, sizeof states, "%s%s", own, two);
+    // build entries 1 (#2925): no later group can be built, so it returns at once, with no window and no polling,
+    // even where the queue shows a later group and the window is long
+    scratch::Run made = scratch::sh(&p, "echo 1 > g.entries");
+    scratch::expect_status("batch_wait: the ruleset is made", 0, &made);
+    scratch::Run one = wait_window(&p, states, "60", "99");
+    scratch::expect_status("batch_wait: build entries 1, it builds at once", 0, &one);
+    scratch::expect_text("batch_wait: as alone", "batch=alone\n", one.out);
+    scratch::expect_contains("batch_wait: it logs why", one.err, "batch: alone (build entries 1)");
+    // build entries 4: it waits as before, with the window
+    made = scratch::sh(&p, "echo 4 > g.entries");
+    scratch::Run four = wait_window(&p, own, "60", "3");
+    scratch::expect_status("batch_wait: build entries 4, alone after the window", 0, &four);
+    scratch::expect_contains("batch_wait: it waited the window", four.err,
+                             "last for now; waiting 3 s for later groups");
+    // a ruleset that cannot be read counts as 2 or more: it waits, never skips
+    made = scratch::sh(&p, "rm g.entries");
+    scratch::Run unread = wait_window(&p, own, "60", "3");
+    scratch::expect_contains("batch_wait: an unreadable ruleset waits the window", unread.err,
+                             "last for now; waiting 3 s for later groups");
 }
