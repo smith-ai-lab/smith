@@ -743,8 +743,11 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
     steps:
       - name: Verdict
+        id: verdict
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
@@ -789,6 +792,23 @@ jobs:
               exit 1
             fi
           done
+      # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
+      # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
+      # Only once every job before it ran: a cancelled job (a cancelled run) posts nothing, and the next pass restarts
+      # the check; the verdict above already fails a run in which a job that was owed was skipped.
+      - name: Post the verdict as the commit status `ci`
+        if: >-
+          always() && github.event_name == 'workflow_dispatch' && !cancelled()
+          && !contains(join(needs.*.result, ' '), 'cancelled')
+          && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ steps.verdict.outcome }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
+            -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
+          echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
