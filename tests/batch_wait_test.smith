@@ -20,14 +20,20 @@ constexpr const char *setup =
 
 // Runs batch_wait as entry 1 (own branch pr-1-M, group head A) with the queue states `states` (one line per poll,
 // `-` for no branch, FAIL for a failed read), polling every 0 s and capped at `cap` polls.
-static scratch::Run wait(const scratch::Project *p, const char *states, const char *cap) {
+static scratch::Run wait_window(const scratch::Project *p, const char *states, const char *cap, const char *window) {
     char command[1024];
-    __builtin_snprintf(command, sizeof command,
-                       "printf '%%b' '%s' > q && rm -f q.n && "
-                       "Q=$PWD/q BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 "
-                       "BATCH_WAIT_CAP=%s ./batch_wait refs/heads/gh-readonly-queue/main/pr-1-M A url",
-                       states, cap);
+    __builtin_snprintf(
+        command, sizeof command,
+        "printf '%%b' '%s' > q && rm -f q.n && "
+        "Q=$PWD/q BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 "
+        "BATCH_WAIT_CAP=%s BATCH_WAIT_WINDOW=%s ./batch_wait refs/heads/gh-readonly-queue/main/pr-1-M A url",
+        states, cap, window);
     return scratch::sh(p, command);
+}
+
+// the same with no batching window
+static scratch::Run wait(const scratch::Project *p, const char *states, const char *cap) {
+    return wait_window(p, states, cap, "0");
 }
 
 static void queue(const scratch::Project *p) {
@@ -118,4 +124,27 @@ export void test_batch_wait_reads_the_group_head_and_survives_a_jump() {
     // one read that misses its own branch is not a removal
     __builtin_snprintf(states, sizeof states, "-\\n%s", own);
     expect(&p, "batch_wait: one miss is not a removal", states, "batch=alone\n", 0);
+}
+
+export void test_batch_wait_waits_the_window_for_a_later_group_of_a_burst() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    queue(&p);
+    char states[512];
+    // last at first, entry 2's group appears inside the window: it waits on it, and cancels when its branch goes
+    __builtin_snprintf(states, sizeof states, "%s\\n%s%s\\n-\\n-", own, own, two);
+    scratch::Run burst = wait_window(&p, states, "60", "3");
+    scratch::expect_status("batch_wait: a group of the burst inside the window makes it wait", 3, &burst);
+    scratch::expect_contains("batch_wait: it logged the window", burst.err,
+                             "last for now; waiting 3 s for later groups");
+    scratch::expect_contains("batch_wait: then the wait", burst.err,
+                             "waiting on refs/heads/gh-readonly-queue/main/pr-2-A");
+    // no later group within the window: alone, after the window
+    scratch::Run alone = wait_window(&p, own, "60", "3");
+    scratch::expect_status("batch_wait: alone after the window", 0, &alone);
+    scratch::expect_text("batch_wait: as alone", "batch=alone\n", alone.out);
 }

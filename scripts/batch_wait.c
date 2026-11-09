@@ -8,7 +8,8 @@
 //
 // Usage: batch_wait OWN_REF HEAD_SHA REPO_URL
 //
-// Prints `batch=alone` (no wait), `batch=waited` (waited, now last) or `batch=capped` (waited BATCH_WAIT_CAP
+// A group that is last waits the batching window (window_seconds) first, so later groups of a burst can form.
+// Prints `batch=alone` (no later group), `batch=waited` (waited, now last) or `batch=capped` (waited BATCH_WAIT_CAP
 // seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's 120-minute check
 // timeout) on stdout and exits 0. Exits 3 when its own branch is gone on two reads BATCH_WAIT_MISS_SLEEP seconds
 // apart (5; the group merged or was dropped, as a jump drops every group): the caller cancels the run. A failed read
@@ -25,6 +26,10 @@ constexpr int exit_usage = 2;
 constexpr int line_size = 1024;
 constexpr int later_size = 4096;
 constexpr int command_size = 2048;
+// the batching window (#2851): a group waits this long for later groups before it decides it is alone, since the
+// lead enqueues in bursts and the queue creates their groups one after another (2026-11-09: 3 of 4 groups in a burst
+// started alone and built in full). BATCH_WAIT_WINDOW replaces it (the test).
+constexpr int window_seconds = 180;
 
 typedef enum { Read_Failed, Read_Gone, Read_Last, Read_Later } Read;
 
@@ -89,12 +94,15 @@ int main(int argc, char **argv) {
     int cap = setting("BATCH_WAIT_CAP", 3600);
     int miss_sleep = setting("BATCH_WAIT_MISS_SLEEP", 5);
     int polls = poll > 0 ? cap / poll : cap;
+    int window = setting("BATCH_WAIT_WINDOW", window_seconds);
+    int window_polls = poll > 0 ? window / poll : window;
+    int elapsed = 0;
     char later[later_size];
     char last[later_size] = "";
     int waited = 0;
     int misses = 0;
     // each pass is a poll or a miss; two misses in a row end it, so the bound is twice the polls of the cap
-    for (int pass = 0; pass <= 2 * polls + 2; pass++) {
+    for (int pass = 0; pass <= 2 * (polls + window_polls) + 2; pass++) {
         Read read = read_queue(argv[1], argv[2], argv[3], later);
         if (read == Read_Failed) return finish(waited ? "waited" : "alone", "ls-remote failed; running full checks");
         if (read == Read_Gone) {
@@ -106,6 +114,12 @@ int main(int argc, char **argv) {
             continue;
         }
         misses = 0;
+        if (read == Read_Last && elapsed < window_polls) {
+            if (elapsed == 0) fprintf(stderr, "batch-wait: last for now; waiting %d s for later groups\n", window);
+            elapsed += 1;
+            sleep((unsigned)poll);
+            continue;
+        }
         if (read == Read_Last)
             return finish(waited ? "waited" : "alone",
                           waited ? "now last; running full checks" : "last entry; running full checks");
@@ -113,6 +127,7 @@ int main(int argc, char **argv) {
         if (strcmp(later, last) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
         strcpy(last, later);
         waited += 1;
+        elapsed += 1;
         sleep((unsigned)poll);
     }
     return finish("capped", "capped; running full checks");
