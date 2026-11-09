@@ -345,42 +345,28 @@ export constexpr Op op_greater_equal = 5;
     return value_unsigned((U64)value, 8);
 }
 
-// The Value of a value of type T: the bridge from a generic check to the comparison below. The type is chosen by
-// _Generic, which needs no compiler to lower, so a module's tests can call the checks too. bool, char, the sized
-// integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
+// The Value of a value of type T: the bridge from a generic check to the comparison below. The type is chosen by a
+// compile-time `if`, which needs no run-time lowering, so a module's tests can call the checks too. bool, char, the
+// sized integers, f32 and f64 are themselves; anything else is a pointer (a struct is a compile error).
 export [[nodiscard]] Value value_of(auto v) {
-    if constexpr (target::os == target::macos) {
-        return _Generic(v,
-            Bool: value_bool,
-            char: value_char,
-            I8: value_i8,
-            I16: value_i16,
-            I32: value_i32,
-            I64: value_i64,
-            Isize: value_isize,
-            U8: value_u8,
-            U16: value_u16,
-            U32: value_u32,
-            U64: value_u64,
-            Usize: value_usize,
-            F32: value_f32,
-            F64: value_f64,
-            default: value_pointer)(v);
-    } else { // LP64 Linux: isize is i64 and usize is u64 (both `long`), which one association each covers
-        return _Generic(v,
-            Bool: value_bool,
-            char: value_char,
-            I8: value_i8,
-            I16: value_i16,
-            I32: value_i32,
-            I64: value_i64,
-            U8: value_u8,
-            U16: value_u16,
-            U32: value_u32,
-            U64: value_u64,
-            F32: value_f32,
-            F64: value_f64,
-            default: value_pointer)(v);
+    if constexpr (is_bool(typeof(v))) {
+        return value_bool(v);
+    } else if constexpr (typeof(v) == char) {
+        return value_char(v);
+    } else if constexpr (is_float(typeof(v))) {
+        if constexpr (sizeof(typeof(v)) == 4) {
+            return value_f32(v);
+        } else {
+            return value_f64(v);
+        }
+    } else if constexpr (is_integer(typeof(v)) || is_enum(typeof(v))) { // an enumeration is its integer
+        if constexpr (is_signed(typeof(v))) {
+            return value_signed((I64)v, sizeof(typeof(v)));
+        } else {
+            return value_unsigned((U64)v, sizeof(typeof(v)));
+        }
+    } else {
+        return value_pointer(v);
     }
 }
 
