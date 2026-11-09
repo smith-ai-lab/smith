@@ -28,7 +28,6 @@ import front::ast;
 import std::contract;
 import std::format;
 import std::mem;
-import <string.h>;
 
 // Keep in step with SmithImportRegion in runtime/import_cache.h.
 struct Region {
@@ -99,7 +98,8 @@ static void *region_realloc(mem::Allocator *self, void *block, Usize size, Usize
     Usize grown = 2 * room > size ? 2 * room : size;
     U8 *moved = (U8 *)region_alloc(self, grown, align);
     if (moved == nullptr) return nullptr;
-    c::memcpy(moved, at, old < size ? old : size);
+    Usize kept = old < size ? old : size;
+    mem::copy(moved[0:kept], at[0:kept]);
     *(Usize *)(moved - block_header) = size;
     return moved;
 }
