@@ -676,44 +676,27 @@ jobs:
         shell: bash
         run: |
           failed=0
-          # one stage: its log, its `took` line and its exit status in files, since a stage may run in the background
-          stage() { # stage <name> <smith args...>
-            local name=$1 start=$SECONDS code=0
+          stages=("fmt fmt --dry-run --Werror" "docs docs" "prove prove")
+          # a PR check is at most 2 Linux jobs at once (#2856): lint runs here after the others, not in `check-lint`.
+          # The queue keeps the two jobs side by side, the shorter critical path (lead, 2026-11-08, #2833)
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && stages+=("lint lint")
+          for stage in "${stages[@]}"; do
+            set -- $stage
+            name=$1
             shift
+            start=$SECONDS
+            code=0
             "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
-            echo "took $name $((SECONDS - start))s (exit $code)" >"$RUNNER_TEMP/$name.took"
-            echo "$code" >"$RUNNER_TEMP/$name.code"
-          }
-          report() { # report <name>
-            tee -a "$GITHUB_STEP_SUMMARY" <"$RUNNER_TEMP/$1.took"
-            if [ "$(cat "$RUNNER_TEMP/$1.code")" != 0 ]; then
-              tail -n 60 "$RUNNER_TEMP/$1.log"
-              echo "FAIL $1"
-              echo "::error::smith $1 failed"
+            echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "$code" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$name.log"
+              echo "FAIL $name"
+              echo "::error::smith $name failed"
               failed=1
             else
-              echo "ok $1"
+              echo "ok $name"
             fi
-          }
-          # fmt first, then docs; prove and lint run at the same time (#2954). A PR check is at most 2 Linux jobs at once
-          # (#2856): lint runs here in place of `check-lint`. The queue keeps the two jobs side by side (lead, 2026-11-08, #2833)
-          stage fmt fmt --dry-run --Werror; report fmt
-          stage docs docs; report docs
-          # prove and lint each run the project's build first, and two builds in one tree race (a relink removed
-          # `smith-cc` under the other, run 42667056557): build once here, so both only read the tree
-          stage build build; report build
-          stage prove prove &
-          pids=$!
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            stage lint lint &
-            pids="$pids $!"
-          fi
-          wait $pids
-          report prove
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            report lint
-            grep -h 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
-          fi
+          done
           exit $failed
 
   check-lint:
