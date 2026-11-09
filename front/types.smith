@@ -1519,6 +1519,9 @@ export struct Error {
     // module's declarations or an instance of its generic; empty for the file being checked. The driver reports such an
     // error at that module's file and line, not one past the end of the importer (#2669).
     Str module;
+    // The instance of a generic whose body was being checked (#2949), for the error trace.
+    Bool in_instance;
+    Usize instance;
     // A construction that leaves a field out (#2329): the call, the record, and which fields (bit k for field k) it
     // gives. The fixer writes the zero values (`front::fix_zero`), which the checker cannot spell without its imports.
     const ast::Expr *left_out_call;
@@ -1625,6 +1628,7 @@ export struct InstanceUse {
     const ast::Expr *call;
     Usize instance;
     Usize outer; // the instance whose body holds the call, or `max_instances` for a call outside any instance
+    Str module;  // the prefix of the module the call is in (#2949), empty for the file being compiled
 };
 
 export struct Checked {
@@ -1662,6 +1666,8 @@ export void fail(Checked *r, ast::Span span, Str message) {
     r->errors[r->error_count] = (Error){.message = msg(format::push(message)),
                                         .span = span,
                                         .module = r->prefix,
+                                        .in_instance = r->current != max_instances,
+                                        .instance = r->current,
                                         .left_out_call = nullptr,
                                         .left_out_record = nullptr};
     r->error_count += 1;
@@ -3581,7 +3587,7 @@ export void use_instance(Checked *r, const ast::Expr *call, Usize instance) {
         if (capacity < 8) capacity = 8;
         r->uses = mem::realloc(r->uses, capacity);
     }
-    r->uses[r->use_count] = (InstanceUse){.call = call, .instance = instance, .outer = r->current};
+    r->uses[r->use_count] = (InstanceUse){.call = call, .instance = instance, .outer = r->current, .module = r->prefix};
     r->use_count += 1;
 }
 

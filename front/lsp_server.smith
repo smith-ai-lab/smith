@@ -125,6 +125,22 @@ static Str position(Str source, U32 offset) {
     return as_str(format::push("{\"line\":", line, ",\"character\":", column, "}"));
 }
 
+// The `relatedInformation` of a diagnostic: one entry per link of its error trace (#2949), empty when it has none.
+static Str related_information(compile::Links links) {
+    if (countof(links) == 0) return "";
+    Str list = "";
+    for (Usize i = 0; i < countof(links); i++) {
+        Str where = links[i].path;
+        if (countof(where) == 0) continue;
+        Str place = as_str(format::push("{\"line\":", links[i].line, ",\"character\":", links[i].column, "}"));
+        list = as_str(format::push(list, countof(list) == 0 ? "" : ",", "{\"location\":{\"uri\":\"file://",
+                                   escape(where), "\",\"range\":{\"start\":", place, ",\"end\":", place,
+                                   "}},\"message\":\"", escape(links[i].label), "\"}"));
+    }
+    if (countof(list) == 0) return "";
+    return as_str(format::push(",\"relatedInformation\":[", list, "]"));
+}
+
 // A `textDocument/publishDiagnostics` notification for the text `source` of the document `uri`.
 export Str diagnostics(Str uri, Str source) {
     compile::Problems found = compile::diagnose(path_of(uri), source, roots::default_roots());
@@ -133,7 +149,8 @@ export Str diagnostics(Str uri, Str source) {
         U32 severity = found[i].error ? 1 : 2;
         list = as_str(format::push(list, i == 0 ? "" : ",", "{\"range\":{\"start\":", position(source, found[i].start),
                                    ",\"end\":", position(source, found[i].end), "},\"severity\":", severity,
-                                   ",\"source\":\"smith\",\"message\":\"", escape(found[i].message), "\"}"));
+                                   ",\"source\":\"smith\",\"message\":\"", escape(found[i].message), "\"",
+                                   related_information(found[i].links), "}"));
     }
     return frame(as_str(
         format::push("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"",

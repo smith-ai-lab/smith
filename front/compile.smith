@@ -123,9 +123,10 @@ constexpr Usize read_max = 256;
 static Str read_prefixes[read_max];
 static Str read_paths[read_max];
 static Str read_sources[read_max];
+static const ast::Module *read_trees[read_max];
 static Usize read_count = 0;
 
-static void remember_module(Str dotted, Str path, Str source) {
+static void remember_module(Str dotted, Str path, Str source, const ast::Module *tree) {
     if (read_count == read_max) return;
     Str prefix = "";
     for (Usize i = 0; i < countof(dotted); i++) {
@@ -136,6 +137,7 @@ static void remember_module(Str dotted, Str path, Str source) {
     read_prefixes[read_count] = as_str(format::push(prefix, "::"));
     read_paths[read_count] = path;
     read_sources[read_count] = source;
+    read_trees[read_count] = tree;
     read_count += 1;
 }
 
@@ -636,7 +638,7 @@ static const ast::Module *read_module(const char *dotted) {
         Str named = roots_key(named_by);
         const ast::Module *shared = shared_module(path, named, source);
         if (shared != nullptr) {
-            remember_module(relative, path, source);
+            remember_module(relative, path, source, shared);
             return shared;
         }
         Kept kept = read_kept("file", path, named, source, named_by, "");
@@ -645,7 +647,7 @@ static const ast::Module *read_module(const char *dotted) {
             return nullptr;
         }
         if (kept.tree == nullptr) return nullptr;
-        remember_module(relative, path, source);
+        remember_module(relative, path, source, kept.tree);
         share_module(kept.path, kept.named, kept.source, kept.tree);
         return kept.tree;
     }
@@ -735,12 +737,28 @@ static Report failed(Str message, Times times) {
     return (Report){.ok = false, .text = message, .times = times};
 }
 
+export struct Link {
+    Str label; // `in check_part[str], instantiated at`, `in module std.test, imported by`
+    Str path;  // where, empty when it is not known
+    U32 line;  // 0-based
+    U32 column;
+};
+
+export typedef typeof(Link[:]) Links;
+
+static Str root_path;
+static Str root_source;
+static const ast::Module *root_tree;
+
+static Links links_of(const types::Checked *c, Str module, Bool in_instance, Usize i);
+
 // One finding of `diagnose`: the bytes it covers, whether it is an error (else a warning), and its message.
 export struct Problem {
     U32 start;
     U32 end;
     Bool error;
     Str message;
+    Links links; // the error trace (#2949), empty when there is none
 };
 
 export typedef typeof(Problem[:]) Problems;
@@ -767,6 +785,9 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     if (countof(parsed.errors) > 0) return list;
     import_roots = folders;
     enter_file(path);
+    root_path = path;
+    root_source = source;
+    root_tree = &parsed.module;
     lint_inputs(source);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     lint_inputs_done();
@@ -778,7 +799,9 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
                       .error = true,
                       .message = checked.errors[i].has_related
                                      ? with_line(source, checked.errors[i].message, checked.errors[i].related)
-                                     : checked.errors[i].message};
+                                     : checked.errors[i].message,
+                      .links = links_of(&checked, checked.errors[i].module, checked.errors[i].in_instance,
+                                        checked.errors[i].instance)};
     }
     return list;
 }
@@ -1113,6 +1136,162 @@ static Str colons(Str chain) {
     return out;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The error trace (#2949): the chain that led to a diagnostic, innermost first. A link says what the diagnostic is
+// inside (`in check_part[str], instantiated at`) and where that was; the report prints one `  in ...` line per link,
+// the language server sends each as a `relatedInformation` entry.
+
+static Links add_link(Links list, Str label, Str prefix, ast::Span span) {
+    Str path = root_path;
+    Str source = root_source;
+    Usize at = read_index(prefix);
+    if (countof(prefix) > 0 && at < read_count) {
+        path = read_paths[at];
+        source = read_sources[at];
+    }
+    U32 line = 0;
+    U32 column = 0;
+    for (Usize k = 0; k < countof(source) && k < span.start; k++) {
+        if (source[k] == '\n') {
+            line += 1;
+            column = 0;
+        } else {
+            column += 1;
+        }
+    }
+    list = mem::realloc(list, countof(list) + 1);
+    list[countof(list) - 1] = (Link){.label = label, .path = path, .line = line, .column = column};
+    return list;
+}
+
+static Links add_unplaced(Links list, Str label) {
+    list = mem::realloc(list, countof(list) + 1);
+    list[countof(list) - 1] = (Link){.label = label};
+    return list;
+}
+
+// The dotted name (`std.test`) of the module read under `prefix` (`std::test::`).
+static Str dotted_of_prefix(Str prefix) {
+    Str out = "";
+    for (Usize i = 0; i < countof(prefix); i++) {
+        if (prefix[i] == ':') {
+            if (i + 1 < countof(prefix) && prefix[i + 1] == ':') {
+                if (i + 2 < countof(prefix)) out = as_str(format::push(out, "."));
+                i += 1;
+            }
+            continue;
+        }
+        out = as_str(format::push(out, prefix[i:i + 1]));
+    }
+    return out;
+}
+
+// The import in `m` of the module `name`, or null.
+static const ast::Decl *import_of(const ast::Module *m, Str name) {
+    if (m == nullptr) return nullptr;
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        ast::Path path = imported_path(m->decls[i]);
+        if (countof(path.segments) > 0 && same_text(dotted_of(path), name)) return m->decls[i];
+    }
+    return nullptr;
+}
+
+// The `in module ..., imported by` links for the module read under `prefix`, up to the file being compiled.
+static Links import_links(Links list, Str prefix) {
+    for (Usize depth = 0; depth < 8 && countof(prefix) > 0; depth++) {
+        Str name = dotted_of_prefix(prefix);
+        Str label = as_str(format::push("in module ", name, ", imported by"));
+        Str importer = "";
+        const ast::Decl *at = import_of(root_tree, name);
+        for (Usize i = 0; at == nullptr && i < read_count; i++) {
+            at = import_of(read_trees[i], name);
+            importer = read_prefixes[i];
+        }
+        if (at == nullptr) return add_unplaced(list, as_str(format::push("in module ", name)));
+        list = add_link(list, label, importer, imported_path(at).span);
+        prefix = importer;
+    }
+    return list;
+}
+
+// `check_part[str]`: the generic function of instance `i` and what its parameters are bound to.
+static Str instance_label(const types::Checked *c, Usize i) {
+    const types::Instance *x = &c->instances[i];
+    Str label = "?";
+    if (x->template->kind == .function) label = as_str(format::push(x->template->kind.function.name));
+    for (Usize k = 0; k < countof(x->bindings); k++) {
+        Str bound =
+            x->bindings[k].is_type ? types::show(x->bindings[k].type) : as_str(format::push(x->bindings[k].value));
+        label = as_str(format::push(label, k == 0 ? "[" : ", ", bound));
+    }
+    if (countof(x->bindings) > 0) label = as_str(format::push(label, "]"));
+    return label;
+}
+
+// The `in <instance>, instantiated at` links from instance `i` out to the first call outside any instance.
+static Links instance_links(Links list, const types::Checked *c, Usize i) {
+    for (Usize depth = 0; depth < 16 && i < c->instance_count; depth++) {
+        Usize use = 0;
+        while (use < c->use_count && c->uses[use].instance != i)
+            use += 1;
+        if (use == c->use_count) return add_unplaced(list, as_str(format::push("in ", instance_label(c, i))));
+        Str label = as_str(format::push("in ", instance_label(c, i), ", instantiated at"));
+        list = add_link(list, label, c->uses[use].module, c->uses[use].call->span);
+        i = c->uses[use].outer;
+    }
+    return list;
+}
+
+// The trace of an error found in `module` (a prefix) and, when `in_instance`, in the body of instance `i`.
+static Links links_of(const types::Checked *c, Str module, Bool in_instance, Usize i) {
+    Links list = {};
+    if (in_instance) list = instance_links(list, c, i);
+    return import_links(list, module);
+}
+
+// The `  in ...` lines of `links`.
+static Str trace_text(Links links) {
+    Str out = "";
+    for (Usize i = 0; i < countof(links); i++) {
+        Str where = links[i].path;
+        if (countof(where) == 0) {
+            out = as_str(format::push(out, "  ", links[i].label, "\n"));
+        } else {
+            out = as_str(format::push(out, "  ", links[i].label, " ", links[i].path, ":", links[i].line + 1, ":",
+                                      links[i].column + 1, "\n"));
+        }
+    }
+    return out;
+}
+
+static Str trace_of(const types::Checked *c, Str module, Bool in_instance, Usize i) {
+    return trace_text(links_of(c, module, in_instance, i));
+}
+
+// The report of every error the checker found: each one's line, its note and its trace (#2949).
+static Str checked_lines(Str path, Str source, const types::Checked *checked) {
+    Str all = "";
+    for (Usize i = 0; i < checked->error_count; i++) {
+        const types::Error *e = &checked->errors[i];
+        all = as_str(
+            format::push(all, error_lines(path, source, e), trace_of(checked, e->module, e->in_instance, e->instance)));
+    }
+    return all;
+}
+
+// The report of the error the emitter stopped at: its line, in the module it was found in, then its trace (#2949).
+static Str emit_error_lines(const types::Checked *checked, emit::Error e) {
+    Str file = root_path;
+    Str source = root_source;
+    Usize at = read_index(e.module);
+    if (countof(e.module) > 0 && at < read_count) {
+        file = read_paths[at];
+        source = read_sources[at];
+    }
+    return as_str(format::push(diagnostic(file, source, e.span, "error", e.message),
+                               trace_of(checked, e.module, e.in_instance, e.instance)));
+}
+
 // The report of the imports of `m` (the module of `path`, named already) that close a cycle: one line at each such
 // `import`, `file:line:column: error: import cycle: a -> b -> a`, the column that of the module's name. Empty when
 // none does. `import_roots` says where the modules are.
@@ -1334,6 +1513,9 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     header_nanoseconds = 0;
     read_count = 0;
     lint_inputs(source);
+    root_path = path;
+    root_source = source;
+    root_tree = &parsed.module;
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
     lint_inputs_done();
@@ -1341,13 +1523,8 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     times.imports = import_nanoseconds < checking ? import_nanoseconds : checking;
     times.check = checking - times.imports;
     times.headers = header_nanoseconds < times.imports ? header_nanoseconds : times.imports;
-    if (checked.error_count > 0) {
-        Str all = warned;
-        for (Usize i = 0; i < checked.error_count; i++) {
-            all = as_str(format::push(all, error_lines(path, source, &checked.errors[i])));
-        }
-        return failed(all, times);
-    }
+    if (checked.error_count > 0)
+        return failed(as_str(format::push(warned, checked_lines(path, source, &checked))), times);
 
     mem::set_allocator(outside);
     emit::Options options = emit_options(wanted, source, &checked);
@@ -1357,9 +1534,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     emit::ModuleResult emitted = emit::module(context, checked_module(&checked, &parsed.module), options);
     times.emit = clock::monotonic() - mark;
     if (emitted == .error)
-        return failed(
-            as_str(format::push(warned, diagnostic(path, source, emitted.error.span, "error", emitted.error.message))),
-            times);
+        return failed(as_str(format::push(warned, emit_error_lines(&checked, emitted.error))), times);
     c::LLVMModuleRef ir = emitted.ok;
     defer c::LLVMDisposeModule(ir);
 
