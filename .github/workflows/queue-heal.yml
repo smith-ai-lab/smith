@@ -1,7 +1,8 @@
 # Finds a pull request the merge queue lost and queues it again (#2900). On 2026-11-09 #2885 got `added_to_merge_queue`
 # at 07:04:49Z but never had a queue entry (no `merge_group` run, absent from the queue's list), and sat 75 minutes until
 # a runner noticed. Every 10 minutes (and by hand) this job lists the queue's entries on `main`, and re-queues each open
-# PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list.
+# PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
+# it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it).
 name: queue-heal
 run-name: "queue-heal"
 
@@ -70,7 +71,9 @@ jobs:
           q=$(echo "$list" | grep -c . || true)
           now=$(date -u +%s)
           lost=0
-          open=$(gh api "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate --jq '.[].number') \
+          # a PR labelled `dequeued` was taken out on purpose by queue-ops: an API dequeue leaves no timeline event
+          open=$(gh api "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+            --jq '.[] | select([.labels[].name] | index("dequeued") | not) | .number') \
             || { log "queue-heal: cannot list the open PRs, nothing done"; exit 1; }
           for pr in $open; do
             case "$queued" in *" $pr "*) continue ;; esac
