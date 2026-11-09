@@ -990,6 +990,10 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - name: Check the objects the count's key leaves out
+        # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
+        shell: bash
+        run: scripts/frontend_coverage/check_excluded.sh "$(dirname "$SMITH")" "$PWD/scripts/frontend_coverage/main.smith"
       - name: Restore main's fixed files
         # a failure only leaves the fix cold
         continue-on-error: true
