@@ -726,3 +726,5 @@ export void check_body(types::Checked *r, const ast::Stmt *root) {
         }
     }
 }
+
+// count-sample test for #2914, not for merge
