@@ -40,7 +40,8 @@ constexpr size_t smith_stepcache_command_max = (size_t)1 << 16;
 constexpr size_t smith_stepcache_memo_max = (size_t)1 << 20;
 constexpr size_t smith_stepcache_ids_max = 8;
 constexpr int64_t smith_stepcache_fresh_ns = 2 * 1'000'000'000LL; // a file this new is hashed again each time
-constexpr int smith_stepcache_touch_seconds = 86400;
+constexpr int smith_stepcache_touch_seconds =
+    60; // a hit touches an entry older than this: warm keeps what a build used (#2833)
 constexpr char smith_stepcache_root_token = '\x01';
 constexpr char smith_stepcache_percent_token = '\x02';
 
