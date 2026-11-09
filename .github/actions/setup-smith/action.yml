@@ -171,10 +171,12 @@ runs:
       shell: bash
       run: |
         start=$(date +%s)
-        # same checkout path in every job, so the absolute paths inside build/ still hold. The files get the time of
-        # now, newer than the checkout's sources, so nothing looks out of date and is rebuilt
+        # same checkout path in every job, so the absolute paths inside build/ still hold. The build keeps the times it
+        # was written with (a step records the time of each input it read, and is out of date when an input is newer
+        # than that: touching the files made all 318 steps run, 3 minutes), and the checkout's sources, the same
+        # commit's, get an old time so that they are not newer than the build (#2833)
         tar -x --zstd -f "$RUNNER_TEMP/smith-build/build.tar.zst"
-        find build .smith -exec touch -h {} +
+        git ls-files -z | xargs -0 touch -c -h -d '2001-01-01 00:00:00'
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         # the pack, when the cache above missed it (the first run of a configuration)
