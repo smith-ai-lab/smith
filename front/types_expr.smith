@@ -5825,6 +5825,30 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
     return true;
 }
 
+// The fixed (not compile-time, `auto` or pack) arguments of a call of a template, conformed to their slots of the
+// instance's signature, so a read-only pointer for a `*mut` slot gets its fix-it as in any call. False, with the error,
+// when one does not conform.
+static Bool conform_fixed_arguments(types::Checked *c, ast::Param params[:], ast::ExprRef args[:],
+                                    types::TypeRef signature) {
+    types::Members slots = types::slots_of(signature);
+    if (countof(args) != countof(params)) return true;
+    for (Usize i = 0; i < countof(params) && i < countof(slots.items); i++) {
+        if (params[i].is_pack || params[i].is_gather)
+            break; // the slots after a pack no longer line up with the parameters
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) continue;
+        const ast::Expr *arg = argument_value(args[i]);
+        types::TypeRef found = typ(c, arg);
+        types::TypeRef wanted = slots.items[i].type;
+        if (found == invalid(c) || wanted == invalid(c) || found == wanted) continue;
+        if (literal_like(arg) && adaptable(found, wanted)) {
+            if (!retype(c, arg, wanted)) return false;
+            continue;
+        }
+        if (!conform(c, arg, found, wanted)) return false;
+    }
+    return true;
+}
+
 // Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
 // the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
 // binds last, and only a generic no other argument binds.
@@ -5881,6 +5905,10 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 
@@ -5913,6 +5941,10 @@ static void auto_resolved(types::Checked *c, Frame f) {
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 
