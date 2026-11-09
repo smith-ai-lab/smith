@@ -21,4 +21,16 @@ extern size_t smith_header_flag_count;
 
 extern const char *smith_header_source;
 
+// The files a header pass read, for `-MD -MF depfile` (#2937): the step cache serves a header step only for the
+// contents of every file the pass read. smith_header_depend adds a file the pass read (the compiler it asked read
+// them too); smith_header_depend_unknown says a file may have been read that cannot be named, so no depfile is written
+// and the step is never cached.
+void smith_header_depend(const char *path);
+
+void smith_header_depend_unknown(void);
+
+// Adds the files a make-style depfile names (what `smith cc -MD -MF` wrote), but not `skip`; false if it cannot be
+// read.
+bool smith_header_depend_file(const char *depfile, const char *skip);
+
 int smith_lang_main(int count, char **args, bool header);

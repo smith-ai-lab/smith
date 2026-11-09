@@ -36,6 +36,7 @@ runs:
       with:
         os: linux
         fresh: ${{ github.event_name == 'schedule' }}
+        imports-from: linux-* # the test parts' import caches, not the count's (#2939)
     - name: Tests, part ${{ inputs.part }} of ${{ inputs.count }}
       shell: bash
       env:

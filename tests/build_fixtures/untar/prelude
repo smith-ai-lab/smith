@@ -7,7 +7,7 @@ xz() {
         smith cc -std=gnu23 -O1 -I "$SMITH_REPO/.smith/include" "$here/tests/xz.smith" "$here/lib/std/arena.smith" \
             "$here/lib/std/ascii.smith" "$here/lib/std/contract.smith" "$here/lib/std/env.smith" \
             "$here/lib/std/files.smith" "$here/lib/std/inflate.smith" "$here/lib/std/math.smith" "$here/lib/std/math_trig.smith" "$here/lib/std/mem.smith" \
-            "$here/lib/std/net.smith" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$here/lib/handlers.c" "$here/lib/trace.c" "$here/lib/optimize_asm.c" \
+            "$here/lib/std/net.smith" "$here/lib/net_tls.c" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$here/lib/handlers.c" "$here/lib/trace.c" "$here/lib/optimize_asm.c" \
             -o "$here/xz-tool.$$" && mv "$here/xz-tool.$$" "$here/xz-tool" || return 1
     fi
     "$here/xz-tool" "$@"
@@ -133,7 +133,7 @@ shared_untar() {
         cat "$here/tests/untar.c" "$here/tests/xz.smith" "$here"/runtime/*.c "$here"/runtime/*.h "$here/lib/std/arena.smith" \
             "$here/lib/std/contract.smith" "$here/lib/std/inflate.smith" \
             "$here/lib/std/math.smith" "$here/lib/std/math_trig.smith" "$here/lib/std/optimize.smith" "$here/lib/std/random.smith" "$here/lib/std/env.smith" "$here/lib/std/files.smith" \
-            "$here/lib/std/mem.smith" "$here/lib/std/net.smith" "$here/lib/handlers.c" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
+            "$here/lib/std/mem.smith" "$here/lib/std/net.smith" "$here/lib/net_tls.c" "$here/lib/handlers.c" "$here/prelude"; } | shasum -a 256 | cut -c1-16)
     dir=$base/$key
     if [ ! -e "$dir/done" ]; then
         find "$base" -maxdepth 1 -name "lock-$key" -mmin +20 -exec rmdir {} + 2>/dev/null

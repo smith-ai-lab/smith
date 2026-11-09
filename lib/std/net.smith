@@ -35,6 +35,7 @@ import <poll.h>;
 import <sched.h>;
 import <signal.h>;
 import <smith/handlers.h>;
+import <smith/net_tls.h>;
 import <smith/trace.h>;
 import <string.h>;
 import <sys/socket.h>;
@@ -81,7 +82,6 @@ constexpr I32 sol_socket = c::SOL_SOCKET;
 constexpr I32 so_reuseaddr = c::SO_REUSEADDR;
 constexpr I32 ai_passive = c::AI_PASSIVE;
 constexpr I32 eai_system = c::EAI_SYSTEM;
-constexpr I32 dlopen_flags = c::RTLD_NOW | c::RTLD_LOCAL;
 constexpr I32 set_descriptor_flags = c::F_SETFD;
 constexpr I32 fd_cloexec = c::FD_CLOEXEC;
 constexpr I32 reason_failed = c::SmithNetworkTls_Failed;
@@ -105,7 +105,8 @@ constexpr Usize tries_max = 64;
 constexpr I32 listen_backlog = 128;
 constexpr I64 millisecond_ns = 1'000'000;
 constexpr I32 poll_wait_max = 1 << 30; // milliseconds, which poll takes as an int
-constexpr I32 tls_base = 1000; // an internal code at or above this is a TLS reason (tls_base + reason), not an errno
+constexpr I32 tls_base = 1000; // an internal code at or above this is a TLS reason (tls_base + reason), not an errno;
+                               // SMITH_NET_TLS_BASE in <smith/net_tls.h>, which the macOS code in C adds the same way
 export constexpr Usize fake_servers_max = 16;
 export constexpr Usize fake_connections_max = 32;
 export constexpr Usize fake_listeners_max = 4;
@@ -244,6 +245,11 @@ export typedef Result(Usize, Error) CountResult;
 [[noreturn]] void misuse(const char *message) {
     contract::trusted(); // it stops the program
     c::smith_failure_format(c::SmithFailure_Check, "%s", message);
+}
+
+// The code of a TLS reason.
+I32 tls_code(I32 reason) {
+    return tls_base + reason;
 }
 
 // The value of an internal code the world can answer. The codes of a bug stop the program.
@@ -466,38 +472,10 @@ Isize write_plain(I32 descriptor, const void *buffer, Usize size, I32 *code) {
 
 // ---------------------------------------------------------------- the system's TLS
 
-// The code of a TLS reason.
-I32 tls_code(I32 reason) {
-    return tls_base + reason;
-}
+if constexpr (target::os != target::macos) {
+    // NOLINTNEXTLINE(smith-preprocessor)
+    constexpr I32 dlopen_flags = c::RTLD_NOW | c::RTLD_LOCAL;
 
-if constexpr (target::os == target::macos) {
-    // Network.framework is loaded with dlopen when the first TLS connection is made, never linked: a program that makes
-    // no connection pays nothing at start, where linking the framework costs about 2.5 ms in every process. The
-    // functions and the constants the C API names are looked up once. A connection is driven from this thread: its
-    // callbacks run on a serial dispatch queue and signal a semaphore, which the call waits on, so the call blocks.
-    constexpr I32 stage_ready = 1;
-    constexpr I32 stage_failed = 2;
-    constexpr I32 stage_cancelled = 3;
-    constexpr Usize api_spins = 4096;
-
-    typedef struct {
-        typeof(c::nw_endpoint_create_host) *endpoint_create_host;
-        typeof(c::nw_parameters_create_secure_tcp) *parameters_create_secure_tcp;
-        typeof(c::nw_connection_create) *connection_create;
-        typeof(c::nw_connection_set_queue) *set_queue;
-        typeof(c::nw_connection_set_state_changed_handler) *set_state_handler;
-        typeof(c::nw_connection_start) *start;
-        typeof(c::nw_connection_cancel) *cancel;
-        typeof(c::nw_connection_send) *send;
-        typeof(c::nw_connection_receive) *receive;
-        typeof(c::nw_error_get_error_domain) *error_domain;
-        typeof(c::nw_error_get_error_code) *error_code;
-        const c::nw_parameters_configure_protocol_block_t *configure_default;
-        const c::nw_content_context_t *context_message;
-        c::dispatch_queue_t queue;
-    } Api;
-} else {
     // OpenSSL is loaded with dlopen when the first TLS connection is made, never linked: a program that makes no
     // connection pays nothing at start, and a machine without OpenSSL runs everything else. The functions are looked
     // up once, with the context every connection is made from; the constants the C API names are written here, since
@@ -537,47 +515,21 @@ if constexpr (target::os == target::macos) {
         void (*error_clear)();
         void *context;
     } Api;
-}
 
-// The functions of the TLS stack, loaded once by whichever thread asks first (the callbacks of macOS run on another
-// thread and read the table, so it is one for the process). The state is 0 (not loaded), 1 (loading), 2 (loaded) or 3
-// (not there).
-Api api_table;
-_Atomic I32 api_state;
+    // The functions of the TLS stack, loaded once by whichever thread asks first; the state of the loading is in C
+    // (<smith/net_tls.h>: 0 not loaded, 1 loading, 2 loaded, 3 not there).
+    Api api_table;
 
-// Looks a symbol up and stores its address in the pointer at destination. Symbols are data or functions; either way
-// dlsym returns an address. ISO C has no conversion from object pointers to function pointers, and dlsym's contract is
-// exactly that conversion, so the address is copied byte for byte.
-Bool symbol(void *library, const char *name, void *destination) {
-    void *address = c::dlsym(library, name);
-    if (address == nullptr) return false;
-    put(destination, (const void *)&address, sizeof address);
-    return true;
-}
-
-if constexpr (target::os == target::macos) {
-    Bool api_load(Api *api) {
-        void *library = c::dlopen("/System/Library/Frameworks/Network.framework/Network", dlopen_flags);
-        if (library == nullptr) return false;
-        Bool found = symbol(library, "nw_endpoint_create_host", (void *)&api->endpoint_create_host) &&
-                     symbol(library, "nw_parameters_create_secure_tcp", (void *)&api->parameters_create_secure_tcp) &&
-                     symbol(library, "nw_connection_create", (void *)&api->connection_create) &&
-                     symbol(library, "nw_connection_set_queue", (void *)&api->set_queue) &&
-                     symbol(library, "nw_connection_set_state_changed_handler", (void *)&api->set_state_handler) &&
-                     symbol(library, "nw_connection_start", (void *)&api->start) &&
-                     symbol(library, "nw_connection_cancel", (void *)&api->cancel) &&
-                     symbol(library, "nw_connection_send", (void *)&api->send) &&
-                     symbol(library, "nw_connection_receive", (void *)&api->receive) &&
-                     symbol(library, "nw_error_get_error_domain", (void *)&api->error_domain) &&
-                     symbol(library, "nw_error_get_error_code", (void *)&api->error_code) &&
-                     symbol(library, "_nw_parameters_configure_protocol_default_configuration",
-                            (void *)&api->configure_default) &&
-                     symbol(library, "_nw_content_context_default_message", (void *)&api->context_message);
-        if (!found) return false;
-        api->queue = c::dispatch_queue_create("smith.net", nullptr); // a serial queue
-        return api->queue != nullptr;
+    // Looks a symbol up and stores its address in the pointer at destination. Symbols are data or functions; either way
+    // dlsym returns an address. ISO C has no conversion from object pointers to function pointers, and dlsym's contract
+    // is exactly that conversion, so the address is copied byte for byte.
+    Bool symbol(void *library, const char *name, void *destination) {
+        void *address = c::dlsym(library, name);
+        if (address == nullptr) return false;
+        put(destination, (const void *)&address, sizeof address);
+        return true;
     }
-} else {
+
     Bool api_load_crypto(void *library, Api *api) {
         return symbol(library, "ERR_get_error", (void *)&api->error_next) &&
                symbol(library, "ERR_clear_error", (void *)&api->error_clear) &&
@@ -620,232 +572,59 @@ if constexpr (target::os == target::macos) {
         api->context = context;
         return true;
     }
-}
 
-// The TLS functions, loaded on the first call (null when the system has none). A function before a file-scope
-// `if constexpr` is measured with the branch not taken after it (the size check reads the dropped tokens as part of
-// it; on Linux the branch is the macOS one, 190 lines), hence the NOLINT.
-// NOLINTNEXTLINE(readability-function-size)
-const Api *api_get() {
-    I32 expected = 0;
-    if (__c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 0 &&
-        __c11_atomic_compare_exchange_strong(&api_state, &expected, 1, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-        Bool loaded = api_load(&api_table);
-        __c11_atomic_store(&api_state, loaded ? 2 : 3, __ATOMIC_SEQ_CST);
+    // The TLS functions, loaded on the first call (null when the system has none).
+    const Api *api_get() {
+        if (c::smith_net_tls_state_load() == 0 && c::smith_net_tls_state_claim()) {
+            Bool loaded = api_load(&api_table);
+            c::smith_net_tls_state_store(loaded ? 2 : 3);
+        }
+        for (Usize spin = 0; spin < api_spins && c::smith_net_tls_state_load() == 1; spin++) {
+            c::sched_yield(); // another thread is loading
+        }
+        return c::smith_net_tls_state_load() == 2 ? &api_table : nullptr;
     }
-    for (Usize spin = 0; spin < api_spins && __c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 1; spin++) {
-        c::sched_yield(); // another thread is loading
-    }
-    return __c11_atomic_load(&api_state, __ATOMIC_SEQ_CST) == 2 ? &api_table : nullptr;
 }
 
 if constexpr (target::os == target::macos) {
-    constexpr U64 forever = ~(U64)0; // the wait of a semaphore that has no end
-
-    // What the callbacks of a connection (on the dispatch queue) share with the calls (on the caller's thread): a block
-    // of the region of the connect. The semaphores order the writes of one before the reads of the other.
-    typedef struct {
-        c::nw_connection_t handle;
-        c::dispatch_semaphore_t gate; // the connection's state changes: ready, failed, cancelled
-        c::dispatch_semaphore_t flow; // the send or receive in flight
-        I32 stage;
-        I32 failure; // the internal code of what the callbacks saw, 0 for none
-        Usize taken; // how much the last receive copied
-    } State;
-
-    // What the system's TLS stack means by a status (Security/SecureTransport.h), for the ones a certificate check
-    // gives.
-    I32 status_reason(I32 status) {
-        switch (status) {
-        case -9807:
-        case -9808: // rejected: the framework does not say whether the host, the chain or the trust was the cause
-            return reason_invalid;
-        case -9812:
-        case -9813:
-            return reason_untrusted;
-        case -9814:
-            return reason_expired;
-        case -9815:
-            return reason_not_yet;
-        case -9843:
-            return reason_host;
-        default:
-            return reason_failed;
-        }
-    }
-
-    // A Network.framework error as an internal code.
-    I32 error_code(const Api *api, c::nw_error_t error) {
-        I32 code = api->error_code(error);
-        switch (api->error_domain(error)) {
-        case c::nw_error_domain_posix:
-            return code != 0 ? code : eio;
-        case c::nw_error_domain_dns:
-            return enoent;
-        case c::nw_error_domain_tls:
-            return tls_code(status_reason(code));
-        default:
-            return eio;
-        }
-    }
-
-    // The state callback: ready or failed ends the connect (a failure cancels the connection first, so the last state
-    // follows), and the last state (cancelled) ends the close.
-    void on_state(State *state, c::nw_connection_state_t value, c::nw_error_t error) {
-        const Api *api = &api_table;
-        if (value == c::nw_connection_state_ready) {
-            state->stage = stage_ready;
-            c::dispatch_semaphore_signal(state->gate);
-        } else if (error != nullptr &&
-                   (value == c::nw_connection_state_failed || value == c::nw_connection_state_waiting)) {
-            state->failure = error_code(api, error);
-            state->stage = stage_failed;
-            api->cancel(state->handle);
-            c::dispatch_semaphore_signal(state->gate);
-        } else if (value == c::nw_connection_state_cancelled) {
-            state->stage = stage_cancelled;
-            c::dispatch_semaphore_signal(state->gate);
-        }
-    }
+    // Network.framework is driven from C (lib/net_tls.c, #2651: C stays C), which keeps its callbacks' state in a block
+    // taken here from the current allocator, as every allocation of this module.
 
     // Cancels the connection, waits for its last state and releases what the connect made.
-    void tls_close(Connection *connection) {
-        State *state = (State *)connection->state;
-        if (state == nullptr) return;
-        const Api *api = &api_table;
-        api->cancel(state->handle);
-        for (Usize waits = 0; state->stage != stage_cancelled && waits < tries_max; waits++) {
-            c::dispatch_semaphore_wait(state->gate, forever);
-        }
-        c::os_release(state->handle);
-        c::dispatch_release(state->gate);
-        c::dispatch_release(state->flow);
+    void secure_close(Connection *connection) {
+        if (connection->state == nullptr) return;
+        c::smith_net_tls_close(&connection->session, connection->state);
         connection->state = nullptr;
-        connection->session = nullptr;
     }
 
     // Connects with TLS to host: 0 and the connection filled, or the internal code of the failure.
-    I32 tls_connect(Connection *connection, const char *host, U16 port) {
-        const Api *api = api_get();
-        if (api == nullptr) return enosys;
-        State *state = mem::alloc(State);
-        *state = (State){.gate = c::dispatch_semaphore_create(0), .flow = c::dispatch_semaphore_create(0)};
-        char service[8];
-        service_make(port, service);
-        c::nw_endpoint_t endpoint = api->endpoint_create_host(host, service);
-        c::nw_parameters_t parameters =
-            api->parameters_create_secure_tcp(*api->configure_default, *api->configure_default);
-        state->handle = api->connection_create(endpoint, parameters);
-        c::os_release(endpoint);
-        c::os_release(parameters);
-        connection->state = state;
-        connection->session = state->handle;
-        api->set_queue(state->handle, api->queue);
-        api->set_state_handler(state->handle, ^(c::nw_connection_state_t value, c::nw_error_t error) {
-            on_state(state, value, error);
-        });
-        api->start(state->handle);
-        c::dispatch_semaphore_wait(state->gate, forever);
-        if (state->failure == 0 && state->stage == stage_ready) return 0;
-        I32 code = state->failure != 0 ? state->failure : eio;
-        tls_close(connection);
+    I32 secure_connect(Connection *connection, const char *host, U16 port) {
+        connection->state = mem::alloc_raw(c::smith_net_tls_state_size(), c::smith_net_tls_state_align());
+        I32 code = c::smith_net_tls_connect(&connection->session, connection->state, host, port);
+        if (code != 0) connection->state = nullptr;
         return code;
     }
 
-    // Copies a received block into the buffer, up to its capacity.
-    Usize received_copy(c::dispatch_data_t content, U8 *buffer, Usize capacity) {
-        __block Usize copied = 0;
-        if (content == nullptr) return 0;
-        c::dispatch_data_apply(content, ^Bool(c::dispatch_data_t region, Usize offset, const void *bytes, Usize size) {
-            (void)region;
-            (void)offset;
-            Usize take = size < capacity - copied ? size : capacity - copied;
-            put(buffer + copied, bytes, take);
-            copied += take;
-            return true;
-        });
-        return copied;
-    }
-
-    // The receive callback: what arrived, the error or the end.
-    void on_received(State *state, Connection *connection, c::dispatch_data_t content, Bool complete,
-                     c::nw_error_t error, U8 *buffer, Usize capacity) {
-        state->taken = received_copy(content, buffer, capacity);
-        if (error != nullptr) {
-            state->failure = error_code(&api_table, error);
-        } else if (complete) {
-            connection->end = true; // after what this block holds
-        }
-        c::dispatch_semaphore_signal(state->flow);
-    }
-
-    // The send callback.
-    void on_sent(State *state, c::nw_error_t error) {
-        if (error != nullptr) state->failure = error_code(&api_table, error);
-        c::dispatch_semaphore_signal(state->flow);
-    }
-
     // Writes all of size bytes: the count, or -1 with the code.
-    Isize tls_write(Connection *connection, const void *buffer, Usize size, I32 *code) {
-        State *state = (State *)connection->state;
-        const Api *api = &api_table;
-        state->failure = 0;
-        c::dispatch_data_t data = c::dispatch_data_create(buffer, size, api->queue, nullptr); // copies the bytes
-        api->send(state->handle, data, *api->context_message, true, ^(c::nw_error_t error) {
-            on_sent(state, error);
-        });
-        c::dispatch_release(data);
-        c::dispatch_semaphore_wait(state->flow, forever);
-        if (state->failure != 0) {
-            *code = state->failure;
-            return -1;
-        }
-        return (Isize)size;
-    }
-
-    // Reads what has arrived (at least one byte), waiting at most timeout_ns (negative: for ever): the count, 0 when
-    // the peer has finished, or -1 with the code (ETIMEDOUT when nothing came: the connection is cancelled then, since
-    // the framework cannot take a receive back, and only `close` is left to call).
-    Isize tls_receive(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
-        if (connection->end) return 0;
-        State *state = (State *)connection->state;
-        state->taken = 0;
-        state->failure = 0;
-        api_table.receive(
-            state->handle, 1, (U32)size,
-            ^(c::dispatch_data_t content, c::nw_content_context_t context, Bool complete, c::nw_error_t error) {
-                (void)context;
-                on_received(state, connection, content, complete, error, (U8 *)buffer, size);
-            });
-        U64 when = timeout_ns < 0 ? forever : c::dispatch_time(0, timeout_ns);
-        if (c::dispatch_semaphore_wait(state->flow, when) != 0) {
-            api_table.cancel(state->handle); // the receive's block runs with an error, and is the last to touch buffer
-            c::dispatch_semaphore_wait(state->flow, forever);
-            *code = etimedout;
-            return -1;
-        }
-        if (state->failure != 0) {
-            *code = state->failure;
-            return -1;
-        }
-        return (Isize)state->taken;
+    Isize secure_write(Connection *connection, const void *buffer, Usize size, I32 *code) {
+        return c::smith_net_tls_write(connection->state, buffer, size, code);
     }
 
     // Reads what has arrived (at least one byte): the count, 0 when the peer has finished, or -1 with the code.
-    Isize tls_read(Connection *connection, void *buffer, Usize size, I32 *code) {
-        return tls_receive(connection, buffer, size, -1, code);
+    Isize secure_read(Connection *connection, void *buffer, Usize size, I32 *code) {
+        return c::smith_net_tls_read(connection->state, &connection->end, buffer, size, code);
     }
 
-    // Reads like tls_read, giving up with ETIMEDOUT when nothing arrives within timeout_ns.
-    Isize tls_read_within(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
-        return tls_receive(connection, buffer, size, timeout_ns, code);
+    // Reads like secure_read, giving up with ETIMEDOUT when nothing arrives within timeout_ns.
+    Isize secure_read_within(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
+        return c::smith_net_tls_read_within(connection->state, &connection->end, buffer, size, timeout_ns, code);
     }
 
     // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
     // size check reads the dropped tokens as part of it), hence the NOLINT.
     // NOLINTNEXTLINE(readability-function-size)
-    Bool tls_live(const Connection *connection) {
-        return connection->session != nullptr;
+    Bool secure_live(const Connection *connection) {
+        return c::smith_net_tls_live(connection->session);
     }
 } else {
     // What a certificate check says (X509_V_ERR_*), for the ones a program meets.
@@ -899,7 +678,7 @@ if constexpr (target::os == target::macos) {
     }
 
     // Connects with TLS to host: 0 and the connection filled, or the internal code of the failure.
-    I32 tls_connect(Connection *connection, const char *host, U16 port) {
+    I32 secure_connect(Connection *connection, const char *host, U16 port) {
         const Api *api = api_get();
         if (api == nullptr) return enosys;
         I32 code = 0;
@@ -925,7 +704,7 @@ if constexpr (target::os == target::macos) {
     }
 
     // Reads: the count, 0 at the end, or -1 with the code.
-    Isize tls_read(Connection *connection, void *buffer, Usize size, I32 *code) {
+    Isize secure_read(Connection *connection, void *buffer, Usize size, I32 *code) {
         const Api *api = &api_table;
         api->error_clear();
         I32 chunk = size > (Usize)1 << 30 ? 1 << 30 : (I32)size;
@@ -938,9 +717,9 @@ if constexpr (target::os == target::macos) {
         return -1;
     }
 
-    // Reads like tls_read, giving up with ETIMEDOUT when nothing arrives on the socket within timeout_ns. Bytes OpenSSL
-    // holds already are returned at once; a record that has arrived in part is waited for in tls_read.
-    Isize tls_read_within(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
+    // Reads like secure_read, giving up with ETIMEDOUT when nothing arrives on the socket within timeout_ns. Bytes
+    // OpenSSL holds already are returned at once; a record that has arrived in part is waited for in secure_read.
+    Isize secure_read_within(Connection *connection, void *buffer, Usize size, I64 timeout_ns, I32 *code) {
         const Api *api = &api_table;
         if (api->session_pending(connection->session) == 0) {
             I32 ready = wait_readable(connection->descriptor, timeout_ns, code);
@@ -950,13 +729,13 @@ if constexpr (target::os == target::macos) {
             }
             if (ready < 0) return -1;
         }
-        return tls_read(connection, buffer, size, code);
+        return secure_read(connection, buffer, size, code);
     }
 
     // NOLINTBEGIN(smith-preprocessor)
     // Writes up to a record of size bytes with SIGPIPE blocked for the call and, when the write raised it, taken off
     // the thread, so a peer that has gone is the error EPIPE and never a signal: the count, or -1 with the code.
-    Isize tls_write(Connection *connection, const void *buffer, Usize size, I32 *code) {
+    Isize secure_write(Connection *connection, const void *buffer, Usize size, I32 *code) {
         const Api *api = &api_table;
         c::sigset_t pipe_signal = {};
         c::sigemptyset(&pipe_signal);
@@ -981,7 +760,7 @@ if constexpr (target::os == target::macos) {
     // NOLINTEND(smith-preprocessor)
 
     // Ends the TLS session (the socket is the caller's to close).
-    void tls_close(Connection *connection) {
+    void secure_close(Connection *connection) {
         if (connection->session == nullptr) return;
         const Api *api = &api_table;
         api->session_shutdown(connection->session);
@@ -992,7 +771,7 @@ if constexpr (target::os == target::macos) {
     // Whether the TLS session is up. The last function of a branch is measured with the branch not taken after it (the
     // size check reads the dropped tokens as part of it), hence the NOLINT.
     // NOLINTNEXTLINE(readability-function-size)
-    Bool tls_live(const Connection *connection) {
+    Bool secure_live(const Connection *connection) {
         return connection->session != nullptr;
     }
 }
@@ -1027,11 +806,11 @@ ConnectionResult open_connection(const char host[:], U16 port, Bool tls) {
     }
     I32 code = 0;
     if (tls) {
-        code = tls_connect(&connection, name.text, port);
+        code = secure_connect(&connection, name.text, port);
     } else {
         connection.descriptor = dial(name.text, port, &code);
     }
-    if (code != 0 || (connection.descriptor < 0 && !tls_live(&connection))) {
+    if (code != 0 || (connection.descriptor < 0 && !secure_live(&connection))) {
         return {.error = error_from(code != 0 ? code : eio)};
     }
     return connection;
@@ -1069,7 +848,7 @@ void connection_open(const Connection *connection) {
         count = handler->read(handler, connection->id, buffer.data, countof(buffer));
         code = errno_now();
     } else if (connection->tls) {
-        count = tls_read(connection, buffer.data, countof(buffer), &code);
+        count = secure_read(connection, buffer.data, countof(buffer), &code);
     } else {
         count = read_plain(connection->descriptor, buffer.data, countof(buffer), &code);
     }
@@ -1099,7 +878,7 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
         count = handler->read(handler, connection->id, buffer.data, countof(buffer));
         code = errno_now();
     } else if (connection->tls) {
-        count = connection->end ? 0 : tls_read_within(connection, buffer.data, countof(buffer), timeout_ns, &code);
+        count = connection->end ? 0 : secure_read_within(connection, buffer.data, countof(buffer), timeout_ns, &code);
     } else {
         count = read_plain_within(connection->descriptor, buffer.data, countof(buffer), timeout_ns, &code);
     }
@@ -1124,7 +903,7 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
             count = handler->write(handler, connection->id, rest.data, countof(rest));
             code = errno_now();
         } else if (connection->tls) {
-            count = tls_write(connection, rest.data, countof(rest), &code);
+            count = secure_write(connection, rest.data, countof(rest), &code);
         } else {
             count = write_plain(connection->descriptor, rest.data, countof(rest), &code);
         }
@@ -1146,7 +925,7 @@ read_within(Connection *connection, U8 buffer[:], I64 timeout_ns) {
         handler->close(handler, connection->id);
         return;
     }
-    if (connection->tls) tls_close(connection);
+    if (connection->tls) secure_close(connection);
     if (connection->descriptor >= 0) c::close(connection->descriptor);
     connection->descriptor = -1;
 }

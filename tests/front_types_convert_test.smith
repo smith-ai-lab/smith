@@ -35,6 +35,10 @@ static types_convert::Verdict conv(types::Table *t, types::TypeRef from, types::
     return types_convert::convert(t, from, to, types_convert::no_literal());
 }
 
+static types_convert::Verdict conv_literal(types::Table *t, types::TypeRef from, types::TypeRef to) {
+    return types_convert::convert(t, from, to, types_convert::string_literal());
+}
+
 static types_convert::Verdict cast_verdict(types::Table *t, types::TypeRef from, types::TypeRef to) {
     return types_convert::cast_ok(t, from, to, types_convert::no_literal());
 }
@@ -439,4 +443,21 @@ export void test_front_types_convert_usize_follows_the_target() {
     types::TypeRef plain = types::pointer_to(&narrow, named(&narrow, "I32"), false);
     test::check_condition(cast_verdict(&narrow, plain, named(&narrow, "U32")).ok);
     test::check_condition(!cast_verdict(&narrow, plain, named(&narrow, "U64")).ok);
+}
+
+// A string literal is NUL-terminated const characters, so it converts to a `const Char *` (#2941); a `Str` value does
+// not, and a non-const `Char *` target refuses.
+export void test_front_types_convert_string_literal_converts_to_const_char_pointer() {
+    types::Table t = types::start(types::lp64());
+    types::TypeRef char_type = named(&t, "Char");
+    types::TypeRef read_pointer = types::pointer_to(&t, char_type, true);
+    types::TypeRef write_pointer = types::pointer_to(&t, char_type, false);
+    test::check_condition(is(conv_literal(&t, t.text, read_pointer), types_convert::literal_to_pointer));
+    // The same Str as a value (a variable, a parameter, a slice): not NUL-terminated, so it needs cstr.of.
+    refused(conv(&t, t.text, read_pointer), "expected const Char *", "found Str", "cstr.of(s)");
+    // The literal's characters are const.
+    refused(conv_literal(&t, t.text, write_pointer), "expected Char *", "found Str", "drops const");
+    // Only characters: a literal is no `const I32 *`.
+    refused(conv_literal(&t, t.text, types::pointer_to(&t, named(&t, "I32"), true)), "expected const I32 *",
+            "found Str", "no conversion");
 }
