@@ -679,6 +679,30 @@ static bool smith_stepcache_find_program(const char *name, char *real) {
     return false;
 }
 
+// The digest of the running smith (code only, #2833), kept in the step store by build-id: hashing a smith of hundreds
+// of megabytes in every process that is a compiler (each compile of a build, each build of a test) cost minutes in all.
+static bool smith_stepcache_self_digest(const char *real, const char *id, char hex[smith_sha256_hex_size]) {
+    char path[PATH_MAX];
+    char temporary[PATH_MAX];
+    size_t size = 0;
+    char text[smith_sha256_hex_size + 1];
+    if (snprintf(path, sizeof path, "%s/self/%s", smith_stepcache.folder, id) >= (int)sizeof path)
+        return smith_self_digest(real, hex);
+    if (smith_stepcache_read(path, text, sizeof text, &size) && size == smith_sha256_hex_size - 1) {
+        memcpy(hex, text, size);
+        hex[size] = '\0';
+        return true;
+    }
+    if (!smith_self_digest(real, hex)) return false;
+    if (snprintf(temporary, sizeof temporary, "%s/tmp/%d-%u", smith_stepcache.folder, (int)getpid(),
+                 smith_stepcache.counter++) < (int)sizeof temporary &&
+        smith_stepcache_make_parent(temporary) && smith_stepcache_make_parent(path) &&
+        smith_stepcache_write(temporary, hex, smith_sha256_hex_size - 1)) {
+        if (rename(temporary, path) != 0) unlink(temporary);
+    }
+    return true;
+}
+
 // What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name.
 static const char *smith_stepcache_program(const char *name) {
     SmithStepCache *cache = &smith_stepcache;
@@ -697,7 +721,8 @@ static const char *smith_stepcache_program(const char *name) {
     // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
     // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
     // restored cache would be served (#2833): it is identified by its code, with both blanked.
-    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 && smith_self_digest(real, self)) {
+    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 &&
+        smith_platform_file_id(real, id) && smith_stepcache_self_digest(real, id, self)) {
         written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
     } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
