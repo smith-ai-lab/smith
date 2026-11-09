@@ -850,6 +850,9 @@ jobs:
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
     if: needs.changes.outputs.warm == 'true'
     strategy:
+      # one OS failing must not cancel the other: a Mac step that failed cancelled the Linux job, so main saved no
+      # Linux cache from 01:48Z to 03:50Z on 2026-11-09 (#2826)
+      fail-fast: false
       matrix:
         # each OS saves the cache of what its jobs build: the Mac builds only its `--macos-only` tests
         os: ${{ fromJSON(needs.changes.outputs.warm_os) }}
@@ -873,6 +876,9 @@ jobs:
           tests: "true"
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
       - name: Fetch what the test jobs download (#2825)
+        # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
+        # this cache (the test parts, check-fmt-prove, check-lint, release-linux) are all Linux
+        if: runner.os == 'Linux'
         # the test parts take the build of `build-linux` and so restore no step cache; they restore the small
         # `smith-tools-` cache saved below instead, which must hold every package they would fetch from github.com:
         # the tree-sitter CLI (the build above fetched it) and the Neovim release (`smith build nvim`)
@@ -883,7 +889,7 @@ jobs:
       - name: Save the packages and tools
         # about 60 MB: every job that restores a build rather than making it reads this, so no job reaches github.com
         # for a package the cache holds (a 504 hour kept #2798 out of the queue for hours, #2825)
-        if: env.DRY_RUN != '1'
+        if: env.DRY_RUN != '1' && runner.os == 'Linux'
         uses: actions/cache/save@v4
         with:
           path: |
