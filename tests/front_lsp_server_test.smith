@@ -8,6 +8,9 @@ import std::arena;
 import std::format;
 import std::mem;
 import std::test;
+import <stdio.h>;
+import <sys/stat.h>;
+import <unistd.h>;
 
 static Bool has(Str text, Str needle) {
     for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
@@ -112,4 +115,38 @@ export void test_lsp_the_newest_document_is_kept_when_every_slot_is_taken() {
     Str out = lsp_server::handle("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/semanticTokens/full\","
                                  "\"params\":{\"textDocument\":{\"uri\":\"file:///t/many11.smith\"}}}");
     test::check(!has(out, "\"result\":null"));
+}
+
+// A diagnostic in the instance of an imported generic links to the call that asked for it (#2949): `relatedInformation`
+// has one entry per link of the error trace. The server reads imports under `src` of its working folder.
+export void test_lsp_a_diagnostic_in_an_imported_instance_links_to_its_call_site() {
+    arena::Arena memory = test::memory(1U << 26);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str folder = as_str(format::push("/tmp/front_lsp_trace_", (I64)c::getpid()));
+    c::mkdir(folder.data, 0o700);
+    Str source = as_str(format::push(folder, "/src"));
+    c::mkdir(source.data, 0o700);
+    Str util = as_str(format::push(source, "/util.smith"));
+    c::FILE *file = c::fopen(util.data, "w");
+    test::check(file != nullptr);
+    if (file == nullptr) return;
+    Str body = "pub fn wrap(x: auto) -> f64:\n    return 1 - x\n";
+    c::fwrite(body.data, 1, countof(body), file);
+    c::fclose(file);
+    char before[4096] = {};
+    test::check(c::getcwd(before, sizeof before) != nullptr);
+    test::check_equal(c::chdir(folder.data), 0);
+    Str out = lsp_server::handle(as_str(format::push(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://",
+        folder, "/main.smith\",\"text\":\"import util\\n\\npub fn f() -> f64: util.wrap(0.5)\\n\"}}}")));
+    c::chdir(before);
+    test::check(has(out, "\"relatedInformation\":["));
+    test::check(has(out, "\"message\":\"in wrap[F64], instantiated at\""));
+    test::check(has(out, "\"message\":\"in module util, imported by\""));
+    test::check(has(out, "\"start\":{\"line\":2,\"character\":19}"));
+    c::unlink(util.data);
+    c::rmdir(source.data);
+    c::rmdir(folder.data);
 }

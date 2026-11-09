@@ -99,8 +99,17 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   that counts the compiles of its own fixture.
 - `SMITH_STEP_CACHE=0` turns it off. An entry unused for 31 days is removed, and the results are kept within `SMITH_CACHE_MAX` (#618), checked at most once an hour (`smith cache`
   shows the folder; `smith cache clean steps` empties it). Like the depfile model it cannot see a header that appears
-  earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Module header steps and
-  lint are not covered yet.
+  earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Lint is not covered
+  yet.
+- **A module's header step is cached** (#2937): `smith cc --smith-header m.smith -o m.h <flags> -MD -MF m.h.d` writes
+  a depfile of every file the pass opened (the module, the sources or headers of the modules it imports, and, when it
+  asked the compiler which import declared a C name, the files that compile read), and is keyed like any compile: the
+  command, the identity of the smith, the content of those files. A pass that read a file it cannot name (a path make
+  cannot spell, more than 256 files, a compiler question that failed) leaves no depfile and runs. The step is restat,
+  and a served header whose bytes the file already has is not rewritten. A module looked for on an include path and not
+  found there is not in the list (nothing is to be read): the same blind spot as a header that appears earlier on a
+  compile's include path. `smith_object` and `build.c`'s single-header steps (the libraries', `front/`'s and the `smith new` template's, #2959)
+  emit the flags; the tests' `--smith-headers` batch does not yet (#2967).
 
 ## `.smith` compiles in one process (#2888)
 

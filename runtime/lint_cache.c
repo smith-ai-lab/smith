@@ -453,7 +453,10 @@ static bool smith_lc_replay_to(size_t number, int *status, FILE *out) {
     char path[PATH_MAX];
     if (!job->keyed || !smith_lc_entry_path(path, 'r', job->key, false)) return false;
     FILE *file = fopen(path, "rb");
-    if (file == nullptr) return false;
+    if (file == nullptr) {
+        smith_lc_why(job->first, "runs: no result for the content of the files it read (one of them changed)");
+        return false;
+    }
     size_t size = fread(smith_lc_entry, 1, sizeof smith_lc_entry - 1, file);
     bool whole = feof(file) != 0;
     fclose(file);

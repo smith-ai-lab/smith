@@ -202,7 +202,11 @@ static SignatureResult imported_function(state::Emitter *e, Str key, const ast::
     e->import_scope = module_prefix(key);
     SignatureResult made = signature(e, d);
     e->import_scope = "";
-    if (made == .error) return made;
+    if (made == .error) {
+        state::Error located = made.error;
+        if (countof(located.module) == 0) located.module = module_prefix(key);
+        return {.error = located};
+    }
     Signature sig = made.ok;
     Str own = state::c_name_of(d); // `@c_name("__enzyme_autodiff")`: the symbol is the C name, not the module's path
     Str named = key;

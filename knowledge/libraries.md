@@ -36,3 +36,5 @@ doc comments) stays what it was. `option` and `result` (issue #198) are `.smith`
 `arena::push_slice(&a, T, sizes...)` (a slice with a size for each `[:]`).
 
 **Talking to the OS:** a program touches the world outside it through the direct modules `std::console`, `files`, `process`, `net`, `clock`, `env` and `entropy` (`import std::files;`, `<smith/files.h>` from C), each called with no value passed down from `main`, each platform behind it on its best API (kqueue and Network.framework on macOS, epoll and OpenSSL on Linux), and a test stands in for each with its `set_handler` or fake. The executor and `smith mcp` call libc through `runtime/world.c` (a test swaps the effects with the handler table); only their event loop is still smith's private `runtime/io.smith`, until #2662 (no user library).
+
+**C beside a `.smith` library (#2651):** what `.smith` cannot write stays C and is its own C library row: `net_tls` (`lib/net_tls.c`, `include/smith/net_tls.h`) holds std::net's macOS TLS through Network.framework (blocks) and the atomic state that loads the TLS stack once, on every system. `std::net` imports its header, the way `std::optimize` imports `optimize_asm`.

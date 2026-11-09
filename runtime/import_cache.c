@@ -322,6 +322,15 @@ void smith_import_cache_report(void) {
     fprintf(file, "headers %u %u modules %u %u\n", smith_ic.hits[0], smith_ic.misses[0], smith_ic.hits[1],
             smith_ic.misses[1]);
     fclose(file);
+    // and the identity folder this process used, one line in `<log>.identity` (#2978): the save drops every other
+    // folder before it publishes. A smith with no identity writes none, and the save then drops nothing.
+    const char *identity = smith_ic_build_identity();
+    char named[PATH_MAX];
+    if (identity == nullptr || snprintf(named, sizeof named, "%s.identity", log) >= (int)sizeof named) return;
+    file = fopen(named, "a");
+    if (file == nullptr) return;
+    fprintf(file, "%.16s\n", identity);
+    fclose(file);
 }
 
 // ---------------------------------------------------------------- the image of a module's parse tree

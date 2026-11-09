@@ -540,6 +540,7 @@ jobs:
         with:
           os: linux
           fresh: ${{ github.event_name == 'schedule' }}
+          imports-from: linux-* # the test parts' import caches, not the count's (#2939)
       - name: Size the test parts
         # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
         # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
@@ -690,19 +691,15 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the proof cache
-        # main's `warm` saves it (#2237): a proof is keyed by the IR the prover checks, so only what changed is proved again
+      - name: Restore the lint and proof caches
+        # main's `warm` saves ONE cache holding both folders (#2237). `actions/cache` puts the path list in the cache
+        # version, so a restore naming one folder never finds it ("Cache not found" even for the prefix, #2954): every
+        # restore of `smith-lintprove-` names the same two paths, in the same order, as `warm`'s save.
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/proofs
-          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
-          restore-keys: smith-lintprove-${{ runner.os }}-
-      - name: Restore the lint cache
-        # a PR check lints here too, in place of `check-lint` (#2856)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
@@ -719,8 +716,21 @@ jobs:
             shift
             start=$SECONDS
             code=0
-            "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
+            SMITH_LINT_CACHE=why "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            # where a stage's time went (#2985): lint's own line (files run and cached, run and setup seconds), and
+            # prove's (build and proof seconds, groups) with the sum of its groups' `N proved, M failed, K cached`
+            case $name in
+              lint)
+                grep 'smith lint: linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+                # why each file ran (`SMITH_LINT_CACHE=why`), counted by reason
+                grep -o 'runs: .*' "$RUNNER_TEMP/lint.log" | sort | uniq -c | tee -a "$GITHUB_STEP_SUMMARY" || true ;;
+              prove)
+                grep 'smith prove: [0-9]* groups' "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+                awk '/^[0-9]+ proved, [0-9]+ failed/ { p += $1; f += $3; for (i = 1; i <= NF; i++) if ($i == "cached") c += $(i - 1) }
+                     END { printf "prove: %d functions proved (%d reused from the cache, %d failed)\n", p, c, f }' \
+                  "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            esac
             if [ "$code" != 0 ]; then
               tail -n 60 "$RUNNER_TEMP/$name.log"
               echo "FAIL $name"
@@ -754,11 +764,13 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the lint cache
-        # main's `warm` saves it (#2237): an entry is keyed by the lint identity and the file's content (#2236)
+      - name: Restore the lint and proof caches
+        # the same two paths as `warm`'s save: the path list is part of the cache version (#2954)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Lint
@@ -791,6 +803,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
@@ -805,12 +818,29 @@ jobs:
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
-          case " $RESULTS " in
-          *" failure "* | *" cancelled "*)
-            echo "::error::a CI job failed or was cancelled"
+          # Fail closed (#2965): only `success` and `skipped` pass. An `abandoned` job (GitHub never created it, as in the
+          # outage of 2026-11-09), `failure`, `cancelled`, an empty or any future value fails.
+          for r in $RESULTS; do
+            case "$r" in
+            success | skipped) ;;
+            *)
+              echo "::error::a CI job's result is '$r', not success or skipped"
+              exit 1
+              ;;
+            esac
+          done
+          # `changes` decides what is owed: without its scope nothing can be owed, so nothing may pass.
+          case "$SCOPE" in
+          full | docs | release | none) ;;
+          *)
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
             exit 1
             ;;
           esac
+          if [ "$CHANGES" != success ]; then
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
+            exit 1
+          fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
           # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
@@ -839,12 +869,12 @@ jobs:
           done
       # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
       # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
-      # Only once every job before it ran: a cancelled job (a cancelled run) posts nothing, and the next pass restarts
+      # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts
       # the check; the verdict above already fails a run in which a job that was owed was skipped.
       - name: Post the verdict as the commit status `ci`
         if: >-
           always() && github.event_name == 'workflow_dispatch' && !cancelled()
-          && !contains(join(needs.*.result, ' '), 'cancelled')
+          && !contains(join(needs.*.result, ' '), 'cancelled') && !contains(join(needs.*.result, ' '), 'abandoned')
           && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -869,7 +899,7 @@ jobs:
     # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
     # `always()`: a pull request's dry run (no release) warms with the newest published stage0; on a push, a release
     # that never publishes fails this job rather than save a cache built with another smith
-    needs: [changes, publish]
+    needs: [changes, release, release-linux, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
@@ -891,6 +921,13 @@ jobs:
       # would have written to the step summary instead
       DRY_RUN: ${{ github.event_name != 'push' && '1' || '0' }}
     steps:
+      - name: Say which job the stage0 comes from
+        # on a push, a `publish` that did not succeed means no release of this commit will appear: say so at once and in one
+        # line, instead of waiting 6 minutes in fetch-smith for it (#2976). The Mac's warm also needs the macOS tarball.
+        if: github.event_name == 'push' && (needs.publish.result != 'success' || (runner.os == 'macOS' && needs.release.result != 'success'))
+        run: |
+          echo "warm: stage0-$GITHUB_SHA is not published: job publish ${{ needs.publish.result }} (release ${{ needs.release.result }}, release-linux ${{ needs.release-linux.result }})" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+          exit 1
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -959,7 +996,7 @@ jobs:
         # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
         # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
         # them in order), smith-steps-linux.sha (the commit it was built from) and, when the queue run of this commit
-        # made one, frontend-coverage.tar.gz (the count's per-file table). The 3 newest releases stay. A failure here
+        # made one, frontend-coverage.tar.gz (the count's per-file table) and count-fixed.tar.zst (its fixed files, #2942). The 3 newest releases stay. A failure here
         # must not fail main's push
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -978,6 +1015,14 @@ jobs:
             echo "$GITHUB_SHA" >"$out/c/sha"
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
+          fi
+          # the fixed tree the count checked (#2942), at its tree paths, for a session to read the lines its errors name
+          tid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          if [ -n "$tid" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
+            mkdir "$out/t"; unzip -q "$out/t.zip" -d "$out/t"
+            mv "$out/t/count-fixed.tar.zst" "$out/count-fixed.tar.zst"
+            files+=("$out/count-fixed.tar.zst")
           fi
           # the fixed files and rows of the count (#2832) are the release `count-fixed-<sha7>` of the queue run (`count-fixed-save`)
           ls -l "${files[@]}" | awk '{print $5, $9}'
@@ -1099,7 +1144,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1113,7 +1158,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
@@ -1121,7 +1172,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1137,7 +1188,13 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
@@ -1181,10 +1238,11 @@ jobs:
           profile: release
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
-        # count's jobs publish
+        # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
           fresh: ${{ needs.changes.outputs.uncached }}
+          imports-from: count
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1217,12 +1275,29 @@ jobs:
         shell: bash
         run: |
           mkdir -p .smith/frontend-coverage/fixed
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^(step-cache|count-fixed)-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
-          if [ -z "$tag" ]; then echo "fixed files: none saved yet"; exit 0; fi
-          d=$(mktemp -d)
-          gh release download "$tag" -D "$d" -p count-fixed.tar.gz
-          tar -xz -C .smith/frontend-coverage -f "$d/count-fixed.tar.gz"
-          echo "fixed files: $(ls .smith/frontend-coverage/fixed | wc -l) restored from $tag"
+          # Looked up by tag, never by listing: the repository has hundreds of releases and the list is in no order of
+          # date, so its first 30 held none of these (#2974). Newest first along the first parents of HEAD, count-fixed
+          # before step-cache, 20 commits back at most.
+          d=$(mktemp -d); tag=; asset=; id=; back=0
+          for prefix in count-fixed step-cache; do
+            k=0
+            for sha in $(git rev-list --first-parent -n 21 HEAD); do
+              t="$prefix-${sha:0:7}"
+              a=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$t" --jq '[.assets[]|select(.name=="count-fixed.tar.zst" or .name=="count-fixed.tar.gz")]|sort_by(.name)|reverse|.[0]|select(.)|"\(.id) \(.name)"' 2>/dev/null || true)
+              if [ -n "$a" ]; then tag=$t; id=${a% *}; asset=${a#* }; back=$k; break 2; fi
+              k=$((k + 1))
+            done
+          done
+          if [ -z "$tag" ]; then echo "fixed files: none in the last 20 commits"; exit 0; fi
+          # by the asset's id from the lookup above: `gh release download` looked the tag up again and failed with
+          # "release not found" on the queue run of #2975 (the step then counted cold)
+          echo "fixed files: found $asset in $tag ($back commits back)"
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$id" >"$d/$asset"
+          case "$asset" in
+            *.zst) tar -x --zstd -C .smith/frontend-coverage -f "$d/$asset" ;;
+            *) tar -xz -C .smith/frontend-coverage -f "$d/$asset" ;;
+          esac
+          echo "fixed files: $(ls .smith/frontend-coverage/fixed | wc -l) restored from $tag ($back commits back)"
       - name: Fix the tree
         shell: bash
         run: |
@@ -1301,6 +1376,23 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: Pack the fixed tree for sessions (#2942)
+        # the files as the count checks them, at their tree paths: its errors give lines of this form. `warm` attaches
+        # the tarball to the commit's release, where a cloud session can download it
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixed-tree"
+          tar -C .smith/frontend-coverage/tree --exclude=compile_commands.json -c --zstd -f "$RUNNER_TEMP/fixed-tree/count-fixed.tar.zst" .
+      - name: Save the fixed tree
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-fixed-tree-${{ github.sha }}
+          path: ${{ runner.temp }}/fixed-tree
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
@@ -1346,10 +1438,11 @@ jobs:
         with:
           artifact: build-linux-release
       - uses: ./.github/actions/test-cache
-        # the import cache only (#2891), of the release smith's identity
+        # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
           fresh: ${{ needs.changes.outputs.uncached }}
+          imports-from: count count-${{ matrix.shard }}
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
@@ -1702,9 +1795,11 @@ jobs:
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
-    # a failed Linux job still lets the macOS release out
+    # either one's tarball lets the release out: a failed Linux job still lets the macOS release out, and a macOS job that
+    # timed out lets the Linux one out (`warm` and every Linux job fetch the Linux tarball; 4 of the 5 failed `warm` runs of
+    # 2026-11-09 waited for a release the macOS timeout kept unpublished, #2976). That commit has no macOS tarball for good.
     needs: [release, release-linux]
-    if: always() && needs.release.result == 'success'
+    if: always() && (needs.release.result == 'success' || needs.release-linux.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -1724,7 +1819,9 @@ jobs:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
     # checksum, no build (owner, 2026-10-29). Nothing needs this job (not `ci`, not the release): with the Mac off it
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
-    needs: publish
+    # a commit published without its macOS tarball (the macOS job failed or timed out, #2976) is skipped, not waited for
+    needs: [release, publish]
+    if: needs.release.result == 'success'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     concurrency:

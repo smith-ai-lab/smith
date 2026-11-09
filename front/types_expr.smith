@@ -92,6 +92,9 @@ export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
 // An `if` used as a value, before its parts are typed: J1d's fixer notes a test of an option field that guards the
 // reads in the first branch (#2647).
 export typedef void (*ValueIf)(types::Checked *c, const ast::Stmt *s);
+// An `a and b` or `a or b` before its operands are typed: J1d's fixer notes a test of an option field in `a` that
+// guards the reads in `b` (#2647).
+export typedef void (*ValueLogic)(types::Checked *c, const ast::Expr *e);
 
 // The result type of the function being checked (`nullptr` outside one); `try` reads it.
 export typedef types::TypeRef (*FunctionResult)();
@@ -103,6 +106,7 @@ export struct Hooks {
     LambdaBody lambda_body;
     Statement statement;
     ValueIf value_if;
+    ValueLogic value_logic;
 };
 
 static Hooks hooks;
@@ -6653,6 +6657,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .unary) {
         unary_before(c, w, f);
     } else if (e->kind == .binary) {
+        if (hooks.value_logic != nullptr && is_logical(e->kind.binary.op)) hooks.value_logic(c, e);
         binary_before(w, f);
     } else if (e->kind == .assign) {
         assign_before(c, w, f);

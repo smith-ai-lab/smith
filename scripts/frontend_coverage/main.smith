@@ -66,7 +66,12 @@ constexpr Usize names_listed = 15;
 constexpr Usize path_size = 256;
 constexpr Usize message_size = 240;
 constexpr Usize stage_size = 16;
-constexpr Usize position_size = 24;
+constexpr Usize position_size = 96; // `line:column`, or `path:line:column` for a position in another module (#2949)
+
+// True when `position` begins with a path (`lib/std/test.smith:905:16`), not a line number.
+static Bool foreign_position(const char *position) {
+    return position[0] != '\0' && !(position[0] >= '0' && position[0] <= '9');
+}
 
 struct Entry {
     char path[path_size];
@@ -535,7 +540,10 @@ static void print_causes() {
         Usize shown = groups[g].count < examples_max ? groups[g].count : examples_max;
         for (Usize e = 0; e < shown; e++) {
             const struct Entry *at = &entries[groups[g].examples[e]];
-            if (at->position[0] != '\0') {
+            if (foreign_position(at->position)) {
+                console::print("                e.g. ", (const char *)at->path, " (in ", (const char *)at->position,
+                               ")\n");
+            } else if (at->position[0] != '\0') {
                 console::print("                e.g. ", (const char *)at->path, ":", (const char *)at->position, "\n");
             } else {
                 console::print("                e.g. ", (const char *)at->path, "\n");
@@ -618,6 +626,9 @@ static I32 summarize(const char file[:], const char *smith) {
         if (is_pass(&entries[i])) {
             passed += 1;
             console::print("pass  ", path, "\n");
+        } else if (foreign_position(entries[i].position)) {
+            console::print("FAIL  ", path, " (in ", (const char *)entries[i].position, ") [",
+                           (const char *)entries[i].stage, "] ", (const char *)entries[i].message, "\n");
         } else if (entries[i].position[0] != '\0') {
             console::print("FAIL  ", path, ":", (const char *)entries[i].position, " [", (const char *)entries[i].stage,
                            "] ", (const char *)entries[i].message, "\n");
@@ -815,6 +826,24 @@ static typeof(const char[:]) position_of(const char line[:], Usize error) {
     return line[at + 1:error];
 }
 
+// True when `text` ends with `tail`.
+static Bool tail_is(const char text[:], const char tail[:]) {
+    if (countof(tail) > countof(text)) return false;
+    return same(text[countof(text) - countof(tail):countof(text)], tail);
+}
+
+// The position to record for the diagnostic `line` (its `: error:` at `error`) of `file`: `line:column` when the
+// diagnostic is in `file`, `path:line:column` when it is in another module, which the file imports (#2949).
+static typeof(const char[:]) located_at(const char line[:], Usize error, const char file[:]) {
+    typeof(const char[:]) plain = position_of(line, error);
+    if (countof(plain) == 0) return plain;
+    Usize start = (Usize)(plain.data - line.data);
+    if (start == 0) return plain;
+    typeof(const char[:]) where = line[0:start - 1]; // the path before the colon that starts the position
+    if (same(where, file) || tail_is(where, file) || tail_is(file, where)) return plain;
+    return line[0:error];
+}
+
 // Every error of a compile's output, as an entry each: `a.smith:3:7: error: message` is `message` at `3:7`. Output
 // with no `error:` line (a crash, a missing tool) is one entry with the text as it stands. Returns how many.
 static Usize record_errors(const char *path, const char output[:], const char stage[:], I32 status) {
@@ -827,7 +856,7 @@ static Usize record_errors(const char *path, const char output[:], const char st
         if (error < countof(line)) {
             char message[message_size];
             copy_text(message[0:message_size], line[error + 9:countof(line)]);
-            add_entry(view_of(path), stage, message[0:message_size], position_of(line, error));
+            add_entry(view_of(path), stage, message[0:message_size], located_at(line, error, view_of(path)));
             made += 1;
         }
         at = end + 1;

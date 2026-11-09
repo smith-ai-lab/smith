@@ -22,6 +22,11 @@ import <llvm-c/Target.h>;
 export struct Error {
     Str message;
     ast::Span span;
+    // Where `span` is (#2949): the prefix of the module whose text it is an offset in (`std::test::`), empty for the
+    // file being compiled; and the instance of a generic whose body was being emitted, for the error trace.
+    Str module;
+    Bool in_instance;
+    Usize instance;
 };
 
 // What the module is emitted for. The emitter never asks the host: the triple and the data layout come from here.
@@ -44,6 +49,25 @@ export typedef Result(Bool, Error) Status;
 
 export Status success() {
     return true;
+}
+
+// `status` with the module its error was found in, when no inner scope named one yet (#2949).
+export Status in_module(Status status, Str module) {
+    if (status != .error) return status;
+    Error error = status.error;
+    if (countof(error.module) == 0) error.module = module;
+    return {.error = error};
+}
+
+// `status` with the instance whose body was being emitted when its error was found (#2949).
+export Status in_instance(Status status, Usize instance) {
+    if (status != .error) return status;
+    Error error = status.error;
+    if (!error.in_instance) {
+        error.in_instance = true;
+        error.instance = instance;
+    }
+    return {.error = error};
 }
 
 // A message built with format::push, as the Str that fail takes.
@@ -163,6 +187,67 @@ export struct Ty {
 
 // A type, or the reason there is none.
 export typedef Result(Ty, Error) TyResult;
+
+// The name of a type's kind in the tree (`tuple`, `pointer`), for the messages that say which kind is not emitted yet
+// (#2949).
+export Str type_kind_name(const ast::TypeExpr *t) {
+    if (t->kind == .named) return "named";
+    if (t->kind == .auto_type) return "auto_type";
+    if (t->kind == .pointer) return "pointer";
+    if (t->kind == .array) return "array";
+    if (t->kind == .slice) return "slice";
+    if (t->kind == .function) return "function";
+    if (t->kind == .applied) return "applied";
+    if (t->kind == .type_of) return "type_of";
+    if (t->kind == .unsupported_c) return "unsupported_c";
+    if (t->kind == .record) return "record";
+    if (t->kind == .tuple) return "tuple";
+    if (t->kind == .option) return "option";
+    if (t->kind == .block_type) return "block_type";
+    return "unknown";
+}
+
+// The name of an expression's kind in the tree (`call`, `member`), for the messages that say which expression lacks a
+// checked type (#2949).
+export Str expr_kind_name(const ast::Expr *x) {
+    if (x->kind == .integer) return "integer";
+    if (x->kind == .floating) return "floating";
+    if (x->kind == .character) return "character";
+    if (x->kind == .string) return "string";
+    if (x->kind == .boolean) return "boolean";
+    if (x->kind == .null_pointer) return "null_pointer";
+    if (x->kind == .name) return "name";
+    if (x->kind == .variant) return "variant";
+    if (x->kind == .type_value) return "type_value";
+    if (x->kind == .unary) return "unary";
+    if (x->kind == .binary) return "binary";
+    if (x->kind == .assign) return "assign";
+    if (x->kind == .conditional) return "conditional";
+    if (x->kind == .call) return "call";
+    if (x->kind == .index) return "index";
+    if (x->kind == .slice_of) return "slice_of";
+    if (x->kind == .member) return "member";
+    if (x->kind == .cast) return "cast";
+    if (x->kind == .query) return "query";
+    if (x->kind == .compound) return "compound";
+    if (x->kind == .lambda) return "lambda";
+    if (x->kind == .try_expr) return "try_expr";
+    if (x->kind == .reflect_member) return "reflect_member";
+    if (x->kind == .expand) return "expand";
+    if (x->kind == .named_arg) return "named_arg";
+    if (x->kind == .tuple_lit) return "tuple_lit";
+    if (x->kind == .array_lit) return "array_lit";
+    if (x->kind == .stmt_expr) return "stmt_expr";
+    if (x->kind == .generic_select) return "generic_select";
+    if (x->kind == .pattern_test) return "pattern_test";
+    return "unknown";
+}
+
+// A type that cannot be made, its message the pieces `args` as `format::push` takes them (#2949).
+export TyResult ty_fail_with(ast::Span span, auto... args) {
+    Error error = {.message = msg(format::push(args...)), .span = span};
+    return {.error = error};
+}
 
 // A type that cannot be made.
 export TyResult ty_fail(Str message, ast::Span span) {

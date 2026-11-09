@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A fourth pass (#2948) dequeues a queued PR that conflicts with main. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A fourth pass (#2948) dequeues a queued PR that conflicts with main. A fifth pass (#2962) enqueues a green PR labelled `ready`. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -116,6 +116,45 @@ jobs:
             lost=$((lost + 1))
           done
           [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
+
+          # fifth pass (#2962): GitHub won't turn on auto-merge for a PR that is already clean, and a runner can't enqueue,
+          # so a runner labels such a PR `ready`. Each open PR with that label, not in the queue, not labelled `dequeued`,
+          # mergeable, whose `ci` check on the current head is `success`, is enqueued as queue-ops' enqueue does, and loses
+          # `ready`. A PR whose ci is not green yet keeps the label and is tried again on the next pass.
+          ready_pass() {
+            local pr info mergeable state id sha ci pos n=0
+            for pr in $(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+                --jq '.[] | select([.labels[].name] | (index("ready") and (index("dequeued") | not))) | .number'); do
+              case "$queued" in *" $pr "*) continue ;; esac
+              info=$(gh api "repos/$REPO/pulls/$pr" --jq '"\(.mergeable) \(.mergeable_state) \(.node_id) \(.head.sha)"') \
+                || { log "queue-heal: #$pr (ready) unreadable, skipped"; continue; }
+              set -- $info
+              mergeable=$1; state=$2; id=$3; sha=$4
+              [ "$mergeable" = true ] && [ "$state" != dirty ] || { log "queue-heal: #$pr (ready) not mergeable yet, kept"; continue; }
+              ci=$(gh api -X GET "repos/$REPO/commits/$sha/check-runs" -f check_name=ci -f filter=latest \
+                --jq '[.check_runs[] | .conclusion // .status][0] // "none"') || ci=unreadable
+              [ "$ci" = success ] || { log "queue-heal: #$pr (ready) ci is $ci, kept"; continue; }
+              n=$((n + 1))
+              if dry; then
+                log "dry-run: would enqueue #$pr (ready)"
+                log "dry-run: would unlabel #$pr ready"
+                continue
+              fi
+              if pos=$(gh api graphql -f query='
+                  mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
+                  -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'); then
+                gh api -X DELETE "repos/$REPO/issues/$pr/labels/ready" --silent || true
+                log "queue-heal: enqueued #$pr (ready) at position $pos"
+              else
+                log "queue-heal: #$pr (ready) enqueue refused, kept"
+              fi
+            done
+            [ "$n" = 0 ] && log "queue-heal: none ready"
+            return 0
+          }
+          ready_pass
+          # what it enqueued joins the list the later passes read
+          dry || { list=$(entries) || true; q=$(echo "$list" | grep -c . || true); }
 
           # fourth pass (#2948): a queued PR that conflicts with main is dequeued at once, so the `removed_from_merge_queue`
           # event wakes its runner (#2926 sat 90 minutes in the queue while it conflicted, and no event told anyone).
