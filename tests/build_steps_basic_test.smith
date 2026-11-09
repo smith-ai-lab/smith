@@ -126,11 +126,36 @@ export void test_build_steps_explain_names_the_first_cause_down_a_chain() {
     Build first = build_defaults(p.dir, 200);
     scratch::expect_contains("explain: the first reason is the missing output", first.text, "output mid doesn't exist");
     scratch::expect_contains("explain: the step after it names that output as the first cause", first.text,
-                             "mid is dirty (first cause: mid)");
+                             "mid is dirty (first cause: mid, missing)");
     put(p.dir, "input", "two\n", 400);
     Build changed = build_defaults(p.dir, 500);
     scratch::expect_contains("explain: a changed input is the cause down the chain", changed.text,
-                             "mid is dirty (first cause: mid)");
+                             "mid is dirty (first cause: input, newer than its output)");
+}
+
+export void test_build_steps_explain_names_the_header_behind_a_step_down_a_chain() {
+    scratch::Project p = scratch::make("p", "steps_depfile");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    manifest(p.dir, "build a.o: step a.c\n  cmd = sh -c 'cc -MMD -MF a.o.d -c a.c -o a.o'\n"
+                    "  depfile = a.o.d\n  deps = gcc\nbuild prog: step a.o\n  cmd = cp a.o prog\ndefault prog\n");
+    put(p.dir, "a.c", "#include \"a.h\"\n", 100);
+    put(p.dir, "a.h", "#define VALUE 1\n", 100);
+    const char *const depends[_] = {"a.o: a.c a.h", nullptr};
+    Build first = build(p.dir, nullptr, 200, nullptr, depends);
+    expect_ran("explain leaf: the first build makes both", 2, &first);
+    put(p.dir, "a.h", "#define VALUE 2\n", 400);
+    Build changed = build(p.dir, nullptr, 500, nullptr, depends);
+    scratch::expect_contains("explain leaf: the step after the object names the header and says it is newer",
+                             changed.text, "a.o is dirty (first cause: a.h, newer than its output)");
+    manifest(p.dir, "build a.o: step a.c\n  cmd = sh -c 'cc -MMD -MF a.o.d -c a.c -o a.o && true'\n"
+                    "  depfile = a.o.d\n  deps = gcc\nbuild prog: step a.o\n  cmd = cp a.o prog\ndefault prog\n");
+    Build command = build(p.dir, nullptr, 600, nullptr, depends);
+    scratch::expect_contains("explain leaf: a changed command names the output and says so", command.text,
+                             "a.o is dirty (first cause: a.o, its command line changed)");
 }
 
 export void test_build_steps_a_task_runs_every_time_and_a_stamp_step_once_per_input() {
