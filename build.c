@@ -736,10 +736,12 @@ static const char *build_import_identity(SmithBuild *b, const BuildConfig *confi
         "");
 }
 
-// runtime/import_identity.c, the identity above in a translation unit of its own, as the lint identity's.
-static SmithObject build_import_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder) {
+// runtime/import_identity.c, the identity above in a translation unit of its own, as the lint identity's, made in
+// `object` (the executor knows an object by its address).
+static void build_import_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                         SmithObject *object) {
     const char *identity = build_import_identity(b, config);
-    SmithObject object = {
+    *object = (SmithObject){
         .compiler = config->cc,
         .source = "runtime/import_identity.c",
         .output = smith_fmt(b, "%s/import_identity.o", folder),
@@ -749,8 +751,7 @@ static SmithObject build_import_identity_object(SmithBuild *b, const BuildConfig
                                  (const char *[]){smith_fmt(b, "-DSMITH_IMPORT_IDENTITY=\"%s\"", identity), nullptr}),
                       nullptr),
     };
-    smith_object(b, &object);
-    return object;
+    smith_object(b, object);
 }
 
 static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
@@ -1164,7 +1165,7 @@ static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, co
             count++;
         }
     }
-    objects[count] = build_import_identity_object(b, config, folder);
+    build_import_identity_object(b, config, folder, &objects[count]);
     list[count] = &objects[count];
     return count + 1;
 }
