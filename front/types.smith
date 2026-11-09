@@ -208,11 +208,15 @@ export struct Builtin {
     TypeRef type;
 };
 
+export struct ShapeSlot {
+    TypeRef type; // null: an empty slot
+};
+
 export struct Table {
     Target target;
     Entry entries[:];
     Usize count;
-    TypeRef shapes[:]; // the structural entries, by `shape_hash` (open addressing): `intern`'s index
+    ShapeSlot shapes[:]; // the structural entries, by `shape_hash` (open addressing): `intern`'s index
     Usize shaped;
     Builtin builtins[:];
     TypeRef invalid;
@@ -430,17 +434,17 @@ static U64 shape_hash(const Ty *a) {
 static Usize shape_slot(const Table *t, const Ty *candidate) {
     Usize mask = countof(t->shapes) - 1;
     Usize i = (Usize)shape_hash(candidate) & mask;
-    while (t->shapes[i] != nullptr && !same_shape(t->shapes[i], candidate))
+    while (t->shapes[i].type != nullptr && !same_shape(t->shapes[i].type, candidate))
         i = (i + 1) & mask;
     return i;
 }
 
 static void grow_shapes(Table *t) {
     Usize capacity = countof(t->shapes) == 0 ? 256 : countof(t->shapes) * 2;
-    TypeRef old[:] = t->shapes;
-    t->shapes = mem::alloc_slice(TypeRef, capacity);
+    ShapeSlot old[:] = t->shapes;
+    t->shapes = mem::alloc_slice(ShapeSlot, capacity);
     for (Usize i = 0; i < countof(old); i++) {
-        if (old[i] != nullptr) t->shapes[shape_slot(t, old[i])] = old[i];
+        if (old[i].type != nullptr) t->shapes[shape_slot(t, old[i].type)] = old[i];
     }
     mem::free(old.data);
 }
@@ -450,9 +454,9 @@ static void grow_shapes(Table *t) {
 static TypeRef intern(Table *t, Ty candidate) {
     if (2 * (t->shaped + 1) > countof(t->shapes)) grow_shapes(t);
     Usize at = shape_slot(t, &candidate);
-    if (t->shapes[at] != nullptr) return t->shapes[at];
+    if (t->shapes[at].type != nullptr) return t->shapes[at].type;
     Ty *made = add_entry(t, candidate);
-    t->shapes[at] = made;
+    t->shapes[at].type = made;
     t->shaped += 1;
     return made;
 }

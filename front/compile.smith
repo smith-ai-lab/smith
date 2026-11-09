@@ -42,6 +42,7 @@ import front::parse;
 import std::arena;
 import std::ascii;
 import std::clock;
+import std::contract;
 import std::files;
 import std::format;
 import std::mem;
@@ -298,6 +299,7 @@ static mem::Allocator *enter_shared() {
 
 // The system's allocator with the handler of the thread out of the way (a set allocator swaps malloc's family).
 static void *system_raw(void *block, Usize size) {
+    contract::trusted(); // the system's allocator is the edge
     mem::Allocator *before = mem::set_allocator(nullptr);
     void *result = c::realloc(block, size); // NOLINT(smith-effects): the edge, as mem's own
     mem::set_allocator(before);
@@ -305,6 +307,7 @@ static void *system_raw(void *block, Usize size) {
 }
 
 static void system_release(void *block) {
+    contract::trusted();
     mem::Allocator *before = mem::set_allocator(nullptr);
     c::free(block); // NOLINT(smith-effects): the edge
     mem::set_allocator(before);
@@ -342,13 +345,15 @@ static void file_grow() {
     file_capacity = old_capacity == 0 ? 1U << 16 : old_capacity * 2;
     file_live = (void **)system_raw(nullptr, file_capacity * sizeof(void *));
     if (file_live == nullptr) c::abort();
-    c::memset(file_live, 0, file_capacity * sizeof(void *));
+    for (Usize i = 0; i < file_capacity; i++) {
+        file_live[i] = nullptr;
+    }
     file_used = 0;
     file_count = 0;
     for (Usize i = 0; i < old_capacity; i++) {
         if (old[i] != nullptr && old[i] != (void *)&file_gone_mark) file_place(old[i]);
     }
-    system_release(old);
+    system_release((void *)old);
 }
 
 static void file_insert(void *block) {
@@ -367,7 +372,7 @@ static Usize file_find(const void *block) {
     return file_capacity;
 }
 
-static void *file_alloc(c::SmithAllocator *self, Usize size, Usize align) {
+static void *file_alloc(mem::Allocator *self, Usize size, Usize align) {
     (void)self;
     if (align > file_header) return nullptr; // nothing in the front end asks for more than 16
     U8 *raw = (U8 *)system_raw(nullptr, size + file_header);
@@ -377,7 +382,7 @@ static void *file_alloc(c::SmithAllocator *self, Usize size, Usize align) {
     return raw + file_header;
 }
 
-static void file_free(c::SmithAllocator *self, void *block) {
+static void file_free(mem::Allocator *self, void *block) {
     (void)self;
     Usize at = file_find(block);
     if (at == file_capacity) return;
@@ -386,7 +391,7 @@ static void file_free(c::SmithAllocator *self, void *block) {
     system_release((U8 *)block - file_header);
 }
 
-static void *file_realloc(c::SmithAllocator *self, void *block, Usize size, Usize align) {
+static void *file_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
     if (block == nullptr) return file_alloc(self, size, align);
     Usize at = file_find(block);
     if (at == file_capacity || align > file_header) return nullptr;
@@ -399,17 +404,17 @@ static void *file_realloc(c::SmithAllocator *self, void *block, Usize size, Usiz
     return raw + file_header;
 }
 
-static Bool file_owns(c::SmithAllocator *self, const void *block) {
+static Bool file_owns(mem::Allocator *self, const void *block) {
     (void)self;
     return file_find(block) != file_capacity;
 }
 
-static Usize file_size(c::SmithAllocator *self, const void *block) {
+static Usize file_size(mem::Allocator *self, const void *block) {
     (void)self;
     return *(const Usize *)((const U8 *)block - file_header);
 }
 
-static c::SmithAllocator file_allocator = {
+static mem::Allocator file_allocator = {
     .alloc = file_alloc, .realloc = file_realloc, .free = file_free, .owns = file_owns, .size = file_size};
 
 static mem::Allocator *file_memory() {
@@ -555,7 +560,7 @@ static const ast::Module *read_module(const char *dotted) {
         Str kept_named = as_str(format::push(named));
         Str kept_source = as_str(format::push(source));
         parser::Parsed parsed = starts_with_module(kept_source) ? parser::parse_file(kept_path, kept_source)
-                                                                 : parser::parse_new(kept_path, kept_source);
+                                                                : parser::parse_new(kept_path, kept_source);
         Bool parses = countof(parsed.errors) == 0;
         Bool named_well = parses && countof(name_module(&parsed.module, kept_path, named_by)) == 0;
         ast::Module *copy = nullptr;
@@ -762,7 +767,8 @@ static const ast::Module *read_header(Str header, Bool angled) {
                             .generation = header_generation};
     }
     mem::set_allocator(outside);
-    // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it again.
+    // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it
+    // again.
     if (module == nullptr) return nullptr;
     if (shared_header_count < shared_headers_max) {
         shared_header_keys[shared_header_count] = kept_key;
@@ -1545,7 +1551,7 @@ static BeforeFile before_file_hook = nullptr;
         Str output = as_str(format::push((const char *)outputs[i]));
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
-        U64 started = clock::monotonic(); // the file's flags are part of its compile
+        U64 started = clock::monotonic();        // the file's flags (`before_file_hook`) are part of its compile
         if (before_file_hook != nullptr) before_file_hook(sources[i]);
         Report done = file_in(paths[i].path, output, target, beside, file_memory());
         U64 wall = clock::monotonic() - started;

@@ -437,15 +437,18 @@ static int smith_front_serve(char **argv, int first, const char *self) {
     int out = dup(STDOUT_FILENO);
     int err = dup(STDERR_FILENO);
     SMITH_ASSERT(out >= 0 && err >= 0);
-    for (;;) { // one request each pass; ends at the end of input
+    for (size_t served = 0; served < SIZE_MAX; served++) { // one request each pass; ends at the end of input
         size_t used = 0;
         char *head = smith_serve_line(&used);
         if (head == nullptr) return 0;
-        int count = -1;
-        if (sscanf(head, "smith-serve %d", &count) != 1 || count < 0 || (size_t)count + 2 >= smith_front_args_max) {
+        const char *prefix = "smith-serve ";
+        char *end = nullptr;
+        long asked = strncmp(head, prefix, strlen(prefix)) == 0 ? strtol(head + strlen(prefix), &end, 10) : -1;
+        if (end == nullptr || *end != '\0' || asked < 0 || (size_t)asked + 2 >= smith_front_args_max) {
             fprintf(stderr, "smith: serve: a request starts `smith-serve <n>`, not: %s\n", head);
             return 2;
         }
+        int count = (int)asked;
         bool whole = true;
         for (int i = 0; i <= count && whole; i++) { // the folder, then the arguments
             smith_serve_args[first + i] = smith_serve_line(&used);
@@ -457,6 +460,7 @@ static int smith_front_serve(char **argv, int first, const char *self) {
         SMITH_ASSERT(dup2(out, STDOUT_FILENO) >= 0 && dup2(err, STDERR_FILENO) >= 0);
         smith_serve_reply(out, capture, status);
     }
+    return 0;
 }
 
 // The entry from smith.c: `--serve` among the arguments serves requests (above); otherwise one compile.

@@ -49,7 +49,8 @@ export void test_cc_shared_files_an_error_in_an_imported_module_is_reported_in_e
     scratch::write(&p, "bad.smith", "pub fn wrap(x: auto) -> f64:\n    return 1 - x\n");
     scratch::write(&p, "a.smith", "import bad\n\npub fn a() -> f64: bad.wrap(0.5)\n");
     scratch::write(&p, "b.smith", "import bad\n\npub fn b() -> f64: bad.wrap(1.5)\n");
-    scratch::Run run = scratch::sh(&p, "smith cc --front-end=new -c a.smith b.smith 2>&1 | grep -c 'bad.smith:2:12: error'");
+    scratch::Run run =
+        scratch::sh(&p, "smith cc --front-end=new -c a.smith b.smith 2>&1 | grep -c 'bad.smith:2:12: error'");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("one report for each file", run.out, "2\n");
@@ -62,13 +63,13 @@ export void test_cc_shared_files_files_with_different_defines_read_the_header_ea
     scratch::write(&p, "zz.h", "#ifdef ZZ_ONE\nint zz_one(void);\n#else\nint zz_two(void);\n#endif\n");
     scratch::write(&p, "one.smith", "import c \"zz.h\"\n\npub fn one() -> i32: zz.zz_one()\n");
     scratch::write(&p, "two.smith", "import c \"zz.h\"\n\npub fn two() -> i32: zz.zz_two()\n");
-    scratch::Run run = scratch::sh(
-        &p, "d=$PWD; printf '[\\n  {\\n    \"directory\": \"%s\",\\n    \"file\": \"one.smith\",\\n    \"arguments\": "
-            "[\\n      \"smith-cc\",\\n      \"-DZZ_ONE\",\\n      \"-c\",\\n      \"one.smith\"\\n    ]\\n  },\\n  {\\n"
-            "    \"directory\": \"%s\",\\n    \"file\": \"two.smith\",\\n    \"arguments\": [\\n      \"smith-cc\",\\n"
-            "      \"-c\",\\n      \"two.smith\"\\n    ]\\n  }\\n]\\n' \"$d\" \"$d\" > compile_commands.json; "
-            "smith cc --front-end=new -c one.smith two.smith 2>&1; echo status $?; "
-            "smith cc --front-end=new -c two.smith one.smith 2>&1; echo status $?");
+    scratch::write(&p, "compile_commands.json",
+                   "[\n  {\n    \"directory\": \".\",\n    \"file\": \"one.smith\",\n    \"arguments\": [\n"
+                   "      \"smith-cc\",\n      \"-DZZ_ONE\",\n      \"-c\",\n      \"one.smith\"\n    ]\n  },\n"
+                   "  {\n    \"directory\": \".\",\n    \"file\": \"two.smith\",\n    \"arguments\": [\n"
+                   "      \"smith-cc\",\n      \"-c\",\n      \"two.smith\"\n    ]\n  }\n]\n");
+    scratch::Run run = scratch::sh(&p, "smith cc --front-end=new -c one.smith two.smith 2>&1; echo status $?; "
+                                       "smith cc --front-end=new -c two.smith one.smith 2>&1; echo status $?");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_lacks("no diagnostics", run.out, "error");
