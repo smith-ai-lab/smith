@@ -358,8 +358,7 @@ static Bool call_target(state::Emitter *e, const ast::Expr *x, const ast::Decl *
 // The instance of a generic function that `x` calls, or null.
 // The name of an instance's function: `pick.i32`.
 static Str instance_key(const types::Instance *instance) {
-    if (instance->decl->kind != .function) return state::msg(format::push(""));
-    return state::msg(format::push(instance->decl->kind.function.name));
+    return state::instance_name(instance);
 }
 
 static const types::Instance *instance_call(state::Emitter *e, const ast::Expr *x) {
@@ -471,7 +470,11 @@ static const ast::Decl *find_decl(state::Emitter *e, Str key, const ast::Decl *i
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
             const ast::Decl *d = e->options.checked->instances[i].decl;
-            if (d->kind == .function && state::same_text(d->kind.function.name, key)) return d;
+            Str name = state::instance_name(&e->options.checked->instances[i]);
+            Bool same = d->kind == .function && state::same_text(name, key);
+
+            state::free_text(name);
+            if (same) return d;
         }
     }
     return nullptr;

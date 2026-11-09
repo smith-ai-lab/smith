@@ -307,7 +307,8 @@ static syntax::Edits element_mut_fix(const types::Checked *c, const ast::Expr *e
     if (array == nullptr) return edits;
     if (array->kind != .name) return edits;
     const types::Symbol *s = types::lookup_path(&c->scopes, array->kind.name.path);
-    if (s == nullptr || s->kind != .variable || !s->is_new || s->written == nullptr) return edits;
+    if (s == nullptr || s->kind != .variable || !s->is_new) return edits;
+    if (s->written == nullptr) return edits;
     const ast::TypeExpr *element = array_element_written(s->written);
     if (element == nullptr || !is_plain_pointer(element)) return edits;
     edits = mem::realloc(edits, 1);
@@ -322,8 +323,24 @@ static const ast::Expr *additive_left(const ast::Expr *e);
 
 static syntax::Edits nonzero_fix(const ast::Expr *e);
 
+// Whether `from` to `to` drops a `volatile` element: `*volatile T` handed where `*T` is wanted, as dropping const.
+static Bool drops_volatile(types::TypeRef from, types::TypeRef to) {
+    Bool both = (from->kind == .pointer && to->kind == .pointer) || (from->kind == .slice && to->kind == .slice) ||
+                (from->kind == .array && to->kind == .pointer);
+    return both && types::points_to_volatile(from) && !types::points_to_volatile(to);
+}
+
+// Refuses a conversion the converter allows but that drops `volatile`; whether it did.
+static Bool volatile_refused(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
+    if (!drops_volatile(from, to)) return false;
+    types::failf(c, e->span, "expected ", types::show(to), ", found ", types::show(from),
+                 ": this drops volatile; make the target's element volatile");
+    return true;
+}
+
 static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef from, types::TypeRef to) {
     types_convert::Verdict verdict = types_convert::convert(&c->table, from, to, literal_of(e));
+    if (verdict.ok && volatile_refused(c, e, from, to)) return false;
     if (verdict.ok) {
         return true;
     }
@@ -345,13 +362,12 @@ static Bool convert_hook(types::Checked *c, const ast::Expr *e, types::TypeRef f
     if (drops_const && countof(fix) == 0 && addressed != nullptr) {
         const ast::Expr *place = addressed;
         while (member_base(place) != nullptr) {
-            const ast::Expr *base = member_base(place);
-            types::TypeRef owner = types::type_of(c, base);
+            place = member_base(place);
+            types::TypeRef owner = types::type_of(c, place);
             if (owner != nullptr && owner->kind == .pointer) {
-                fix = types_expr::pointer_fix(c, base);
+                fix = types_expr::pointer_fix(c, place);
                 break;
             }
-            place = base;
         }
     }
     if (from->kind == .pointer && to->kind == .pointer && !types::points_to_const(from) && !types::points_to_const(to))
@@ -658,7 +674,7 @@ static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     if (!is_new_variable(d) || is_discard(name)) {
         return false;
     }
-    const types::Symbol *earlier = types::lookup(&r->scopes, name);
+    const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
     if (earlier != nullptr && earlier->kind == .module_name) {
         types::failf(r, d->span, "`", name, "` hides the module `", name,
                      "`; shadowing is an error: assign with `=`, or choose another name");
@@ -696,6 +712,10 @@ static void declare_local(types::Checked *r, const ast::Decl *d, Str name, types
         symbol.may_mut = countof(d->attributes) == 0 && !d->kind.variable.is_constexpr;
         symbol.written = d->kind.variable.type;
         symbol.init = d->kind.variable.init;
+    }
+    if (d->kind == .variable) {
+        const ast::TypeExpr *written = d->kind.variable.type;
+        symbol.is_volatile = written != nullptr && written->qualifiers.is_volatile;
     }
     if (!types::declare(&r->scopes, symbol)) {
         types::failf(r, d->span, "`", name, "` is already declared in this scope; choose another name");
@@ -871,7 +891,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         if (is_discard(name)) {
             continue;
         }
-        const types::Symbol *earlier = types::lookup(&r->scopes, name);
+        const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
         if (earlier != nullptr && earlier->kind == .variable) {
             types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error: ",
                          "assign with `=`, or choose another name");
@@ -1441,6 +1461,174 @@ static void note_arm_guards(types::Checked *r, const ast::Stmt *s) {
     }
 }
 
+// Whether `e` is `and`, `or` or `not`, the connectives a compile-time question about a type is joined with.
+static Bool connective(const ast::Expr *e) {
+    if (e->kind == .unary) return e->kind.unary.op == .logical_not;
+    if (e->kind != .binary) return false;
+    return e->kind.binary.op == .logical_and || e->kind.binary.op == .logical_or;
+}
+
+// A call of a concept function being answered: its declaration and the types its parameters stand for. Frame 0 is
+// the condition itself, read in the scopes of the function that holds it.
+struct ConceptFrame {
+    const ast::Decl *decl;
+    types::TypeRef args[8];
+};
+
+// Declares the type parameters of `frame` in a scope of their own (`T` in `is_float(T)`), or pushes nothing when the
+// frame is the condition itself. The caller pops the scope with `leave_frame`.
+static void enter_frame(types::Checked *r, const ConceptFrame *frame) {
+    const ast::Decl *decl = frame->decl;
+    if (decl == nullptr) return;
+    if (decl->kind != .function) return;
+    ast::Param params[:] = decl->kind.function.params;
+    types::push_scope(&r->scopes);
+    for (Usize i = 0; i < countof(params); i++) {
+        types::Symbol bound = {.name = params[i].name, .kind = .type_name, .type = frame->args[i]};
+        (void)types::declare(&r->scopes, bound);
+    }
+}
+
+static void leave_frame(types::Checked *r, const ConceptFrame *frame) {
+    const ast::Decl *decl = frame->decl;
+    if (decl == nullptr) return;
+    if (decl->kind == .function) types::pop_scope(&r->scopes);
+}
+
+// The type an argument of a concept call stands for (`typeof(x)`, `T`, `i32`), or null when it is none or not known
+// until an instance (the parameter of a template).
+static types::TypeRef concept_argument(types::Checked *r, const ast::Expr *arg) {
+    types::TypeRef t = nullptr;
+    Usize errors = r->error_count;
+    if (arg->kind == .name) {
+        const types::Symbol *s = types::lookup_path(&r->scopes, arg->kind.name.path);
+        if (s != nullptr && s->kind == .type_name) t = s->type;
+        if (s == nullptr) {
+            ast::TypeExpr *written = mem::alloc(ast::TypeExpr);
+            written->span = arg->span;
+            written->kind = (ast::TypeKind){.named = {.path = arg->kind.name.path}};
+            r->new_syntax = true;
+            t = types::resolve(r, written);
+            r->new_syntax = false;
+        }
+    } else if (arg->kind == .type_value) {
+        r->new_syntax = true;
+        t = types::resolve(r, arg->kind.type_value.type);
+        r->new_syntax = false;
+    }
+    r->error_count = errors;
+    if (t == nullptr || t == r->table.invalid || t->kind == .concept_type || t->kind == .automatic) return nullptr;
+    return t;
+}
+
+// The concept function `e` calls, with the types of its arguments bound in `made`; false when `e` is no call of a
+// concept function, or an argument's type is not known yet.
+static Bool concept_call(types::Checked *r, const ast::Expr *e, ConceptFrame *made) {
+    if (e->kind != .call) return false;
+    ast::ExprRef args[:] = e->kind.call.args;
+    const ast::Expr *callee = e->kind.call.callee;
+    if (callee->kind != .name) return false;
+    ast::Path path = callee->kind.name.path;
+    const types::Symbol *s = types::lookup_path(&r->scopes, path);
+    if (s == nullptr || s->kind != .function_symbol) return false;
+    const ast::Decl *decl = s->decl;
+    if (decl == nullptr) return false;
+    if (decl->kind != .function) return false;
+    ast::Param params[:] = decl->kind.function.params;
+    if (types::concept_body(decl) == nullptr || countof(args) != countof(params)) return false;
+    if (countof(args) > countof(made->args)) return false;
+    for (Usize i = 0; i < countof(args); i++) {
+        made->args[i] = concept_argument(r, args[i]);
+        if (made->args[i] == nullptr) return false;
+    }
+    made->decl = decl;
+    return true;
+}
+
+// The answer of one question that is no connective, read in its frame: a built-in question (`is_float(T)`,
+// `typeof(x) == i32`), or `true` and `false` in the body of a concept.
+static Bool leaf_answer(types::Checked *r, const ast::Expr *e, const ConceptFrame *frame, Bool *value) {
+    if (e->kind == .boolean && frame->decl != nullptr) {
+        *value = e->kind.boolean.value;
+        return true;
+    }
+    enter_frame(r, frame);
+    Bool known = types_builtin::query_value(r, e, value);
+    leave_frame(r, frame);
+    return known;
+}
+
+// The answer of a condition made of questions about types (`is_integer(typeof(x)) and is_signed(typeof(x))`,
+// `typeof(x) == *char or typeof(x) == []char`, a call of a concept function such as `floaty(typeof(x))`), joined by
+// `and`, `or` and `not`; false when a part is not such a question or its type is not known yet. A concept's call is
+// answered by its body, read with its parameters bound to the argument types, on the same stack (no recursion). An
+// instance keeps the branch the answer picks, as for one question (#1902).
+static Bool query_answer(types::Checked *r, const ast::Expr *test, Bool *answer) {
+    const ast::Expr *nodes[32];
+    Bool opened[32];
+    Usize frame_of[32];
+    Bool values[32];
+    ConceptFrame frames[8];
+    Usize frame_count = 1;
+    frames[0].decl = nullptr;
+    Usize n = 1;
+    Usize have = 0;
+    nodes[0] = test;
+    opened[0] = false;
+    frame_of[0] = 0;
+    while (n > 0) {
+        const ast::Expr *e = nodes[n - 1];
+        Usize f = frame_of[n - 1];
+        if (opened[n - 1]) {
+            n -= 1;
+            if (e->kind == .unary) {
+                values[have - 1] = !values[have - 1];
+            } else if (e->kind == .binary) {
+                Bool left = values[have - 2]; // the left side is answered first
+                Bool right = values[have - 1];
+                have -= 1;
+                values[have - 1] = e->kind.binary.op == .logical_and ? left && right : left || right;
+            } // a concept's call: the answer of its body stays
+        } else if (connective(e)) {
+            opened[n - 1] = true;
+            if (n + 2 > countof(nodes)) return false;
+            if (e->kind == .unary) {
+                nodes[n] = e->kind.unary.operand;
+                frame_of[n] = f;
+                opened[n++] = false;
+            } else if (e->kind == .binary) {
+                nodes[n] = e->kind.binary.right;
+                frame_of[n] = f;
+                opened[n++] = false;
+                nodes[n] = e->kind.binary.left;
+                frame_of[n] = f;
+                opened[n++] = false;
+            }
+        } else {
+            ConceptFrame called = {};
+            enter_frame(r, &frames[f]);
+            Bool is_concept = frame_count < countof(frames) && concept_call(r, e, &called);
+            leave_frame(r, &frames[f]);
+            if (is_concept) {
+                if (n + 1 > countof(nodes)) return false;
+                opened[n - 1] = true;
+                frames[frame_count] = called;
+                nodes[n] = types::concept_body(called.decl);
+                frame_of[n] = frame_count++;
+                opened[n++] = false;
+            } else {
+                n -= 1;
+                Bool value = false;
+                if (have == countof(values) || !leaf_answer(r, e, &frames[f], &value)) return false;
+                values[have++] = value;
+            }
+        }
+    }
+    if (have != 1) return false;
+    *answer = values[0];
+    return true;
+}
+
 static void if_statement(types::Checked *r, const ast::Stmt *s) {
     if (s->kind != .if_stmt) {
         return;
@@ -1462,7 +1650,8 @@ static void if_statement(types::Checked *r, const ast::Stmt *s) {
         return;
     }
     Bool answer = false;
-    if (types_builtin::query_value(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+    if (query_answer(r, test, &answer)) { // `is_slice(typeof(x))`: one branch is live (#1902)
+        types::set_decided(r, test, answer);
         const ast::Stmt *live = answer ? then_branch : else_branch;
         if (live != nullptr) push(live, nullptr, enter);
         return;
@@ -1505,7 +1694,7 @@ static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef 
         types::failf(r, else_branch->span, "the `else` of a binding must leave: end it with `return`, ",
                      "`break`, `continue` or a call that never returns");
     }
-    const types::Symbol *earlier = types::lookup(&r->scopes, pattern.binding);
+    const types::Symbol *earlier = types::lookup_own(&r->scopes, pattern.binding);
     if (countof(pattern.binding) > 0 && earlier != nullptr && earlier->kind == .variable) {
         types::failf(r, pattern.span, "`", pattern.binding,
                      "` hides a variable of the same name; shadowing is an error, choose another name");
@@ -1547,6 +1736,9 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     types::Symbol symbol = {
         .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     symbol.init = s->kind.if_let.value; // a fix that makes the value writable reaches it through the name (#2643)
+    if (t != nullptr && t->kind == .enumeration && types::is_payload_enum(t)) {
+        symbol.written = types_expr::payload_written(t, pattern); // `.decl(decl)` of a `*Decl` payload (#2647)
+    }
     (void)types::declare(&r->scopes, symbol);
     note_local(binding, element);
 }
@@ -1914,7 +2106,7 @@ static void walk(types::Checked *r, const ast::Stmt *root, types::TypeRef result
     for (Usize i = 0; i < r->guard_count; i++) {
         types::Guard *g = &r->guards[i];
         if (g->option && g->null_error > 0 && (!g->head_sent || g->spoiled)) {
-            r->errors[g->null_error - 1].fix = g->null_fix;
+            types::set_fix(r, g->null_error - 1, g->null_fix);
         }
     }
     state.result = outer;

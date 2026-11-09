@@ -1,0 +1,28 @@
+# Does fetch-smith work on the owner's Mac? (#2835) Started by hand (`workflow_dispatch`), it runs only that action on a
+# self-hosted Mac runner and prints the smith it fetched. A Mac that is off or asleep never takes the job: the 5-minute
+# limit counts the time the job waits for a runner, so the run ends (cancelled) instead of waiting for a day.
+name: mac-fetch-check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-fetch-check
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the newest release, as setup-smith does
+        uses: ./.github/actions/fetch-smith
+      - name: Run what was fetched
+        shell: bash
+        run: |
+          smith version | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "mac-fetch-check: fetch-smith passed on $RUNNER_NAME" | tee -a "$GITHUB_STEP_SUMMARY"
