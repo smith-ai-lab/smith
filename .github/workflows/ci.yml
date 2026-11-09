@@ -1456,7 +1456,21 @@ jobs:
           # (an agent session cannot download the artifact, but it reads the log). Output only: it never fails the job
           # and never changes the count
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
-            scripts/count_diff.sh "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" "${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY" || true
+            # a table has one or more rows per file (path, stage); a file's stage is its first row's, `pass` or the stage
+            # that failed; a file one table lacks counts as failing there
+            { awk -F'\t' -v base="${sha:0:7}" '
+                FNR == 1 { f++ }
+                !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? "pass" : "fail"; all[$1] = 1 }
+                END {
+                  for (p in all) {
+                    a = ((1, p) in st) ? st[1, p] : "fail"; b = ((2, p) in st) ? st[2, p] : "fail"
+                    if (a == b) continue
+                    if (a == "pass") { print "count: pass->fail " p; down++ } else { print "count: fail->pass " p; up++ }
+                  }
+                  n = down + up
+                  if (n == 0) print "count: no file changed against main " base
+                  else printf "count~total: %d files changed (%d pass->fail, %d fail->pass)\n", n, down + 0, up + 0
+                }' "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort | sed 's/^count~total:/count:/' || true; } | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo "count: no main results to compare (no results.tsv in the count of ${sha:0:7} or in this run)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
