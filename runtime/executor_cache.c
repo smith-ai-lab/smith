@@ -25,7 +25,7 @@
 #include "main.h"
 #include "package.h"
 #include "platform_linux.h"
-#include "test_cache.h"
+#include "self_digest.h"
 
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
