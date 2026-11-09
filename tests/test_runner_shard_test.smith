@@ -169,3 +169,31 @@ export void test_runner_shard_a_store_that_answers_twice_differently_still_gives
                              "SMITH_OUTPUT=full smith test --list --shard 1/2 --weigh $PWD/w9.tsv "
                              ">/dev/null 2>&1; cat flip.txt"));
 }
+
+// `smith test --test` compiles only the files that hold a chosen test (#2998): in a project whose second test file does
+// not compile, a run that chose a test of the first passes, a plain `smith test` still fails on the second file, and
+// the runner of the selection says so when it is asked for a test it does not hold.
+export void test_runner_shard_a_selection_does_not_compile_the_other_test_files() {
+    scratch::Project p = runner::project("runner_base", "runner_select");
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run chosen = runner::smith_test(&p, "", "--test select::good_test::good_1");
+    scratch::expect_status("select: a run that chose a test of the first file passes", 0, &chosen);
+    scratch::expect_contains("select: ... and ran it", chosen.out, "1 passed");
+    scratch::expect_lacks("select: ... without compiling the other file", chosen.out, "broken_test");
+    scratch::Run asked = runner::tests(&p, "", "--test select::good_test::good_2");
+    scratch::expect_status("select: the runner of a selection refuses another one", 1, &asked);
+    scratch::expect_contains("select: ... and says what it was built for", asked.out, "was built only for");
+    scratch::Run whole = runner::smith_test(&p, "", "");
+    scratch::expect_failure("select: a plain smith test still fails on the second file", &whole);
+    scratch::expect_contains("select: ... which it names", whole.out, "broken_test");
+    scratch::release(chosen.out);
+    scratch::release(chosen.err);
+    scratch::release(asked.out);
+    scratch::release(asked.err);
+    scratch::release(whole.out);
+    scratch::release(whole.err);
+}
