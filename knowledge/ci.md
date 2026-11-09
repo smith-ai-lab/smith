@@ -11,8 +11,8 @@ tags: [ci, process]
 for what it changed, never the full check; no git hook runs anything on a push, everything runs in CI (owner,
 2026-10-29).
 
-**CI is GitHub's.** `.github/workflows/ci.yml` runs the full check on the pull request on hosted runners
-([ci-hosted](ci-hosted.md)); the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
+**CI is GitHub's.** `.github/workflows/ci.yml` runs a light check on the pull request (the build, fmt/docs/prove/lint, the tests the change reaches, the Mac only for Mac-only files; started by ci-dispatch.yml under a budget, never ahead of the queue, [ci-hosted](ci-hosted.md)) and the full suite in the merge queue, on hosted runners
+([ci-hosted](ci-hosted.md), #2822): a green pull request is not a green queue run; the one required check is `ci`. The macOS jobs run on hosted `macos-26`; the owner's Mac takes them only as overflow when the hosted pool is saturated (and never needs to be on).
 
 **The merge queue merges.** When `ci` is green the pull request goes into GitHub's merge queue
 (`gh pr merge N --auto`). The queue makes a group of up to 5 entries on top of main, runs `ci` on the group
@@ -48,8 +48,8 @@ later and only runner minutes dropped (about 17 of 41 per queue run), so the sha
 2026-11-02 the trade-off flipped: the free plan's 20 hosted job slots were full most hours and runs waited 15 to 40 min
 for a runner, so runner minutes are the limit (owner: no paid runners). Now `build-linux` builds smith and the tests
 once, packs `build/` and `.smith/` with `tar --zstd`, and uploads it as the artifact `build-linux` (1 day); each shard
-restores it (`setup-smith` with `artifact: build-linux`), touches the files so none looks older than the checkout's
-sources, and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758.
+restores it (`setup-smith` with `artifact: build-linux`), gives the checkout's sources an old time so none is newer than
+the build (the build's own files keep their times: touching them made every step run again, #2833), and runs its tests. Measurement before and after (3 queue runs, 3 pull request runs): in the PR of #1758.
 
 **A red pull request** is its author's: read the failing job (`gh run view --log-failed`), fix it on the branch, push.
 A conflict with main is fixed by merging main into the branch, never by a rebase or a force-push.

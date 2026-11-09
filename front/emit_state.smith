@@ -70,6 +70,14 @@ export Status not_emitted(Str kind, ast::Span span) {
 }
 
 // Give back a string of the allocator in force: an `Error.message`, or a copy `msg` made.
+// The name an instance's function goes by: the module its template is declared in (`math_trig::`) and the name the
+// checker gave it (`clamp.f64`), so two instances of the same name from two modules are two functions (#2650). A fresh
+// string.
+export Str instance_name(const types::Instance *instance) {
+    if (instance->decl->kind != .function) return msg(format::push(""));
+    return msg(format::push(instance->prefix, instance->decl->kind.function.name));
+}
+
 export void free_text(Str text) {
     mem::free((char *)(Usize)text.data);
 }
