@@ -782,7 +782,7 @@ static const char *const build_runtime_sources[] = {
     "runtime/account.c",       "runtime/cache.c",          "runtime/changed.c",        "runtime/coverage.c",
     "runtime/docs.c",          "runtime/executor.c",       "runtime/executor_cache.c", "runtime/executor_manifest.c",
     "runtime/executor_plan.c", "runtime/executor_run.c",   "runtime/executor_state.c", "runtime/executor_tools.c",
-    "runtime/explain.c",       "runtime/front_flag.c",     "runtime/lang.c",           "runtime/lang_body.c",
+    "runtime/explain.c",       "runtime/front_flag.c",     "runtime/import_cache.c",   "runtime/lang.c",           "runtime/lang_body.c",
     "runtime/lang_command.c",  "runtime/lang_constexpr.c", "runtime/lang_decl.c",      "runtime/lang_declare.c",
     "runtime/lang_enum.c",     "runtime/lang_fields.c",    "runtime/lang_generic.c",   "runtime/lang_head.c",
     "runtime/lang_import.c",   "runtime/lang_lambda.c",    "runtime/lang_lex.c",       "runtime/lang_names.c",

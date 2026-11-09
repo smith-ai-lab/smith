@@ -5,6 +5,7 @@
 // end linked, so it has none of this.
 #include "front_flag.h"
 #include "core.h"
+#include "import_cache.h"
 #ifdef __APPLE__
 #include "sdk_cache.h"
 #endif
@@ -333,7 +334,9 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     smith_front_args = args;
     front_compile_before_file(sources > 1 ? smith_front_flags_of_file : nullptr);
     if (sources > 0) smith_front_debug_flag(count, args);
-    if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
+    int compiled = sources > 0 ? front_compile_run(smith_front_sources, smith_front_objects, sources, triple) : 0;
+    smith_import_cache_report();
+    if (compiled != 0) return -1;
     int used = first;
     size_t seen = 0;
     for (int i = 0; i < count; i++) { // bounded by count

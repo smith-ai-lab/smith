@@ -1,0 +1,176 @@
+// front::module_cache: a module's parse tree on disk (#2891, knowledge/front-end.md "From disk"). #2888 keeps each
+// module a process parses in a table; this keeps the tree between processes, CI jobs and machines, so a process that
+// imports std reads its trees instead of lexing and parsing it again.
+//
+// The tree is stored as an image (runtime/import_cache.c): the module is parsed twice, each time with every block the
+// parser asks for taken from a region of its own (this file's allocator), on a copy of the source made first in that
+// region. The two regions hold the same bytes but for the pointers into themselves, which is how the store tells them
+// from the rest: they are written as offsets, and a load moves them to where the image now is. Any other difference, or
+// a word holding an address the process has mapped outside the regions, and nothing is stored: the image would not
+// mean the same in another process. So the walk names no kind of node, and a new kind needs nothing here.
+//
+// The key is the source text, the module's path and the roots that name it (both relative to the project), and what
+// kind of read it was (a file, or std embedded in smith): what the parse and the naming read. The compiler is the
+// folder (`smith_import_cache_folder`). A module that does not parse or names itself wrongly is never stored.
+//
+//   key(kind, path, named, source)  the key of a read
+//   load(key)                       the stored tree, or null
+//   begin()                         the parses that follow take their memory from a new region (until `end`); false
+//                                   when no region can be had
+//   end()                           back to the allocator before `begin`; the region is kept
+//   store(key, tree)                the two regions of the last two `begin`s, the tree of the first: stored when they
+//                                   differ only by their own pointers. The second region is released, the first is
+//                                   kept (it holds the tree the caller goes on with)
+//   forget()                        releases the regions of the last `begin`s that will not be stored
+module front::module_cache;
+
+import front::ast;
+import std::contract;
+import std::format;
+import std::mem;
+import <string.h>;
+
+// Keep in step with SmithImportRegion in runtime/import_cache.h.
+struct Region {
+    U8 *base;
+    Usize used;
+    Usize reserved;
+};
+
+extern const char *smith_import_cache_folder();
+extern void smith_import_cache_key(const void *material, Usize size, char *key);
+extern void smith_import_cache_count(const char *kind, Bool hit);
+extern Bool smith_import_region_open(Region *region, Usize reserve);
+extern void smith_import_region_close(Region *region);
+extern void smith_import_region_trim(Region *region);
+extern void *smith_import_region_take(Region *region, Usize size, Usize align);
+extern Bool smith_import_image_store(const char *key, const Region *a, const Region *b, Usize root);
+extern void *smith_import_image_load(const char *key);
+
+// The address space of one region: std's largest module takes some megabytes; committed only as it is used.
+constexpr Usize region_reserve = 1ULL << 32;
+// A block starts this far after its header, which holds its size and the room it has (16: the front end's largest
+// alignment).
+constexpr Usize block_header = 16;
+
+static Region regions[2];
+static Usize region_count = 0;
+static Region *current = nullptr;
+static mem::Allocator *before_begin = nullptr;
+
+// Whether the cache is on for this process (a folder for this smith's entries).
+export Bool enabled() {
+    const char *folder = smith_import_cache_folder();
+    return folder != nullptr && folder[0] != 0;
+}
+
+static Usize room_of(const void *block) {
+    return *(const Usize *)((const U8 *)block - block_header + 8);
+}
+
+static void *region_alloc(mem::Allocator *self, Usize size, Usize align) {
+    (void)self;
+    if (align > block_header) return nullptr;
+    U8 *raw = (U8 *)smith_import_region_take(current, size + block_header, block_header);
+    if (raw == nullptr) return nullptr;
+    *(Usize *)raw = size;
+    *(Usize *)(raw + 8) = size;
+    return raw + block_header;
+}
+
+// A block that has room grows in place; the last block of the region grows into what follows it; any other is copied
+// to a block with twice the room, so a list grown one element at a time is copied a logarithmic number of times.
+static void *region_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
+    if (block == nullptr) return region_alloc(self, size, align);
+    U8 *at = (U8 *)block;
+    Usize old = *(Usize *)(at - block_header);
+    Usize room = room_of(block);
+    if (size <= room) {
+        *(Usize *)(at - block_header) = size;
+        return block;
+    }
+    if (at + room == current->base + current->used && current->reserved - current->used >= size - room) {
+        current->used += size - room;
+        *(Usize *)(at - block_header) = size;
+        *(Usize *)(at - block_header + 8) = size;
+        return block;
+    }
+    Usize grown = 2 * room > size ? 2 * room : size;
+    U8 *moved = (U8 *)region_alloc(self, grown, align);
+    if (moved == nullptr) return nullptr;
+    c::memcpy(moved, at, old < size ? old : size);
+    *(Usize *)(moved - block_header) = size;
+    return moved;
+}
+
+static void region_free(mem::Allocator *self, void *block) {
+    (void)self;
+    (void)block; // a region is released whole
+}
+
+static Bool region_owns(mem::Allocator *self, const void *block) {
+    (void)self;
+    const U8 *at = (const U8 *)block;
+    return current != nullptr && at >= current->base && at < current->base + current->used;
+}
+
+static Usize region_size(mem::Allocator *self, const void *block) {
+    (void)self;
+    return *(const Usize *)((const U8 *)block - block_header);
+}
+
+static mem::Allocator region_allocator = {.alloc = region_alloc,
+                                          .realloc = region_realloc,
+                                          .free = region_free,
+                                          .owns = region_owns,
+                                          .size = region_size};
+
+export Str key(Str kind, Str path, Str named, Str source) {
+    format::Chars material = format::push("smith-module 1\n", kind, "\n", path, "\n", named, "\n", source);
+    char digits[33] = {};
+    smith_import_cache_key(material.data, countof(material), digits);
+    mem::free(material.data);
+    format::Chars text = format::push((const char *)digits);
+    return format::bytes(text.data, countof(text));
+}
+
+export const ast::Module *load(Str key) {
+    contract::trusted(); // the image's memory is the runtime's
+    const ast::Module *tree = (const ast::Module *)smith_import_image_load(key.data);
+    smith_import_cache_count("m", tree != nullptr);
+    return tree;
+}
+
+export Bool begin() {
+    if (region_count == 2) return false;
+    if (!smith_import_region_open(&regions[region_count], region_reserve)) return false;
+    current = &regions[region_count];
+    region_count += 1;
+    before_begin = mem::set_allocator(&region_allocator);
+    return true;
+}
+
+export void end() {
+    mem::set_allocator(before_begin);
+    current = nullptr;
+}
+
+export void forget() {
+    for (Usize i = 0; i < region_count; i++) {
+        smith_import_region_close(&regions[i]);
+    }
+    region_count = 0;
+}
+
+export Bool store(Str key, const ast::Module *tree) {
+    contract::trusted(); // the regions are the runtime's
+    Bool stored = false;
+    if (region_count == 2 && tree != nullptr) {
+        Usize root = (Usize)((const U8 *)tree - regions[0].base);
+        stored = smith_import_image_store(key.data, &regions[0], &regions[1], root);
+    }
+    if (region_count == 2) smith_import_region_close(&regions[1]);
+    if (region_count > 0) smith_import_region_trim(&regions[0]);
+    region_count = 0; // the first region holds the tree: it is the process's for its life
+    return stored;
+}
