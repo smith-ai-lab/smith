@@ -31,6 +31,12 @@ inputs:
       shards measure a release smith, so the count is not slowed by the dev profile
     default: dev
 
+  stage0:
+    description: >
+      the release to build with instead of the newest (`stage0-<commit>`), waited for and never replaced; main's `warm` names its
+      own commit's, the one every job after it fetches (#2833). Empty: the newest
+    default: ""
+
 outputs:
   llvm-key:
     description: the cache key of the LLVM pack
@@ -82,9 +88,24 @@ runs:
         key: smith-steps-${{ runner.os }}-${{ github.sha }}
         restore-keys: smith-steps-${{ runner.os }}-
 
+    - name: Restore the packages and tools
+      # a job that takes the build of `build-linux` restores no step cache, but still needs the packages the tests
+      # fetch (the tree-sitter CLI, Neovim): main's `warm` saves them apart, a small cache (#2825), so such a job
+      # reaches github.com for a package only when this cache lacks it
+      if: inputs.artifact != ''
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/smith/packages
+          ~/.cache/smith/tools
+        key: smith-tools-${{ runner.os }}-${{ github.sha }}
+        restore-keys: smith-tools-${{ runner.os }}-
+
     - name: Fetch the previous smith
       if: inputs.artifact == ''
       uses: ./.github/actions/fetch-smith
+      with:
+        tag: ${{ inputs.stage0 }}
 
     - name: Fetch the LLVM pack
       if: inputs.artifact == ''
@@ -105,10 +126,20 @@ runs:
         SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
-        smith build -DPROFILE=${{ inputs.profile }}
+        # the output is kept to count the steps the step cache served (#2833): "N steps, M cached"
+        smith build -DPROFILE=${{ inputs.profile }} 2>&1 | tee "$RUNNER_TEMP/build.out"
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
-        echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "build: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/build.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/build.out" || true) cached ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Report the step cache (build)
+      if: inputs.artifact == ''
+      continue-on-error: true
+      uses: ./.github/actions/cache-report
+      with:
+        name: steps
+        log: ${{ runner.temp }}/build.out
+        inputs: '^(build\.c|patches/|llvm/)'
 
     - name: Build the tests
       if: inputs.artifact == '' && inputs.tests == 'true'
@@ -143,7 +174,16 @@ runs:
           cat "$RUNNER_TEMP/build-failed.txt"
           exit 1
         fi
-        echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "tests built: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/list.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/list.out" || true) cached" | tee -a "$GITHUB_STEP_SUMMARY"
+
+    - name: Report the step cache (tests built)
+      if: inputs.artifact == '' && inputs.tests == 'true'
+      continue-on-error: true
+      uses: ./.github/actions/cache-report
+      with:
+        name: tests-built
+        log: ${{ runner.temp }}/list.out
+        inputs: '^(build\.c|patches/|llvm/)'
 
     - name: Download the build of this run
       if: inputs.artifact != ''
@@ -157,10 +197,12 @@ runs:
       shell: bash
       run: |
         start=$(date +%s)
-        # same checkout path in every job, so the absolute paths inside build/ still hold. The files get the time of
-        # now, newer than the checkout's sources, so nothing looks out of date and is rebuilt
+        # same checkout path in every job, so the absolute paths inside build/ still hold. The build keeps the times it
+        # was written with (a step records the time of each input it read, and is out of date when an input is newer
+        # than that: touching the files made all 318 steps run, 3 minutes), and the checkout's sources, the same
+        # commit's, get an old time so that they are not newer than the build (#2833)
         tar -x --zstd -f "$RUNNER_TEMP/smith-build/build.tar.zst"
-        find build .smith -exec touch -h {} +
+        git ls-files -z | xargs -0 touch -c -h -d '2001-01-01 00:00:00'
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         # the pack, when the cache above missed it (the first run of a configuration)

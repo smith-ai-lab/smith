@@ -1,0 +1,96 @@
+# Finds a pull request the merge queue lost and queues it again (#2900). On 2026-11-09 #2885 got `added_to_merge_queue`
+# at 07:04:49Z but never had a queue entry (no `merge_group` run, absent from the queue's list), and sat 75 minutes until
+# a runner noticed. Every 10 minutes (and by hand) this job lists the queue's entries on `main`, and re-queues each open
+# PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
+# it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it).
+name: queue-heal
+run-name: "queue-heal"
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: queue-heal
+  cancel-in-progress: false
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      REPO: ${{ github.repository }}
+      BASE_TOKEN: ${{ github.token }}
+      OWNER_TOKEN: ${{ secrets.QUEUE_OPS_TOKEN }}
+      # a PR is lost only when its `added_to_merge_queue` is older than this many seconds
+      GRACE: "900"
+    steps:
+      - name: Re-queue the PRs the queue lost
+        shell: bash
+        run: |
+          set -u
+          log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          export GH_TOKEN="${OWNER_TOKEN:-$BASE_TOKEN}"
+
+          # the queue's entries on main: "<pr>" per line, front first
+          entries() {
+            gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+              query($owner: String!, $name: String!) {
+                repository(owner: $owner, name: $name) {
+                  mergeQueue(branch: "main") { entries(first: 100) { nodes { position pullRequest { number } } } }
+                }
+              }' --jq '.data.repository.mergeQueue.entries.nodes | sort_by(.position)[] | .pullRequest.number'
+          }
+
+          # takes the PR out of the queue (nothing to do when it has no entry) and queues it again, as queue-ops'
+          # dequeue and enqueue do (dequeuePullRequest takes the PULL REQUEST's node id)
+          requeue() {
+            local id entry
+            id=$(gh api "repos/$REPO/pulls/$1" --jq .node_id) || return 1
+            entry=$(gh api graphql -f query='
+              query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
+              -f id="$id" --jq '.data.node.mergeQueueEntry.id // empty') || return 1
+            if [ -n "$entry" ]; then
+              gh api graphql -f query='
+                mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
+                -f id="$id" --silent || return 1
+            fi
+            gh api graphql -f query='
+              mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
+              -f id="$id" --jq '.data.enqueuePullRequest.mergeQueueEntry.position'
+          }
+
+          # a failed lookup must stop the job: with no entry list every queued PR would look lost
+          list=$(entries) || { log "queue-heal: cannot read the queue's entries, nothing done"; exit 1; }
+          queued=" $(echo "$list" | tr '\n' ' ')"
+          q=$(echo "$list" | grep -c . || true)
+          now=$(date -u +%s)
+          lost=0
+          # a PR labelled `dequeued` was taken out on purpose by queue-ops: an API dequeue leaves no timeline event
+          open=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+            --jq '.[] | select([.labels[].name] | index("dequeued") | not) | .number') \
+            || { log "queue-heal: cannot list the open PRs, nothing done"; exit 1; }
+          for pr in $open; do
+            case "$queued" in *" $pr "*) continue ;; esac
+            # the last merge-queue event of the PR: "<event> <time>"
+            events=$(gh api -X GET "repos/$REPO/issues/$pr/timeline" -f per_page=100 --paginate --jq \
+              '.[] | select(.event == "added_to_merge_queue" or .event == "removed_from_merge_queue") | "\(.event) \(.created_at)"') \
+              || { log "queue-heal: #$pr timeline unreadable, skipped"; continue; }
+            last=$(echo "$events" | tail -n 1)
+            case "$last" in added_to_merge_queue*) ;; *) continue ;; esac
+            since=${last#* }
+            [ $((now - $(date -u -d "$since" +%s))) -gt "$GRACE" ] || continue
+            if pos=$(requeue "$pr"); then
+              log "queue-heal: #$pr lost since $since, re-queued at position $pos"
+            else
+              log "queue-heal: #$pr lost since $since, re-queue failed"
+            fi
+            lost=$((lost + 1))
+          done
+          [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
+          exit 0

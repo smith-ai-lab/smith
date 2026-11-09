@@ -140,5 +140,5 @@ export inline typeof(x) clamp(auto x, typeof(x) low, typeof(x) high) {
 
 // a at t = 0 and b at t = 1: a * (1 - t) + b * t, exact at both ends.
 export inline typeof(a) lerp(auto a, typeof(a) b, typeof(a) t) {
-    return a * (1 - t) + b * t;
+    return a * ((typeof(t))1 - t) + b * t;
 }
