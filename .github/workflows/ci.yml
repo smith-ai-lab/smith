@@ -1427,6 +1427,7 @@ jobs:
           now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
           if [ -z "$now" ]; then
             echo "::error::the count was not measured, and a merge needs its count: see the Count step's output above (the tail is in the job summary)"
+            echo "count: no main results to compare (this run's count was not measured)" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           # main's last count: the artifact of the newest commit on main's first-parent line that has one (a merge of
@@ -1446,14 +1447,18 @@ jobs:
             before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
-          if [ -z "$before" ]; then echo "no count on main's last 20 commits: nothing to compare with"; exit 0; fi
-          # the files whose result changed against main (#2832): path, old stage, new stage (a file's stage is its
-          # first row's; `-` is a file the table does not have)
+          if [ -z "$before" ]; then
+            echo "no count on main's last 20 commits: nothing to compare with"
+            echo "count: no main results to compare (no passing count on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # the files that went from pass to fail or back against main's last passing count (#2879), in the log and the summary
+          # (an agent session cannot download the artifact, but it reads the log). Output only: it never fails the job
+          # and never changes the count
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
-            echo "files whose result changed against main (path, main, now):"
-            awk -F'\t' 'FNR==1 {f++} !((f, $1) in st) {st[f, $1]=$2; all[$1]=1}
-              END {for (p in all) {a=((1,p) in st)?st[1,p]:"-"; b=((2,p) in st)?st[2,p]:"-"; if (a!=b) print "  " p "\t" a "\t" b}}' \
-              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | sort | head -n 200
+            scripts/count_diff.sh "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" "${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "count: no main results to compare (no results.tsv in the count of ${sha:0:7} or in this run)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
