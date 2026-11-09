@@ -68,7 +68,8 @@ static Bool at_statement_start(Str source, Usize at, Usize floor) {
     Usize back = at;
     while (back > floor && (source[back - 1] == ' ' || source[back - 1] == '\t'))
         back -= 1;
-    if (back == floor) return false;
+    // the first statement of a body in smith's own syntax starts the body's span (only its indentation comes before)
+    if (back == floor) return true;
     char before = source[back - 1];
     return before == '\n' || before == '{' || before == ';' || before == '}';
 }
