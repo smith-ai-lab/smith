@@ -2482,6 +2482,8 @@ static ast::Enumerator parse_enumerator(parse::Parser *p, Style *style) {
     // smith's own syntax: `circle: Circle`, and a lowercase name that ends its line (`red`, the next on its own line).
     Bool payload_ahead = head.kind == lex::name && parse::peek_at(p, 1).kind == lex::colon;
     Bool line_variant = head.kind == lex::name && head.line_break;
+    // a capitalized variant that ends its line is one too (`End_Check` above `End_Signal`, in a mended import: #2648)
+    if (head.kind == lex::type_name && head.line_break && parse::peek_at(p, 1).line_break) line_variant = true;
     if (payload_ahead) {
         style->saw_new = true;
         item.name = parse::text(p, parse::advance(p));
