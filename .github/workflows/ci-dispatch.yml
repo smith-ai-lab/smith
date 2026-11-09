@@ -119,6 +119,14 @@ jobs:
             if [ "$queue_waits" = 1 ] || [ $((used + PER_RUN)) -gt "$BUDGET" ]; then
               waiting=$((waiting + 1)); continue
             fi
+            # The status-filtered scan above can lag behind a run dispatched a minute ago (#2896: #2895 d192248 was
+            # dispatched twice 56 s apart). The list by head_sha, the one the wait below reads, is the authority.
+            dup=$(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=workflow_dispatch -f head_sha="$sha" \
+              -f per_page=10 --jq '[.workflow_runs[] | select(.status != "completed")][0].id // empty' 2>/dev/null)
+            if [ -n "$dup" ]; then
+              log "dispatch: #$pr ${sha:0:7} already live (run $dup)"
+              used=$((used + PER_RUN)); live="${live}$dup:$sha "; continue
+            fi
             if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f ref="$ref" -f "inputs[pr]=$pr" --silent; then
               log "started the check of #$pr (${sha:0:7})"
               used=$((used + PER_RUN)); started=$((started + 1)); live="${live}0:$sha "
