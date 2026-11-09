@@ -531,7 +531,7 @@ static Kept read_kept(Str kind, Str path, Str named, Str source, roots::Roots na
         kept.tree = hit;
         return kept;
     }
-    if (!module_cache::begin()) {
+    if (!module_cache::begin(countof(source))) {
         mem::Allocator *outside = enter_shared();
         Kept kept = parse_kept(path, named, source, named_by, std_name);
         mem::set_allocator(outside);
@@ -550,7 +550,7 @@ static Kept read_kept(Str kind, Str path, Str named, Str source, roots::Roots na
         module_cache::forget();
         return failed;
     }
-    if (module_cache::begin()) {
+    if (module_cache::begin(countof(source))) {
         (void)parse_kept(path, named, source, named_by, std_name);
         module_cache::end();
     }
