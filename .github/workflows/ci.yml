@@ -68,6 +68,11 @@ jobs:
       scope: ${{ steps.scope.outputs.scope }}
       # whether `macos` runs: always, except on a pull request whose diff touches nothing only the Mac sees (#2822)
       mac_run: ${{ steps.scope.outputs.mac_run }}
+      # whether the front-end count runs (#2914): every queue entry and nightly run, and a PR check whose diff touches
+      # what can change the count
+      count: ${{ steps.scope.outputs.count }}
+      # the base a PR check is compared against (the count's gate reads main's last count from it)
+      base: ${{ steps.pr.outputs.base }}
       # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
       batch: ${{ steps.batch.outputs.batch }}
       prs: ${{ steps.prs.outputs.prs }}
@@ -170,9 +175,18 @@ jobs:
             if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_run=true; fi
             if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_run=true; fi
           fi
+          # The count (#2914) runs in every queue entry and nightly run. A PR check runs it only when its diff touches
+          # what the count reads: the front end, std, the C import, the language runtime or the build; a docs-only or
+          # .github-only PR gets no count jobs and no extra cost.
+          count=false
+          case "$GITHUB_EVENT_NAME" in merge_group | schedule) count=true ;; esac
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
+            if printf '%s\n' "$changed" | grep -E '^(front/|lib/std/|shim/cimport|runtime/front|runtime/lang|build[.]c$)' >/dev/null; then count=true; fi
+          fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope (macos: $mac_run)" >>"$GITHUB_STEP_SUMMARY"
+          echo "count=$count" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope (macos: $mac_run, count: $count)" >>"$GITHUB_STEP_SUMMARY"
 
       - name: The pull requests this queue entry tests
         id: prs
@@ -770,6 +784,7 @@ jobs:
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
+          COUNT: ${{ needs.changes.outputs.count }}
           BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
         run: |
@@ -797,6 +812,8 @@ jobs:
           if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed FRONTEND_COVERAGE"; fi
+          # a PR check owes it when its diff reaches what the count reads (#2914)
+          if [ "$SCOPE" = full ] && [ "$EVENT" = workflow_dispatch ] && [ "$COUNT" = true ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
             eval "result=\$$name"
             if [ "$result" != success ]; then
@@ -1119,7 +1136,7 @@ jobs:
     # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
     # count of a queue run is this job, the merge and the gate (3 jobs); a cold one packs the build for the shards.
     needs: [changes, pack]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.count == 'true' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
     # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
@@ -1128,6 +1145,9 @@ jobs:
       # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
       shards: ${{ steps.plan.outputs.shards }}
       count: ${{ steps.plan.outputs.count }}
+      # a PR check measures a sample (#2914): the first two parts only, and the rows it was owed
+      sampled: ${{ steps.plan.outputs.sampled }}
+      missed: ${{ steps.plan.outputs.missed }}
     permissions:
       contents: write # test-cache/save: `gh release create` of the import cache this job made (#2891)
       actions: read
@@ -1205,9 +1225,16 @@ jobs:
           if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
           [ "$n" -lt 1 ] && n=1
           [ "$n" -gt 8 ] && n=8
+          # A PR check (#2914) runs the first two parts of a count that has more: about a quarter of the rows, spread over
+          # the tree as the parts split it. All eight would cost the 65 runner-minutes of a cold queue run out of the
+          # 20 shared jobs, for a count the queue repeats on the very commit anyway.
+          run=$n; sampled=false
+          if [ "${{ github.event_name }}" = workflow_dispatch ] && [ "$n" -gt 2 ]; then run=2; sampled=true; fi
           echo "count=$n" >>"$GITHUB_OUTPUT"
-          echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
-          echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "sampled=$sampled" >>"$GITHUB_OUTPUT"
+          echo "missed=${missing:-0}" >>"$GITHUB_OUTPUT"
+          echo "shards=$(seq -s, 1 "$run" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
+          echo "count parts: $n, run: $run (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Count the rows left, here
         # one part or none left (a warm run): measured in this job, as part 1 of 1, so no shard job runs
         if: ${{ steps.plan.outputs.count == '1' }}
@@ -1277,7 +1304,7 @@ jobs:
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
     # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
     needs: [changes, frontend-coverage-fix]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.count == 'true' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -1365,7 +1392,7 @@ jobs:
     # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count took 9 to 19 minutes on 4 cores on 2026-11-06,
     # so 30 keeps a slow count from failing its group now that it gates (10 groups hit the old 20 that morning).
     needs: [changes, build-linux, frontend-coverage-fix, frontend-coverage-shard]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.count == 'true' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1401,6 +1428,8 @@ jobs:
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
           parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
+          # a PR check's sample (#2914): only the first two parts ran
+          [ "${{ needs.frontend-coverage-fix.outputs.sampled }}" = true ] && parts=2
           for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
@@ -1410,7 +1439,14 @@ jobs:
               tail -n 20 "$d/output.txt" 2>/dev/null >>"$out"
             fi
           done
-          if [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
+          if [ "${{ needs.frontend-coverage-fix.outputs.sampled }}" = true ]; then
+            # the sample is not a whole table: the shards' tables are joined as they are, and the gate reads only these files
+            if [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
+              for t in $(printf %s "$tables" | tr ',' ' '); do cat "$t"; done >"$RUNNER_TEMP/coverage/results.tsv"
+              measured=$(grep -v '^[[:space:]]' "$RUNNER_TEMP/coverage/results.tsv" | cut -f1 | sort -u | wc -l)
+              echo "frontend-coverage-sample: $measured ${{ needs.frontend-coverage-fix.outputs.missed }}" >>"$out"
+            fi
+          elif [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
             "$SMITH" build frontend-coverage -Dmerge="$tables" -Dsmith="$SMITH" >>"$out" 2>&1
             echo "status: $?" >>"$out"
             cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
@@ -1422,8 +1458,11 @@ jobs:
         run: |
           out="$RUNNER_TEMP/coverage/output.txt"
           line=$(sed -n 's/^frontend-coverage: \([0-9][0-9]*\) of \([0-9][0-9]*\) files pass$/\1 \2/p' "$out" 2>/dev/null | tail -n 1)
+          sample=$(sed -n 's/^frontend-coverage-sample: \([0-9][0-9]*\) \([0-9][0-9]*\)$/\1 \2/p' "$out" 2>/dev/null | tail -n 1)
           {
-            if [ -n "$line" ]; then
+            if [ -n "$sample" ]; then
+              echo "### Front-end coverage (PR check): measured ${sample% *} of ${sample#* } rows; the queue run measures all"
+            elif [ -n "$line" ]; then
               echo "### Front-end coverage: ${line% *} of ${line#* } files pass"
               echo
               echo '```'
@@ -1444,7 +1483,8 @@ jobs:
             fi
           } >>"$GITHUB_STEP_SUMMARY"
           # one fixed line for the lead's watcher (`gh api` reads this job's log): <sha> <passed> <total>
-          if [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
+          if [ -n "$sample" ]; then echo "count (PR check): measured ${sample% *} of ${sample#* } rows; the queue run measures all"
+          elif [ -n "$line" ]; then echo "frontend-coverage: $GITHUB_SHA $line"
           else echo "frontend-coverage: $GITHUB_SHA unmeasured"; fi
           # the total errors (#2731): frontend-errors: <sha> <errors> <files failing>
           errs=$(grep '^frontend-errors: ' "$out" 2>/dev/null | tail -n 1 || true)
@@ -1468,11 +1508,14 @@ jobs:
         if: always()
         shell: bash
         env:
-          BASE: ${{ github.event.merge_group.base_sha }}
+          BASE: ${{ github.event.merge_group.base_sha || needs.changes.outputs.base }}
           HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          SAMPLED: ${{ needs.frontend-coverage-fix.outputs.sampled }}
+          PR_NUMBER: ${{ inputs.pr }}
         run: |
           pass='s/^frontend-coverage: \([0-9][0-9]*\) of [0-9][0-9]* files pass$/\1/p'
           now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
+          if [ -z "$now" ] && [ "$SAMPLED" = true ] && grep -q '^frontend-coverage-sample: ' "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null; then now=sample; fi
           if [ -z "$now" ]; then
             echo "::error::the count was not measured, and a merge needs its count: see the Count step's output above (the tail is in the job summary)"
             echo "count: no main results to compare (this run's count was not measured)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1503,6 +1546,25 @@ jobs:
           # the files that went from pass to fail or back against main's last passing count (#2879), in the log and the summary
           # (an agent session cannot download the artifact, but it reads the log). Output only: it never fails the job
           # and never changes the count
+          if [ "$SAMPLED" = true ]; then
+            # A PR check's sample (#2914): the gate compares only the files the sample measured. A file that passes in
+            # main's last count and fails here is a loss; there is no total to compare, the queue run counts them all.
+            if [ ! -f "$dir/results.tsv" ]; then
+              echo "count (PR check): no main results to compare (no results.tsv in the count of ${sha:0:7})" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            lost=$(awk -F'\t' 'FNR == 1 { f++ } /^[ \t]/ { next }
+              f == 1 { if (!($1 in m)) m[$1] = ($2 == "pass") ? "pass" : "fail"; next }
+              !($1 in s) { s[$1] = ($2 == "pass") ? "pass" : "fail" }
+              END { for (p in s) if (s[p] == "fail" && m[p] == "pass") print "count: pass->fail " p }' \
+              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort)
+            [ -n "$lost" ] && printf '%s\n' "$lost" | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ -z "$lost" ]; then echo "count (PR check): no measured file went from pass to fail against main at ${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+            why=$([ -n "$PR_NUMBER" ] && gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.body // ""' | grep -m1 '^Count drop: ') || true
+            if [ -n "$why" ]; then echo "::warning::files fell against main; the PR says: ${why#Count drop: }"; exit 0; fi
+            echo "::error::$(printf '%s\n' "$lost" | wc -l) of the files measured here passed in main's last count and fail now (listed above). Fix them, or add a line 'Count drop: <why>' to the PR body and ask the lead"
+            exit 1
+          fi
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
             # a table has one or more rows per file (path, stage); a file's stage is its first row's, `pass` or the stage
             # that failed; a file one table lacks counts as failing there
