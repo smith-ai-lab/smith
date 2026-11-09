@@ -190,8 +190,9 @@ static types_convert::Literal folded_literal(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
-// The constant that `e` is, when it is an integer or floating literal (possibly negated).
+// The constant that `e` is, when it is an integer or floating literal (possibly negated), or a string literal.
 static types_convert::Literal literal_of(const ast::Expr *e) {
+    if (e->kind == .string) return types_convert::string_literal();
     if (e->kind == .integer) {
         return types_convert::constant_unsigned(e->kind.integer.value);
     }
