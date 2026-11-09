@@ -72,7 +72,7 @@ runs:
                 ok=true
                 if [ "$kind" = imports ] && [ -n "$FROM" ]; then
                   ok=false; set -f # the patterns are words, not files of the working folder
-                  for pattern in $FROM; do case "$job" in $pattern) ok=true ;; esac; done
+                  for pattern in $FROM; do [[ $job == $pattern ]] && ok=true; done # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
                 fi
                 [ "$ok" = true ] && echo "$url"
               done || true)
