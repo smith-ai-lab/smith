@@ -12,7 +12,7 @@ tags: [ci, process]
 |---|---|---|
 | `changes` | first, light | the scope, the matrix, the macOS runner, batching |
 | `build-linux` | the dev build, the sizing, and the one test part | the tree every Linux check restores; the part runs here, on the tree just built, when the misses fit in one part |
-| `check-fmt-prove`, `check-lint` | after `build-linux` | two jobs so neither is longer than the other path (lead, 2026-11-08, #2833); their `Checks` step prints where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
+| `check-fmt-prove`, `check-lint` | after `build-linux` | two jobs so neither is longer than the other path (lead, 2026-11-08, #2833); their `Checks` step prints where the time went (#2985): lint's `linted N files (R run, C cached, T s, setup S s: build info, needs, plan and hash)`, prove's `G groups, build B s, proofs P s` and its count of functions reused from the cache |
 | `macos` | beside them | the one macOS job (#1709): lint and the `--macos-only` tests whose inputs changed (its own test store) |
 | `frontend-coverage-fix`, `frontend-coverage` (and `-shard` ×2 to 8 when two or more parts are left) | the count ([count](count.md)) | the fix job builds the release smith and, in a warm run, counts itself (#2832) |
 | `ci` | last, light | the verdict |

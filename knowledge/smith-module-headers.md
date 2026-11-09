@@ -38,7 +38,7 @@ run by hand (no task regenerates headers and no check compares them). smith's ow
   header of each from them with the same binary, in parallel within a wave: a module's header waits for the headers of
   the modules it imports (their `import std::<name>;` lines), or it would name their types by the fallback and the
   stamp would keep that header (`tests/header_order_test.smith`) (`smith_write_lang_headers` in smith.c: about 80 ms for the 13, and
-  nothing while the stamp `.smith/include/smith/.written-by`, the binary's size and mtime, and every header are there).
+  nothing while the stamp `.smith/include/smith/.written-by`, the binary's build-id and size, and every header are there; not its mtime, which a link or the restore of a build changes without changing the program, and which made the build's header steps dirty again after every `smith build`, #2995).
   smith embeds the *sources*, not headers, so the program that reads a header is the one that wrote it and no
   compatibility reader exists. `smith lsp` does the same for the nearest project, so an editor finds `<smith/arena.h>`
   before a first build.
