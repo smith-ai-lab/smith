@@ -156,7 +156,7 @@ jobs:
 
           # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
           # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
-          # three passes double it (cap 8); cancelled runs count for neither. Same PUT and token fallback as queue-ops'
+          # one pass doubles it below 4 and three from 4 up (cap 8); cancelled runs and runs with no failed job count for neither. Same PUT and token fallback as queue-ops'
           # set-build-entries. It runs from an EXIT trap, after the second pass.
           tune() {
             local id rs b t runs n m nb
@@ -166,15 +166,28 @@ jobs:
             t=$(echo "$rs" | jq -r '.updated_at // empty')
             [ -n "$b" ] && [ -n "$t" ] || { log "queue-heal: build entries unreadable, kept"; return 0; }
             runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed \
-              -f per_page=100 --paginate --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
+              -f per_page=100 --paginate --jq '.workflow_runs[] | "\(.created_at) \(.conclusion) \(.id)"') \
               || { log "queue-heal: build entries $b kept (merge_group runs unreadable)"; return 0; }
             # ISO times in UTC compare as text
             n=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "success"' | grep -c . || true)
-            m=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure"' | grep -c . || true)
+            # a failed run counts only when a job other than `ci` failed (#2970): a GitHub fault can fail a run with no failed
+            # job (jobs never created), which says nothing about the queue's health and counts like a cancelled run
+            m=0
+            for rid in $(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure" {print $3}'); do
+              if gh api -X GET "repos/$REPO/actions/runs/$rid/jobs" -f filter=latest -f per_page=100 \
+                  --jq '[.jobs[] | select(.name != "ci" and .conclusion == "failure")] | length > 0' 2>/dev/null | grep -qx true; then
+                m=$((m + 1))
+              else
+                log "queue-heal: run $rid failed with no failed job, not counted"
+              fi
+            done
             nb=$b
+            # below 4 entries one passing run doubles (a failure costs little, three serial runs cost over an hour);
+            # from 4 up it takes three
+            need=3; [ "$b" -ge 4 ] || need=1
             if [ "$m" -gt 0 ]; then
               nb=$((b / 2)); [ "$nb" -ge 1 ] || nb=1
-            elif [ "$n" -ge 3 ] && [ "$b" -lt 8 ]; then
+            elif [ "$n" -ge "$need" ] && [ "$b" -lt 8 ]; then
               nb=$((b * 2)); [ "$nb" -le 8 ] || nb=8
             fi
             if [ "$nb" = "$b" ]; then
