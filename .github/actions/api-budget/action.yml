@@ -22,5 +22,5 @@ runs:
       run: |
         line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
         [ -n "$line" ] || line=unknown
-        echo "api budget: $LABEL $line"
-        echo "api budget: $LABEL $line" >>"$GITHUB_STEP_SUMMARY"
+        echo "api budget: $LABEL $line (workflow token)"
+        echo "api budget: $LABEL $line (workflow token)" >>"$GITHUB_STEP_SUMMARY"

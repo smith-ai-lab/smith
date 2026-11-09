@@ -463,12 +463,20 @@ jobs:
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242); a documents-only change keeps the full list
           test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the macOS tests the store holds as passed are left out too (#2833): the `--macos-only` tests whose inputs did
         # not change do not run; the nightly restores nothing
         with:
           os: macos
           fresh: ${{ github.event_name == 'schedule' }}
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Checks
         timeout-minutes: 30
         shell: bash
@@ -601,11 +609,19 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         with:
           os: linux
           fresh: ${{ github.event_name == 'schedule' }}
           imports-from: linux-* # the test parts' import caches, not the count's (#2939)
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Size the test parts
         # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
         # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
@@ -1356,12 +1372,20 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
         # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
           imports-from: count
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1548,11 +1572,19 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - name: API budget (before test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} before test-cache
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
           imports-from: count count-${{ matrix.shard }}
+      - name: API budget (after test-cache)
+        uses: ./.github/actions/api-budget
+        with:
+          label: ${{ github.workflow }}/${{ github.job }} after test-cache
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
