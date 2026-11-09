@@ -44,7 +44,7 @@ already holds what the proof depends on.
 
 **The group's record** (#2994). Asking for a function's key needs its IR, so a group whose proofs were all reused still
 paid for compiling every source and loading the IR (49.9 s of a warm `smith prove` of smith itself). A group that ends
-with every function reused keeps `group-<hash>` in the same folder: the files its compiles read (the depfiles of
+with every function reused (so from its second run) keeps `group-<hash>` in the same folder: the files its compiles read (the depfiles of
 `-MD`) with a SHA-256 of each, and the lines it printed. The name is a hash of the sources, libraries, flags, budget,
 memory and loop options, the prover and LLVM versions, and `smith_import_identity` (the front end, runtime, `lib/std`
 and the LLVM pack: the compiler, by content, so a rebuild with the same sources keeps it). The next run reads the files
