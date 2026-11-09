@@ -323,6 +323,11 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     types::TypeRef bound = nullptr;
     if (state::bound_type(e, name, &bound)) return state::type_of(e, base); // `*T` in an instance
     if (countof(e->import_scope) > 0) return state::type_of(e, base);       // a record of the imported module (`*Tap`)
+    if (countof(e->instance_scope) > 0 && e->options.checked != nullptr) {  // `Written` in a generic's instance
+        const types::Symbol *own =
+            types::lookup(&e->options.checked->scopes, state::msg(format::push(e->instance_scope, name)));
+        if (own != nullptr && own->kind == .type_name) return state::type_of_checked(e, own->type, base->span);
+    }
     return ty_failf(base->span, "unknown type ", name);
 }
 

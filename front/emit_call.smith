@@ -584,20 +584,33 @@ static Bool find_record(state::Emitter *e, Str name, Usize *found) {
     return false;
 }
 
+// The record a checker symbol names, made when first named.
+static Bool record_of_symbol(state::Emitter *e, const types::Symbol *symbol, Usize *at) {
+    if (symbol == nullptr || symbol->kind != .type_name || symbol->type->kind != .record) return false;
+    ast::Span nowhere = {};
+    state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
+    if (ty == .error) {
+        state::free_text(ty.error.message);
+        return false;
+    }
+    return find_record(e, types::name_of(symbol->type), at);
+}
+
 // `c::point` where a header declared the struct `point`: the record, made when first named.
 static Bool c_record(state::Emitter *e, ast::Path path, Usize *at) {
     if (e->options.checked == nullptr) return false;
     Str full = join(path);
-    const types::Symbol *symbol = types::lookup_as(&e->options.checked->scopes, full, true); // the tag (#2610)
-    Bool made = false;
-    if (symbol != nullptr && symbol->kind == .type_name && symbol->type->kind == .record) {
-        ast::Span nowhere = {};
-        state::TyResult ty = state::type_of_checked(e, symbol->type, nowhere);
-        if (ty == .error) state::free_text(ty.error.message);
-        made = ty != .error && find_record(e, types::name_of(symbol->type), at);
-    }
+    Bool made = record_of_symbol(e, types::lookup_as(&e->options.checked->scopes, full, true), at); // the tag (#2610)
     state::free_text(full);
     return made;
+}
+
+// `Writer(...)` in the body of a generic's instance from another module: a record of that module, found under its
+// prefix.
+static Bool instance_record(state::Emitter *e, ast::Path path, Usize *at) {
+    if (e->options.checked == nullptr || countof(e->instance_scope) == 0 || countof(path.segments) != 1) return false;
+    Str full = state::msg(format::push(e->instance_scope, path.segments[0].text));
+    return record_of_symbol(e, types::lookup(&e->options.checked->scopes, full), at);
 }
 
 static Bool find_field(state::RecordType record, Str name, Usize *found) {
@@ -704,7 +717,7 @@ static Bool callee_record(state::Emitter *e, const ast::Expr *callee, Usize *at)
     if (callee->kind == .name) {
         ast::Path path = callee->kind.name.path;
         if (countof(path.segments) == 1 && find_record(e, path.segments[0].text, at)) return true;
-        if (c_record(e, path, at) || imported_record_at(e, path, at)) return true;
+        if (c_record(e, path, at) || imported_record_at(e, path, at) || instance_record(e, path, at)) return true;
         ast::Identifier expanded[8];
         return countof(path.segments) > 1 && c_record(e, through_import(e, path, expanded), at);
     }
@@ -951,7 +964,9 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
     if (!is_imported && instance == nullptr && callee->kind != .name) {
         // A call through a field that holds a function: a C function pointer, or a `fn` value of the module.
-        if (callee->kind != .member) return state::failf(x->span, "not emitted yet: a call whose callee is of kind `", state::expr_kind_name(callee), "`");
+        if (callee->kind != .member)
+            return state::failf(x->span, "not emitted yet: a call whose callee is of kind `",
+                                state::expr_kind_name(callee), "`");
         state::TyResult held = state::type_of_node(e, callee);
         if (held == .error) return {.error = held.error};
         if (held.ok.kind != .fn_value && held.ok.kind != .fn_pointer)
