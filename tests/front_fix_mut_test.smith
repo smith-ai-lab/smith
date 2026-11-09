@@ -191,3 +191,40 @@ export void test_front_fix_mut_an_inner_pointer_of_a_local_becomes_mut() {
            "fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *mut i32 = g(p)\n",
            1);
 }
+
+// A `Result` tested and left with `return made` (or `{.error = made.error}` under a loop) and then read twice as
+// `made.ok`: one `ok` after the guard.
+export void test_front_fix_mut_a_result_returned_whole_is_read_as_ok() {
+    expect(
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+        "    if made == .error:\n        return made\n    a: usize = made.ok\n    b: usize = made.ok\n    .ok(a + b)\n",
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+        "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+        2);
+}
+
+export void test_front_fix_mut_a_result_guard_in_a_loop_binds_ok() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        made: Result(usize, usize) = f(i)\n        if made == .error:\n            return made\n"
+           "        total += made.ok\n        total += made.ok\n    .ok(total)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        ok := try f(i)\n        total += ok\n        total += ok\n    .ok(total)\n",
+           2);
+}
+
+// The guard `if .error(error) := made: return .error(error)` (written by the first pass where the `try` was held back
+// by old forms) followed by `made.ok` is `ok := try`, the same site as `if made == .error:`.
+export void test_front_fix_mut_a_result_guard_in_pattern_form_is_a_try() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+           "    if .error(error) := made:\n        return .error(error)\n    a: usize = made.ok\n"
+           "    b: usize = made.ok\n    .ok(a + b)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+           "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+           2);
+}
