@@ -94,6 +94,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/yield-to-queue
         with:
           queue-wait: "true"
@@ -255,6 +257,9 @@ jobs:
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
           echo "tests: $count Linux parts ($flags), one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
@@ -280,7 +285,22 @@ jobs:
       group: mac-probe-${{ github.run_id }}
       cancel-in-progress: true
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - run: echo "the Mac started the probe"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   watch:
     # The Mac watchdog, part 2: the one that decides where `macos` runs. Hosted was picked: hosted. The Mac was picked:
@@ -302,6 +322,13 @@ jobs:
       MAC: ${{ needs.changes.outputs.mac }}
       MAC_CORES: ${{ needs.changes.outputs.cores }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Did the Mac start the probe
         id: watch
         run: |
@@ -324,6 +351,14 @@ jobs:
           echo "cores=$cores" >>"$GITHUB_OUTPUT"
           echo "dead=$dead" >>"$GITHUB_OUTPUT"
           echo "macOS job runs on $runner ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   mac-probe-end:
     # The Mac watchdog, part 3: the probe of a Mac that did not answer is still queued; a job of its concurrency group
@@ -337,7 +372,22 @@ jobs:
       group: mac-probe-${{ github.run_id }}
       cancel-in-progress: true
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - run: echo "the Mac did not answer; its probe is cancelled"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   macos:
     # everything macOS does in a run, in one job (#1709): build smith and the tests, then the macOS-only tests (a
@@ -375,6 +425,13 @@ jobs:
       contents: write # test-cache/save: `gh release create` of this job's test store (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Tools some tests need
         if: needs.changes.outputs.scope == 'full'
         timeout-minutes: 5
@@ -471,6 +528,14 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   build-linux:
     # builds smith and the tests once for the Linux shards (#1758): a hosted runner minute is the scarce thing (the free
@@ -502,6 +567,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -619,6 +686,9 @@ jobs:
         with:
           restore: "false"
           flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
@@ -641,6 +711,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -651,6 +723,9 @@ jobs:
           part: ${{ matrix.shard }}
           count: ${{ matrix.count }}
           flags: ${{ matrix.flags }}
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
@@ -671,6 +746,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -713,6 +790,9 @@ jobs:
             fi
           done
           exit $failed
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   check-lint:
     # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't.
@@ -732,6 +812,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/setup-smith
         with:
@@ -759,6 +841,9 @@ jobs:
             echo "::error::smith lint failed"
           fi
           exit $code
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   ci:
     # the one required check: green when every job that had to run is green; skipped jobs (a change of documents only)
@@ -770,6 +855,13 @@ jobs:
     permissions:
       statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Verdict
         id: verdict
         env:
@@ -855,6 +947,14 @@ jobs:
           gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
             -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
           echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
@@ -895,6 +995,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -1100,6 +1202,9 @@ jobs:
             exit 0
           fi
           gh api -X PATCH repos/${{ github.repository }}/issues/2751 -F body=@"$RUNNER_TEMP/body.md" >/dev/null
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   release:
     # a push to main (the merge queue's checked commit) publishes the stage0 release stage0-<commit>
@@ -1120,6 +1225,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - uses: ./.github/actions/setup-smith
       - name: Release
         # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
@@ -1129,6 +1236,9 @@ jobs:
           "$SMITH" build release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
@@ -1148,6 +1258,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1159,6 +1271,9 @@ jobs:
           "$SMITH" build release || code=$?
           echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit "$code"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
@@ -1195,6 +1310,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1351,6 +1468,9 @@ jobs:
         with:
           name: count
           tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage-shard:
     # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
@@ -1376,6 +1496,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1433,6 +1555,9 @@ jobs:
         with:
           name: count-${{ matrix.shard }}
           tests: "false"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   frontend-coverage:
     # the merge of the eight shards of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files
@@ -1462,6 +1587,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1646,6 +1773,9 @@ jobs:
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   count-fixed-save:
     # the queue run saves the fixed files of its own head commit (#2832). Main's `warm` publishes them with the step cache
@@ -1666,6 +1796,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - name: API budget (first)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/download-artifact@v4
         with:
           name: count-fixed-${{ github.sha }}
@@ -1701,6 +1838,14 @@ jobs:
               gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
             done
           echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: API budget (last)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+          [ -n "$line" ] || line=unknown
+          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
@@ -1715,12 +1860,17 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Publish the release
         # no smith on this runner (a hosted Ubuntu, 3 minutes): the one command of `release finish`
         # (release/publish.smith), which stays for use by hand
         run: |
           gh release edit "stage0-$GITHUB_SHA" --draft=false
           echo "release: published stage0-$GITHUB_SHA"
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget
 
   install:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
@@ -1736,6 +1886,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: API budget (first)
+        uses: ./.github/actions/api-budget
       - name: Install the release
         run: |
           export PATH="/opt/homebrew/bin:$PATH"
@@ -1777,3 +1929,6 @@ jobs:
           done
           rm -rf "$tmp"
           "$HOME/.local/bin/smith" version
+      - name: API budget (last)
+        if: always()
+        uses: ./.github/actions/api-budget

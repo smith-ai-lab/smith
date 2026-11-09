@@ -1,0 +1,26 @@
+name: api-budget
+description: >
+  Prints the REST quota the workflows' GITHUB_TOKEN has left (#2986): `api budget: <job> <remaining> of <limit>,
+  resets in <s> s`, and adds the line to the job summary. GitHub gives that token 1,000 requests an hour for the
+  whole repository, shared by every job of every run. `GET /rate_limit` does not count against it. Every job calls
+  this as its first step and as its last (`if: always()`); a job's spend is the difference between the two lines, less
+  what ran beside it. Never fails: when the call fails it prints `api budget: <job> unknown`.
+
+inputs:
+  label:
+    description: Name printed in the line
+    default: ${{ github.workflow }}/${{ github.job }}
+
+runs:
+  using: composite
+  steps:
+    - name: API budget
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
+        [ -n "$line" ] || line=unknown
+        echo "api budget: $LABEL $line"
+        echo "api budget: $LABEL $line" >>"$GITHUB_STEP_SUMMARY"
