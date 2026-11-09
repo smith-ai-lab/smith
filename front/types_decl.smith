@@ -190,8 +190,9 @@ static types_convert::Literal folded_literal(const ast::Expr *e) {
     return types_convert::no_literal();
 }
 
-// The constant that `e` is, when it is an integer or floating literal (possibly negated).
+// The constant that `e` is, when it is an integer or floating literal (possibly negated), or a string literal.
 static types_convert::Literal literal_of(const ast::Expr *e) {
+    if (e->kind == .string) return types_convert::string_literal();
     if (e->kind == .integer) {
         return types_convert::constant_unsigned(e->kind.integer.value);
     }
@@ -1430,6 +1431,37 @@ static Bool note_inline_guard(types::Checked *r, const ast::Stmt *s) {
     return true;
 }
 
+// `a.f != .none and rest` (`a.f == .none or rest`) in a statement that is not an `if` (#2647): `return s.decl != .none
+// and s.decl.n > 0`. The field is read into a local on the line before the statement, which the test and the reads in
+// `rest` use: a field does not narrow. An `if` statement and a loop's test are not these: the first has its own guard,
+// and a loop reads the field again.
+static void note_logic_guard(types::Checked *r, const ast::Expr *e) {
+    if (countof(fixed_source) == 0 || state.statement_start == 0 || !(binary_and(e) || binary_or(e))) return;
+    const ast::Expr *first = e;
+    while (binary_and(first) == binary_and(e) && binary_or(first) == binary_or(e))
+        first = binary_left(first);
+    const ast::Expr *test = null_test(first, binary_or(e));
+    if (test == nullptr || first->kind != .binary) return;
+    const ast::Expr *left = binary_left(first);
+    Str field = member_name(left);
+    if (countof(field) == 0 || name_taken(r, field)) return;
+    for (Usize i = 0; i < r->guard_count; i++) { // an outer chain or an `if` already covers this one
+        types::Guard *g = &r->guards[i];
+        if (!g->option || g->test == nullptr || !types::same_text(g->variant, field)) continue;
+        if (e->span.start >= g->test->span.start && e->span.end <= g->reads.end) return;
+    }
+    Str read = fixed_source[left->span.start:left->span.end];
+    syntax::Edits head = {};
+    head = mem::realloc(head, 2);
+    head[0] = edit_of(state.statement_start, state.statement_start,
+                      msg(format::push(field, " := ", read, "\n", indent_at(state.statement_start))));
+    head[1] = edit_of(left->span.start, left->span.end, field);
+    types::Guard guard = {.base = member_base(left), .variant = field, .option = true, .test = first};
+    guard.reads = (ast::Span){.start = first->span.end, .end = e->span.end};
+    guard.head = head;
+    add_guard(r, guard);
+}
+
 // A test of a field that is an option (#2557): `if a.f != nullptr:` guards its `then`, written `if f := a.f:`, and
 // `if a.f == nullptr: return X` with no `else` guards the rest of the block, written `f := a.f else: return X`. Each
 // read `a.f` the test guards is `f`, the field's own name (#2455: no invented names); a name `f` in scope leaves the
@@ -2063,10 +2095,9 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     state.prev_decl = state.last_decl;
     state.last_decl = nullptr;
     // The line a binding for an `if` used as a value goes before: the start of the statement that holds it (#2647).
+    state.statement_start = 0;
     // The body of an instance of a generic function is another module's text: its spans are not in `fixed_source`.
-    if (r->current != types::max_instances) {
-        state.statement_start = 0;
-    } else if (countof(fixed_source) > 0 && starts_line(s->span.start)) {
+    if (r->current == types::max_instances && countof(fixed_source) > 0 && starts_line(s->span.start)) {
         Bool plain = s->kind == .expression || s->kind == .declaration || s->kind == .return_stmt;
         state.statement_start = plain ? s->span.start : 0;
     }
@@ -2407,7 +2438,8 @@ export void install() {
                                               .cast_rule = cast_hook,
                                               .lambda_body = lambda_hook,
                                               .statement = value_block_statement,
-                                              .value_if = note_inline_guard_hook});
+                                              .value_if = note_inline_guard_hook,
+                                              .value_logic = note_logic_guard});
 }
 
 // Takes the hooks out again (the default of front::types_expr is exact equality).

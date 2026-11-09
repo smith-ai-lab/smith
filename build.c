@@ -365,14 +365,17 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         const char *name = modules[i];
         const char *header = smith_fmt(b, ".smith/include/smith/%s.h", name);
         const char *source = smith_fmt(b, "%s/%s.smith", build_library_folder, name);
+        const char *depfile = smith_fmt(b, "%s.d", header);
         SmithStep step = {
-            .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr),
+            .command =
+                smith_list(b, config->cc, "--smith-header", source, "-o", header, "-MD", "-MF", depfile, nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs =
                 smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
-            .restat = true, // the header is written only when its bytes change
+            .depfile = depfile, // the files the pass read: the step cache serves the header for their contents (#2959)
+            .restat = true,     // the header is written only when its bytes change
         };
         smith_step(b, &step);
         outputs = smith_cat(b, outputs, step.outputs, nullptr);
@@ -1106,13 +1109,15 @@ static const char *const *build_front_objects(SmithBuild *b, const BuildConfig *
         const char *header = smith_fmt(b, ".smith/include/front/%s.h", name);
         const char *object = smith_fmt(b, "%s/front_%s.o", folder, name);
         const char *depfile = smith_fmt(b, "%s/front_%s.d", folder, name);
+        const char *header_depfile = smith_fmt(b, "%s.d", header);
         SmithStep made = {
             .command = smith_cat(b, smith_list(b, config->cc, "--smith-header", source, "-o", header, nullptr), flags,
-                                 extra, nullptr),
+                                 extra, smith_list(b, "-MD", "-MF", header_depfile, nullptr), nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs = before,
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
+            .depfile = header_depfile, // served from the step cache for the files the pass read (#2959)
             .restat = true,
         };
         smith_step(b, &made);
@@ -1337,13 +1342,15 @@ static const char *const *build_template_modules(SmithBuild *b, const BuildConfi
     for (size_t i = 0; modules[i] != nullptr; i++) {
         const char *name = smith_replace_extension(b, modules[i] + strlen("templates/new/"), "");
         const char *header = smith_fmt(b, ".smith/template-new/%s.h", name);
+        const char *depfile = smith_fmt(b, "%s.d", header);
         SmithStep write = {
             .command = smith_cat(b, smith_list(b, smith_cc, "--smith-header", modules[i], "-o", header, nullptr), flags,
-                                 smith_list(b, "-I", ".smith/template-new", nullptr), nullptr),
+                                 smith_list(b, "-I", ".smith/template-new", "-MD", "-MF", depfile, nullptr), nullptr),
             .inputs = smith_list(b, modules[i], nullptr),
             .implicit_inputs = smith_list(b, smith_cc, nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", modules[i]),
+            .depfile = depfile, // served from the step cache for the files the pass read (#2959)
             .restat = true,
         };
         smith_step(b, &write);

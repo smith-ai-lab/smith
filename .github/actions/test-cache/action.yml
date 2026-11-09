@@ -23,6 +23,13 @@ inputs:
   tests:
     description: '"false" restores only the import cache (a job that runs no test, the count)'
     default: "true"
+  imports-from:
+    description: >
+      the jobs whose import caches are restored, as patterns of the last part of their tag (`count count-3`,
+      `linux-*`); empty, every job's. A count shard's set holds what that shard's files import (40 to 90 MB once the
+      module trees are stored, about 490 MB for the nine count sets of a commit), so a shard restores its own and the fix
+      job's, and a test job only the test jobs' (the dev smith's; the count's are the release smith's) (#2939)
+    default: ""
 
 runs:
   using: composite
@@ -38,13 +45,15 @@ runs:
         GH_TOKEN: ${{ github.token }}
         OS: ${{ inputs.os }}
         TESTS: ${{ inputs.tests }}
+        FROM: ${{ inputs.imports-from }}
       run: |
         # The sets of the newest commit that published them (#2938): the commit under test, then its first parents,
         # newest first, at most 20, each by its tags (`test-cache-<sha7>-<job>`, or `test-cache-<sha7>` before #2870),
         # so no page of releases is read (the repository has hundreds; the newest commit's fell past the first page,
         # #2891). In a merge queue a group's first parent is the group ahead of it, so a run reads the sets of the groups
         # before it, then main's; in a pull request it is main. The test store and the import cache may come from two
-        # commits. A tag whose release was pruned answers 404 and gh prints its body: only URLs are kept. Writes
+        # commits, and the import cache only from the jobs `imports-from` names. A tag whose release was pruned answers
+        # 404 and gh prints its body: only URLs are kept. Writes
         # <kind>-urls (one URL a line) and <kind>-from (which commit, for the summary) to RUNNER_TEMP.
         t="$RUNNER_TEMP"; : >"$t/tests-urls"; : >"$t/imports-urls"
         echo "none in the commits tried" >"$t/tests-from"; echo "none in the commits tried" >"$t/imports-from"
@@ -53,12 +62,20 @@ runs:
         back=0
         while [ -n "$sha" ] && [ "$back" -lt 20 ] && { [ "$want_tests" = true ] || [ "$want_imports" = true ]; }; do
           assets=$(for tag in $(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/test-cache-${sha:0:7}" --jq '.[].ref|sub("refs/tags/";"")' 2>/dev/null); do
-              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[]|"\(.name) \(.url)"' 2>/dev/null || true
+              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq ".assets[]|\"${tag#test-cache-*-} \\(.name) \\(.url)\"" 2>/dev/null || true
             done | grep ' https://' || true)
           for kind in tests imports; do
             want=want_$kind
             [ "${!want}" = true ] || continue
-            urls=$(printf '%s\n' "$assets" | awk -v n="smith-$kind-$OS.tar.gz" '$1 == n { print $2 }')
+            urls=$(printf '%s\n' "$assets" | while read -r job name url; do
+                [ "$name" = "smith-$kind-$OS.tar.gz" ] || continue
+                ok=true
+                if [ "$kind" = imports ] && [ -n "$FROM" ]; then
+                  ok=false; set -f # the patterns are words, not files of the working folder
+                  for pattern in $FROM; do [[ $job == $pattern ]] && ok=true; done # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                fi
+                [ "$ok" = true ] && echo "$url"
+              done || true)
             [ -n "$urls" ] || continue
             printf '%s\n' "$urls" >"$t/$kind-urls"
             echo "commit ${sha:0:7}, $back first parents back" >"$t/$kind-from"
