@@ -3,7 +3,7 @@ description: >
   A pull request's check gives its runner back while a merge queue job waits for one (#2856). GitHub has no job
   priority and hands runners out first come, first served, so a PR check job can take the runner a queue job was
   waiting for. Each heavy job of a PR check (a `workflow_dispatch` run that ci-dispatch.yml started) calls this first:
-  one check, no waiting. If a `merge_group` run of `ci.yml` is queued, or has a job queued, it force-cancels its own
+  one check, no waiting. Off since #2968 (`YIELD=0` in the first step): the step only logs. When on (`YIELD=1`): if a `merge_group` run of `ci.yml` is queued, or has a job queued, it force-cancels its own
   run, which leaves no `ci` check run behind (a plain cancel lets the always() `ci` job run and fail, a red `ci`), and
   ci-dispatch.yml starts the check again once there is room. A self-cancelled run is never a result. An API failure
   counts as no queue job waiting. A run started by hand with `no_yield: true` skips this. Needs `GH_TOKEN` with `actions: write`.
@@ -30,6 +30,8 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        # 0: a PR check no longer force-cancels itself for a queue job (#2968, an experiment); 1 gives the old yield back
+        YIELD=0
         repo=$GITHUB_REPOSITORY
         # a merge_group run that is queued, or that has a job queued (a job is listed once the jobs it needs are done,
         # so `queued` means it waits for a runner); a failed call counts as none
@@ -48,6 +50,10 @@ runs:
         }
         if ! waits; then
           echo "yield-to-queue: no merge queue job waits" >>"$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        if [ "$YIELD" != 1 ]; then
+          echo "yield-to-queue: a merge queue job waits; not yielding (#2968)" | tee -a "$GITHUB_STEP_SUMMARY"
           exit 0
         fi
         echo "yield-to-queue: a merge queue job waits for a runner: this check gives its runner back, and ci-dispatch starts it again" | tee -a "$GITHUB_STEP_SUMMARY"

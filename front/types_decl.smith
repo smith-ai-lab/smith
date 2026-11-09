@@ -1116,6 +1116,8 @@ static Bool indented_if(ast::Span statement, ast::Span test) {
     return types::same_text(text[statement.start:statement.start + 3], "if ") && text[test.end] == ':';
 }
 
+static const ast::Expr *null_test(const ast::Expr *test, Bool equal);
+
 // `if k != .v: return X` (or `break`, `continue`) with no `else`: the reads of `k.v` to the end of the block are the
 // test's, written `.v(v) := k else: return X` (#2503). In a chain `if a || k != .v || b: X` the test stands alone
 // between `if a: X` and `if b: X`, which copies `X`: that needs the text, so a chain is left when there is none.
@@ -1126,23 +1128,28 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
     const ast::Expr *parts[8] = {};
     Usize count = or_operands(test, parts);
     Usize at = count;
+    // An option field in the chain, `a || f == .none`, is bound the same way: `f := a.f else: return X` (#2647), but
+    // only in a chain: a lone test is `note_option_guard`'s.
     for (Usize i = 0; i < count; i++) {
-        if (at == count && variant_test(parts[i], false) != nullptr) at = i;
+        Bool test_here =
+            variant_test(parts[i], false) != nullptr || (count > 1 && null_test(parts[i], true) != nullptr);
+        if (at == count && test_here) at = i;
     }
     U32 end = state.block_end;
     if (at == count || end == 0 || !indented_if(s->span, test->span)) return;
-    const ast::Expr *tested = variant_test(parts[at], false);
+    Bool option = variant_test(parts[at], false) == nullptr;
+    const ast::Expr *tested = option ? null_test(parts[at], true) : variant_test(parts[at], false);
     if (tested == nullptr) return;
     const ast::Expr *left = binary_left(tested);
     const ast::Expr *right = binary_right(tested);
-    Str variant = variant_name(right);
+    Str variant = option ? member_name(left) : variant_name(right);
     if (countof(variant) == 0 || name_taken(r, variant)) return;
     for (Usize i = 0; i < r->guard_count; i++) { // a second test of the same variant is covered by the first
         types::Guard *g = &r->guards[i];
         Bool covered = s->span.start >= g->reads.start && s->span.start < g->reads.end;
         if (covered && types::same_text(g->variant, variant)) return;
     }
-    Str pattern = msg(format::push(".", variant, "(", variant, ") := "));
+    Str pattern = option ? msg(format::push(variant, " := ")) : msg(format::push(".", variant, "(", variant, ") := "));
     syntax::Edits head = {};
     if (count == 1) {
         head = mem::realloc(head, 2);
@@ -1165,12 +1172,13 @@ static void note_rest_guard(types::Checked *r, const ast::Stmt *s) {
         head[1] = edit_of(parts[at]->span.start, stop, msg(format::push(pattern, bound, " else", after)));
     }
     ast::Span reads = {.start = parts[at]->span.end, .end = end};
-    add_guard(r, (types::Guard){.base = guard_base(left),
+    add_guard(r, (types::Guard){.base = option ? member_base(left) : guard_base(left),
                                 .variant = variant,
                                 .reads = reads,
                                 .skip = then_branch->span,
                                 .head = head,
-                                .test = nullptr});
+                                .option = option,
+                                .test = option ? parts[at] : nullptr});
 }
 
 // The statement itself when `s` is a block of one statement, through nested blocks.

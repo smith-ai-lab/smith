@@ -103,3 +103,28 @@ export void test_front_compile_an_error_in_an_imported_instance_names_its_module
     test::check_equal(made.text[0:n], want);
     remove_all(folder);
 }
+
+static Bool has(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++) {
+        Bool same = true;
+        for (Usize k = 0; same && k < countof(needle); k++)
+            same = text[i + k] == needle[k];
+        if (same) return true;
+    }
+    return false;
+}
+
+// The diagnostic carries the chain that led to it, innermost first (#2949): the instance and where it was asked for,
+// then the module and where it was imported.
+export void test_front_compile_an_error_in_an_imported_instance_carries_its_trace() {
+    Str folder = folder_for("trace");
+    write_text(as_str(format::push(folder, "/src/util.smith")), "pub fn wrap(x: auto) -> f64:\n    return 1 - x\n");
+    write_text(as_str(format::push(folder, "/src/main.smith")), "import util\n\npub fn f() -> f64: util.wrap(0.5)\n");
+    compile::Report made = compile_one(folder, "main");
+    Str main_at = as_str(format::push(folder, "/src/main.smith"));
+    test::check_equal(has(made.text, as_str(format::push("\n  in wrap[F64], instantiated at ", main_at, ":3:20\n"))),
+                      true);
+    test::check_equal(has(made.text, as_str(format::push("\n  in module util, imported by ", main_at, ":1:8\n"))),
+                      true);
+    remove_all(folder);
+}

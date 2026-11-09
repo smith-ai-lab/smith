@@ -266,7 +266,9 @@ export state::TyResult imported_record(state::Emitter *e, const ast::Decl *decl,
         Str outer = e->import_scope;
         e->import_scope = record_module_prefix(name);
         state::Status made = declare_record(e, decl, name, name);
+        Str scope = e->import_scope;
         e->import_scope = outer;
+        made = state::in_module(made, scope);
         if (made == .error) return {.error = made.error};
         find_record_named(e, name, &index);
     }
@@ -286,7 +288,8 @@ static state::TyResult leaf_type(state::Emitter *e, const ast::TypeExpr *base) {
     if (base->kind == .block_type) return type_block(e, base);
     if (base->kind == .tuple)
         return state::type_of(e, base); // `*mut (f64, f32)`: front::emit's type_of builds the tuple
-    if (base->kind != .named) return ty_failf(base->span, "not emitted yet: this kind of type", "");
+    if (base->kind != .named)
+        return state::ty_fail_with(base->span, "not emitted yet: a type of kind `", state::type_kind_name(base), "`");
     ast::Path path = base->kind.named.path;
     if (countof(path.segments) == 2) return state::type_of(e, base); // `v.Vec`: front::emit's type_of reads the import
     if (countof(path.segments) != 1) return ty_failf(base->span, "not emitted yet: qualified type", "");

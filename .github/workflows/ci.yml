@@ -870,7 +870,7 @@ jobs:
     # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
     # `always()`: a pull request's dry run (no release) warms with the newest published stage0; on a push, a release
     # that never publishes fails this job rather than save a cache built with another smith
-    needs: [changes, publish]
+    needs: [changes, release, release-linux, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
@@ -892,6 +892,13 @@ jobs:
       # would have written to the step summary instead
       DRY_RUN: ${{ github.event_name != 'push' && '1' || '0' }}
     steps:
+      - name: Say which job the stage0 comes from
+        # on a push, a `publish` that did not succeed means no release of this commit will appear: say so at once and in one
+        # line, instead of waiting 6 minutes in fetch-smith for it (#2976). The Mac's warm also needs the macOS tarball.
+        if: github.event_name == 'push' && (needs.publish.result != 'success' || (runner.os == 'macOS' && needs.release.result != 'success'))
+        run: |
+          echo "warm: stage0-$GITHUB_SHA is not published: job publish ${{ needs.publish.result }} (release ${{ needs.release.result }}, release-linux ${{ needs.release-linux.result }})" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+          exit 1
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -1108,7 +1115,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1122,7 +1129,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
@@ -1130,7 +1143,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1146,7 +1159,13 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
@@ -1692,9 +1711,11 @@ jobs:
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
-    # a failed Linux job still lets the macOS release out
+    # either one's tarball lets the release out: a failed Linux job still lets the macOS release out, and a macOS job that
+    # timed out lets the Linux one out (`warm` and every Linux job fetch the Linux tarball; 4 of the 5 failed `warm` runs of
+    # 2026-11-09 waited for a release the macOS timeout kept unpublished, #2976). That commit has no macOS tarball for good.
     needs: [release, release-linux]
-    if: always() && needs.release.result == 'success'
+    if: always() && (needs.release.result == 'success' || needs.release-linux.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -1714,7 +1735,9 @@ jobs:
     # the owner's Mac installs the release just published, so the installed smith is always main's: a download and a
     # checksum, no build (owner, 2026-10-29). Nothing needs this job (not `ci`, not the release): with the Mac off it
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
-    needs: publish
+    # a commit published without its macOS tarball (the macOS job failed or timed out, #2976) is skipped, not waited for
+    needs: [release, publish]
+    if: needs.release.result == 'success'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 10
     concurrency:
