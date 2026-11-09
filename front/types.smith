@@ -1131,6 +1131,22 @@ export struct Symbol {
     Bool narrowed; // a `?T` name known not to be `.none` here, typed `T` (#2481): `x.some` is `x`
 };
 
+// An index of the names of `symbols[0:indexed)` (#2888): a module that imports std holds tens of thousands of symbols
+// (the C headers' above all), and a scan of all of them for each declaration and each name made the check quadratic.
+// A name hashes to a bucket; `heads[b]` is one more than the highest index in bucket `b` (0: none), and `next[i]` one
+// more than the next lower index in the bucket of symbol `i`, so a walk meets the newest first, as the scan did.
+//
+// The index is a cache and never decides: it is used only while `data` is still where the symbols are and `count` has
+// not gone below `indexed` since it was built (`index_usable`); otherwise it is built again. A symbol is only ever
+// written at `count` or over one of the same name (a forward-declared struct), so the names below `indexed` are those
+// it was built from.
+export struct ScopeIndex {
+    const Symbol *data;
+    Usize indexed;
+    U32 heads[:];
+    U32 next[:];
+};
+
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
 export struct Scopes {
     Symbol symbols[:];
@@ -1140,6 +1156,7 @@ export struct Scopes {
     Str prefix;   // while the body of a generic's instance from another module is checked: that module's prefix
     Usize floor;  // the symbols from here on are the body's own (locals, the bound generics): they hide the module's
     Bool prelude; // `std.prelude` is declared (as `std::prelude::name`): a bare name nothing else declares is its
+    ScopeIndex *index; // null until a scope has enough names to need one; a copy of the struct shares it
 };
 
 export void push_scope(Scopes *s) {
@@ -1164,16 +1181,89 @@ static Usize scope_start(const Scopes *s) {
     return s->marks[s->depth - 1];
 }
 
-// Adds `symbol` to the innermost scope; false, and nothing added, when that scope has the name already.
-export Bool declare(Scopes *s, Symbol symbol) {
-    for (Usize i = scope_start(s); i < s->count; i++) {
-        if (same_text(s->symbols[i].name, symbol.name)) return false;
+// Fewer symbols than this past the index are scanned; at this many the index is built again over all of them.
+constexpr Usize index_gap = 256;
+
+static U32 name_hash(Str name) {
+    U32 h = 2166136261U;
+    for (Usize i = 0; i < countof(name); i++)
+        h = (h ^ (U32)(U8)name[i]) * 16777619U;
+    return h;
+}
+
+// Whether the index still describes `symbols[0:indexed)` of `s`.
+static Bool index_usable(const Scopes *s) {
+    const ScopeIndex *x = s->index;
+    return x != nullptr && x->indexed > 0 && x->data == s->symbols.data && x->indexed <= s->count;
+}
+
+// Builds the index over every symbol of `s`.
+static void index_build(const Scopes *s) {
+    ScopeIndex *x = s->index;
+    Usize buckets = 1024;
+    while (buckets < 2 * s->count)
+        buckets *= 2;
+    if (countof(x->heads) != buckets) {
+        mem::free(x->heads.data);
+        x->heads = mem::alloc_slice(U32, buckets);
+    } else {
+        for (Usize b = 0; b < buckets; b++)
+            x->heads[b] = 0;
     }
+    if (countof(x->next) < s->count) {
+        mem::free(x->next.data);
+        x->next = mem::alloc_slice(U32, countof(s->symbols));
+    }
+    for (Usize i = 0; i < s->count; i++) {
+        Usize b = name_hash(s->symbols[i].name) & (buckets - 1);
+        x->next[i] = x->heads[b];
+        x->heads[b] = (U32)(i + 1);
+    }
+    x->data = s->symbols.data;
+    x->indexed = s->count;
+}
+
+// One more than the highest index below `upper` whose symbol is called `name`; 0 when none is.
+static Usize find_below(const Scopes *s, Str name, Usize upper) {
+    if (upper > s->count) upper = s->count;
+    if (s->count >= index_gap && s->index != nullptr && (!index_usable(s) || s->count - s->index->indexed >= index_gap))
+        index_build(s);
+    Usize floor = index_usable(s) ? s->index->indexed : 0;
+    if (floor > upper) floor = upper;
+    for (Usize i = upper; i > floor; i--) {
+        if (same_text(s->symbols[i - 1].name, name)) return i;
+    }
+    if (floor == 0) return 0;
+    const ScopeIndex *x = s->index;
+    U32 at = x->heads[name_hash(name) & (countof(x->heads) - 1)];
+    while (at != 0) {
+        Usize i = at - 1;
+        if (i < floor && same_text(s->symbols[i].name, name)) return i + 1;
+        at = x->next[i];
+    }
+    return 0;
+}
+
+// The innermost symbol below `upper` called `name`, or null.
+static const Symbol *named_below(const Scopes *s, Str name, Usize upper) {
+    Usize found = find_below(s, name, upper);
+    return found == 0 ? nullptr : &s->symbols[found - 1];
+}
+
+// Room for one more symbol. A scope that grew large enough gets an index (its first use builds it).
+static void make_room(Scopes *s) {
     if (s->count == countof(s->symbols)) {
         Usize capacity = countof(s->symbols) * 2;
         if (capacity < 64) capacity = 64;
         s->symbols = mem::realloc(s->symbols, capacity);
     }
+    if (s->index == nullptr && s->count >= index_gap) s->index = mem::alloc(ScopeIndex);
+}
+
+// Adds `symbol` to the innermost scope; false, and nothing added, when that scope has the name already.
+export Bool declare(Scopes *s, Symbol symbol) {
+    if (find_below(s, symbol.name, s->count) > scope_start(s)) return false;
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
     return true;
@@ -1186,15 +1276,11 @@ static Bool names_type(const Symbol *s) {
 }
 
 static Bool declare_beside(Scopes *s, Symbol symbol) {
-    for (Usize i = scope_start(s); i < s->count; i++) {
-        if (same_text(s->symbols[i].name, symbol.name) && names_type(&s->symbols[i]) == names_type(&symbol))
-            return false;
+    Usize start = scope_start(s);
+    for (Usize at = find_below(s, symbol.name, s->count); at > start; at = find_below(s, symbol.name, at - 1)) {
+        if (names_type(&s->symbols[at - 1]) == names_type(&symbol)) return false;
     }
-    if (s->count == countof(s->symbols)) {
-        Usize capacity = countof(s->symbols) * 2;
-        if (capacity < 64) capacity = 64;
-        s->symbols = mem::realloc(s->symbols, capacity);
-    }
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
     return true;
@@ -1204,11 +1290,7 @@ static Bool declare_beside(Scopes *s, Symbol symbol) {
 // `.none` from here to the end of the scope has the type `T` (#2481). `lookup` finds the newest, so the narrowed one
 // wins.
 export void narrow(Scopes *s, Symbol symbol) {
-    if (s->count == countof(s->symbols)) {
-        Usize capacity = countof(s->symbols) * 2;
-        if (capacity < 64) capacity = 64;
-        s->symbols = mem::realloc(s->symbols, capacity);
-    }
+    make_room(s);
     s->symbols[s->count] = symbol;
     s->count += 1;
 }
@@ -1227,28 +1309,23 @@ static Bool has_separator(Str name) {
 static const Symbol *prelude_symbol(const Scopes *s, Str name) {
     if (!s->prelude || countof(name) == 0 || has_separator(name)) return nullptr;
     Str full = msg(format::push("std::prelude::", name));
-    for (Usize i = s->count; i > 0; i--) {
-        const Symbol *found = &s->symbols[i - 1];
-        if (same_text(found->name, full)) return is_public(found) ? found : nullptr;
-    }
-    return nullptr;
+    const Symbol *found = named_below(s, full, s->count);
+    if (found == nullptr) return nullptr;
+    return is_public(found) ? found : nullptr;
 }
 
 // The innermost symbol called `name`, or null. In the body of a generic instance from another module the body's own
 // names come first, then the module's (`util::name`), then the names of the module being checked, then the prelude's.
 export const Symbol *lookup(const Scopes *s, Str name) {
     if (countof(s->prefix) > 0) {
-        for (Usize i = s->count; i > s->floor; i--) {
-            if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
-        }
+        Usize body = find_below(s, name, s->count);
+        if (body > s->floor) return &s->symbols[body - 1];
         Str own = msg(format::push(s->prefix, name));
-        for (Usize i = s->floor; i > 0; i--) {
-            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
-        }
+        const Symbol *module = named_below(s, own, s->floor);
+        if (module != nullptr) return module;
     }
-    for (Usize i = s->count; i > 0; i--) {
-        if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
-    }
+    const Symbol *found = named_below(s, name, s->count);
+    if (found != nullptr) return found;
     return prelude_symbol(s, name);
 }
 
@@ -1257,43 +1334,21 @@ export const Symbol *lookup(const Scopes *s, Str name) {
 // checked, which the body cannot see by its own name (#2669). Elsewhere it is `lookup`.
 export const Symbol *lookup_own(const Scopes *s, Str name) {
     if (countof(s->prefix) == 0) return lookup(s, name);
-    for (Usize i = s->count; i > s->floor; i--) {
-        if (same_text(s->symbols[i - 1].name, name)) return &s->symbols[i - 1];
-    }
+    Usize body = find_below(s, name, s->count);
+    if (body > s->floor) return &s->symbols[body - 1];
     Str own = msg(format::push(s->prefix, name));
-    for (Usize i = s->floor; i > 0; i--) {
-        if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
-    }
-    return nullptr;
+    return named_below(s, own, s->floor);
 }
 
 // The symbol `name` stands for in a type position (`want_type`) or a value position: a C header has a struct tag and a
 // function of one name (`struct stat` and `stat()`, #2610), kept apart here by position. Falls back to the other kind
 // when only that one exists, so every other name reads as before.
 export const Symbol *lookup_as(const Scopes *s, Str name, Bool want_type) {
-    for (Usize i = s->count; i > 0; i--) {
-        const Symbol *found = &s->symbols[i - 1];
-        if (same_text(found->name, name) && names_type(found) == want_type) return found;
+    for (Usize at = find_below(s, name, s->count); at > 0; at = find_below(s, name, at - 1)) {
+        const Symbol *found = &s->symbols[at - 1];
+        if (names_type(found) == want_type) return found;
     }
     return lookup(s, name);
-}
-
-// Whether `name` is the segments of `path` joined by `::`.
-static Bool is_path(Str name, ast::Path path) {
-    Usize at = 0;
-    for (Usize i = 0; i < countof(path.segments); i++) {
-        Str segment = path.segments[i].text;
-        if (i > 0) {
-            if (at + 2 > countof(name) || name[at] != ':' || name[at + 1] != ':') return false;
-            at += 2;
-        }
-        if (at + countof(segment) > countof(name)) return false;
-        for (Usize k = 0; k < countof(segment); k++) {
-            if (name[at + k] != segment[k]) return false;
-        }
-        at += countof(segment);
-    }
-    return at == countof(name);
 }
 
 // The innermost symbol whose whole name is `path`, or null (`c::printf` is the name `c::printf`).
@@ -1306,39 +1361,36 @@ static const Symbol *through_own_import(const Scopes *s, ast::Path path) {
     if (countof(path.segments) < 2) return nullptr;
     Str module_name = msg(format::push(s->prefix, path.segments[0].text));
     const Symbol *module = nullptr;
-    for (Usize i = s->floor; i > 0 && module == nullptr; i--) {
-        const Symbol *at = &s->symbols[i - 1];
-        if (at->kind == .module_name && same_text(at->name, module_name)) module = at;
+    for (Usize at = find_below(s, module_name, s->floor); at > 0 && module == nullptr;
+         at = find_below(s, module_name, at - 1)) {
+        const Symbol *candidate = &s->symbols[at - 1];
+        if (candidate->kind == .module_name) module = candidate;
     }
     if (module == nullptr) return nullptr;
     Str full = prefix_of_symbol(module);
     if (countof(full) == 0) return nullptr;
     for (Usize k = 1; k < countof(path.segments); k++)
         full = msg(format::push(full, k > 1 ? "::" : "", path.segments[k].text));
-    for (Usize i = s->floor; i > 0; i--) {
-        if (same_text(s->symbols[i - 1].name, full)) return &s->symbols[i - 1];
-    }
-    return nullptr;
+    return named_below(s, full, s->floor);
 }
 
 export const Symbol *lookup_path(const Scopes *s, ast::Path path) {
+    if (countof(path.segments) == 0) return nullptr;
+    // A symbol's whole name is the path when it is the segments joined by `::` (`is_path`).
+    Str joined_path = path.segments[0].text;
+    for (Usize k = 1; k < countof(path.segments); k++)
+        joined_path = msg(format::push(joined_path, "::", path.segments[k].text));
     if (countof(s->prefix) > 0) {
-        for (Usize i = s->count; i > s->floor; i--) {
-            if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
-        }
-        Str joined_path = path.segments[0].text;
-        for (Usize k = 1; k < countof(path.segments); k++)
-            joined_path = msg(format::push(joined_path, "::", path.segments[k].text));
+        Usize body = find_below(s, joined_path, s->count);
+        if (body > s->floor) return &s->symbols[body - 1];
         Str own = msg(format::push(s->prefix, joined_path));
-        for (Usize i = s->floor; i > 0; i--) {
-            if (same_text(s->symbols[i - 1].name, own)) return &s->symbols[i - 1];
-        }
+        const Symbol *module = named_below(s, own, s->floor);
+        if (module != nullptr) return module;
         const Symbol *through = through_own_import(s, path);
         if (through != nullptr) return through;
     }
-    for (Usize i = s->count; i > 0; i--) {
-        if (is_path(s->symbols[i - 1].name, path)) return &s->symbols[i - 1];
-    }
+    const Symbol *found = named_below(s, joined_path, s->count);
+    if (found != nullptr) return found;
     if (countof(path.segments) == 1) return prelude_symbol(s, path.segments[0].text);
     return nullptr;
 }
@@ -2860,9 +2912,8 @@ static void declare_nominal(Checked *r, const ast::Decl *d) {
         set_marks(made, marks_affine(d), from_c ? from_header : record_c_name(d));
         // A forward declaration (`struct Expr` alone) and the definition that follows it are one type (#2329).
         Symbol *earlier = nullptr;
-        for (Usize i = r->scopes.count; i > 0 && earlier == nullptr; i--) {
-            if (same_text(r->scopes.symbols[i - 1].name, name)) earlier = &r->scopes.symbols[i - 1];
-        }
+        Usize found = find_below(&r->scopes, name, r->scopes.count);
+        if (found > 0) earlier = &r->scopes.symbols[found - 1];
         if (earlier != nullptr && earlier->kind == .type_name && declared_by_record(earlier)) {
             if (forward) return;
             if (declared_opaque(earlier)) {

@@ -290,49 +290,141 @@ static Str shared_module_sources[shared_modules_max];
 static const ast::Module *shared_module_trees[shared_modules_max];
 static Usize shared_module_count = 0;
 
-// What the table keeps lives in an arena of its own for the life of the process, never in the allocator in force: a
-// caller such as `smith lsp` resets that one after each request, and the next file must still find the entry whole.
-static arena::Arena shared_memory;
-static arena::ArenaAllocator shared_allocator;
-static Bool shared_memory_made = false;
-
-// The arena's chunks come from the system's allocator, not the one in force: while the arena's own allocator is in
-// force, a chunk taken from it would ask the arena again.
-static void *system_alloc(c::SmithAllocator *self, Usize size, Usize align) {
-    (void)self;
-    return mem::from_parent(nullptr, size, align);
-}
-
-static void *system_realloc(c::SmithAllocator *self, void *block, Usize size, Usize align) {
-    (void)self;
-    (void)block;
-    (void)size;
-    (void)align;
-    return nullptr; // the arena never resizes a chunk
-}
-
-static void system_free(c::SmithAllocator *self, void *block) {
-    (void)self;
-    mem::to_parent(nullptr, block);
-}
-
-static Bool system_owns(c::SmithAllocator *self, const void *block) {
-    (void)self;
-    (void)block;
-    return false;
-}
-
-static c::SmithAllocator system_backing = {
-    .alloc = system_alloc, .realloc = system_realloc, .free = system_free, .owns = system_owns, .size = nullptr};
-
-// Makes the shared arena the allocator in force and returns the one that was; `mem::set_allocator` gives it back.
+// What the table keeps is allocated by the system's allocator and never freed, whatever allocator is in force: a caller
+// such as `smith lsp` resets its own after each request, and the next file must still find the entry whole.
 static mem::Allocator *enter_shared() {
-    if (!shared_memory_made) {
-        shared_memory = arena::growing(1U << 22, &system_backing);
-        shared_allocator = arena::allocator(&shared_memory);
-        shared_memory_made = true;
+    return mem::set_allocator(nullptr);
+}
+
+// The system's allocator with the handler of the thread out of the way (a set allocator swaps malloc's family).
+static void *system_raw(void *block, Usize size) {
+    mem::Allocator *before = mem::set_allocator(nullptr);
+    void *result = c::realloc(block, size); // NOLINT(smith-effects): the edge, as mem's own
+    mem::set_allocator(before);
+    return result;
+}
+
+static void system_release(void *block) {
+    mem::Allocator *before = mem::set_allocator(nullptr);
+    c::free(block); // NOLINT(smith-effects): the edge
+    mem::set_allocator(before);
+}
+
+// What one file of `run` parses and checks (#2888): the system's allocator, with every block it hands out recorded, so
+// that what is left once the file's report is out is freed (`file_memory_release`). It is not an arena: the parser
+// grows its lists one element at a time, and an arena copies a block it cannot extend, which on today's syntax took
+// more memory than the machine had. A block starts `file_header` bytes after the system's, which holds its size.
+constexpr Usize file_header = 16;
+
+static void **file_live = nullptr; // the blocks handed out, by address (open addressing; `file_gone` marks a removal)
+static Usize file_capacity = 0;
+static Usize file_used = 0; // live blocks and removals, which a growth drops
+static Usize file_count = 0;
+static U8 file_gone_mark = 0;
+
+static Usize file_slot(const void *block) {
+    return (Usize)(((U64)(Usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 20);
+}
+
+// Puts `block` in a free slot; the table has room.
+static void file_place(void *block) {
+    Usize i = file_slot(block) & (file_capacity - 1);
+    while (file_live[i] != nullptr && file_live[i] != (void *)&file_gone_mark)
+        i = (i + 1) & (file_capacity - 1);
+    if (file_live[i] == nullptr) file_used += 1;
+    file_live[i] = block;
+    file_count += 1;
+}
+
+static void file_grow() {
+    void **old = file_live;
+    Usize old_capacity = file_capacity;
+    file_capacity = old_capacity == 0 ? 1U << 16 : old_capacity * 2;
+    file_live = (void **)system_raw(nullptr, file_capacity * sizeof(void *));
+    if (file_live == nullptr) c::abort();
+    c::memset(file_live, 0, file_capacity * sizeof(void *));
+    file_used = 0;
+    file_count = 0;
+    for (Usize i = 0; i < old_capacity; i++) {
+        if (old[i] != nullptr && old[i] != (void *)&file_gone_mark) file_place(old[i]);
     }
-    return mem::set_allocator(&shared_allocator.base);
+    system_release(old);
+}
+
+static void file_insert(void *block) {
+    if (2 * (file_used + 1) > file_capacity) file_grow();
+    file_place(block);
+}
+
+// The slot of `block`, or the capacity when it is not one of ours.
+static Usize file_find(const void *block) {
+    if (file_capacity == 0 || block == nullptr) return file_capacity;
+    Usize i = file_slot(block) & (file_capacity - 1);
+    while (file_live[i] != nullptr) {
+        if (file_live[i] == block) return i;
+        i = (i + 1) & (file_capacity - 1);
+    }
+    return file_capacity;
+}
+
+static void *file_alloc(c::SmithAllocator *self, Usize size, Usize align) {
+    (void)self;
+    if (align > file_header) return nullptr; // nothing in the front end asks for more than 16
+    U8 *raw = (U8 *)system_raw(nullptr, size + file_header);
+    if (raw == nullptr) return nullptr;
+    *(Usize *)raw = size;
+    file_insert(raw + file_header);
+    return raw + file_header;
+}
+
+static void file_free(c::SmithAllocator *self, void *block) {
+    (void)self;
+    Usize at = file_find(block);
+    if (at == file_capacity) return;
+    file_live[at] = (void *)&file_gone_mark;
+    file_count -= 1;
+    system_release((U8 *)block - file_header);
+}
+
+static void *file_realloc(c::SmithAllocator *self, void *block, Usize size, Usize align) {
+    if (block == nullptr) return file_alloc(self, size, align);
+    Usize at = file_find(block);
+    if (at == file_capacity || align > file_header) return nullptr;
+    U8 *raw = (U8 *)system_raw((U8 *)block - file_header, size + file_header);
+    if (raw == nullptr) return nullptr;
+    *(Usize *)raw = size;
+    file_live[at] = (void *)&file_gone_mark;
+    file_count -= 1;
+    file_insert(raw + file_header);
+    return raw + file_header;
+}
+
+static Bool file_owns(c::SmithAllocator *self, const void *block) {
+    (void)self;
+    return file_find(block) != file_capacity;
+}
+
+static Usize file_size(c::SmithAllocator *self, const void *block) {
+    (void)self;
+    return *(const Usize *)((const U8 *)block - file_header);
+}
+
+static c::SmithAllocator file_allocator = {
+    .alloc = file_alloc, .realloc = file_realloc, .free = file_free, .owns = file_owns, .size = file_size};
+
+static mem::Allocator *file_memory() {
+    return &file_allocator;
+}
+
+// Frees every block the file's allocator still holds.
+static void file_memory_release() {
+    for (Usize i = 0; i < file_capacity; i++) {
+        void *block = file_live[i];
+        if (block != nullptr && block != (void *)&file_gone_mark) system_release((U8 *)block - file_header);
+        file_live[i] = nullptr;
+    }
+    file_used = 0;
+    file_count = 0;
 }
 
 static Str roots_key(roots::Roots named_by) {
@@ -525,12 +617,12 @@ static const ast::Module *read_header(Str header, Bool angled) {
     }
     Str name = as_str(format::push(header));
     Str folder = as_str(format::push(header_folder));
-    if (!header_arena_made) {
-        header_arena = arena::growing(1U << 22, nullptr);
-        header_arena_made = true;
-    }
     Str terminated = as_str(format::push(flags));
     mem::Allocator *outside = enter_shared();
+    if (!header_arena_made) {
+        header_arena = arena::growing(1U << 22, nullptr); // under enter_shared: the system's, for the process's life
+        header_arena_made = true;
+    }
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
     ast::Module *module = nullptr;
     Str kept_key = "";
@@ -1164,7 +1256,19 @@ static Str wanted_triple(Str triple) {
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
+// `file` with what parsing and checking allocate taken from `memory` (null: the allocator in force), which the caller
+// resets once the report is out (#2888): a process that compiles many files keeps only the shared table between them.
+// Emitting and writing go back to the allocator in force, as LLVM keeps process-wide state in what it allocates.
+static Report file_in(Str path, Str output, Str triple, roots::Roots folders, mem::Allocator *memory);
+
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
+    return file_in(path, output, triple, folders, nullptr);
+}
+
+static Report file_in(Str path, Str output, Str triple, roots::Roots folders, mem::Allocator *memory) {
+    mem::Allocator *outside = mem::allocator();
+    if (memory != nullptr) mem::set_allocator(memory);
+    defer mem::set_allocator(outside);
     Times times = {};
     files::BytesResult loaded = load(path);
     if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
@@ -1209,6 +1313,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         return failed(all, times);
     }
 
+    mem::set_allocator(outside);
     emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
@@ -1298,7 +1403,7 @@ static Str stage_of(Times times) {
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
         U64 started = clock::monotonic();
-        Report done = file(paths[i].path, output, target, beside);
+        Report done = file_in(paths[i].path, output, target, beside, file_memory());
         U64 wall = clock::monotonic() - started;
         if (countof(done.text) > 0) report(done.text);
         if (time_requested()) report_times(paths[i].path, done.times, wall);
@@ -1307,6 +1412,7 @@ static Str stage_of(Times times) {
         if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
             report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
         }
+        file_memory_release();
     }
     if (time_requested()) {
         report(
