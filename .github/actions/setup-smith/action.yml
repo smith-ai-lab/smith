@@ -123,6 +123,7 @@ runs:
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
         echo "build: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/build.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/build.out" || true) cached ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+        CACHE_BASE="${{ github.event.merge_group.base_sha }}" "$GITHUB_ACTION_PATH/../../../ci/cache-report.sh" steps "$RUNNER_TEMP/build.out" '^(build\.c|patches/|llvm/)'
 
     - name: Build the tests
       if: inputs.artifact == '' && inputs.tests == 'true'
@@ -158,6 +159,7 @@ runs:
           exit 1
         fi
         echo "tests built: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/list.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/list.out" || true) cached" | tee -a "$GITHUB_STEP_SUMMARY"
+        CACHE_BASE="${{ github.event.merge_group.base_sha }}" "$GITHUB_ACTION_PATH/../../../ci/cache-report.sh" tests-built "$RUNNER_TEMP/list.out" '^(build\.c|patches/|llvm/)'
 
     - name: Download the build of this run
       if: inputs.artifact != ''

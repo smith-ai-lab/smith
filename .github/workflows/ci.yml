@@ -400,7 +400,8 @@ jobs:
         run: |
           count=8
           # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: ' || true)
+          "$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
+          line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
           if [ -n "$line" ]; then
             secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
@@ -408,6 +409,8 @@ jobs:
           echo "count=$count" >>"$GITHUB_OUTPUT"
           echo "jobs=$(( count + 2 ))" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
+          # one line per cache with its hit rate; the first misses say which input differs (#2876)
+          CACHE_BASE="${{ github.event.merge_group.base_sha }}" ci/cache-report.sh test-store "$RUNNER_TEMP/misses.out" '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
@@ -505,6 +508,7 @@ jobs:
             echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
             grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
           } >>"$GITHUB_STEP_SUMMARY"
+          CACHE_BASE="${{ github.event.merge_group.base_sha }}" ci/cache-report.sh test-store "$RUNNER_TEMP/test.log" '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
           if [ "$rc" -ne 0 ]; then
             # each failed test's name and the lines under it (where the check failed, its error), kept for the
             # `Failed tests` step, which prints them last
