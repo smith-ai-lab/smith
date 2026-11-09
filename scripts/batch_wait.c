@@ -16,7 +16,7 @@
 //
 // With the ruleset `main`'s `max_entries_to_build` at 1 (#2925) no later group can be built while this one runs, so
 // the window and the polling can only wait: it logs `batch: alone (build entries 1)`, prints `batch=alone` and
-// returns at once. The ruleset is read with `gh api` (repos/R/rulesets, then the one named main); 2 or more, or a
+// returns at once. The ruleset is read with `gh api` (repos/R/rules/branches/main); 2 or more, or a
 // failed read, waits as below. (The knob is the ruleset, set with queue-ops `set-build-entries`, #2922.)
 //
 // A batch has one deadline, never restarted (#2925; owner, 2026-11-09: "Whatever gets in gets in. We wait no more
@@ -155,7 +155,8 @@ static int later_failed(const char *url, const char *later) {
     return 0;
 }
 
-// The `max_entries_to_build` of the merge_queue rule of the ruleset named main, or 0 when a read failed.
+// The `max_entries_to_build` of the merge_queue rule that applies to main (the rules of the branch, metadata read
+// only), or 0 when a read failed.
 static int build_entries(const char *url) {
     const char *gh = getenv("BATCH_WAIT_GH");
     const char *tool = gh != nullptr && gh[0] != '\0' ? gh : "gh";
@@ -163,14 +164,10 @@ static int build_entries(const char *url) {
     repo = repo != nullptr ? repo + strlen("github.com/") : url;
     if (strchr(repo, '\'') != nullptr) return 0;
     char command[command_size];
-    char id[line_size];
     int n = snprintf(command, sizeof command,
-                     "%s api 'repos/%s/rulesets' --jq '[.[]|select(.name==\"main\")|.id]|first // empty'", tool, repo);
-    if (n < 0 || n >= (int)sizeof command || !first_line(command, id) || strpbrk(id, "' ;|&$") != nullptr) return 0;
-    n = snprintf(command, sizeof command,
-                 "%s api 'repos/%s/rulesets/%s' --jq '[.rules[]|select(.type==\"merge_queue\")|"
-                 ".parameters.max_entries_to_build]|first // empty'",
-                 tool, repo, id);
+                     "%s api 'repos/%s/rules/branches/main' --jq '[.[]|select(.type==\"merge_queue\")|"
+                     ".parameters.max_entries_to_build]|first // empty'",
+                     tool, repo);
     char value[line_size];
     if (n < 0 || n >= (int)sizeof command || !first_line(command, value)) return 0;
     char *end = nullptr;
