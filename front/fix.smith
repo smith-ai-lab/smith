@@ -20,7 +20,7 @@
 module front::fix;
 
 import front::ast;
-import front::cimport;
+import front::header_table;
 import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
@@ -168,9 +168,8 @@ export void set_loader(types::ModuleLoader load) {
     loader = load;
 }
 
-static arena::Arena header_arena;
-static Bool header_arena_made = false;
 static Str header_folder = ".";
+static Bool within_run = false; // `fix_run`: every file of one command line is one generation of the header table
 
 // The path of the file being fixed, to find its entry in a compile_commands.json (#2648).
 static Str database_file = "";
@@ -266,14 +265,9 @@ static Str database_flags() {
 }
 
 // The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
-// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
+// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it. Read through clang once per process for the
+// same folder and flags (`front::header_table`, #2913): every pass and every file of one `lint --fix` shares it.
 static const ast::Module *load_header(Str header, Bool angled) {
-    Str name = as_str(format::push(header));
-    Str folder = as_str(format::push(header_folder));
-    if (!header_arena_made) {
-        header_arena = arena::growing(1U << 20, nullptr);
-        header_arena_made = true;
-    }
     Str empty = "";
     const char *flags = empty.data;
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
@@ -283,12 +277,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
     Str given_text = as_str(format::push(flags));
     Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n",
                                      database_flags()));
-    flags = joined.data;
-    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
-    if (countof(got.error) > 0) return nullptr;
-    ast::Module *module = mem::alloc(ast::Module);
-    module->decls = got.decls;
-    return module;
+    return header_table::read(header, angled, header_folder, joined);
 }
 
 // The libc headers a name used as `c.name` may come from, most specific first (#2627): the file never imports the
@@ -995,11 +984,9 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
+    // A header kept from an earlier `fix_text` is checked against its files first; one `fix_run` is one generation.
+    if (!within_run) header_table::next_generation();
     mend_passes(file, &total, true);
-    if (header_arena_made) { // what the headers declared is not needed once the passes are done
-        arena::release(&header_arena);
-        header_arena_made = false;
-    }
     // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
     if (total.applied > 0) total.text = hash_comments(total.text);
     // The blocks last (#2014): the passes above read their own output with braces, so only now do `:` and the
@@ -1017,10 +1004,6 @@ export Fixed fix_text(Str file, Str source) {
         total.text = fix_blocks::convert(hash_comments(more.text));
         total.applied += more.applied;
         total.skipped = more.skipped;
-    }
-    if (header_arena_made) {
-        arena::release(&header_arena);
-        header_arena_made = false;
     }
     return total;
 }
@@ -1523,6 +1506,9 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
     import_text_count = 0;
     foreign_count = 0;
     foreign_loaded = false;
+    header_table::next_generation();
+    within_run = true;
+    defer within_run = false;
     defer loader = outside;
     defer loaded_count = 0;
     defer import_text_count = 0;
