@@ -32,6 +32,11 @@ on:
         description: "set-build-entries: max_entries_to_build, 1 to 10"
         required: false
         type: string
+      dry_run:
+        description: "Run every read, skip every write and print 'dry-run: would <op> <args>' instead (#2934); test a PR that changes this file by dispatching it on the PR's branch"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,6 +56,8 @@ jobs:
       OP: ${{ inputs.op }}
       PR: ${{ inputs.pr }}
       VALUE: ${{ inputs.value }}
+      # only a workflow_dispatch has the input; the string is empty on every other event
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
       REPO: ${{ github.repository }}
       ACTOR: ${{ github.actor }}
       BASE_TOKEN: ${{ github.token }}
@@ -60,6 +67,8 @@ jobs:
         shell: bash
         run: |
           set -u
+          # a dry run (#2934) skips every write and prints what it would do; reads run as usual
+          dry() { [ "$DRY_RUN" = true ]; }
           summary() { echo "queue-ops: op=$OP pr=${PR:-none} result=$1 actor=$ACTOR" | tee -a "$GITHUB_STEP_SUMMARY"; }
 
           needs_pr() {
@@ -78,6 +87,7 @@ jobs:
               query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
               -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || return 1
             [ -z "$entry" ] && return 0
+            if dry; then echo "dry-run: would dequeue #$PR"; return 0; fi
             gh api graphql -f query='
               mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
               -f id="$(pr_id)" --silent
@@ -85,8 +95,8 @@ jobs:
 
           # `dequeued` marks a PR taken out of the queue on purpose, so queue-heal (#2900) does not queue it again: an
           # API dequeue leaves no `removed_from_merge_queue` on the timeline. `dequeue` sets it; enqueue and jump clear it.
-          mark_dequeued() { gh api -X POST "repos/$REPO/issues/$PR/labels" -f 'labels[]=dequeued' --silent || echo "label dequeued: not set"; }
-          clear_dequeued() { gh api -X DELETE "repos/$REPO/issues/$PR/labels/dequeued" --silent 2>/dev/null || true; }
+          mark_dequeued() { if dry; then echo "dry-run: would label #$PR dequeued"; return 0; fi; gh api -X POST "repos/$REPO/issues/$PR/labels" -f 'labels[]=dequeued' --silent || echo "label dequeued: not set"; }
+          clear_dequeued() { if dry; then echo "dry-run: would unlabel #$PR dequeued"; return 0; fi; gh api -X DELETE "repos/$REPO/issues/$PR/labels/dequeued" --silent 2>/dev/null || true; }
 
           # the queue's PR numbers, front first
           queue_order() {
@@ -109,6 +119,7 @@ jobs:
                 clear_dequeued
                 # print what GitHub says about the entry (position, jump) and the queue now and 10 s later: the
                 # mutation's position alone was not reliable (jump put a PR third, 2026-11-08)
+                if dry; then echo "dry-run: would $OP #$PR (jump=$jump)"; echo "queue: $(queue_order)"; return 0; fi
                 gh api graphql -f query='
                   mutation($id: ID!, $jump: Boolean) {
                     enqueuePullRequest(input: {pullRequestId: $id, jump: $jump}) {
@@ -137,6 +148,7 @@ jobs:
                     -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || { failed=$((failed + 1)); continue; }
                   [ -n "$entry" ] && { echo "#$n already queued"; continue; }
                   clear_dequeued
+                  if dry; then echo "dry-run: would enqueue #$n"; queued=$((queued + 1)); continue; fi
                   if gh api graphql -f query='
                     mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { id } } }' \
                     -f id="$(pr_id)" --silent; then
@@ -164,6 +176,7 @@ jobs:
                   if [ "$pr" != 0 ] && gh api "repos/$REPO/pulls/$pr/files" --paginate --jq '.[].filename' | grep -q '^\.github/'; then
                     continue
                   fi
+                  if dry; then echo "dry-run: would force-cancel run ${run%%:*} (${run#*:})"; n=$((n + 1)); continue; fi
                   gh api -X POST "repos/$REPO/actions/runs/${run%%:*}/force-cancel" --silent && n=$((n + 1))
                 done
                 echo "cancelled $n" ;;
@@ -173,6 +186,7 @@ jobs:
                 sha=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha) || return 1
                 run_id=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=$sha&per_page=1" --jq '.workflow_runs[0].id // empty') || return 1
                 if [ -z "$run_id" ]; then echo "no-run"; return 1; fi
+                if dry; then echo "dry-run: would rerun failed jobs of run $run_id"; return 0; fi
                 gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" --silent && echo "rerun $run_id" ;;
               set-build-entries)
                 case "$VALUE" in [1-9]|10) ;; *) echo "value must be 1 to 10"; return 2 ;; esac
@@ -183,6 +197,7 @@ jobs:
                   | jq --argjson n "$VALUE" '{name, target, enforcement, bypass_actors, conditions,
                       rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
                   > /tmp/ruleset.json
+                if dry; then echo "dry-run: would set max_entries_to_build=$VALUE"; return 0; fi
                 gh api -X PUT "repos/$REPO/rulesets/$id" --input /tmp/ruleset.json --silent && echo "max_entries_to_build=$VALUE" ;;
               *) echo "unknown op"; return 2 ;;
             esac

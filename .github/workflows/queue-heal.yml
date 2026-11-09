@@ -15,13 +15,21 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run every read, skip every write and print 'dry-run: would <op> <args>' instead (#2934); test a PR that changes this file by dispatching it on the PR's branch"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: queue-heal
+  # a dry run writes nothing, so it has its own group: it cannot race a live run, and the live runs that
+  # every ci completion starts no longer cancel it (#2934)
+  group: queue-heal-${{ inputs.dry_run == true && 'dry' || 'live' }}
   cancel-in-progress: true
 
 jobs:
@@ -34,12 +42,16 @@ jobs:
       OWNER_TOKEN: ${{ secrets.QUEUE_OPS_TOKEN }}
       # a PR is lost only when its `added_to_merge_queue` is older than this many seconds
       GRACE: "900"
+      # only a workflow_dispatch has the input; schedule and workflow_run never dry-run (#2934)
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
     steps:
       - name: Re-queue the PRs the queue lost
         shell: bash
         run: |
           set -u
           log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
+          # a dry run skips every write and prints what it would do; reads run as usual
+          dry() { [ "$DRY_RUN" = true ]; }
           export GH_TOKEN="${OWNER_TOKEN:-$BASE_TOKEN}"
 
           # the queue's entries on main: "<pr>" per line, front first
@@ -60,6 +72,12 @@ jobs:
             entry=$(gh api graphql -f query='
               query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
               -f id="$id" --jq '.data.node.mergeQueueEntry.id // empty') || return 1
+            if dry; then
+              [ -n "$entry" ] && log "dry-run: would dequeue #$1" >&2
+              log "dry-run: would enqueue #$1" >&2
+              echo dry
+              return 0
+            fi
             if [ -n "$entry" ]; then
               gh api graphql -f query='
                 mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' \
@@ -126,6 +144,11 @@ jobs:
               log "queue-heal: build entries $b kept ($n passed, $m failed since $t)"
               return 0
             fi
+            if dry; then
+              log "queue-heal: build entries $b -> $nb ($n passed, $m failed since $t)"
+              log "dry-run: would set max_entries_to_build=$nb"
+              return 0
+            fi
             echo "$rs" | jq --argjson n "$nb" '{name, target, enforcement, bypass_actors, conditions,
                 rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
               > "${RUNNER_TEMP:-/tmp}/ruleset.json"
@@ -155,6 +178,12 @@ jobs:
           job=$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
             --jq '[.jobs[] | select(.conclusion == "failure")][0].name // "unknown"') || job=unknown
           id=$(gh api "repos/$REPO/pulls/$front" --jq .node_id) || { log "queue-heal: front #$front unreadable, left alone"; exit 0; }
+          if dry; then
+            log "dry-run: would dequeue #$front"
+            log "dry-run: would label #$front dequeued"
+            log "queue-heal: #$front dequeued, its own group failed (run $1, job $job)"
+            exit 0
+          fi
           if gh api graphql -f query='
               mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$id" --silent; then
             gh api -X POST "repos/$REPO/issues/$front/labels" -f "labels[]=dequeued" --silent || true
