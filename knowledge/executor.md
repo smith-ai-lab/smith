@@ -55,7 +55,8 @@ no shell feature) is served from `<cache>/smith/steps` when a build has made it 
 Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `SmithEdge`, `SmithJob`), which move to
 `.smith` with the executor (#45); its one pure part, SHA-256, is `runtime/package.c`'s.
 - **Two levels, as ccache's direct mode.** The inputs of a compile are known only after it ran, so a *manifest*
-  `m/<xx>/<key>` (key = SHA-256 of the command with the folder a token, the compiler's build-id or LC_UUID, the
+  `m/<xx>/<key>` (key = SHA-256 of the command with the folder a token, the compiler's build-id or LC_UUID (the smith that runs the build, when it is the compiler: its digest with its
+  commit and build-id blanked, so a stage0 of another commit with the same code is the same compiler, #2833), the
   environment (`SMITH_LANG_FLAGS`, `SMITH_LANG_INPUTS`, `SDKROOT`, `SMITH_CLANG`, `CPATH`, ...) and the content of the
   step's explicit and implicit inputs) keeps up to 8 *variants*: the files a compile read and a spec of each. A *result*
   `r/<xx>/<rkey>/` holds the object, the `.fx` and the depfile of a variant.
@@ -101,6 +102,10 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   earlier on the include path, or (with `-fmodules`) a system header that only a module reads. Module header steps and
   lint are not covered yet.
 
+## `.smith` compiles in one process (#2888)
+
+Each `.smith` compile of a build is its own `smith cc --front-end=new` process, so each reads std and its C headers again. Within one process they are read once (knowledge/front-end.md, "One process, many files"): a command line with several `.smith` files shares them, and a later file's import drops from about 500 ms to about 2 ms. What it shares never changes a result: modules are keyed by their whole source, headers by the header, its folder and the file's own flags. The executor still runs one process per compile, so a build gets the sharing between its compiles only through the disk cache of the same entries (#2891); a long-lived compile worker (#2893) is parked.
+
 ## Keep writing `build.ninja`
 
 Yes. It is the executor's input, so it is not a fallback format that can be dropped; what stays optional is ninja. Keep
@@ -136,7 +141,7 @@ the pools, the progress line and the log do not change. Threads against worker p
 | `-t clean [-g] [-r rule] [targets]`, `-t compdb [rules]`, `-t targets [all\|rule R]`, `-t commands <targets>`, `-t deps [targets]`, `-t cleandead` | kept, with ninja's output; `cleandead` leaves a file that the manifest still names |
 | `.ninja_log` / `.ninja_deps` (binary deps log) | replaced by `.smith_log` / `.smith_deps` (text), above |
 | the default job count | the same: cores + 2 |
-| `-d explain` | kept: says on stderr why each edge is dirty, and an output made dirty by an input says `X is dirty (first cause: Y)`, Y being the first output or missing source whose own reason was printed |
+| `-d explain` | kept: says on stderr why each edge is dirty, and an output made dirty by an input says `X is dirty (first cause: Y, <reason>)` (#2788), Y being the leaf behind the first reason printed: followed down through dirty inputs and depfile entries, the file that changed (`newer than its output`), a missing output or source (`missing`), or the output whose command line changed (`its command line changed`) |
 | `-l`, `-w`, other `-d` modes | read and ignored |
 | `-t graph`, `browse`, `query`, `inputs`, `rules`, `recompact`, `restat`, `msvc`, `multi-inputs`, `-f`, `-C` | dropped: no project here uses them (`-f` and `-C` were already refused) |
 | `include`, `subninja`, `rspfile`, `deps = msvc`, `dyndep`, `$in_newline`, one rule's variable naming another's | dropped: smith writes none of them. `SMITH_NINJA` runs a manifest that has them |
