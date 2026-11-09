@@ -605,3 +605,36 @@ export void test_build_step_cache_the_header_pass_lists_what_it_read() {
     scratch::Run plain = scratch::sh(&p, "smith cc --smith-header api.smith -o plain.h -I . && cmp api.h plain.h");
     scratch::expect_status("deps: the header is the same with or without -MD", 0, &plain);
 }
+
+// The same step as the build writes it: the compiler's identity file is an implicit input, so the step runs after a new
+// compiler (#3002). The key holds the compiler already, so that file's bytes (its path, size and time, new in every job)
+// are no part of it: a second folder whose file differs is still served.
+constexpr const char *header_compiler_manifest =
+    "ninja_required_version = 1.10\nbuilddir = .smith\nrule cc\n  command = $cmd\n"
+    "build api.h: cc api.smith | .smith/compiler/0123456789abcdef\n"
+    "  cmd = sh --smith-header api.smith -o api.h -std=gnu23 -I . -MD -MF api.h.d\n"
+    "  depfile = api.h.d\n  deps = gcc\n  restat = 1\n"
+    "default api.h\n";
+
+static scratch::Project header_compiler_project(const char *name, const char *identity) {
+    scratch::Project p = header_project(name);
+    test::check_condition(c::smith_core_plan_write(p.dir, ".smith/build.ninja", header_compiler_manifest, 100));
+    put(p, ".smith/compiler/0123456789abcdef", identity, 100);
+    return p;
+}
+
+export void test_build_step_cache_a_header_step_does_not_key_on_the_compiler_file() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = header_compiler_project("a", "/runner/job-1/smith 111 1000\n");
+    defer scratch::clean(&a);
+    scratch::Project b = header_compiler_project("b", "/other/job-2/smith 222 2000\n");
+    defer scratch::clean(&b);
+    scratch::own_cache(&a);
+    Build first = header_build(a, a.cache, 1000);
+    expect_counts("compiler file: the first job runs the header step", 1, 0, &first);
+    Build second = header_build(b, a.cache, 1000);
+    expect_counts("compiler file: a job whose file differs is served it", 0, 1, &second);
+}
