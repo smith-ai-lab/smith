@@ -62,6 +62,7 @@ static Str as_str(char chars[:]) {
 export struct Times {
     U64 parse;
     U64 imports; // the part of `check` spent reading imported modules and C headers (--time, #2681)
+    U64 headers; // the part of `imports` spent on C headers (#2888)
     U64 check;
     U64 emit;
     U64 write;
@@ -407,6 +408,7 @@ static const ast::Module *read_header(Str header, Bool angled) {
 
 // `--time` (#2681): what reading the imports cost, summed over a file's check, so `check` can be told from `import`.
 static U64 import_nanoseconds = 0;
+static U64 header_nanoseconds = 0;
 
 static const ast::Module *load_module(const char *dotted) {
     U64 mark = clock::monotonic();
@@ -418,7 +420,10 @@ static const ast::Module *load_module(const char *dotted) {
 static const ast::Module *load_header(Str header, Bool angled) {
     U64 mark = clock::monotonic();
     const ast::Module *found = read_header(header, angled);
-    import_nanoseconds += clock::monotonic() - mark;
+    U64 spent = clock::monotonic() - mark;
+    import_nanoseconds += spent;
+    header_nanoseconds += spent;
+    if (c::getenv("SMITH_TIME_HEADERS") != nullptr) report(as_str(format::push("header ", header, " ", spent / 1000000, " ms\n")));
     return found;
 }
 
@@ -1043,6 +1048,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     import_roots = folders;
     header_folder = folder_of(path);
     import_nanoseconds = 0;
+    header_nanoseconds = 0;
     read_count = 0;
     lint_inputs(source);
     types::Checked checked =
@@ -1051,6 +1057,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     U64 checking = clock::monotonic() - mark;
     times.imports = import_nanoseconds < checking ? import_nanoseconds : checking;
     times.check = checking - times.imports;
+    times.headers = header_nanoseconds < times.imports ? header_nanoseconds : times.imports;
     if (checked.error_count > 0) {
         Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
@@ -1105,6 +1112,7 @@ static void report_times(Str path, Times times, U64 wall) {
     Str lines = as_str(format::push("time: ", path, "\n"));
     lines = as_str(format::push(lines, time_line("lex and parse", times.parse)));
     lines = as_str(format::push(lines, time_line("import (modules and C headers)", times.imports)));
+    lines = as_str(format::push(lines, time_line("  of which C headers", times.headers)));
     lines = as_str(format::push(lines, time_line("check", times.check)));
     lines = as_str(format::push(lines, time_line("emit LLVM IR", times.emit)));
     lines = as_str(format::push(lines, time_line("write the object (LLVM passes and code generation)", times.write)));
