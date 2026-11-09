@@ -993,7 +993,28 @@ jobs:
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
-        run: scripts/frontend_coverage/check_excluded.sh "$(dirname "$SMITH")" "$PWD/scripts/frontend_coverage/main.smith"
+        run: |
+          # the objects `unrelated_object` in scripts/frontend_coverage/main.smith leaves out of the key hold only another
+          # verb's code: nothing outside them and the two dispatchers (smith.o, rt_runtime_verbs.o) calls a symbol they define,
+          # and the list here is the list there
+          source="$PWD/scripts/frontend_coverage/main.smith"
+          cd "$(dirname "$SMITH")"
+          exact="rt_runtime_test_cache.o rt_runtime_docs.o rt_smith_protocol_dap.o rt_smith_protocol_mcp.o lldb_dap_shim.o lldb_server_shim.o"
+          listed=$(sed -n '/static Bool unrelated_object/,/^}/p' "$source" | grep -o '"[a-z_]*\.o"' | tr -d '"' | sort | tr '\n' ' ')
+          want=$(echo $exact | tr ' ' '\n' | sort | tr '\n' ' ')
+          [ "$listed" = "$want" ] || { echo "::error::the excluded objects here ($want) differ from unrelated_object ($listed)"; exit 1; }
+          excluded=$(for o in $exact rt_runtime_mcp*.o front_lsp_*.o; do [ -f "$o" ] && echo "$o"; done | tr '\n' ' ')
+          defined=$(mktemp)
+          nm -g --defined-only $excluded | awk 'NF == 3 && $2 ~ /^[TDRBSVW]$/ {print $3}' | sort -u >"$defined"
+          status=0
+          for o in *.o; do
+            case " $excluded " in *" $o "*) continue ;; esac
+            case "$o" in smith.o | rt_runtime_verbs.o) continue ;; esac
+            hits=$(nm -u "$o" 2>/dev/null | awk 'NF == 2 {print $2}' | sort -u | comm -12 - "$defined" | head -n 5 | tr '\n' ' ')
+            if [ -n "$hits" ]; then echo "::error::$o calls $hits(defined in an object left out of the count's key)"; status=1; fi
+          done
+          [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
+          exit $status
       - name: Restore main's fixed files
         # a failure only leaves the fix cold
         continue-on-error: true
