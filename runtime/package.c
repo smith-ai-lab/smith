@@ -212,9 +212,32 @@ void smith_package_remove(const char *path) {
 
 // The only place a package is downloaded: smith's HTTP client, https only (and file:// for tests), also after a
 // redirect. The body goes to the destination as it arrives. A failure's message is the client's, naming the URL.
+// A number from the environment, or the fallback when it is not set or not a number.
+static unsigned smith_package_env_number(const char *name, unsigned fallback) {
+    const char *text = getenv(name);
+    if (text == nullptr || *text == '\0') return fallback;
+    char *end = nullptr;
+    unsigned long value = strtoul(text, &end, 10);
+    return *end == '\0' && value <= 1000 ? (unsigned)value : fallback;
+}
+
+// A download from github.com gets a 504 now and then: an https one is tried up to 8 times, 5 s apart, on any error
+// (about 2 minutes, as fetch-smith does, #2792). A file:// one is local and tried once. SMITH_DOWNLOAD_TRIES and
+// SMITH_DOWNLOAD_DELAY (seconds) override the two numbers: the tests of the scripted network set 1 try, and 0 s.
 static bool smith_package_download(const char *url, const char *destination, SmithPackageFault *error) {
+    unsigned tries = smith_package_env_number("SMITH_DOWNLOAD_TRIES", 8);
+    unsigned delay_seconds = smith_package_env_number("SMITH_DOWNLOAD_DELAY", 5);
+    if (tries == 0 || strncmp(url, "https://", 8) != 0) tries = 1;
     SmithHttpResult result = smith_http_get(url, destination);
+    for (unsigned tried = 1; result.error.code != 0 && tried < tries; tried++) {
+        fprintf(stderr, "smith: %s failed (%s), trying again in %u s (%u of %u)\n", url, result.error.message,
+                delay_seconds, tried, tries - 1);
+        sleep(delay_seconds);
+        result = smith_http_get(url, destination);
+    }
     if (result.error.code == 0) return true;
+    // one greppable line for a failure that is GitHub's or the network's, not smith's (#2825)
+    if (tries > 1) fprintf(stderr, "external: %s %d after %u tries\n", url, result.status, tries);
     return smith_package_fail(error, "cannot download %s\n  %s", url, result.error.message);
 }
 

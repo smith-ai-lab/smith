@@ -368,6 +368,7 @@ static void visit_expr(Work *work, ast::Expr *e) {
         e->kind.lambda.result = take_type(work, e->kind.lambda.result);
         e->kind.lambda.body = take_stmt(work, e->kind.lambda.body);
     }
+    if (e->kind == .pattern_test) e->kind.pattern_test.value = take_expr(work, e->kind.pattern_test.value);
     if (e->kind == .try_expr) e->kind.try_expr.operand = take_expr(work, e->kind.try_expr.operand);
     if (e->kind == .reflect_member) {
         e->kind.reflect_member.base = take_expr(work, e->kind.reflect_member.base);
