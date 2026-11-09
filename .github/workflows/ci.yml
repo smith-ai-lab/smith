@@ -770,6 +770,7 @@ jobs:
     timeout-minutes: 3
     permissions:
       statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
+      actions: write # a PR check that yielded force-cancels its own run (#2965)
     steps:
       - name: Verdict
         id: verdict
@@ -787,8 +788,24 @@ jobs:
           COUNT: ${{ needs.changes.outputs.count }}
           BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          # An `abandoned` job in a PR check is a yield: yield-to-queue force-cancelled this run, but GitHub still ran this
+          # always() job. It is no result, so cancel the run for good (a cancelled `ci` is none for ci-dispatch.yml, which
+          # starts the check again) and post no status. Never green or skipped: either would pass the ruleset (#2965).
+          # A merge_group, push or schedule run with an abandoned job falls through and fails below.
+          case " $RESULTS " in
+          *" abandoned "*)
+            if [ "$EVENT" = workflow_dispatch ]; then
+              echo "yield: a job was abandoned, this PR check cancelled itself; cancelling the run" | tee -a "$GITHUB_STEP_SUMMARY"
+              gh api -X POST "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/force-cancel" --silent || true
+              for _ in $(seq 12); do sleep 5; done
+              echo "::error::yield: force-cancel did not end the run"
+              exit 1
+            fi
+            ;;
+          esac
           if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           case " $RESULTS " in
           *" failure "* | *" cancelled "*)
@@ -828,7 +845,7 @@ jobs:
       - name: Post the verdict as the commit status `ci`
         if: >-
           always() && github.event_name == 'workflow_dispatch' && !cancelled()
-          && !contains(join(needs.*.result, ' '), 'cancelled')
+          && !contains(join(needs.*.result, ' '), 'cancelled') && !contains(join(needs.*.result, ' '), 'abandoned')
           && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
