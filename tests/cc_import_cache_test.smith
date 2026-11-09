@@ -1,0 +1,116 @@
+// The disk cache of imports (#2891): a second process reads a module's parse tree and a C header's declarations from
+// `<cache>/smith/imports` and gives the same object and the same diagnostics as a compile without the cache; a
+// header read with other defines is another entry; an edited header and a damaged entry are read again;
+// SMITH_IMPORT_CACHE=0 writes nothing. Each test has a cache folder of its own, and `log` a line of counts for each
+// process. smith-covers: runtime/import_cache.c front/module_cache.smith front/compile.smith shim/cimport.cpp
+module cc_import_cache_test;
+
+import std::test;
+import scratch;
+
+// A module with a struct read by reflection, a generic and an attribute, a quoted header and a system one.
+static void write_project(const scratch::Project *p) {
+    scratch::write(p, "zz.h", "int zz_count(int x);\n");
+    scratch::write(p, "util.smith",
+                   "import c <stdio.h>\n\nstruct Point:\n    x: i32\n    y: i32\n\npub fn twice(x: auto) -> f64:\n"
+                   "    return x + x\n\npub fn field_count() -> usize: countof(fields(Point))\n\n@pure\n"
+                   "pub fn quiet() -> i32: 1\n");
+    scratch::write(p, "a.smith",
+                   "import util\nimport c \"zz.h\"\nimport c <stdio.h>\n\npub fn a(x: i32) -> i32:\n"
+                   "    return zz.zz_count(x) + util.quiet()\n\npub fn a2(x: f64) -> f64: util.twice(x)\n\n"
+                   "pub fn a3() -> usize: util.field_count()\n");
+    scratch::write(p, "c.smith", "import util\n\npub fn c(x: i32) -> i32:\n    return util.twice(x) + y\n");
+}
+
+// Without the cache, then twice with it: the second process reads every module and header from it, and the objects
+// and the diagnostics are the same bytes.
+export void test_cc_import_cache_a_second_process_reads_what_the_first_stored() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    write_project(&p);
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "SMITH_IMPORT_CACHE=0 smith cc --front-end=new -c a.smith -o off.o; "
+                                       "SMITH_IMPORT_CACHE=0 smith cc --front-end=new -c c.smith 2>off.err; "
+                                       "for r in 1 2; do smith cc --front-end=new -c a.smith -o on$r.o; "
+                                       "smith cc --front-end=new -c c.smith 2>on$r.err; done; cat log; "
+                                       "cmp off.o on1.o && cmp off.o on2.o && echo objects same; "
+                                       "cmp off.err on2.err && echo diagnostics same; cat on2.err");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the first process stores", run.out, "headers 0 2 modules 0 1\n");
+    scratch::expect_contains("the second reads", run.out, "headers 2 0 modules 1 0\n");
+    scratch::expect_contains("the objects", run.out, "objects same");
+    scratch::expect_contains("the diagnostics", run.out, "diagnostics same");
+    scratch::expect_contains("the file's own error", run.out, "c.smith:4:");
+}
+
+// A header read with a define is not the header read without it, and each compile reads its own.
+export void test_cc_import_cache_a_header_with_other_defines_is_another_entry() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "zz.h", "#ifdef ZZ_ONE\nint zz_one(void);\n#else\nint zz_two(void);\n#endif\n");
+    scratch::write(&p, "one.smith", "import c \"zz.h\"\n\npub fn one() -> i32: zz.zz_one()\n");
+    scratch::write(&p, "two.smith", "import c \"zz.h\"\n\npub fn two() -> i32: zz.zz_two()\n");
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "smith cc --front-end=new -DZZ_ONE -c one.smith 2>&1; "
+                                       "smith cc --front-end=new -c two.smith 2>&1; "
+                                       "smith cc --front-end=new -DZZ_ONE -c one.smith 2>&1; "
+                                       "smith cc --front-end=new -c two.smith 2>&1; cat log; "
+                                       "ls cache/smith/imports/*/h | wc -l");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_lacks("no diagnostics", run.out, "error");
+    scratch::expect_contains("each read stored", run.out, "headers 0 1 modules 0 0\nheaders 0 1 modules 0 0\n");
+    scratch::expect_contains("then each read from the cache", run.out,
+                             "headers 1 0 modules 0 0\nheaders 1 0 modules 0 0\n2\n");
+}
+
+// A header whose text changed is read again: the declaration it has now, not the one stored.
+export void test_cc_import_cache_an_edited_header_is_read_again() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    scratch::write(&p, "zz.h", "int zz_old(void);\n");
+    scratch::write(&p, "a.smith", "import c \"zz.h\"\n\npub fn a() -> i32: zz.zz_new()\n");
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "smith cc --front-end=new -c a.smith 2>/dev/null; echo status $?; "
+                                       "echo 'int zz_new(void);' > zz.h; "
+                                       "smith cc --front-end=new -c a.smith 2>&1; echo status $?; cat log");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("the old header has no zz_new", run.out, "status 1\n");
+    scratch::expect_contains("the new one has", run.out, "status 0\n");
+    scratch::expect_contains("read again", run.out, "headers 0 1 modules 0 0\nheaders 0 1 modules 0 0\n");
+}
+
+// An entry with a byte changed is a miss, read again and stored again, and the object is the same.
+export void test_cc_import_cache_a_damaged_entry_is_read_again() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    write_project(&p);
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "smith cc --front-end=new -c a.smith -o one.o; "
+                                       "for f in cache/smith/imports/*/[hm]/*; do printf '\\377\\376\\375\\374' | dd of=$f bs=1 seek=96 "
+                                       "conv=notrunc 2>/dev/null; done; smith cc --front-end=new -c a.smith -o two.o; "
+                                       "smith cc --front-end=new -c a.smith -o three.o; cat log; "
+                                       "cmp one.o two.o && cmp one.o three.o && echo objects same");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("damaged, then stored again", run.out,
+                             "headers 0 2 modules 0 1\nheaders 0 2 modules 0 1\nheaders 2 0 modules 1 0\n");
+    scratch::expect_contains("the objects", run.out, "objects same");
+}
+
+// SMITH_IMPORT_CACHE=0: nothing is read, written or counted.
+export void test_cc_import_cache_is_off_when_the_variable_is_0() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    write_project(&p);
+    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+                                       "SMITH_IMPORT_CACHE=0 smith cc --front-end=new -c a.smith; echo status $?; "
+                                       "test -e cache/smith/imports && echo cache made; test -e log && echo counted");
+    defer scratch::release(run.out);
+    defer scratch::release(run.err);
+    scratch::expect_contains("it compiles", run.out, "status 0\n");
+    scratch::expect_lacks("no cache", run.out, "cache made");
+    scratch::expect_lacks("nothing counted", run.out, "counted");
+}
