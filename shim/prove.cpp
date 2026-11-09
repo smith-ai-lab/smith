@@ -207,9 +207,9 @@ int compile(const char *program, const char *resource, const std::string &file, 
                                "-UNDEBUG", "-Wno-unused-command-line-argument", sanitizers, "-fsanitize-trap=all"}) {
         words.emplace_back(forced);
     }
-    words.insert(words.end(), {"-Xclang", "-disable-O0-optnone", "-o", output, file});
     // The files this compile reads, for the group's record (GroupRecord): what the compile is a function of.
     if (!depfile.empty()) words.insert(words.end(), {"-MD", "-MF", depfile});
+    words.insert(words.end(), {"-Xclang", "-disable-O0-optnone", "-o", output, file});
     std::vector<char *> pointers;
     for (std::string &word : words)
         pointers.push_back(word.data());
