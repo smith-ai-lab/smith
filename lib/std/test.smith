@@ -354,7 +354,7 @@ export [[nodiscard]] Value value_of(auto v) {
     } else if constexpr (typeof(v) == char) {
         return value_char(v);
     } else if constexpr (is_float(typeof(v))) {
-        if constexpr (sizeof(typeof(v)) == 4) {
+        if constexpr (typeof(v) == F32) {
             return value_f32(v);
         } else {
             return value_f64(v);
@@ -969,7 +969,10 @@ void check_slices(auto a, typeof(a) b) {
     if (countof(a) != countof(b)) {
         fail_field("count", value_usize(countof(a)), value_usize(countof(b)));
     }
-    check_part("", countof(a) != 0 ? &a[0] : nullptr, countof(b) != 0 ? &b[0] : nullptr, countof(a));
+    if (countof(a) == 0) {
+        return; // the counts are equal: both are empty, and there is no element to compare
+    }
+    check_part("", &a[0], &b[0], countof(a));
 }
 
 // a == b. The type is a's, and b converts to it (a conversion that changes b's value is an error at the call); both
