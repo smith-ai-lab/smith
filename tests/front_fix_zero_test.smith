@@ -438,3 +438,15 @@ export void test_front_fix_zero_a_pointer_field_read_through_a_tested_local_is_o
         "struct Node:\n    value: i32\n    next: ?*Node = .none\nfn f() -> i32:\n    second := Node(value = 2)\n"
         "    mut n: *Node = &second\n    while n != nullptr:\n        n = n.next\n    return 0\n");
 }
+
+// A test of a field counts for the struct it is on (D23): `o->next == nullptr` tests `Other.next`, and `Node.next`,
+// which a construction leaves out, has the same name and stays as it is.
+export void test_front_fix_zero_a_test_on_another_struct_does_not_make_a_field_optional() {
+    expect_fixed(
+        "module m;\nstruct Node {\n    int value;\n    Node *next;\n};\nstruct Other {\n    int value;\n"
+        "    Other *next;\n};\nint f(Other *o) {\n    Node a = {.value = 1};\n    if (o->next == nullptr) return 0;\n"
+        "    return a.value;\n}\n",
+        "struct Node:\n    value: i32\n    next: *Node\nstruct Other:\n    value: i32\n    next: *Other\n"
+        "fn f(o: *Other) -> i32:\n    a := Node(value = 1)\n    if o.next == nullptr:\n        return 0\n"
+        "    return a.value\n");
+}
