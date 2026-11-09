@@ -397,7 +397,7 @@ export void test_front_emit_an_unsupported_node_is_an_error_with_the_span() {
     ast::Module m = module_of(ast::function("f", params, ast::named("I32"), ast::block(items)));
     tree_end(&trees);
     emit::Error error = failure_of(&m);
-    test::check_equal(contains(error.message.data, "not emitted yet: call"), true);
+    test::check_equal(contains(error.message.data, "not emitted yet: a call whose callee is of kind `integer`"), true);
     test::check_equal(error.span.start, 4U);
     emit::free_error(error);
 }
