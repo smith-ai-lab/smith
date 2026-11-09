@@ -212,6 +212,49 @@ export void test_build_step_cache_results_over_the_cap_are_removed() {
     expect_counts("cap: over the cap nothing is left to serve", 3, 0, &capped);
 }
 
+constexpr U64 two_results = 40000; // bytes: a result is 16 KB on disk, so two fit and five do not
+
+// 5b. The cap drops the least recently used first, whatever the age (#2833): an entry a build used a minute ago
+// survives when it was made ten days ago, the ones nobody used go, and their manifests go with them (a manifest is a
+// file for each key, 122,000 of them in the CI cache before this).
+export void test_build_step_cache_the_cap_drops_the_least_recently_used_first() {
+    arena::Arena memory = test::memory(memory_size);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Project a = project("a");
+    defer scratch::clean(&a);
+    scratch::own_cache(&a);
+    (void)build(a, a.cache, 1000);
+    // everything made so far was last used ten days ago
+    const char *age = format::push("find ", a.cache, "/steps/m ", a.cache, "/steps/r -mindepth 2 -maxdepth 2 ",
+                                   "-exec touch -d '10 days ago' {} +")
+                          .data;
+    scratch::Run aged = scratch::sh(&a, age);
+    test::check_equal(aged.status, 0);
+    // other.h changes: main.o and other.o compile again (two new results made now; util.o is up to date and its
+    // result is not read)
+    put(a, "other.h", "int other(void);\nint more(void);\n", 2000);
+    Build second = build(a, a.cache, 3000);
+    expect_counts("lru: two compile again", 2, 0, &second);
+    I64 now = (I64)c::time(nullptr);
+    test::check_equal(c::smith_core_step_cache_prune(a.cache, two_results, now), true);
+    scratch::Run manifests = scratch::sh(&a, format::push("ls ", a.cache, "/steps/m/*/* | wc -l").data);
+    scratch::expect_contains("lru: the manifest of the unused result goes with it, the two used stay", manifests.out,
+                             "2");
+    // what was made now stays, whatever the age of the rest: a build of the new header is served its two results, the
+    // third (util.o, ten days unused) is compiled again, and the old header's results are gone
+    scratch::Project b = project("b");
+    defer scratch::clean(&b);
+    put(b, "other.h", "int other(void);\nint more(void);\n", 2000);
+    Build recent = build(b, a.cache, 3000);
+    expect_counts("lru: the recent results survive, the one nobody used is gone", 1, 2, &recent);
+    scratch::Project d = project("d");
+    defer scratch::clean(&d);
+    Build old = build(d, a.cache, 3000);
+    expect_counts("lru: the old header's results are gone", 2, 1, &old);
+}
+
 // 6. A precompiled header is served only when it is made and read with -fvalidate-ast-input-files-content: it records
 // the time of each file it read, so one served after a checkout rewrote its header with the same text (a new time)
 // is rejected by every compile that includes it (#728) unless the hash of each input is stored (#1415).

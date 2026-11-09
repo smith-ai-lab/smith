@@ -888,20 +888,16 @@ jobs:
             ~/.cache/smith/packages
             ~/.cache/smith/tools
           key: smith-tools-${{ runner.os }}-${{ github.sha }}
-      - name: Keep the step cache entries this job used (#2833)
-        # the folder restored carries every entry of every warm before it (a new smith is a new key for every compile of
-        # a smith-cc step, so the old ones are never used again): 122,000 manifests and 105,000 results, 1.6 GB, 41 s
-        # to restore in every job. A hit touches its entry (a minute old or more) and a compile stores a new one, so
-        # what this job used is what was touched in the last minutes; the rest goes before the save
+      - name: Let the next build prune the step cache (#2833)
+        # the folder is kept within `step-cache-max` of setup-smith, the least recently used first, by the prune a build
+        # starts with, at most once an hour. The stamp of that check is saved with the folder, so a warm within the hour
+        # of the one before would skip it and the folder would grow: it is left out of the save, and the next warm (or
+        # any job that restores this) prunes at its first build
         if: env.DRY_RUN != '1'
         shell: bash
         run: |
-          dir=~/.cache/smith/steps
-          before=$(du -sm "$dir" | cut -f1)
-          for kind in m r; do
-            [ -d "$dir/$kind" ] && find "$dir/$kind" -mindepth 2 -maxdepth 2 -mmin +45 -exec rm -rf {} +
-          done
-          echo "step cache kept: $before MB -> $(du -sm "$dir" | cut -f1) MB, $(find "$dir/m" -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f ~/.cache/smith/steps/prune.timestamp
+          echo "step cache saved: $(du -sm ~/.cache/smith/steps | cut -f1) MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the step cache
         if: env.DRY_RUN != '1'
         uses: actions/cache/save@v4
