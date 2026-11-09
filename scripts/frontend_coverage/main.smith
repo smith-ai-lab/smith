@@ -1422,6 +1422,23 @@ static Bool fixer_object(const char object[:]) {
     return false;
 }
 
+// Objects of verbs that neither fix nor compile a file (#2832, #2854): each is linked into smith for the verb it names,
+// so a change to it (runtime/test_cache.c in #2854) is not a change to what the fixer or a compile makes. The list is
+// by name and short on purpose: any object not on it is hashed. The test cache and test selection (`smith test`), the
+// docs check, coverage selection, the failed check's explanation, `smith symbolize`, the run accounting, the MCP
+// server and its debug-adapter session, the DAP and LLDB shims, the language server's shim and its front objects.
+static Bool unrelated_object(const char name[:]) {
+    static const char *const names[_] = {"rt_runtime_test_cache.o", "rt_runtime_docs.o",
+                                         "rt_runtime_coverage.o",   "rt_runtime_explain.o",
+                                         "rt_runtime_symbolize.o",  "rt_runtime_account.o",
+                                         "rt_runtime_changed.o",    "rt_smith_protocol_dap.o",
+                                         "rt_smith_protocol_mcp.o", "lsp_shim.o"};
+    for (Usize i = 0; i < countof(names); i++) {
+        if (same(name, view_of(names[i]))) return true;
+    }
+    return starts_with(name, "rt_runtime_mcp") || starts_with(name, "lldb_") || starts_with(name, "front_lsp_");
+}
+
 // The hash of what the fixer is built from (#2632): the objects `smith build` made, which no hand-kept list of inputs
 // can miss. Every object and pack of the smith's folder except the front/ modules the fixer does not import (the
 // checker and the emitter: an edit to them leaves the fixer's objects as they were, so the cache of fixed files
@@ -1446,7 +1463,8 @@ static Bool hash_objects(const char *smith, Bool fixer_only, struct Hash *result
         // and a key that included it never matched main's cache of fixed files (#2832). The fixer does not read it.
         if (same(name, "commit.o")) continue;
         // not what a compile of a file reads (#2832): the commit being built, and smith lint's cache identity
-        if (!fixer_only && (same(name, "commit.o") || same(name, "lint_identity.o"))) continue;
+        if (!fixer_only && same(name, "lint_identity.o")) continue;
+        if (unrelated_object(name)) continue;
         Bool front = starts_with(name, "front_");
         if (fixer_only && front && !fixer_object(name)) continue;
         if (front && fixer_only) fixer_objects += 1;
