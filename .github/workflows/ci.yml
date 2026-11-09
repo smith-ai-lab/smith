@@ -463,6 +463,7 @@ jobs:
       - name: Report the test-store hit rate (sizing)
         # one line per cache with its hit rate; the first misses say which input differs (#2876)
         if: always()
+        continue-on-error: true
         uses: ./.github/actions/cache-report
         with:
           name: test-store
@@ -578,6 +579,7 @@ jobs:
           exit $rc
       - name: Report the test-store hit rate (part)
         if: always()
+        continue-on-error: true
         uses: ./.github/actions/cache-report
         with:
           name: test-store

@@ -28,6 +28,8 @@ runs:
         #   steps:      the log is `smith build` output: `[n/m] ...` lines, `(cached)` at the end of a served step.
         # The input regex names the files whose change makes a low rate normal; CACHE_BASE is the commit the run is compared
         # with (the queue's base). A cache never fails a run: a miss costs time, never correctness.
+        # a report never fails a job: no -e, no pipefail (a grep with no match, a missing log)
+        set +e +o pipefail
         set -u
         name="$CACHE_NAME"
         log="$CACHE_LOG"

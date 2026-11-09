@@ -126,6 +126,7 @@ runs:
 
     - name: Report the step cache (build)
       if: inputs.artifact == ''
+      continue-on-error: true
       uses: ./.github/actions/cache-report
       with:
         name: steps
@@ -169,6 +170,7 @@ runs:
 
     - name: Report the step cache (tests built)
       if: inputs.artifact == '' && inputs.tests == 'true'
+      continue-on-error: true
       uses: ./.github/actions/cache-report
       with:
         name: tests-built
