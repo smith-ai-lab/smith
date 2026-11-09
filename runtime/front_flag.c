@@ -10,6 +10,8 @@
 #endif
 #include "main.h"
 #include "mcp_unit.h"
+#include "package.h"
+#include "test_cache.h"
 
 #ifndef SMITH_CORE
 
@@ -355,6 +357,23 @@ bool smith_lint_fix_requested(int count, char **args) {
 // `smith lint --fix FILE...` (#1442): each `.smith` file is parsed by smith's own front end, the fixes its parse errors
 // carry are applied, and `path: N fixes applied` is printed; a file with nothing to fix reports 0. The units runner has
 // no front end, so it refuses.
+// Gives the fixer a folder for what it keeps between processes (#2889), unless the caller set one (the count gives its
+// own per smith, #2586): the mended text of each import and the masks of its fields (`front::fix::mended_import`,
+// `fix_zero`), keyed there by the hash of the path and the text. The fixer depends on the code of the smith that runs
+// it, so the folder is named by `smith_self_digest`: another smith reads none of these entries. A failure only leaves
+// the fixer cold; a cache entry never changes the fixed file.
+static void smith_lint_fix_import_cache(const char *self) {
+    if (getenv("SMITH_FIX_IMPORT_CACHE") != nullptr) return;
+    char digest[smith_sha256_hex_size];
+    char base[PATH_MAX];
+    char folder[PATH_MAX];
+    SmithPackageFault fault;
+    if (self == nullptr || !smith_self_digest(self, digest) || !smith_cache_base(base, &fault)) return;
+    int written = snprintf(folder, sizeof folder, "%s/fix-imports/%.16s", base, digest);
+    if (written <= 0 || (size_t)written >= sizeof folder || !smith_package_make_folders(folder)) return;
+    setenv("SMITH_FIX_IMPORT_CACHE", folder, 1);
+}
+
 int smith_lint_fix(int count, char **args, const char *self) {
 #ifdef SMITH_CORE
     (void)count;
@@ -369,6 +388,7 @@ int smith_lint_fix(int count, char **args, const char *self) {
     }
     smith_front_cimport_flags(self, 0, args,
                               nullptr); // the fixer reads the headers a file imports as `smith cc` does (#2209)
+    smith_lint_fix_import_cache(self);
     return front_parser_fix_run((const char *const *)args, (size_t)count) == 0 ? 0 : 1;
 #endif
 }
