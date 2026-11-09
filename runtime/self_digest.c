@@ -1,6 +1,7 @@
 // The digest of a smith by its code (#2833): what `smith test`'s cache (runtime/test_cache.c) keys a test that runs
 // smith by, and what the step cache (runtime/executor_cache.c) keys the compiler of its own smith-cc steps by. A file
 // of its own, so that an edit to either cache does not change the digest object (#2855's key holds this one alone).
+// Moved unchanged from runtime/test_cache.c, where #2854 added it.
 #include "self_digest.h"
 #include "core.h"
 #include "package.h"
