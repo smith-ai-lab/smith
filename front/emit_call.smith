@@ -934,6 +934,11 @@ static Bool function_twin(state::Emitter *e, const ast::Expr *callee, ast::ExprR
     return c_callee(e, callee, &twin, &twin_symbol);
 }
 
+static state::Status unsupported_callee(const ast::Expr *x, const ast::Expr *callee) {
+    return state::failf(x->span, "not emitted yet: a call whose callee is of kind `", state::expr_kind_name(callee),
+                        "`");
+}
+
 // `Expr.call`.
 export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hint _) {
     if (written->kind != .call) {
@@ -964,9 +969,7 @@ export state::Status call(state::Emitter *e, const ast::Expr *written, state::Hi
     const types::Instance *instance = callee_of(e, written, written_args, &written_args, &imported, &key, &is_imported);
     if (!is_imported && instance == nullptr && callee->kind != .name) {
         // A call through a field that holds a function: a C function pointer, or a `fn` value of the module.
-        if (callee->kind != .member)
-            return state::failf(x->span, "not emitted yet: a call whose callee is of kind `",
-                                state::expr_kind_name(callee), "`");
+        if (callee->kind != .member) return unsupported_callee(x, callee);
         state::TyResult held = state::type_of_node(e, callee);
         if (held == .error) return {.error = held.error};
         if (held.ok.kind != .fn_value && held.ok.kind != .fn_pointer)
