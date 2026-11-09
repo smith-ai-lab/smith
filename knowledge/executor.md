@@ -110,6 +110,9 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   found there is not in the list (nothing is to be read): the same blind spot as a header that appears earlier on a
   compile's include path. `smith_object` and `build.c`'s single-header steps (the libraries', `front/`'s and the `smith new` template's, #2959)
   emit the flags; the tests' `--smith-headers` batch does not yet (#2967).
+  The compiler is not an input of the key: the key holds its identity already, so a step that lists the compiler as an
+  input (a header step's `.smith/compiler/<hash>` file, which holds the compiler's path, size and time, new in every job)
+  leaves that input out of the key (#3002). It had made every header step miss in every job after the one that stored it.
 
 ## `.smith` compiles in one process (#2888)
 
