@@ -71,6 +71,31 @@ export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
     expect("fn f():\n    x := 1\n    p := &x\n    p.* = 2\n", "fn f():\n    mut x := 1\n    p := &x\n    p.* = 2\n", 1);
 }
 
+// A number where a Bool is wanted (#2647): `not n` is `n == 0`, an operand of `and` or `or` is tested `!= 0`.
+export void test_front_fix_mut_not_a_number_is_a_comparison_with_zero() {
+    expect("fn f(n: usize) -> bool:\n    return not n\n", "fn f(n: usize) -> bool:\n    return n == 0\n", 1);
+}
+
+export void test_front_fix_mut_a_number_operand_of_and_is_tested_against_zero() {
+    expect("fn f(n: usize, ok: bool) -> bool:\n    return n and ok\n",
+           "fn f(n: usize, ok: bool) -> bool:\n    return n != 0 and ok\n", 1);
+    expect("fn f(n: usize, m: usize, ok: bool) -> bool:\n    return ok or n + m\n",
+           "fn f(n: usize, m: usize, ok: bool) -> bool:\n    return ok or (n + m) != 0\n", 1);
+}
+
+// The lead's repro: a C `while (n && p[0])` and `return !n;` come out checked (#2647).
+export void test_front_fix_mut_a_c_test_of_a_number_comes_out_without_errors() {
+    arena::Arena memory = test::memory(1U << 24);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Usize count = 0;
+    Str got = fixed("module m;\nstatic Bool f(Usize n, const char *p) {\n    while (n && p[0]) {\n        n -= 1;\n    "
+                    "}\n    return !n;\n}\n",
+                    &count);
+    test::check_equal(errors_in(got), (Usize)0);
+}
+
 // A name bound by a variant pattern is as writable as the variant's payload: `.item(p)` of a `*i32` payload handed
 // where
 // `*mut i32` is wanted makes the payload `*mut i32` (#2647).
@@ -190,4 +215,41 @@ export void test_front_fix_mut_an_inner_pointer_of_a_local_becomes_mut() {
     expect("fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *i32 = g(p)\n",
            "fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *mut i32 = g(p)\n",
            1);
+}
+
+// A `Result` tested and left with `return made` (or `{.error = made.error}` under a loop) and then read twice as
+// `made.ok`: one `ok` after the guard.
+export void test_front_fix_mut_a_result_returned_whole_is_read_as_ok() {
+    expect(
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+        "    if made == .error:\n        return made\n    a: usize = made.ok\n    b: usize = made.ok\n    .ok(a + b)\n",
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+        "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+        2);
+}
+
+export void test_front_fix_mut_a_result_guard_in_a_loop_binds_ok() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        made: Result(usize, usize) = f(i)\n        if made == .error:\n            return made\n"
+           "        total += made.ok\n        total += made.ok\n    .ok(total)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        ok := try f(i)\n        total += ok\n        total += ok\n    .ok(total)\n",
+           2);
+}
+
+// The guard `if .error(error) := made: return .error(error)` (written by the first pass where the `try` was held back
+// by old forms) followed by `made.ok` is `ok := try`, the same site as `if made == .error:`.
+export void test_front_fix_mut_a_result_guard_in_pattern_form_is_a_try() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+           "    if .error(error) := made:\n        return .error(error)\n    a: usize = made.ok\n"
+           "    b: usize = made.ok\n    .ok(a + b)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+           "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+           2);
 }

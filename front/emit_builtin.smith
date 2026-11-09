@@ -207,11 +207,11 @@ static c::LLVMAtomicOrdering memory_order(const ast::Expr *x) {
     if (x->kind != .call || countof(x->kind.call.args) != 3) return c::LLVMAtomicOrderingMonotonic;
     const ast::Expr *order = x->kind.call.args[2];
     if (order->kind != .name) return c::LLVMAtomicOrderingMonotonic;
-    Str name = order->kind.name.path.segments[0].text;
-    if (state::same_text(name, "__ATOMIC_ACQUIRE")) return c::LLVMAtomicOrderingAcquire;
-    if (state::same_text(name, "__ATOMIC_RELEASE")) return c::LLVMAtomicOrderingRelease;
-    if (state::same_text(name, "__ATOMIC_ACQ_REL")) return c::LLVMAtomicOrderingAcquireRelease;
-    if (state::same_text(name, "__ATOMIC_SEQ_CST")) return c::LLVMAtomicOrderingSequentiallyConsistent;
+    Str macro = order->kind.name.path.segments[0].text;
+    if (state::same_text(macro, "__ATOMIC_ACQUIRE")) return c::LLVMAtomicOrderingAcquire;
+    if (state::same_text(macro, "__ATOMIC_RELEASE")) return c::LLVMAtomicOrderingRelease;
+    if (state::same_text(macro, "__ATOMIC_ACQ_REL")) return c::LLVMAtomicOrderingAcquireRelease;
+    if (state::same_text(macro, "__ATOMIC_SEQ_CST")) return c::LLVMAtomicOrderingSequentiallyConsistent;
     return c::LLVMAtomicOrderingMonotonic;
 }
 

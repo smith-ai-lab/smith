@@ -114,3 +114,12 @@ export void test_front_fix_generic_mut_a_long_pointer_name_in_a_short_body_does_
     expect_fixed("module m;\nexport I32 view(auto xs, void *memory, Usize n) {\n    return xs;\n}\n",
                  "pub fn view(xs: auto, memory: *void, n: usize) -> i32:\n    return xs\n");
 }
+
+export void test_front_fix_generic_mut_the_first_line_of_a_body_in_the_new_syntax_is_a_statement() {
+    expect_fixed(
+        "struct P:\n    width: usize\n\npub fn make(piece: auto, width: usize) -> P:\n    padded: P = P(width = 0)\n"
+        "    padded.width = width\n    return padded\n",
+        "struct P:\n    width: usize\n\npub fn make(piece: auto, width: usize) -> P:\n    mut padded: P = P(width = "
+        "0)\n"
+        "    padded.width = width\n    return padded\n");
+}

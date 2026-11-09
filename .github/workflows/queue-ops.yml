@@ -83,6 +83,11 @@ jobs:
               -f id="$(pr_id)" --silent
           }
 
+          # `dequeued` marks a PR taken out of the queue on purpose, so queue-heal (#2900) does not queue it again: an
+          # API dequeue leaves no `removed_from_merge_queue` on the timeline. `dequeue` sets it; enqueue and jump clear it.
+          mark_dequeued() { gh api -X POST "repos/$REPO/issues/$PR/labels" -f 'labels[]=dequeued' --silent || echo "label dequeued: not set"; }
+          clear_dequeued() { gh api -X DELETE "repos/$REPO/issues/$PR/labels/dequeued" --silent 2>/dev/null || true; }
+
           # the queue's PR numbers, front first
           queue_order() {
             gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
@@ -101,6 +106,7 @@ jobs:
                 [ "$OP" = jump ] && jump=true
                 # a PR already in the queue cannot be enqueued again: take it out first (jump, 2026-11-08)
                 [ "$jump" = true ] && { dequeue_pr || return 1; }
+                clear_dequeued
                 # print what GitHub says about the entry (position, jump) and the queue now and 10 s later: the
                 # mutation's position alone was not reliable (jump put a PR third, 2026-11-08)
                 gh api graphql -f query='
@@ -130,6 +136,7 @@ jobs:
                     query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
                     -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || { failed=$((failed + 1)); continue; }
                   [ -n "$entry" ] && { echo "#$n already queued"; continue; }
+                  clear_dequeued
                   if gh api graphql -f query='
                     mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { id } } }' \
                     -f id="$(pr_id)" --silent; then
@@ -145,6 +152,7 @@ jobs:
               dequeue)
                 needs_pr
                 dequeue_pr || return 1
+                mark_dequeued
                 echo "queue: $(queue_order)" ;;
               cancel-pr-runs)
                 local n=0 run pr files

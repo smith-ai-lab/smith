@@ -18,6 +18,13 @@ inputs:
     description: "'true' for a pull request from a fork, which never runs on the Mac"
     required: false
     default: "false"
+  force:
+    description: >
+      Only by hand (a workflow_dispatch of ci.yml, the watchdog's test): `mac` picks the owner's Mac whatever the pool
+      looks like, `dead` picks a Mac that does not exist (a runner label nothing carries), as a Mac that is off or hung
+      would be. Empty or `auto`: the rule below.
+    required: false
+    default: ""
   linux-jobs:
     description: >
       How many hosted Linux jobs the caller is about to start. Set, the action decides only that (outputs linux-mac) and
@@ -50,14 +57,15 @@ runs:
         JOB_TOKEN: ${{ inputs.github-token }}
         RUN_ID: ${{ github.run_id }}
         FORK: ${{ inputs.fork }}
+        FORCE: ${{ inputs.force }}
         GH_REPO: ${{ github.repository }}
       run: |
         # hosted by default; the Mac is overflow. A Mac that is off, a failed call or a fork never stalls a run.
         # Saturated = another run has a macos-26 job queued (it is waiting for a slot), or 5 running (the free plan's cap).
         mac='"macos-26"'; cores=3; why="hosted is the default"
         if [ "$FORK" = true ]; then why="fork pull request"
-        # TEMPORARY (#2835): the merge queue never takes the Mac until a watchdog re-runs a macos job the Mac does not start
-        elif [ "${GITHUB_EVENT_NAME:-}" = merge_group ]; then why="merge queue: hosted only (#2835)"
+        elif [ "$FORCE" = mac ]; then mac='["self-hosted","macOS","ARM64"]'; cores=5; why="forced by hand"
+        elif [ "$FORCE" = dead ]; then mac='["self-hosted","macOS","ARM64","no-such-runner"]'; cores=5; why="forced by hand: a Mac nothing answers for"
         elif [ -z "$RUNNER_STATUS_TOKEN" ] || [ -z "$JOB_TOKEN" ]; then why="no token"
         elif ! runners=$(GH_TOKEN=$RUNNER_STATUS_TOKEN gh api "repos/$GH_REPO/actions/runners" --paginate --jq \
           '.runners[] | select([.labels[].name] | contains(["self-hosted", "macOS", "ARM64"])) | "\(.name) \(.status) \(.busy)"' 2>/dev/null); then
