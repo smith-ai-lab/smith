@@ -6,7 +6,7 @@ description: >
   one check, no waiting. If a `merge_group` run of `ci.yml` is queued, or has a job queued, it force-cancels its own
   run, which leaves no `ci` check run behind (a plain cancel lets the always() `ci` job run and fail, a red `ci`), and
   ci-dispatch.yml starts the check again once there is room. A self-cancelled run is never a result. An API failure
-  counts as no queue job waiting. Needs `GH_TOKEN` with `actions: write`.
+  counts as no queue job waiting. A run started by hand with `no_yield: true` skips this. Needs `GH_TOKEN` with `actions: write`.
   A merge-queue run waits instead, for the groups ahead of it (#2833), only where `queue-wait: "true"` (`changes`): while
   an earlier `merge_group` run of `ci.yml` has a job still queued for a runner, this run's `changes` waits, so the
   front group gets the runners first (2026-11-08 17:48: the front group held 2 running jobs and 18 queued while the
@@ -25,7 +25,7 @@ runs:
   using: composite
   steps:
     - name: Give the runner back while a queue job waits
-      if: github.event_name == 'workflow_dispatch'
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.no_yield != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

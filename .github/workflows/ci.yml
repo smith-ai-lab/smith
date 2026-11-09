@@ -19,6 +19,10 @@ on:
         description: "The pull request this run checks (ci-dispatch.yml starts it on the PR's head branch)"
         required: true
         type: string
+      no_yield:
+        description: "Only by hand, for a check that must finish while the queue is never idle: skip yield-to-queue's self-cancel"
+        type: boolean
+        default: false
   merge_group:
   push:
     branches: [main]
