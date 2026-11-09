@@ -94,16 +94,21 @@ static void smith_plan_reason(SmithExec *exec, const char *format, ...) {
 }
 
 // Whether the output of an edge is out of date, given the newest of the edge's inputs that are not order-only.
-static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent, uint32_t output) {
+// When it is, `leaf` is the node behind the reason (an input that is newer, or the output itself) and `why` says how.
+static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent, uint32_t output,
+                                    SmithCause *cause) {
+    cause->leaf = output;
     const SmithNode *node = &exec->graph.nodes[output];
     const SmithNode *newest = recent != smith_plan_none ? &exec->graph.nodes[recent] : nullptr;
     if (edge->phony) {
         bool missing = smith_plan_input_count(edge) == 0 && node->mtime == 0;
         if (missing) smith_plan_explain(exec, "phony %s has no inputs and doesn't exist", node->path);
+        cause->why = "missing";
         return missing;
     }
     if (node->mtime == 0) {
         smith_plan_reason(exec, "output %s doesn't exist", node->path);
+        cause->why = "missing";
         return true;
     }
     const SmithLogEntry *entry = smith_state_log_find(exec, node->path);
@@ -113,28 +118,34 @@ static bool smith_plan_output_dirty(SmithExec *exec, const SmithEdge *edge, uint
         if (mtime < newest->mtime) {
             smith_plan_reason(exec, "output %s older than most recent input %s (%lld vs %lld)", node->path,
                               newest->path, (long long)mtime, (long long)newest->mtime);
+            cause->leaf = recent;
+            cause->why = "newer than its output";
             return true;
         }
     }
     if (entry != nullptr) {
         if (!edge->generator && entry->hash != edge->command_hash) {
             smith_plan_reason(exec, "command line changed for %s", node->path);
+            cause->why = "its command line changed";
             return true;
         }
         if (newest != nullptr && entry->mtime < newest->mtime) {
             smith_plan_reason(exec, "recorded time of %s (%lld) is older than most recent input %s (%lld)", node->path,
                               (long long)entry->mtime, newest->path, (long long)newest->mtime);
+            cause->leaf = recent;
+            cause->why = "newer than its output";
             return true;
         }
     }
     if (entry == nullptr && !edge->generator)
         smith_plan_reason(exec, "command line not found in log for %s", node->path);
+    cause->why = "its command line is not in the log";
     return entry == nullptr && !edge->generator;
 }
 
-static bool smith_plan_outputs_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent) {
+static bool smith_plan_outputs_dirty(SmithExec *exec, const SmithEdge *edge, uint32_t recent, SmithCause *cause) {
     for (uint32_t k = 0; k < edge->output_count; k++) {
-        if (smith_plan_output_dirty(exec, edge, recent, smith_plan_output(exec, edge, k))) return true;
+        if (smith_plan_output_dirty(exec, edge, recent, smith_plan_output(exec, edge, k), cause)) return true;
     }
     return false;
 }
@@ -200,7 +211,9 @@ static void smith_plan_finish_scan(SmithExec *exec, SmithEdge *edge) {
     uint32_t recent = smith_plan_none;
     bool dirty = edge->deps_missing;
     uint32_t first_output = smith_plan_output(exec, edge, 0);
-    uint32_t cause = dirty ? first_output + 1 : 0; // the first cause: the earliest reason printed for this edge
+    // the first cause: the leaf behind the earliest reason printed for this edge
+    SmithCause cause = {.leaf = first_output, .why = "its recorded deps are missing"};
+    bool caused = dirty;
     edge->outputs_ready = true;
     for (uint32_t k = 0; k < total; k++) {
         uint32_t number = smith_plan_input(exec, edge, k);
@@ -208,22 +221,25 @@ static void smith_plan_finish_scan(SmithExec *exec, SmithEdge *edge) {
         if (input->edge != 0 && !graph->edges[input->edge].outputs_ready) edge->outputs_ready = false;
         if (smith_plan_is_order_only(edge, k)) continue;
         if (input->dirty) {
-            uint32_t origin = input->cause != 0 ? input->cause : number + 1;
-            smith_plan_explain(exec, "%s is dirty (first cause: %s)", input->path, graph->nodes[origin - 1].path);
-            if (cause == 0) cause = origin;
+            SmithCause origin = {.leaf = number, .why = "missing"};
+            if (input->cause != 0) origin = (SmithCause){.leaf = input->cause - 1, .why = input->why};
+            smith_plan_explain(exec, "%s is dirty (first cause: %s, %s)", input->path, graph->nodes[origin.leaf].path,
+                               origin.why);
+            if (!caused) cause = origin;
+            caused = true;
             dirty = true;
         } else if (recent == smith_plan_none || input->mtime > graph->nodes[recent].mtime)
             recent = number;
     }
     if (!dirty) {
-        dirty = smith_plan_outputs_dirty(exec, edge, recent);
-        cause = first_output + 1;
+        dirty = smith_plan_outputs_dirty(exec, edge, recent, &cause);
     }
     for (uint32_t k = 0; k < edge->output_count; k++) {
         SmithNode *output = &graph->nodes[smith_plan_output(exec, edge, k)];
         if (dirty) {
             output->dirty = true;
-            output->cause = cause;
+            output->cause = cause.leaf + 1;
+            output->why = cause.why;
         }
         output->scan = SmithScan_Done;
     }
@@ -269,6 +285,7 @@ static void smith_plan_scan(SmithExec *exec, uint32_t root, uint32_t *stack) {
                 node->dirty = smith_plan_mtime(exec, stack[depth - 1]) == 0;
                 if (node->dirty) {
                     node->cause = stack[depth - 1] + 1;
+                    node->why = "missing and nothing makes it";
                     smith_plan_explain(exec, "input %s doesn't exist and nothing makes it", node->path);
                 }
                 node->scan = SmithScan_Done;
@@ -486,7 +503,7 @@ void smith_plan_clean(SmithExec *exec, uint32_t first, uint32_t *stack) {
                 dirty = graph->nodes[input].dirty;
                 if (recent == smith_plan_none || graph->nodes[input].mtime > graph->nodes[recent].mtime) recent = input;
             }
-            if (dirty || smith_plan_outputs_dirty(exec, edge, recent)) continue;
+            if (dirty || smith_plan_outputs_dirty(exec, edge, recent, &(SmithCause){})) continue;
             edge->want = SmithWant_Nothing;
             exec->wanted -= 1;
             if (!edge->phony) exec->command_edges -= 1;

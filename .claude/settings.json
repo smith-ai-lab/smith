@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__github__enable_pr_auto_merge"
+    ]
+  }
+}
