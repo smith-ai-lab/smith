@@ -3,8 +3,8 @@ description: >
   Publishes this job's test-result store (`~/.cache/smith/tests`, #2686) as the prerelease `test-cache-<sha7>-<name>`
   (#2833, #2870), for `./.github/actions/test-cache` to restore. Each job that runs tests publishes its own, so no
   job waits for the others to merge them: the restore extracts every store of the newest commit. Releases are
-  immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 3 newest
-  commits are kept, like the step cache (#2772). Only a merge queue run and the nightly save (what they ran is the tree
+  immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 10 newest
+  commits are kept (a merge queue's groups are newer than main's commit, #2938). Only a merge queue run and the nightly save (what they ran is the tree
   that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
   The release also holds the job's import cache (`~/.cache/smith/imports`, #2891) as `smith-imports-<os>.tar.gz`, even
   when the job ran no test, and the job's import-cache hits are printed first (`./.github/actions/test-cache/report`),
@@ -64,11 +64,13 @@ runs:
             --target "$GITHUB_SHA" --title "test cache $tag" \
             --notes "The test-result store (#2686) and import cache (#2891) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
         fi
-        # the 3 newest commits' stores stay; an older commit's go, every job's (another job may delete one first)
+        # the 10 newest commits' stores stay; an older commit's go, every job's (another job may delete one first). Not 3:
+        # a merge queue's groups are newer commits than main's, and three of them deleted main's sets before a run could
+        # restore them (#2938). Up to about 16 releases a commit, so the list reads more than 10 commits' worth
         # shellcheck disable=SC2016
-        gh release list --limit 100 --json tagName,createdAt \
+        gh release list --limit 400 --json tagName,createdAt \
           --jq '[.[]|select(.tagName|test("^test-cache-[0-9a-f]{7}"))|{tag: .tagName, sha: .tagName[11:18], at: .createdAt}]
-            | (group_by(.sha)|map({sha: .[0].sha, at: (map(.at)|max)})|sort_by(.at)|reverse|.[3:]|map(.sha)) as $old
+            | (group_by(.sha)|map({sha: .[0].sha, at: (map(.at)|max)})|sort_by(.at)|reverse|.[10:]|map(.sha)) as $old
             | .[]|select(.sha as $s|$old|index($s))|.tag' |
           while read -r old; do
             gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
