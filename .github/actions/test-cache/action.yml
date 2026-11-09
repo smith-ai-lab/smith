@@ -121,10 +121,24 @@ runs:
         # stored, so the sets overlap; the same entry is the same bytes)
         urls=$(cat "$RUNNER_TEMP/imports-urls"); from=$(cat "$RUNNER_TEMP/imports-from")
         got=0
+        # one line a set (#2978): its entries, size and seconds, or where it failed and the first line of the error; a
+        # failed set never fails the job. `df` of the cache's filesystem before the first set and after the last.
+        echo "import cache: df before: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
         for url in $urls; do
-          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
-            tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" && got=$((got + 1))
+          set_name=${url##*/}; start=$SECONDS; err="$RUNNER_TEMP/imports.err"
+          if ! gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
+            echo "import cache: set $set_name: FAILED at download: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"; continue
+          fi
+          mb=$(( $(wc -c <"$RUNNER_TEMP/imports.tar.gz") / 1048576 ))
+          if tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" 2>"$err"; then
+            got=$((got + 1))
+            n=$(tar -tzf "$RUNNER_TEMP/imports.tar.gz" 2>/dev/null | grep -c '/[hm]/[^/][^/]*$' || true)
+            echo "import cache: set $set_name: $n entries, $mb MB, $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "import cache: set $set_name: FAILED at extract: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
         done
+        echo "import cache: df after: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
         # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
         if [ "$got" -gt 0 ]; then
           tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; mkdir -p "$tests"; cp -a "$dir/." "$tests/"
