@@ -97,7 +97,7 @@ runs:
             exit 0
           fi
           echo "$n job(s) of earlier groups wait for runners; ${waited}s waited"
-          sleep 20
+          sleep 45
           n=$(queued)
         done
         echo "yield-to-queue: groups ahead had no job waiting for a runner after $(($(date +%s) - start)) s" >>"$GITHUB_STEP_SUMMARY"

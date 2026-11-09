@@ -1024,6 +1024,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -1101,18 +1107,18 @@ jobs:
           echo "$GITHUB_SHA" >"$out/smith-steps-linux.sha"
           files=("$out"/smith-steps-linux.tar.gz.* "$out/smith-steps-linux.sha")
           # the queue run of this very commit saved the count (a documents-only merge runs none)
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          id=$(GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=frontend-coverage-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
           if [ -n "$id" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/c.zip"
+            GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/c.zip"
             mkdir "$out/c"; unzip -q "$out/c.zip" -d "$out/c"
             echo "$GITHUB_SHA" >"$out/c/sha"
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
           fi
           # the fixed tree the count checked (#2942), at its tree paths, for a session to read the lines its errors name
-          tid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          tid=$(GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
           if [ -n "$tid" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
+            GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
             mkdir "$out/t"; unzip -q "$out/t.zip" -d "$out/t"
             mv "$out/t/count-fixed.tar.zst" "$out/count-fixed.tar.zst"
             files+=("$out/count-fixed.tar.zst")
@@ -1124,12 +1130,12 @@ jobs:
             exit 0
           fi
           tag="step-cache-${GITHUB_SHA:0:7}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
+          if ! GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" "${files[@]}" --prerelease --latest=false --target "$GITHUB_SHA" \
               --title "step cache $tag" --notes "Main's step cache and the count's table at $GITHUB_SHA (#2772). Not a release of smith."
           fi
           # keep the 3 newest (the old rolling `step-cache` of #2755 goes first); a refused delete only warns
-          gh release list --limit 100 --json tagName,createdAt \
+          GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh release list --limit 100 --json tagName,createdAt \
             --jq '[.[]|select(.tagName|test("^step-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
             while read -r old; do
               gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
