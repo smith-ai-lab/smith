@@ -2,11 +2,16 @@
 # at 07:04:49Z but never had a queue entry (no `merge_group` run, absent from the queue's list), and sat 75 minutes until
 # a runner noticed. Every 10 minutes (and by hand) this job lists the queue's entries on `main`, and re-queues each open
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
-# it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it).
+# it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
+# the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
+# alone, so the PR fails by itself and is dequeued. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
 on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
@@ -17,7 +22,7 @@ permissions:
 
 concurrency:
   group: queue-heal
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   heal:
@@ -93,4 +98,26 @@ jobs:
             lost=$((lost + 1))
           done
           [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
+
+          # second pass: only the front entry's group is built on main alone, so only its failure is its own
+          front=$(echo "$list" | head -n 1)
+          [ -n "$front" ] || { log "queue-heal: queue empty, no front entry"; exit 0; }
+          run=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f per_page=100 \
+            --jq "[.workflow_runs[] | select(.head_branch | startswith(\"gh-readonly-queue/main/pr-$front-\"))][0] | \"\(.id) \(.status) \(.conclusion)\"") \
+            || { log "queue-heal: front #$front run unreadable, left alone"; exit 0; }
+          set -- $run
+          if [ "${3:-}" != failure ]; then
+            log "queue-heal: front #$front ok (run ${1:-none} ${2:-none})"
+            exit 0
+          fi
+          job=$(gh api -X GET "repos/$REPO/actions/runs/$1/jobs" -f filter=latest -f per_page=100 \
+            --jq '[.jobs[] | select(.conclusion == "failure")][0].name // "unknown"') || job=unknown
+          id=$(gh api "repos/$REPO/pulls/$front" --jq .node_id) || { log "queue-heal: front #$front unreadable, left alone"; exit 0; }
+          if gh api graphql -f query='
+              mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$id" --silent; then
+            gh api -X POST "repos/$REPO/issues/$front/labels" -f "labels[]=dequeued" --silent || true
+            log "queue-heal: #$front dequeued, its own group failed (run $1, job $job)"
+          else
+            log "queue-heal: #$front dequeue failed (run $1, job $job)"
+          fi
           exit 0

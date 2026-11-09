@@ -840,17 +840,96 @@ static Bool flows_to_tested_local(Str source, lex::Tokens t, Usize i) {
     return local_tested(source, t, lex::text(source, t[base - 2]));
 }
 
-// The fields of the module's records that `source` tests against null, by name: a read of a field of that name
-// anywhere in the text counts (#2557), and so does one whose value goes to a local that is tested (#2648).
+// The last name of a type written `T`, `*T`, `?*T` or `module.T`; empty when it is none of these.
+static Str type_name_of(const ast::TypeExpr *type) {
+    while (type != nullptr) {
+        if (type->kind == .pointer) {
+            type = type->kind.pointer.pointee;
+        } else if (type->kind == .option) {
+            type = type->kind.option.inner;
+        } else {
+            break;
+        }
+    }
+    if (type == nullptr || type->kind != .named || countof(type->kind.named.path.segments) == 0) return "";
+    return type->kind.named.path.segments[countof(type->kind.named.path.segments) - 1].text;
+}
+
+// The type named after `t[k]`, which starts a type: `module.T` or `T`, its last name.
+static Str last_of_path(Str source, lex::Tokens t, Usize k) {
+    while (k + 2 < countof(t) && is_member(t[k + 1].kind) && is_word(t[k + 2].kind))
+        k += 2;
+    Str none = "";
+    if (k < countof(t) && is_word(t[k].kind)) return lex::text(source, t[k]);
+    return none;
+}
+
+// The type name of the local, parameter or field `t[at]` names, from its nearest declaration before `at` in the same
+// text: `n: *Node`, `n: Node`, `Node *n`, `const Node *n`, or `n := Node(...)`. Empty when none is found (D23: a
+// test counts only for the struct it is on, so a name that cannot be typed counts for none).
+static Str declared_type(Str source, lex::Tokens t, Usize at) {
+    Str name = lex::text(source, t[at]);
+    for (Usize j = at; j > 0; j--) {
+        Usize d = j - 1;
+        if (t[d].kind != lex::name || !same(lex::text(source, t[d]), name) || d + 1 >= countof(t)) continue;
+        lex::TokenKind next = t[d + 1].kind;
+        if (next == lex::colon) {
+            Usize k = d + 2;
+            while (k < countof(t) && (t[k].kind == lex::star || t[k].kind == lex::question ||
+                                      t[k].kind == lex::kw_mut || t[k].kind == lex::kw_const))
+                k += 1;
+            Str none = "";
+            if (k < countof(t)) return last_of_path(source, t, k);
+            return none;
+        }
+        if (next == lex::colon_equal && d + 3 < countof(t) && is_word(t[d + 2].kind)) {
+            Usize k = d + 2;
+            while (k + 2 < countof(t) && is_member(t[k + 1].kind) && is_word(t[k + 2].kind))
+                k += 2;
+            if (k + 1 < countof(t) && t[k + 1].kind == lex::left_paren) return lex::text(source, t[k]);
+            continue;
+        }
+        Bool ends = next == lex::equal || next == lex::semicolon || next == lex::comma || next == lex::right_paren ||
+                    next == lex::left_bracket;
+        if (!ends || d == 0) continue;
+        Usize k = d;
+        while (k > 0 && (t[k - 1].kind == lex::star || t[k - 1].kind == lex::kw_const))
+            k -= 1;
+        if (k < d && k > 0 && is_word(t[k - 1].kind)) return lex::text(source, t[k - 1]);
+    }
+    return "";
+}
+
+// The record that owns the field read that ends at `t[i]` (`x.f`, `x->f`, `a.b.f`): the type of the first name of the
+// chain, followed through the fields of the module's records; the number of records when it is not known.
+static Usize chain_owner(const Wanted *w, Str source, lex::Tokens t, Usize i) {
+    Usize start = i - 1;
+    while (start >= 2 && is_word(t[start - 1].kind) && is_member(t[start - 2].kind))
+        start -= 2;
+    if (start < 1 || !is_word(t[start - 1].kind)) return w->count;
+    Usize at = start - 1;
+    Str type = declared_type(source, t, at);
+    for (Usize step = at; step + 2 < i && countof(type) > 0; step += 2) {
+        Usize r = record_index(w, type);
+        if (r == w->count) return w->count;
+        Usize f = field_index(&w->records[r], lex::text(source, t[step + 2]));
+        if (f >= countof(w->records[r].fields)) return w->count;
+        type = type_name_of(w->records[r].fields[f].type);
+    }
+    return countof(type) > 0 ? record_index(w, type) : w->count;
+}
+
+// The fields of the module's records that `source` tests against null: a read `x.f` counts for the record that the
+// type of `x` names, never for a record that merely has a field of that name (D23), and so does one whose value goes
+// to a local that is tested (#2648).
 static void scan_tests(Wanted *w, Str source, lex::Tokens t, const Bool named[records_max]) {
     for (Usize i = 2; i < countof(t); i++) {
         if (!is_word(t[i].kind) || !(t[i - 1].kind == lex::dot || t[i - 1].kind == lex::arrow)) continue;
         if (!null_tested_at(source, t, i) && !flows_to_tested_local(source, t, i)) continue;
-        Str field = lex::text(source, t[i]);
-        for (Usize r = 0; r < w->count; r++) {
-            Usize f = field_index(&w->records[r], field);
-            if (f < fields_max && named[r]) w->tested[r] |= (U64)1 << f;
-        }
+        Usize r = chain_owner(w, source, t, i);
+        if (r == w->count || !named[r]) continue;
+        Usize f = field_index(&w->records[r], lex::text(source, t[i]));
+        if (f < fields_max) w->tested[r] |= (U64)1 << f;
     }
 }
 
