@@ -33,7 +33,7 @@ inputs:
 
   stage0:
     description: >
-      the release to build with instead of the newest (`stage0-<commit>`), if it is published; main's `warm` names its
+      the release to build with instead of the newest (`stage0-<commit>`), waited for and never replaced; main's `warm` names its
       own commit's, the one every job after it fetches (#2833). Empty: the newest
     default: ""
 

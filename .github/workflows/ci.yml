@@ -949,8 +949,8 @@ jobs:
     # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
     # Waiting was not enough by itself: fetch-smith's release list left the newest out (run 42601821786 got
     # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
-    # `always()`: a failed or skipped release (a pull request, a release left pending behind a newer one) still warms,
-    # with the newest published stage0
+    # `always()`: a pull request's dry run (no release) warms with the newest published stage0; on a push, a release
+    # that never publishes fails this job rather than save a cache built with another smith
     needs: [changes, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'

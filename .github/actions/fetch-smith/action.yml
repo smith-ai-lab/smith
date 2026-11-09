@@ -9,8 +9,8 @@ description: >
 inputs:
   tag:
     description: >
-      a release to take instead of the newest (`stage0-<commit>`), when it is published with this platform's tarball;
-      else the newest. Main's `warm` names its own commit's, so the step cache is built with the smith every job after
+      a release to take instead of the newest (`stage0-<commit>`): waited for about 6 minutes, and the step fails
+      if it is not published with this platform's tarball by then. Main's `warm` names its own commit's, so the step cache is built with the smith every job after
       it fetches (#2833)
     default: ""
 
@@ -57,20 +57,25 @@ runs:
           fi
           echo "fetch-smith: the newest release ${newest:-?} has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-        # A release asked for by name (main's `warm`: its own commit's, which `latest` may not show for a moment). A 404
-        # (not published yet) is asked again for about a minute; a published release without this platform's tarball
-        # (its Linux job failed) leaves the newest
+        # A release asked for by name (main's `warm`: its own commit's, which `latest` may not show for a moment) is
+        # waited for, about 6 minutes, and never replaced: a cache built with another smith misses in every job after
+        # it, unseen (#2833). A published release without this platform's tarball (its Linux job failed) fails too
         if [ -n "${WANT:-}" ] && [ "$WANT" != "$tag" ]; then
-          for _ in 1 2 3 4 5 6; do
+          tag=
+          for _ in $(seq 36); do
             if curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases/tags/$WANT" -o .smith/stage0/want.json 2>/dev/null; then
-              if jq -e --arg n "$name" '(.draft|not) and any(.assets[]; .name==$n)' .smith/stage0/want.json >/dev/null; then
-                jq -s . .smith/stage0/want.json >.smith/stage0/releases.json; tag=$WANT
+              if jq -e '.draft|not' .smith/stage0/want.json >/dev/null; then
+                jq -e --arg n "$name" 'any(.assets[]; .name==$n)' .smith/stage0/want.json >/dev/null && tag=$WANT
+                break
               fi
-              break
             fi
             sleep 10
           done
-          [ "$tag" = "$WANT" ] || echo "fetch-smith: $WANT is not published with $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -z "$tag" ]; then
+            echo "fetch-smith: $WANT is not published with $name after about 6 minutes" | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+          jq -s . .smith/stage0/want.json >.smith/stage0/releases.json
         fi
         # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id. The API
         # answers with a redirect to a signed URL: ask for it with the token, then fetch it without (a curl that sends the
