@@ -438,10 +438,11 @@ static bool smith_stepcache_under(const char *path, const char *folder) {
     return strncmp(path, folder, length) == 0 && (path[length] == '/' || path[length] == '\0');
 }
 
-// Whether a file belongs to the system, not to the project: it is hashed by path, size and time (path and size under smith's clang), and the graph does
-// not track it. A relative path is the project's. An absolute one is the system's when it is in a system folder the
-// command names (-isystem, -isysroot, --sysroot, SDKROOT), in smith's embedded runtime, or under /usr, /lib, the SDKs
-// of macOS; a folder the command names with -I, -iquote, -idirafter, -F or -include is the project's even then.
+// Whether a file belongs to the system, not to the project: it is hashed by path, size and time (path and size under
+// smith's clang), and the graph does not track it. A relative path is the project's. An absolute one is the system's
+// when it is in a system folder the command names (-isystem, -isysroot, --sysroot, SDKROOT), in smith's embedded
+// runtime, or under /usr, /lib, the SDKs of macOS; a folder the command names with -I, -iquote, -idirafter, -F or
+// -include is the project's even then.
 static bool smith_stepcache_is_system(const char *path) {
     const SmithStepScope *scope = &smith_stepcache_scope;
     if (path[0] != '/') return false;
