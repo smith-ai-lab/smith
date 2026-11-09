@@ -814,23 +814,75 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 // compiled with smith.c's flags, so an edit of one recompiles one file. gzip, xz and untar stay in package.c, which the
 // build runtime embeds and includes as one file.
 static const char *const build_runtime_sources[] = {
-    "runtime/account.c",       "runtime/cache.c",          "runtime/changed.c",        "runtime/coverage.c",
-    "runtime/docs.c",          "runtime/executor.c",       "runtime/executor_cache.c", "runtime/executor_manifest.c",
-    "runtime/executor_plan.c", "runtime/executor_run.c",   "runtime/executor_state.c", "runtime/executor_tools.c",
-    "runtime/explain.c",       "runtime/front_flag.c",     "runtime/import_cache.c",   "runtime/lang.c",           "runtime/lang_body.c",
-    "runtime/lang_command.c",  "runtime/lang_constexpr.c", "runtime/lang_decl.c",      "runtime/lang_declare.c",
-    "runtime/lang_enum.c",     "runtime/lang_fields.c",    "runtime/lang_generic.c",   "runtime/lang_head.c",
-    "runtime/lang_import.c",   "runtime/lang_lambda.c",    "runtime/lang_lex.c",       "runtime/lang_names.c",
-    "runtime/lang_nested.c",   "runtime/lang_out.c",       "runtime/lang_private.c",   "runtime/lang_rfor.c",
-    "runtime/lang_slice.c",    "runtime/lang_sparse.c",    "runtime/lang_stream.c",    "runtime/lang_target.c",
-    "runtime/lang_trivia.c",   "runtime/lang_try.c",       "runtime/lang_tuple.c",     "runtime/lang_type.c",
-    "runtime/lang_unused.c",   "runtime/lint_cache.c",     "runtime/make.c",           "runtime/make_cc.c",
-    "runtime/make_class.c",    "runtime/make_emit.c",      "runtime/make_expand.c",    "runtime/make_graph.c",
-    "runtime/make_print.c",    "runtime/make_read.c",      "runtime/make_sub.c",       "runtime/make_translate.c",
-    "runtime/mcp.c",           "runtime/mcp_dap.c",        "runtime/mcp_serve.c",      "runtime/mcp_show.c",
-    "runtime/mcp_text.c",      "runtime/mcp_tools.c",      "runtime/package_unit.c",   "runtime/quiet.c",
-    "runtime/record.c",        "runtime/self_digest.c",    "runtime/slots.c",          "runtime/symbolize.c",
-    "runtime/test_cache.c",    "runtime/verbs.c",          "runtime/world.c",          nullptr,
+    "runtime/account.c",
+    "runtime/cache.c",
+    "runtime/changed.c",
+    "runtime/coverage.c",
+    "runtime/docs.c",
+    "runtime/executor.c",
+    "runtime/executor_cache.c",
+    "runtime/executor_manifest.c",
+    "runtime/executor_plan.c",
+    "runtime/executor_run.c",
+    "runtime/executor_state.c",
+    "runtime/executor_tools.c",
+    "runtime/explain.c",
+    "runtime/front_flag.c",
+    "runtime/lang.c",
+    "runtime/lang_body.c",
+    "runtime/lang_command.c",
+    "runtime/lang_constexpr.c",
+    "runtime/lang_decl.c",
+    "runtime/lang_declare.c",
+    "runtime/lang_enum.c",
+    "runtime/lang_fields.c",
+    "runtime/lang_generic.c",
+    "runtime/lang_head.c",
+    "runtime/lang_import.c",
+    "runtime/lang_lambda.c",
+    "runtime/lang_lex.c",
+    "runtime/lang_names.c",
+    "runtime/lang_nested.c",
+    "runtime/lang_out.c",
+    "runtime/lang_private.c",
+    "runtime/lang_rfor.c",
+    "runtime/lang_slice.c",
+    "runtime/lang_sparse.c",
+    "runtime/lang_stream.c",
+    "runtime/lang_target.c",
+    "runtime/lang_trivia.c",
+    "runtime/lang_try.c",
+    "runtime/lang_tuple.c",
+    "runtime/lang_type.c",
+    "runtime/lang_unused.c",
+    "runtime/lint_cache.c",
+    "runtime/make.c",
+    "runtime/make_cc.c",
+    "runtime/make_class.c",
+    "runtime/make_emit.c",
+    "runtime/make_expand.c",
+    "runtime/make_graph.c",
+    "runtime/make_print.c",
+    "runtime/make_read.c",
+    "runtime/make_sub.c",
+    "runtime/make_translate.c",
+    "runtime/mcp.c",
+    "runtime/mcp_dap.c",
+    "runtime/mcp_serve.c",
+    "runtime/mcp_show.c",
+    "runtime/mcp_text.c",
+    "runtime/mcp_tools.c",
+    "runtime/package_unit.c",
+    "runtime/quiet.c",
+    "runtime/record.c",
+    "runtime/self_digest.c",
+    "runtime/slots.c",
+    "runtime/symbolize.c",
+    "runtime/test_cache.c",
+    "runtime/verbs.c",
+    "runtime/world.c",
+    "runtime/import_cache.c",
+    nullptr,
 };
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
 // library and the protocol runtime, each an object of its own now that smith.c includes none of them.
@@ -1089,7 +1141,7 @@ static const char *build_runtime_object_path(SmithBuild *b, const char *folder, 
     return smith_fmt(b, "%s/rt_%s.o", folder, smith_replace_extension(b, flat, ""));
 }
 
-// One object for each runtime source; returns how many it added to `list`.
+// One object for each runtime source, then the import identity's; returns how many it added to `list`.
 static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
                                     const char *const *flags, SmithObject *objects, const SmithObject **list) {
     const char *const *platform = build_is_linux(b) ? build_runtime_sources_linux : build_runtime_sources_macos;
@@ -1112,7 +1164,9 @@ static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, co
             count++;
         }
     }
-    return count;
+    objects[count] = build_import_identity_object(b, config, folder);
+    list[count] = &objects[count];
+    return count + 1;
 }
 
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
@@ -1144,7 +1198,6 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     smith_object(b, &object);
     SmithObject commit = build_commit_object(b, config, folder);
     SmithObject lint_identity = build_lint_identity_object(b, config, folder);
-    SmithObject import_identity = build_import_identity_object(b, config, folder);
     BuildShims shims = {};
     const char *const *linked = build_linked_libraries(b);
     size_t linked_count = 0;
@@ -1153,19 +1206,18 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject libraries[linked_count + 1];
     SmithObject runtime_io;
     build_io_object(b, config, folder, flags, &runtime_io);
-    // smith.c, the commit, the io layer, the lint and import identities, the front end, the libraries, the shims (a
-    // table of 19, the packed data and the parser) and the prover's four, ended by nullptr
-    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2;
+    // smith.c, the commit, the io layer, the lint identity, the front end, the libraries, the runtime (the import
+    // identity last), the shims (a table of 19, the packed data and the parser) and the prover's four, ended by nullptr
+    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2 + 1;
     SmithObject runtime_objects[runtime_max];
-    const SmithObject *objects[5 + linked_count + 19 + 2 + 4 + runtime_max + 1];
+    const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + runtime_max + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)
         objects[i] = nullptr;
     objects[0] = &object;
     objects[1] = &commit;
     objects[2] = &runtime_io;
     objects[3] = &lint_identity;
-    objects[4] = &import_identity;
-    size_t count = 5;
+    size_t count = 4;
     count += build_library_objects(b, config, folder, flags, linked, libraries, objects + count);
     count += build_runtime_objects(b, config, folder, flags, runtime_objects, objects + count);
     build_shims(b, config, folder, pack, &shims, objects + count);

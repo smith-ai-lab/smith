@@ -1038,8 +1038,7 @@ struct Taker {
 
 // The words with the file of each place row changed by `change`: the new names go at the end of the pool and the rows
 // point there (the old text stays, unused), so no other offset moves.
-template <typename Change>
-std::vector<uint32_t> with_place_files(const uint32_t *w, size_t count, Change change) {
+template <typename Change> std::vector<uint32_t> with_place_files(const uint32_t *w, size_t count, Change change) {
     std::vector<uint32_t> out(w, w + count);
     if (count < 25 || w[1] != count) return out;
     const char *pool = reinterpret_cast<const char *>(w) + w[2];
@@ -1117,7 +1116,8 @@ bool cache_load(const SmithCimportRequest *request, std::vector<uint32_t> *words
     }
     *words = with_place_files(stored.data(), stored.size(), [&](const std::string &p) { return untokened(f, p); });
     smith_import_cache_count("h", true);
-    if (moved) cache_store(request, words->data(), words->size(), files, INT64_MAX); // the new times: the next hit stats
+    if (moved)
+        cache_store(request, words->data(), words->size(), files, INT64_MAX); // the new times: the next hit stats
     return true;
 }
 

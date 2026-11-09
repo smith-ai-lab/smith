@@ -87,12 +87,13 @@ export void test_cc_import_cache_a_damaged_entry_is_read_again() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     write_project(&p);
-    scratch::Run run = scratch::sh(&p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
-                                       "smith cc --front-end=new -c a.smith -o one.o; "
-                                       "for f in cache/smith/imports/*/[hm]/*; do printf '\\377\\376\\375\\374' | dd of=$f bs=1 seek=96 "
-                                       "conv=notrunc 2>/dev/null; done; smith cc --front-end=new -c a.smith -o two.o; "
-                                       "smith cc --front-end=new -c a.smith -o three.o; cat log; "
-                                       "cmp one.o two.o && cmp one.o three.o && echo objects same");
+    scratch::Run run = scratch::sh(
+        &p, "export XDG_CACHE_HOME=$PWD/cache SMITH_IMPORT_CACHE_LOG=$PWD/log; "
+            "smith cc --front-end=new -c a.smith -o one.o; "
+            "for f in cache/smith/imports/*/[hm]/*; do printf '\\377\\376\\375\\374' | dd of=$f bs=1 seek=96 "
+            "conv=notrunc 2>/dev/null; done; smith cc --front-end=new -c a.smith -o two.o; "
+            "smith cc --front-end=new -c a.smith -o three.o; cat log; "
+            "cmp one.o two.o && cmp one.o three.o && echo objects same");
     defer scratch::release(run.out);
     defer scratch::release(run.err);
     scratch::expect_contains("damaged, then stored again", run.out,

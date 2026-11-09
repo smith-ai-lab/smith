@@ -100,9 +100,9 @@ static uint64_t smith_ic_limit(void) {
     unsigned long long value = strtoull(text, &end, 10);
     if (end == text) return smith_ic_default_max;
     uint64_t unit = 1;
-    if (*end == 'k' || *end == 'K') unit = 1000;
-    if (*end == 'm' || *end == 'M') unit = 1000 * 1000;
-    if (*end == 'g' || *end == 'G') unit = 1000 * 1000 * 1000;
+    if (*end == 'k' || *end == 'K') unit = (uint64_t)1000;
+    if (*end == 'm' || *end == 'M') unit = (uint64_t)1000 * 1000;
+    if (*end == 'g' || *end == 'G') unit = (uint64_t)1000 * 1000 * 1000;
     return (uint64_t)value * unit;
 }
 
@@ -336,7 +336,7 @@ void smith_import_cache_report(void) {
 
 constexpr size_t smith_ic_maps_max = 8192;
 constexpr uint32_t smith_ic_image_magic = 0x474d4953; // "SIMG"
-constexpr size_t smith_ic_image_head = 32; // magic and moves, size, root, fixed: the image is 16-aligned
+constexpr size_t smith_ic_image_head = 32;            // magic and moves, size, root, fixed: the image is 16-aligned
 
 typedef struct {
     uintptr_t start;
@@ -429,9 +429,12 @@ static size_t smith_ic_read_maps(void) {
     bool sorted = true;
     char line[4096];
     while (count < smith_ic_maps_max && fgets(line, sizeof line, file) != nullptr) { // bounded by the table
-        unsigned long long start = 0;
-        unsigned long long end = 0;
-        if (sscanf(line, "%llx-%llx", &start, &end) != 2) continue;
+        char *dash = nullptr;
+        char *space = nullptr;
+        unsigned long long start = strtoull(line, &dash, 16);
+        if (dash == line || *dash != '-') continue;
+        unsigned long long end = strtoull(dash + 1, &space, 16);
+        if (space == dash + 1 || *space != ' ') continue;
         if (count > 0 && start < smith_ic_maps[count - 1].end) sorted = false;
         smith_ic_maps[count++] = (SmithIcRange){start, end};
     }
@@ -475,8 +478,7 @@ typedef struct {
 
 // `a` in `image`, its words that point into it or into smith's executable written as offsets and listed in `lists`;
 // false when `a` and `b` differ in another way or a word points elsewhere into the process.
-static bool smith_ic_pack(const SmithImportRegion *a, const SmithImportRegion *b, uint8_t *image,
-                          SmithIcLists *lists) {
+static bool smith_ic_pack(const SmithImportRegion *a, const SmithImportRegion *b, uint8_t *image, SmithIcLists *lists) {
     size_t maps = smith_ic_read_maps();
     if (maps == 0 || !smith_ic_find_program()) return false;
     if (a->used != b->used || a->used % 8 != 0) return smith_ic_refuse("two parses of different sizes", 0, 0);
@@ -500,7 +502,8 @@ static bool smith_ic_pack(const SmithImportRegion *a, const SmithImportRegion *b
             memcpy(image + at, &x, 8);
             continue;
         }
-        if (y - x != delta || x < a_start || x > a_start + a->used) return smith_ic_refuse("a word that differs", at, x);
+        if (y - x != delta || x < a_start || x > a_start + a->used)
+            return smith_ic_refuse("a word that differs", at, x);
         if (at / 8 > UINT32_MAX) return false;
         lists->moves[lists->move_count++] = (uint32_t)(at / 8);
         uint64_t offset = x - a_start;
@@ -518,9 +521,8 @@ bool smith_import_image_store(const char *key, const SmithImportRegion *a, const
     uint8_t *payload = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (payload == MAP_FAILED) return false;
     uint8_t *lists_at = payload + head + a->used;
-    SmithIcLists lists = {.moves = (uint32_t *)lists_at,
-                          .fixed = (uint32_t *)(lists_at + 4 * words),
-                          .checks = lists_at + 8 * words};
+    SmithIcLists lists = {
+        .moves = (uint32_t *)lists_at, .fixed = (uint32_t *)(lists_at + 4 * words), .checks = lists_at + 8 * words};
     bool packed = smith_ic_pack(a, b, payload + head, &lists);
     if (packed) { // the moves, the fixed after them, and their checks
         size_t moves = lists.move_count;

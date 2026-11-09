@@ -577,8 +577,7 @@ static const ast::Module *load_embedded(Str dotted) {
     roots::Roots none = {};
     Kept kept = read_kept("embedded", path, "embedded", source, none, name);
     if (kept.tree == nullptr) {
-        types::set_load_failure(
-            as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
+        types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
         return nullptr;
     }
     share_module(kept.path, "embedded", kept.source, kept.tree);
@@ -641,8 +640,7 @@ static const ast::Module *read_module(const char *dotted) {
         }
         Kept kept = read_kept("file", path, named, source, named_by, "");
         if (kept.parse_failed) {
-            types::set_load_failure(
-                as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
+            types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
             return nullptr;
         }
         if (kept.tree == nullptr) return nullptr;
