@@ -18,7 +18,6 @@
 // does not do for the sources under .smith/front/.
 int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
 void front_compile_before_file(void (*hook)(const char *source));
-void front_compile_serve(void);
 
 // front::compile's header entry (`front_header_run`), declared by hand for the same reason.
 int32_t front_header_run(const char *source, const char *output, const char *triple);
@@ -438,7 +437,6 @@ static int smith_front_serve(char **argv, int first, const char *self) {
     int out = dup(STDOUT_FILENO);
     int err = dup(STDERR_FILENO);
     SMITH_ASSERT(out >= 0 && err >= 0);
-    front_compile_serve();
     for (;;) { // one request each pass; ends at the end of input
         size_t used = 0;
         char *head = smith_serve_line(&used);

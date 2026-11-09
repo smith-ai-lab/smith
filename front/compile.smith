@@ -590,14 +590,18 @@ static Str shared_header_keys[shared_headers_max];
 static const ast::Module *shared_header_modules[shared_headers_max];
 static Usize shared_header_count = 0;
 
-// A process that serves many requests (`smith cc --front-end=new --serve`, runtime/front_flag.c) keeps its headers
-// between them, and a header's file can change meanwhile, which the key does not see. So it also keeps the files clang
-// read for each (shim/cimport_deps.cpp) with their size and time, and at the start of each request drops the headers
-// whose files changed. One command line does not check: its headers are read once, as it starts.
-static Bool serving = false;
+// A header's file can change while the process lives (a server's next request, the editor, a test that writes it
+// again), which the key does not see. One command line reads its headers as it starts and does not check; any other
+// entry (each file of `file`, `diagnose`, `hover_at` ...: `enter_file`) starts a new generation, and a header kept
+// from an older one is used only when the files clang read for it (shim/cimport_deps.cpp) are as they were. Those
+// files are listed on the first such use, and a file changed since the header was read (its time is not before the
+// read) drops it then.
+static U64 header_generation = 1;
+static Bool within_command = false; // `run`: every file of one command line is one generation
 
-[[std::c_name("front_compile_serve")]] export void serve() {
-    serving = true;
+static void enter_file(Str path) {
+    header_folder = folder_of(path);
+    if (!within_command) header_generation += 1;
 }
 
 // Keep in step with SmithCimportRequest in shim/cimport.cpp.
@@ -616,10 +620,18 @@ struct HeaderFiles {
     char paths[:];
     U64 sizes[:];
     I64 mtimes[:];
-    Bool known; // false: clang refused the list, or a file was gone; the header is then read again next request
+    Bool known; // false: not listed yet, or clang refused the list, or a file was gone
 };
 
-static HeaderFiles shared_header_files[shared_headers_max];
+// What a kept header needs for its check: how it was read, when, its files and the generation that last used it.
+struct HeaderKept {
+    DepsRequest request;
+    I64 read_at;
+    HeaderFiles files;
+    U64 generation;
+};
+
+static HeaderKept shared_header_kept[shared_headers_max];
 
 // The files of `request` with their states now, from the allocator in force.
 static HeaderFiles header_files(const DepsRequest *request) {
@@ -669,6 +681,33 @@ static Bool files_unchanged(const HeaderFiles *files) {
     return true;
 }
 
+// Whether kept header `i` still holds for this generation (see `enter_file`).
+static Bool header_holds(Usize i) {
+    HeaderKept *kept = &shared_header_kept[i];
+    if (kept->generation == header_generation) return true;
+    if (!kept->files.known) {
+        mem::Allocator *outside = enter_shared();
+        kept->files = header_files(&kept->request);
+        mem::set_allocator(outside);
+        if (!kept->files.known) return false;
+        for (Usize k = 0; k < countof(kept->files.mtimes); k++) {
+            if (kept->files.mtimes[k] >= kept->read_at) return false;
+        }
+    } else if (!files_unchanged(&kept->files)) {
+        return false;
+    }
+    kept->generation = header_generation;
+    return true;
+}
+
+// Drops kept header `i` (its memory stays: a header is rarely read again).
+static void forget_header(Usize i) {
+    shared_header_count -= 1;
+    shared_header_keys[i] = shared_header_keys[shared_header_count];
+    shared_header_modules[i] = shared_header_modules[shared_header_count];
+    shared_header_kept[i] = shared_header_kept[shared_header_count];
+}
+
 static Str header_flags() {
     Str empty = "";
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
@@ -692,8 +731,12 @@ static const ast::Module *read_header(Str header, Bool angled) {
     Str flags = header_flags();
     Str key = header_key(header, angled, flags);
     for (Usize i = 0; i < shared_header_count; i++) {
-        if (roots::same(shared_header_keys[i], key)) return shared_header_modules[i];
+        if (!roots::same(shared_header_keys[i], key)) continue;
+        if (header_holds(i)) return shared_header_modules[i];
+        forget_header(i);
+        break;
     }
+    I64 read_at = clock::now();
     Str name = as_str(format::push(header));
     Str folder = as_str(format::push(header_folder));
     Str terminated = as_str(format::push(flags));
@@ -705,13 +748,18 @@ static const ast::Module *read_header(Str header, Bool angled) {
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
     ast::Module *module = nullptr;
     Str kept_key = "";
-    HeaderFiles files = {.known = false};
+    HeaderKept kept = {.request = {.name = nullptr}};
     if (countof(got.error) == 0) {
         module = mem::alloc(ast::Module);
         module->decls = got.decls;
         kept_key = as_str(format::push(key));
-        DepsRequest request = {.name = name.data, .quoted = angled ? 0 : 1, .folder = folder.data, .flags = terminated.data};
-        if (serving) files = header_files(&request);
+        kept = (HeaderKept){.request = {.name = as_str(format::push(name)).data,
+                                        .quoted = angled ? 0 : 1,
+                                        .folder = as_str(format::push(folder)).data,
+                                        .flags = as_str(format::push(flags)).data},
+                            .read_at = read_at,
+                            .files = {.known = false},
+                            .generation = header_generation};
     }
     mem::set_allocator(outside);
     // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it again.
@@ -719,24 +767,10 @@ static const ast::Module *read_header(Str header, Bool angled) {
     if (shared_header_count < shared_headers_max) {
         shared_header_keys[shared_header_count] = kept_key;
         shared_header_modules[shared_header_count] = module;
-        shared_header_files[shared_header_count] = files;
+        shared_header_kept[shared_header_count] = kept;
         shared_header_count += 1;
     }
     return module;
-}
-
-// At the start of a served request: the headers whose files changed since they were read are dropped (their memory
-// stays; a server reads few headers again).
-static void forget_changed_headers() {
-    Usize kept = 0;
-    for (Usize i = 0; i < shared_header_count; i++) {
-        if (!files_unchanged(&shared_header_files[i])) continue;
-        shared_header_keys[kept] = shared_header_keys[i];
-        shared_header_modules[kept] = shared_header_modules[i];
-        shared_header_files[kept] = shared_header_files[i];
-        kept += 1;
-    }
-    shared_header_count = kept;
 }
 
 // `--time` (#2681): what reading the imports cost, summed over a file's check, so `check` can be told from `import`.
@@ -827,7 +861,7 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     list = problems_of(list, parsed.errors, true);
     if (countof(parsed.errors) > 0) return list;
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     lint_inputs(source);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     lint_inputs_done();
@@ -881,7 +915,7 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Hover){};
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     const ast::Expr *at = ast::expr_at(checked_module(&checked, &parsed.module), offset);
     if (at == nullptr) return (Hover){};
@@ -1050,7 +1084,7 @@ export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 
     if (countof(parsed.errors) > 0) return list;
     if (!dot) return names_at(list, &parsed.module, edited, offset, prefix);
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     if (word < 2) return list;
     const ast::Module *module = checked_module(&checked, &parsed.module);
@@ -1246,7 +1280,7 @@ export Location definition_at(Str path, Str source, roots::Roots folders, U32 of
     parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Location){};
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     const ast::Expr *at = ast::expr_at(&parsed.module, offset);
     if (at == nullptr) return (Location){};
     Location found = {};
@@ -1390,7 +1424,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     Str wanted = wanted_triple(triple);
     mark = clock::monotonic();
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     import_nanoseconds = 0;
     header_nanoseconds = 0;
     read_count = 0;
@@ -1489,7 +1523,6 @@ static BeforeFile before_file_hook = nullptr;
 [[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
                                                     const char *triple) {
     U64 run_started = clock::monotonic();
-    if (serving) forget_changed_headers();
     roots::Roots folders = roots::default_roots();
     roots::Source paths[:] = {};
     for (Usize i = 0; i < count; i++) {
@@ -1505,6 +1538,8 @@ static BeforeFile before_file_hook = nullptr;
     if (triple != nullptr) {
         target = as_str(format::push((const char *)triple));
     }
+    within_command = true; // one generation for the whole command line
+    header_generation += 1;
     I32 status = 0;
     for (Usize i = 0; i < count; i++) {
         Str output = as_str(format::push((const char *)outputs[i]));
@@ -1523,6 +1558,7 @@ static BeforeFile before_file_hook = nullptr;
         }
         file_memory_release();
     }
+    within_command = false;
     if (time_requested()) {
         report(
             as_str(format::push("time: front end compile ", milliseconds(clock::monotonic() - run_started), " ms\n")));
