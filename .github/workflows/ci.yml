@@ -1083,7 +1083,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: macos-26
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1097,7 +1097,13 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   release-linux:
     # the same draft release gets the Linux tarball (`release publish`, release/publish.smith, adds it to the draft the other job made). `publish` publishes without this
@@ -1105,7 +1111,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.scope == 'release'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: write
     concurrency:
@@ -1121,7 +1127,13 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
       - name: Release
-        run: '"$SMITH" build release'
+        # `smith build release` prints no per-stage output to read, so only the whole command is timed (#2971)
+        run: |
+          start=$SECONDS
+          code=0
+          "$SMITH" build release || code=$?
+          echo "took release $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$code"
 
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
