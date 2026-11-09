@@ -199,3 +199,103 @@ export void test_front_fix_loader_str_struct_of_a_module_is_zeroed_by_fields() {
                    "row := Row(kind = 1)\n    return row.kind\n");
     }
 }
+
+// A mended import is read once its statements end at the line break, including one that ends in `p.*` (a `*p` in
+// today's syntax): `out.* = s.*` then `out.n = 1` did not parse, the import was dropped, and the importer was fixed
+// without its types (#2648). `mine` is the out-parameter the import's function fills, so it is `mut` and starts
+// undefined (`{}` stays when the import is not read).
+export void test_front_fix_loader_a_mended_import_with_a_deref_at_a_line_end_is_read() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_deref.smith";
+    Str user_path = "/tmp/front_fix_loader_deref_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_deref;\nexport struct Sym { Int n; };\n"
+                                              "[[gnu::always_inline]] static Int twice(Int n) {\n    return n * 2;\n}\n"
+                                              "export void copy(Sym *out, const Sym *s) {\n    if (s == nullptr) {\n"
+                                              "        return;\n    }\n    *out = *s;\n    out->n = 1;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_deref_user;\nimport front_fix_loader_deref;\n"
+                                            "static void f() {\n"
+                                            "    front_fix_loader_deref::Sym mine = {};\n"
+                                            "    front_fix_loader_deref::Sym other = {};\n"
+                                            "    front_fix_loader_deref::copy(&mine, &other);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    test::check_equal(fix::fix_run(paths, 1), 0);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_deref\nfn f():\n    mut mine: front_fix_loader_deref.Sym = undefined\n"
+                        "    mut other: front_fix_loader_deref.Sym = undefined\n"
+                        "    front_fix_loader_deref.copy(&mine, &other)\n");
+    }
+}
+
+// A mended import with an enum whose variants carry a trailing `//` comment after the comma reads (lib/std/test.smith's
+// `End`, lib/std/build.smith's `Hash`: 399 files failed on them once an import that does not read fails the run).
+export void test_front_fix_loader_a_mended_enum_with_comments_after_its_variants_is_read() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_enum.smith";
+    Str user_path = "/tmp/front_fix_loader_enum_user.smith";
+    test::check_equal(fix::store(module_path,
+                                 "module front_fix_loader_enum;\n"
+                                 "[[gnu::always_inline]] static Int twice(Int n) {\n    return n * 2;\n}\n"
+                                 "typedef enum : U8 {\n    End_Passed,\n    End_Check,   // a check failed\n"
+                                 "    End_Signal,  // killed by a signal\n} End;\n"
+                                 "export End first(void) {\n    return End_Check;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_enum_user;\nimport front_fix_loader_enum;\n"
+                                            "static void f() {\n"
+                                            "    front_fix_loader_enum::End e = front_fix_loader_enum::first();\n"
+                                            "    front_fix_loader_enum::first();\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    test::check_equal(fix::fix_run(paths, 1), 0);
+}
+
+// An import that has a spelling the parser refuses (`[[gnu::always_inline]]`) is mended before the checker reads it,
+// and is then in smith's own syntax: its `const Sym *` is `*Sym`, read-only. It was marked as today's syntax all the
+// same, so the pointer was writable and the importer's `*Sym` parameter became `*mut` for a callee that never writes
+// (#2648).
+export void test_front_fix_loader_a_mended_import_keeps_its_read_only_pointer() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_mended.smith";
+    Str user_path = "/tmp/front_fix_loader_mended_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_mended;\nexport struct Sym { Bool exported; };\n"
+                                              "[[gnu::always_inline]] static Int twice(Int n) {\n    return n * 2;\n}\n"
+                                              "export Str doc(const Sym *s) {\n    if (s->exported) return \"\";\n"
+                                              "    return \"x\";\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_mended_user;\nimport front_fix_loader_mended;\n"
+                                            "static Str f(const front_fix_loader_mended::Sym *s) {\n"
+                                            "    return front_fix_loader_mended::doc(s);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_mended\nfn f(s: *front_fix_loader_mended.Sym) -> str:\n"
+                        "    return s.doc()\n");
+    }
+}
