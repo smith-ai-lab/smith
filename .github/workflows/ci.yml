@@ -675,19 +675,15 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the proof cache
-        # main's `warm` saves it (#2237): a proof is keyed by the IR the prover checks, so only what changed is proved again
+      - name: Restore the lint and proof caches
+        # main's `warm` saves ONE cache holding both folders (#2237). `actions/cache` puts the path list in the cache
+        # version, so a restore naming one folder never finds it ("Cache not found" even for the prefix, #2954): every
+        # restore of `smith-lintprove-` names the same two paths, in the same order, as `warm`'s save.
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/proofs
-          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
-          restore-keys: smith-lintprove-${{ runner.os }}-
-      - name: Restore the lint cache
-        # a PR check lints here too, in place of `check-lint` (#2856)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
@@ -739,11 +735,13 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the lint cache
-        # main's `warm` saves it (#2237): an entry is keyed by the lint identity and the file's content (#2236)
+      - name: Restore the lint and proof caches
+        # the same two paths as `warm`'s save: the path list is part of the cache version (#2954)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Lint
