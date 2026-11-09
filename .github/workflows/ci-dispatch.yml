@@ -36,7 +36,7 @@ permissions:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -106,7 +106,7 @@ jobs:
           done
           [ "$used" -lt 0 ] && used=0
 
-          started=0; waiting=0
+          started=0; waiting=0; fresh=""
           for row in $prs; do
             pr=${row%%:*}; rest=${row#*:}; sha=${rest%%:*}; ref=${rest#*:}
             # a check of this head is live
@@ -119,9 +119,34 @@ jobs:
             if [ "$queue_waits" = 1 ] || [ $((used + PER_RUN)) -gt "$BUDGET" ]; then
               waiting=$((waiting + 1)); continue
             fi
+            # The status-filtered scan above can lag behind a run dispatched a minute ago (#2896: #2895 d192248 was
+            # dispatched twice 56 s apart). The list by head_sha, the one the wait below reads, is the authority.
+            dup=$(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=workflow_dispatch -f head_sha="$sha" \
+              -f per_page=10 --jq '[.workflow_runs[] | select(.status != "completed")][0].id // empty' 2>/dev/null)
+            if [ -n "$dup" ]; then
+              log "dispatch: #$pr ${sha:0:7} already live (run $dup)"
+              used=$((used + PER_RUN)); live="${live}$dup:$sha "; continue
+            fi
             if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f ref="$ref" -f "inputs[pr]=$pr" --silent; then
               log "started the check of #$pr (${sha:0:7})"
               used=$((used + PER_RUN)); started=$((started + 1)); live="${live}0:$sha "
+              fresh="$fresh $pr:$sha"
             fi
           done
           log "ci-dispatch: budget $BUDGET, used $used, queue job waiting: $queue_waits, started $started, still waiting $waiting"
+
+          # A dispatched run is listed only about 20 s after the call (#2873: dispatched 05:27:38Z, created 05:27:58Z).
+          # A pass inside that window would see no live run and no `ci`, and dispatch the head again; the second run
+          # cancels the first through the `ci-pr-<n>` group (#2882). So wait until each head started here shows a live
+          # `workflow_dispatch` run: every 5 s, at most 90 s. Not listed by then: say so and end, the next pass decides.
+          for item in $fresh; do
+            pr=${item%%:*}; sha=${item#*:}; seen=0
+            for _ in $(seq 1 18); do
+              n=$(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event=workflow_dispatch -f head_sha="$sha" \
+                -f per_page=10 --jq '[.workflow_runs[] | select(.status != "completed")] | length' 2>/dev/null || echo 0)
+              [ "${n:-0}" -gt 0 ] && { seen=1; break; }
+              sleep 5
+            done
+            if [ "$seen" = 1 ]; then log "dispatch: #$pr ${sha:0:7} listed"
+            else log "dispatch: #$pr ${sha:0:7} not listed after 90 s"; fi
+          done

@@ -1,0 +1,46 @@
+// Tests of the fix-it for a pointer parameter that is handed an option (#2648): a function that tests its pointer
+// parameter against `nullptr` and is called with a field that is `?*T` takes `?*T`.
+module front_fix_optional_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+static Str fixed_text(Str source) {
+    fix::Fixed fixed = fix::fix_text("t.smith", source);
+    return fixed.text;
+}
+
+export void test_front_fix_optional_a_tested_parameter_handed_an_option_is_an_option() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("module m;\nstruct Node {\n    Node *next;\n    U32 v;\n};\n"
+                         "static U32 size(Node *old) {\n    if (old == nullptr) {\n        return 0;\n    }\n"
+                         "    return old->v;\n}\n"
+                         "static U32 f(Node *n) {\n    if (n->next == nullptr) {\n        return 0;\n    }\n    return "
+                         "size(n->next);\n}\n"
+                         "static Node make() {\n    Node n = {.v = 1};\n    return n;\n}\n");
+    check_text(got, "struct Node:\n    next: ?*Node = .none\n    v: u32\nfn size(old: ?*Node) -> u32:\n"
+                    "    if old == .none:\n        return 0\n    return old.v\nfn f(n: *Node) -> u32:\n"
+                    "    if n.next == .none:\n        return 0\n    return size(n.next)\nfn make() -> Node:\n"
+                    "    n := Node(v = 1)\n    return n\n");
+}
+
+export void test_front_fix_optional_an_assigned_option_parameter_is_read_through_a_local() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str got = fixed_text("fn skip(mut old: ?*mut Node) -> *mut Node:\n    if old == .none:\n        return nullptr\n"
+                         "    while old.v == 0:\n        old = old.next\n    return old\n");
+    check_text(got, "fn skip(old: ?*mut Node) -> *mut Node:\n    if old == .none:\n        return nullptr\n"
+                    "    mut old_some: *mut Node = old\n    while old_some.v == 0:\n        old_some = old_some.next\n"
+                    "    return old_some\n");
+}
