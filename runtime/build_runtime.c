@@ -3955,8 +3955,8 @@ static const char *const *smith_tests_shard_args(SmithBuild *b) {
     return selected ? kept : smith_list(b, nullptr);
 }
 
-// The sources the build compiles: with a part or a selection, the files that hold one of its tests and the files with no
-// test of their own (the helpers); else all.
+// The sources the build compiles: with a part or a selection, the files that hold one of its tests and the files with
+// no test of their own (the helpers); else all.
 static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *const *sources,
                                                     const char *const *args) {
     if (args[0] == nullptr) return sources;
