@@ -1383,6 +1383,112 @@ static core::Errors with_optionals(core::Errors out, Str source, const ast::Modu
     return out;
 }
 
+static Bool option_starts_with(Str text, Str prefix) {
+    if (countof(text) < countof(prefix)) return false;
+    return same(text[0:countof(prefix)], prefix);
+}
+
+static Bool option_contains(Str text, Str needle) {
+    for (Usize i = 0; i + countof(needle) <= countof(text); i++)
+        if (same(text[i:i + countof(needle)], needle)) return true;
+    return false;
+}
+
+// An option given to a pointer parameter that tests for null (#2648): `count(n->next)` where `n->next` is `?*Node`
+// and `count` (of this module, written for a null: it tests `n == nullptr`) takes a `*Node`. The checker says "a value
+// that may be absent is not a value"; the fix writes `?` before the parameter's pointer type, and the passes after it
+// turn the tests into `.none` and narrow the name. A call written `name(args)` only: a fix edits one file.
+// Where the call that holds the argument at `at` opens, and which argument it is: the `(` before it, or `at` when
+// the argument is in no call (a bracket or a brace opens first).
+static Usize option_call_open(Str source, Usize at, Usize *index) {
+    Usize depth = 0;
+    Usize open = at;
+    *index = 0;
+    while (open > 0) {
+        open -= 1;
+        char ch = source[open];
+        if (ch == ')' || ch == ']' || ch == '}') {
+            depth += 1;
+        } else if (ch == '(' || ch == '[' || ch == '{') {
+            if (depth > 0) {
+                depth -= 1;
+            } else if (ch == '(') {
+                return open;
+            } else {
+                return at;
+            }
+        } else if (ch == ',' && depth == 0) {
+            *index += 1;
+        }
+    }
+    return at;
+}
+
+// The function of the module named `name`, or null.
+static const ast::Decl *option_function_named(const ast::Module *module, Str name) {
+    for (Usize i = 0; i < countof(module->decls); i++) {
+        const ast::Decl *d = module->decls[i];
+        if (d->kind == .function && same(d->kind.function.name, name)) return d;
+    }
+    return nullptr;
+}
+
+// Whether the text of the function tests `name` against null: `name == nullptr`, `name != .none` and the like.
+static Bool option_tests_for_null(Str body, Str name) {
+    for (Usize i = 0; i + countof(name) < countof(body); i++) {
+        if (!option_starts_with(body[i:countof(body)], name)) continue;
+        if (i > 0 && (word_char(body[i - 1]) || body[i - 1] == '.')) continue;
+        Str after = body[i + countof(name):countof(body)];
+        if (option_starts_with(after, " == nullptr") || option_starts_with(after, " != nullptr") ||
+            option_starts_with(after, " == .none") || option_starts_with(after, " != .none"))
+            return true;
+    }
+    return false;
+}
+
+static Bool option_seen(core::Errors out, Usize at) {
+    for (Usize i = 0; i < countof(out); i++)
+        if (out[i].span.start == at) return true;
+    return false;
+}
+
+static core::Errors option_param_edits(core::Errors out, Str source, const ast::Module *module,
+                                       const types::Checked *c) {
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error found = c->errors[i];
+        if (countof(found.fix) > 0 || found.span.end > countof(source) || found.span.start >= found.span.end) continue;
+        if (!option_starts_with(found.message, "expected ") || !option_contains(found.message, ", found Option(") ||
+            !option_contains(found.message, "a value that may be absent is not a value"))
+            continue;
+        Usize index = 0;
+        Usize open = option_call_open(source, found.span.start, &index);
+        if (open == found.span.start) continue;
+        Usize stop = open;
+        Usize start = stop;
+        while (start > 0 && word_char(source[start - 1]))
+            start -= 1;
+        if (start == stop || (start > 0 && (source[start - 1] == '.' || source[start - 1] == ':'))) continue;
+        const ast::Decl *callee = option_function_named(module, source[start:stop]);
+        if (callee == nullptr || callee->kind != .function || index >= countof(callee->kind.function.params)) continue;
+        const ast::Param *param = &callee->kind.function.params[index];
+        if (param->is_pack || param->is_keyword || param->type == nullptr || param->type->kind != .pointer) continue;
+        U32 at = param->type->span.start;
+        if (option_seen(out, at) || callee->span.end > countof(source)) continue;
+        if (!option_tests_for_null(source[callee->span.start:callee->span.end], param->name)) continue;
+        core::Edits fix = {};
+        fix = mem::realloc(fix, 1);
+        Str mark = "?";
+        fix[0] = (core::Edit){.span = {.start = at, .end = at}, .text = mark};
+        core::ParseError made = {};
+        made.span = fix[0].span;
+        made.message = "a parameter that is tested for null and given an option is `?*T`";
+        made.fix = fix;
+        out = mem::realloc(out, countof(out) + 1);
+        out[countof(out) - 1] = made;
+    }
+    return out;
+}
+
 export core::Errors edits(Str source, const ast::Module *module, types::Checked *c) {
     core::Errors out = {};
     Bool filled = false;
@@ -1450,6 +1556,7 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
     if (filled) out = add(out, import_std(module, "array"));
     if (zeroed_written) out = add(out, import_std(module, "mem"));
     zeroed_written = false;
+    out = option_param_edits(out, source, module, c);
     localize(module, out);
     return out;
 }
