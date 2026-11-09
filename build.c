@@ -840,6 +840,7 @@ static const char *const build_runtime_sources[] = {
     "runtime/package_unit.c",
     "runtime/quiet.c",
     "runtime/record.c",
+    "runtime/self_digest.c",
     "runtime/slots.c",
     "runtime/symbolize.c",
     "runtime/test_cache.c",
