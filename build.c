@@ -1435,6 +1435,25 @@ static const char *build_encode_argument(SmithBuild *b, const char *argument) {
     return encoded;
 }
 
+// With a --shard or a selection (--test, --macos-only, --skip-macos), units-build compiles only the test files of the
+// part or the chosen tests (#1200, #2998): the build there reads the arguments as `smith test` does, as the option
+// SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A). Empty for neither.
+static const char *build_units_selection(SmithBuild *b, const char *const *given) {
+    const char *option = "";
+    for (size_t i = 0; given[i] != nullptr; i++) {
+        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+        if (!selects) continue;
+        const char *encoded = "";
+        for (size_t k = 0; given[k] != nullptr; k++) {
+            const char *argument = build_encode_argument(b, given[k]);
+            encoded = smith_fmt(b, "%s;%s", encoded, argument);
+        }
+        option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
+    }
+    return option;
+}
+
 // smith's own tests of behavior, in `.smith` on its test runner (issue #31): every `*_test.smith` (beside the library
 // it tests in `lib/`, or in `tests/`) linked into one runner, built once under AddressSanitizer and UBSan, whose
 // workers run the tests in process, one per core, where a script starts smith for each case. It is a project of its own
@@ -1463,21 +1482,7 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
-    // With a --shard or a selection (--test, --macos-only, --skip-macos), units-build compiles only the test files of
-    // the part or the chosen tests (#1200, #2998): the build there reads the arguments as `smith test` does, as the
-    // option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A).
-    const char *shard_option = "";
-    for (size_t i = 0; given[i] != nullptr; i++) {
-        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
-                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
-        if (!selects) continue;
-        const char *encoded = "";
-        for (size_t k = 0; given[k] != nullptr; k++) {
-            const char *argument = build_encode_argument(b, given[k]);
-            encoded = smith_fmt(b, "%s;%s", encoded, argument);
-        }
-        shard_option = smith_fmt(b, " '-DSMITH_ARGS=%s'", encoded);
-    }
+    const char *shard_option = build_units_selection(b, given);
     SmithStep build_step = {
         .command = (const char *[]){"sh", "-c",
                                     smith_fmt(b, "%s env %s \"%s\" build%s build/tests", setup, environment, self,
