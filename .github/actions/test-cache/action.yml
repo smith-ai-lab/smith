@@ -74,7 +74,7 @@ runs:
                   ok=false; set -f # the patterns are words, not files of the working folder
                   for pattern in $FROM; do [[ $job == $pattern ]] && ok=true; done # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
                 fi
-                [ "$ok" = true ] && echo "$url"
+                [ "$ok" = true ] && { [ "$kind" = imports ] && echo "$job $url" || echo "$url"; }
               done || true)
             [ -n "$urls" ] || continue
             printf '%s\n' "$urls" >"$t/$kind-urls"
@@ -124,8 +124,9 @@ runs:
         # one line a set (#2978): its entries, size and seconds, or where it failed and the first line of the error; a
         # failed set never fails the job. `df` of the cache's filesystem before the first set and after the last.
         echo "import cache: df before: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
-        for url in $urls; do
-          set_name=${url##*/}; start=$SECONDS; err="$RUNNER_TEMP/imports.err"
+        while read -r set_name url; do
+          [ -n "$url" ] || continue
+          start=$SECONDS; err="$RUNNER_TEMP/imports.err"
           if ! gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
             echo "import cache: set $set_name: FAILED at download: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"; continue
           fi
@@ -137,7 +138,7 @@ runs:
           else
             echo "import cache: set $set_name: FAILED at extract: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-        done
+        done <<<"$urls"
         echo "import cache: df after: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
         # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
         if [ "$got" -gt 0 ]; then
