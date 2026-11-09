@@ -963,9 +963,13 @@ static void block_statement(types::Checked *r, const ast::Stmt *s) {
     ast::StmtRef items[:] = s->kind.block.items;
     types::push_scope(&r->scopes);
     push(nullptr, nullptr, leave);
+    // The rest of a block after `.v(x) := value else:` is a block of no span of its own: it ends with its last
+    // statement.
+    U32 end = s->span.end;
+    if (end == 0 && countof(items) > 0) end = items[countof(items) - 1]->span.end;
     for (Usize i = countof(items); i > 0; i--) {
         push(items[i - 1], nullptr, enter);
-        state.work[state.top - 1].end = s->span.end;
+        state.work[state.top - 1].end = end;
     }
 }
 
