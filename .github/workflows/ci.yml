@@ -262,6 +262,12 @@ jobs:
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242); a documents-only change keeps the full list
           test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
+      - uses: ./.github/actions/test-cache
+        # the macOS tests the store holds as passed are left out too (#2833): the `--macos-only` tests whose inputs did
+        # not change do not run; the nightly restores nothing
+        with:
+          os: macos
+          fresh: ${{ github.event_name == 'schedule' }}
       - name: Checks
         timeout-minutes: 30
         shell: bash
@@ -311,6 +317,16 @@ jobs:
             fi
           done
           exit $failed
+      - name: Keep the test store for the cache job
+        if: always() && needs.changes.outputs.scope == 'full' && (github.event_name == 'merge_group' || github.event_name == 'schedule')
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-store-macos
+          path: ~/.cache/smith/tests
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: ignore
       - name: Upload the logs
         if: always()
         continue-on-error: true
@@ -339,6 +355,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
+      # in every test key (an environment variable of SMITH_ is): the test jobs set it, so the sizing step must too,
+      # or `smith test --misses` finds nothing of the store and asks for 7 parts (#2833)
+      SMITH_TEST_STATS: "1"
     permissions:
       contents: read
       actions: write # queue-guard: `gh run cancel` (#2256)
@@ -530,7 +549,7 @@ jobs:
     # (#2833). Releases are immutable, so a new tag per commit with the store in one `gh release create`, the 3 newest
     # kept, like the step cache (#2772). Only a queue run saves, and what it ran is the tree that lands; a pull
     # request run only reads. A failure here never fails the run.
-    needs: [changes, test-linux]
+    needs: [changes, test-linux, macos]
     if: ${{ always() && (github.event_name == 'merge_group' || github.event_name == 'schedule') && needs.changes.outputs.scope == 'full' && needs.test-linux.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -545,23 +564,35 @@ jobs:
         with:
           pattern: test-store-linux-*
           path: ${{ runner.temp }}/stores
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: test-store-macos
+          path: ${{ runner.temp }}/stores-macos
       - name: Publish the store
         continue-on-error: true
         shell: bash
         run: |
           set -eu
-          merged="$RUNNER_TEMP/merged"; mkdir -p "$merged"
-          for part in "$RUNNER_TEMP"/stores/*/; do [ -d "$part" ] && cp -a "$part". "$merged"/; done
-          # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
-          find "$merged" -type f -mtime +14 -delete
-          n=$(find "$merged" -type f | wc -l)
-          if [ "$n" -eq 0 ]; then echo "no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           out="$RUNNER_TEMP/assets"; mkdir -p "$out"
-          tar -C "$merged" -c . | gzip -1 >"$out/smith-tests-linux.tar.gz"
+          n=0
+          # one tarball per OS: the Linux parts' stores merged, and the macOS job's
+          for os in linux macos; do
+            if [ "$os" = linux ]; then src="$RUNNER_TEMP/stores/*/"; else src="$RUNNER_TEMP/stores-macos/"; fi
+            merged="$RUNNER_TEMP/merged-$os"; mkdir -p "$merged"
+            for part in $src; do [ -d "$part" ] && cp -a "$part". "$merged"/; done
+            # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
+            find "$merged" -type f -mtime +14 -delete
+            c=$(find "$merged" -type f | wc -l)
+            [ "$c" -eq 0 ] && continue
+            tar -C "$merged" -c . | gzip -1 >"$out/smith-tests-$os.tar.gz"
+            n=$((n + c)); echo "$os: $c entries, $(du -h "$out/smith-tests-$os.tar.gz" | cut -f1)" >>"$GITHUB_STEP_SUMMARY"
+          done
+          if [ "$n" -eq 0 ]; then echo "no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
           echo "$GITHUB_SHA" >"$out/smith-tests.sha"
           tag="test-cache-${GITHUB_SHA:0:7}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" "$out"/smith-tests-linux.tar.gz "$out"/smith-tests.sha --prerelease --latest=false \
+            gh release create "$tag" "$out"/smith-tests-*.tar.gz "$out"/smith-tests.sha --prerelease --latest=false \
               --target "$GITHUB_SHA" --title "test cache $tag" \
               --notes "The test-result store (#2686) of the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2833). Not a release of smith."
           fi
@@ -570,7 +601,7 @@ jobs:
             while read -r old; do
               gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
             done
-          echo "published $tag: $n entries, $(du -h "$out/smith-tests-linux.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "published $tag: $n entries" | tee -a "$GITHUB_STEP_SUMMARY"
 
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
