@@ -1429,10 +1429,11 @@ static Bool fixer_object(const char object[:]) {
 // and short on purpose: any object not on it is hashed, and one that is unsure stays out (account, changed, coverage,
 // explain, symbolize and the lint cache are reached from the startup, the crash trace or the lint path).
 static Bool unrelated_object(const char name[:]) {
-    static const char *const names[_] = {"rt_runtime_test_cache.o", "rt_runtime_docs.o", "rt_smith_protocol_dap.o",
-                                         "rt_smith_protocol_mcp.o", "lldb_dap_shim.o",   "lldb_server_shim.o"};
-    for (Usize i = 0; i < countof(names); i++) {
-        if (same(name, view_of(names[i]))) return true;
+    static const char *const object_names[_] = {"rt_runtime_test_cache.o", "rt_runtime_docs.o",
+                                                "rt_smith_protocol_dap.o", "rt_smith_protocol_mcp.o",
+                                                "lldb_dap_shim.o",         "lldb_server_shim.o"};
+    for (Usize i = 0; i < countof(object_names); i++) {
+        if (same(name, view_of(object_names[i]))) return true;
     }
     return starts_with(name, "rt_runtime_mcp") || starts_with(name, "front_lsp_");
 }
