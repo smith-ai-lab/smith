@@ -2,8 +2,7 @@
 // header once, and a file compiled with others gives the same object and the same diagnostics as compiled alone. A
 // file's C headers are read with its own compile command's flags, so two files with different defines do not share
 // one; a generic of an imported module is instantiated in each file; an error in an imported module is reported in
-// every file that imports it. `--serve` answers request after request in one process, and a header changed between
-// two requests is read again. smith-covers: front/compile.smith front/types.smith runtime/front_flag.c
+// every file that imports it. smith-covers: front/compile.smith front/types.smith runtime/front_flag.c
 module cc_shared_files_test;
 
 import std::test;
@@ -74,37 +73,4 @@ export void test_cc_shared_files_files_with_different_defines_read_the_header_ea
     defer scratch::release(run.err);
     scratch::expect_lacks("no diagnostics", run.out, "error");
     scratch::expect_lacks("both orders compile", run.out, "status 1");
-}
-
-// `--serve`: three requests in one process, the header edited before the third; each reply is the status and what
-// the compile printed.
-export void test_cc_shared_files_serve_answers_each_request_and_sees_a_changed_header() {
-    scratch::Project p = scratch::make("p", nullptr);
-    defer scratch::clean(&p);
-    scratch::write(&p, "zz.h", "int zz_first(int x);\n");
-    scratch::write(&p, "u.smith", "import c \"zz.h\"\n\npub fn u(x: i32) -> i32:\n    zz.zz_first(x)\n");
-    scratch::Run run = scratch::sh(
-        &p, "r='smith-serve 5\\n.\\n--front-end=new\\n-c\\nu.smith\\n-o\\nu.o\\n'; "
-            "{ printf \"$r\"; printf \"$r\"; sleep 1; printf 'int zz_second(int x);\\n' > zz.h; printf \"$r\"; } "
-            "| smith cc --front-end=new --serve; echo exit $?");
-    defer scratch::release(run.out);
-    defer scratch::release(run.err);
-    scratch::expect_contains("the first two compile", run.out, "smith-serve 0 0\nsmith-serve 0 0\nsmith-serve 1 ");
-    scratch::expect_contains("the edited header", run.out, "`zz.zz_first` is not declared by that header");
-    scratch::expect_contains("end of input ends it", run.out, "exit 0");
-}
-
-// A request the server does not run gets status 2 and the server goes on.
-export void test_cc_shared_files_serve_refuses_a_folder_it_cannot_enter_and_goes_on() {
-    scratch::Project p = scratch::make("p", nullptr);
-    defer scratch::clean(&p);
-    scratch::write(&p, "u.smith", "pub fn u() -> i32: 1\n");
-    scratch::Run run = scratch::sh(
-        &p, "printf 'smith-serve 2\\nmissing\\n-c\\nu.smith\\nsmith-serve 3\\n.\\n-c\\nu.smith\\n--front-end=new\\n' "
-            "| smith cc --front-end=new --serve");
-    defer scratch::release(run.out);
-    defer scratch::release(run.err);
-    scratch::expect_contains("the refusal", run.out, "smith-serve 2 ");
-    scratch::expect_contains("its reason", run.out, "cannot enter the folder missing");
-    scratch::expect_contains("the next request", run.out, "smith-serve 0 0");
 }

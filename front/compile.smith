@@ -595,7 +595,7 @@ static Str shared_header_keys[shared_headers_max];
 static const ast::Module *shared_header_modules[shared_headers_max];
 static Usize shared_header_count = 0;
 
-// A header's file can change while the process lives (a server's next request, the editor, a test that writes it
+// A header's file can change while the process lives (the editor's next request, a test that writes it
 // again), which the key does not see. One command line reads its headers as it starts and does not check; any other
 // entry (each file of `file`, `diagnose`, `hover_at` ...: `enter_file`) starts a new generation, and a header kept
 // from an older one is used only when the files clang read for it (shim/cimport_deps.cpp) are as they were. Those

@@ -298,7 +298,7 @@ static void smith_front_depfile(const char *depfile, const char *output, const c
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
-static int smith_front_compile(char **argv, int first, int count, char **args, const char *self) {
+int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
     SMITH_ASSERT((size_t)count < smith_front_args_max && first >= 1 && first <= 8);
     for (int i = 0; i < first; i++) // bounded by 8
         smith_front_arguments[i] = argv[i];
@@ -331,7 +331,7 @@ static int smith_front_compile(char **argv, int first, int count, char **args, c
     smith_front_self = self;
     smith_front_count = count;
     smith_front_args = args;
-    front_compile_before_file(sources > 1 ? smith_front_flags_of_file : nullptr); // a served request has its own args
+    front_compile_before_file(sources > 1 ? smith_front_flags_of_file : nullptr);
     if (sources > 0) smith_front_debug_flag(count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;
@@ -359,115 +359,6 @@ static int smith_front_compile(char **argv, int first, int count, char **args, c
     if (compile_only && only_options && sources == 1 && depfile != nullptr)
         smith_front_depfile(depfile, output, args[source_at]);
     return compile_only && only_options ? 0 : used;
-}
-
-// `smith cc --front-end=new --serve` (#2888): one process compiles request after request, so std and the C headers are
-// read once for all of them (knowledge/front-end.md, "One process, many files"). A request, on stdin:
-//
-//     smith-serve <n>\n<folder>\n<argument 1>\n ... <argument n>\n
-//
-// is the arguments of one `smith cc` after `cc` (`--front-end=new -c a.smith -o a.o`; an argument holding a newline
-// cannot be sent), run in <folder> (relative to the server's own). The reply, on stdout:
-//
-//     smith-serve <status> <length>\n<length bytes: what the compile printed>
-//
-// with status 0 (compiled), 1 (did not) or 2 (not a request the server runs: a malformed one, a folder it cannot
-// enter, or a command with something left for clang). End of input ends the server with 0. A request that kills the
-// process (a crash, a usage error) ends the server too: the caller runs that request again alone.
-constexpr size_t smith_serve_text_max = 1U << 20;
-static char smith_serve_text[smith_serve_text_max];
-static char *smith_serve_args[smith_front_args_max + 8];
-
-// Reads one line of the request into the text at `*used`; null at the end of input or when it does not fit.
-static char *smith_serve_line(size_t *used) {
-    char *line = smith_serve_text + *used;
-    if (fgets(line, (int)(smith_serve_text_max - *used), stdin) == nullptr) return nullptr;
-    size_t length = strlen(line);
-    if (length == 0 || line[length - 1] != '\n') return nullptr;
-    line[length - 1] = '\0';
-    *used += length;
-    return line;
-}
-
-// Sends the reply: the status and what the request printed, which is in `capture` (then emptied).
-static void smith_serve_reply(int out, int capture, int status) {
-    off_t length = lseek(capture, 0, SEEK_END);
-    char head[64];
-    int n = snprintf(head, sizeof head, "smith-serve %d %lld\n", status, (long long)(length > 0 ? length : 0));
-    SMITH_ASSERT(n > 0 && (size_t)n < sizeof head);
-    SMITH_ASSERT(write(out, head, (size_t)n) == n);
-    lseek(capture, 0, SEEK_SET);
-    for (off_t sent = 0; sent < length;) { // bounded by length: each read moves at least one byte
-        char chunk[1U << 16];
-        ssize_t got = read(capture, chunk, sizeof chunk);
-        if (got <= 0) break;
-        SMITH_ASSERT(write(out, chunk, (size_t)got) == got);
-        sent += got;
-    }
-    SMITH_ASSERT(ftruncate(capture, 0) == 0);
-    lseek(capture, 0, SEEK_SET);
-}
-
-// Runs one request with its output in `capture`; the status of the reply.
-static int smith_serve_one(char **argv, int first, int count, const char *self, const char *home, bool flags_given) {
-    for (int i = 0; i < first; i++) // bounded by 8
-        smith_serve_args[i] = argv[i];
-    if (chdir(home) != 0 || chdir(smith_serve_args[first]) != 0) {
-        fprintf(stderr, "smith: serve: cannot enter the folder %s\n", smith_serve_args[first]);
-        return 2;
-    }
-    if (!flags_given) unsetenv("SMITH_FRONT_CIMPORT_FLAGS");
-    int forwarded = smith_front_compile(smith_serve_args, first, count, smith_serve_args + first + 1, self);
-    fflush(stdout);
-    fflush(stderr);
-    if (forwarded > 0) fprintf(stderr, "smith: serve: only `-c` of .smith files is served; nothing else ran\n");
-    return forwarded > 0 ? 2 : forwarded < 0 ? 1 : 0;
-}
-
-static int smith_front_serve(char **argv, int first, const char *self) {
-    static char home[PATH_MAX];
-    if (getcwd(home, sizeof home) == nullptr) smith_die(smith_exit_missing, "cannot read the current folder", nullptr);
-    bool flags_given = getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr;
-    char capture_name[PATH_MAX];
-    const char *tmp = getenv("TMPDIR") != nullptr ? getenv("TMPDIR") : "/tmp";
-    snprintf(capture_name, sizeof capture_name, "%s/smith-serve-XXXXXX", tmp);
-    int capture = mkstemp(capture_name);
-    if (capture < 0) smith_die(smith_exit_missing, "cannot make the serve capture file", capture_name);
-    unlink(capture_name);
-    int out = dup(STDOUT_FILENO);
-    int err = dup(STDERR_FILENO);
-    SMITH_ASSERT(out >= 0 && err >= 0);
-    for (size_t served = 0; served < SIZE_MAX; served++) { // one request each pass; ends at the end of input
-        size_t used = 0;
-        char *head = smith_serve_line(&used);
-        if (head == nullptr) return 0;
-        const char *prefix = "smith-serve ";
-        char *end = nullptr;
-        long asked = strncmp(head, prefix, strlen(prefix)) == 0 ? strtol(head + strlen(prefix), &end, 10) : -1;
-        if (end == nullptr || *end != '\0' || asked < 0 || (size_t)asked + 2 >= smith_front_args_max) {
-            fprintf(stderr, "smith: serve: a request starts `smith-serve <n>`, not: %s\n", head);
-            return 2;
-        }
-        int count = (int)asked;
-        bool whole = true;
-        for (int i = 0; i <= count && whole; i++) { // the folder, then the arguments
-            smith_serve_args[first + i] = smith_serve_line(&used);
-            whole = smith_serve_args[first + i] != nullptr;
-        }
-        if (!whole) return 2;
-        SMITH_ASSERT(dup2(capture, STDOUT_FILENO) >= 0 && dup2(capture, STDERR_FILENO) >= 0);
-        int status = smith_serve_one(argv, first, count, self, home, flags_given);
-        SMITH_ASSERT(dup2(out, STDOUT_FILENO) >= 0 && dup2(err, STDERR_FILENO) >= 0);
-        smith_serve_reply(out, capture, status);
-    }
-    return 0;
-}
-
-// The entry from smith.c: `--serve` among the arguments serves requests (above); otherwise one compile.
-int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
-    for (int i = 0; i < count; i++) // bounded by count
-        if (strcmp(args[i], "--serve") == 0) return smith_front_serve(argv, first, self) == 0 ? 0 : -1;
-    return smith_front_compile(argv, first, count, args, self);
 }
 #endif // SMITH_CORE
 
