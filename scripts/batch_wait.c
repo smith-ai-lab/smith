@@ -8,6 +8,12 @@
 //
 // Usage: batch_wait OWN_REF HEAD_SHA REPO_URL
 //
+// A later group whose run has a failed job (#2903) cannot merge this entry with it, so the wait ends at once and the
+// run builds: each poll reads the latest `ci.yml` merge_group run of every later group's branch (`gh api`, with
+// GH_TOKEN; BATCH_WAIT_GH replaces `gh`) and its jobs, and prints `batch=waited` with a line on stderr naming the
+// group and the job. Without that, the 2026-11-09 waits (runs 42582094132, 42582096340) lasted the cap while later
+// groups failed one after another. A failed read of the run or its jobs is "no failure": the wait goes on.
+//
 // A group that is last waits the batching window (window_seconds) first, so later groups of a burst can form.
 // Prints `batch=alone` (no later group), `batch=waited` (waited, now last) or `batch=capped` (waited BATCH_WAIT_CAP
 // seconds, 3600 by default, and builds anyway, so a wait and a full run stay under the ruleset's 120-minute check
@@ -79,6 +85,55 @@ static Read read_queue(const char *own, const char *head, const char *url, char 
     return later[0] != '\0' ? Read_Later : Read_Last;
 }
 
+// The text of one command's first line of output, empty when it fails (a failed read is "no failure").
+static int first_line(const char *command, char out[line_size]) {
+    out[0] = '\0';
+    // NOLINTNEXTLINE(bugprone-command-processor): gh (or the test's fake), with the branch and repo checked for quotes
+    FILE *pipe = popen(command, "r");
+    if (pipe == nullptr) return 0;
+    if (fgets(out, line_size, pipe) == nullptr) out[0] = '\0';
+    out[strcspn(out, "\r\n")] = '\0';
+    return pclose(pipe) == 0 && out[0] != '\0';
+}
+
+// The name of a failed job in the latest merge_group run of `branch` (a ref of a later group), or "" when there is
+// none or a read failed. `repo` is owner/name.
+static int failed_job(const char *repo, const char *branch, char name[line_size]) {
+    const char *gh = getenv("BATCH_WAIT_GH");
+    const char *tool = gh != nullptr && gh[0] != '\0' ? gh : "gh";
+    name[0] = '\0';
+    if (strchr(repo, '\'') != nullptr || strchr(branch, '\'') != nullptr) return 0;
+    char command[command_size];
+    char id[line_size];
+    int n = snprintf(command, sizeof command,
+                     "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f head_branch='%s' "
+                     "--jq '.workflow_runs[0].id // empty'",
+                     tool, repo, branch);
+    if (n < 0 || n >= (int)sizeof command || !first_line(command, id) || strchr(id, '\'') != nullptr) return 0;
+    n = snprintf(command, sizeof command,
+                 "%s api 'repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100' "
+                 "--jq '[.jobs[]|select(.conclusion==\"failure\")|.name]|first // empty'",
+                 tool, repo, id);
+    return n >= 0 && n < (int)sizeof command && first_line(command, name);
+}
+
+// Whether any group of `later` (refs separated by spaces) has a failed job; names the group and the job on stderr.
+static int later_failed(const char *url, const char *later) {
+    const char *repo = strstr(url, "github.com/");
+    repo = repo != nullptr ? repo + strlen("github.com/") : url;
+    char refs[later_size];
+    snprintf(refs, sizeof refs, "%s", later);
+    char name[line_size];
+    for (char *ref = strtok(refs, " "); ref != nullptr; ref = strtok(nullptr, " ")) {
+        const char *branch = strncmp(ref, "refs/heads/", 11) == 0 ? ref + 11 : ref;
+        if (failed_job(repo, branch, name)) {
+            fprintf(stderr, "batch-wait: later group %s failed (job %s), building now\n", ref, name);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int finish(const char *state, const char *why) {
     fprintf(stderr, "batch-wait: %s\n", why);
     printf("batch=%s\n", state);
@@ -124,6 +179,7 @@ int main(int argc, char **argv) {
             return finish(waited ? "waited" : "alone",
                           waited ? "now last; running full checks" : "last entry; running full checks");
         if (waited >= polls) return finish("capped", "capped; running full checks");
+        if (later_failed(argv[3], later)) return finish("waited", "a later group failed; running full checks");
         if (strcmp(later, last) != 0) fprintf(stderr, "batch-wait: waiting on %s\n", later);
         strcpy(last, later);
         waited += 1;
