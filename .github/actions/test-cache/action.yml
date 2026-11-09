@@ -58,11 +58,13 @@ runs:
         t="$RUNNER_TEMP"; : >"$t/tests-urls"; : >"$t/imports-urls"
         echo "none in the commits tried" >"$t/tests-from"; echo "none in the commits tried" >"$t/imports-from"
         want_tests=$TESTS; want_imports=true
-        sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .sha 2>/dev/null || true)
+        # reads use the read-only app's token when the job minted one (#2986)
+        rd() { GH_TOKEN=${READ_GH_TOKEN:-$GH_TOKEN} gh api "$@"; }
+        sha=$(rd "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" --jq .sha 2>/dev/null || true)
         back=0
         while [ -n "$sha" ] && [ "$back" -lt 20 ] && { [ "$want_tests" = true ] || [ "$want_imports" = true ]; }; do
-          assets=$(for tag in $(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/test-cache-${sha:0:7}" --jq '.[].ref|sub("refs/tags/";"")' 2>/dev/null); do
-              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq ".assets[]|\"${tag#test-cache-*-} \\(.name) \\(.url)\"" 2>/dev/null || true
+          assets=$(for tag in $(rd "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/test-cache-${sha:0:7}" --jq '.[].ref|sub("refs/tags/";"")' 2>/dev/null); do
+              rd "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq ".assets[]|\"${tag#test-cache-*-} \\(.name) \\(.url)\"" 2>/dev/null || true
             done | grep ' https://' || true)
           for kind in tests imports; do
             want=want_$kind
@@ -81,7 +83,7 @@ runs:
             echo "commit ${sha:0:7}, $back first parents back" >"$t/$kind-from"
             printf -v "$want" false
           done
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.parents[0].sha // empty' 2>/dev/null || true)
+          sha=$(rd "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.parents[0].sha // empty' 2>/dev/null || true)
           back=$((back + 1))
         done
     - name: Restore the test-result store
@@ -100,7 +102,7 @@ runs:
         urls=$(cat "$RUNNER_TEMP/tests-urls"); from=$(cat "$RUNNER_TEMP/tests-from")
         got=0
         for url in $urls; do
-          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
+          rd -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
             tar -xzf "$RUNNER_TEMP/tests.tar.gz" -C "$dir" && got=$((got + 1))
         done
         if [ "$got" -gt 0 ]; then
@@ -122,7 +124,7 @@ runs:
         urls=$(cat "$RUNNER_TEMP/imports-urls"); from=$(cat "$RUNNER_TEMP/imports-from")
         got=0
         for url in $urls; do
-          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
+          rd -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
             tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" && got=$((got + 1))
         done
         # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)

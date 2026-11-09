@@ -96,6 +96,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/yield-to-queue
         with:
           queue-wait: "true"
@@ -108,7 +114,7 @@ jobs:
           PR: ${{ inputs.pr }}
         run: |
           . "$GITHUB_WORKSPACE/.github/actions/api-budget/gh-retry.sh" # gh_retry: waits out a spent REST quota (#2986)
-          gh_retry gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
+          gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
           echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
@@ -570,6 +576,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -714,6 +726,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -749,6 +767,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
@@ -815,6 +839,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: gh_retry waits out a spent REST quota (tests/gh_retry_test.sh)
         run: bash tests/gh_retry_test.sh
       - uses: ./.github/actions/queue-guard
@@ -1309,6 +1339,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1495,6 +1531,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1586,6 +1628,12 @@ jobs:
           fetch-depth: 0
       - name: API budget (first)
         uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Install lld
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
@@ -1710,13 +1758,13 @@ jobs:
           before=
           for sha in $(git rev-list --first-parent --max-count=20 "$BASE"); do
             id=
-            for a in $(gh_retry gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
-              ok=$(gh_retry gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
+            for a in $(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts?name=frontend-coverage-$sha&per_page=5" --jq '.artifacts[]|select(.expired|not)|"\(.id):\(.workflow_run.id)"'); do
+              ok=$(gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/runs/${a#*:}/jobs?per_page=100" --jq '[.jobs[]|select(.name=="frontend-coverage" and .conclusion=="success")]|length')
               [ "$ok" = 1 ] && { id=${a%%:*}; break; }
             done
             [ -n "$id" ] || continue
             dir="$RUNNER_TEMP/before-$sha"; mkdir -p "$dir"
-            gh_retry gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
+            gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/actions/artifacts/$id/zip" >"$dir/a.zip" && unzip -o -q "$dir/a.zip" -d "$dir" || continue
             before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
@@ -1742,7 +1790,7 @@ jobs:
               "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort)
             [ -n "$lost" ] && printf '%s\n' "$lost" | tee -a "$GITHUB_STEP_SUMMARY"
             if [ -z "$lost" ]; then echo "count (PR check): no measured file went from pass to fail against main at ${sha:0:7}" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
-            why=$([ -n "$PR_NUMBER" ] && gh_retry gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.body // ""' | grep -m1 '^Count drop: ') || true
+            why=$([ -n "$PR_NUMBER" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.body // ""' | grep -m1 '^Count drop: ') || true
             if [ -n "$why" ]; then echo "::warning::files fell against main; the PR says: ${why#Count drop: }"; exit 0; fi
             echo "::error::$(printf '%s\n' "$lost" | wc -l) of the files measured here passed in main's last count and fail now (listed above). Fix them, or add a line 'Count drop: <why>' to the PR body and ask the lead"
             exit 1
@@ -1768,7 +1816,7 @@ jobs:
           fi
           if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
-          why=$([ -n "$pr" ] && gh_retry gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
+          why=$([ -n "$pr" ] && gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GH_REPO/pulls/$pr" --jq '.body // ""' | grep -m1 '^Count drop: ')
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1

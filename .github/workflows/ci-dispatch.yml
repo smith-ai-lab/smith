@@ -48,18 +48,25 @@ jobs:
       # short and run before and after them)
       PER_RUN: "2"
     steps:
+      - uses: actions/checkout@v4 # only the shared actions (git, not REST)
+        with:
+          sparse-checkout: .github/actions
       - name: API budget (first)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
-          [ -n "$line" ] || line=unknown
-          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/api-budget
+      - name: Token for the reads (the app's, #2986)
+        id: reader
+        uses: ./.github/actions/ci-reader
+        with:
+          app-id: ${{ vars.CI_READER_APP_ID }}
+          private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
       - name: Start the waiting PR checks that fit
         shell: bash
+        env:
+          READ_TOKEN: ${{ steps.reader.outputs.token }}
         run: |
           set -u
-          api() { gh api -X GET "$@"; }
+          # reads use the read-only app's token; the cancels and dispatches below stay on GITHUB_TOKEN
+          api() { GH_TOKEN=$READ_TOKEN gh api -X GET "$@"; }
           log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
           # live (not completed) Linux jobs of the ci.yml runs of one event; 0 when a call fails
           linux_jobs() {
@@ -181,9 +188,4 @@ jobs:
           done
       - name: API budget (last)
         if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
-          [ -n "$line" ] || line=unknown
-          echo "api budget: ${{ github.workflow }}/${{ github.job }} $line" | tee -a "$GITHUB_STEP_SUMMARY"
+        uses: ./.github/actions/api-budget

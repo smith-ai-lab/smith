@@ -1,0 +1,57 @@
+name: ci-reader
+description: >
+  A token for the READ calls of a job (#2986). The owner's read-only GitHub App `smith-ci-reader` (repository variable
+  CI_READER_APP_ID, secret CI_READER_PRIVATE_KEY) gets 5,000 REST requests an hour, separate from the workflow
+  token's. Writes (the commit status `ci`, release creation, run cancel, dispatch) stay on `github.token`: the app
+  cannot write, and `ci` must come from Actions. Output `token` is the app's installation token, or `github.token`
+  when the variable or the secret is missing, a fork's pull request gets no secrets, or minting fails; the fallback
+  prints `api budget: reader token unavailable, using the workflow token`. Minting never fails a job. The key is never
+  printed or passed on; the token is masked by the minting action. Prints one budget line for the token it returns.
+
+inputs:
+  label:
+    description: Name printed in the budget line
+    default: ${{ github.workflow }}/${{ github.job }}
+  app-id:
+    description: App id (the caller passes vars.CI_READER_APP_ID; a composite action cannot read vars itself)
+    default: ""
+  private-key:
+    description: The app's private key (the caller passes secrets.CI_READER_PRIVATE_KEY)
+    default: ""
+
+outputs:
+  token:
+    description: The reader token, or the workflow token
+    value: ${{ steps.pick.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Mint the reader token
+      id: mint
+      if: inputs.app-id != '' && inputs.private-key != ''
+      continue-on-error: true
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+    - name: Pick the token
+      id: pick
+      shell: bash
+      env:
+        MINTED: ${{ steps.mint.outputs.token }}
+        WORKFLOW_TOKEN: ${{ github.token }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        if [ -n "$MINTED" ]; then
+          tok=$MINTED; who=reader
+        else
+          tok=$WORKFLOW_TOKEN; who=workflow
+          echo "api budget: reader token unavailable, using the workflow token" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+        echo "::add-mask::$tok"
+        echo "token=$tok" >>"$GITHUB_OUTPUT"
+        # later steps of the job (and the composite actions they call) read it as READ_GH_TOKEN: GH_TOKEN=${READ_GH_TOKEN:-$GH_TOKEN} gh api ...
+        echo "READ_GH_TOKEN=$tok" >>"$GITHUB_ENV"
+        line=$(GH_TOKEN=$tok gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=unknown
+        echo "api budget: $LABEL $who token $line" | tee -a "$GITHUB_STEP_SUMMARY"

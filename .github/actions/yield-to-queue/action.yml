@@ -31,16 +31,18 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         repo=$GITHUB_REPOSITORY
+        # reads use the read-only app's token when the job minted one (#2986); the force-cancel stays on GITHUB_TOKEN
+        rd() { GH_TOKEN=${READ_GH_TOKEN:-$GH_TOKEN} gh api "$@"; }
         # a merge_group run that is queued, or that has a job queued (a job is listed once the jobs it needs are done,
         # so `queued` means it waits for a runner); a failed call counts as none
         waits() {
           local n run
-          n=$(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status=queued \
+          n=$(rd -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status=queued \
             -f per_page=1 --jq .total_count 2>/dev/null) || n=0
           [ "${n:-0}" != 0 ] && return 0
-          for run in $(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group \
+          for run in $(rd -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group \
               -f status=in_progress -f per_page=50 --jq '.workflow_runs[].id' 2>/dev/null); do
-            n=$(gh api -X GET "repos/$repo/actions/runs/$run/jobs" -f filter=latest -f per_page=100 \
+            n=$(rd -X GET "repos/$repo/actions/runs/$run/jobs" -f filter=latest -f per_page=100 \
               --jq '[.jobs[] | select(.status == "queued")] | length' 2>/dev/null) || n=0
             [ "${n:-0}" != 0 ] && return 0
           done
@@ -67,7 +69,8 @@ runs:
         CAP: ${{ inputs.queue-cap-minutes }}
       run: |
         repo=${GH_REPO:-$GITHUB_REPOSITORY}
-        mine=$(gh api "repos/$repo/actions/runs/$GITHUB_RUN_ID" --jq .created_at 2>/dev/null) || mine=
+        rd() { GH_TOKEN=${READ_GH_TOKEN:-$GH_TOKEN} gh api "$@"; }
+        mine=$(rd "repos/$repo/actions/runs/$GITHUB_RUN_ID" --jq .created_at 2>/dev/null) || mine=
         if [ -z "$mine" ]; then echo "yield-to-queue: own run unknown, no wait" >>"$GITHUB_STEP_SUMMARY"; exit 0; fi
         # jobs of the earlier merge_group runs (created before this one, not finished) that wait for a runner; a job
         # exists in the list only once the jobs it needs are done, so `queued` means it waits for a runner. A failed
@@ -75,9 +78,9 @@ runs:
         queued() {
           local n=0 id c status
           for status in queued in_progress; do
-            for id in $(gh api -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status="$status" \
+            for id in $(rd -X GET "repos/$repo/actions/workflows/ci.yml/runs" -f event=merge_group -f status="$status" \
               -f per_page=20 --jq ".workflow_runs[]|select(.created_at < \"$mine\")|.id" 2>/dev/null); do
-              c=$(gh api -X GET "repos/$repo/actions/runs/$id/jobs" -f per_page=100 \
+              c=$(rd -X GET "repos/$repo/actions/runs/$id/jobs" -f per_page=100 \
                 --jq '[.jobs[]|select(.status=="queued")]|length' 2>/dev/null) || c=0
               n=$((n + ${c:-0}))
             done
