@@ -67,12 +67,17 @@ runs:
           for kind in tests imports; do
             want=want_$kind
             [ "${!want}" = true ] || continue
-            urls=$(printf '%s\n' "$assets" | while read -r job name url; do
+            urls=$(served=""; printf '%s\n' "$assets" | while read -r job name url; do
                 [ "$name" = "smith-$kind-$OS.tar.gz" ] || continue
                 ok=true
                 if [ "$kind" = imports ] && [ -n "$FROM" ]; then
+                  # one set a pattern (#2978): a set holds what its job restored plus what it stored, so the sets that a
+                  # pattern like `linux-*` names hold the same entries over and over (six sets of 613 MB, 5.3 minutes);
+                  # the first (any one) is enough. A pattern's later sets are left out.
                   ok=false; set -f # the patterns are words, not files of the working folder
-                  for pattern in $FROM; do [[ $job == $pattern ]] && ok=true; done # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                  for pattern in $FROM; do
+                    if [[ $job == $pattern && " $served " != *" $pattern "* ]]; then ok=true; served="$served $pattern"; break; fi # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                  done
                 fi
                 [ "$ok" = true ] && { [ "$kind" = imports ] && echo "$job $url" || echo "$url"; }
               done || true)
