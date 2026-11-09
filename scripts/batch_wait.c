@@ -29,7 +29,7 @@ constexpr int command_size = 2048;
 // the batching window (#2851): a group waits this long for later groups before it decides it is alone, since the
 // lead enqueues in bursts and the queue creates their groups one after another (2026-11-09: 3 of 4 groups in a burst
 // started alone and built in full). BATCH_WAIT_WINDOW replaces it (the test).
-constexpr int window_seconds = 180;
+constexpr int window_seconds = 60;
 
 typedef enum { Read_Failed, Read_Gone, Read_Last, Read_Later } Read;
 
