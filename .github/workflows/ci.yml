@@ -525,6 +525,7 @@ jobs:
         with:
           os: linux
           fresh: ${{ github.event_name == 'schedule' }}
+          imports-from: linux-* # the test parts' import caches, not the count's (#2939)
       - name: Size the test parts
         # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
         # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
@@ -1171,9 +1172,10 @@ jobs:
           profile: release
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
-        # count's jobs publish
+        # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
+          imports-from: count
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1350,9 +1352,10 @@ jobs:
         with:
           artifact: build-linux-release
       - uses: ./.github/actions/test-cache
-        # the import cache only (#2891), of the release smith's identity
+        # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
+          imports-from: count count-${{ matrix.shard }}
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
