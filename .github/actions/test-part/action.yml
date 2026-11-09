@@ -1,0 +1,99 @@
+name: test-part
+description: >
+  Runs one Linux part of `smith test` on a tree that is built (#1758, #2870): Neovim for the editor tests, the restored
+  test-result store, `smith test --shard <part>/<count>`, the store published (queue and nightly runs), the log
+  uploaded as `test-log-linux-<part>-of-<count>`, and the failed tests printed last. `test-linux` runs it for each part
+  on the build it restored; `build-linux` runs it itself when the sizing asks for one part, so a typical queue run has
+  no `test-linux` job. The job sets SMITH (setup-smith), SMITH_TEST_STATS=1 and `contents: write`.
+
+inputs:
+  part:
+    description: this part's number, 1 to count
+    default: "1"
+  count:
+    description: the number of parts
+    default: "1"
+  flags:
+    description: the test flags of the part (`--skip-macos`)
+    default: --skip-macos
+  restore:
+    description: '"true" restores the test-result store first; "false" when the job already did'
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Neovim 0.11+ for the editor tests (#1017)
+      # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
+      # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
+      shell: bash
+      run: |
+        bin=$("$SMITH" build nvim | tail -n 1)
+        echo "$bin" >>"$GITHUB_PATH"
+        "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
+    - if: inputs.restore == 'true'
+      uses: ./.github/actions/test-cache
+      with:
+        os: linux
+        fresh: ${{ github.event_name == 'schedule' }}
+    - name: Tests, part ${{ inputs.part }} of ${{ inputs.count }}
+      shell: bash
+      env:
+        PART: ${{ inputs.part }}
+        COUNT: ${{ inputs.count }}
+        FLAGS: ${{ inputs.flags }}
+        SMITH_OUTPUT: full
+      run: |
+        start=$(date +%s)
+        rc=0
+        shard=
+        if [ "$COUNT" -gt 1 ]; then shard="--shard $PART/$COUNT"; fi
+        # shellcheck disable=SC2086
+        "$SMITH" test $shard $FLAGS --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
+          tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
+        took=$(( $(date +%s) - start ))
+        # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
+        # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
+        mkdir -p .smith/log
+        cp "$RUNNER_TEMP/test.log" .smith/log/test.log
+        {
+          echo "### tests linux $PART/$COUNT: $took s"
+          grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
+        } >>"$GITHUB_STEP_SUMMARY"
+        if [ "$rc" -ne 0 ]; then
+          # each failed test's name and the lines under it (where the check failed, its error), kept for the
+          # `Failed tests` step, which prints them last
+          grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
+          { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
+            while IFS= read -r line; do echo "::error::$line"; done
+        fi
+        exit "$rc"
+    - name: Publish the test store
+      # the store holds what was restored plus the entries this part added; an entry is one test that passed, so a
+      # part that failed elsewhere still adds valid ones (#2833). Each part publishes its own release, so no job
+      # waits for every part to merge them (#2870); queue and nightly runs only
+      if: always()
+      uses: ./.github/actions/test-cache/save
+      with:
+        os: linux
+        name: linux-${{ inputs.part }}of${{ inputs.count }}
+    - name: Upload the logs
+      if: always()
+      continue-on-error: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-log-linux-${{ inputs.part }}-of-${{ inputs.count }}
+        path: .smith/log
+        include-hidden-files: true
+        if-no-files-found: ignore
+        retention-days: 7
+    - name: Failed tests
+      if: failure()
+      # the failed tests are the last lines of this part's log (#1086); the other parts run on (#1139)
+      shell: bash
+      run: |
+        if [ -s "$RUNNER_TEMP/failed.txt" ]; then
+          echo "FAILED TESTS of this part:"
+          cat "$RUNNER_TEMP/failed.txt"
+        fi

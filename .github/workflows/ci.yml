@@ -342,8 +342,11 @@ jobs:
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # the build, then one test part when the sizing asks for one in a queue run (#2870)
+    timeout-minutes: 30
     outputs:
+      # the outcome of the test part this job ran (`success`, `failure`), or empty when the parts are `test-linux`'s
+      tests: ${{ steps.tests.outcome != 'skipped' && steps.tests.outcome || '' }}
       # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
@@ -356,7 +359,7 @@ jobs:
       # or `smith test --misses` finds nothing of the store and asks for 7 parts (#2833)
       SMITH_TEST_STATS: "1"
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the test store of the part it runs (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
@@ -403,7 +406,9 @@ jobs:
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
           fi
           echo "count=$count" >>"$GITHUB_OUTPUT"
-          echo "jobs=$(( count + 2 ))" >>"$GITHUB_OUTPUT"
+          # one part in a queue run is run by this job, which holds its runner already (#2870)
+          jobs=$(( count + 2 )); [ "$count" = 1 ] && [ "$GITHUB_EVENT_NAME" = merge_group ] && jobs=2
+          echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
@@ -446,10 +451,24 @@ jobs:
           { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
           echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
 
+      - name: The one test part, in this job
+        # A queue run whose misses fit in one part runs it here, on the tree just built, not in a `test-linux` job
+        # (#2870): the part is no job of its own, restores and rebuilds nothing, and its test time replaces a job's
+        # setup. The jobs that need this build start once it ends, which is off the critical path in the queue (the
+        # count is longer). A pull request keeps its part in `test-linux`, beside `check-fmt-prove`. A failing test
+        # fails the step, not the job, so the checks and the count still run on this build; `ci` reads the outcome.
+        id: tests
+        if: steps.size.outputs.count == '1' && github.event_name == 'merge_group'
+        continue-on-error: true
+        uses: ./.github/actions/test-part
+        with:
+          restore: "false"
+          flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.build-linux.outputs.tests == '' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 20
     strategy:
@@ -471,73 +490,11 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Neovim 0.11+ for the editor tests (#1017)
-        # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
-        # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
-        shell: bash
-        run: |
-          bin=$("$SMITH" build nvim | tail -n 1)
-          echo "$bin" >>"$GITHUB_PATH"
-          "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: ./.github/actions/test-cache
+      - uses: ./.github/actions/test-part
         with:
-          os: linux
-          fresh: ${{ github.event_name == 'schedule' }}
-      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
-        shell: bash
-        run: |
-          start=$(date +%s)
-          rc=0
-          shard=
-          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
-          # shellcheck disable=SC2086
-          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
-            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
-          took=$(( $(date +%s) - start ))
-          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
-          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
-          mkdir -p .smith/log
-          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
-          {
-            echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
-            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
-          } >>"$GITHUB_STEP_SUMMARY"
-          if [ "$rc" -ne 0 ]; then
-            # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Failed tests` step, which prints them last
-            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
-            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
-            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
-              while IFS= read -r line; do echo "::error::$line"; done
-          fi
-          exit $rc
-      - name: Publish the test store
-        # the store holds what was restored plus the entries this part added; an entry is one test that passed, so a
-        # part that failed elsewhere still adds valid ones (#2833). Each part publishes its own release, so no job
-        # waits for every part to merge them (#2870); queue and nightly runs only
-        if: always()
-        uses: ./.github/actions/test-cache/save
-        with:
-          os: linux
-          name: linux-${{ matrix.shard }}of${{ matrix.count }}
-      - name: Upload the logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-log-linux-${{ matrix.shard }}-of-${{ matrix.count }}
-          path: .smith/log
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Failed tests
-        if: failure()
-        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
-        run: |
-          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard:"
-            cat "$RUNNER_TEMP/failed.txt"
-          fi
+          part: ${{ matrix.shard }}
+          count: ${{ matrix.count }}
+          flags: ${{ matrix.flags }}
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
@@ -649,7 +606,8 @@ jobs:
           SCOPE: ${{ needs.changes.outputs.scope }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
-          TEST_LINUX: ${{ needs.test-linux.result }}
+          # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
+          TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
@@ -948,36 +906,6 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
-  build-linux-release:
-    # the release profile (-O2, #2684) of smith for the front-end coverage shards: the count runs the smith it measures,
-    # and the dev build of `build-linux` (-O0) made six of eight shards hit their timeout (queue run 42349047932). Only
-    # the merge queue counts, so only it builds this; the test jobs keep the dev build.
-    needs: [changes, pack]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: "4"
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/setup-smith
-        with:
-          profile: release
-      - name: Pack the build
-        shell: bash
-        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-release
-          path: ${{ runner.temp }}/build.tar.zst
-          compression-level: 0
-          retention-days: 1
-
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
     # modules that must already be in the new syntax), so the whole tree was fixed eight times and the fix phase was
@@ -986,10 +914,15 @@ jobs:
     # the artifact of this job), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
     # what it depends on (the file, every module it imports, the C headers and the objects the fixer is built from,
     # #2309, #2632), so an entry never changes a result: a stale or missing entry is only fixed again.
-    needs: [changes, build-linux-release]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux-release.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    #
+    # It builds the release profile (-O2, #2684) of smith itself, the smith the count runs and measures (the dev build of
+    # `build-linux`, -O0, made six of eight shards hit their timeout, queue run 42349047932), and hands it to the shards
+    # as the artifact `build-linux-release`. Until #2870 a job `build-linux-release` built it and this job waited for
+    # it: the same path, one job more.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35 # the release build (about 3 min) and the fix (#2870)
     permissions:
       contents: read
       actions: read
@@ -1004,7 +937,16 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
-          artifact: build-linux-release
+          profile: release
+      - name: Pack the release build for the shards
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
       - name: Restore main's fixed files
         # a failure only leaves the fix cold
         continue-on-error: true
@@ -1040,8 +982,8 @@ jobs:
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
-    needs: [changes, build-linux-release, frontend-coverage-fix]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux-release.result == 'success' && needs.frontend-coverage-fix.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    needs: [changes, frontend-coverage-fix]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.frontend-coverage-fix.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
