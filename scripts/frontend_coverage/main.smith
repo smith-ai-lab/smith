@@ -1532,18 +1532,10 @@ static Bool ends_with(const char text[:], const char tail[:]) {
     return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):countof(text)], tail);
 }
 
-// Fixes file `i` again from its original: the copy in the scratch tree is replaced by the original first, and the
-// cache entry of its fix is made again from the result (#2669).
-static void fix_again(const char *smith, const char *root, const char *scratch, Usize i) {
-    char from[path_size * 2];
-    char to[path_size * 2];
-    format::Written a = format::write(from, sizeof from, root, "/", (const char *)tree[i]);
-    format::Written b = format::write(to, sizeof to, scratch, "/", (const char *)tree[i]);
-    files::BytesResult loaded = files::read_file(from[0:a.length]);
-    if (loaded == .error) return;
-    defer mem::free(loaded.ok.data);
-    files::CountResult put = files::write_file(to[0:b.length], loaded.ok, files::Replace);
-    if (put == .error) return;
+// Fixes file `i` again, from its fixed text: the foreign fixes found in its generics while an importer was fixed are
+// keyed by the text the importer read, which is the fixed one (#2669, #2924). The cache entry of its fix is made
+// again from the result.
+static void fix_again(const char *smith, Usize i) {
     char name[33];
     char entry[path_size * 2];
     hex_of(name[0:33], fix_key(i));
@@ -1553,8 +1545,8 @@ static void fix_again(const char *smith, const char *root, const char *scratch, 
 
 // A fix the checker finds in an instance of another module's generic belongs to that module and is found only while an
 // importer is fixed (front::fix, #2669): the fixers share them in `foreign.tsv` of the imports folder. A module named
-// there may have been fixed before its importer found them, whatever the order of the files, so each is fixed again.
-static void fix_foreign(const char *smith, const char *root, const char *scratch, const char *imports) {
+// there was fixed before its importer found them, so each is fixed again, from its fixed text.
+static void fix_foreign(const char *smith, const char *imports) {
     char path[path_size * 2];
     format::Written w = format::write(path, sizeof path, imports, "/foreign.tsv");
     files::BytesResult loaded = files::read_file(path[0:w.length]);
@@ -1579,7 +1571,7 @@ static void fix_foreign(const char *smith, const char *root, const char *scratch
             if (again[i] || !fixed_ok[i] || !is_smith(tree[i]) || !ends_with(file, tail)) continue;
             if (countof(file) > countof(tail) && file[countof(file) - countof(tail) - 1] != '/') continue;
             again[i] = true;
-            fix_again(smith, root, scratch, i);
+            fix_again(smith, i);
         }
     }
     jobs_drain();
@@ -1927,6 +1919,51 @@ static void measure_all(const char *smith, const char *scratch) {
     }
 }
 
+// Whether every file that file `i` imports and that is fixed in this run has been fixed already.
+static Bool imports_fixed(Usize i, const Bool *done) {
+    for (Usize k = 0; k < import_count[i]; k++) {
+        Usize found = import_list[i][k];
+        if (fixed_ok[found] && !done[found]) return false;
+    }
+    return true;
+}
+
+// Fixes the files in rounds: a file is fixed once the files it imports are, so the fixer reads each import as it is
+// fixed and not in whatever state its own fixer has reached (it reads imports beside the file in this tree). The
+// foreign fixes it finds in the generics of an import (#2669) are keyed by that text, so a run gives the same
+// result at any number of jobs (#2924).
+static void fix_in_order(const char *smith, Bool all) {
+    static Bool done[files_max];
+    static Bool fixing[files_max];
+    Usize left = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        done[i] = false;
+        fixed_ok[i] = is_smith(tree[i]) && (all || wanted[i]);
+        if (fixed_ok[i]) left += 1;
+    }
+    while (left > 0) {
+        Usize started = 0;
+        for (Usize i = 0; i < tree_count; i++) {
+            fixing[i] = fixed_ok[i] && !done[i] && imports_fixed(i, done);
+            if (!fixing[i]) continue;
+            fix_cached(smith, i);
+            started += 1;
+        }
+        // an import cycle: nothing is ready, so the rest is fixed as it comes
+        Bool stuck = started == 0;
+        for (Usize i = 0; i < tree_count && stuck; i++) {
+            fixing[i] = fixed_ok[i] && !done[i];
+            if (fixing[i]) fix_cached(smith, i);
+        }
+        jobs_drain();
+        for (Usize i = 0; i < tree_count; i++) {
+            if (!fixing[i]) continue;
+            done[i] = true;
+            left -= 1;
+        }
+    }
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1967,14 +2004,8 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     job_folder = jobs_path;
     (void)files::make_folder(view_of(jobs_path));
     U64 phase_start = clock::monotonic();
-    for (Usize i = 0; i < tree_count; i++) {
-        fixed_ok[i] = false;
-        if (!is_smith(tree[i]) || (!all && !wanted[i])) continue;
-        fixed_ok[i] = true;
-        fix_cached(smith, i);
-    }
-    jobs_drain();
-    fix_foreign(smith, root, scratch, imports);
+    fix_in_order(smith, all);
+    fix_foreign(smith, imports);
     U64 fix_ms = (clock::monotonic() - phase_start) / clock::millisecond;
     console::print_error("frontend_coverage: fix phase ", fix_ms, " ms\n");
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
