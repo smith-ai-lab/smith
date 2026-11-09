@@ -32,7 +32,9 @@ import front::cimport;
 import front::emit;
 import front::emit_object;
 import front::emit_state as state;
+import front::header_table;
 import front::lint;
+import front::module_cache;
 import front::parser;
 import front::roots;
 import front::types;
@@ -42,6 +44,7 @@ import front::parse;
 import std::arena;
 import std::ascii;
 import std::clock;
+import std::contract;
 import std::files;
 import std::format;
 import std::mem;
@@ -62,6 +65,7 @@ static Str as_str(char chars[:]) {
 export struct Times {
     U64 parse;
     U64 imports; // the part of `check` spent reading imported modules and C headers (--time, #2681)
+    U64 headers; // the part of `imports` spent on C headers (#2888)
     U64 check;
     U64 emit;
     U64 write;
@@ -279,9 +283,280 @@ static files::BytesResult load(Str path) {
     return files::read_file(path);
 }
 
+// The `.smith` modules this process has parsed (#2888), so the files of one compile parse std once. An entry is the
+// file's path, its text (compared whole on every use, so an edited file is parsed again), and the folders that named
+// it; its tree is the parse of exactly that text.
+constexpr Usize shared_modules_max = 512;
+static Str shared_module_paths[shared_modules_max];
+static Str shared_module_names[shared_modules_max];
+static Str shared_module_sources[shared_modules_max];
+static const ast::Module *shared_module_trees[shared_modules_max];
+static Usize shared_module_count = 0;
+
+// What the table keeps is allocated by the system's allocator and never freed, whatever allocator is in force: a caller
+// such as `smith lsp` resets its own after each request, and the next file must still find the entry whole.
+static mem::Allocator *enter_shared() {
+    return mem::set_allocator(nullptr);
+}
+
+// The system's allocator with the handler of the thread out of the way (a set allocator swaps malloc's family).
+static void *system_raw(void *block, Usize size) {
+    contract::trusted(); // the system's allocator is the edge
+    mem::Allocator *before = mem::set_allocator(nullptr);
+    void *result = c::realloc(block, size); // NOLINT(smith-effects): the edge, as mem's own
+    mem::set_allocator(before);
+    return result;
+}
+
+static void system_release(void *block) {
+    contract::trusted();
+    mem::Allocator *before = mem::set_allocator(nullptr);
+    c::free(block); // NOLINT(smith-effects): the edge
+    mem::set_allocator(before);
+}
+
+// What one file of `run` parses and checks (#2888): the system's allocator, with every block it hands out recorded, so
+// that what is left once the file's report is out is freed (`file_memory_release`). It is not an arena: the parser
+// grows its lists one element at a time, and an arena copies a block it cannot extend, which on today's syntax took
+// more memory than the machine had. A block starts `file_header` bytes after the system's, which holds its size.
+constexpr Usize file_header = 16;
+
+static void **file_live = nullptr; // the blocks handed out, by address (open addressing; `file_gone` marks a removal)
+static Usize file_capacity = 0;
+static Usize file_used = 0; // live blocks and removals, which a growth drops
+static Usize file_count = 0;
+static U8 file_gone_mark = 0;
+
+static Usize file_slot(const void *block) {
+    return (Usize)(((U64)(Usize)block >> 4) * 0x9E3779B97F4A7C15ULL >> 20);
+}
+
+// Puts `block` in a free slot; the table has room.
+static void file_place(void *block) {
+    Usize i = file_slot(block) & (file_capacity - 1);
+    while (file_live[i] != nullptr && file_live[i] != (void *)&file_gone_mark)
+        i = (i + 1) & (file_capacity - 1);
+    if (file_live[i] == nullptr) file_used += 1;
+    file_live[i] = block;
+    file_count += 1;
+}
+
+static void file_grow() {
+    void **old = file_live;
+    Usize old_capacity = file_capacity;
+    file_capacity = old_capacity == 0 ? 1U << 16 : old_capacity * 2;
+    file_live = (void **)system_raw(nullptr, file_capacity * sizeof(void *));
+    if (file_live == nullptr) c::abort();
+    for (Usize i = 0; i < file_capacity; i++) {
+        file_live[i] = nullptr;
+    }
+    file_used = 0;
+    file_count = 0;
+    for (Usize i = 0; i < old_capacity; i++) {
+        if (old[i] != nullptr && old[i] != (void *)&file_gone_mark) file_place(old[i]);
+    }
+    system_release((void *)old);
+}
+
+static void file_insert(void *block) {
+    if (2 * (file_used + 1) > file_capacity) file_grow();
+    file_place(block);
+}
+
+// The slot of `block`, or the capacity when it is not one of ours.
+static Usize file_find(const void *block) {
+    if (file_capacity == 0 || block == nullptr) return file_capacity;
+    Usize i = file_slot(block) & (file_capacity - 1);
+    while (file_live[i] != nullptr) {
+        if (file_live[i] == block) return i;
+        i = (i + 1) & (file_capacity - 1);
+    }
+    return file_capacity;
+}
+
+static void *file_alloc(mem::Allocator *self, Usize size, Usize align) {
+    (void)self;
+    if (align > file_header) return nullptr; // nothing in the front end asks for more than 16
+    U8 *raw = (U8 *)system_raw(nullptr, size + file_header);
+    if (raw == nullptr) return nullptr;
+    *(Usize *)raw = size;
+    file_insert(raw + file_header);
+    return raw + file_header;
+}
+
+static void file_free(mem::Allocator *self, void *block) {
+    (void)self;
+    Usize at = file_find(block);
+    if (at == file_capacity) return;
+    file_live[at] = (void *)&file_gone_mark;
+    file_count -= 1;
+    system_release((U8 *)block - file_header);
+}
+
+static void *file_realloc(mem::Allocator *self, void *block, Usize size, Usize align) {
+    if (block == nullptr) return file_alloc(self, size, align);
+    Usize at = file_find(block);
+    if (at == file_capacity || align > file_header) return nullptr;
+    U8 *raw = (U8 *)system_raw((U8 *)block - file_header, size + file_header);
+    if (raw == nullptr) return nullptr;
+    *(Usize *)raw = size;
+    file_live[at] = (void *)&file_gone_mark;
+    file_count -= 1;
+    file_insert(raw + file_header);
+    return raw + file_header;
+}
+
+static Bool file_owns(mem::Allocator *self, const void *block) {
+    (void)self;
+    return file_find(block) != file_capacity;
+}
+
+static Usize file_size(mem::Allocator *self, const void *block) {
+    (void)self;
+    return *(const Usize *)((const U8 *)block - file_header);
+}
+
+static mem::Allocator file_allocator = {
+    .alloc = file_alloc, .realloc = file_realloc, .free = file_free, .owns = file_owns, .size = file_size};
+
+static mem::Allocator *file_memory() {
+    return &file_allocator;
+}
+
+// Frees every block the file's allocator still holds.
+static void file_memory_release() {
+    for (Usize i = 0; i < file_capacity; i++) {
+        void *block = file_live[i];
+        if (block != nullptr && block != (void *)&file_gone_mark) system_release((U8 *)block - file_header);
+        file_live[i] = nullptr;
+    }
+    file_used = 0;
+    file_count = 0;
+}
+
+static Str roots_key(roots::Roots named_by) {
+    return as_str(format::push(named_by.source, "\n", named_by.library, "\n", named_by.local));
+}
+
+static const ast::Module *shared_module(Str path, Str named, Str source) {
+    for (Usize i = 0; i < shared_module_count; i++) {
+        if (roots::same(shared_module_paths[i], path) && roots::same(shared_module_names[i], named) &&
+            roots::same(shared_module_sources[i], source))
+            return shared_module_trees[i];
+    }
+    return nullptr;
+}
+
+static void share_module(Str path, Str named, Str source, const ast::Module *tree) {
+    if (shared_module_count == shared_modules_max) return;
+    shared_module_paths[shared_module_count] = path;
+    shared_module_names[shared_module_count] = named;
+    shared_module_sources[shared_module_count] = source;
+    shared_module_trees[shared_module_count] = tree;
+    shared_module_count += 1;
+}
+
 // The embedded sources of smith's `.smith` libraries (shim/cimport_std.cpp, filled by smith.c from `smith_libraries`):
 // the source of `std.<name>` and its size, or null when this program has no such module (#2041).
 extern const char *smith_std_source(const char *name, Usize *size);
+
+// A module read for the table: its tree (null when it did not parse or names itself wrongly) and the texts the table
+// keeps, all in memory that lives as long as the process. When it did not parse, the first error.
+struct Kept {
+    const ast::Module *tree;
+    Str path;
+    Str named;
+    Str source;
+    Bool parse_failed;
+    U32 error_at;
+    Str error;
+};
+
+// Parses `source` as `path` in the allocator in force, the texts copied into it first, and names the tree: as
+// `std::<std_name>` when that is not empty (the embedded std), else by its path from `named_by`.
+static Kept parse_kept(Str path, Str named, Str source, roots::Roots named_by, Str std_name) {
+    Kept kept = {.path = as_str(format::push(path)),
+                 .named = as_str(format::push(named)),
+                 .source = as_str(format::push(source)),
+                 .parse_failed = false};
+    parser::Parsed parsed = starts_with_module(kept.source) ? parser::parse_file(kept.path, kept.source)
+                                                            : parser::parse_new(kept.path, kept.source);
+    if (countof(parsed.errors) != 0) {
+        kept.parse_failed = true;
+        kept.error_at = parsed.errors[0].span.start;
+        kept.error = parsed.errors[0].message;
+        return kept;
+    }
+    if (countof(std_name) != 0) {
+        ast::Identifier parts[:] = {};
+        parts = mem::realloc(parts, 2);
+        parts[0] = (ast::Identifier){.text = as_str(format::push("std"))};
+        parts[1] = (ast::Identifier){.text = as_str(format::push(std_name))};
+        parsed.module.name.segments = parts;
+    } else if (countof(name_module(&parsed.module, kept.path, named_by)) != 0) {
+        return kept;
+    }
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = parsed.module;
+    kept.tree = copy;
+    return kept;
+}
+
+// The texts of a read, copied for the process's life.
+static Kept kept_texts(Str path, Str named, Str source) {
+    mem::Allocator *outside = enter_shared();
+    Kept kept = {.path = as_str(format::push(path)),
+                 .named = as_str(format::push(named)),
+                 .source = as_str(format::push(source)),
+                 .parse_failed = false};
+    mem::set_allocator(outside);
+    return kept;
+}
+
+// A module read for the table (#2891): from the disk cache when it holds the tree, else parsed, and then stored. With
+// the cache on, a parse runs in a region of its own and again in a second one, which is what the store compares
+// (front/module_cache.smith); the first region holds the tree for the process's life. `kind` says what was read: a
+// file, or std embedded in smith.
+static Kept read_kept(Str kind, Str path, Str named, Str source, roots::Roots named_by, Str std_name) {
+    if (!module_cache::enabled()) {
+        mem::Allocator *outside = enter_shared();
+        Kept kept = parse_kept(path, named, source, named_by, std_name);
+        mem::set_allocator(outside);
+        return kept;
+    }
+    Str key = module_cache::key(kind, path, named, source);
+    const ast::Module *hit = module_cache::load(key);
+    if (hit != nullptr) {
+        Kept kept = kept_texts(path, named, source);
+        kept.tree = hit;
+        return kept;
+    }
+    if (!module_cache::begin()) {
+        mem::Allocator *outside = enter_shared();
+        Kept kept = parse_kept(path, named, source, named_by, std_name);
+        mem::set_allocator(outside);
+        return kept;
+    }
+    Kept first = parse_kept(path, named, source, named_by, std_name);
+    module_cache::end();
+    if (first.tree == nullptr) {
+        // Not stored: the error's text is copied out of the region before it goes.
+        Kept failed = kept_texts(path, named, source);
+        failed.parse_failed = first.parse_failed;
+        failed.error_at = first.error_at;
+        mem::Allocator *outside = enter_shared();
+        failed.error = as_str(format::push(first.error));
+        mem::set_allocator(outside);
+        module_cache::forget();
+        return failed;
+    }
+    if (module_cache::begin()) {
+        (void)parse_kept(path, named, source, named_by, std_name);
+        module_cache::end();
+    }
+    module_cache::store(key, first.tree);
+    return first;
+}
 
 // The tree of `std.<name>` (`dotted` is `std.name`) read from the source inside the program, named `std::name`, or
 // null when `dotted` is not a one-level `std` module this program embeds, or the source does not parse. A file on disk
@@ -298,22 +573,16 @@ static const ast::Module *load_embedded(Str dotted) {
     if (found == nullptr) return nullptr;
     Str path = as_str(format::push("lib/std/", name, ".smith"));
     Str source = found[0:size];
-    parser::Parsed parsed =
-        starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
-    if (countof(parsed.errors) > 0) {
-        types::set_load_failure(as_str(
-            format::push(path, ":", position(source, parsed.errors[0].span.start), ": ", parsed.errors[0].message)));
+    const ast::Module *shared = shared_module(path, "embedded", source);
+    if (shared != nullptr) return shared;
+    roots::Roots none = {};
+    Kept kept = read_kept("embedded", path, "embedded", source, none, name);
+    if (kept.tree == nullptr) {
+        types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
         return nullptr;
     }
-    ast::Identifier parts[:] = {};
-    parts = mem::realloc(parts, 2);
-    Str lead = "std";
-    parts[0] = (ast::Identifier){.text = lead};
-    parts[1] = (ast::Identifier){.text = name};
-    ast::Module *copy = mem::alloc(ast::Module);
-    *copy = parsed.module;
-    copy->name.segments = parts;
-    return copy;
+    share_module(kept.path, "embedded", kept.source, kept.tree);
+    return kept.tree;
 }
 
 // The folder of `path`: everything before its last `/`, or `.`.
@@ -360,53 +629,58 @@ static const ast::Module *read_module(const char *dotted) {
         if (loaded != .ok) return nullptr;
         format::Chars chars = mem::view(loaded.ok, char);
         Str source = chars;
-        parser::Parsed parsed =
-            starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
-        if (countof(parsed.errors) > 0) {
-            types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
-                                                        parsed.errors[0].message)));
-            return nullptr;
-        }
         // A file found beside the compiled one is named from that folder alone: `src` may also hold it (the coverage
         // tree links `src` to the repo), and a `module runner;` line then disagrees with `tests::runner` (#2041).
         roots::Roots named_by = import_roots;
         if (k >= 2) named_by = (roots::Roots){.local = folders[k]};
-        if (countof(name_module(&parsed.module, path, named_by)) > 0) return nullptr;
-        ast::Module *copy = mem::alloc(ast::Module);
-        *copy = parsed.module;
+        Str named = roots_key(named_by);
+        const ast::Module *shared = shared_module(path, named, source);
+        if (shared != nullptr) {
+            remember_module(relative, path, source);
+            return shared;
+        }
+        Kept kept = read_kept("file", path, named, source, named_by, "");
+        if (kept.parse_failed) {
+            types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
+            return nullptr;
+        }
+        if (kept.tree == nullptr) return nullptr;
         remember_module(relative, path, source);
-        return copy;
+        share_module(kept.path, kept.named, kept.source, kept.tree);
+        return kept.tree;
     }
     return load_embedded(relative);
 }
 
-// The folder of the file being compiled and the arena that holds what a header reads (`load_header` takes no context).
+// The folder of the file being compiled (`load_header` takes no context).
 static Str header_folder;
-static arena::Arena header_arena;
-static Bool header_arena_made = false;
 
-// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
-// when clang cannot read it.
-static const ast::Module *read_header(Str header, Bool angled) {
-    Str name = as_str(format::push(header));
-    Str folder = as_str(format::push(header_folder));
-    if (!header_arena_made) {
-        header_arena = arena::growing(1U << 22, nullptr);
-        header_arena_made = true;
-    }
+// A header's file can change while the process lives (`front::header_table`): one command line reads its headers as it
+// starts and does not check; any other entry (each file of `file`, `diagnose`, `hover_at` ...: `enter_file`) starts a
+// new generation of the table.
+static Bool within_command = false; // `run`: every file of one command line is one generation
+
+static void enter_file(Str path) {
+    header_folder = folder_of(path);
+    if (!within_command) header_table::next_generation();
+}
+
+static Str header_flags() {
     Str empty = "";
-    const char *flags = empty.data;
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
-    if (given != nullptr) flags = given;
-    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
-    if (countof(got.error) > 0) return nullptr;
-    ast::Module *module = mem::alloc(ast::Module);
-    module->decls = got.decls;
-    return module;
+    if (given == nullptr) return empty;
+    return as_str(format::push(given));
+}
+
+// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang once per process
+// (#2888); null when clang cannot read it.
+static const ast::Module *read_header(Str header, Bool angled) {
+    return header_table::read(header, angled, header_folder, header_flags());
 }
 
 // `--time` (#2681): what reading the imports cost, summed over a file's check, so `check` can be told from `import`.
 static U64 import_nanoseconds = 0;
+static U64 header_nanoseconds = 0;
 
 static const ast::Module *load_module(const char *dotted) {
     U64 mark = clock::monotonic();
@@ -418,7 +692,9 @@ static const ast::Module *load_module(const char *dotted) {
 static const ast::Module *load_header(Str header, Bool angled) {
     U64 mark = clock::monotonic();
     const ast::Module *found = read_header(header, angled);
-    import_nanoseconds += clock::monotonic() - mark;
+    U64 spent = clock::monotonic() - mark;
+    import_nanoseconds += spent;
+    header_nanoseconds += spent;
     return found;
 }
 
@@ -490,7 +766,7 @@ export Problems diagnose(Str path, Str source, roots::Roots folders) {
     list = problems_of(list, parsed.errors, true);
     if (countof(parsed.errors) > 0) return list;
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     lint_inputs(source);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     lint_inputs_done();
@@ -544,7 +820,7 @@ export Hover hover_at(Str path, Str source, roots::Roots folders, U32 offset) {
     parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Hover){};
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     const ast::Expr *at = ast::expr_at(checked_module(&checked, &parsed.module), offset);
     if (at == nullptr) return (Hover){};
@@ -713,7 +989,7 @@ export Candidates completion_at(Str path, Str source, roots::Roots folders, U32 
     if (countof(parsed.errors) > 0) return list;
     if (!dot) return names_at(list, &parsed.module, edited, offset, prefix);
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     types::Checked checked = types_decl::check_module_headers(&parsed.module, types::lp64(), load_module, load_header);
     if (word < 2) return list;
     const ast::Module *module = checked_module(&checked, &parsed.module);
@@ -909,7 +1185,7 @@ export Location definition_at(Str path, Str source, roots::Roots folders, U32 of
     parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) return (Location){};
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     const ast::Expr *at = ast::expr_at(&parsed.module, offset);
     if (at == nullptr) return (Location){};
     Location found = {};
@@ -1016,7 +1292,19 @@ static Str wanted_triple(Str triple) {
 }
 
 // Compiles `path` to the object `output` for `triple`; `roots` are the folders names start from.
+// `file` with what parsing and checking allocate taken from `memory` (null: the allocator in force), which the caller
+// resets once the report is out (#2888): a process that compiles many files keeps only the shared table between them.
+// Emitting and writing go back to the allocator in force, as LLVM keeps process-wide state in what it allocates.
+static Report file_in(Str path, Str output, Str triple, roots::Roots folders, mem::Allocator *memory);
+
 export Report file(Str path, Str output, Str triple, roots::Roots folders) {
+    return file_in(path, output, triple, folders, nullptr);
+}
+
+static Report file_in(Str path, Str output, Str triple, roots::Roots folders, mem::Allocator *memory) {
+    mem::Allocator *outside = mem::allocator();
+    if (memory != nullptr) mem::set_allocator(memory);
+    defer mem::set_allocator(outside);
     Times times = {};
     files::BytesResult loaded = load(path);
     if (loaded != .ok) return failed(as_str(format::push(path, ": error: cannot read the file\n")), times);
@@ -1041,8 +1329,9 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     Str wanted = wanted_triple(triple);
     mark = clock::monotonic();
     import_roots = folders;
-    header_folder = folder_of(path);
+    enter_file(path);
     import_nanoseconds = 0;
+    header_nanoseconds = 0;
     read_count = 0;
     lint_inputs(source);
     types::Checked checked =
@@ -1051,6 +1340,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
     U64 checking = clock::monotonic() - mark;
     times.imports = import_nanoseconds < checking ? import_nanoseconds : checking;
     times.check = checking - times.imports;
+    times.headers = header_nanoseconds < times.imports ? header_nanoseconds : times.imports;
     if (checked.error_count > 0) {
         Str all = warned;
         for (Usize i = 0; i < checked.error_count; i++) {
@@ -1059,6 +1349,7 @@ export Report file(Str path, Str output, Str triple, roots::Roots folders) {
         return failed(all, times);
     }
 
+    mem::set_allocator(outside);
     emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
@@ -1105,11 +1396,13 @@ static void report_times(Str path, Times times, U64 wall) {
     Str lines = as_str(format::push("time: ", path, "\n"));
     lines = as_str(format::push(lines, time_line("lex and parse", times.parse)));
     lines = as_str(format::push(lines, time_line("import (modules and C headers)", times.imports)));
+    lines = as_str(format::push(lines, time_line("  of which C headers", times.headers)));
     lines = as_str(format::push(lines, time_line("check", times.check)));
     lines = as_str(format::push(lines, time_line("emit LLVM IR", times.emit)));
     lines = as_str(format::push(lines, time_line("write the object (LLVM passes and code generation)", times.write)));
     lines = as_str(format::push(lines, time_line("other (reading the file, setting up the target and LLVM)",
                                                  wall > staged ? wall - staged : 0)));
+    lines = as_str(format::push(lines, time_line("wall (the file, every stage)", wall)));
     report(lines);
 }
 
@@ -1119,6 +1412,15 @@ static Str stage_of(Times times) {
     if (times.emit > 0) return "emit";
     if (times.check > 0) return "check";
     return "parse";
+}
+
+// What the driver runs before each file (null: nothing): it sets the flags the file's C headers are read with, from its
+// own compile command, so that a file compiled with others reads them as it does alone (#2888).
+export typedef void (*BeforeFile)(const char *source);
+static BeforeFile before_file_hook = nullptr;
+
+[[std::c_name("front_compile_before_file")]] export void set_before_file(BeforeFile hook) {
+    before_file_hook = hook;
 }
 
 // The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
@@ -1141,13 +1443,16 @@ static Str stage_of(Times times) {
     if (triple != nullptr) {
         target = as_str(format::push((const char *)triple));
     }
+    within_command = true; // one generation for the whole command line
+    header_table::next_generation();
     I32 status = 0;
     for (Usize i = 0; i < count; i++) {
         Str output = as_str(format::push((const char *)outputs[i]));
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
-        U64 started = clock::monotonic();
-        Report done = file(paths[i].path, output, target, beside);
+        U64 started = clock::monotonic();        // the file's flags (`before_file_hook`) are part of its compile
+        if (before_file_hook != nullptr) before_file_hook(sources[i]);
+        Report done = file_in(paths[i].path, output, target, beside, file_memory());
         U64 wall = clock::monotonic() - started;
         if (countof(done.text) > 0) report(done.text);
         if (time_requested()) report_times(paths[i].path, done.times, wall);
@@ -1156,7 +1461,9 @@ static Str stage_of(Times times) {
         if (!done.ok && c::getenv("SMITH_FRONT_STAGE") != nullptr) {
             report(as_str(format::push(paths[i].path, ": stage: ", stage_of(done.times), "\n")));
         }
+        file_memory_release();
     }
+    within_command = false;
     if (time_requested()) {
         report(
             as_str(format::push("time: front end compile ", milliseconds(clock::monotonic() - run_started), " ms\n")));

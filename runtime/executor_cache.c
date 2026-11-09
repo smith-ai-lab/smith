@@ -25,6 +25,7 @@
 #include "main.h"
 #include "package.h"
 #include "platform_linux.h"
+#include "self_digest.h"
 
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
@@ -39,7 +40,8 @@ constexpr size_t smith_stepcache_command_max = (size_t)1 << 16;
 constexpr size_t smith_stepcache_memo_max = (size_t)1 << 20;
 constexpr size_t smith_stepcache_ids_max = 8;
 constexpr int64_t smith_stepcache_fresh_ns = 2 * 1'000'000'000LL; // a file this new is hashed again each time
-constexpr int smith_stepcache_touch_seconds = 86400;
+constexpr int smith_stepcache_touch_seconds =
+    60; // a hit touches an entry older than this: warm keeps what a build used (#2833)
 constexpr char smith_stepcache_root_token = '\x01';
 constexpr char smith_stepcache_percent_token = '\x02';
 
@@ -437,10 +439,11 @@ static bool smith_stepcache_under(const char *path, const char *folder) {
     return strncmp(path, folder, length) == 0 && (path[length] == '/' || path[length] == '\0');
 }
 
-// Whether a file belongs to the system, not to the project: it is hashed by path, size and time, and the graph does
-// not track it. A relative path is the project's. An absolute one is the system's when it is in a system folder the
-// command names (-isystem, -isysroot, --sysroot, SDKROOT), in smith's embedded runtime, or under /usr, /lib, the SDKs
-// of macOS; a folder the command names with -I, -iquote, -idirafter, -F or -include is the project's even then.
+// Whether a file belongs to the system, not to the project: it is hashed by path, size and time (path and size under
+// smith's clang), and the graph does not track it. A relative path is the project's. An absolute one is the system's
+// when it is in a system folder the command names (-isystem, -isysroot, --sysroot, SDKROOT), in smith's embedded
+// runtime, or under /usr, /lib, the SDKs of macOS; a folder the command names with -I, -iquote, -idirafter, -F or
+// -include is the project's even then.
 static bool smith_stepcache_is_system(const char *path) {
     const SmithStepScope *scope = &smith_stepcache_scope;
     if (path[0] != '/') return false;
@@ -466,7 +469,11 @@ static bool smith_stepcache_spec(const char *path, char *out, size_t capacity, i
     if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) return false;
     *mtime = smith_stepcache_mtime_of(&info);
     if (smith_stepcache_is_system(path)) {
-        int written = snprintf(out, capacity, "s:%lld:%lld", (long long)info.st_size, (long long)*mtime);
+        // smith's own copy of clang's files: its folder is named for the pack's identity, so the path and size say what
+        // the file is, and its time says only when this job unpacked it (a new one in every job, so no job would hit)
+        bool unpacked = strstr(path, "/smith/clang/") != nullptr;
+        int written = unpacked ? snprintf(out, capacity, "p:%lld", (long long)info.st_size)
+                               : snprintf(out, capacity, "s:%lld:%lld", (long long)info.st_size, (long long)*mtime);
         return written > 0 && (size_t)written < capacity;
     }
     char hex[smith_stepcache_hex];
@@ -678,6 +685,30 @@ static bool smith_stepcache_find_program(const char *name, char *real) {
     return false;
 }
 
+// The digest of the running smith (code only, #2833), kept in the step store by build-id: hashing a smith of hundreds
+// of megabytes in every process that is a compiler (each compile of a build, each build of a test) cost minutes in all.
+static bool smith_stepcache_self_digest(const char *real, const char *id, char hex[smith_sha256_hex_size]) {
+    char path[PATH_MAX];
+    char temporary[PATH_MAX];
+    size_t size = 0;
+    char text[smith_sha256_hex_size + 1];
+    if (snprintf(path, sizeof path, "%s/self/%s", smith_stepcache.folder, id) >= (int)sizeof path)
+        return smith_self_digest(real, hex);
+    if (smith_stepcache_read(path, text, sizeof text, &size) && size == smith_sha256_hex_size - 1) {
+        memcpy(hex, text, size);
+        hex[size] = '\0';
+        return true;
+    }
+    if (!smith_self_digest(real, hex)) return false;
+    if (snprintf(temporary, sizeof temporary, "%s/tmp/%d-%u", smith_stepcache.folder, (int)getpid(),
+                 smith_stepcache.counter++) < (int)sizeof temporary &&
+        smith_stepcache_make_parent(temporary) && smith_stepcache_make_parent(path) &&
+        smith_stepcache_write(temporary, hex, smith_sha256_hex_size - 1)) {
+        if (rename(temporary, path) != 0) unlink(temporary);
+    }
+    return true;
+}
+
 // What a program is: its build-id (LC_UUID on macOS) when it has one, else its real path, size and time. Kept by name.
 static const char *smith_stepcache_program(const char *name) {
     SmithStepCache *cache = &smith_stepcache;
@@ -690,8 +721,16 @@ static const char *smith_stepcache_program(const char *name) {
     if (!smith_stepcache_find_program(name, real) || stat(real, &info) != 0) return nullptr;
     char *value = cache->id_values[cache->id_count];
     char id[33]; // 16 bytes in hex
+    char self[smith_sha256_hex_size];
+    char running[PATH_MAX];
     int written = 0;
-    if (smith_platform_file_id(real, id)) {
+    // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
+    // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
+    // restored cache would be served (#2833): it is identified by its code, with both blanked.
+    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 &&
+        smith_platform_file_id(real, id) && smith_stepcache_self_digest(real, id, self)) {
+        written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
+    } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
     } else {
         written = snprintf(value, sizeof cache->id_values[0], "file:%s:%lld:%lld", real, (long long)info.st_size,
@@ -1179,6 +1218,13 @@ constexpr int smith_stepcache_prune_seconds = 3600;   // the check, at most once
 constexpr size_t smith_stepcache_shards = 256;
 constexpr size_t smith_stepcache_entries_max = (size_t)1 << 24;
 
+// The results a prune saw and dropped, for the line it prints.
+static struct {
+    size_t seen;
+    size_t dropped;
+    uint64_t dropped_bytes;
+} smith_stepcache_tally;
+
 // What a pass over the results does with each: add its size to the ages (the first pass), or remove it when it is
 // idle for 31 days or older than the cutoff of #618's cap (the second).
 static void smith_stepcache_pass_shard(const char *shard, time_t now, long cutoff, bool measure) {
@@ -1197,7 +1243,13 @@ static void smith_stepcache_pass_shard(const char *shard, time_t now, long cutof
             time_t newest = 0;
             smith_cache_measure(path, &bytes, &newest);
             smith_cache_ages_add(bytes, info.st_mtime, now);
+            smith_stepcache_tally.seen++;
         } else if (now - info.st_mtime > smith_stepcache_idle_seconds || smith_cache_goes(info.st_mtime, now, cutoff)) {
+            uint64_t bytes = 0;
+            time_t newest = 0;
+            smith_cache_measure(path, &bytes, &newest);
+            smith_stepcache_tally.dropped++;
+            smith_stepcache_tally.dropped_bytes += bytes;
             smith_package_remove(path);
         }
     }
@@ -1231,13 +1283,23 @@ static void smith_stepcache_prune_at(time_t now, uint64_t cap) {
     if (stat(stamp, &info) == 0 && now - info.st_mtime < smith_stepcache_prune_seconds) return;
     (void)smith_cache_touch(stamp);
     smith_cache_ages_reset();
+    smith_stepcache_tally = (typeof(smith_stepcache_tally)){};
     smith_stepcache_pass("r", now, -1, true);
-    long cutoff = smith_cache_cutoff(smith_cache_ages.total > cap ? smith_cache_ages.total - cap : 0);
+    uint64_t before = smith_cache_ages.total;
+    long cutoff = smith_cache_cutoff(before > cap ? before - cap : 0);
     smith_stepcache_pass("r", now, cutoff, false);
-    smith_stepcache_pass("m", now, -1, false);
+    size_t seen = smith_stepcache_tally.seen;
+    size_t dropped = smith_stepcache_tally.dropped;
+    uint64_t gone = smith_stepcache_tally.dropped_bytes;
+    // a manifest is used when its results are (a hit touches both), so the cutoff that drops the oldest results drops
+    // the manifests as old: they were 122,000 files that the cap left (#2833)
+    smith_stepcache_pass("m", now, cutoff, false);
     char temporary[PATH_MAX];
     if (snprintf(temporary, sizeof temporary, "%s/tmp", smith_stepcache.folder) < (int)sizeof temporary)
         smith_stepcache_pass_shard(temporary, now, -1, false);
+    if (dropped > 0)
+        fprintf(stderr, "cache: kept %zu entries (%lld MB), dropped %zu (%lld MB)\n", seen - dropped,
+                (long long)((before > gone ? before - gone : 0) / 1000000), dropped, (long long)(gone / 1000000));
 }
 
 void smith_stepcache_prune(SmithExec *exec) {

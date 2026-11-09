@@ -1243,6 +1243,9 @@ static Bool error_item(const ast::Initializer *item) {
     return types::same_text(d->field.name, "error");
 }
 
+static Bool try_site(types::Checked *r, const ast::Stmt *s, const ast::Expr *left, const ast::Stmt *body,
+                     Str error_text);
+
 // `r: Result(T, E) = f()` followed by `if r == .error: return {.error = r.error}` (or `.error(r.error)`) passes the
 // error up unchanged: the fix is `ok := try f()`, no guard, and each read `r.ok` is `ok` (#2506). The binding takes the
 // variant's name; `ok` in scope, a use of `r` other than `r.ok`, or an error type that differs from the function's
@@ -1261,9 +1264,31 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     if (!types::same_text(variant_name(right), "error") ||
         !types::same_text(fixed_source[left->span.start:left->span.end], name))
         return false;
+    return try_site(r, s, left, then_of(s), msg(format::push(name, ".error")));
+}
+
+// `if .error(e) := r: return .error(e)` (the guard the checker writes where the `try` was held back, or a program
+// written so): the same site as `if r == .error:`, read from the pattern.
+static void note_try_pattern(types::Checked *r, const ast::Stmt *s) {
+    if (s->kind != .if_let || s->kind.if_let.else_branch != nullptr) return;
+    ast::Pattern pattern = s->kind.if_let.pattern;
+    if (!types::same_text(pattern.name, "error") || countof(pattern.binding) == 0) return;
+    const ast::Expr *value = s->kind.if_let.value;
+    if (try_site(r, s, value, s->kind.if_let.then_branch, pattern.binding)) return;
+}
+
+// The site both forms share: `s` tests the result `left` (declared just before) and leaves with its error, passed up
+// as `error_text`, or with the whole result.
+static Bool try_site(types::Checked *r, const ast::Stmt *s, const ast::Expr *left, const ast::Stmt *body,
+                     Str error_text) {
+    const ast::Decl *d = state.prev_decl;
+    if (d == nullptr || d->span.end > s->span.start || countof(fixed_source) == 0 || d->kind != .variable) return false;
+    const ast::Expr *init = variable_init(d);
+    if (init == nullptr || variable_is_mut(d) || !is_new_variable(d)) return false;
+    Str name = variable_name(d);
+    if (!types::same_text(fixed_source[left->span.start:left->span.end], name)) return false;
     // `if r == .error: cleanup; return {.error = r.error}`: the cleanup, one line, becomes an `errdefer` before the
     // call.
-    const ast::Stmt *body = then_of(s);
     const ast::Stmt *cleanup = nullptr;
     if (block_size(body) == 2) {
         cleanup = block_item(body, 0);
@@ -1273,10 +1298,14 @@ static Bool note_try_guard(types::Checked *r, const ast::Stmt *s, const ast::Exp
     const ast::Expr *value = returned_value(leave);
     if (value == nullptr) return false;
     // `{.error = r.error}` of C, or `.error(r.error)` once the option and Result fix has mended the braces (#2563)
+    // or the whole result, `return r`, which the function's own result type allows only when the errors agree
     const ast::Expr *error_value = passed_error(value);
-    if (error_value == nullptr) return false;
-    Str passed = fixed_source[error_value->span.start:error_value->span.end];
-    if (!types::same_text(passed, msg(format::push(name, ".error")))) return false;
+    Bool whole = types::same_text(fixed_source[value->span.start:value->span.end], name);
+    if (error_value == nullptr && !whole) return false;
+    if (!whole) {
+        Str passed = fixed_source[error_value->span.start:error_value->span.end];
+        if (!types::same_text(passed, error_text)) return false;
+    }
     const types::Symbol *local = types::lookup(&r->scopes, name);
     types::TypeRef want = state.result;
     if (local == nullptr || local->type->kind != .result_type || want == nullptr || want->kind != .result_type ||
@@ -1811,6 +1840,9 @@ static void if_let_statement(types::Checked *r, const ast::Stmt *s) {
     types::Symbol symbol = {
         .name = binding, .kind = .variable, .type = element, .is_const = !pattern.is_mut, .is_new = true};
     symbol.init = s->kind.if_let.value; // a fix that makes the value writable reaches it through the name (#2643)
+    if (t != nullptr && t->kind == .enumeration && types::is_payload_enum(t)) {
+        symbol.written = types_expr::payload_written(t, pattern); // `.decl(decl)` of a `*Decl` payload (#2647)
+    }
     (void)types::declare(&r->scopes, symbol);
     note_local(binding, element);
 }
@@ -2067,7 +2099,8 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     state.last_decl = nullptr;
     // The line a binding for an `if` used as a value goes before: the start of the statement that holds it (#2647).
     state.statement_start = 0;
-    if (countof(fixed_source) > 0 && starts_line(s->span.start)) {
+    // The body of an instance of a generic function is another module's text: its spans are not in `fixed_source`.
+    if (r->current == types::max_instances && countof(fixed_source) > 0 && starts_line(s->span.start)) {
         Bool plain = s->kind == .expression || s->kind == .declaration || s->kind == .return_stmt;
         state.statement_start = plain ? s->span.start : 0;
     }
@@ -2093,6 +2126,7 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     } else if (s->kind == .for_stmt) {
         for_statement(r, s);
     } else if (s->kind == .if_let) {
+        note_try_pattern(r, s);
         if_let_statement(r, s);
     } else if (s->kind == .for_in) {
         for_in_statement(r, s);

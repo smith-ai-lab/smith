@@ -6,8 +6,28 @@ name: ci
 # `--macos-only` tests; a documents-only change: docs and their tests);
 # the one job `ci` gathers them, so the ruleset and the merge queue name a single required check. The first job that
 # fails cancels the run. A push to main (a commit the queue checked) also publishes the release and saves the cache.
+# A pull request's check is a run of this workflow that ci-dispatch.yml starts with `workflow_dispatch` on the PR's
+# head branch, under a budget of Linux jobs and never while a merge queue job waits for a runner (#2856): its `ci`
+# lands on the PR's head sha, where the ruleset reads it. It is a light check (#2822): the build, one job of fmt, docs,
+# prove and lint, and one of only the tests `smith test --changed` reaches; the Mac only when the diff touches what
+# only the Mac sees. The merge queue runs everything. There is no `pull_request` trigger: a run whose jobs were all
+# skipped would leave a skipped `ci`, which the ruleset counts as passing.
 on:
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "The pull request this run checks (ci-dispatch.yml starts it on the PR's head branch)"
+        required: true
+        type: string
+      mac:
+        description: "Only by hand, to test the Mac watchdog (#2835): `mac` runs the macOS job on the owner's Mac, `dead` on a Mac that does not answer (the watchdog must fall back to hosted macos-26); `auto` is the rule of pick-mac"
+        type: choice
+        options: [auto, mac, dead]
+        default: auto
+      no_yield:
+        description: "Only by hand, for a check that must finish while the queue is never idle: skip yield-to-queue's self-cancel"
+        type: boolean
+        default: false
   merge_group:
   push:
     branches: [main]
@@ -22,8 +42,8 @@ on:
 # with no job started, and `warm` (the step cache) never ran (#2792). The jobs that must run once at a time keep their
 # own groups (`release-macos`, `release-linux`).
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ inputs.pr && format('pr-{0}', inputs.pr) || github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 permissions:
   contents: read
@@ -36,10 +56,21 @@ jobs:
     # what the change touches decides what runs: a document no build reads runs nothing, the README,
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
-    # 3 minutes of work plus the 20-minute cap of `yield-to-queue` (#2356)
-    timeout-minutes: 25
+    # 3 minutes of work plus the 10-minute cap of a queue run's wait for the groups ahead (`yield-to-queue`, #2833)
+    # and the 60-minute cap of `batch-wait` (#2851, a queue entry)
+    timeout-minutes: 75
+    # `batch-wait` cancels the run of a group that left the queue; `yield-to-queue` force-cancels a PR check's own run
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
+      # whether `macos` runs: always, except on a pull request whose diff touches nothing only the Mac sees (#2822)
+      mac_run: ${{ steps.scope.outputs.mac_run }}
+      # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
+      batch: ${{ steps.batch.outputs.batch }}
+      prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
@@ -58,27 +89,46 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Yield to the merge queue
-        # a pull request's run waits (at most 20 minutes) while a queue run waits for runners, before any heavy job
-        # starts (#2356, knowledge/ci-hosted.md); first, so the picks below are made when the jobs are about to start
-        uses: ./.github/actions/yield-to-queue
+      - uses: ./.github/actions/yield-to-queue
+        with:
+          queue-wait: "true"
+      - name: The pull request
+        # a PR check is a `workflow_dispatch` run (#2856): what a `pull_request` event carried (the base, the body) is
+        # read from the PR the dispatcher named
+        id: pr
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR: ${{ inputs.pr }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
+          echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
+          jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
+          echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
+      - name: Wait while a later queue entry is built on this one
+        # batching (#2851, knowledge/ci-hosted.md): with HEADGREEN a later group's passing run merges every entry ahead
+        # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
+        # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
+        # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
+        id: batch
+        uses: ./.github/actions/batch-wait
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
-          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          fork: false
+          force: ${{ inputs.mac }}
       - name: Is there a pack for this LLVM configuration
         id: pack
         # a change of patches/ bumps the configuration name, whose pack no release holds yet: the `pack` job builds
         # and publishes it before anything that needs LLVM runs (#1064). Not for a fork, which cannot publish.
         env:
-          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          FORK: false
         run: |
           name=$(sed -n 's/.*"SMITH_LLVM_NAME", "\([^"]*\)".*/\1/p' build.c | head -1)
           build=false
-          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+          if [ "$FORK" != true ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             for tag in "llvm-$name-darwin-arm64" "llvm-$name-linux-x86_64"; do
               gh release view "$tag" >/dev/null 2>&1 || build=true
             done
@@ -88,7 +138,7 @@ jobs:
       - name: Scope
         id: scope
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
         run: |
           # none: only documents no build reads. docs: also the documents the docs check and their tests read. full:
           # anything else; a push to main, or a diff that cannot be read, is always full.
@@ -97,6 +147,7 @@ jobs:
           workflows='^[.]github/workflows/'
           gated='^(README[.]md|knowledge/.*|[.]agents/.*)$'
           scope=full
+          changed=
           # a push to main is a commit the merge queue already checked: it only publishes the release
           if [ "$GITHUB_EVENT_NAME" = push ]; then scope=release; BASE=; fi
           # a queue entry is built on main plus the entries ahead of it, and merging it merges them too: its scope is
@@ -110,8 +161,28 @@ jobs:
             code=$(printf '%s\n' "$built" | grep . | grep -vE "$gated" || true)
             if [ -z "$built" ]; then scope=none; elif [ -z "$code" ]; then scope=docs; fi
           fi
+          # A pull request runs the Mac only where the diff reaches what only the Mac sees: shim/, Objective-C, the TLS
+          # file, a `@when(target.os == .macos)` line, or the workflows and actions (#2822). A docs scope keeps it (it
+          # is where the docs check runs); the queue runs it always, so a green pull request is not a green queue.
+          mac_run=true
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
+            mac_run=false
+            if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$|[.]github/)|[.]m$' >/dev/null; then mac_run=true; fi
+            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_run=true; fi
+          fi
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
-          echo "scope: $scope" >>"$GITHUB_STEP_SUMMARY"
+          echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
+          echo "scope: $scope (macos: $mac_run)" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: The pull requests this queue entry tests
+        id: prs
+        if: github.event_name == 'merge_group'
+        # every entry ahead of this one and this one: the squash commits on top of main, each subject ending in (#N)
+        run: |
+          git fetch -q origin main
+          prs=$(git log --format=%s "$(git merge-base HEAD origin/main)..HEAD" | grep -oE '[(]#[0-9]+[)]$' | tr -d '()' | tac | paste -sd ' ' -)
+          echo "prs=$prs" >>"$GITHUB_OUTPUT"
+          echo "tests: $prs" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Does the change touch the warm job
         id: warm
@@ -119,7 +190,7 @@ jobs:
         # working before it merged (#2761). A pull request whose `warm` job, or the setup action it uses, differs from
         # the base's runs it as a dry run: every write is skipped and printed to the step summary instead (#2769).
         env:
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
         run: |
           warm=false; os='["ubuntu-latest"]'
           if [ "$GITHUB_EVENT_NAME" = push ]; then
@@ -138,14 +209,13 @@ jobs:
         # a stale working tree squashed onto a moved main deletes merged work with every test green (#1455, #1473):
         # scripts/revert_check.c fails a change that removes the lines of a recent commit; `Reverts #N` or
         # `Rewrites #N` in the body (or the queue entry's commit message) says a revert or a rewrite is meant
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
         env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ steps.pr.outputs.base || github.event.merge_group.base_sha }}
         run: |
           cc -std=gnu2x -O1 scripts/revert_check.c -o "$RUNNER_TEMP/revert_check"
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/body"
-          else git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"; fi
+          # a PR check's body was saved by the step `The pull request`
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || git log -1 --format=%B HEAD >"$RUNNER_TEMP/body"
           "$RUNNER_TEMP/revert_check" "$(git merge-base "$BASE" HEAD)" HEAD "$RUNNER_TEMP/body"
 
       - name: Test matrix
@@ -160,13 +230,17 @@ jobs:
           flags="--skip-macos"
           macflags="--macos-only --shard 1/1"
           count=8
+          # A pull request runs the tests `smith test --changed` reaches, in one part (#2822, #2856: a PR check is at most
+          # 2 Linux jobs at once, this part and `check-fmt-prove`); the queue runs all of them in 8. A wide selection
+          # (smith's core, the test runner) is still wide: the queue is the gate.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then flags="--skip-macos --changed"; count=1; fi
           linux=
           for i in $(seq 1 "$count"); do
             linux="$linux"${linux:+,}'{"shard":'$i',"count":'$count',"flags":"'"$flags"'"}'
           done
           echo "linux={\"include\":[$linux]}" >>"$GITHUB_OUTPUT"
           echo "matrix={\"include\":[{\"os\":\"macos-26\",\"shard\":1,\"count\":1,\"flags\":\"$macflags\"}]}" >>"$GITHUB_OUTPUT"
-          echo "tests: $count Linux parts, one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
+          echo "tests: $count Linux parts ($flags), one macOS part ($macflags)" >>"$GITHUB_STEP_SUMMARY"
 
   pack:
     # the LLVM pack of a configuration no release holds yet, built and published by llvm.yml (#1064) before the jobs
@@ -179,6 +253,78 @@ jobs:
       actions: write # llvm.yml's pick-mac lists the queued and running jobs
     secrets: inherit
 
+  mac-probe:
+    # The Mac watchdog (#2835), part 1. A job sent to the owner's Mac waits for a runner that never comes when the Mac is
+    # off, asleep or hung, though the runners call says it is online; `ci` would wait with it. So the real `macos` job
+    # is not queued on the Mac blind: this probe is, with nothing to do, and `watch` decides from whether it starts.
+    # Nothing needs this job, so a probe that never starts holds nobody; `mac-probe-end` cancels it.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.mac_run == 'true' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') && needs.changes.outputs.mac != '"macos-26"' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    timeout-minutes: 5
+    concurrency:
+      group: mac-probe-${{ github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - run: echo "the Mac started the probe"
+
+  watch:
+    # The Mac watchdog, part 2: the one that decides where `macos` runs. Hosted was picked: hosted. The Mac was picked:
+    # the Mac if it started the probe within 3 minutes, else hosted macos-26 with nobody's hand (a failed call is
+    # hosted too). One small hosted Linux job for at most 3 minutes, started with the probe.
+    needs: [changes, pack]
+    if: ${{  !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.mac_run == 'true' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs')  }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      runner: ${{ steps.watch.outputs.runner }}
+      cores: ${{ steps.watch.outputs.cores }}
+      dead: ${{ steps.watch.outputs.dead }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MAC: ${{ needs.changes.outputs.mac }}
+      MAC_CORES: ${{ needs.changes.outputs.cores }}
+    steps:
+      - name: Did the Mac start the probe
+        id: watch
+        run: |
+          hosted='"macos-26"'
+          runner=$hosted; cores=3; dead=false; why="hosted was picked"
+          if [ "$MAC" != "$hosted" ]; then
+            dead=true; why="the Mac did not start the probe within 180 s: macOS runs on hosted macos-26"
+            end=$((SECONDS + 180))
+            while [ "$SECONDS" -lt "$end" ]; do
+              status=$(gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq \
+                '[.jobs[] | select(.name == "mac-probe")][0].status // "none"' 2>/dev/null) || status=none
+              if [ "$status" = in_progress ] || [ "$status" = completed ]; then
+                runner=$MAC; cores=$MAC_CORES; dead=false; why="the Mac started the probe after $SECONDS s"
+                break
+              fi
+              sleep 10
+            done
+          fi
+          echo "runner=$runner" >>"$GITHUB_OUTPUT"
+          echo "cores=$cores" >>"$GITHUB_OUTPUT"
+          echo "dead=$dead" >>"$GITHUB_OUTPUT"
+          echo "macOS job runs on $runner ($why)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  mac-probe-end:
+    # The Mac watchdog, part 3: the probe of a Mac that did not answer is still queued; a job of its concurrency group
+    # that starts replaces it (cancel-in-progress cancels a pending job too), so the run does not sit "in progress"
+    # until GitHub drops the job a day later. That run ends `cancelled` though every job it owed passed.
+    needs: [watch]
+    if: ${{ always() && needs.watch.outputs.dead == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: mac-probe-${{ github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - run: echo "the Mac did not answer; its probe is cancelled"
+
   macos:
     # everything macOS does in a run, in one job (#1709): build smith and the tests, then the macOS-only tests (a
     # documents-only change: docs and the tests that read them). fmt, docs and prove run on Linux beside the test
@@ -190,13 +336,15 @@ jobs:
     # five runs proceed at once, and nothing is packed or downloaded. The stages run one after another: two verbs
     # cannot share one tree (they collide on .smith/build.ninja), and every stage runs even when an earlier one failed,
     # so one run names all failures.
-    needs: [changes, pack]
-    # On pull requests too: a green PR should mean a green queue run, and each queue failure fails every group behind
-    # it. Capacity is never saved by dropping a check (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac
-    # runners. We should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS
-    # slots are full, `pick-mac` sends the job to the owner's Mac. From 2026-11-03 it had run in the merge queue only.
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
-    runs-on: ${{ fromJSON(needs.changes.outputs.mac) }}
+    needs: [changes, pack, watch]
+    # The queue runs it always; a pull request runs it only when its diff reaches what only the Mac sees, or when the
+    # change is documents (where the docs check runs) (#2822): the free plan runs about 20 jobs at once, and a pull
+    # request that cannot reach the Mac's code leaves it to the queue. Before #2822 it ran on every pull request so that
+    # a green PR meant a green queue run (owner, 2026-11-04: "We have the 20 Linux runners and the 5 Mac runners. We
+    # should be prioritizing that. But then absolutely leverage my Mac as well."): when the 5 hosted macOS slots are
+    # full, `pick-mac` sends the job to the owner's Mac, if the Mac starts the probe job within 3 minutes (`watch`, #2835).
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.watch.result == 'success' && needs.changes.outputs.mac_run == 'true' && (needs.changes.outputs.scope == 'full' || needs.changes.outputs.scope == 'docs') }}
+    runs-on: ${{ fromJSON(needs.watch.outputs.runner) }}
     # hosted: build about 3.5 min, fmt/docs/lint 3 to 5, the proofs and the macOS tests a few more; the owner's Mac
     # does all of it in about 4 (#1709). The job's limit counts time spent queued for a slot: at 30 minutes, jobs waiting
     # for a full hosted pool were cancelled before their first step (2026-11-03). So the job allows 90, and each step has
@@ -204,13 +352,13 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: ${{ needs.changes.outputs.cores }}
+      SMITH_CORES: ${{ needs.watch.outputs.cores }}
       SMITH_OUTPUT: full
       SMITH_TEST_STATS: "1"
       SCOPE: ${{ needs.changes.outputs.scope }}
       MACFLAGS: ${{ fromJSON(needs.changes.outputs.matrix).include[0].flags }}
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of this job's test store (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - name: Tools some tests need
@@ -237,6 +385,12 @@ jobs:
           # builds only the `--macos-only` tests the job runs (`--shard 1/1` makes the scan list one part), not all of
           # them (#2242); a documents-only change keeps the full list
           test-flags: ${{ needs.changes.outputs.scope == 'full' && format('{0} --costs {1}/.github/shard-costs.tsv', env.MACFLAGS, github.workspace) || '' }}
+      - uses: ./.github/actions/test-cache
+        # the macOS tests the store holds as passed are left out too (#2833): the `--macos-only` tests whose inputs did
+        # not change do not run; the nightly restores nothing
+        with:
+          os: macos
+          fresh: ${{ github.event_name == 'schedule' }}
       - name: Checks
         timeout-minutes: 30
         shell: bash
@@ -286,6 +440,13 @@ jobs:
             fi
           done
           exit $failed
+      - name: Publish the test store
+        # this job's store as its own release, `test-cache-<sha7>-macos` (#2870); queue and nightly runs only
+        if: always() && needs.changes.outputs.scope == 'full'
+        uses: ./.github/actions/test-cache/save
+        with:
+          os: macos
+          name: macos
       - name: Upload the logs
         if: always()
         continue-on-error: true
@@ -304,8 +465,11 @@ jobs:
     needs: [changes, pack]
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # the build, then one test part when the sizing asks for one in a queue run (#2870)
+    timeout-minutes: 30
     outputs:
+      # the outcome of the test part this job ran (`success`, `failure`), or empty when the parts are `test-linux`'s
+      tests: ${{ steps.tests.outcome != 'skipped' && steps.tests.outcome || '' }}
       # where the 10 Linux jobs that start next run, chosen by the last step: hosted ubuntu-latest, the Mac's Linux runners
       # (#1140) for the ones that would not fit in the hosted slots (#2259)
       matrix: ${{ steps.runners.outputs.matrix }}
@@ -314,14 +478,18 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SMITH_CORES: "4"
+      # in every test key (an environment variable of SMITH_ is): the test jobs set it, so the sizing step must too,
+      # or `smith test --misses` finds nothing of the store and asks for 7 parts (#2833)
+      SMITH_TEST_STATS: "1"
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the test store of the part it runs (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
@@ -355,15 +523,32 @@ jobs:
           SMITH_OUTPUT: full
         run: |
           count=8
+          # a PR check runs its tests in one part whatever they cost (#2856: at most 2 Linux jobs at once)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "count=1" >>"$GITHUB_OUTPUT"; echo "jobs=2" >>"$GITHUB_OUTPUT"
+            echo "test parts: 1 (a pull request's check)" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
           # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: ' || true)
+          "$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
+          line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
           if [ -n "$line" ]; then
             secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
           fi
           echo "count=$count" >>"$GITHUB_OUTPUT"
-          echo "jobs=$(( count + 2 ))" >>"$GITHUB_OUTPUT"
+          # one part in a queue run is run by this job, which holds its runner already (#2870)
+          jobs=$(( count + 2 )); [ "$count" = 1 ] && [ "$GITHUB_EVENT_NAME" = merge_group ] && jobs=2
+          echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Report the test-store hit rate (sizing)
+        # one line per cache with its hit rate; the first misses say which input differs (#2876)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cache-report
+        with:
+          name: test-store
+          log: ${{ runner.temp }}/misses.out
+          inputs: '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
@@ -374,7 +559,7 @@ jobs:
         with:
           token: ${{ secrets.RUNNER_STATUS_TOKEN }}
           github-token: ${{ github.token }}
-          fork: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          fork: false
           linux-jobs: ${{ steps.size.outputs.jobs || '10' }}
       - name: Give each job its runner
         id: runners
@@ -386,7 +571,8 @@ jobs:
           COUNT: ${{ steps.size.outputs.count }}
         run: |
           # fewer parts than `changes` planned: the same matrix cut to the count sized above (#2833)
-          case "$COUNT" in ''|*[!0-9]*) COUNT=8 ;; esac
+          # no answer keeps the parts `changes` made (8 in the queue, 1 in a PR check)
+          case "$COUNT" in ''|*[!0-9]*) COUNT=$(printf '%s' "$MATRIX" | jq '.include | length') ;; esac
           MATRIX=$(printf '%s' "$MATRIX" | jq -c --argjson n "$COUNT" \
             '.include |= (map(select(.shard <= $n)) | map(.count = $n))')
           [ "$COUNT" -gt 8 ] && COUNT=8
@@ -405,10 +591,24 @@ jobs:
           { echo "matrix=$matrix"; echo "lint=$lint"; echo "fmt-prove=$fmt"; } >>"$GITHUB_OUTPUT"
           echo "Linux jobs on the Mac: $n (parts $parts, lint $([ "$lint" = "$mac" ] && echo yes || echo no), fmt-prove $([ "$fmt" = "$mac" ] && echo yes || echo no))" >>"$GITHUB_STEP_SUMMARY"
 
+      - name: The one test part, in this job
+        # A queue run whose misses fit in one part runs it here, on the tree just built, not in a `test-linux` job
+        # (#2870): the part is no job of its own, restores and rebuilds nothing, and its test time replaces a job's
+        # setup. The jobs that need this build start once it ends, which is off the critical path in the queue (the
+        # count is longer). A pull request keeps its part in `test-linux`, beside `check-fmt-prove`. A failing test
+        # fails the step, not the job, so the checks and the count still run on this build; `ci` reads the outcome.
+        id: tests
+        if: steps.size.outputs.count == '1' && github.event_name == 'merge_group'
+        continue-on-error: true
+        uses: ./.github/actions/test-part
+        with:
+          restore: "false"
+          flags: ${{ fromJSON(needs.changes.outputs.linux).include[0].flags }}
+
   test-linux:
     # Linux carries the tests (required): hosted shards of `--skip-macos`, each restoring the build of `build-linux` (#1758)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.build-linux.outputs.tests == '' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 20
     strategy:
@@ -420,133 +620,22 @@ jobs:
       SMITH_OUTPUT: full
       SMITH_TEST_STATS: "1"
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of this part's test store (#2870)
       actions: write # queue-guard: `gh run cancel` (#2256)
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Neovim 0.11+ for the editor tests (#1017)
-        # the runner's nvim is 0.9 and the plugin needs `vim.uv`: `smith build nvim` fetches the pinned release (by
-        # hash, kept in ~/.cache/smith/tools) and prints its bin/, which goes first on the PATH
-        shell: bash
-        run: |
-          bin=$("$SMITH" build nvim | tail -n 1)
-          echo "$bin" >>"$GITHUB_PATH"
-          "$bin/nvim" --version | head -n 1 | tee -a "$GITHUB_STEP_SUMMARY"
-      - uses: ./.github/actions/test-cache
+      - uses: ./.github/actions/test-part
         with:
-          os: linux
-          fresh: ${{ github.event_name == 'schedule' }}
-      - name: Tests, part ${{ matrix.shard }} of ${{ matrix.count }}
-        shell: bash
-        run: |
-          start=$(date +%s)
-          rc=0
-          shard=
-          if [ "${{ matrix.count }}" -gt 1 ]; then shard="--shard ${{ matrix.shard }}/${{ matrix.count }}"; fi
-          # shellcheck disable=SC2086
-          "$SMITH" test $shard ${{ matrix.flags }} --costs "$PWD/.github/shard-costs.tsv" 2>&1 |
-            tee "$RUNNER_TEMP/test.log" || rc=${PIPESTATUS[0]}
-          took=$(( $(date +%s) - start ))
-          # the artifact below holds .smith/log; `smith test` writes no log there, so keep its output (with the
-          # SMITH_TEST_STATS lines) as test.log, which `smith build ci-times` reads (#1139)
-          mkdir -p .smith/log
-          cp "$RUNNER_TEMP/test.log" .smith/log/test.log
-          {
-            echo "### tests linux ${{ matrix.shard }}/${{ matrix.count }}: $took s"
-            grep -E '^[0-9]+ passed' "$RUNNER_TEMP/test.log" || true
-          } >>"$GITHUB_STEP_SUMMARY"
-          if [ "$rc" -ne 0 ]; then
-            # each failed test's name and the lines under it (where the check failed, its error), kept for the
-            # `Failed tests` step, which prints them last
-            grep -hE -A6 '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" 2>/dev/null | grep -vE '^--$' | head -n 80 >"$RUNNER_TEMP/failed.txt" || true
-            { echo '```'; cat "$RUNNER_TEMP/failed.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
-            grep -hE '^FAIL |^FAILED:' "$RUNNER_TEMP/test.log" .smith/log/*.log 2>/dev/null | sort -u | head -n 20 |
-              while IFS= read -r line; do echo "::error::$line"; done
-          fi
-          exit $rc
-      - name: Keep the test store for the cache job
-        # the store holds what was restored plus the entries this part added; an entry is one test that passed, so a
-        # part that failed elsewhere still adds valid ones (#2833)
-        if: always() && (github.event_name == 'merge_group' || github.event_name == 'schedule')
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-store-linux-${{ matrix.shard }}-of-${{ matrix.count }}
-          path: ~/.cache/smith/tests
-          retention-days: 1
-          compression-level: 1
-          if-no-files-found: ignore
-      - name: Upload the logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-log-linux-${{ matrix.shard }}-of-${{ matrix.count }}
-          path: .smith/log
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Failed tests
-        if: failure()
-        # the failed tests are the last lines of this shard's log (#1086); the other shards run on (#1139)
-        run: |
-          if [ -s "$RUNNER_TEMP/failed.txt" ]; then
-            echo "FAILED TESTS of this shard:"
-            cat "$RUNNER_TEMP/failed.txt"
-          fi
-  save-test-cache:
-    # publishes the test-result store of a merge queue run or the nightly one as the prerelease `test-cache-<sha7>`
-    # (#2833). Releases are immutable, so a new tag per commit with the store in one `gh release create`, the 3 newest
-    # kept, like the step cache (#2772). Only a queue run saves, and what it ran is the tree that lands; a pull
-    # request run only reads. A failure here never fails the run.
-    needs: [changes, test-linux]
-    if: ${{ always() && (github.event_name == 'merge_group' || github.event_name == 'schedule') && needs.changes.outputs.scope == 'full' && needs.test-linux.result != 'skipped' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: test-store-linux-*
-          path: ${{ runner.temp }}/stores
-      - name: Publish the store
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -eu
-          merged="$RUNNER_TEMP/merged"; mkdir -p "$merged"
-          for part in "$RUNNER_TEMP"/stores/*/; do [ -d "$part" ] && cp -a "$part". "$merged"/; done
-          # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
-          find "$merged" -type f -mtime +14 -delete
-          n=$(find "$merged" -type f | wc -l)
-          if [ "$n" -eq 0 ]; then echo "no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
-          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
-          tar -C "$merged" -c . | gzip -1 >"$out/smith-tests-linux.tar.gz"
-          echo "$GITHUB_SHA" >"$out/smith-tests.sha"
-          tag="test-cache-${GITHUB_SHA:0:7}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" "$out"/smith-tests-linux.tar.gz "$out"/smith-tests.sha --prerelease --latest=false \
-              --target "$GITHUB_SHA" --title "test cache $tag" \
-              --notes "The test-result store (#2686) of the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2833). Not a release of smith."
-          fi
-          gh release list --limit 100 --json tagName,createdAt \
-            --jq '[.[]|select(.tagName|test("^test-cache-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
-            while read -r old; do
-              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
-            done
-          echo "published $tag: $n entries, $(du -h "$out/smith-tests-linux.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
-
+          part: ${{ matrix.shard }}
+          count: ${{ matrix.count }}
+          flags: ${{ matrix.flags }}
   check-fmt-prove:
     # fmt, docs and the proofs on Linux (#2234), beside the test parts: they restore the build of `build-linux` like a
     # shard. They moved off the Mac, where lint and prove were 6 of the 9 minutes of checks; split in two jobs
@@ -568,6 +657,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./.github/actions/queue-guard
+      - uses: ./.github/actions/yield-to-queue
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
@@ -578,11 +668,23 @@ jobs:
           path: ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
+      - name: Restore the lint cache
+        # a PR check lints here too, in place of `check-lint` (#2856)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/smith/lint
+          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
+          restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
         shell: bash
         run: |
           failed=0
-          for stage in "fmt fmt --dry-run --Werror" "docs docs" "prove prove"; do
+          stages=("fmt fmt --dry-run --Werror" "docs docs" "prove prove")
+          # a PR check is at most 2 Linux jobs at once (#2856): lint runs here after the others, not in `check-lint`.
+          # The queue keeps the two jobs side by side, the shorter critical path (lead, 2026-11-08, #2833)
+          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && stages+=("lint lint")
+          for stage in "${stages[@]}"; do
             set -- $stage
             name=$1
             shift
@@ -602,9 +704,10 @@ jobs:
           exit $failed
 
   check-lint:
-    # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't
+    # `smith lint` on Linux (#2234), beside the test parts and `check-fmt-prove`; the Mac lints too, since each platform sees code the other can't.
+    # Not in a PR check, where `check-fmt-prove` lints (#2856)
     needs: [changes, pack, build-linux]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && github.event_name != 'workflow_dispatch' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ${{ fromJSON(needs.build-linux.outputs.runner-lint) }}
     timeout-minutes: 20
     env:
@@ -651,19 +754,27 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
     steps:
       - name: Verdict
+        id: verdict
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
-          TEST_LINUX: ${{ needs.test-linux.result }}
+          MAC_RUN: ${{ needs.changes.outputs.mac_run }}
+          # the one part a queue run's `build-linux` ran itself, else the parts of `test-linux` (#2870)
+          TEST_LINUX: ${{ needs.build-linux.outputs.tests || needs.test-linux.result }}
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
+          BATCH: ${{ needs.changes.outputs.batch }}
+          PRS: ${{ needs.changes.outputs.prs }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           case " $RESULTS " in
           *" failure "* | *" cancelled "*)
             echo "::error::a CI job failed or was cancelled"
@@ -680,6 +791,10 @@ jobs:
           release) owed="" ;;
           *) owed="" ;;
           esac
+          # a pull request whose diff cannot reach the Mac's code did not run `macos` on purpose (#2822)
+          if [ "$MAC_RUN" = false ]; then owed=${owed/MACOS/}; fi
+          # a PR check lints in `check-fmt-prove`, so it owes no `check-lint` (#2856)
+          if [ "$EVENT" = workflow_dispatch ]; then owed=${owed/CHECK_LINT/}; fi
           # a full merge group also owes the count (owner, 2026-11-06): it measures the commit main moves to
           if [ "$SCOPE" = full ] && [ "$EVENT" = merge_group ]; then owed="$owed FRONTEND_COVERAGE"; fi
           for name in $owed; do
@@ -689,16 +804,45 @@ jobs:
               exit 1
             fi
           done
+      # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
+      # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
+      # Only once every job before it ran: a cancelled job (a cancelled run) posts nothing, and the next pass restarts
+      # the check; the verdict above already fails a run in which a job that was owed was skipped.
+      - name: Post the verdict as the commit status `ci`
+        if: >-
+          always() && github.event_name == 'workflow_dispatch' && !cancelled()
+          && !contains(join(needs.*.result, ' '), 'cancelled')
+          && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ steps.verdict.outcome }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
+            -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
+          echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
 
   warm:
     # a push to main (a commit the queue checked) builds smith and the tests once more only to save the step cache,
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
     # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
     # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
-    needs: changes
+    # It waits for `publish` and its setup names the stage0 of this very commit, which is the one every job after it
+    # fetches: a compile step's key holds the digest of the smith that runs it, so a cache built with the stage0
+    # before served 23 of 319 steps (#2833; warm used stage0-b2dc5ea at 06:20Z, build-linux stage0-a42cac3 at 06:38Z).
+    # Fetching the cache's stage0 in the jobs instead would cost no wait but break the lag rule
+    # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
+    # Waiting was not enough by itself: fetch-smith's release list left the newest out (run 42601821786 got
+    # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
+    # `always()`: a pull request's dry run (no release) warms with the newest published stage0; on a push, a release
+    # that never publishes fails this job rather than save a cache built with another smith
+    needs: [changes, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
-    if: needs.changes.outputs.warm == 'true'
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
+      # one OS failing must not cancel the other: a Mac step that failed cancelled the Linux job, so main saved no
+      # Linux cache from 01:48Z to 03:50Z on 2026-11-09 (#2826)
+      fail-fast: false
       matrix:
         # each OS saves the cache of what its jobs build: the Mac builds only its `--macos-only` tests
         os: ${{ fromJSON(needs.changes.outputs.warm_os) }}
@@ -720,7 +864,40 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+          # its own commit's release by name, not whatever the release list calls the newest (#2833)
+          stage0: ${{ github.event_name == 'push' && format('stage0-{0}', github.sha) || '' }}
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
+      - name: Fetch what the test jobs download (#2825)
+        # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
+        # this cache (the test parts, check-fmt-prove, check-lint, release-linux) are all Linux
+        if: runner.os == 'Linux'
+        # the test parts take the build of `build-linux` and so restore no step cache; they restore the small
+        # `smith-tools-` cache saved below instead, which must hold every package they would fetch from github.com:
+        # the tree-sitter CLI (the build above fetched it) and the Neovim release (`smith build nvim`)
+        shell: bash
+        run: |
+          "$SMITH" build nvim | tail -n 1
+          du -sh ~/.cache/smith/packages ~/.cache/smith/tools | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save the packages and tools
+        # about 60 MB: every job that restores a build rather than making it reads this, so no job reaches github.com
+        # for a package the cache holds (a 504 hour kept #2798 out of the queue for hours, #2825)
+        if: env.DRY_RUN != '1' && runner.os == 'Linux'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/smith/packages
+            ~/.cache/smith/tools
+          key: smith-tools-${{ runner.os }}-${{ github.sha }}
+      - name: Let the next build prune the step cache (#2833)
+        # the folder is kept within `step-cache-max` of setup-smith, the least recently used first, by the prune a build
+        # starts with, at most once an hour. The stamp of that check is saved with the folder, so a warm within the hour
+        # of the one before would skip it and the folder would grow: it is left out of the save, and the next warm (or
+        # any job that restores this) prunes at its first build
+        if: env.DRY_RUN != '1'
+        shell: bash
+        run: |
+          rm -f ~/.cache/smith/steps/prune.timestamp
+          echo "step cache saved: $(du -sm ~/.cache/smith/steps | cut -f1) MB, $(find ~/.cache/smith/steps/m -type f | wc -l) manifests" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the step cache
         if: env.DRY_RUN != '1'
         uses: actions/cache/save@v4
@@ -769,14 +946,7 @@ jobs:
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
           fi
-          # the fixed files of the count (#2832), from the queue run of this commit: the next runs start from them
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
-          if [ -n "$id" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/f.zip"
-            mkdir -p "$out/f/fixed"; unzip -q "$out/f.zip" -d "$out/f/fixed"
-            tar -C "$out/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
-            files+=("$out/count-fixed.tar.gz")
-          fi
+          # the fixed files and rows of the count (#2832) are the release `count-fixed-<sha7>` of the queue run (`count-fixed-save`)
           ls -l "${files[@]}" | awk '{print $5, $9}'
           if [ "$DRY_RUN" = 1 ]; then
             { echo "### Dry run: would create release \`step-cache-${GITHUB_SHA:0:7}\` with these assets, then keep the 3 newest"; echo '```'; ls -l "${files[@]}" | awk '{print $5, $9}'; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -936,50 +1106,30 @@ jobs:
       - name: Release
         run: '"$SMITH" build release'
 
-  build-linux-release:
-    # the release profile (-O2, #2684) of smith for the front-end coverage shards: the count runs the smith it measures,
-    # and the dev build of `build-linux` (-O0) made six of eight shards hit their timeout (queue run 42349047932). Only
-    # the merge queue counts, so only it builds this; the test jobs keep the dev build.
-    needs: [changes, pack]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      GH_TOKEN: ${{ github.token }}
-      SMITH_CORES: "4"
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/setup-smith
-        with:
-          profile: release
-      - name: Pack the build
-        shell: bash
-        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-release
-          path: ${{ runner.temp }}/build.tar.zst
-          compression-level: 0
-          retention-days: 1
-
   frontend-coverage-fix:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
     # modules that must already be in the new syntax), so the whole tree was fixed eight times and the fix phase was
     # most of a shard's 15 to 26 minutes. This job fixes the tree once, starting from the fixed files main last saved
-    # (`count-fixed.tar.gz`, an asset of the newest `step-cache-*` release that has one, written by `warm` below from
-    # the artifact of this job), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
+    # (`count-fixed.tar.gz`, an asset of the newest `count-fixed-*` release, written by `count-fixed-save` below from
+    # the artifact of this job and the rows of the parts), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
     # what it depends on (the file, every module it imports, the C headers and the objects the fixer is built from,
     # #2309, #2632), so an entry never changes a result: a stale or missing entry is only fixed again.
-    needs: [changes, build-linux-release]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux-release.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    # It builds the release profile (-O2, #2684) of smith itself, which `build-linux-release` did in a job of its own: the
+    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards hit their
+    # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
+    # count of a queue run is this job, the merge and the gate (3 jobs); a cold one packs the build for the shards.
+    needs: [changes, pack]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
+    # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
+    timeout-minutes: 60
+    outputs:
+      # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the import cache this job made (#2891)
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -992,14 +1142,44 @@ jobs:
         run: sudo apt-get install -y -q lld
       - uses: ./.github/actions/setup-smith
         with:
-          artifact: build-linux-release
+          profile: release
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
+        # count's jobs publish
+        with:
+          tests: "false"
+      - name: Check the objects the count's key leaves out
+        # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
+        shell: bash
+        run: |
+          # the objects `unrelated_object` in scripts/frontend_coverage/main.smith leaves out of the key hold only another
+          # verb's code: nothing outside them and the two dispatchers (smith.o, rt_runtime_verbs.o) calls a symbol they define,
+          # and the list here is the list there
+          source="$PWD/scripts/frontend_coverage/main.smith"
+          cd "$(dirname "$SMITH")"
+          exact="rt_runtime_docs.o rt_smith_protocol_dap.o rt_smith_protocol_mcp.o lldb_dap_shim.o lldb_server_shim.o"
+          listed=$(sed -n '/static Bool unrelated_object/,/^}/p' "$source" | grep -o '"[a-z_]*\.o"' | tr -d '"' | sort | tr '\n' ' ')
+          want=$(echo $exact | tr ' ' '\n' | sort | tr '\n' ' ')
+          [ "$listed" = "$want" ] || { echo "::error::the excluded objects here ($want) differ from unrelated_object ($listed)"; exit 1; }
+          excluded=$(for o in $exact rt_runtime_mcp*.o front_lsp_*.o; do [ -f "$o" ] && echo "$o"; done | tr '\n' ' ')
+          defined=$(mktemp)
+          nm -g --defined-only $excluded | awk 'NF == 3 && $2 ~ /^[TDRBSVW]$/ {print $3}' | sort -u >"$defined"
+          status=0
+          for o in *.o; do
+            case " $excluded " in *" $o "*) continue ;; esac
+            case "$o" in smith.o | rt_runtime_verbs.o) continue ;; esac
+            hits=$(nm -u "$o" 2>/dev/null | awk 'NF == 2 {print $2}' | sort -u | comm -12 - "$defined" | head -n 5 | tr '\n' ' ')
+            if [ -n "$hits" ]; then echo "::error::$o calls $hits(defined in an object left out of the count's key)"; status=1; fi
+          done
+          [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
+          exit $status
       - name: Restore main's fixed files
         # a failure only leaves the fix cold
         continue-on-error: true
         shell: bash
         run: |
           mkdir -p .smith/frontend-coverage/fixed
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^step-cache-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^(step-cache|count-fixed)-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
           if [ -z "$tag" ]; then echo "fixed files: none saved yet"; exit 0; fi
           d=$(mktemp -d)
           gh release download "$tag" -D "$d" -p count-fixed.tar.gz
@@ -1012,9 +1192,69 @@ jobs:
           {
             echo "### Count: fixed files"
             echo '```'
-            grep -E 'frontend_coverage: (fix phase|fixer cache)' "$RUNNER_TEMP/fix.txt"
+            grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure)' "$RUNNER_TEMP/fix.txt"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+      - name: Size the shards
+        id: plan
+        shell: bash
+        run: |
+          # a part measures at most an eighth of the tree: a cold count is 8 parts as before, a warm one is 1 or 2
+          read -r missing total < <(sed -n 's/^frontend_coverage: rows to measure: \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$RUNNER_TEMP/fix.txt" | tail -n 1)
+          n=8
+          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
+          [ "$n" -lt 1 ] && n=1
+          [ "$n" -gt 8 ] && n=8
+          echo "count=$n" >>"$GITHUB_OUTPUT"
+          echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
+          echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Count the rows left, here
+        # one part or none left (a warm run): measured in this job, as part 1 of 1, so no shard job runs
+        if: ${{ steps.plan.outputs.count == '1' }}
+        # never fails the job: the status is read by the merge job, whatever happened here
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          touch "$RUNNER_TEMP/before-count"
+          "$SMITH" build frontend-coverage -Dshard=1/1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          mkdir -p "$RUNNER_TEMP/rows"
+          find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - name: Save the rows of the count here
+        if: ${{ steps.plan.outputs.count == '1' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-rows-${{ github.sha }}-1
+          path: ${{ runner.temp }}/rows
+          if-no-files-found: ignore
+          compression-level: 1
+          retention-days: 3
+      - name: Save the part counted here
+        if: ${{ steps.plan.outputs.count == '1' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ github.sha }}-1
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Pack the build for the shards
+        if: ${{ steps.plan.outputs.count != '1' }}
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - name: Save the build for the shards
+        if: ${{ steps.plan.outputs.count != '1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
@@ -1022,22 +1262,30 @@ jobs:
           path: .smith/frontend-coverage/fixed
           compression-level: 1
           retention-days: 3
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count`, queue runs only, and the hits of the fix and of a count done here
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count
+          tests: "false"
 
   frontend-coverage-shard:
-    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/8` fixes and compiles the tracked files
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
-    needs: [changes, build-linux-release, frontend-coverage-fix]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux-release.result == 'success' && needs.frontend-coverage-fix.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
+    needs: [changes, frontend-coverage-fix]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON(needs.frontend-coverage-fix.outputs.shards) }}
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the import cache this shard made (#2891)
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -1051,6 +1299,10 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891), of the release smith's identity
+        with:
+          tests: "false"
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
@@ -1064,10 +1316,25 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
-          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          touch "$RUNNER_TEMP/before-count"
+          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          # the rows this shard measured (#2832): the save job adds them to the cache main starts from
+          mkdir -p "$RUNNER_TEMP/rows"
+          find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
           exit 0
+      - name: Save the shard's rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-rows-${{ github.sha }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/rows
+          if-no-files-found: ignore
+          compression-level: 1
+          retention-days: 3
       - name: Save the shard
         if: always()
         uses: actions/upload-artifact@v4
@@ -1076,6 +1343,13 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count-<k>`, and the shard's hits
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count-${{ matrix.shard }}
+          tests: "false"
 
   frontend-coverage:
     # the merge of the eight shards of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files
@@ -1090,7 +1364,7 @@ jobs:
     # main's last one, unless the PR's body has a line `Count drop: <why>`. A group the queue cancels cancels it too; the
     # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count took 9 to 19 minutes on 4 cores on 2026-11-06,
     # so 30 keeps a slow count from failing its group now that it gates (10 groups hit the old 20 that morning).
-    needs: [changes, build-linux, frontend-coverage-shard]
+    needs: [changes, build-linux, frontend-coverage-fix, frontend-coverage-shard]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1126,16 +1400,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
-          for k in 1 2 3 4 5 6 7 8; do
+          parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
+          for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
               tables="${tables:+$tables,}$d/results.tsv"
             else
-              echo "frontend-coverage: shard $k of 8 did not finish, so the count is not measured" >>"$out"
+              echo "frontend-coverage: shard $k of $parts did not finish, so the count is not measured" >>"$out"
               tail -n 20 "$d/output.txt" 2>/dev/null >>"$out"
             fi
           done
-          if [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = 7 ]; then
+          if [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
             "$SMITH" build frontend-coverage -Dmerge="$tables" -Dsmith="$SMITH" >>"$out" 2>&1
             echo "status: $?" >>"$out"
             cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
@@ -1200,6 +1475,7 @@ jobs:
           now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
           if [ -z "$now" ]; then
             echo "::error::the count was not measured, and a merge needs its count: see the Count step's output above (the tail is in the job summary)"
+            echo "count: no main results to compare (this run's count was not measured)" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           # main's last count: the artifact of the newest commit on main's first-parent line that has one (a merge of
@@ -1219,14 +1495,32 @@ jobs:
             before=$(sed -n "$pass" "$dir/output.txt" 2>/dev/null | tail -n 1)
             [ -n "$before" ] && { echo "main's last count: $before files pass, at $sha"; break; }
           done
-          if [ -z "$before" ]; then echo "no count on main's last 20 commits: nothing to compare with"; exit 0; fi
-          # the files whose result changed against main (#2832): path, old stage, new stage (a file's stage is its
-          # first row's; `-` is a file the table does not have)
+          if [ -z "$before" ]; then
+            echo "no count on main's last 20 commits: nothing to compare with"
+            echo "count: no main results to compare (no passing count on main's last 20 commits)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # the files that went from pass to fail or back against main's last passing count (#2879), in the log and the summary
+          # (an agent session cannot download the artifact, but it reads the log). Output only: it never fails the job
+          # and never changes the count
           if [ -f "$dir/results.tsv" ] && [ -f "$RUNNER_TEMP/coverage/results.tsv" ]; then
-            echo "files whose result changed against main (path, main, now):"
-            awk -F'\t' 'FNR==1 {f++} !((f, $1) in st) {st[f, $1]=$2; all[$1]=1}
-              END {for (p in all) {a=((1,p) in st)?st[1,p]:"-"; b=((2,p) in st)?st[2,p]:"-"; if (a!=b) print "  " p "\t" a "\t" b}}' \
-              "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | sort | head -n 200
+            # a table has one or more rows per file (path, stage); a file's stage is its first row's, `pass` or the stage
+            # that failed; a file one table lacks counts as failing there
+            { awk -F'\t' -v base="${sha:0:7}" '
+                FNR == 1 { f++ }
+                !((f, $1) in st) { st[f, $1] = ($2 == "pass") ? "pass" : "fail"; all[$1] = 1 }
+                END {
+                  for (p in all) {
+                    a = ((1, p) in st) ? st[1, p] : "fail"; b = ((2, p) in st) ? st[2, p] : "fail"
+                    if (a == b) continue
+                    if (a == "pass") { print "count: pass->fail " p; down++ } else { print "count: fail->pass " p; up++ }
+                  }
+                  n = down + up
+                  if (n == 0) print "count: no file changed against main " base
+                  else printf "count~total: %d files changed (%d pass->fail, %d fail->pass)\n", n, down + 0, up + 0
+                }' "$dir/results.tsv" "$RUNNER_TEMP/coverage/results.tsv" | LC_ALL=C sort | sed 's/^count~total:/count:/' || true; } | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "count: no main results to compare (no results.tsv in the count of ${sha:0:7} or in this run)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           if [ "$now" -ge "$before" ]; then echo "count: $now files pass (main: $before)"; exit 0; fi
           pr=$(printf '%s' "$HEAD_REF" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')
@@ -1234,6 +1528,61 @@ jobs:
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
+
+  count-fixed-save:
+    # the queue run saves the fixed files of its own head commit (#2832). Main's `warm` publishes them with the step cache
+    # about 11 minutes after a merge, so the very next queue run always started cold (the fix job: 19 minutes instead of
+    # a few). A group's head commit is the tree main becomes if the group merges, so a run that passed (`ci` is green and
+    # the fix job ran) puts its `count-fixed` artifact in a prerelease `count-fixed-<sha7>`, which the fix job restores
+    # from like a `step-cache-*` one. Only a passing run saves, and a cache entry is keyed by what it depends on, so one
+    # for a group that never merges costs nothing. It does not gate the merge: it needs `ci` and nothing needs it. The 3
+    # newest `count-fixed-*` stay.
+    needs: [ci, frontend-coverage-fix, frontend-coverage-shard]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.ci.result == 'success' && needs.frontend-coverage-fix.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: count-fixed-${{ github.sha }}
+          path: ${{ runner.temp }}/f/fixed
+      - name: Fetch the rows the parts measured
+        # the rows of the count (#2832) go in the same tarball: a part saved the ones it measured
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: count-rows-${{ github.sha }}-*
+          path: ${{ runner.temp }}/rows
+          merge-multiple: true
+      - name: Release the fixed files
+        # a failure only leaves the next run cold
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          if [ -d "$RUNNER_TEMP/rows" ]; then cp "$RUNNER_TEMP"/rows/*.row "$RUNNER_TEMP/f/fixed/" 2>/dev/null || true; fi
+          # rows are keyed by the smith, so each change of it leaves a tree of dead ones: drop those not written in 3 days
+          find "$RUNNER_TEMP/f/fixed" -name '*.row' -mtime +3 -delete
+          echo "rows saved: $(ls "$RUNNER_TEMP/f/fixed" | grep -c '\.row$' || true)" | tee -a "$GITHUB_STEP_SUMMARY"
+          tar -C "$RUNNER_TEMP/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
+          tag="count-fixed-${GITHUB_SHA:0:7}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "$out/count-fixed.tar.gz" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "count fixed $tag" --notes "The fixed files of the count at $GITHUB_SHA (#2832). Not a release of smith."
+          fi
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^count-fixed-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and
@@ -1261,7 +1610,7 @@ jobs:
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 3
+    timeout-minutes: 10
     concurrency:
       group: install-mac
       cancel-in-progress: true
@@ -1276,9 +1625,29 @@ jobs:
           # plain curl and tar, no smith: this step must work with whatever smith is installed, even a stale one
           # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
           name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
-          base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name" "$base/$name"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name.sha256" "$base/$name.sha256"
+          api=https://api.github.com/repos/smith-ai-lab/smith
+          # A release published seconds ago is not always served yet: github.com/releases/download/ answered 504 to all 9
+          # tries of curl over 40 s (2026-11-09 05:37Z, run 42567390515). Try for about 6 minutes, by the asset API (a
+          # redirect to a signed URL, asked for with the token and fetched without it, #2835) and then by the download URL.
+          get() {
+            f=$1
+            for try in $(seq 1 24); do
+              id=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$api/releases/tags/stage0-$GITHUB_SHA" 2>/dev/null \
+                | jq -r --arg n "$f" '.assets[]|select(.name==$n)|.id' 2>/dev/null) || id=
+              if [ -n "$id" ]; then
+                url=$(curl -fsS -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/octet-stream" "$api/releases/assets/$id" 2>/dev/null) || url=
+                if [ -n "$url" ] && curl -fsSL --retry 3 --retry-all-errors -o "$tmp/$f" "$url"; then return 0; fi
+              fi
+              curl -fsSL --retry 2 --retry-all-errors -o "$tmp/$f" \
+                "https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA/$f" && return 0
+              echo "install: try $try of 24 failed for $f; waiting 15 s"; sleep 15
+            done
+            echo "external: stage0-$GITHUB_SHA/$f not served after 24 tries (about 6 minutes)" >&2
+            return 1
+          }
+          get "$name"
+          get "$name.sha256"
           [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
             || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
           tar -C "$tmp" -xJf "$tmp/$name"

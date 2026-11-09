@@ -1,0 +1,214 @@
+// front::header_table: the C headers this process has read through clang (#2888), kept for its life and shared by
+// every reader: `front::compile` (each file of one compile) and `front::fix` (each pass and each file of one
+// `lint --fix`, #2913).
+//
+//   read(header, angled, importer, flags) the declarations of `import c <header>` (angled) or `"header"`, as clang
+//                                       reads them from the importer's folder with `flags` (one per line); null
+//                                       when clang cannot read it (never kept: the next read prints clang's error)
+//   next_generation()                   a kept header is used again only once the files clang read for it are checked
+module front::header_table;
+
+import front::ast;
+import front::cimport;
+import std::arena;
+import std::clock;
+import std::format;
+import std::mem;
+
+static Str as_str(char chars[:]) {
+    return chars;
+}
+
+// What the table keeps is allocated by the system's allocator and never freed, whatever allocator is in force: a caller
+// such as `smith lsp` resets its own after each request, and the next file must still find the entry whole.
+static mem::Allocator *enter_shared() {
+    return mem::set_allocator(nullptr);
+}
+
+// The arena that holds what the headers declare, the system's, for the process's life.
+static arena::Arena header_arena;
+static Bool header_arena_made = false;
+
+// The headers this process has read (#2888): one compile of many files reads each header once, and the fixer's passes
+// and files read each once too (#2913). An entry is keyed by
+// all that clang's result depends on: the header as written, how it is written, the importer's folder for a quoted
+// header (an angled one does not look there), and the flags. The key is text compared whole, never a hash alone.
+constexpr Usize shared_headers_max = 512;
+static Str shared_header_keys[shared_headers_max];
+static const ast::Module *shared_header_modules[shared_headers_max];
+static Usize shared_header_count = 0;
+
+// A header's file can change while the process lives (the editor's next request, a test that writes it
+// again), which the key does not see. One command line reads its headers as it starts and does not check; any other
+// entry (each file of `file`, `diagnose`, `hover_at` ...: `enter_file`) starts a new generation, and a header kept
+// from an older one is used only when the files clang read for it (shim/cimport_deps.cpp) are as they were. Those
+// files are listed on the first such use, and a file changed since the header was read (its time is not before the
+// read) drops it then.
+static U64 header_generation = 1;
+
+// Starts a new generation: a header kept from an older one is checked against its files on its next use.
+export void next_generation() {
+    header_generation += 1;
+}
+
+// Keep in step with SmithCimportRequest in shim/cimport.cpp.
+struct DepsRequest {
+    const char *name;
+    I32 quoted;
+    const char *folder;
+    const char *flags;
+};
+
+extern Usize smith_cimport_deps(const DepsRequest *request, char *out, Usize capacity);
+extern I32 smith_cimport_file_state(const char *path, U64 *size, I64 *mtime);
+
+// The files one header read: their paths one after the other, each ending in a NUL, and the state of each.
+struct HeaderFiles {
+    char paths[:];
+    U64 sizes[:];
+    I64 mtimes[:];
+    Bool known; // false: not listed yet, or clang refused the list, or a file was gone
+};
+
+// What a kept header needs for its check: how it was read, when, its files and the generation that last used it.
+struct HeaderKept {
+    DepsRequest request;
+    I64 read_at;
+    HeaderFiles files;
+    U64 generation;
+};
+
+static HeaderKept shared_header_kept[shared_headers_max];
+
+// The files of `request` with their states now, from the allocator in force.
+static HeaderFiles header_files(const DepsRequest *request) {
+    HeaderFiles none = {.known = false};
+    Usize capacity = 1U << 14;
+    char blob[:] = mem::alloc_slice(char, capacity);
+    Usize needed = smith_cimport_deps(request, blob.data, capacity);
+    if (needed == ~(Usize)0) return none;
+    if (needed > capacity) {
+        mem::free(blob.data);
+        blob = mem::alloc_slice(char, needed);
+        needed = smith_cimport_deps(request, blob.data, needed);
+    }
+    Usize count = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] == 0) count += 1;
+    }
+    HeaderFiles files = {.paths = blob[0:needed],
+                         .sizes = mem::alloc_slice(U64, count),
+                         .mtimes = mem::alloc_slice(I64, count),
+                         .known = true};
+    Usize start = 0;
+    Usize k = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] != 0) continue;
+        if (smith_cimport_file_state(&blob.data[start], &files.sizes[k], &files.mtimes[k]) != 0) return none;
+        start = i + 1;
+        k += 1;
+    }
+    return files;
+}
+
+// Whether every file a header read is as it was.
+static Bool files_unchanged(const HeaderFiles *files) {
+    if (!files->known) return false;
+    Usize start = 0;
+    Usize k = 0;
+    for (Usize i = 0; i < countof(files->paths); i++) {
+        if (files->paths[i] != 0) continue;
+        U64 size = 0;
+        I64 mtime = 0;
+        if (smith_cimport_file_state(&files->paths.data[start], &size, &mtime) != 0) return false;
+        if (size != files->sizes[k] || mtime != files->mtimes[k]) return false;
+        start = i + 1;
+        k += 1;
+    }
+    return true;
+}
+
+// Whether kept header `i` still holds for this generation (see `enter_file`).
+static Bool header_holds(Usize i) {
+    HeaderKept *kept = &shared_header_kept[i];
+    if (kept->generation == header_generation) return true;
+    if (!kept->files.known) {
+        mem::Allocator *outside = enter_shared();
+        kept->files = header_files(&kept->request);
+        mem::set_allocator(outside);
+        if (!kept->files.known) return false;
+        for (Usize k = 0; k < countof(kept->files.mtimes); k++) {
+            if (kept->files.mtimes[k] >= kept->read_at) return false;
+        }
+    } else if (!files_unchanged(&kept->files)) {
+        return false;
+    }
+    kept->generation = header_generation;
+    return true;
+}
+
+// Drops kept header `i` (its memory stays: a header is rarely read again).
+static void forget_header(Usize i) {
+    shared_header_count -= 1;
+    shared_header_keys[i] = shared_header_keys[shared_header_count];
+    shared_header_modules[i] = shared_header_modules[shared_header_count];
+    shared_header_kept[i] = shared_header_kept[shared_header_count];
+}
+
+static Str header_key(Str header, Bool angled, Str importer, Str flags) {
+    Str how = "\"";
+    Str folder = importer;
+    if (angled) {
+        how = "<";
+        folder = "";
+    }
+    return as_str(format::push(header, "\n", how, "\n", folder, "\n", flags));
+}
+
+// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang once per process
+// for the same importer's folder and flags (one per line); null when clang cannot read it.
+export const ast::Module *read(Str header, Bool angled, Str importer, Str flags) {
+    Str key = header_key(header, angled, importer, flags);
+    for (Usize i = 0; i < shared_header_count; i++) {
+        if (!mem::equal(shared_header_keys[i], key)) continue;
+        if (header_holds(i)) return shared_header_modules[i];
+        forget_header(i);
+        break;
+    }
+    I64 read_at = clock::now();
+    Str name = as_str(format::push(header));
+    Str folder = as_str(format::push(importer));
+    Str terminated = as_str(format::push(flags));
+    mem::Allocator *outside = enter_shared();
+    if (!header_arena_made) {
+        header_arena = arena::growing(1U << 22, nullptr); // under enter_shared: the system's, for the process's life
+        header_arena_made = true;
+    }
+    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
+    ast::Module *module = nullptr;
+    Str kept_key = "";
+    HeaderKept kept = {.request = {.name = nullptr}};
+    if (countof(got.error) == 0) {
+        module = mem::alloc(ast::Module);
+        module->decls = got.decls;
+        kept_key = as_str(format::push(key));
+        kept = (HeaderKept){.request = {.name = as_str(format::push(name)).data,
+                                        .quoted = angled ? 0 : 1,
+                                        .folder = as_str(format::push(folder)).data,
+                                        .flags = as_str(format::push(flags)).data},
+                            .read_at = read_at,
+                            .files = {.known = false},
+                            .generation = header_generation};
+    }
+    mem::set_allocator(outside);
+    // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it
+    // again.
+    if (module == nullptr) return nullptr;
+    if (shared_header_count < shared_headers_max) {
+        shared_header_keys[shared_header_count] = kept_key;
+        shared_header_modules[shared_header_count] = module;
+        shared_header_kept[shared_header_count] = kept;
+        shared_header_count += 1;
+    }
+    return module;
+}

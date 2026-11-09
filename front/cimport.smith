@@ -31,6 +31,7 @@ constexpr U32 kind_string = 11;     // `Str`: the type of a string macro
 constexpr U32 value_integer = 0;
 constexpr U32 value_floating = 1;
 constexpr U32 value_string = 2;
+constexpr U32 value_extern = 3; // an extern variable (`stdout`): a type and no value
 
 constexpr U32 flag_const = 1;
 constexpr U32 flag_restrict = 2;
@@ -498,7 +499,9 @@ static ast::Decl *constant_decl(const Table *t, U32 index, TypeList types) {
     const Item *item = &t->constants[index];
     ast::Decl *d = placed(from_c(ast::variable(item->name, types[item->type], value_expr(item))),
                           place_of(t, place_constant, index));
-    if (d->kind == .variable) {
+    if (d->kind == .variable && item->kind == value_extern) {
+        d->is_extern = true;
+    } else if (d->kind == .variable) {
         d->kind.variable.is_constexpr = true;
     }
     return d;
