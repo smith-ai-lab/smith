@@ -15,8 +15,8 @@
 //
 //   key(kind, path, named, source)  the key of a read
 //   load(key)                       the stored tree, or null
-//   begin()                         the parses that follow take their memory from a new region (until `end`); false
-//                                   when no region can be had
+//   begin(size)                     the parses that follow, of a source of `size` bytes, take their memory from a new
+//                                   region (until `end`); false when no region can be had
 //   end()                           back to the allocator before `begin`; the region is kept
 //   store(key, tree)                the two regions of the last two `begin`s, the tree of the first: stored when they
 //                                   differ only by their own pointers. The second region is released, the first is
@@ -43,11 +43,16 @@ extern Bool smith_import_region_open(Region *region, Usize reserve);
 extern void smith_import_region_close(Region *region);
 extern void smith_import_region_trim(Region *region);
 extern void *smith_import_region_take(Region *region, Usize size, Usize align);
+extern void smith_import_cache_why(const char *reason);
 extern Bool smith_import_image_store(const char *key, const Region *a, const Region *b, Usize root);
 extern void *smith_import_image_load(const char *key);
 
-// The address space of one region: std's largest module takes some megabytes; committed only as it is used.
-constexpr Usize region_reserve = 1ULL << 32;
+// The address space of one region, committed only as it is used: a tree takes some 66 times its source, and the parse
+// some more for what it throws away. Sized from the source, not the largest module: the count runs each compile under a
+// 6 GB cap on its address space, where two regions of 4 GB each could not be had and nothing was stored.
+constexpr Usize region_floor = 64ULL << 20;
+constexpr Usize region_per_byte = 256;
+constexpr Usize region_ceiling = 1ULL << 32;
 // A block starts this far after its header, which holds its size and the room it has (16: the front end's largest
 // alignment).
 constexpr Usize block_header = 16;
@@ -56,11 +61,19 @@ static Region regions[2];
 static Usize region_count = 0;
 static Region *current = nullptr;
 static mem::Allocator *before_begin = nullptr;
+// Whether a block of the parses since the first `begin` came from the system's allocator because the region was full:
+// the two regions then do not hold the whole tree, and nothing is stored.
+static Bool spilled = false;
 
 // Whether the cache is on for this process (a folder for this smith's entries).
 export Bool enabled() {
     const char *folder = smith_import_cache_folder();
     return folder != nullptr && folder[0] != 0;
+}
+
+static Bool in_region(const void *block) {
+    const U8 *at = (const U8 *)block;
+    return current != nullptr && at >= current->base && at < current->base + current->used;
 }
 
 static Usize room_of(const void *block) {
@@ -71,7 +84,12 @@ static void *region_alloc(mem::Allocator *self, Usize size, Usize align) {
     (void)self;
     if (align > block_header) return nullptr;
     U8 *raw = (U8 *)smith_import_region_take(current, size + block_header, block_header);
-    if (raw == nullptr) return nullptr;
+    if (raw == nullptr) {
+        // A full region never fails the compile: the block is the system's (its free and realloc go there, since the
+        // region does not own it), and the tree is not stored.
+        spilled = true;
+        return mem::from_parent(nullptr, size, align);
+    }
     *(Usize *)raw = size;
     *(Usize *)(raw + 8) = size;
     return raw + block_header;
@@ -100,7 +118,7 @@ static void *region_realloc(mem::Allocator *self, void *block, Usize size, Usize
     if (moved == nullptr) return nullptr;
     Usize kept = old < size ? old : size;
     mem::copy(moved[0:kept], at[0:kept]);
-    *(Usize *)(moved - block_header) = size;
+    if (in_region(moved)) *(Usize *)(moved - block_header) = size; // a spilled block has no header
     return moved;
 }
 
@@ -111,8 +129,7 @@ static void region_free(mem::Allocator *self, void *block) {
 
 static Bool region_owns(mem::Allocator *self, const void *block) {
     (void)self;
-    const U8 *at = (const U8 *)block;
-    return current != nullptr && at >= current->base && at < current->base + current->used;
+    return in_region(block);
 }
 
 static Usize region_size(mem::Allocator *self, const void *block) {
@@ -139,9 +156,18 @@ export const ast::Module *load(Str key) {
     return tree;
 }
 
-export Bool begin() {
+static Usize reserve_for(Usize size) {
+    if (size >= (region_ceiling - region_floor) / region_per_byte) return region_ceiling;
+    return region_floor + size * region_per_byte;
+}
+
+export Bool begin(Usize size) {
     if (region_count == 2) return false;
-    if (!smith_import_region_open(&regions[region_count], region_reserve)) return false;
+    if (region_count == 0) spilled = false;
+    if (!smith_import_region_open(&regions[region_count], reserve_for(size))) {
+        smith_import_cache_why("no region could be reserved (a cap on the address space?)");
+        return false;
+    }
     current = &regions[region_count];
     region_count += 1;
     before_begin = mem::set_allocator(&region_allocator);
@@ -163,7 +189,8 @@ export void forget() {
 export Bool store(Str key, const ast::Module *tree) {
     contract::trusted(); // the regions are the runtime's
     Bool stored = false;
-    if (region_count == 2 && tree != nullptr) {
+    if (spilled) smith_import_cache_why("a region was full");
+    if (region_count == 2 && tree != nullptr && !spilled) {
         Usize root = (Usize)((const U8 *)tree - regions[0].base);
         stored = smith_import_image_store(key.data, &regions[0], &regions[1], root);
     }
