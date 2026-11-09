@@ -703,6 +703,16 @@ jobs:
             code=0
             "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
             echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
+            # where a stage's time went (#2985): lint's own line (files run and cached, run and setup seconds), and
+            # prove's (build and proof seconds, groups) with the sum of its groups' `N proved, M failed, K cached`
+            case $name in
+              lint) grep 'smith lint: linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true ;;
+              prove)
+                grep 'smith prove: [0-9]* groups' "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+                awk '/^[0-9]+ proved, [0-9]+ failed/ { p += $1; f += $3; for (i = 1; i <= NF; i++) if ($i == "cached") c += $(i - 1) }
+                     END { printf "prove: %d functions proved (%d reused from the cache, %d failed)\n", p, c, f }' \
+                  "$RUNNER_TEMP/prove.log" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            esac
             if [ "$code" != 0 ]; then
               tail -n 60 "$RUNNER_TEMP/$name.log"
               echo "FAIL $name"
