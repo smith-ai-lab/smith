@@ -6,6 +6,9 @@ description: >
   immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 3 newest
   commits are kept, like the step cache (#2772). Only a merge queue run and the nightly save (what they ran is the tree
   that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
+  The release also holds the job's import cache (`~/.cache/smith/imports`, #2891) as `smith-imports-<os>.tar.gz`, even
+  when the job ran no test, and the job's import-cache hits are printed first (`./.github/actions/test-cache/report`),
+  in every run.
 
 inputs:
   os:
@@ -14,10 +17,14 @@ inputs:
   name:
     description: this job's part of the commit's stores, unique in the run (e.g. "linux-2of3", "macos")
     required: true
+  tests:
+    description: '"false" publishes only the import cache (a job that runs no test, the count)'
+    default: "true"
 
 runs:
   using: composite
   steps:
+    - uses: ./.github/actions/test-cache/report
     - name: Publish the test-result store
       if: github.event_name == 'merge_group' || github.event_name == 'schedule'
       continue-on-error: true
@@ -26,21 +33,36 @@ runs:
         GH_TOKEN: ${{ github.token }}
         OS: ${{ inputs.os }}
         NAME: ${{ inputs.name }}
+        TESTS: ${{ inputs.tests }}
       run: |
         set -eu
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
+        # the import cache of smith run by hand and of smith run inside a test (a scratch project's XDG_CACHE_HOME,
+        # tests/scratch.smith), merged: identities keep them apart, and one key is the same bytes in both
+        imports="$RUNNER_TEMP/imports"; mkdir -p "$imports"
+        for src in "${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports" "${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; do
+          [ -d "$src" ] && cp -a "$src/." "$imports/"
+        done
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
-        n=$( [ -d "$dir" ] && find "$dir" -type f | wc -l || echo 0)
-        if [ "$n" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+        n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f | wc -l || echo 0)
+        # the import cache prunes itself (other identities unused for 14 days, then SMITH_IMPORT_CACHE_MAX)
+        m=$( [ -d "$imports" ] && find "$imports" -type f -path '*/[hm]/*' | wc -l || echo 0)
+        if [ "$n" -eq 0 ] && [ "$m" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
         out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
-        tar -C "$dir" -c . | gzip -1 >"$out/smith-tests-$OS.tar.gz"
+        assets=("$out/smith-tests.sha")
+        if [ "$n" -gt 0 ]; then
+          tar -C "$dir" -c . | gzip -1 >"$out/smith-tests-$OS.tar.gz"; assets+=("$out/smith-tests-$OS.tar.gz")
+        fi
+        if [ "$m" -gt 0 ]; then
+          tar -C "$imports" -c . | gzip -1 >"$out/smith-imports-$OS.tar.gz"; assets+=("$out/smith-imports-$OS.tar.gz")
+        fi
         echo "$GITHUB_SHA" >"$out/smith-tests.sha"
         tag="test-cache-${GITHUB_SHA:0:7}-$NAME"
         if ! gh release view "$tag" >/dev/null 2>&1; then
-          gh release create "$tag" "$out/smith-tests-$OS.tar.gz" "$out/smith-tests.sha" --prerelease --latest=false \
+          gh release create "$tag" "${assets[@]}" --prerelease --latest=false \
             --target "$GITHUB_SHA" --title "test cache $tag" \
-            --notes "The test-result store (#2686) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
+            --notes "The test-result store (#2686) and import cache (#2891) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
         fi
         # the 3 newest commits' stores stay; an older commit's go, every job's (another job may delete one first)
         # shellcheck disable=SC2016
@@ -51,4 +73,4 @@ runs:
           while read -r old; do
             gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
           done
-        echo "test store: published $tag, $n entries, $(du -h "$out/smith-tests-$OS.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "test store: published $tag, $n test entries, $m import entries, $(du -ch "${assets[@]}" | tail -1 | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"

@@ -7,6 +7,11 @@ description: >
   entry that passed. A missing or unreadable release only leaves the store empty: every test runs. A cache entry never
   changes a result and a failure is never stored. `fresh: true` (the nightly full run) restores nothing, so every test
   runs and the run stores them all.
+  The same releases hold the import cache (`~/.cache/smith/imports`, #2891), `smith-imports-<os>.tar.gz`: std's parse
+  trees and the C headers' declarations, in a folder per smith identity (a smith whose front end differs reads none).
+  This action extracts every one of the newest commit that published one, and sets SMITH_IMPORT_CACHE_LOG, from which
+  `./.github/actions/test-cache/save` (or `./.github/actions/test-cache/report`) prints the job's hits. `fresh: true`
+  restores none of it either.
 
 inputs:
   os:
@@ -15,11 +20,19 @@ inputs:
   fresh:
     description: '"true" restores nothing'
     default: "false"
+  tests:
+    description: '"false" restores only the import cache (a job that runs no test, the count)'
+    default: "true"
 
 runs:
   using: composite
   steps:
+    - name: The import-cache log
+      shell: bash
+      # every smith of the job appends its import-cache counts here (#2891); the save or report step prints them
+      run: echo "SMITH_IMPORT_CACHE_LOG=$RUNNER_TEMP/import-cache.log" >>"$GITHUB_ENV"
     - name: Restore the test-result store
+      if: inputs.tests == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -46,4 +59,34 @@ runs:
           echo "test store: restored $(find "$dir" -type f | wc -l) entries from $got of $(printf '%s\n' "$urls" | grep -c .) stores" | tee -a "$GITHUB_STEP_SUMMARY"
         else
           echo "test store: none (every test runs)" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
+    - name: Restore the import cache
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OS: ${{ inputs.os }}
+        FRESH: ${{ inputs.fresh }}
+      run: |
+        if [ "$FRESH" = true ]; then echo "import cache: fresh run, nothing restored" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+        dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports"; mkdir -p "$dir"
+        # the newest commit that published an import cache of this OS, and every job's of it (each holds what it
+        # restored plus what its own processes stored, so the sets overlap; the same entry is the same bytes)
+        urls=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=60" --jq "
+          [.[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
+            |{sha: .tag_name[11:18], at: .created_at, urls: [.assets[]|select(.name==\"smith-imports-$OS.tar.gz\")|.url]}
+            |select(.urls|length > 0)] as \$r
+          | (\$r|sort_by(.at)|last|.sha) as \$s | \$r[]|select(.sha == \$s)|.urls[]" 2>/dev/null || true)
+        got=0
+        for url in $urls; do
+          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
+            tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" && got=$((got + 1))
+        done
+        # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
+        if [ "$got" -gt 0 ]; then
+          tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; mkdir -p "$tests"; cp -a "$dir/." "$tests/"
+        fi
+        if [ "$got" -gt 0 ]; then
+          echo "import cache: restored $(find "$dir" -type f -path '*/[hm]/*' | wc -l) entries ($(du -sh "$dir" | cut -f1)) from $got sets" | tee -a "$GITHUB_STEP_SUMMARY"
+        else
+          echo "import cache: none (std and the headers are read)" | tee -a "$GITHUB_STEP_SUMMARY"
         fi

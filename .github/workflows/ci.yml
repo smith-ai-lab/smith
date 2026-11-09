@@ -1119,7 +1119,7 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       count: ${{ steps.plan.outputs.count }}
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the import cache this job made (#2891)
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -1133,6 +1133,11 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
+        # count's jobs publish
+        with:
+          tests: "false"
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1246,6 +1251,13 @@ jobs:
           path: .smith/frontend-coverage/fixed
           compression-level: 1
           retention-days: 3
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count`, queue runs only, and the hits of the fix and of a count done here
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count
+          tests: "false"
 
   frontend-coverage-shard:
     # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
@@ -1262,7 +1274,7 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.frontend-coverage-fix.outputs.shards) }}
     permissions:
-      contents: read
+      contents: write # test-cache/save: `gh release create` of the import cache this shard made (#2891)
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
@@ -1276,6 +1288,10 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - uses: ./.github/actions/test-cache
+        # the import cache only (#2891), of the release smith's identity
+        with:
+          tests: "false"
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
@@ -1315,6 +1331,13 @@ jobs:
           path: ${{ runner.temp }}/coverage
           if-no-files-found: ignore
           retention-days: 30
+      - name: Publish the import cache
+        # `test-cache-<sha7>-count-<k>`, and the shard's hits
+        if: always()
+        uses: ./.github/actions/test-cache/save
+        with:
+          name: count-${{ matrix.shard }}
+          tests: "false"
 
   frontend-coverage:
     # the merge of the eight shards of `frontend-coverage-shard` (#2697): their tables are joined in the order of the files
