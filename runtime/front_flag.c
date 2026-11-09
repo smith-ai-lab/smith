@@ -11,7 +11,7 @@
 #include "main.h"
 #include "mcp_unit.h"
 #include "package.h"
-#include "test_cache.h"
+#include "self_digest.h"
 
 #ifndef SMITH_CORE
 
