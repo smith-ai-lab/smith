@@ -31,6 +31,13 @@ inputs:
       shards measure a release smith, so the count is not slowed by the dev profile
     default: dev
 
+  step-cache-max:
+    description: >
+      the size the step cache is kept within (SMITH_CACHE_MAX): the least recently used results go past it, with their
+      manifests, at the start of a build. The one place the cap is written (#2833): `warm` saves the folder whole, so
+      it is what every job restores. A build reads about 20 MB of it, so 300M keeps about 15 builds' worth
+    default: 300M
+
   stage0:
     description: >
       the release to build with instead of the newest (`stage0-<commit>`), waited for and never replaced; main's `warm` names its
@@ -122,8 +129,8 @@ runs:
       if: inputs.artifact == ''
       shell: bash
       env:
-        # the cache is saved whole, so it is kept small: the least recently used results go past this
-        SMITH_CACHE_MAX: 1G
+        # the cache is saved whole, so it is kept small: the least recently used results go past this (#2833)
+        SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
       run: |
         start=$(date +%s)
         # the output is kept to count the steps the step cache served (#2833): "N steps, M cached"
@@ -145,7 +152,7 @@ runs:
       if: inputs.artifact == '' && inputs.tests == 'true'
       shell: bash
       env:
-        SMITH_CACHE_MAX: 1G
+        SMITH_CACHE_MAX: ${{ inputs.step-cache-max }}
       run: |
         start=$(date +%s)
         # `--list` builds the runner and every test program (of the given `test-flags` part) and runs none of them. The compiler's errors go to stdout
