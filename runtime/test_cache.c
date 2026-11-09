@@ -111,7 +111,7 @@ static int smith_tc_hex_value(char c) {
 // and the key of every test held the build-id. Here both are blanked (they are zeros in what is hashed), so the digest
 // changes with the code smith was built from and not with the commit it happens to carry. A file that does not hold
 // them (or when this smith knows no commit) is hashed whole.
-static bool smith_tc_hash_self(const char *path, char hex[smith_sha256_hex_size]) {
+bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return false;
     struct stat info;
@@ -594,7 +594,7 @@ static int smith_tc_check(const char *folder) {
         return 0;
     }
     const char *self = getenv("SMITH_SELF");
-    if (self != nullptr && self[0] != '\0' && !smith_tc_hash_self(self, smith_tc_self_hex)) smith_tc_self_hex[0] = '\0';
+    if (self != nullptr && self[0] != '\0' && !smith_self_digest(self, smith_tc_self_hex)) smith_tc_self_hex[0] = '\0';
     smith_tc_make_base();
     smith_tc_index_functions();
     for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
