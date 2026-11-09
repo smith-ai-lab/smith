@@ -661,46 +661,56 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the proof cache
-        # main's `warm` saves it (#2237): a proof is keyed by the IR the prover checks, so only what changed is proved again
+      - name: Restore the lint and proof caches
+        # main's `warm` saves ONE cache holding both folders (#2237). `actions/cache` puts the path list in the cache
+        # version, so a restore naming one folder never finds it ("Cache not found" even for the prefix, #2954): every
+        # restore of `smith-lintprove-` names the same two paths, in the same order, as `warm`'s save.
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/proofs
-          key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
-          restore-keys: smith-lintprove-${{ runner.os }}-
-      - name: Restore the lint cache
-        # a PR check lints here too, in place of `check-lint` (#2856)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Checks
         shell: bash
         run: |
           failed=0
-          stages=("fmt fmt --dry-run --Werror" "docs docs" "prove prove")
-          # a PR check is at most 2 Linux jobs at once (#2856): lint runs here after the others, not in `check-lint`.
-          # The queue keeps the two jobs side by side, the shorter critical path (lead, 2026-11-08, #2833)
-          [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && stages+=("lint lint")
-          for stage in "${stages[@]}"; do
-            set -- $stage
-            name=$1
+          # one stage: its log, its `took` line and its exit status in files, since a stage may run in the background
+          stage() { # stage <name> <smith args...>
+            local name=$1 start=$SECONDS code=0
             shift
-            start=$SECONDS
-            code=0
             "$SMITH" "$@" >"$RUNNER_TEMP/$name.log" 2>&1 || code=$?
-            echo "took $name $((SECONDS - start))s (exit $code)" | tee -a "$GITHUB_STEP_SUMMARY"
-            if [ "$code" != 0 ]; then
-              tail -n 60 "$RUNNER_TEMP/$name.log"
-              echo "FAIL $name"
-              echo "::error::smith $name failed"
+            echo "took $name $((SECONDS - start))s (exit $code)" >"$RUNNER_TEMP/$name.took"
+            echo "$code" >"$RUNNER_TEMP/$name.code"
+          }
+          report() { # report <name>
+            tee -a "$GITHUB_STEP_SUMMARY" <"$RUNNER_TEMP/$1.took"
+            if [ "$(cat "$RUNNER_TEMP/$1.code")" != 0 ]; then
+              tail -n 60 "$RUNNER_TEMP/$1.log"
+              echo "FAIL $1"
+              echo "::error::smith $1 failed"
               failed=1
             else
-              echo "ok $name"
+              echo "ok $1"
             fi
-          done
+          }
+          # fmt first, then docs; prove and lint run at the same time (#2954). A PR check is at most 2 Linux jobs at once
+          # (#2856): lint runs here in place of `check-lint`. The queue keeps the two jobs side by side (lead, 2026-11-08, #2833)
+          stage fmt fmt --dry-run --Werror; report fmt
+          stage docs docs; report docs
+          stage prove prove &
+          pids=$!
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            stage lint lint &
+            pids="$pids $!"
+          fi
+          wait $pids
+          report prove
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            report lint
+            grep -h 'linted [0-9]* files' "$RUNNER_TEMP/lint.log" | tee -a "$GITHUB_STEP_SUMMARY" || true
+          fi
           exit $failed
 
   check-lint:
@@ -725,11 +735,13 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux
-      - name: Restore the lint cache
-        # main's `warm` saves it (#2237): an entry is keyed by the lint identity and the file's content (#2236)
+      - name: Restore the lint and proof caches
+        # the same two paths as `warm`'s save: the path list is part of the cache version (#2954)
         uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/smith/lint
+          path: |
+            ~/.cache/smith/lint
+            ~/.cache/smith/proofs
           key: smith-lintprove-${{ runner.os }}-${{ github.sha }}
           restore-keys: smith-lintprove-${{ runner.os }}-
       - name: Lint
