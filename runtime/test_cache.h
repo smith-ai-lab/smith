@@ -2,5 +2,6 @@
 #pragma once
 
 #include "core.h"
+#include "package.h"
 
 int smith_tc_main(int count, char **args);
