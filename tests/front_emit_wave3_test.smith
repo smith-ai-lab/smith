@@ -223,6 +223,7 @@ export void test_front_emit_wave3_type_of_node_needs_the_checker_on_a_tree_built
     test::check_equal(made == .error, true);
     if (made == .error) {
         test::check_equal(has(made.error.message, "needs the checker's types"), true);
+        test::check_equal(has(made.error.message, "none for the module, at an expression of kind `name`"), true);
         emit::free_error(made.error);
     }
 }
