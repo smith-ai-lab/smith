@@ -21,7 +21,7 @@ effective one and makes it the project's (`smith fmt --dump-config > .clang-form
 **Project `smith lint` is a gate over every `.smith` source** (issue #424, `smith_lint_project`, runtime/verbs.c): the
 build's compiles (with their own command from `.smith/compile_commands.json`) and every other `.smith` file git sees
 that `.clang-format-ignore` does not name (the one list of test inputs, generated and copied files; clang-tidy reads the
-nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files (R run, C cached, T s, setup S s)` (`smith check`:
+nearest compile's command for it). A finding fails it, the last line is `smith lint: linted N files (R run, C cached, T s, setup S s: build info B, needs W, plan and hash H)` (`smith check`:
 `lint ok: N files`), and a project with `.smith` sources that lints none fails. A stage0, whose clang cannot read
 `.smith`, leaves them out and says so.
 

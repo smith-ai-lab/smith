@@ -607,6 +607,8 @@ static size_t smith_lint_unbuilt(const char **files, size_t count, size_t *sourc
 // their compile (.smith/compile_commands.json) and are stored when it completes. The last line says how many were
 // linted and how many of those ran. Returns the exit status.
 static uint64_t smith_lint_started_ms; // when `smith lint` began: the line says how long all before the run took
+static uint64_t smith_lint_info_ms;    // when .smith/build.info was made, and when what the files wait for was built:
+static uint64_t smith_lint_needs_ms;   // the line splits the setup at these (#2995)
 
 static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
     uint64_t began = smith_account_now_ms();
@@ -625,6 +627,7 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
             run->order[misses++] = i;
         }
     }
+    uint64_t planned = smith_account_now_ms();
     smith_lint_argv[0] = (char *)self;
     smith_lint_argv[1] = (char *)"lint";
     smith_lint_argv[2] = (char *)"--quiet";
@@ -642,8 +645,14 @@ static int smith_lint_run(SmithLintRun *run, size_t count, const char *self) {
             fprintf(stderr, "smith lint:   and %zu more\n", failed - smith_lint_failure_count);
     }
     uint64_t took = smith_account_now_ms() - began;
-    fprintf(stderr, "smith lint: linted %zu files (%zu run, %zu cached, %.1f s, setup %.1f s)\n", count, misses,
-            count - misses, (double)took / 1000.0, (double)(began - smith_lint_started_ms) / 1000.0);
+    // setup: the build info (and the compile database), what the compiles wait for, then the keys and the cache reads
+    fprintf(stderr,
+            "smith lint: linted %zu files (%zu run, %zu cached, %.1f s, setup %.1f s: build info %.1f, needs %.1f, "
+            "plan and hash %.1f)\n",
+            count, misses, count - misses, (double)took / 1000.0, (double)(began - smith_lint_started_ms) / 1000.0,
+            (double)(smith_lint_info_ms - smith_lint_started_ms) / 1000.0,
+            (double)(smith_lint_needs_ms - smith_lint_info_ms) / 1000.0,
+            (double)(planned - smith_lint_needs_ms) / 1000.0);
     return failed > 0 ? 1 : 0;
 }
 
@@ -893,6 +902,7 @@ int smith_lint_project(int count, char **args, const char *self) {
     const char *const targets[] = {"smith_info", nullptr};
     int status = smith_verb_build(self, split, targets, false);
     if (status != 0) return status;
+    smith_lint_info_ms = smith_account_now_ms();
     const SmithInfo *info = smith_info_read("smith lint");
     static const char *files[smith_verbs_files_max + 1];
     static const char *flags[smith_verbs_files_max + 1]; // of each file's compile; the unbuilt ones have none
@@ -932,6 +942,7 @@ int smith_lint_project(int count, char **args, const char *self) {
     }
     status = smith_lint_prepare(self, split, info, files, flags, &files_count);
     if (status != 0) return status;
+    smith_lint_needs_ms = smith_account_now_ms();
     if (files_count == 0) {
         fprintf(stderr, "smith lint: linted 0 files\n");
         return 0;
