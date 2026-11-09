@@ -4,8 +4,9 @@
 # (seconds, one small runner) starts `ci.yml` with `workflow_dispatch` on the PR's head branch for the PRs that wait
 # longest, while
 #   - no merge queue job waits for a runner, and
-#   - the Linux jobs of the running PR checks plus the new one stay within the budget (BUDGET below: 6 of the 20; a
-#     change is a one-line PR, lead 2026-11-08).
+#   - the Linux jobs of the running PR checks plus the new one stay within the budget: 20, minus the live Linux jobs
+#     of merge_group runs and of push runs on main, minus a reserve of 4 for the queue's next group, never below
+#     PER_RUN (computed on every pass, #2952).
 # A PR that cannot start now is not running and holds no runner: the next pass starts it. A pass runs on every pull
 # request event, when any `ci` run ends (room freed) and every 5 minutes as the backstop, and scans every open PR, so a
 # pass that is dropped (one runs, one waits) loses nothing. The dispatched run's last job is `ci`, the required check,
@@ -40,8 +41,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      # the most Linux jobs of pull request checks at once, of the org's 20 Linux runners
-      BUDGET: "6"
+      # the org's Linux runners, and the ones kept free for the merge queue's next group to start (#2952)
+      TOTAL: "20"
+      RESERVE: "4"
       # the most Linux jobs of one PR check at once (the build-and-test job and the checks job; `changes` and `ci` are
       # short and run before and after them)
       PER_RUN: "2"
@@ -52,7 +54,20 @@ jobs:
           set -u
           api() { gh api -X GET "$@"; }
           log() { echo "$*" | tee -a "$GITHUB_STEP_SUMMARY"; }
-          case "$BUDGET" in ''|*[!0-9]*) BUDGET=6 ;; esac
+          # live (not completed) Linux jobs of the ci.yml runs of one event; 0 when a call fails
+          linux_jobs() {
+            local total=0 id n
+            for status in queued in_progress waiting pending requested; do
+              for id in $(api "repos/$REPO/actions/workflows/ci.yml/runs" -f event="$1" -f status="$status" \
+                  -f per_page=100 --jq '.workflow_runs[].id' 2>/dev/null); do
+                n=$(api "repos/$REPO/actions/runs/$id/jobs" -f filter=latest -f per_page=100 \
+                  --jq '[.jobs[] | select(.status != "completed") | select(.labels | index("ubuntu-latest"))] | length' \
+                  2>/dev/null || echo 0)
+                total=$((total + ${n:-0}))
+              done
+            done
+            echo "$total"
+          }
 
           # A queue job that waits for a runner stops every start: queue runs come first. A job is listed only once
           # the jobs it needs are done, so `queued` means it waits for a runner (#2848).
@@ -85,6 +100,12 @@ jobs:
               used=$((used + n))
             done
           done
+
+          # The budget of the PR checks is what the queue and main leave idle, minus a reserve for the queue's next group,
+          # and never below one check's share (#2952).
+          queue_jobs=$(linux_jobs merge_group); main_jobs=$(linux_jobs push)
+          BUDGET=$((TOTAL - queue_jobs - main_jobs - RESERVE))
+          [ "$BUDGET" -lt "$PER_RUN" ] && BUDGET=$PER_RUN
 
           # The open PRs to main from this repository, longest waiting first, with their head shas.
           prs=$(api "repos/$REPO/pulls" -f state=open -f base=main -f sort=updated -f direction=asc -f per_page=100 \
@@ -133,7 +154,8 @@ jobs:
               fresh="$fresh $pr:$sha"
             fi
           done
-          log "ci-dispatch: budget $BUDGET, used $used, queue job waiting: $queue_waits, started $started, still waiting $waiting"
+          startedlist=$(for i in $fresh; do printf '#%s ' "${i%%:*}"; done)
+          log "ci-dispatch: budget $BUDGET ($TOTAL - queue $queue_jobs - main $main_jobs - reserve $RESERVE), used $used, queue job waiting: $queue_waits, started ${startedlist:-waiting} (started $started, still waiting $waiting)"
 
           # A dispatched run is listed only about 20 s after the call (#2873: dispatched 05:27:38Z, created 05:27:58Z).
           # A pass inside that window would see no live run and no `ci`, and dispatch the head again; the second run
