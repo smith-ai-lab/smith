@@ -141,19 +141,22 @@ jobs:
                 echo "queue: $(queue_order)" ;;
               cancel-pr-runs)
                 local n=0 run pr files
-                for run in $(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&status=queued&per_page=100" --paginate --jq '.workflow_runs[] | "\(.id):\(.pull_requests[0].number // 0)"'); do
-                  pr=${run#*:}
+                # a PR check is a workflow_dispatch run (#2856), whose run carries no PR number:
+                # the PR is found by the run's branch. A force-cancelled check leaves no `ci`, so ci-dispatch starts it
+                # again when there is room
+                for run in $(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=workflow_dispatch&status=queued&per_page=100" --paginate --jq '.workflow_runs[] | "\(.id):\(.head_branch)"'); do
+                  pr=$(gh api "repos/$REPO/pulls?head=${REPO%/*}:${run#*:}&state=open" --jq '.[0].number // 0')
                   if [ "$pr" != 0 ] && gh api "repos/$REPO/pulls/$pr/files" --paginate --jq '.[].filename' | grep -q '^\.github/'; then
                     continue
                   fi
-                  gh api -X POST "repos/$REPO/actions/runs/${run%%:*}/cancel" --silent && n=$((n + 1))
+                  gh api -X POST "repos/$REPO/actions/runs/${run%%:*}/force-cancel" --silent && n=$((n + 1))
                 done
                 echo "cancelled $n" ;;
               rerun-failed)
                 needs_pr
                 local sha run_id
                 sha=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha) || return 1
-                run_id=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$sha&per_page=1" --jq '.workflow_runs[0].id // empty') || return 1
+                run_id=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=$sha&per_page=1" --jq '.workflow_runs[0].id // empty') || return 1
                 if [ -z "$run_id" ]; then echo "no-run"; return 1; fi
                 gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" --silent && echo "rerun $run_id" ;;
               set-build-entries)
