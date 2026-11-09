@@ -607,8 +607,8 @@ export void test_build_step_cache_the_header_pass_lists_what_it_read() {
 }
 
 // The same step as the build writes it: the compiler's identity file is an implicit input, so the step runs after a new
-// compiler (#3002). The key holds the compiler already, so that file's bytes (its path, size and time, new in every job)
-// are no part of it: a second folder whose file differs is still served.
+// compiler (#3002). The key holds the compiler already, so that file's bytes (its path, size and time, new in every
+// job) are no part of it: a second folder whose file differs is still served.
 constexpr const char *header_compiler_manifest =
     "ninja_required_version = 1.10\nbuilddir = .smith\nrule cc\n  command = $cmd\n"
     "build api.h: cc api.smith | .smith/compiler/0123456789abcdef\n"
