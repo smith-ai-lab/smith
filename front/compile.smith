@@ -290,6 +290,51 @@ static Str shared_module_sources[shared_modules_max];
 static const ast::Module *shared_module_trees[shared_modules_max];
 static Usize shared_module_count = 0;
 
+// What the table keeps lives in an arena of its own for the life of the process, never in the allocator in force: a
+// caller such as `smith lsp` resets that one after each request, and the next file must still find the entry whole.
+static arena::Arena shared_memory;
+static arena::ArenaAllocator shared_allocator;
+static Bool shared_memory_made = false;
+
+// The arena's chunks come from the system's allocator, not the one in force: while the arena's own allocator is in
+// force, a chunk taken from it would ask the arena again.
+static void *system_alloc(c::SmithAllocator *self, Usize size, Usize align) {
+    (void)self;
+    return mem::from_parent(nullptr, size, align);
+}
+
+static void *system_realloc(c::SmithAllocator *self, void *block, Usize size, Usize align) {
+    (void)self;
+    (void)block;
+    (void)size;
+    (void)align;
+    return nullptr; // the arena never resizes a chunk
+}
+
+static void system_free(c::SmithAllocator *self, void *block) {
+    (void)self;
+    mem::to_parent(nullptr, block);
+}
+
+static Bool system_owns(c::SmithAllocator *self, const void *block) {
+    (void)self;
+    (void)block;
+    return false;
+}
+
+static c::SmithAllocator system_backing = {
+    .alloc = system_alloc, .realloc = system_realloc, .free = system_free, .owns = system_owns, .size = nullptr};
+
+// Makes the shared arena the allocator in force and returns the one that was; `mem::set_allocator` gives it back.
+static mem::Allocator *enter_shared() {
+    if (!shared_memory_made) {
+        shared_memory = arena::growing(1U << 22, &system_backing);
+        shared_allocator = arena::allocator(&shared_memory);
+        shared_memory_made = true;
+    }
+    return mem::set_allocator(&shared_allocator.base);
+}
+
 static Str roots_key(roots::Roots named_by) {
     return as_str(format::push(named_by.source, "\n", named_by.library, "\n", named_by.local));
 }
@@ -333,22 +378,29 @@ static const ast::Module *load_embedded(Str dotted) {
     Str source = found[0:size];
     const ast::Module *shared = shared_module(path, "embedded", source);
     if (shared != nullptr) return shared;
+    mem::Allocator *outside = enter_shared();
+    Str kept_path = as_str(format::push(path));
+    Str kept_name = as_str(format::push(name));
     parser::Parsed parsed =
-        starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
-    if (countof(parsed.errors) > 0) {
+        starts_with_module(source) ? parser::parse_file(kept_path, source) : parser::parse_new(kept_path, source);
+    ast::Module *copy = nullptr;
+    if (countof(parsed.errors) == 0) {
+        ast::Identifier parts[:] = {};
+        parts = mem::realloc(parts, 2);
+        Str lead = "std";
+        parts[0] = (ast::Identifier){.text = lead};
+        parts[1] = (ast::Identifier){.text = kept_name};
+        copy = mem::alloc(ast::Module);
+        *copy = parsed.module;
+        copy->name.segments = parts;
+    }
+    mem::set_allocator(outside);
+    if (copy == nullptr) {
         types::set_load_failure(as_str(
             format::push(path, ":", position(source, parsed.errors[0].span.start), ": ", parsed.errors[0].message)));
         return nullptr;
     }
-    ast::Identifier parts[:] = {};
-    parts = mem::realloc(parts, 2);
-    Str lead = "std";
-    parts[0] = (ast::Identifier){.text = lead};
-    parts[1] = (ast::Identifier){.text = name};
-    ast::Module *copy = mem::alloc(ast::Module);
-    *copy = parsed.module;
-    copy->name.segments = parts;
-    share_module(path, "embedded", source, copy);
+    share_module(kept_path, "embedded", source, copy); // the source is the program's own, for its whole life
     return copy;
 }
 
@@ -406,18 +458,28 @@ static const ast::Module *read_module(const char *dotted) {
             remember_module(relative, path, source);
             return shared;
         }
-        parser::Parsed parsed =
-            starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
-        if (countof(parsed.errors) > 0) {
+        mem::Allocator *outside = enter_shared();
+        Str kept_path = as_str(format::push(path));
+        Str kept_named = as_str(format::push(named));
+        Str kept_source = as_str(format::push(source));
+        parser::Parsed parsed = starts_with_module(kept_source) ? parser::parse_file(kept_path, kept_source)
+                                                                 : parser::parse_new(kept_path, kept_source);
+        Bool parses = countof(parsed.errors) == 0;
+        Bool named_well = parses && countof(name_module(&parsed.module, kept_path, named_by)) == 0;
+        ast::Module *copy = nullptr;
+        if (named_well) {
+            copy = mem::alloc(ast::Module);
+            *copy = parsed.module;
+        }
+        mem::set_allocator(outside);
+        if (!parses) {
             types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
                                                         parsed.errors[0].message)));
             return nullptr;
         }
-        if (countof(name_module(&parsed.module, path, named_by)) > 0) return nullptr;
-        ast::Module *copy = mem::alloc(ast::Module);
-        *copy = parsed.module;
+        if (copy == nullptr) return nullptr;
         remember_module(relative, path, source);
-        share_module(path, named, source, copy);
+        share_module(kept_path, kept_named, kept_source, copy);
         return copy;
     }
     return load_embedded(relative);
@@ -468,13 +530,20 @@ static const ast::Module *read_header(Str header, Bool angled) {
         header_arena_made = true;
     }
     Str terminated = as_str(format::push(flags));
+    mem::Allocator *outside = enter_shared();
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
+    ast::Module *module = nullptr;
+    Str kept_key = "";
+    if (countof(got.error) == 0) {
+        module = mem::alloc(ast::Module);
+        module->decls = got.decls;
+        kept_key = as_str(format::push(key));
+    }
+    mem::set_allocator(outside);
     // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it again.
-    if (countof(got.error) > 0) return nullptr;
-    ast::Module *module = mem::alloc(ast::Module);
-    module->decls = got.decls;
+    if (module == nullptr) return nullptr;
     if (shared_header_count < shared_headers_max) {
-        shared_header_keys[shared_header_count] = key;
+        shared_header_keys[shared_header_count] = kept_key;
         shared_header_modules[shared_header_count] = module;
         shared_header_count += 1;
     }
