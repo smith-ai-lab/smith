@@ -55,7 +55,8 @@ no shell feature) is served from `<cache>/smith/steps` when a build has made it 
 Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `SmithEdge`, `SmithJob`), which move to
 `.smith` with the executor (#45); its one pure part, SHA-256, is `runtime/package.c`'s.
 - **Two levels, as ccache's direct mode.** The inputs of a compile are known only after it ran, so a *manifest*
-  `m/<xx>/<key>` (key = SHA-256 of the command with the folder a token, the compiler's build-id or LC_UUID, the
+  `m/<xx>/<key>` (key = SHA-256 of the command with the folder a token, the compiler's build-id or LC_UUID (the smith that runs the build, when it is the compiler: its digest with its
+  commit and build-id blanked, so a stage0 of another commit with the same code is the same compiler, #2833), the
   environment (`SMITH_LANG_FLAGS`, `SMITH_LANG_INPUTS`, `SDKROOT`, `SMITH_CLANG`, `CPATH`, ...) and the content of the
   step's explicit and implicit inputs) keeps up to 8 *variants*: the files a compile read and a spec of each. A *result*
   `r/<xx>/<rkey>/` holds the object, the `.fx` and the depfile of a variant.

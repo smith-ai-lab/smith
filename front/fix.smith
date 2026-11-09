@@ -1081,7 +1081,9 @@ static const ast::Module *read_import(Str path) {
     // reads as the fixed module does (#2561).
     Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
     parser::Parsed parsed = parse_for_fix(path, source);
+    Bool mended = false;
     if (countof(parsed.errors) > 0) {
+        mended = true;
         // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
         // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
         // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
@@ -1098,7 +1100,10 @@ static const ast::Module *read_import(Str path) {
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = parsed.module;
-    if (has_module_line(source)) as_todays_syntax(copy);
+    // A module mended above is written in smith's own syntax now, where `*T` is read-only and `*mut T` writable: marked
+    // as today's syntax it would read a `*T` (a C `const T *`) as a writable pointer, and a call passing a read-only
+    // pointer would ask for a `*mut` the callee never wrote (#2648).
+    if (has_module_line(source) && !mended) as_todays_syntax(copy);
     // a pointer field its own fix makes `?*T = .none` is one here too, so the reads of it are mended (#2557)
     fix_zero::nullable_fields(copy, source);
     return copy;
