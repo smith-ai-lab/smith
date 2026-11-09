@@ -770,13 +770,13 @@ jobs:
     timeout-minutes: 3
     permissions:
       statuses: write # a PR check posts its verdict as the commit status `ci` (#2856)
-      actions: write # a PR check that yielded force-cancels its own run (#2965)
     steps:
       - name: Verdict
         id: verdict
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
@@ -788,31 +788,32 @@ jobs:
           COUNT: ${{ needs.changes.outputs.count }}
           BATCH: ${{ needs.changes.outputs.batch }}
           PRS: ${{ needs.changes.outputs.prs }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
-          # An `abandoned` job in a PR check is a yield: yield-to-queue force-cancelled this run, but GitHub still ran this
-          # always() job. It is no result, so cancel the run for good (a cancelled `ci` is none for ci-dispatch.yml, which
-          # starts the check again) and post no status. Never green or skipped: either would pass the ruleset (#2965).
-          # A merge_group, push or schedule run with an abandoned job falls through and fails below.
-          case " $RESULTS " in
-          *" abandoned "*)
-            if [ "$EVENT" = workflow_dispatch ]; then
-              echo "yield: a job was abandoned, this PR check cancelled itself; cancelling the run" | tee -a "$GITHUB_STEP_SUMMARY"
-              gh api -X POST "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/force-cancel" --silent || true
-              for _ in $(seq 12); do sleep 5; done
-              echo "::error::yield: force-cancel did not end the run"
-              exit 1
-            fi
-            ;;
-          esac
           if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
-          case " $RESULTS " in
-          *" failure "* | *" cancelled "*)
-            echo "::error::a CI job failed or was cancelled"
+          # Fail closed (#2965): only `success` and `skipped` pass. An `abandoned` job (GitHub never created it, as in the
+          # outage of 2026-11-09), `failure`, `cancelled`, an empty or any future value fails.
+          for r in $RESULTS; do
+            case "$r" in
+            success | skipped) ;;
+            *)
+              echo "::error::a CI job's result is '$r', not success or skipped"
+              exit 1
+              ;;
+            esac
+          done
+          # `changes` decides what is owed: without its scope nothing can be owed, so nothing may pass.
+          case "$SCOPE" in
+          full | docs | release | none) ;;
+          *)
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
             exit 1
             ;;
           esac
+          if [ "$CHANGES" != success ]; then
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
+            exit 1
+          fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
           # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
@@ -840,7 +841,7 @@ jobs:
           done
       # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
       # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
-      # Only once every job before it ran: a cancelled job (a cancelled run) posts nothing, and the next pass restarts
+      # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts
       # the check; the verdict above already fails a run in which a job that was owed was skipped.
       - name: Post the verdict as the commit status `ci`
         if: >-
