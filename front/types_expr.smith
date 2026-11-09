@@ -89,6 +89,9 @@ export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, ty
 // A statement inside a block that is a value and that is not an expression: a local, a `return`, a loop. J1d's walk
 // checks it in the scope the block opened. Unset, such a statement is reported as `not yet typed`.
 export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
+// An `if` used as a value, before its parts are typed: J1d's fixer notes a test of an option field that guards the
+// reads in the first branch (#2647).
+export typedef void (*ValueIf)(types::Checked *c, const ast::Stmt *s);
 
 // The result type of the function being checked (`nullptr` outside one); `try` reads it.
 export typedef types::TypeRef (*FunctionResult)();
@@ -99,6 +102,7 @@ export struct Hooks {
     CastRule cast_rule;
     LambdaBody lambda_body;
     Statement statement;
+    ValueIf value_if;
 };
 
 static Hooks hooks;
@@ -4866,6 +4870,7 @@ static Plan read_value(const types::Checked *c, const ast::Expr *e, types::TypeR
 // Stage 0: the last frame goes down first, then every frame of the plan, the first on top.
 static void value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
+    if (hooks.value_if != nullptr && e->kind == .stmt_expr) hooks.value_if(c, e->kind.stmt_expr.stmt);
     Plan p = read_value(c, e, f.expected);
     push_frame(w, make_frame(e, f.expected, 1, nullptr, c->error_count, "", nullptr));
     for (Usize i = p.out_count; i > 0; i--) {
