@@ -34,6 +34,7 @@ import front::emit_object;
 import front::emit_state as state;
 import front::header_table;
 import front::lint;
+import front::module_cache;
 import front::parser;
 import front::roots;
 import front::types;
@@ -459,6 +460,104 @@ static void share_module(Str path, Str named, Str source, const ast::Module *tre
 // the source of `std.<name>` and its size, or null when this program has no such module (#2041).
 extern const char *smith_std_source(const char *name, Usize *size);
 
+// A module read for the table: its tree (null when it did not parse or names itself wrongly) and the texts the table
+// keeps, all in memory that lives as long as the process. When it did not parse, the first error.
+struct Kept {
+    const ast::Module *tree;
+    Str path;
+    Str named;
+    Str source;
+    Bool parse_failed;
+    U32 error_at;
+    Str error;
+};
+
+// Parses `source` as `path` in the allocator in force, the texts copied into it first, and names the tree: as
+// `std::<std_name>` when that is not empty (the embedded std), else by its path from `named_by`.
+static Kept parse_kept(Str path, Str named, Str source, roots::Roots named_by, Str std_name) {
+    Kept kept = {.path = as_str(format::push(path)),
+                 .named = as_str(format::push(named)),
+                 .source = as_str(format::push(source)),
+                 .parse_failed = false};
+    parser::Parsed parsed = starts_with_module(kept.source) ? parser::parse_file(kept.path, kept.source)
+                                                            : parser::parse_new(kept.path, kept.source);
+    if (countof(parsed.errors) != 0) {
+        kept.parse_failed = true;
+        kept.error_at = parsed.errors[0].span.start;
+        kept.error = parsed.errors[0].message;
+        return kept;
+    }
+    if (countof(std_name) != 0) {
+        ast::Identifier parts[:] = {};
+        parts = mem::realloc(parts, 2);
+        parts[0] = (ast::Identifier){.text = as_str(format::push("std"))};
+        parts[1] = (ast::Identifier){.text = as_str(format::push(std_name))};
+        parsed.module.name.segments = parts;
+    } else if (countof(name_module(&parsed.module, kept.path, named_by)) != 0) {
+        return kept;
+    }
+    ast::Module *copy = mem::alloc(ast::Module);
+    *copy = parsed.module;
+    kept.tree = copy;
+    return kept;
+}
+
+// The texts of a read, copied for the process's life.
+static Kept kept_texts(Str path, Str named, Str source) {
+    mem::Allocator *outside = enter_shared();
+    Kept kept = {.path = as_str(format::push(path)),
+                 .named = as_str(format::push(named)),
+                 .source = as_str(format::push(source)),
+                 .parse_failed = false};
+    mem::set_allocator(outside);
+    return kept;
+}
+
+// A module read for the table (#2891): from the disk cache when it holds the tree, else parsed, and then stored. With
+// the cache on, a parse runs in a region of its own and again in a second one, which is what the store compares
+// (front/module_cache.smith); the first region holds the tree for the process's life. `kind` says what was read: a
+// file, or std embedded in smith.
+static Kept read_kept(Str kind, Str path, Str named, Str source, roots::Roots named_by, Str std_name) {
+    if (!module_cache::enabled()) {
+        mem::Allocator *outside = enter_shared();
+        Kept kept = parse_kept(path, named, source, named_by, std_name);
+        mem::set_allocator(outside);
+        return kept;
+    }
+    Str key = module_cache::key(kind, path, named, source);
+    const ast::Module *hit = module_cache::load(key);
+    if (hit != nullptr) {
+        Kept kept = kept_texts(path, named, source);
+        kept.tree = hit;
+        return kept;
+    }
+    if (!module_cache::begin()) {
+        mem::Allocator *outside = enter_shared();
+        Kept kept = parse_kept(path, named, source, named_by, std_name);
+        mem::set_allocator(outside);
+        return kept;
+    }
+    Kept first = parse_kept(path, named, source, named_by, std_name);
+    module_cache::end();
+    if (first.tree == nullptr) {
+        // Not stored: the error's text is copied out of the region before it goes.
+        Kept failed = kept_texts(path, named, source);
+        failed.parse_failed = first.parse_failed;
+        failed.error_at = first.error_at;
+        mem::Allocator *outside = enter_shared();
+        failed.error = as_str(format::push(first.error));
+        mem::set_allocator(outside);
+        module_cache::forget();
+        return failed;
+    }
+    if (module_cache::begin()) {
+        (void)parse_kept(path, named, source, named_by, std_name);
+        module_cache::end();
+    }
+    module_cache::store(key, first.tree);
+    return first;
+}
+
 // The tree of `std.<name>` (`dotted` is `std.name`) read from the source inside the program, named `std::name`, or
 // null when `dotted` is not a one-level `std` module this program embeds, or the source does not parse. A file on disk
 // under a root wins over this (smith's developers compile against the library they edit).
@@ -476,30 +575,14 @@ static const ast::Module *load_embedded(Str dotted) {
     Str source = found[0:size];
     const ast::Module *shared = shared_module(path, "embedded", source);
     if (shared != nullptr) return shared;
-    mem::Allocator *outside = enter_shared();
-    Str kept_path = as_str(format::push(path));
-    Str kept_name = as_str(format::push(name));
-    parser::Parsed parsed =
-        starts_with_module(source) ? parser::parse_file(kept_path, source) : parser::parse_new(kept_path, source);
-    ast::Module *copy = nullptr;
-    if (countof(parsed.errors) == 0) {
-        ast::Identifier parts[:] = {};
-        parts = mem::realloc(parts, 2);
-        Str lead = "std";
-        parts[0] = (ast::Identifier){.text = lead};
-        parts[1] = (ast::Identifier){.text = kept_name};
-        copy = mem::alloc(ast::Module);
-        *copy = parsed.module;
-        copy->name.segments = parts;
-    }
-    mem::set_allocator(outside);
-    if (copy == nullptr) {
-        types::set_load_failure(as_str(
-            format::push(path, ":", position(source, parsed.errors[0].span.start), ": ", parsed.errors[0].message)));
+    roots::Roots none = {};
+    Kept kept = read_kept("embedded", path, "embedded", source, none, name);
+    if (kept.tree == nullptr) {
+        types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
         return nullptr;
     }
-    share_module(kept_path, "embedded", source, copy); // the source is the program's own, for its whole life
-    return copy;
+    share_module(kept.path, "embedded", kept.source, kept.tree);
+    return kept.tree;
 }
 
 // The folder of `path`: everything before its last `/`, or `.`.
@@ -556,29 +639,15 @@ static const ast::Module *read_module(const char *dotted) {
             remember_module(relative, path, source);
             return shared;
         }
-        mem::Allocator *outside = enter_shared();
-        Str kept_path = as_str(format::push(path));
-        Str kept_named = as_str(format::push(named));
-        Str kept_source = as_str(format::push(source));
-        parser::Parsed parsed = starts_with_module(kept_source) ? parser::parse_file(kept_path, kept_source)
-                                                                : parser::parse_new(kept_path, kept_source);
-        Bool parses = countof(parsed.errors) == 0;
-        Bool named_well = parses && countof(name_module(&parsed.module, kept_path, named_by)) == 0;
-        ast::Module *copy = nullptr;
-        if (named_well) {
-            copy = mem::alloc(ast::Module);
-            *copy = parsed.module;
-        }
-        mem::set_allocator(outside);
-        if (!parses) {
-            types::set_load_failure(as_str(format::push(path, ":", position(source, parsed.errors[0].span.start), ": ",
-                                                        parsed.errors[0].message)));
+        Kept kept = read_kept("file", path, named, source, named_by, "");
+        if (kept.parse_failed) {
+            types::set_load_failure(as_str(format::push(path, ":", position(source, kept.error_at), ": ", kept.error)));
             return nullptr;
         }
-        if (copy == nullptr) return nullptr;
+        if (kept.tree == nullptr) return nullptr;
         remember_module(relative, path, source);
-        share_module(kept_path, kept_named, kept_source, copy);
-        return copy;
+        share_module(kept.path, kept.named, kept.source, kept.tree);
+        return kept.tree;
     }
     return load_embedded(relative);
 }
