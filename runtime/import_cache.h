@@ -50,6 +50,9 @@ void smith_import_region_trim(SmithImportRegion *region);
 // `size` bytes at `align` (at most 16) from the region; null when it is full.
 void *smith_import_region_take(SmithImportRegion *region, size_t size, size_t align);
 
+// Prints `reason` as why an image is not stored, when SMITH_IMPORT_CACHE is `why`.
+void smith_import_cache_why(const char *reason);
+
 // Stores the image of `a` (`b` the same parse in another region) whose tree starts at byte `root` of the region.
 // False when the two do not differ only by their own pointers (nothing is stored).
 bool smith_import_image_store(const char *key, const SmithImportRegion *a, const SmithImportRegion *b, size_t root);

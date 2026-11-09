@@ -400,6 +400,10 @@ static bool smith_ic_refuse(const char *reason, size_t at, uint64_t word) {
     return false;
 }
 
+void smith_import_cache_why(const char *reason) {
+    (void)smith_ic_refuse(reason, 0, 0);
+}
+
 bool smith_import_region_open(SmithImportRegion *region, size_t reserve) {
     void *base = mmap(nullptr, reserve, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (base == MAP_FAILED) return false;
