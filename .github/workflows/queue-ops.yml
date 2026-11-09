@@ -2,13 +2,19 @@
 # A Claude Code session cannot reach GitHub's GraphQL API, and jumping or
 # dequeuing a queue entry exists only there; a job on a runner can.
 name: queue-ops
+# the run list shows what the run did: ops (a list) or op and pr
+run-name: "queue-ops: ${{ inputs.ops != '' && inputs.ops || format('{0} {1}', inputs.op, inputs.pr) }}"
 
 on:
   workflow_dispatch:
     inputs:
+      ops:
+        description: "Several ops in order, one per line (or separated by ;): '<op> <pr>', e.g. 'jump 2864' / 'dequeue 2784'. Replaces op and pr when set (#2872)"
+        required: false
+        type: string
       op:
-        description: "What to do"
-        required: true
+        description: "What to do (ignored when ops is set)"
+        required: false
         type: choice
         options:
           - jump
@@ -41,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      OPS: ${{ inputs.ops }}
       OP: ${{ inputs.op }}
       PR: ${{ inputs.pr }}
       VALUE: ${{ inputs.value }}
@@ -173,20 +180,45 @@ jobs:
             esac
           }
 
-          # GITHUB_TOKEN first; the owner's secret only when GitHub refuses it.
-          export GH_TOKEN="$BASE_TOKEN"
-          if out=$(do_op 2>&1); then
-            summary "ok ($out) token=GITHUB_TOKEN"
-            exit 0
-          fi
-          echo "GITHUB_TOKEN: $out"
-          if [ -n "$OWNER_TOKEN" ]; then
-            export GH_TOKEN="$OWNER_TOKEN"
+          # GITHUB_TOKEN first; the owner's secret only when GitHub refuses. One op, with OP, PR and VALUE set.
+          run_one() {
+            export GH_TOKEN="$BASE_TOKEN"
             if out=$(do_op 2>&1); then
-              summary "ok ($out) token=QUEUE_OPS_TOKEN"
-              exit 0
+              summary "ok ($out) token=GITHUB_TOKEN"
+              return 0
             fi
-            echo "QUEUE_OPS_TOKEN: $out"
-          fi
-          summary "failed ($(echo "$out" | tail -n 1 | cut -c1-200))"
-          exit 1
+            echo "GITHUB_TOKEN: $out"
+            if [ -n "$OWNER_TOKEN" ]; then
+              export GH_TOKEN="$OWNER_TOKEN"
+              if out=$(do_op 2>&1); then
+                summary "ok ($out) token=QUEUE_OPS_TOKEN"
+                return 0
+              fi
+              echo "QUEUE_OPS_TOKEN: $out"
+            fi
+            summary "failed ($(echo "$out" | tail -n 1 | cut -c1-200))"
+            return 1
+          }
+
+          # the ops as lines '<op> <rest>': OPS (lines or ';') when set, else the op and pr inputs as a list of one
+          op_lines() {
+            if [ -n "${OPS//[[:space:]]/}" ]; then
+              printf '%s\n' "$OPS" | tr ';' '\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d'
+            else
+              echo "$OP $PR"
+            fi
+          }
+
+          failed=0 total=0
+          lines=$(op_lines)
+          while IFS= read -r line; do
+            total=$((total + 1))
+            OP=${line%% *}
+            PR=""
+            [ "$OP" != "$line" ] && PR=${line#* }
+            VALUE=${VALUE:-}
+            [ -n "$OPS" ] && VALUE=$PR
+            run_one || failed=$((failed + 1))
+          done <<< "$lines"
+          echo "queue-ops: $total op(s), $failed failed" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$failed" = 0 ]
