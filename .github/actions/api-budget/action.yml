@@ -22,5 +22,8 @@ runs:
       run: |
         line=$(gh api rate_limit --jq '.resources.core | "\(.remaining) of \(.limit), resets in \(.reset - now | floor) s"' 2>/dev/null) || line=
         [ -n "$line" ] || line=unknown
+        # which pool answered (settles whether two jobs share a window): x-ratelimit-resource / -reset / -used
+        hdr=$(gh api -i rate_limit 2>/dev/null | tr -d '\r' | grep -iE '^x-ratelimit-(resource|reset|used|limit):' | tr '\n' ' ') || hdr=
+        line="$line [$hdr]"
         echo "api budget: $LABEL $line (workflow token)"
         echo "api budget: $LABEL $line (workflow token)" >>"$GITHUB_STEP_SUMMARY"
