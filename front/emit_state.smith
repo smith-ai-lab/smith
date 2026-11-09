@@ -486,6 +486,11 @@ export struct Emitter {
     SavedFunction lambda_frames[:]; // the enclosing functions of the lambda being emitted, innermost last (#1620)
     Usize lambda_frame_count;
 
+    Error errors[:]; // every error found so far, in order: emit goes on past a failed declaration (#2982)
+    Usize error_count;
+    Usize skipped[:]; // the declarations that failed to declare, by index in the tree (instances: after the tree's)
+    Usize skipped_count;
+
     Str instance_scope; // while the body of a generic's instance from another module is emitted: that module's prefix
     Str import_scope;   // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
     const types::Instance *instance; // while a generic's instance is emitted: its bindings (`T` of `sizeof(T)`)
@@ -516,6 +521,42 @@ export struct Emitter {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Helpers for handlers
+
+// Keeps `error` and lets the walk go on with the next declaration (#2982).
+export void add_error(Emitter *e, Error error) {
+    if (e->error_count == countof(e->errors)) {
+        Usize capacity = countof(e->errors) * 2;
+        if (capacity < 8) capacity = 8;
+        e->errors = mem::realloc(e->errors, capacity);
+    }
+    e->errors[e->error_count] = error;
+    e->error_count += 1;
+}
+
+// Keeps the error of `status`, if it has one; whether it had.
+export Bool collect(Emitter *e, Status status) {
+    if (status != .error) return false;
+    add_error(e, status.error);
+    return true;
+}
+
+// Marks declaration `index` as not declared: its body is not emitted.
+export void skip_declaration(Emitter *e, Usize index) {
+    if (e->skipped_count == countof(e->skipped)) {
+        Usize capacity = countof(e->skipped) * 2;
+        if (capacity < 8) capacity = 8;
+        e->skipped = mem::realloc(e->skipped, capacity);
+    }
+    e->skipped[e->skipped_count] = index;
+    e->skipped_count += 1;
+}
+
+export Bool is_skipped(const Emitter *e, Usize index) {
+    for (Usize i = 0; i < e->skipped_count; i++) {
+        if (e->skipped[i] == index) return true;
+    }
+    return false;
+}
 
 export void push_work(Emitter *e, Work item) {
     if (e->work_count == countof(e->work)) {

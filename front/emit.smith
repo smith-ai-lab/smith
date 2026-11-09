@@ -113,6 +113,12 @@ export typedef state::Target Target;
 export typedef state::Options Options;
 export typedef Result(c::LLVMModuleRef, state::Error) ModuleResult;
 
+// What `module_all` gives: the module, or (module null) every error, in the order found (#2982).
+export struct Emitted {
+    c::LLVMModuleRef module;
+    state::Error errors[:];
+};
+
 // Give back a string of the allocator in force (an Error's message) when the caller is done with it.
 export void free_text(Str text) {
     state::free_text(text);
@@ -2005,40 +2011,45 @@ static Bool is_type_alias(const state::Emitter *e, const ast::Decl *d) {
     return symbol != nullptr && symbol->kind == .type_name && symbol->decl == d;
 }
 
-// Pass 1: types, then every function and global.
-static state::Status declare_all(state::Emitter *e) {
+// Pass 1: types, then every function and global. An error is kept and the walk goes on with the next declaration
+// (#2982); a function that failed to declare is marked, so its body is not emitted.
+static void declare_all(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++)
         emit_memory::record_shell(e, e->tree->decls[i]);
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
-        if (d->kind == .record) try emit_memory::record_decl(e, d);
-        if (d->kind == .enumeration) try matching::enum_decl(e, d);
+        if (d->kind == .record) state::collect(e, emit_memory::record_decl(e, d));
+        if (d->kind == .enumeration) state::collect(e, matching::enum_decl(e, d));
     }
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
+        state::Status declared = state::success();
         if (d->kind == .function) {
             if (d->kind.function.body == nullptr)
-                try call::prototype(e, d);
+                declared = call::prototype(e, d);
             else if (!is_template(d))
-                try declare_function(e, d);
+                declared = declare_function(e, d);
         } else if (d->kind == .variable) {
             continue; // after every function: a table of callbacks names functions declared below it (#2643)
         } else if (d->kind != .record && d->kind != .enumeration && d->kind != .import_module && d->kind != .import_c &&
                    d->kind != .import_from && d->kind != .static_assert_decl && d->kind != .asm_decl) {
-            return state::not_emitted("this kind of declaration", d->span);
+            declared = state::not_emitted("this kind of declaration", d->span);
         }
+        if (state::collect(e, declared)) state::skip_declaration(e, i);
     }
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .variable && !is_module_alias(e, d) && !is_type_alias(e, d))
-            try emit_memory::global_variable(e, d);
+            state::collect(e, emit_memory::global_variable(e, d));
     }
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
-            try declare_instance(e, &e->options.checked->instances[i]);
+            const types::Instance *instance = &e->options.checked->instances[i];
+            state::Status declared =
+                state::in_instance(state::in_module(declare_instance(e, instance), instance->prefix), i);
+            if (state::collect(e, declared)) state::skip_declaration(e, countof(e->tree->decls) + i);
         }
     }
-    return state::success();
 }
 
 // `x` built in a function nothing keeps and folded to the constant of type `to` (a global's initializer, #2510).
@@ -2073,7 +2084,7 @@ static state::Status fold_constant(state::Emitter *e, const ast::Expr *x, state:
 
 // A module-level `static_assert(c, "m")` (#2510): the condition is built in a function nothing keeps, and must fold to
 // a constant; false stops the compile with the message.
-static state::Status check_static_asserts(state::Emitter *e) {
+static void check_static_asserts(state::Emitter *e) {
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind != .static_assert_decl) continue;
@@ -2089,9 +2100,8 @@ static state::Status check_static_asserts(state::Emitter *e) {
         e->folding = false;
         state::end_scope(e);
         c::LLVMDeleteFunction(scratch);
-        try ran;
+        state::collect(e, ran);
     }
-    return state::success();
 }
 
 // The `asm` literals of the module (D7, #2636), in order: LLVM module asm, which the object file's assembler reads.
@@ -2104,29 +2114,43 @@ static void append_module_asm(state::Emitter *e) {
     }
 }
 
+// What a failed body leaves behind in the emitter: its open loops, defers and lambda frames (#2982). The half-built
+// function stays in the module, which is not used once an error is kept.
+static void recover(state::Emitter *e) {
+    e->loop_count = 0;
+    e->defer_count = 0;
+    e->lambda_frame_count = 0;
+    e->folding = false;
+    e->instance_scope = "";
+    e->instance = nullptr;
+}
+
 static state::Status emit_all(state::Emitter *e) {
     try debug::begin_module(e);
-    try declare_all(e);
+    declare_all(e);
     Usize next = 0;
     for (Usize i = 0; i < countof(e->tree->decls); i++) {
         const ast::Decl *d = e->tree->decls[i];
         if (d->kind == .function && d->kind.function.body != nullptr && !is_template(d)) {
-            try emit_function(e, d, e->functions[next], nullptr);
+            if (state::is_skipped(e, i)) continue;
+            if (state::collect(e, emit_function(e, d, e->functions[next], nullptr))) recover(e);
             next += 1;
         }
     }
     if (e->options.checked != nullptr) {
         for (Usize i = 0; i < e->options.checked->instance_count; i++) {
+            if (state::is_skipped(e, countof(e->tree->decls) + i)) continue;
             e->instance_scope = e->options.checked->instances[i].prefix;
             state::Status emitted = emit_function(e, e->options.checked->instances[i].decl, e->functions[next],
                                                   &e->options.checked->instances[i]);
             e->instance_scope = "";
             emitted = state::in_instance(state::in_module(emitted, e->options.checked->instances[i].prefix), i);
-            try emitted;
+            if (state::collect(e, emitted)) recover(e);
             next += 1;
         }
     }
-    try check_static_asserts(e);
+    check_static_asserts(e);
+    if (e->error_count > 0) return state::success(); // the module is not used: nothing more to build or verify
     append_module_asm(e);
     try debug::finish(e);
     try call::check_recursion(e->module);
@@ -2149,7 +2173,9 @@ static state::Status emit_all(state::Emitter *e) {
 
 // The tree as an LLVM module in `context`, for `options.target`. The caller owns the context and disposes of the
 // module. On an Error nothing is left behind: the half-built module is disposed of.
-export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, state::Options options) {
+// Like `module`, but with every error the walk found, not the first: emit goes on past a failed declaration (#2982).
+// With errors `module` is null; the caller frees each message and `errors.data`.
+export Emitted module_all(c::LLVMContextRef context, const ast::Module *m, state::Options options) {
     char *name = state::cstr(m->file);
     char *triple = state::cstr(options.target.triple);
     c::LLVMModuleRef ir = c::LLVMModuleCreateWithNameInContext(name, context);
@@ -2171,6 +2197,7 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     e.builder = c::LLVMCreateBuilderInContext(context);
     e.alloca_builder = c::LLVMCreateBuilderInContext(context);
     state::Status status = emit_all(&e);
+    if (status == .error) state::add_error(&e, status.error);
     debug::release(&e);
     emit_memory::release(&e);
     matching::release(&e);
@@ -2190,9 +2217,22 @@ export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, stat
     // them already, so this frees what is left; mem::free of null is nothing.
     mem::free(e.loops.data);
     mem::free(e.defers.data);
-    if (status == .error) {
+    mem::free(e.skipped.data);
+    if (e.error_count > 0) {
         c::LLVMDisposeModule(ir);
-        return {.error = status.error};
+        return (Emitted){.module = nullptr, .errors = e.errors[0:e.error_count]};
     }
-    return ir;
+    mem::free(e.errors.data);
+    return (Emitted){.module = ir};
+}
+
+// The tree as an LLVM module, or its first error; `module_all` has every one.
+export ModuleResult module(c::LLVMContextRef context, const ast::Module *m, state::Options options) {
+    Emitted all = module_all(context, m, options);
+    if (countof(all.errors) == 0) return all.module;
+    for (Usize i = 1; i < countof(all.errors); i++)
+        free_error(all.errors[i]);
+    state::Error first = all.errors[0];
+    mem::free(all.errors.data);
+    return {.error = first};
 }
