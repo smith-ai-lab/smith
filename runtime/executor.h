@@ -50,13 +50,20 @@ typedef enum {
     SmithWant_Done,
 } SmithWant;
 
+// The leaf behind the reason an edge is dirty, and how it caused it.
+typedef struct {
+    uint32_t leaf; // a node
+    const char *why;
+} SmithCause;
+
 typedef struct {
     const char *path;
     int64_t mtime;     // -1 not read yet, 0 missing, otherwise nanoseconds since the epoch
     uint32_t edge;     // the edge that makes it, plus one; 0 for a file nothing makes
     uint32_t consumer; // the first of its consumer links, plus one; 0 for none
     uint8_t scan;      // SmithScan
-    uint32_t cause;    // when dirty, the node whose own reason (-d explain) started it, plus one
+    uint32_t cause;    // when dirty, the leaf node behind the first reason (-d explain), plus one
+    const char *why;   // when dirty, how the leaf caused it: "missing", "newer than its output", ...
     bool dirty;
     bool from_deps; // first seen in a depfile: a missing one is not an error
 } SmithNode;
