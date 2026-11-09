@@ -1543,7 +1543,7 @@ jobs:
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 3
+    timeout-minutes: 10
     concurrency:
       group: install-mac
       cancel-in-progress: true
@@ -1558,9 +1558,29 @@ jobs:
           # plain curl and tar, no smith: this step must work with whatever smith is installed, even a stale one
           # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
           name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
-          base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name" "$base/$name"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name.sha256" "$base/$name.sha256"
+          api=https://api.github.com/repos/smith-ai-lab/smith
+          # A release published seconds ago is not always served yet: github.com/releases/download/ answered 504 to all 9
+          # tries of curl over 40 s (2026-11-09 05:37Z, run 42567390515). Try for about 6 minutes, by the asset API (a
+          # redirect to a signed URL, asked for with the token and fetched without it, #2835) and then by the download URL.
+          get() {
+            f=$1
+            for try in $(seq 1 24); do
+              id=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$api/releases/tags/stage0-$GITHUB_SHA" 2>/dev/null \
+                | jq -r --arg n "$f" '.assets[]|select(.name==$n)|.id' 2>/dev/null) || id=
+              if [ -n "$id" ]; then
+                url=$(curl -fsS -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/octet-stream" "$api/releases/assets/$id" 2>/dev/null) || url=
+                if [ -n "$url" ] && curl -fsSL --retry 3 --retry-all-errors -o "$tmp/$f" "$url"; then return 0; fi
+              fi
+              curl -fsSL --retry 2 --retry-all-errors -o "$tmp/$f" \
+                "https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA/$f" && return 0
+              echo "install: try $try of 24 failed for $f; waiting 15 s"; sleep 15
+            done
+            echo "external: stage0-$GITHUB_SHA/$f not served after 24 tries (about 6 minutes)" >&2
+            return 1
+          }
+          get "$name"
+          get "$name.sha256"
           [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
             || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
           tar -C "$tmp" -xJf "$tmp/$name"
