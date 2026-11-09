@@ -666,6 +666,39 @@ static void smith_tc_write_results(const char *folder) {
     if (keys != nullptr) fclose(keys);
 }
 
+// The digest of the smith under test, kept in the store by build-id (the step cache does the same, executor_cache.c):
+// hashing a smith of hundreds of megabytes took 7 s in every run, hits included (#2997). The build-id names the code.
+static unsigned smith_tc_self_hashed; // how many times a run hashed the whole smith (a test counts it)
+
+static bool smith_tc_self_digest(const char *self, char hex[smith_sha256_hex_size]) {
+    char id[2 * smith_platform_id_bytes + 1];
+    char path[PATH_MAX];
+    if (!smith_platform_file_id(self, id) ||
+        snprintf(path, sizeof path, "%s/self/%s", smith_tc_store, id) >= (int)sizeof path) {
+        smith_tc_self_hashed++;
+        return smith_self_digest(self, hex);
+    }
+    FILE *in = fopen(path, "r");
+    if (in != nullptr) {
+        size_t size = fread(hex, 1, smith_sha256_hex_size - 1, in);
+        bool whole = size == smith_sha256_hex_size - 1 && fgetc(in) == EOF;
+        fclose(in);
+        hex[whole ? size : 0] = '\0';
+        if (whole) return true;
+    }
+    smith_tc_self_hashed++;
+    if (!smith_self_digest(self, hex)) return false;
+    char temporary[PATH_MAX + 32];
+    snprintf(temporary, sizeof temporary, "%s.%d", path, (int)getpid());
+    char folder[PATH_MAX];
+    snprintf(folder, sizeof folder, "%s/self", smith_tc_store);
+    FILE *out = smith_tc_ensure_folder(folder) ? fopen(temporary, "w") : nullptr;
+    if (out == nullptr) return true;
+    bool written = fwrite(hex, 1, smith_sha256_hex_size - 1, out) == smith_sha256_hex_size - 1;
+    if (fclose(out) != 0 || !written || rename(temporary, path) != 0) unlink(temporary);
+    return true;
+}
+
 // `smith test --cache check <folder>`: which of the tests would pass again. Exit 0 whatever happens: no cache is only
 // a run of everything.
 static int smith_tc_check(const char *folder) {
@@ -676,7 +709,8 @@ static int smith_tc_check(const char *folder) {
         return 0;
     }
     const char *self = getenv("SMITH_SELF");
-    if (self != nullptr && self[0] != '\0' && !smith_self_digest(self, smith_tc_self_hex)) smith_tc_self_hex[0] = '\0';
+    if (self != nullptr && self[0] != '\0' && !smith_tc_self_digest(self, smith_tc_self_hex))
+        smith_tc_self_hex[0] = '\0';
     smith_tc_make_base();
     smith_tc_index_functions();
     smith_tc_name_base();
@@ -710,6 +744,7 @@ static int smith_tc_check(const char *folder) {
     if (smith_tc_report && smith_tc_test_count > 0)
         fprintf(stderr, "cache test-store: %zu of %zu (%zu%%)\n", hits, smith_tc_test_count,
                 hits * 100 / smith_tc_test_count);
+    if (smith_tc_report) fprintf(stderr, "cache test-store: smith hashed whole %u times\n", smith_tc_self_hashed);
     smith_tc_save_base();
     smith_tc_write_results(folder);
     return 0;
