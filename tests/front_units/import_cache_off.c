@@ -47,6 +47,10 @@ bool smith_import_region_open(SmithImportRegion *region, size_t reserve) {
     return false;
 }
 
+void smith_import_cache_why(const char *reason) {
+    (void)reason;
+}
+
 void smith_import_region_close(SmithImportRegion *region) {
     (void)region;
 }
