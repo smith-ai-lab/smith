@@ -27,7 +27,9 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: queue-heal
+  # a dry run writes nothing, so it has its own group: it cannot race a live run, and the live runs that
+  # every ci completion starts no longer cancel it (#2934)
+  group: queue-heal-${{ inputs.dry_run == true && 'dry' || 'live' }}
   cancel-in-progress: true
 
 jobs:
