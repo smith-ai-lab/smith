@@ -151,8 +151,8 @@ import <unistd.h>;
 // test files of its part, so its table holds only that part's tests (runtime/build_runtime.c, #1200).
 [[std::c_name("smith_test_shard_index")]] export extern const Usize built_shard_index;
 [[std::c_name("smith_test_shard_count")]] export extern const Usize built_shard_count;
-// The selection (--test, --macos-only, --skip-macos) the table was built for: `smith test --test` compiles only the test
-// files that hold a chosen test (#2998). The filter is nullptr and the macOS choice 0 for a table of every test.
+// The selection (--test, --macos-only, --skip-macos) the table was built for: `smith test --test` compiles only the
+// test files that hold a chosen test (#2998). The filter is nullptr and the macOS choice 0 for a table of every test.
 [[std::c_name("smith_test_built_filter")]] export extern const char *const built_filter;
 [[std::c_name("smith_test_built_filter_macos")]] export extern const Usize built_filter_macos;
 
