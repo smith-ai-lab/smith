@@ -208,7 +208,7 @@ The syntax tree: plain data, every type exported with all its fields. The layout
 
 ## The checker
 
-### Roots and reach (#2993: the rule; built by #2998 to #3001)
+### Roots and reach (#2993: the rule; built by #2998 to #3001 and #3005)
 
 Owner, 2026-11-09: "We always compile the absolute minimum amount." The design, its measurements and its prediction are in #2993; the rule is:
 
