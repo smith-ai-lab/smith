@@ -72,13 +72,13 @@ jobs:
           now=$(date -u +%s)
           lost=0
           # a PR labelled `dequeued` was taken out on purpose by queue-ops: an API dequeue leaves no timeline event
-          open=$(gh api "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
+          open=$(gh api -X GET "repos/$REPO/pulls" -f state=open -f base=main -f per_page=100 --paginate \
             --jq '.[] | select([.labels[].name] | index("dequeued") | not) | .number') \
             || { log "queue-heal: cannot list the open PRs, nothing done"; exit 1; }
           for pr in $open; do
             case "$queued" in *" $pr "*) continue ;; esac
             # the last merge-queue event of the PR: "<event> <time>"
-            events=$(gh api "repos/$REPO/issues/$pr/timeline" -f per_page=100 --paginate --jq \
+            events=$(gh api -X GET "repos/$REPO/issues/$pr/timeline" -f per_page=100 --paginate --jq \
               '.[] | select(.event == "added_to_merge_queue" or .event == "removed_from_merge_queue") | "\(.event) \(.created_at)"') \
               || { log "queue-heal: #$pr timeline unreadable, skipped"; continue; }
             last=$(echo "$events" | tail -n 1)
