@@ -69,6 +69,15 @@ runs:
             while IFS= read -r line; do echo "::error::$line"; done
         fi
         exit "$rc"
+    - name: Report the test-store hit rate (part)
+      # one line per cache with its hit rate; the first misses say which input differs (#2876)
+      if: always()
+      continue-on-error: true
+      uses: ./.github/actions/cache-report
+      with:
+        name: test-store
+        log: ${{ runner.temp }}/test.log
+        inputs: '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
     - name: Publish the test store
       # the store holds what was restored plus the entries this part added; an entry is one test that passed, so a
       # part that failed elsewhere still adds valid ones (#2833). Each part publishes its own release, so no job

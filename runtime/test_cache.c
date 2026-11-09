@@ -16,6 +16,7 @@
 #include "core.h"
 #include "package.h"
 #include "platform_linux.h"
+#include "self_digest.h"
 
 #include <dirent.h>
 #include <ftw.h>
@@ -53,6 +54,24 @@ static char smith_tc_base_hex[smith_sha256_hex_size];
 static bool smith_tc_why; // SMITH_RESULT_CACHE=why: say why a test runs
 static char smith_tc_text[smith_tc_text_max + 1];
 
+// What the base of every key holds, as `<name>\t<value>` lines, so a miss can say which input differs (#2876). The base
+// file `<store>/base/<digest of these lines>` keeps them for the next run to compare with.
+constexpr size_t smith_tc_notes_max = 16384;
+constexpr size_t smith_tc_bases_max = 64;
+constexpr size_t smith_tc_report_max = 5; // miss lines a run prints
+constexpr size_t smith_tc_value_max = 120;
+static char smith_tc_notes[smith_tc_notes_max];
+static size_t smith_tc_notes_used;
+static char smith_tc_base_name[smith_sha256_hex_size];
+static char smith_tc_stale[PATH_MAX]; // the first file of a manifest that is not as it was
+static bool smith_tc_report;          // CI or SMITH_RESULT_CACHE=why: print the hit rate and the first misses
+
+static void smith_tc_note(const char *name, const char *value) {
+    int put = snprintf(smith_tc_notes + smith_tc_notes_used, smith_tc_notes_max - smith_tc_notes_used, "%s\t%.*s\n",
+                       name, (int)smith_tc_value_max, value);
+    if (put > 0 && smith_tc_notes_used + (size_t)put < smith_tc_notes_max) smith_tc_notes_used += (size_t)put;
+}
+
 // The digest of the content of a file; false when it cannot be read.
 static bool smith_tc_hash_path(const char *path, char hex[smith_sha256_hex_size]) {
     static uint8_t buffer[65536];
@@ -74,105 +93,6 @@ static bool smith_tc_hash_path(const char *path, char hex[smith_sha256_hex_size]
 
 static int smith_tc_compare(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
-}
-
-#ifdef SMITH_COMMIT_LINKED
-extern const char smith_commit[];
-#else
-static const char smith_commit[] = "";
-#endif
-
-constexpr size_t smith_tc_blank_max = 16;
-
-// Where `needle` (length `size`) occurs in the mapped file, at most `max` places, in order.
-static size_t smith_tc_find_all(const uint8_t *file, size_t length, const uint8_t *needle, size_t size, size_t *at,
-                                size_t max) {
-    size_t found = 0;
-    size_t from = 0;
-    while (size > 0 && found < max && from + size <= length) { // bounded by the file and max
-        const uint8_t *hit = memmem(file + from, length - from, needle, size);
-        if (hit == nullptr) break;
-        at[found++] = (size_t)(hit - file);
-        from = (size_t)(hit - file) + size;
-    }
-    return found;
-}
-
-// The value of a hex digit, -1 for any other character.
-static int smith_tc_hex_value(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-// The digest of the smith under test (#2833). Its build-id and the commit it was built from are in the file, so they
-// change with every commit; counted as they are, no test that runs smith could pass from the cache on another commit,
-// and the key of every test held the build-id. Here both are blanked (they are zeros in what is hashed), so the digest
-// changes with the code smith was built from and not with the commit it happens to carry. A file that does not hold
-// them (or when this smith knows no commit) is hashed whole.
-bool smith_self_digest(const char *path, char hex[smith_sha256_hex_size]) {
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return false;
-    struct stat info;
-    if (fstat(fd, &info) != 0 || info.st_size <= 0) {
-        close(fd);
-        return false;
-    }
-    size_t length = (size_t)info.st_size;
-    const uint8_t *file = mmap(nullptr, length, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (file == MAP_FAILED) return false;
-    size_t at[2 * smith_tc_blank_max];
-    size_t size[2 * smith_tc_blank_max];
-    size_t count = 0;
-    size_t commit_size = strlen(smith_commit);
-    count +=
-        smith_tc_find_all(file, length, (const uint8_t *)smith_commit, commit_size, at + count, smith_tc_blank_max);
-    for (size_t i = 0; i < count; i++)
-        size[i] = commit_size;
-    char id_hex[2 * smith_platform_id_bytes + 1];
-    uint8_t id[smith_platform_id_bytes];
-    bool have_id = smith_platform_file_id(path, id_hex);
-    for (size_t k = 0; have_id && k < smith_platform_id_bytes; k++) { // the id's bytes, from its hex
-        int high = smith_tc_hex_value(id_hex[2 * k]);
-        int low = smith_tc_hex_value(id_hex[2 * k + 1]);
-        have_id = high >= 0 && low >= 0;
-        id[k] = (uint8_t)(high * 16 + low);
-    }
-    if (have_id) {
-        size_t first = count;
-        count += smith_tc_find_all(file, length, id, smith_platform_id_bytes, at + count, smith_tc_blank_max);
-        for (size_t i = first; i < count; i++)
-            size[i] = smith_platform_id_bytes;
-    }
-    for (size_t i = 1; i < count; i++) { // insertion sort by place: few
-        size_t place = at[i], width = size[i], j = i;
-        for (; j > 0 && at[j - 1] > place; j--) {
-            at[j] = at[j - 1];
-            size[j] = size[j - 1];
-        }
-        at[j] = place;
-        size[j] = width;
-    }
-    static const uint8_t zeros[64];
-    SmithSha256 sha;
-    smith_sha256_init(&sha);
-    size_t done = 0;
-    for (size_t i = 0; i < count; i++) { // bounded by the blanks
-        if (at[i] < done) continue;
-        smith_sha256_update(&sha, file + done, at[i] - done);
-        for (size_t left = size[i]; left > 0;) { // bounded by the blank's size
-            size_t part = left < sizeof zeros ? left : sizeof zeros;
-            smith_sha256_update(&sha, zeros, part);
-            left -= part;
-        }
-        done = at[i] + size[i];
-    }
-    smith_sha256_update(&sha, file + done, length - done);
-    smith_sha256_final(&sha, hex);
-    munmap((void *)file, length);
-    return true;
 }
 
 // The digest of the names in a folder (a file added or removed changes it); false when it cannot be listed.
@@ -243,6 +163,10 @@ static void smith_tc_feed_environment(SmithSha256 *sha) {
     qsort((void *)kept, count, sizeof kept[0], smith_tc_compare);
     for (size_t i = 0; i < count; i++) { // bounded by the kept
         smith_tc_feed(sha, kept[i]);
+        const char *equals = strchr(kept[i], '=');
+        char name[96];
+        snprintf(name, sizeof name, "environment %.*s", equals != nullptr ? (int)(equals - kept[i]) : 80, kept[i]);
+        smith_tc_note(name, equals != nullptr ? equals + 1 : "");
         if (smith_tc_why) fprintf(stderr, "smith test cache: the key holds %s\n", kept[i]);
     }
 }
@@ -252,14 +176,24 @@ static void smith_tc_feed_build_files(SmithSha256 *sha) {
     static const char *const files[] = {"build.c", "build.smith", ".clang-format", nullptr};
     char hex[smith_sha256_hex_size];
     for (size_t i = 0; files[i] != nullptr; i++) { // a short fixed list
-        if (smith_tc_hash_path(files[i], hex)) smith_tc_feed(sha, hex);
+        if (smith_tc_hash_path(files[i], hex)) {
+            smith_tc_feed(sha, hex);
+            char name[96];
+            snprintf(name, sizeof name, "build file %s", files[i]);
+            smith_tc_note(name, hex);
+        }
     }
     char here[PATH_MAX];
     if (getcwd(here, sizeof here) == nullptr || strcmp(here, smith_tc_root) == 0) return;
     for (size_t i = 0; files[i] != nullptr; i++) { // the same in the folder the runner runs in
         char path[PATH_MAX];
         snprintf(path, sizeof path, "%s/%s", here, files[i]);
-        if (smith_tc_hash_path(path, hex)) smith_tc_feed(sha, hex);
+        if (smith_tc_hash_path(path, hex)) {
+            smith_tc_feed(sha, hex);
+            char name[96];
+            snprintf(name, sizeof name, "build file %s (in the runner's folder)", files[i]);
+            smith_tc_note(name, hex);
+        }
     }
 }
 
@@ -267,11 +201,16 @@ static void smith_tc_feed_build_files(SmithSha256 *sha) {
 static void smith_tc_make_base(void) {
     SmithSha256 sha;
     smith_sha256_init(&sha);
+    smith_tc_notes_used = 0;
+    smith_tc_notes[0] = '\0';
     smith_tc_feed(&sha, smith_tc_header);
     smith_tc_feed(&sha, smith_tc_options);
+    smith_tc_note("options of the run", smith_tc_options);
     smith_tc_feed(&sha, smith_tc_runner);
+    smith_tc_note("runner", smith_tc_runner);
     smith_tc_feed_environment(&sha);
     smith_tc_feed_build_files(&sha);
+    smith_tc_note("smith under test (SMITH_SELF)", smith_tc_self_hex);
     smith_sha256_final(&sha, smith_tc_base_hex);
 }
 
@@ -487,6 +426,7 @@ static bool smith_tc_manifest_holds(const char *key) {
     FILE *file = fopen(path, "r");
     if (file == nullptr) return false;
     char line[PATH_MAX + 80];
+    smith_tc_stale[0] = '\0';
     bool ok = fgets(line, sizeof line, file) != nullptr && strcmp(line, smith_tc_header) == 0;
     for (size_t guard = 0; ok && guard < smith_tc_reads_max; guard++) { // bounded by the reads kept
         if (fgets(line, sizeof line, file) == nullptr) break;
@@ -500,6 +440,8 @@ static bool smith_tc_manifest_holds(const char *key) {
         } else {
             ok = smith_tc_hash_folder(line + 67, hex) && strncmp(hex, line + 2, 64) == 0;
         }
+        if (!ok && line[0] != '\0' && strlen(line) > 67)
+            snprintf(smith_tc_stale, sizeof smith_tc_stale, "%s", line + 67);
     }
     fclose(file);
     if (ok) (void)utimensat(AT_FDCWD, path, nullptr, 0); // used now: pruning goes by the time
@@ -569,6 +511,143 @@ static void smith_tc_say(const char *name, const char *why) {
     if (smith_tc_why) fprintf(stderr, "smith test cache: %s runs: %s\n", name, why);
 }
 
+// Whether `line` (no newline) is one of the lines of `text`.
+static bool smith_tc_has_line(const char *text, const char *line, size_t length) {
+    for (const char *at = text; *at != '\0';) { // bounded by the text
+        const char *end = strchr(at, '\n');
+        size_t size = end != nullptr ? (size_t)(end - at) : strlen(at);
+        if (size == length && strncmp(at, line, length) == 0) return true;
+        if (end == nullptr) break;
+        at = end + 1;
+    }
+    return false;
+}
+
+static void smith_tc_name_base(void) {
+    SmithSha256 sha;
+    smith_sha256_init(&sha);
+    smith_sha256_update(&sha, (const uint8_t *)smith_tc_notes, smith_tc_notes_used);
+    smith_sha256_final(&sha, smith_tc_base_name);
+}
+
+// Saves the notes of this run's base as `<store>/base/<digest>`, once; the next run reads them to name what differs.
+static void smith_tc_save_base(void) {
+    char folder[PATH_MAX];
+    char path[PATH_MAX + 80];
+    snprintf(folder, sizeof folder, "%s/base", smith_tc_store);
+    snprintf(path, sizeof path, "%s/%s", folder, smith_tc_base_name);
+    struct stat info;
+    if (stat(path, &info) == 0 || !smith_tc_ensure_folder(folder)) return;
+    FILE *out = fopen(path, "w");
+    if (out == nullptr) return;
+    fwrite(smith_tc_notes, 1, smith_tc_notes_used, out);
+    fclose(out);
+}
+
+// How many lines of the stored text `other` this run's notes share.
+static size_t smith_tc_shared(const char *other) {
+    size_t shared = 0;
+    for (const char *at = other; *at != '\0';) { // bounded by the text
+        const char *end = strchr(at, '\n');
+        if (end == nullptr) break;
+        if (smith_tc_has_line(smith_tc_notes, at, (size_t)(end - at))) shared++;
+        at = end + 1;
+    }
+    return shared;
+}
+
+// The name of a line of notes: what is before the tab.
+static size_t smith_tc_name_size(const char *line) {
+    const char *tab = strchr(line, '\t');
+    return tab != nullptr ? (size_t)(tab - line) : strlen(line);
+}
+
+// What differs between the stored base `other` and this run's: `<name> differs` for a line of this run that is not
+// there, `<name> is new` and `<name> is gone` when only one side has the name. Written to `out`, at most `max` of them.
+static size_t smith_tc_base_diff(const char *other, char out[][160], size_t max) {
+    size_t count = 0;
+    for (const char *at = smith_tc_notes; *at != '\0' && count < max;) { // bounded by the notes
+        const char *end = strchr(at, '\n');
+        if (end == nullptr) break;
+        size_t length = (size_t)(end - at);
+        size_t name = smith_tc_name_size(at);
+        if (!smith_tc_has_line(other, at, length)) {
+            bool named = false;
+            for (const char *o = other; *o != '\0' && !named;) { // bounded by the stored lines
+                const char *oend = strchr(o, '\n');
+                if (oend == nullptr) break;
+                named = smith_tc_name_size(o) == name && strncmp(o, at, name) == 0;
+                o = oend + 1;
+            }
+            snprintf(out[count++], 160, "%.*s %s", (int)name, at, named ? "differs" : "is new");
+        }
+        at = end + 1;
+    }
+    for (const char *o = other; *o != '\0' && count < max;) { // a name only the stored run had
+        const char *oend = strchr(o, '\n');
+        if (oend == nullptr) break;
+        size_t name = smith_tc_name_size(o);
+        bool kept = false;
+        for (const char *at = smith_tc_notes; *at != '\0' && !kept;) { // bounded by the notes
+            const char *end = strchr(at, '\n');
+            if (end == nullptr) break;
+            kept = smith_tc_name_size(at) == name && strncmp(o, at, name) == 0;
+            at = end + 1;
+        }
+        if (!kept) snprintf(out[count++], 160, "%.*s is gone", (int)name, o);
+        o = oend + 1;
+    }
+    return count;
+}
+
+// Why a test with no entry missed: the stored base that shares the most lines with this run's, and what differs. The
+// answer is one line in `reason`; `exact` is true when a stored run had the same base (so the test's own files
+// changed).
+static void smith_tc_explain_base(char *reason, size_t size) {
+    static char best[smith_tc_notes_max];
+    char folder[PATH_MAX];
+    snprintf(folder, sizeof folder, "%s/base", smith_tc_store);
+    DIR *dir = opendir(folder);
+    size_t best_shared = 0;
+    bool found = false;
+    for (size_t guard = 0; dir != nullptr && guard < smith_tc_bases_max; guard++) { // bounded by the bases kept
+        struct dirent *entry = readdir(dir);
+        if (entry == nullptr) break;
+        if (entry->d_name[0] == '.') continue;
+        if (strcmp(entry->d_name, smith_tc_base_name) == 0) {
+            snprintf(reason, size,
+                     "no entry, though a stored run had this environment: the test never passed there, or its files "
+                     "changed");
+            closedir(dir);
+            return;
+        }
+        static char other[smith_tc_notes_max];
+        char path[PATH_MAX + 300];
+        snprintf(path, sizeof path, "%s/%s", folder, entry->d_name);
+        FILE *file = fopen(path, "r");
+        if (file == nullptr) continue;
+        size_t got = fread(other, 1, sizeof other - 1, file);
+        fclose(file);
+        other[got] = '\0';
+        size_t shared = smith_tc_shared(other);
+        if (!found || shared > best_shared) {
+            found = true;
+            best_shared = shared;
+            memcpy(best, other, got + 1);
+        }
+    }
+    if (dir != nullptr) closedir(dir);
+    if (!found) {
+        snprintf(reason, size, "the store holds no run to compare with");
+        return;
+    }
+    char diff[4][160];
+    size_t count = smith_tc_base_diff(best, diff, 4);
+    int used = snprintf(reason, size, "the nearest stored run differs in");
+    for (size_t i = 0; i < count && used > 0 && (size_t)used < size; i++) // bounded by the diff
+        used += snprintf(reason + used, size - (size_t)used, "%s %s", i == 0 ? "" : ",", diff[i]);
+}
+
 static void smith_tc_write_results(const char *folder) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/hits", folder);
@@ -597,14 +676,38 @@ static int smith_tc_check(const char *folder) {
     if (self != nullptr && self[0] != '\0' && !smith_self_digest(self, smith_tc_self_hex)) smith_tc_self_hex[0] = '\0';
     smith_tc_make_base();
     smith_tc_index_functions();
+    smith_tc_name_base();
+    const char *mode = getenv("SMITH_RESULT_CACHE");
+    smith_tc_report = smith_tc_why || getenv("CI") != nullptr || (mode != nullptr && strcmp(mode, "report") == 0);
+    char base_reason[512] = "";
+    size_t shown = 0;
+    size_t hits = 0;
     for (size_t i = 0; i < smith_tc_test_count; i++) { // bounded by the tests
         SmithTcTest *test = &smith_tc_tests[i];
         const char *why = "";
         test->cacheable = smith_tc_key(test, &why);
         if (!test->cacheable) smith_tc_say(test->name, why);
+        char entry[PATH_MAX];
+        smith_tc_entry_path(test->key, entry, sizeof entry);
+        struct stat info;
+        bool stored = test->cacheable && stat(entry, &info) == 0;
         test->hit = test->cacheable && smith_tc_manifest_holds(test->key);
+        if (test->hit) hits++;
         if (test->cacheable && !test->hit) smith_tc_say(test->name, "no entry, or a file it read has changed");
+        if (!smith_tc_report || !test->cacheable || test->hit || shown >= smith_tc_report_max) continue;
+        if (stored) {
+            fprintf(stderr, "cache test-store: miss %s: %s changed since the entry was stored\n", test->name,
+                    smith_tc_stale[0] != '\0' ? smith_tc_stale : "a file it read");
+        } else {
+            if (base_reason[0] == '\0') smith_tc_explain_base(base_reason, sizeof base_reason);
+            fprintf(stderr, "cache test-store: miss %s: %s\n", test->name, base_reason);
+        }
+        shown++;
     }
+    if (smith_tc_report && smith_tc_test_count > 0)
+        fprintf(stderr, "cache test-store: %zu of %zu (%zu%%)\n", hits, smith_tc_test_count,
+                hits * 100 / smith_tc_test_count);
+    smith_tc_save_base();
     smith_tc_write_results(folder);
     return 0;
 }

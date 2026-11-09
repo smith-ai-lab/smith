@@ -451,7 +451,8 @@ jobs:
             echo "test parts: 1 (a pull request's check)" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
           fi
           # `smith test` runs two runners (front, units): each prints its own `misses:` line, the seconds add up
-          line=$("$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" 2>&1 | grep '^misses: ' || true)
+          "$SMITH" test --skip-macos --misses --costs "$PWD/.github/shard-costs.tsv" >"$RUNNER_TEMP/misses.out" 2>&1 || true
+          line=$(grep '^misses: ' "$RUNNER_TEMP/misses.out" || true)
           if [ -n "$line" ]; then
             secs=$(printf '%s\n' "$line" | sed -n 's/^misses: [0-9]* tests, \([0-9]*\)\.[0-9] s.*/\1/p' | awk '{s+=$1} END{print s+0}')
             count=$(( (secs + 499) / 500 )); [ "$count" -lt 1 ] && count=1; [ "$count" -gt 8 ] && count=8
@@ -461,6 +462,15 @@ jobs:
           jobs=$(( count + 2 )); [ "$count" = 1 ] && [ "$GITHUB_EVENT_NAME" = merge_group ] && jobs=2
           echo "jobs=$jobs" >>"$GITHUB_OUTPUT"
           echo "test parts: $count (${line:-no answer from smith test --misses})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Report the test-store hit rate (sizing)
+        # one line per cache with its hit rate; the first misses say which input differs (#2876)
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/cache-report
+        with:
+          name: test-store
+          log: ${{ runner.temp }}/misses.out
+          inputs: '^(runtime/|lib/std/test\.smith|smith\.c|build\.c|\.github/)'
       - name: Pick the Mac's Linux runners
         # the choice is made here, when the 10 jobs that need this build (8 test parts, check-fmt-prove, check-lint) are
         # about to ask for slots, not once at the start of the run (#2259: `changes` saw the pool free and every job
@@ -739,9 +749,16 @@ jobs:
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
     # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
     # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
-    needs: changes
+    # It waits for `publish`, so its setup fetches the stage0 of this very commit, which is the one every job after it
+    # fetches: a compile step's key holds the digest of the smith that runs it, so a cache built with the stage0
+    # before served 23 of 319 steps (#2833; warm used stage0-b2dc5ea at 06:20Z, build-linux stage0-a42cac3 at 06:38Z).
+    # Fetching the cache's stage0 in the jobs instead would cost no wait but break the lag rule
+    # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
+    # `always()`: a failed or skipped release (a pull request, a release left pending behind a newer one) still warms,
+    # with the newest published stage0
+    needs: [changes, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
-    if: needs.changes.outputs.warm == 'true'
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
       # one OS failing must not cancel the other: a Mac step that failed cancelled the Linux job, so main saved no
       # Linux cache from 01:48Z to 03:50Z on 2026-11-09 (#2826)
@@ -1005,18 +1022,16 @@ jobs:
     # the artifact of this job and the rows of the parts), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
     # what it depends on (the file, every module it imports, the C headers and the objects the fixer is built from,
     # #2309, #2632), so an entry never changes a result: a stale or missing entry is only fixed again.
-    #
-    # It builds the release profile (-O2, #2684) of smith itself, the smith the count runs and measures (the dev build of
-    # `build-linux`, -O0, made six of eight shards hit their timeout, queue run 42349047932), and hands it to the shards
-    # as the artifact `build-linux-release`. Until #2870 a job `build-linux-release` built it and this job waited for
-    # it: the same path, one job more.
+    # It builds the release profile (-O2, #2684) of smith itself, which `build-linux-release` did in a job of its own: the
+    # count runs the smith it measures, and the dev build of `build-linux` (-O0) made six of eight shards hit their
+    # timeout (queue run 42349047932). When at most one part is left to measure (a warm run) it also counts, here, and the
+    # count of a queue run is this job, the merge and the gate (3 jobs); a cold one packs the build for the shards.
     needs: [changes, pack]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.changes.result == 'success' && needs.pack.result != 'failure' && needs.pack.result != 'cancelled' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
-    # 50, not 30: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute
-    # limit failed whole queue groups (#2786's run, #2874's group); back to 30 once #2832 makes the count cheap. 5 more
-    # for the release build this job makes (about 3 min, #2870)
-    timeout-minutes: 55
+    # 60: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute limit
+    # failed whole queue groups (#2786's run, #2874's group); the build of smith that `build-linux-release` did is in it now
+    timeout-minutes: 60
     outputs:
       # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
       shards: ${{ steps.plan.outputs.shards }}
@@ -1036,15 +1051,6 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           profile: release
-      - name: Pack the release build for the shards
-        shell: bash
-        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-linux-release
-          path: ${{ runner.temp }}/build.tar.zst
-          compression-level: 0
-          retention-days: 1
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1105,6 +1111,52 @@ jobs:
           echo "count=$n" >>"$GITHUB_OUTPUT"
           echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
           echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Count the rows left, here
+        # one part or none left (a warm run): measured in this job, as part 1 of 1, so no shard job runs
+        if: ${{ steps.plan.outputs.count == '1' }}
+        # never fails the job: the status is read by the merge job, whatever happened here
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/coverage"
+          touch "$RUNNER_TEMP/before-count"
+          "$SMITH" build frontend-coverage -Dshard=1/1 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
+          cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          mkdir -p "$RUNNER_TEMP/rows"
+          find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
+          grep -E 'frontend_coverage: row cache' "$RUNNER_TEMP/coverage/output.txt" >>"$GITHUB_STEP_SUMMARY"
+          exit 0
+      - name: Save the rows of the count here
+        if: ${{ steps.plan.outputs.count == '1' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-rows-${{ github.sha }}-1
+          path: ${{ runner.temp }}/rows
+          if-no-files-found: ignore
+          compression-level: 1
+          retention-days: 3
+      - name: Save the part counted here
+        if: ${{ steps.plan.outputs.count == '1' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage-shard-${{ github.sha }}-1
+          path: ${{ runner.temp }}/coverage
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Pack the build for the shards
+        if: ${{ steps.plan.outputs.count != '1' }}
+        shell: bash
+        run: tar -c --zstd -f "$RUNNER_TEMP/build.tar.zst" build .smith
+      - name: Save the build for the shards
+        if: ${{ steps.plan.outputs.count != '1' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux-release
+          path: ${{ runner.temp }}/build.tar.zst
+          compression-level: 0
+          retention-days: 1
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
@@ -1118,8 +1170,9 @@ jobs:
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
+    # only when two or more parts are left to measure: with one or none, `frontend-coverage-fix` counted them itself
     needs: [changes, frontend-coverage-fix]
-    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.frontend-coverage-fix.result == 'success' && needs.changes.outputs.scope == 'full' }}
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.frontend-coverage-fix.result == 'success' && needs.frontend-coverage-fix.outputs.count != '1' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -1421,7 +1474,7 @@ jobs:
     # waits, and only the newest commit's install is kept waiting, so the Mac installs once when it returns.
     needs: publish
     runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 3
+    timeout-minutes: 10
     concurrency:
       group: install-mac
       cancel-in-progress: true
@@ -1436,9 +1489,29 @@ jobs:
           # plain curl and tar, no smith: this step must work with whatever smith is installed, even a stale one
           # (compiling release/publish.smith here broke on every push, #1843). `release fetch` does the same by hand.
           name="smith-$(uname -s | tr A-Z a-z)-$(uname -m).tar.xz"
-          base="https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name" "$base/$name"
-          curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -o "$tmp/$name.sha256" "$base/$name.sha256"
+          api=https://api.github.com/repos/smith-ai-lab/smith
+          # A release published seconds ago is not always served yet: github.com/releases/download/ answered 504 to all 9
+          # tries of curl over 40 s (2026-11-09 05:37Z, run 42567390515). Try for about 6 minutes, by the asset API (a
+          # redirect to a signed URL, asked for with the token and fetched without it, #2835) and then by the download URL.
+          get() {
+            f=$1
+            for try in $(seq 1 24); do
+              id=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "$api/releases/tags/stage0-$GITHUB_SHA" 2>/dev/null \
+                | jq -r --arg n "$f" '.assets[]|select(.name==$n)|.id' 2>/dev/null) || id=
+              if [ -n "$id" ]; then
+                url=$(curl -fsS -o /dev/null -w '%{redirect_url}' -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/octet-stream" "$api/releases/assets/$id" 2>/dev/null) || url=
+                if [ -n "$url" ] && curl -fsSL --retry 3 --retry-all-errors -o "$tmp/$f" "$url"; then return 0; fi
+              fi
+              curl -fsSL --retry 2 --retry-all-errors -o "$tmp/$f" \
+                "https://github.com/smith-ai-lab/smith/releases/download/stage0-$GITHUB_SHA/$f" && return 0
+              echo "install: try $try of 24 failed for $f; waiting 15 s"; sleep 15
+            done
+            echo "external: stage0-$GITHUB_SHA/$f not served after 24 tries (about 6 minutes)" >&2
+            return 1
+          }
+          get "$name"
+          get "$name.sha256"
           [ "$(shasum -a 256 "$tmp/$name" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$tmp/$name.sha256")" ] \
             || { echo "the checksum of stage0-$GITHUB_SHA does not match"; exit 1; }
           tar -C "$tmp" -xJf "$tmp/$name"
