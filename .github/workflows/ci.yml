@@ -1241,7 +1241,8 @@ jobs:
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
           mkdir -p "$RUNNER_TEMP/rows"
           find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
-          grep -E 'frontend_coverage: row cache' "$RUNNER_TEMP/coverage/output.txt" >>"$GITHUB_STEP_SUMMARY"
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: Save the rows of the count here
         if: ${{ steps.plan.outputs.count == '1' && always() }}
@@ -1329,7 +1330,8 @@ jobs:
           # the rows this shard measured (#2832): the save job adds them to the cache main starts from
           mkdir -p "$RUNNER_TEMP/rows"
           find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
-          grep -E 'frontend_coverage: row cache' "$RUNNER_TEMP/coverage/output.txt" >>"$GITHUB_STEP_SUMMARY"
+          # the lines that say where the time went, in the job log too (the output file is an artifact nobody can download)
+          grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure|row cache|compile phase)' "$RUNNER_TEMP/coverage/output.txt" | tee -a "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: Save the shard's rows
         if: always()
