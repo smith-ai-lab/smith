@@ -1,0 +1,55 @@
+// gh_retry (.github/actions/api-budget/action.yml, #2986): the shell function the `api-budget` action defines for the
+// later steps of a job. A rate-limit error makes it read GET /rate_limit, sleep until the reset and try again; any
+// other error returns at once; a quota that never returns fails after API_WAIT_MAX. The test cuts the function out of
+// the action file and feeds it the error text GitHub prints, with a fake `gh` and a sleep that only records.
+// smith-reads-tree
+// smith-covers: .github/actions/api-budget/
+module gh_retry_test;
+
+import std::arena;
+import std::mem;
+import std::test;
+import scratch;
+
+constexpr const char *script =
+    "set -u; "
+    // the function, as the action writes it
+    "sed -n \"/<<'GH_RETRY'/,/^        GH_RETRY\\$/p\" action.yml | sed '1d;$d' | "
+    "sed 's/^        //' > fn; . ./fn; "
+    // a fake gh: `gh api rate_limit` answers 7 s to the reset
+    "gh() { if [ \"$2\" = rate_limit ]; then echo 7; else echo \"unexpected gh $*\" >&2; return 9; fi; }; "
+    "flaky() { n=$(cat n 2>/dev/null || echo 0); echo $((n + 1)) > n; "
+    "if [ \"$n\" -lt \"$FAILS\" ]; then echo 'gh: API rate limit exceeded for installation ID 1234. (HTTP 403)' >&2; "
+    "return 1; fi; echo '{\"ok\":true}'; }; "
+    "other() { echo 'gh: Not Found (HTTP 404)' >&2; return 1; }; "
+    "fake_sleep() { echo \"sleep $1\" >> sleeps; }; API_WAIT_SLEEP=fake_sleep; "
+    "FAILS=2; rm -f n; out=$(gh_retry flaky 2>err); echo \"two errors: rc=$? out=$out\"; cat sleeps; : > sleeps; "
+    "grep -c 'api budget: waiting 8 s for the quota' err; "
+    "out=$(gh_retry other 2>err); echo \"other: rc=$? out=$out\"; cat err; "
+    "FAILS=99; rm -f n; out=$(API_WAIT_MAX=20 gh_retry flaky 2>err); echo \"never: rc=$?\"; cat sleeps; "
+    "grep -c 'gave up after waiting 20 s' err";
+
+export void test_gh_retry_waits_out_the_rate_limit_and_returns_other_errors_at_once() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::copy_tree(&p, ".github/actions/api-budget/action.yml", "action.yml");
+    scratch::Run run = scratch::sh(&p, script);
+    scratch::expect_status("gh_retry: the script ran", 0, &run);
+    scratch::expect_text("gh_retry: a rate-limit error waits until the reset and retries, another error does not",
+                         "two errors: rc=0 out={\"ok\":true}\n"
+                         "sleep 8\n"
+                         "sleep 8\n"
+                         "2\n"
+                         "other: rc=1 out=\n"
+                         "gh: Not Found (HTTP 404)\n"
+                         "never: rc=1\n"
+                         "sleep 8\n"
+                         "sleep 8\n"
+                         "sleep 4\n"
+                         "1",
+                         run.out);
+}

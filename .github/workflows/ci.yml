@@ -113,7 +113,6 @@ jobs:
         env:
           PR: ${{ inputs.pr }}
         run: |
-          . "$GITHUB_WORKSPACE/.github/actions/api-budget/gh-retry.sh" # gh_retry: waits out a spent REST quota (#2986)
           gh_retry env GH_TOKEN="${READ_GH_TOKEN:-$GH_TOKEN}" gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" >"$RUNNER_TEMP/pr.json"
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
@@ -861,8 +860,6 @@ jobs:
         with:
           app-id: ${{ vars.CI_READER_APP_ID }}
           private-key: ${{ secrets.CI_READER_PRIVATE_KEY }}
-      - name: gh_retry waits out a spent REST quota (tests/gh_retry_test.sh)
-        run: bash tests/gh_retry_test.sh
       - uses: ./.github/actions/queue-guard
       - uses: ./.github/actions/setup-smith
         with:
@@ -991,7 +988,6 @@ jobs:
           STATE: ${{ steps.verdict.outcome }}
           URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          . "$GITHUB_WORKSPACE/.github/actions/api-budget/gh-retry.sh" # gh_retry: waits out a spent REST quota (#2986)
           gh_retry gh api -X POST "repos/$GH_REPO/statuses/$GITHUB_SHA" -f context=ci -f state="$STATE" -f target_url="$URL" \
             -f description="PR check #${{ inputs.pr }}: $STATE in $URL" --silent
           echo "commit status ci: $STATE on ${GITHUB_SHA:0:7} ($URL)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1779,8 +1775,6 @@ jobs:
           SAMPLED: ${{ needs.frontend-coverage-fix.outputs.sampled }}
           PR_NUMBER: ${{ inputs.pr }}
         run: |
-          . "$GITHUB_WORKSPACE/.github/actions/api-budget/gh-retry.sh" # gh_retry: waits out a spent REST quota (#2986)
-          . "$GITHUB_WORKSPACE/.github/actions/api-budget/gh-retry.sh" # gh_retry: waits out a spent REST quota (#2986)
           pass='s/^frontend-coverage: \([0-9][0-9]*\) of [0-9][0-9]* files pass$/\1/p'
           now=$(sed -n "$pass" "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null | tail -n 1)
           if [ -z "$now" ] && [ "$SAMPLED" = true ] && grep -q '^frontend-coverage-sample: ' "$RUNNER_TEMP/coverage/output.txt" 2>/dev/null; then now=sample; fi
