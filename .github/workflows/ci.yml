@@ -525,6 +525,7 @@ jobs:
         with:
           os: linux
           fresh: ${{ github.event_name == 'schedule' }}
+          imports-from: linux-* # the test parts' import caches, not the count's (#2939)
       - name: Size the test parts
         # the number of Linux test parts follows the work the store leaves (#2833): `smith test --misses` plans the
         # whole suite, leaves out every test the restored store holds, and prints the CPU seconds that remain. A part
@@ -774,6 +775,7 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           SCOPE: ${{ needs.changes.outputs.scope }}
+          CHANGES: ${{ needs.changes.result }}
           EVENT: ${{ github.event_name }}
           MACOS: ${{ needs.macos.result }}
           MAC_RUN: ${{ needs.changes.outputs.mac_run }}
@@ -788,12 +790,29 @@ jobs:
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
-          case " $RESULTS " in
-          *" failure "* | *" cancelled "*)
-            echo "::error::a CI job failed or was cancelled"
+          # Fail closed (#2965): only `success` and `skipped` pass. An `abandoned` job (GitHub never created it, as in the
+          # outage of 2026-11-09), `failure`, `cancelled`, an empty or any future value fails.
+          for r in $RESULTS; do
+            case "$r" in
+            success | skipped) ;;
+            *)
+              echo "::error::a CI job's result is '$r', not success or skipped"
+              exit 1
+              ;;
+            esac
+          done
+          # `changes` decides what is owed: without its scope nothing can be owed, so nothing may pass.
+          case "$SCOPE" in
+          full | docs | release | none) ;;
+          *)
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
             exit 1
             ;;
           esac
+          if [ "$CHANGES" != success ]; then
+            echo "::error::changes gave no scope ('$SCOPE'; result '$CHANGES'): nothing can be owed"
+            exit 1
+          fi
           # A skipped job passes only where `changes` said the area was not touched (#1139). The scope says which jobs
           # the run owes: `full` owes macos, test-linux, check-fmt-prove and check-lint, `docs` owes macos, `release` (a push to main,
           # whose commit the queue already tested) owes no tests, `none` owes nothing. A job that was owed and skipped (a skipped `pack` skipped the three
@@ -821,12 +840,12 @@ jobs:
           done
       # The ruleset does not count a `ci` check run from a `workflow_dispatch` run (#2857 stayed `blocked` with it green),
       # so a PR check also posts its verdict as the commit status `ci` on the PR head, created by GitHub Actions (15368).
-      # Only once every job before it ran: a cancelled job (a cancelled run) posts nothing, and the next pass restarts
+      # Only once every job before it ran: a cancelled or abandoned job (a lost job, #2965) posts nothing, and the next pass restarts
       # the check; the verdict above already fails a run in which a job that was owed was skipped.
       - name: Post the verdict as the commit status `ci`
         if: >-
           always() && github.event_name == 'workflow_dispatch' && !cancelled()
-          && !contains(join(needs.*.result, ' '), 'cancelled')
+          && !contains(join(needs.*.result, ' '), 'cancelled') && !contains(join(needs.*.result, ' '), 'abandoned')
           && (steps.verdict.outcome == 'success' || steps.verdict.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
@@ -941,7 +960,7 @@ jobs:
         # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
         # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
         # them in order), smith-steps-linux.sha (the commit it was built from) and, when the queue run of this commit
-        # made one, frontend-coverage.tar.gz (the count's per-file table). The 3 newest releases stay. A failure here
+        # made one, frontend-coverage.tar.gz (the count's per-file table) and count-fixed.tar.zst (its fixed files, #2942). The 3 newest releases stay. A failure here
         # must not fail main's push
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -960,6 +979,14 @@ jobs:
             echo "$GITHUB_SHA" >"$out/c/sha"
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
+          fi
+          # the fixed tree the count checked (#2942), at its tree paths, for a session to read the lines its errors name
+          tid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          if [ -n "$tid" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
+            mkdir "$out/t"; unzip -q "$out/t.zip" -d "$out/t"
+            mv "$out/t/count-fixed.tar.zst" "$out/count-fixed.tar.zst"
+            files+=("$out/count-fixed.tar.zst")
           fi
           # the fixed files and rows of the count (#2832) are the release `count-fixed-<sha7>` of the queue run (`count-fixed-save`)
           ls -l "${files[@]}" | awk '{print $5, $9}'
@@ -1163,9 +1190,10 @@ jobs:
           profile: release
       - uses: ./.github/actions/test-cache
         # the import cache only (#2891): std's trees and the headers of the release smith's identity, which only the
-        # count's jobs publish
+        # count's jobs publish; its own set (#2939)
         with:
           tests: "false"
+          imports-from: count
       - name: Check the objects the count's key leaves out
         # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
         shell: bash
@@ -1280,6 +1308,23 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: Pack the fixed tree for sessions (#2942)
+        # the files as the count checks them, at their tree paths: its errors give lines of this form. `warm` attaches
+        # the tarball to the commit's release, where a cloud session can download it
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixed-tree"
+          tar -C .smith/frontend-coverage/tree --exclude=compile_commands.json -c --zstd -f "$RUNNER_TEMP/fixed-tree/count-fixed.tar.zst" .
+      - name: Save the fixed tree
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-fixed-tree-${{ github.sha }}
+          path: ${{ runner.temp }}/fixed-tree
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
@@ -1325,9 +1370,10 @@ jobs:
         with:
           artifact: build-linux-release
       - uses: ./.github/actions/test-cache
-        # the import cache only (#2891), of the release smith's identity
+        # the import cache only (#2891), of the release smith's identity: this shard's set and the fix job's (#2939)
         with:
           tests: "false"
+          imports-from: count count-${{ matrix.shard }}
       - name: Fetch the fixed files
         # from `frontend-coverage-fix`: the shard then only reuses them (its fixer cache is all hits) and compiles its files
         uses: actions/download-artifact@v4
