@@ -108,8 +108,8 @@ Written in C, not `.smith`: it works on the executor's own types (`SmithExec`, `
   cannot spell, more than 256 files, a compiler question that failed) leaves no depfile and runs. The step is restat,
   and a served header whose bytes the file already has is not rewritten. A module looked for on an include path and not
   found there is not in the list (nothing is to be read): the same blind spot as a header that appears earlier on a
-  compile's include path. `smith_object` emits the flags; `build.c`'s plain header steps and the tests'
-  `--smith-headers` do not yet (the previous release runs them, and it does not take `-MF`).
+  compile's include path. `smith_object` and `build.c`'s single-header steps (the libraries', `front/`'s and the `smith new` template's, #2959)
+  emit the flags; the tests' `--smith-headers` batch does not yet (#2967).
 
 ## `.smith` compiles in one process (#2888)
 
