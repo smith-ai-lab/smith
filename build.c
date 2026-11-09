@@ -367,14 +367,15 @@ static const char *const *build_header_steps(SmithBuild *b, const BuildConfig *c
         const char *source = smith_fmt(b, "%s/%s.smith", build_library_folder, name);
         const char *depfile = smith_fmt(b, "%s.d", header);
         SmithStep step = {
-            .command = smith_list(b, config->cc, "--smith-header", source, "-o", header, "-MD", "-MF", depfile, nullptr),
+            .command =
+                smith_list(b, config->cc, "--smith-header", source, "-o", header, "-MD", "-MF", depfile, nullptr),
             .inputs = smith_list(b, source, nullptr),
             .implicit_inputs =
                 smith_cat(b, smith_list(b, compiler, nullptr), build_header_imports(b, source, name), nullptr),
             .outputs = smith_list(b, header, nullptr),
             .description = smith_fmt(b, "header %s", source),
             .depfile = depfile, // the files the pass read: the step cache serves the header for their contents (#2959)
-            .restat = true, // the header is written only when its bytes change
+            .restat = true,     // the header is written only when its bytes change
         };
         smith_step(b, &step);
         outputs = smith_cat(b, outputs, step.outputs, nullptr);
