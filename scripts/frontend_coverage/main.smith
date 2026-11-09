@@ -1425,9 +1425,9 @@ static Bool fixer_object(const char object[:]) {
 // Objects that hold only the code of other verbs (#2832, #2854): the test cache (`smith test`), the docs check, the MCP
 // server with its DAP session and protocol, the LLDB DAP and server front ends, and the language server's front
 // modules. Each is reached only from its own verb: smith.o and rt_runtime_verbs.o dispatch to it, and nothing else
-// calls it, which the fix job's step "Check the objects the count's key leaves out" checks with nm. The list is by name and short on purpose:
-// any object not on it is hashed, and one that is unsure stays out (account, changed, coverage, explain, symbolize and
-// the lint cache are reached from the startup, the crash trace or the lint path).
+// calls it, which the fix job's step "Check the objects the count's key leaves out" checks with nm. The list is by name
+// and short on purpose: any object not on it is hashed, and one that is unsure stays out (account, changed, coverage,
+// explain, symbolize and the lint cache are reached from the startup, the crash trace or the lint path).
 static Bool unrelated_object(const char name[:]) {
     static const char *const names[_] = {"rt_runtime_test_cache.o", "rt_runtime_docs.o", "rt_smith_protocol_dap.o",
                                          "rt_smith_protocol_mcp.o", "lldb_dap_shim.o",   "lldb_server_shim.o"};
