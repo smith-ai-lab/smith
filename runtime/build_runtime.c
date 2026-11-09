@@ -2236,16 +2236,18 @@ static size_t smith_lang_header_step_count;
 // The header step of a module, and the flags and ordering its compile gets.
 static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, const char *header) {
     if (smith_lang_header_step_count >= smith_lang_modules_max) smith_too_many("modules", smith_lang_modules_max);
+    const char *depfile = smith_text("%s.d", header);
     smith_lang_header_sources[smith_lang_header_step_count] = object->source;
     smith_lang_header_steps[smith_lang_header_step_count++] = (SmithStep){
         .command =
             smith_cat(b, smith_list(b, object->compiler, "--smith-header", object->source, "-o", header, nullptr),
-                      smith_header_pass_flags(b, object), nullptr),
+                      smith_header_pass_flags(b, object), smith_list(b, "-MD", "-MF", depfile, nullptr), nullptr),
         .inputs = smith_one(object->source),
         .implicit_inputs = smith_one(smith_compiler_file(object->compiler)),
         .outputs = smith_one(header),
         .description = smith_text("header %s", object->source),
-        .restat = true, // the header is written only when its bytes change
+        .depfile = depfile, // the files the pass read: the step cache serves the header for their contents (#2937)
+        .restat = true,     // the header is written only when its bytes change
     };
 }
 
