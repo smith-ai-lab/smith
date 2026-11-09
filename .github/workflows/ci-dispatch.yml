@@ -4,8 +4,8 @@
 # (seconds, one small runner) starts `ci.yml` with `workflow_dispatch` on the PR's head branch for the PRs that wait
 # longest, while
 #   - no merge queue job waits for a runner, and
-#   - the Linux jobs of the running PR checks plus the new one stay within the budget (repo variable PR_BUDGET, 6 when
-#     unset; the lead sets it with queue-ops `set-pr-budget`).
+#   - the Linux jobs of the running PR checks plus the new one stay within the budget (BUDGET below: 6 of the 20; a
+#     change is a one-line PR, lead 2026-11-08).
 # A PR that cannot start now is not running and holds no runner: the next pass starts it. A pass runs on every pull
 # request event, when any `ci` run ends (room freed) and every 5 minutes as the backstop, and scans every open PR, so a
 # pass that is dropped (one runs, one waits) loses nothing. The dispatched run's last job is `ci`, the required check,
@@ -40,7 +40,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      BUDGET: ${{ vars.PR_BUDGET || '6' }}
+      # the most Linux jobs of pull request checks at once, of the org's 20 Linux runners
+      BUDGET: "6"
       # the most Linux jobs of one PR check at once (the build-and-test job and the checks job; `changes` and `ci` are
       # short and run before and after them)
       PER_RUN: "2"
