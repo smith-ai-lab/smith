@@ -718,6 +718,42 @@ static SmithObject build_lint_identity_object(SmithBuild *b, const BuildConfig *
     return object;
 }
 
+// The import identity (#2891): what the disk cache of the new front end's imports (runtime/import_cache.c) names its
+// folder by, so an entry is read only by a smith built from the same inputs. Inclusive, as a missing input would give a
+// wrong hit (lead, 2026-11-09): every file under front/ and lib/std/, shim/cimport*, the runtime's sources, build.c,
+// the LLVM pack's identity, the compile flags and the format's version, each file by its name and SHA-256 in sorted
+// order. One shasum for all the files, so it costs a configure some tens of milliseconds. Empty without an LLVM
+// install, and the cache is then off.
+static const char *build_import_identity(SmithBuild *b, const BuildConfig *config) {
+    if (!config->linkable) return "";
+    const char *script = "set -e; pack=$1; shift; "
+                         "files=$({ find front lib/std -type f; ls shim/cimport* runtime/*.c runtime/*.h; "
+                         "echo build.c; } | LC_ALL=C sort -u); "
+                         "{ printf 'smith-import-identity 1\\n%s\\n%s\\n' \"$pack\" \"$*\"; shasum -a 256 $files; } | "
+                         "shasum -a 256 | cut -c1-64";
+    return smith_capture_or(
+        b, smith_cat(b, (const char *[]){"sh", "-c", script, "sh", config->llvm_id, nullptr}, config->cflags, nullptr),
+        "");
+}
+
+// runtime/import_identity.c, the identity above in a translation unit of its own, as the lint identity's, made in
+// `object` (the executor knows an object by its address).
+static void build_import_identity_object(SmithBuild *b, const BuildConfig *config, const char *folder,
+                                         SmithObject *object) {
+    const char *identity = build_import_identity(b, config);
+    *object = (SmithObject){
+        .compiler = config->cc,
+        .source = "runtime/import_identity.c",
+        .output = smith_fmt(b, "%s/import_identity.o", folder),
+        .flags =
+            smith_cat(b, config->cflags,
+                      smith_when(b, identity[0] != '\0',
+                                 (const char *[]){smith_fmt(b, "-DSMITH_IMPORT_IDENTITY=\"%s\"", identity), nullptr}),
+                      nullptr),
+    };
+    smith_object(b, object);
+}
+
 static void build_tree_sitter_data(SmithBuild *b, const BuildConfig *config, const char *folder, SmithObject *data);
 
 // Everything smith links beside smith.c when clang is inside: the packed data, the shims of the compiler, the linker
@@ -840,11 +876,13 @@ static const char *const build_runtime_sources[] = {
     "runtime/package_unit.c",
     "runtime/quiet.c",
     "runtime/record.c",
+    "runtime/self_digest.c",
     "runtime/slots.c",
     "runtime/symbolize.c",
     "runtime/test_cache.c",
     "runtime/verbs.c",
     "runtime/world.c",
+    "runtime/import_cache.c",
     nullptr,
 };
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
@@ -1104,7 +1142,7 @@ static const char *build_runtime_object_path(SmithBuild *b, const char *folder, 
     return smith_fmt(b, "%s/rt_%s.o", folder, smith_replace_extension(b, flat, ""));
 }
 
-// One object for each runtime source; returns how many it added to `list`.
+// One object for each runtime source, then the import identity's; returns how many it added to `list`.
 static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, const char *folder,
                                     const char *const *flags, SmithObject *objects, const SmithObject **list) {
     const char *const *platform = build_is_linux(b) ? build_runtime_sources_linux : build_runtime_sources_macos;
@@ -1127,7 +1165,9 @@ static size_t build_runtime_objects(SmithBuild *b, const BuildConfig *config, co
             count++;
         }
     }
-    return count;
+    build_import_identity_object(b, config, folder, &objects[count]);
+    list[count] = &objects[count];
+    return count + 1;
 }
 
 static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const char *folder) {
@@ -1135,7 +1175,8 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     const char *const *flags = smith_cat(
         b, config->cflags,
         (const char *[]){"-I", "include", "-I", ".smith/include", "-I", ".smith/protocol", "-I", "runtime/protocol",
-                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IN_PROCESS", nullptr},
+                         "-DSMITH_COMMIT_LINKED", "-DSMITH_LINT_IDENTITY_LINKED", "-DSMITH_IMPORT_IDENTITY_LINKED",
+                         "-DSMITH_IN_PROCESS", nullptr},
         (const char *[]){smith_fmt(b, "-DSMITH_CLANG_ID=\"%s\"", config->llvm_id), "-DSMITH_MCP", "-DSMITH_TREE_SITTER",
                          nullptr},
         smith_when(b, config->prove[0] != '\0', (const char *[]){"-DSMITH_PROVE", nullptr}),
@@ -1166,9 +1207,9 @@ static SmithStep build_programs(SmithBuild *b, const BuildConfig *config, const 
     SmithObject libraries[linked_count + 1];
     SmithObject runtime_io;
     build_io_object(b, config, folder, flags, &runtime_io);
-    // smith.c, the commit, the io layer, the front end, the libraries, the shims (a table of 19, the packed data and
-    // the parser) and the prover's four, ended by nullptr
-    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2;
+    // smith.c, the commit, the io layer, the lint identity, the front end, the libraries, the runtime (the import
+    // identity last), the shims (a table of 19, the packed data and the parser) and the prover's four, ended by nullptr
+    constexpr size_t runtime_max = sizeof build_runtime_sources / sizeof build_runtime_sources[0] + 4 + 2 + 1;
     SmithObject runtime_objects[runtime_max];
     const SmithObject *objects[4 + linked_count + 19 + 2 + 4 + runtime_max + 1];
     for (size_t i = 0; i < sizeof objects / sizeof objects[0]; i++)

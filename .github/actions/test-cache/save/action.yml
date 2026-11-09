@@ -1,0 +1,54 @@
+name: test-cache-save
+description: >
+  Publishes this job's test-result store (`~/.cache/smith/tests`, #2686) as the prerelease `test-cache-<sha7>-<name>`
+  (#2833, #2870), for `./.github/actions/test-cache` to restore. Each job that runs tests publishes its own, so no
+  job waits for the others to merge them: the restore extracts every store of the newest commit. Releases are
+  immutable, so a new tag per commit and job, created whole in one `gh release create`; the stores of the 3 newest
+  commits are kept, like the step cache (#2772). Only a merge queue run and the nightly save (what they ran is the tree
+  that lands); a pull request only reads. A failure here never fails the job. The job needs `contents: write`.
+
+inputs:
+  os:
+    description: the OS of the store, "linux" or "macos"
+    default: linux
+  name:
+    description: this job's part of the commit's stores, unique in the run (e.g. "linux-2of3", "macos")
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Publish the test-result store
+      if: github.event_name == 'merge_group' || github.event_name == 'schedule'
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OS: ${{ inputs.os }}
+        NAME: ${{ inputs.name }}
+      run: |
+        set -eu
+        dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
+        # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
+        [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
+        n=$( [ -d "$dir" ] && find "$dir" -type f | wc -l || echo 0)
+        if [ "$n" -eq 0 ]; then echo "test store: no entries to publish" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; fi
+        out="$RUNNER_TEMP/test-store"; mkdir -p "$out"
+        tar -C "$dir" -c . | gzip -1 >"$out/smith-tests-$OS.tar.gz"
+        echo "$GITHUB_SHA" >"$out/smith-tests.sha"
+        tag="test-cache-${GITHUB_SHA:0:7}-$NAME"
+        if ! gh release view "$tag" >/dev/null 2>&1; then
+          gh release create "$tag" "$out/smith-tests-$OS.tar.gz" "$out/smith-tests.sha" --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "test cache $tag" \
+            --notes "The test-result store (#2686) of $NAME in the $GITHUB_EVENT_NAME run at $GITHUB_SHA (#2870). Not a release of smith."
+        fi
+        # the 3 newest commits' stores stay; an older commit's go, every job's (another job may delete one first)
+        # shellcheck disable=SC2016
+        gh release list --limit 100 --json tagName,createdAt \
+          --jq '[.[]|select(.tagName|test("^test-cache-[0-9a-f]{7}"))|{tag: .tagName, sha: .tagName[11:18], at: .createdAt}]
+            | (group_by(.sha)|map({sha: .[0].sha, at: (map(.at)|max)})|sort_by(.at)|reverse|.[3:]|map(.sha)) as $old
+            | .[]|select(.sha as $s|$old|index($s))|.tag' |
+          while read -r old; do
+            gh release delete "$old" --cleanup-tag --yes >/dev/null 2>&1 || echo "::warning::could not delete release $old"
+          done
+        echo "test store: published $tag, $n entries, $(du -h "$out/smith-tests-$OS.tar.gz" | cut -f1)" | tee -a "$GITHUB_STEP_SUMMARY"

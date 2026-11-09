@@ -47,7 +47,7 @@ void build(SmithBuild *b) {
     static SmithObject objects[64];
     const SmithObject *cxx_objects[64];
     size_t cxx_count = 0;
-    for (size_t i = 0; cxx_sources[i] != nullptr && cxx_count < 63; i++) {
+    for (size_t i = 0; cxx_sources[i] != nullptr && cxx_count < 62; i++) {
         SmithObject *object = &objects[cxx_count];
         *object = (SmithObject){
             .compiler = smith_fmt(b, "%s/bin/clang++", llvm),
@@ -58,6 +58,17 @@ void build(SmithBuild *b) {
         smith_object(b, object);
         cxx_objects[cxx_count++] = object;
     }
+    // The disk cache of imports, off: the runner links no runtime (#2891).
+    SmithObject *off = &objects[cxx_count];
+    *off = (SmithObject){
+        .compiler = smith_fmt(b, "%s/bin/clang", llvm),
+        .source = smith_fmt(b, "%s/tests/front_units/import_cache_off.c", root),
+        .output = "build/tests_objects/import_cache_off.o",
+        .flags = smith_list(b, "-std=c23", "-g", "-O0", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+                            "-fno-sanitize-recover=all", nullptr),
+    };
+    smith_object(b, off);
+    cxx_objects[cxx_count++] = off;
     cxx_objects[cxx_count] = nullptr;
     SmithTests tests = {
         .objects = cxx_objects,
