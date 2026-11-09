@@ -1,0 +1,84 @@
+name: enqueue
+description: >
+  Puts pull requests in the merge queue in one burst, a few seconds apart, so the queue's batching window (60 s,
+  scripts/batch_wait.c, #2851) gathers their groups into one full run. Shared by queue-ops' enqueue-many and by
+  queue-feed (#2865). A PR already in the queue is left alone. Each call to GitHub uses the base token first and the
+  owner's token only when GitHub refuses it (the GITHUB_TOKEN cannot always enqueue; the owner's token has no workflow
+  scope, so a PR that changes a workflow file is enqueued only when it is based on the current main).
+
+inputs:
+  prs:
+    description: "Pull request numbers, separated by spaces"
+    required: true
+  base-token:
+    description: "The GITHUB_TOKEN"
+    required: true
+  owner-token:
+    description: "QUEUE_OPS_TOKEN; may be empty"
+    required: false
+    default: ""
+
+outputs:
+  queued:
+    description: "How many were enqueued"
+    value: ${{ steps.enqueue.outputs.queued }}
+  failed:
+    description: "How many GitHub refused"
+    value: ${{ steps.enqueue.outputs.failed }}
+  results:
+    description: "A file with one line per PR: the number, then enqueued, queued (already in the queue) or refused, then the reason"
+    value: ${{ steps.enqueue.outputs.results }}
+
+runs:
+  using: composite
+  steps:
+    - name: Enqueue the pull requests
+      id: enqueue
+      shell: bash
+      env:
+        PRS: ${{ inputs.prs }}
+        BASE_TOKEN: ${{ inputs.base-token }}
+        OWNER_TOKEN: ${{ inputs.owner-token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -u
+        results="$RUNNER_TEMP/enqueue-results.txt"
+        : >"$results"
+        for n in $PRS; do
+          case "$n" in *[!0-9]*) echo "not a number: $n"; exit 2 ;; esac
+        done
+
+        # GitHub's own message when there is one ("Required status check \"ci\" is expected"), else the last line
+        reason() { local m; m=$(grep '^{' <<<"$1" | head -n 1 | jq -r '.errors[0].message // empty' 2>/dev/null); echo "${m:-$(tail -n 1 <<<"$1")}" | cut -c1-200; }
+
+        # runs gh with the base token, then with the owner's when GitHub refuses; prints the last error on failure
+        gh_either() {
+          local out
+          out=$(GH_TOKEN="$BASE_TOKEN" gh "$@" 2>&1) && { echo "$out"; return 0; }
+          [ -n "$OWNER_TOKEN" ] || { echo "$out"; return 1; }
+          out=$(GH_TOKEN="$OWNER_TOKEN" gh "$@" 2>&1) && { echo "$out"; return 0; }
+          echo "$out"; return 1
+        }
+
+        queued=0 failed=0 first=true
+        for n in $PRS; do
+          [ "$first" = true ] || sleep 3
+          first=false
+          if ! id=$(gh_either api "repos/$REPO/pulls/$n" --jq .node_id); then
+            echo "$n refused $(reason "$id")" >>"$results"; failed=$((failed + 1)); continue
+          fi
+          # dequeuePullRequest and this test take the PULL REQUEST's node id, not the entry's (2026-11-08)
+          entry=$(gh_either api graphql -f query='
+            query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
+            -f id="$id" --jq '.data.node.mergeQueueEntry.id // empty') || entry=""
+          if [ -n "$entry" ]; then echo "$n queued already in the queue" >>"$results"; continue; fi
+          if out=$(gh_either api graphql -f query='
+            mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { id } } }' \
+            -f id="$id" --silent); then
+            echo "$n enqueued" >>"$results"; queued=$((queued + 1))
+          else
+            echo "$n refused $(reason "$out")" >>"$results"; failed=$((failed + 1))
+          fi
+        done
+        cat "$results"
+        { echo "queued=$queued"; echo "failed=$failed"; echo "results=$results"; } >>"$GITHUB_OUTPUT"

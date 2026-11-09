@@ -1,0 +1,155 @@
+# Feeds the merge queue with no human in the loop (#2865): every pass enqueues, in one burst, each open pull request
+# to main that is labeled `ready`, is not a draft, is mergeable (`mergeable_state` clean) with the required `ci`
+# passing on its head, and is not in the queue yet, unless the queue removed it at its current head. Entries a few seconds apart fall in the queue's 60 s batching
+# window (#2851), so the PRs that went green during the last 10 minutes are built by one full run. A runner adds
+# `ready` when its PR is green; the lead keeps queue-ops for jump and dequeue.
+name: queue-feed
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what the pass would enqueue, and enqueue nothing"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: queue-feed
+  cancel-in-progress: false
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      - name: The pull requests to enqueue
+        id: select
+        shell: bash
+        env:
+          OWNER_TOKEN: ${{ secrets.QUEUE_OPS_TOKEN }}
+        run: |
+          set -u
+          skipped="$RUNNER_TEMP/skipped.txt" heads="$RUNNER_TEMP/heads.txt" before="$RUNNER_TEMP/before"
+          : >"$skipped"; : >"$heads"; mkdir -p "$before"; touch "$before/refused.txt"
+          prs=$(gh api "repos/$REPO/issues?labels=ready&state=open&per_page=100" --paginate \
+            --jq '.[] | select(.pull_request) | .number' | sort -n)
+          if [ -z "$prs" ]; then
+            echo "prs=" >>"$GITHUB_OUTPUT"; echo "no open pull request is labeled ready"; exit 0
+          fi
+
+          # the queue refused these at these heads on an earlier pass: try again only once the head changes
+          url=$(gh api "repos/$REPO/actions/artifacts?name=queue-feed-refused&per_page=100" \
+            --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .archive_download_url // empty') || url=""
+          if [ -n "$url" ]; then
+            gh api "$url" >"$RUNNER_TEMP/before.zip" && unzip -oq "$RUNNER_TEMP/before.zip" -d "$before" || true
+          fi
+
+          # the queue's GraphQL may refuse the GITHUB_TOKEN; the owner's token reads it then
+          queue_numbers() {
+            gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                mergeQueue(branch: "main") { entries(first: 50) { nodes { pullRequest { number } } } }
+              }
+            }' --jq '.data.repository.mergeQueue.entries.nodes[].pullRequest.number'
+          }
+          queue=$(queue_numbers) || queue=$(GH_TOKEN="$OWNER_TOKEN" queue_numbers) || queue=""
+
+          skip() { echo "$1 $2" >>"$skipped"; }
+          eligible=""
+          for n in $prs; do
+            if grep -qx "$n" <<<"$queue"; then skip "$n" "in the queue"; continue; fi
+            # GitHub computes mergeable_state after a read; unknown at first is usual
+            for _ in 1 2 3; do
+              pr=$(gh api "repos/$REPO/pulls/$n") || { pr=""; break; }
+              [ "$(jq -r .mergeable_state <<<"$pr")" = unknown ] || break
+              sleep 3
+            done
+            [ -n "$pr" ] || { skip "$n" "could not read the pull request"; continue; }
+            sha=$(jq -r .head.sha <<<"$pr") state=$(jq -r .mergeable_state <<<"$pr")
+            if [ "$(jq -r .base.ref <<<"$pr")" != main ]; then skip "$n" "not based on main"; continue; fi
+            if [ "$(jq -r .draft <<<"$pr")" = true ]; then skip "$n" "draft"; continue; fi
+            ci=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=ci" \
+              --jq '.check_runs | sort_by(.id) | last | if . == null then "none" else "\(.status)/\(.conclusion)" end')
+            if [ "$ci" != completed/success ]; then skip "$n" "ci on ${sha:0:8} is $ci"; continue; fi
+            if [ "$state" != clean ]; then skip "$n" "mergeable_state is $state"; continue; fi
+            # the queue removed it (its group failed, or the lead dequeued it) and nothing was pushed since: its
+            # PR ci is still green, but enqueuing it again would test the same broken tree (#2210)
+            last=$(gh api "repos/$REPO/issues/$n/timeline?per_page=100" --paginate --jq '.[] | .event
+              | select(. == "committed" or . == "head_ref_force_pushed" or . == "added_to_merge_queue" or . == "removed_from_merge_queue")' | tail -n 1)
+            if [ "$last" = removed_from_merge_queue ]; then skip "$n" "removed from the queue at this head; push a fix first"; continue; fi
+            old=$(awk -v n="$n" -v s="$sha" '$1 == n && $2 == s { $1 = $2 = ""; sub(/^ +/, ""); print; exit }' "$before/refused.txt")
+            if [ -n "$old" ]; then skip "$n" "refused at ${sha:0:8} on an earlier pass: $old"; continue; fi
+            echo "$n $sha" >>"$heads"
+            eligible="$eligible $n"
+          done
+          echo "prs=${eligible# }" >>"$GITHUB_OUTPUT"
+          echo "eligible:${eligible:- none}"; cat "$skipped"
+
+      - uses: actions/checkout@v4
+        if: steps.select.outputs.prs != '' && env.DRY_RUN != 'true'
+        with:
+          sparse-checkout: .github/actions
+
+      - name: Enqueue them in one burst
+        id: burst
+        if: steps.select.outputs.prs != '' && env.DRY_RUN != 'true'
+        uses: ./.github/actions/enqueue
+        with:
+          prs: ${{ steps.select.outputs.prs }}
+          base-token: ${{ github.token }}
+          owner-token: ${{ secrets.QUEUE_OPS_TOKEN }}
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          PRS: ${{ steps.select.outputs.prs }}
+          RESULTS: ${{ steps.burst.outputs.results }}
+        run: |
+          set -u
+          skipped="$RUNNER_TEMP/skipped.txt" heads="$RUNNER_TEMP/heads.txt" before="$RUNNER_TEMP/before/refused.txt"
+          mkdir -p "$RUNNER_TEMP/refused"; refused="$RUNNER_TEMP/refused/refused.txt"; : >"$refused"
+          touch "$skipped" "$heads" "$before"
+          {
+            echo "## queue-feed$([ "$DRY_RUN" = true ] && echo ' (dry run: nothing enqueued)')"
+            if [ "$DRY_RUN" = true ]; then
+              for n in $PRS; do echo "- #$n would be enqueued"; done
+            elif [ -n "$RESULTS" ] && [ -f "$RESULTS" ]; then
+              while read -r n what reason; do
+                echo "- #$n $what${reason:+: $reason}"
+                if [ "$what" = refused ]; then
+                  echo "$n $(awk -v n="$n" '$1 == n { print $2 }' "$heads") $reason" >>"$refused"
+                fi
+              done <"$RESULTS"
+            fi
+            while read -r n reason; do echo "- #$n skipped: $reason"; done <"$skipped"
+            [ -n "$PRS" ] || [ -s "$skipped" ] || echo "- no open pull request is labeled ready"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          # keep the refusals of earlier passes whose PR is still at that head and was not tried again now
+          while read -r n sha reason; do
+            grep -q "^$n " "$refused" && continue
+            grep -q "^$n refused at ${sha:0:8} " "$skipped" && echo "$n $sha $reason" >>"$refused"
+          done <"$before"
+
+      - name: Remember the refusals
+        if: always() && env.DRY_RUN != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: queue-feed-refused
+          path: ${{ runner.temp }}/refused/refused.txt
+          retention-days: 3
+          if-no-files-found: ignore

@@ -49,8 +49,25 @@ jobs:
       BASE_TOKEN: ${{ github.token }}
       OWNER_TOKEN: ${{ secrets.QUEUE_OPS_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+        if: inputs.op == 'enqueue-many'
+        with:
+          sparse-checkout: .github/actions
+      - name: Enqueue the pull requests in one burst
+        id: burst
+        if: inputs.op == 'enqueue-many' && inputs.pr != ''
+        continue-on-error: true
+        uses: ./.github/actions/enqueue
+        with:
+          prs: ${{ inputs.pr }}
+          base-token: ${{ github.token }}
+          owner-token: ${{ secrets.QUEUE_OPS_TOKEN }}
       - name: Run the op
         shell: bash
+        env:
+          RESULTS: ${{ steps.burst.outputs.results }}
+          QUEUED: ${{ steps.burst.outputs.queued }}
+          FAILED: ${{ steps.burst.outputs.failed }}
         run: |
           set -u
           summary() { echo "queue-ops: op=$OP pr=${PR:-none} result=$1 actor=$ACTOR" | tee -a "$GITHUB_STEP_SUMMARY"; }
@@ -108,33 +125,12 @@ jobs:
                 sleep 10
                 echo "queue after 10 s: $(queue_order)" ;;
               enqueue-many)
-                # a burst in one job (#2851): the queue's batching window (60 s, scripts/batch_wait.c) gathers the
-                # groups of entries enqueued a few seconds apart; one op per PR took a run of about a minute each, and
-                # a pending op was dropped when a newer one arrived (2026-11-09 00:53). A PR already in the queue is
-                # skipped, so the retry with the owner's token enqueues only the ones that failed.
-                local list="$PR" n failed=0 queued=0 entry
-                [ -n "$list" ] || { echo "enqueue-many needs pr: numbers separated by spaces"; return 2; }
-                for n in $list; do
-                  case "$n" in ''|*[!0-9]*) echo "not a number: $n"; return 2 ;; esac
-                done
-                for n in $list; do
-                  PR=$n
-                  entry=$(gh api graphql -f query='
-                    query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }' \
-                    -f id="$(pr_id)" --jq '.data.node.mergeQueueEntry.id // empty') || { failed=$((failed + 1)); continue; }
-                  [ -n "$entry" ] && { echo "#$n already queued"; continue; }
-                  if gh api graphql -f query='
-                    mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { id } } }' \
-                    -f id="$(pr_id)" --silent; then
-                    echo "#$n enqueued"; queued=$((queued + 1))
-                  else
-                    echo "#$n failed"; failed=$((failed + 1))
-                  fi
-                  sleep 3
-                done
-                PR=$list
-                echo "enqueued $queued, failed $failed; queue: $(queue_order)"
-                [ "$failed" = 0 ] ;;
+                # the burst itself is the step before, the action shared with queue-feed (#2865); this prints
+                # its lines and the queue. It fails when GitHub refused one, after enqueuing the others.
+                [ -n "$RESULTS" ] || { echo "enqueue-many needs pr: numbers separated by spaces"; return 2; }
+                sed 's/^/#/' "$RESULTS"
+                echo "enqueued $QUEUED, failed $FAILED; queue: $(queue_order)"
+                [ "$FAILED" = 0 ] ;;
               dequeue)
                 needs_pr
                 dequeue_pr || return 1
