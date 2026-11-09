@@ -1463,12 +1463,14 @@ static const char *build_units(SmithBuild *b, const BuildConfig *config, const c
     const char *inputs[] = {binary, smith_fmt(b, "%s/smith-cc", folder), nullptr};
     // The arguments of `smith test` (--test a,b from --changed, #441) go to the runner of the units project.
     const char *const *given = smith_args(b);
-    // With a --shard, units-build compiles only that part's test files (#1200): the build there reads the arguments as
-    // `smith test` does, as the option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B
-    // and %0A).
+    // With a --shard or a selection (--test, --macos-only, --skip-macos), units-build compiles only the test files of
+    // the part or the chosen tests (#1200, #2998): the build there reads the arguments as `smith test` does, as the
+    // option SMITH_ARGS (each argument after a ";", with "%", ";" and newline as %25, %3B and %0A).
     const char *shard_option = "";
     for (size_t i = 0; given[i] != nullptr; i++) {
-        if (strcmp(given[i], "--shard") != 0) continue;
+        bool selects = strcmp(given[i], "--shard") == 0 || strcmp(given[i], "--test") == 0 ||
+                       strcmp(given[i], "--macos-only") == 0 || strcmp(given[i], "--skip-macos") == 0;
+        if (!selects) continue;
         const char *encoded = "";
         for (size_t k = 0; given[k] != nullptr; k++) {
             const char *argument = build_encode_argument(b, given[k]);

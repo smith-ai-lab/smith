@@ -151,6 +151,10 @@ import <unistd.h>;
 // test files of its part, so its table holds only that part's tests (runtime/build_runtime.c, #1200).
 [[std::c_name("smith_test_shard_index")]] export extern const Usize built_shard_index;
 [[std::c_name("smith_test_shard_count")]] export extern const Usize built_shard_count;
+// The selection (--test, --macos-only, --skip-macos) the table was built for: `smith test --test` compiles only the test
+// files that hold a chosen test (#2998). The filter is nullptr and the macOS choice 0 for a table of every test.
+[[std::c_name("smith_test_built_filter")]] export extern const char *const built_filter;
+[[std::c_name("smith_test_built_filter_macos")]] export extern const Usize built_filter_macos;
 
 // The runner's own capability, which main makes and hands to run: the forked workers, their pipes and sockets, the
 // signals they catch and the memory they share. It reads and prints through the direct libraries (console, clock, env,
@@ -4156,6 +4160,16 @@ Bool shard_built(const Options *options) {
     return built_shard_count == options->shard_count && built_shard_index == options->shard_index;
 }
 
+// Whether the table was built for a selection and this run asks for another: the test it names may be in a file the
+// build left out (#2998).
+Bool selection_differs(const Options *options) {
+    Bool built = built_filter != nullptr || built_filter_macos != 0;
+    if (!built) return false;
+    if (built_filter_macos != (Usize)options->macos) return true;
+    if (built_filter == nullptr || options->filter == nullptr) return built_filter != options->filter;
+    return c::strcmp(built_filter, options->filter) != 0;
+}
+
 // --shard i/n: keeps the chosen tests of part i. Files are the unit; the split is balanced by --costs.
 void shard_plan(Plan *plan, const Options *options) {
     const char *costs_file = options->costs;
@@ -4510,6 +4524,11 @@ static Usize report_run(const Plan *plan, const Options *options, F64 start) {
     if (built_shard_count > 0 && !shard_built(&options)) {
         say("this runner holds only part %zu of %zu of the tests: run it with --shard %zu/%zu, or build every test\n",
             built_shard_index, built_shard_count, built_shard_index, built_shard_count);
+        return 1;
+    }
+    if (selection_differs(&options)) {
+        say("this runner was built only for %s%s: run it with the same options, or build every test\n",
+            built_filter != nullptr ? "--test " : "", built_filter != nullptr ? built_filter : "its macOS choice");
         return 1;
     }
     prepare_run(&options);
