@@ -13,11 +13,11 @@
 //   Verdict {ok, kind, checked, message}
 //                                   `kind` says which rule allowed it (`How`: identity, widening, constant_fits,
 //                                   to_some, to_ok, array_to_slice, add_const, to_void_pointer,
-//                                   null_to_pointer, text_from_chars, literal_to_pointer, cast) or `none` when refused. `message` is empty
-//                                   when `ok`; when refused it names what was expected, what was found and what to
-//                                   write: "expected U8, found I32: narrowing may lose a value; write a cast: (U8)x".
-//                                   A type that is already an error (`invalid`) or `Auto` converts with kind
-//                                   `identity`, so one mistake is reported once.
+//                                   null_to_pointer, text_from_chars, literal_to_pointer, cast) or `none` when refused.
+//                                   `message` is empty when `ok`; when refused it names what was expected, what was
+//                                   found and what to write: "expected U8, found I32: narrowing may lose a value; write
+//                                   a cast: (U8)x". A type that is already an error (`invalid`) or `Auto` converts with
+//                                   kind `identity`, so one mistake is reported once.
 //
 // THE RULES (#414's baseline as the owner decided it on #1220, 2026-11-01, #1328)
 //   Implicit conversions never lose a value or type information; anything that could is refused with the written form.
@@ -329,8 +329,7 @@ static Verdict pointer_to_pointer(const Ctx *c) {
 // `cstr.of(s)`. The literal's characters are const, so a `Char *` target refuses (#2941).
 static Verdict text_to_pointer(const Ctx *c) {
     if (types::element_of(c->target_type) != c->char_type) return no_rule(c);
-    if (!c->lit.is_string)
-        return refuse(c, "a Str is not NUL-terminated", "write the C string: cstr.of(s)");
+    if (!c->lit.is_string) return refuse(c, "a Str is not NUL-terminated", "write the C string: cstr.of(s)");
     if (!types::points_to_const(c->target_type)) return dropped_const(c);
     return accept(literal_to_pointer);
 }
