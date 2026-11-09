@@ -850,7 +850,9 @@ static Usize record_errors(const char *path, const char output[:], const char st
 // first, so the rows of the table come in the order of the files, as in a serial run. A child's output goes to two
 // files in the jobs folder (its standard output and its standard error), one pair per slot.
 constexpr Usize jobs_max = 64;
-constexpr Usize job_args_max = 40;
+// Files one compile process takes (#2832): the arguments of a job are the command, its options and the files.
+constexpr Usize batch_max = 32;
+constexpr Usize job_args_max = 48;
 
 struct Job {
     process::Child child;
@@ -861,6 +863,9 @@ struct Job {
     char err[path_size * 2];
     char cache[path_size * 2];
     Usize cache_length;
+    // the files of a compile that took several (`measure_group`); their rows are cached under `row_path`
+    Usize members[batch_max];
+    Usize member_count;
 };
 
 static struct Job jobs[jobs_max];
@@ -875,6 +880,7 @@ static const char *scratch_root = nullptr;
 static const char *pristine_root = nullptr;
 
 static void finish_measure(Usize file, const struct Ran *compiled, const struct Job *job);
+static void finish_group(const struct Job *job, const struct Ran *compiled);
 
 // The result of a finished job: its status, and its error stream as text (its output when the error stream is empty).
 static struct Ran read_job(struct Job *job) {
@@ -905,7 +911,11 @@ static void job_finish() {
     struct Ran ran = read_job(job);
     entry_file = job->file;
     if (!job->is_fix) {
-        finish_measure(job->file, &ran, job);
+        if (job->member_count > 1) {
+            finish_group(job, &ran);
+        } else {
+            finish_measure(job->file, &ran, job);
+        }
     } else if (ran.status != 0) {
         char message[message_size];
         copy_text(message[0:message_size], ran.text);
@@ -995,24 +1005,35 @@ static void fix(const char *smith, Usize i, const char cache[:]) {
     job->cache_length = countof(cache);
 }
 
-// Starts the new front end on one fixed file, from the folder of its project. The result is recorded when the job
-// finishes.
-static void measure(const char *smith, const char *scratch, Usize file, const char row[:]) {
+// The name `smith cc` is given for file `file`, from the folder of its project; its project is returned.
+static Usize source_name(Usize file, char *name, Usize size) {
     const char *path = tree[file];
     Usize project = project_of(view_of(path));
     typeof(const char[:]) folder = text_of(projects[project][0:path_size]);
     typeof(const char[:]) inside = view_of(path)[countof(folder) > 0 ? countof(folder) + 1 : 0:countof(view_of(path))];
-    char name[path_size + 8];
     // A file under the project's own src folder is named from there; any other is named below the `src` link.
     Bool real_src = countof(inside) > 4 && same(inside[0:4], "src/");
-    (void)format::write(name, sizeof name, linked_source[project] && !real_src ? "src/" : "", inside);
+    (void)format::write(name, size, linked_source[project] && !real_src ? "src/" : "", inside);
+    return project;
+}
+
+// Enters the folder of project `project` in the scratch tree; false (and the file's row) when it cannot.
+static Bool enter_project(Usize file, Usize project, const char *scratch) {
+    typeof(const char[:]) folder = text_of(projects[project][0:path_size]);
     char home[path_size * 2];
     (void)format::write(home, sizeof home, scratch, countof(folder) > 0 ? "/" : "", folder);
-    if (c::chdir(home) != 0) {
-        entry_file = file;
-        add_entry(view_of(path), "parse", "cannot enter the project folder", "");
-        return;
-    }
+    if (c::chdir(home) == 0) return true;
+    entry_file = file;
+    add_entry(view_of(tree[file]), "parse", "cannot enter the project folder", "");
+    return false;
+}
+
+// Starts the new front end on one fixed file, from the folder of its project. The result is recorded when the job
+// finishes.
+static void measure(const char *smith, const char *scratch, Usize file, const char row[:]) {
+    char name[path_size + 8];
+    Usize project = source_name(file, name, sizeof name);
+    if (!enter_project(file, project, scratch)) return;
     char object[path_size + 12];
     (void)format::write(object, sizeof object, (const char *)name, ".o");
     char include[path_size * 2];
@@ -1028,10 +1049,74 @@ static void measure(const char *smith, const char *scratch, Usize file, const ch
     job->cache_length = countof(row);
 }
 
+// The files that missed the row cache, and where each one's row goes (#2832). They are compiled together, a process
+// per group of files of one project, so the modules and C headers they import are read once for the group (#2888).
+static Bool pending[files_max];
+static char row_path[files_max][path_size * 2];
+static Usize alone[files_max];
+static Usize alone_count = 0;
+static const char *measure_smith = nullptr;
+static const char *measure_scratch = nullptr;
+
+// Starts one `smith cc` on `files` (all of one project, at most batch_max, more than one): their objects are named by
+// the compiler (`-o` takes one file) and nothing reads them. A file that has no result when the process ends is run
+// again alone by `finish_group`.
+static void measure_group(const Usize files[:]) {
+    char member_names[batch_max][path_size + 8];
+    Usize project = source_name(files[0], member_names[0], sizeof member_names[0]);
+    if (!enter_project(files[0], project, measure_scratch)) return;
+    char include[path_size * 2];
+    (void)format::write(include, sizeof include, "-I", include_root, "/.smith/include");
+    char own[path_size * 2];
+    (void)format::write(own, sizeof own, "-I", include_root, "/include");
+    const char *program[job_args_max];
+    program[0] = measure_smith;
+    program[1] = "cc";
+    program[2] = "--front-end=new";
+    program[3] = include;
+    program[4] = own;
+    program[5] = "-c";
+    for (Usize k = 0; k < countof(files); k++) {
+        if (k > 0) (void)source_name(files[k], member_names[k], sizeof member_names[k]);
+        program[6 + k] = member_names[k];
+    }
+    const char *const *fixed_program = (const char *const *)program;
+    struct Job *job = job_start(false, files[0], "6291456", ".", fixed_program[0:6 + countof(files)]);
+    for (Usize k = 0; k < countof(files); k++)
+        job->members[k] = files[k];
+    job->member_count = countof(files);
+}
+
+// Starts the compiles of every file that missed the row cache: one process for each group of at most batch_max
+// files of a project, the files of a project split evenly so a project of 33 files is two of 17, not 32 and 1.
+static void measure_pending() {
+    for (Usize p = 0; p < project_count; p++) {
+        Usize group[files_max];
+        Usize n = 0;
+        for (Usize i = 0; i < tree_count; i++) {
+            if (pending[i] && project_of(view_of(tree[i])) == p) {
+                group[n] = i;
+                n += 1;
+            }
+        }
+        Usize parts = (n + batch_max - 1) / batch_max;
+        for (Usize k = 0; k < parts; k++) {
+            Usize from = k * n / parts;
+            Usize to = (k + 1) * n / parts;
+            if (to - from == 1) {
+                measure(measure_smith, measure_scratch, group[from], text_of(row_path[group[from]][0:path_size * 2]));
+            } else {
+                measure_group(group[from:to]);
+            }
+        }
+    }
+}
+
 constexpr Usize rows_text_max = 1048576;
 static char rows_text[rows_text_max];
 
-// Writes the rows a compile just recorded (entries `first` up to the end) to the job's row cache entry, as table lines
+// Writes the rows a compile just recorded (entries `first` up to the end) to the row cache entry `cache`, as table
+// lines
 // (#2832). A compile that ended by a signal or a ulimit kill (127 and up) depends on the machine and is never cached;
 // nor are rows that do not fit the buffer.
 static Usize put_text(Usize n, const char text[:], char end) {
@@ -1044,8 +1129,8 @@ static Usize put_text(Usize n, const char text[:], char end) {
     return n + 1;
 }
 
-static void save_rows(const struct Job *job, I32 status, Usize first) {
-    if (job->cache_length == 0 || status < 0 || status >= 127) return;
+static void save_rows_to(const char cache[:], I32 status, Usize first) {
+    if (countof(cache) == 0 || status < 0 || status >= 127) return;
     Usize n = 0;
     for (Usize i = first; i < entry_count; i++) {
         n = put_text(n, text_of(entries[i].path[0:path_size]), '\t');
@@ -1054,7 +1139,11 @@ static void save_rows(const struct Job *job, I32 status, Usize first) {
         n = put_text(n, text_of(entries[i].position[0:position_size]), '\n');
     }
     if (n == 0 || n > rows_text_max) return;
-    (void)files::write_file(job->cache[0:job->cache_length], ((const U8 *)rows_text)[0:n], files::Replace);
+    (void)files::write_file(cache, ((const U8 *)rows_text)[0:n], files::Replace);
+}
+
+static void save_rows(const struct Job *job, I32 status, Usize first) {
+    save_rows_to(job->cache[0:job->cache_length], status, first);
 }
 
 // The result of the compile of file `file`.
@@ -1069,6 +1158,73 @@ static void finish_measure(Usize file, const struct Ran *compiled, const struct 
         (void)record_errors(path, compiled->text, text_of(stage[0:stage_size]), compiled->status);
     }
     save_rows(job, compiled->status, first_row);
+}
+
+// Records the result of one file of a group, from the lines of its block (its diagnostics, then its stage line).
+// `status` 1 is what the file's own compile ends with when it fails, so the row is the one a compile alone gives.
+static void finish_member(Usize file, const char block[:], I32 status) {
+    char stage[stage_size];
+    Usize first_row = entry_count;
+    entry_file = file;
+    if (status == 0) {
+        add_entry(view_of(tree[file]), "pass", "", "");
+    } else {
+        stage_named(block, stage[0:stage_size]);
+        (void)record_errors(tree[file], block, text_of(stage[0:stage_size]), status);
+    }
+    save_rows_to(text_of(row_path[file][0:path_size * 2]), status, first_row);
+}
+
+// The result of a compile of a group of files. A file that failed has its diagnostics and then the line
+// `<name>: stage: <stage>` (SMITH_FRONT_STAGE) in the output; a file that passed prints nothing. When the process ended
+// by a signal or the memory cap (127 and up), or failed with no such line (two files of one module name), only the
+// files that have their line are known, and the others are compiled again alone, as before.
+static void finish_group(const struct Job *job, const struct Ran *compiled) {
+    Usize members[batch_max];
+    Usize count = job->member_count;
+    for (Usize k = 0; k < count; k++)
+        members[k] = job->members[k];
+    char member_names[batch_max][path_size + 8];
+    Bool known[batch_max];
+    for (Usize k = 0; k < count; k++) {
+        (void)source_name(members[k], member_names[k], sizeof member_names[k]);
+        known[k] = false;
+    }
+    typeof(const char[:]) text = compiled->text;
+    Usize at = 0;
+    Usize block = 0;
+    Bool lined = false;
+    while (at < countof(text)) {
+        Usize end = find(text, '\n', at);
+        typeof(const char[:]) line = text[at:end];
+        Usize named = find_text(line, ": stage: ");
+        for (Usize k = 0; k < count && named < countof(line); k++) {
+            if (!known[k] && same(line[0:named], text_of(member_names[k][0:path_size + 8]))) {
+                known[k] = true;
+                lined = true;
+                finish_member(members[k], text[block:end < countof(text) ? end + 1 : end], 1);
+                block = end + 1;
+            }
+        }
+        at = end + 1;
+    }
+    Bool complete = compiled->status >= 0 && compiled->status < 127 && (compiled->status == 0 || lined);
+    Usize again[batch_max];
+    Usize again_count = 0;
+    for (Usize k = 0; k < count; k++) {
+        if (known[k]) continue;
+        if (complete) {
+            finish_member(members[k], text[0:0], 0);
+        } else {
+            again[again_count] = members[k];
+            again_count += 1;
+        }
+    }
+    // They are started once the jobs in flight are done (`measure_all`), not from here.
+    for (Usize k = 0; k < again_count; k++) {
+        alone[alone_count] = again[k];
+        alone_count += 1;
+    }
 }
 
 // ---------------------------------------------------------------------------------------- imports, hashes and cache
@@ -1343,7 +1499,7 @@ static struct Hash row_key(Usize i) {
 
 // Measures file `i`, or replays the rows a compile of the same inputs made (#2832). A cache entry never changes a
 // result: the nightly count without the cache (#2833) is the check.
-static void measure_cached(const char *smith, const char *scratch, Usize i) {
+static void measure_cached(Usize i) {
     char name[33];
     char entry[path_size * 2];
     hex_of(name[0:33], row_key(i));
@@ -1358,8 +1514,8 @@ static void measure_cached(const char *smith, const char *scratch, Usize i) {
         return;
     }
     row_misses += 1;
-    typeof(const char[:]) row = entry[0:e.length];
-    measure(smith, scratch, i, row);
+    copy_text(row_path[i][0:path_size * 2], entry[0:e.length]);
+    pending[i] = true;
 }
 
 // The hash of the smith that fixes, when nothing narrower is known: its file.
@@ -1376,18 +1532,10 @@ static Bool ends_with(const char text[:], const char tail[:]) {
     return countof(text) >= countof(tail) && same(text[countof(text) - countof(tail):countof(text)], tail);
 }
 
-// Fixes file `i` again from its original: the copy in the scratch tree is replaced by the original first, and the
-// cache entry of its fix is made again from the result (#2669).
-static void fix_again(const char *smith, const char *root, const char *scratch, Usize i) {
-    char from[path_size * 2];
-    char to[path_size * 2];
-    format::Written a = format::write(from, sizeof from, root, "/", (const char *)tree[i]);
-    format::Written b = format::write(to, sizeof to, scratch, "/", (const char *)tree[i]);
-    files::BytesResult loaded = files::read_file(from[0:a.length]);
-    if (loaded == .error) return;
-    defer mem::free(loaded.ok.data);
-    files::CountResult put = files::write_file(to[0:b.length], loaded.ok, files::Replace);
-    if (put == .error) return;
+// Fixes file `i` again, from its fixed text: the foreign fixes found in its generics while an importer was fixed are
+// keyed by the text the importer read, which is the fixed one (#2669, #2924). The cache entry of its fix is made
+// again from the result.
+static void fix_again(const char *smith, Usize i) {
     char name[33];
     char entry[path_size * 2];
     hex_of(name[0:33], fix_key(i));
@@ -1397,8 +1545,8 @@ static void fix_again(const char *smith, const char *root, const char *scratch, 
 
 // A fix the checker finds in an instance of another module's generic belongs to that module and is found only while an
 // importer is fixed (front::fix, #2669): the fixers share them in `foreign.tsv` of the imports folder. A module named
-// there may have been fixed before its importer found them, whatever the order of the files, so each is fixed again.
-static void fix_foreign(const char *smith, const char *root, const char *scratch, const char *imports) {
+// there was fixed before its importer found them, so each is fixed again, from its fixed text.
+static void fix_foreign(const char *smith, const char *imports) {
     char path[path_size * 2];
     format::Written w = format::write(path, sizeof path, imports, "/foreign.tsv");
     files::BytesResult loaded = files::read_file(path[0:w.length]);
@@ -1423,7 +1571,7 @@ static void fix_foreign(const char *smith, const char *root, const char *scratch
             if (again[i] || !fixed_ok[i] || !is_smith(tree[i]) || !ends_with(file, tail)) continue;
             if (countof(file) > countof(tail) && file[countof(file) - countof(tail) - 1] != '/') continue;
             again[i] = true;
-            fix_again(smith, root, scratch, i);
+            fix_again(smith, i);
         }
     }
     jobs_drain();
@@ -1749,6 +1897,73 @@ static Bool fix_only_done() {
     return true;
 }
 
+// Measures every owned file: the row cache first, then the misses in groups, then the files of a group that left
+// no result one by one.
+static void measure_all(const char *smith, const char *scratch) {
+    measure_smith = smith;
+    measure_scratch = scratch;
+    for (Usize i = 0; i < tree_count; i++) {
+        if (fixed_ok[i] && owned[i]) measure_cached(i);
+    }
+    measure_pending();
+    jobs_drain();
+    while (alone_count > 0) {
+        Usize again[files_max];
+        Usize n = alone_count;
+        for (Usize k = 0; k < n; k++)
+            again[k] = alone[k];
+        alone_count = 0;
+        for (Usize k = 0; k < n; k++)
+            measure(smith, scratch, again[k], text_of(row_path[again[k]][0:path_size * 2]));
+        jobs_drain();
+    }
+}
+
+// Whether every file that file `i` imports and that is fixed in this run has been fixed already.
+static Bool imports_fixed(Usize i, const Bool *done) {
+    for (Usize k = 0; k < import_count[i]; k++) {
+        Usize found = import_list[i][k];
+        if (fixed_ok[found] && !done[found]) return false;
+    }
+    return true;
+}
+
+// Fixes the files in rounds: a file is fixed once the files it imports are, so the fixer reads each import as it is
+// fixed and not in whatever state its own fixer has reached (it reads imports beside the file in this tree). The
+// foreign fixes it finds in the generics of an import (#2669) are keyed by that text, so a run gives the same
+// result at any number of jobs (#2924).
+static void fix_in_order(const char *smith, Bool all) {
+    static Bool done[files_max];
+    static Bool fixing[files_max];
+    Usize left = 0;
+    for (Usize i = 0; i < tree_count; i++) {
+        done[i] = false;
+        fixed_ok[i] = is_smith(tree[i]) && (all || wanted[i]);
+        if (fixed_ok[i]) left += 1;
+    }
+    while (left > 0) {
+        Usize started = 0;
+        for (Usize i = 0; i < tree_count; i++) {
+            fixing[i] = fixed_ok[i] && !done[i] && imports_fixed(i, done);
+            if (!fixing[i]) continue;
+            fix_cached(smith, i);
+            started += 1;
+        }
+        // an import cycle: nothing is ready, so the rest is fixed as it comes
+        Bool stuck = started == 0;
+        for (Usize i = 0; i < tree_count && stuck; i++) {
+            fixing[i] = fixed_ok[i] && !done[i];
+            if (fixing[i]) fix_cached(smith, i);
+        }
+        jobs_drain();
+        for (Usize i = 0; i < tree_count; i++) {
+            if (!fixing[i]) continue;
+            done[i] = true;
+            left -= 1;
+        }
+    }
+}
+
 static I32 run(const char *smith, const char *root, const char *scratch, const char list[:]) {
     include_root = root;
     if (!list_tree(root)) {
@@ -1789,14 +2004,8 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     job_folder = jobs_path;
     (void)files::make_folder(view_of(jobs_path));
     U64 phase_start = clock::monotonic();
-    for (Usize i = 0; i < tree_count; i++) {
-        fixed_ok[i] = false;
-        if (!is_smith(tree[i]) || (!all && !wanted[i])) continue;
-        fixed_ok[i] = true;
-        fix_cached(smith, i);
-    }
-    jobs_drain();
-    fix_foreign(smith, root, scratch, imports);
+    fix_in_order(smith, all);
+    fix_foreign(smith, imports);
     U64 fix_ms = (clock::monotonic() - phase_start) / clock::millisecond;
     console::print_error("frontend_coverage: fix phase ", fix_ms, " ms\n");
     console::print_error("frontend_coverage: fixer cache: ", cache_hits, " files reused, ", cache_misses, " fixed, ",
@@ -1805,10 +2014,7 @@ static I32 run(const char *smith, const char *root, const char *scratch, const c
     if (fix_only_done()) return 0;
     link_roots(scratch);
     phase_start = clock::monotonic();
-    for (Usize i = 0; i < tree_count; i++) {
-        if (fixed_ok[i] && owned[i]) measure_cached(smith, scratch, i);
-    }
-    jobs_drain();
+    measure_all(smith, scratch);
     console::print_error("frontend_coverage: row cache: ", row_hits, " files reused, ", row_misses, " measured\n");
     console::print_error("frontend_coverage: compile phase ", (clock::monotonic() - phase_start) / clock::millisecond,
                          " ms\n");

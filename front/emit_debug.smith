@@ -141,15 +141,28 @@ static c::LLVMMetadataRef basic_type(state::Emitter *e, state::Ty ty) {
     return c::LLVMDIBuilderCreateUnspecifiedType(e->debug_builder, ty.name.data, countof(ty.name));
 }
 
+// Whether `ty` is a pointer with an element: its pointer and the element's `Ty`. A parameter is never assigned, so the
+// test of its kind holds for the reads (the loop's `base` changes every pass).
+static Bool pointee(state::Ty ty, state::PointerTy *step, state::Ty *next) {
+    if (ty.kind == .pointer && ty.kind.pointer.element != nullptr) {
+        *step = ty.kind.pointer;
+        *next = *ty.kind.pointer.element;
+        return true;
+    }
+    return false;
+}
+
 // The DI type of `ty`: basic types, and pointers to them (a chain of pointers is walked, not recursed into).
 static c::LLVMMetadataRef type_of(state::Emitter *e, state::Ty ty) {
     state::PointerTy chain[8] = {};
     Usize depth = 0;
     state::Ty base = ty;
-    while (base.kind == .pointer && base.kind.pointer.element != nullptr && depth < pointer_depth_max) {
-        chain[depth] = base.kind.pointer;
+    state::PointerTy step;
+    state::Ty next;
+    while (depth < pointer_depth_max && pointee(base, &step, &next)) {
+        chain[depth] = step;
         depth += 1;
-        base = *base.kind.pointer.element;
+        base = next;
     }
     c::LLVMMetadataRef result = nullptr;
     if (base.kind != .pointer) {
@@ -159,7 +172,7 @@ static c::LLVMMetadataRef type_of(state::Emitter *e, state::Ty ty) {
         result = c::LLVMDIBuilderCreatePointerType(e->debug_builder, result, pointer_bits(e), 0,
                                                    chain[i - 1].address_space, "", 0);
     }
-    if (depth == 0 && base.kind == .pointer) {
+    if (base.kind == .pointer && depth == 0) {
         result = c::LLVMDIBuilderCreatePointerType(e->debug_builder, nullptr, pointer_bits(e), 0,
                                                    base.kind.pointer.address_space, "", 0);
     }

@@ -264,6 +264,6 @@ I32 main(Str args[:]) {
                 false);
     print_table("CPU seconds of each part of the test matrix (a balanced split has equal parts)", &parts, true, 10,
                 true);
-    print_table("Tests of 2 CPU seconds or more (what .github/shard-costs.tsv is made from)", &tests, true, 25, true);
+    print_table("Tests of 2 CPU seconds or more", &tests, true, 25, true);
     return 0;
 }

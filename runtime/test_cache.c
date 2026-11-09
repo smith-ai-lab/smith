@@ -147,6 +147,9 @@ static bool smith_tc_env_keyed(const char *entry) {
         "SMITH_RECORDS",     "SMITH_OUTPUT=",  "SMITH_RESULT_CACHE", "SMITH_QUIET",     "SMITH_LINT_CACHE=",
         "SMITH_TEST_CACHE=", "SMITH_SLOT",     "SMITH_START",        "SMITH_BUILD_ID=", nullptr};
     if (strncmp(entry, "SMITH_", 6) != 0) return false;
+    // where the import cache counts its hits (#2891), set by CI's test-cache action in every job
+    static const char import_log[] = "SMITH_IMPORT_CACHE_LOG=";
+    if (strncmp(entry, import_log, sizeof import_log - 1) == 0) return false;
     for (size_t i = 0; skipped[i] != nullptr; i++) { // a short fixed list
         if (strncmp(entry, skipped[i], strlen(skipped[i])) == 0) return false;
     }
