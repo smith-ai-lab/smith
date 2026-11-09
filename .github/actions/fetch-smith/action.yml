@@ -21,8 +21,17 @@ runs:
         mkdir -p .smith/stage0
         set -- -fsS --retry 10
         [ -z "${GITHUB_TOKEN:-}" ] || set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"
+        # Every request retries on a 5xx, a timeout or a reset connection, and a failure after its retries says the
+        # cause is outside this diff (#2825): `external: <url> <status> after 10 tries`
+        get() {
+          url=$1; shift
+          curl "$@" --retry-all-errors "$url" 2>"$RUNNER_TEMP/fetch-smith.err" && return 0
+          status=$?
+          echo "external: $url curl exit $status after 10 tries: $(tail -n 1 "$RUNNER_TEMP/fetch-smith.err")" >&2
+          return "$status"
+        }
         # The newest releases first; the first one that has this platform's asset wins.
-        curl "$@" "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" -o .smith/stage0/releases.json
+        get "https://api.github.com/repos/smith-ai-lab/smith/releases?per_page=30" "$@" -o .smith/stage0/releases.json
         newest=$(jq -r '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
         tag=$(jq -r --arg n "$name" '[.[]|select(.draft|not)|select(.tag_name|startswith("stage0-"))|select(any(.assets[]; .name==$n))]|sort_by(.published_at)|reverse|.[0].tag_name // empty' .smith/stage0/releases.json)
         if [ -z "$tag" ]; then
@@ -32,11 +41,16 @@ runs:
         if [ "$tag" != "$newest" ]; then
           echo "fetch-smith: the newest release $newest has no $name; using $tag" | tee -a "$GITHUB_STEP_SUMMARY"
         fi
-        # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id.
+        # The asset API answers when github.com/releases/download/ returns 504 (2026-11-08): download by asset id. The API
+        # answers with a redirect to a signed URL: ask for it with the token, then fetch it without (a curl that sends the
+        # token on to the other host got a 401 on the owner's Mac, #2835). A 401 is not retried.
+        api=https://api.github.com/repos/smith-ai-lab/smith/releases/assets
         for f in "$name" "$name.sha256"; do
           id=$(jq -r --arg t "$tag" --arg n "$f" '.[]|select(.tag_name==$t)|.assets[]|select(.name==$n)|.id' .smith/stage0/releases.json)
-          curl "$@" --retry-delay 3 --retry-all-errors -L -H "Accept: application/octet-stream" \
-            -o ".smith/stage0/$f" "https://api.github.com/repos/smith-ai-lab/smith/releases/assets/$id"
+          reply=$(curl "$@" --retry-delay 3 -o /dev/null -w '%{http_code} %{redirect_url}' \
+            -H "Accept: application/octet-stream" "$api/$id") || { echo "external: $api/$id curl exit $? after 10 tries" >&2; exit 1; }
+          [ "${reply%% *}" = 302 ] || { echo "fetch-smith: $api/$id answered ${reply%% *}, not a redirect" >&2; exit 1; }
+          get "${reply#* }" -fsS --retry 10 --retry-delay 3 -L -o ".smith/stage0/$f"
         done
         want=$(cut -d' ' -f1 ".smith/stage0/$name.sha256")
         if command -v sha256sum >/dev/null; then got=$(sha256sum ".smith/stage0/$name" | cut -d' ' -f1)
