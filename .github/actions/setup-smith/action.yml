@@ -31,6 +31,12 @@ inputs:
       shards measure a release smith, so the count is not slowed by the dev profile
     default: dev
 
+  stage0:
+    description: >
+      the release to build with instead of the newest (`stage0-<commit>`), if it is published; main's `warm` names its
+      own commit's, the one every job after it fetches (#2833). Empty: the newest
+    default: ""
+
 outputs:
   llvm-key:
     description: the cache key of the LLVM pack
@@ -98,6 +104,8 @@ runs:
     - name: Fetch the previous smith
       if: inputs.artifact == ''
       uses: ./.github/actions/fetch-smith
+      with:
+        tag: ${{ inputs.stage0 }}
 
     - name: Fetch the LLVM pack
       if: inputs.artifact == ''

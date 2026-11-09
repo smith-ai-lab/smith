@@ -942,11 +942,13 @@ jobs:
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
     # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
     # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
-    # It waits for `publish`, so its setup fetches the stage0 of this very commit, which is the one every job after it
+    # It waits for `publish` and its setup names the stage0 of this very commit, which is the one every job after it
     # fetches: a compile step's key holds the digest of the smith that runs it, so a cache built with the stage0
     # before served 23 of 319 steps (#2833; warm used stage0-b2dc5ea at 06:20Z, build-linux stage0-a42cac3 at 06:38Z).
     # Fetching the cache's stage0 in the jobs instead would cost no wait but break the lag rule
     # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
+    # Waiting was not enough by itself: fetch-smith's release list left the newest out (run 42601821786 got
+    # stage0-d6bcd6c 2 s after stage0-78a4f9a was published), so the setup names the tag.
     # `always()`: a failed or skipped release (a pull request, a release left pending behind a newer one) still warms,
     # with the newest published stage0
     needs: [changes, publish]
@@ -977,6 +979,8 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           tests: "true"
+          # its own commit's release by name, not whatever the release list calls the newest (#2833)
+          stage0: ${{ github.event_name == 'push' && format('stage0-{0}', github.sha) || '' }}
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
       - name: Fetch what the test jobs download (#2825)
         # Linux only: `smith build nvim` fetches Neovim for Linux x86_64 and fails on a Mac, and the jobs that restore
