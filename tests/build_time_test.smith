@@ -73,7 +73,7 @@ export void test_the_front_end_stages_add_up_to_the_front_end() {
     scratch::write(&p, "t.smith", "fn main() -> i32:\n    return 0\n");
     scratch::Run run = scratch::sh(
         &p, "SMITH_TIME=1 smith cc --front-end=new -c t.smith -o t.o 2>time.txt; "
-            "awk '/^time:   / { sum += $(NF-1) } /^time: front end compile / { total = $(NF-1) } "
+            "awk '/^time:   / && !/of which|wall/ { sum += $(NF-1) } /^time: front end compile / { total = $(NF-1) } "
             "END { d = sum - total; if (d < 0) d = -d; print (d <= total / 10 + 1 ? \"ok\" : \"bad\"), sum, total }' "
             "time.txt");
     defer scratch::release(run.out);

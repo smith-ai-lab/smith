@@ -89,6 +89,9 @@ export typedef void (*LambdaBody)(types::Checked *c, const ast::Expr *lambda, ty
 // A statement inside a block that is a value and that is not an expression: a local, a `return`, a loop. J1d's walk
 // checks it in the scope the block opened. Unset, such a statement is reported as `not yet typed`.
 export typedef void (*Statement)(types::Checked *c, const ast::Stmt *s);
+// An `if` used as a value, before its parts are typed: J1d's fixer notes a test of an option field that guards the
+// reads in the first branch (#2647).
+export typedef void (*ValueIf)(types::Checked *c, const ast::Stmt *s);
 
 // The result type of the function being checked (`nullptr` outside one); `try` reads it.
 export typedef types::TypeRef (*FunctionResult)();
@@ -99,6 +102,7 @@ export struct Hooks {
     CastRule cast_rule;
     LambdaBody lambda_body;
     Statement statement;
+    ValueIf value_if;
 };
 
 static Hooks hooks;
@@ -1467,6 +1471,27 @@ static Str unary_text(ast::UnaryOp op) {
     return "--";
 }
 
+// An operand whose text can take `== 0` or `!= 0` after it as it stands.
+static Bool is_simple_operand(const ast::Expr *e) {
+    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call;
+}
+
+// `!n` where `n` is a number (#2647): the operand tested against zero, `n == 0`. No fix for an operand that is not a
+// plain name, member, index or call (`!(a & b)` keeps its parentheses).
+static syntax::Edits not_number_fix(const ast::Expr *e, types::TypeRef t) {
+    syntax::Edits none = {};
+    if (!is_number(t) || !(e->kind == .unary)) return none;
+    const ast::Expr *operand = e->kind.unary.operand;
+    if (!is_simple_operand(operand) || operand->span.start <= e->span.start || operand->span.end != e->span.end)
+        return none;
+    syntax::Edits fix = mem::realloc(none, 2);
+    Str zero = " == 0";
+    Str nothing = "";
+    fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = operand->span.start}, .text = nothing};
+    fix[1] = (syntax::Edit){.span = {.start = operand->span.end, .end = operand->span.end}, .text = zero};
+    return fix;
+}
+
 // A unary operator that wants a number, an integer or a Bool; reports what to write when `t` is none of them.
 static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::UnaryOp op, types::TypeRef t) {
     Str text = unary_text(op);
@@ -1475,7 +1500,13 @@ static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::Un
         if (t->kind == .bool_type) {
             return t;
         }
-        types::failf(c, e->span, "`!` needs a Bool, found `", found, "`; write a comparison such as `x == 0`");
+        syntax::Edits fix = not_number_fix(e, t);
+        Str message = msg(format::push("`!` needs a Bool, found `", found, "`; write a comparison such as `x == 0`"));
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span, message, fix);
+        } else {
+            types::fail(c, e->span, message);
+        }
     } else if (op == .bit_not) {
         if (is_integer(t)) {
             return t;
@@ -2120,6 +2151,42 @@ static Bool array_sum(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, c
     return true;
 }
 
+// `n && p` or `n || p` where an operand is a number (#2647): each such operand is tested against zero, `n != 0`
+// (in parentheses when it is itself an operation, `(a & b) != 0`). One error with both fixes.
+static Bool number_operands(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                            const ast::Expr *right) {
+    if (!is_logical(op)) return false;
+    types::TypeRef sides[2] = {typ(c, left), typ(c, right)};
+    const ast::Expr *operands[2] = {left, right};
+    Bool wrong = false;
+    for (Usize i = 0; i < 2; i++) {
+        if (sides[i]->kind != .bool_type) wrong = true;
+    }
+    if (!wrong) return false;
+    syntax::Edits fix = {};
+    for (Usize i = 0; i < 2; i++) {
+        if (sides[i]->kind == .bool_type) continue;
+        if (!is_number(sides[i])) return false;
+        const ast::Expr *operand = operands[i];
+        Bool wrap = !is_simple_operand(operand);
+        Str zero = wrap ? ") != 0" : " != 0";
+        fix = mem::realloc(fix, countof(fix) + (wrap ? 2 : 1));
+        if (wrap) {
+            Str open = "(";
+            fix[countof(fix) - 2] =
+                (syntax::Edit){.span = {.start = operand->span.start, .end = operand->span.start}, .text = open};
+        }
+        fix[countof(fix) - 1] =
+            (syntax::Edit){.span = {.start = operand->span.end, .end = operand->span.end}, .text = zero};
+    }
+    types::TypeRef bad = sides[0]->kind == .bool_type ? sides[1] : sides[0];
+    types::fail_fix(c, e->span,
+                    msg(format::push("`", binary_text(op), "` needs Bool operands, found `", types::show(bad),
+                                     "`; write a comparison such as `x != 0`")),
+                    fix);
+    return true;
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -2374,7 +2441,7 @@ static void binary_after(types::Checked *c, Frame f) {
         finish(c, e, c->table.bool_type, f.expected);
         return;
     }
-    if (array_sum(c, e, op, left, right)) {
+    if (array_sum(c, e, op, left, right) || number_operands(c, e, op, left, right)) {
         poison(c, e);
         return;
     }
@@ -4803,6 +4870,7 @@ static Plan read_value(const types::Checked *c, const ast::Expr *e, types::TypeR
 // Stage 0: the last frame goes down first, then every frame of the plan, the first on top.
 static void value_before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
+    if (hooks.value_if != nullptr && e->kind == .stmt_expr) hooks.value_if(c, e->kind.stmt_expr.stmt);
     Plan p = read_value(c, e, f.expected);
     push_frame(w, make_frame(e, f.expected, 1, nullptr, c->error_count, "", nullptr));
     for (Usize i = p.out_count; i > 0; i--) {
@@ -4839,11 +4907,11 @@ static Str word(const ast::Stmt *s) {
 
 // A name the pattern binds, typed as the optional's element; a name that is not a value gets the invalid type, which
 // keeps the uses of it silent.
-static void bind_name(types::Checked *c, Str name, types::TypeRef type) {
+static void bind_name(types::Checked *c, Str name, types::TypeRef type, const ast::TypeExpr *written) {
     if (countof(name) == 0) {
         return;
     }
-    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true};
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true, .written = written};
     if (!types::declare(&c->scopes, symbol)) {
         types::failf(c, (ast::Span){}, "`", name, "` is already declared in this scope; choose another name");
     }
@@ -4861,7 +4929,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
     if (t == invalid(c)) {
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind == .result_type) {
@@ -4873,7 +4941,7 @@ static void bind_stage(types::Checked *c, Frame f) {
             types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
                          "`; write one of those");
         }
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind != .option) {
@@ -4886,7 +4954,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     } else if (same_text(name, "some")) {
         element = types::element_of(t);
     }
-    bind_name(c, binding, element);
+    bind_name(c, binding, element, nullptr);
 }
 
 // The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
@@ -4945,6 +5013,17 @@ export types::TypeRef pattern_payload(types::Checked *c, ast::Span span, types::
     Usize at = case_of(c, span, t, pat, true);
     if (at >= countof(types::slots_of(t).items)) return invalid(c);
     return types::slots_of(t).items[at].type;
+}
+
+// The payload of the enumerator `pat` names in the payload enumeration `t`, as the enumeration wrote it: null when
+// the enumeration is another module's or the pattern names none.
+export const ast::TypeExpr *payload_written(types::TypeRef t, ast::Pattern pat) {
+    Str name = pat.constant != nullptr ? case_name(pat.constant) : pat.name;
+    types::Members slots = types::slots_of(t);
+    for (Usize i = 0; i < countof(slots.items); i++) {
+        if (same_text(slots.items[i].name, name)) return slots.items[i].written;
+    }
+    return nullptr;
 }
 
 // A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
@@ -5055,6 +5134,7 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
     Bool known = t != invalid(c) && matchable(t);
     for (Usize k = 0; k < countof(pats); k++) {
         types::TypeRef element = invalid(c);
+        const ast::TypeExpr *written = nullptr;
         if (pats[k].wildcard) {
             continue;
         }
@@ -5075,9 +5155,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
                 element = types::error_of(t);
             } else if (t->kind == .enumeration && at < countof(types::slots_of(t).items) && types::is_payload_enum(t)) {
                 element = types::slots_of(t).items[at].type;
+                written = types::slots_of(t).items[at].written;
             }
         }
-        bind_name(c, pats[k].binding, element);
+        bind_name(c, pats[k].binding, element, written);
     }
 }
 
@@ -5432,6 +5513,9 @@ static Bool leaf(types::Checked *c, Frame f) {
         variant_expr(c, f);
     } else if (e->kind == .lambda) {
         lambda_expr(c, f);
+    } else if (e->kind == .pattern_test) {
+        types::failf(c, e->span, "not yet supported: a pattern in an expression"); // typed by #2669 (D16)
+        poison(c, e);
     } else {
         return false;
     }
@@ -5809,6 +5893,30 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
     return true;
 }
 
+// The fixed (not compile-time, `auto` or pack) arguments of a call of a template, conformed to their slots of the
+// instance's signature, so a read-only pointer for a `*mut` slot gets its fix-it as in any call. False, with the error,
+// when one does not conform.
+static Bool conform_fixed_arguments(types::Checked *c, ast::Param params[:], ast::ExprRef args[:],
+                                    types::TypeRef signature) {
+    types::Members slots = types::slots_of(signature);
+    if (countof(args) != countof(params)) return true;
+    for (Usize i = 0; i < countof(params) && i < countof(slots.items); i++) {
+        if (params[i].is_pack || params[i].is_gather)
+            break; // the slots after a pack no longer line up with the parameters
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) continue;
+        const ast::Expr *arg = argument_value(args[i]);
+        types::TypeRef found = typ(c, arg);
+        types::TypeRef wanted = slots.items[i].type;
+        if (found == invalid(c) || wanted == invalid(c) || found == wanted) continue;
+        if (literal_like(arg) && adaptable(found, wanted)) {
+            if (!retype(c, arg, wanted)) return false;
+            continue;
+        }
+        if (!conform(c, arg, found, wanted)) return false;
+    }
+    return true;
+}
+
 // Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
 // the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
 // binds last, and only a generic no other argument binds.
@@ -5865,6 +5973,10 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 
@@ -5897,6 +6009,10 @@ static void auto_resolved(types::Checked *c, Frame f) {
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 

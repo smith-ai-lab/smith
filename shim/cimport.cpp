@@ -24,8 +24,9 @@
 //                 the magnitude)
 //   words[21..22] constants: first word, count  (6 words each: name, type, kind, negative, low, high; kind 0 integer
 //                 (the magnitude), 1 floating (the magnitude's IEEE double), 2 string (low = byte offset in the pool,
-//                 high = byte count). The enumerators of an anonymous enum, the object-like macros whose value clang
-//                 folds to a constant, and the header's `static const` variables with a constant initializer.)
+//                 high = byte count), 3 an extern variable (no value). The enumerators of an anonymous enum, the
+//                 object-like macros whose value clang folds to a constant, the header's `static const` variables with
+//                 a constant initializer, and its extern variables (`stdout`).)
 //   words[23..24] places: first word, count     (6 words each: kind, ordinal, file, line, column, doc; where a
 //                 declaration is and the comment above it (#1941). The file, line and column are clang's presumed
 //                 location (the header as written, after `#line`); file and doc are string offsets, doc is 0 when
@@ -567,6 +568,17 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             if (v->getType().isConstQualified() && v->getInit() != nullptr && !v->getType()->isPointerType() &&
                 constant(v->getName().str(), v->getType(), v->getInit(), why))
                 place(5, static_cast<uint32_t>(constants.size() - 1), v);
+            else if (v->hasExternalStorage() && v->getInit() == nullptr &&
+                     v->getTLSKind() == clang::VarDecl::TLS_None && !seen.count(v->getName().str())) {
+                // An extern variable (`stdout`): its type and no value, kind 3.
+                seen[v->getName().str()] = true;
+                uint32_t type = convert(v->getType(), false);
+                if (type != bad) {
+                    constants.push_back({text(v->getName().str()), type, 3, 0, 0, 0});
+                    place(5, static_cast<uint32_t>(constants.size() - 1), v);
+                }
+                failure.clear();
+            }
         }
     }
     macros_of(unit, macros, errors);
@@ -702,10 +714,54 @@ class ScanMacros : public clang::PreprocessOnlyAction {
 
 } // namespace
 
+namespace {
+// A result that did not fit (#2888): kept with its request, so the caller's second call, with a buffer that big, copies
+// it instead of parsing the header again.
+struct Kept {
+    std::string request;
+    std::vector<uint32_t> words;
+};
+Kept kept;
+
+std::string request_key(const SmithCimportRequest *request) {
+    std::string key = request->name;
+    key += '\n';
+    key += request->quoted != 0 ? '"' : '<';
+    key += '\n';
+    if (request->folder != nullptr) key += request->folder;
+    key += '\n';
+    if (request->flags != nullptr) key += request->flags;
+    return key;
+}
+
+size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill);
+} // namespace
+
 // Reads the header. Returns the words the result needs; when `capacity` is smaller nothing is written and the caller
-// calls again with a buffer that big.
+// calls again with a buffer that big, which gets the result kept from the first call.
 extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_t *words, size_t capacity) {
     PlainAllocator plain;
+    std::string key = request_key(request);
+    if (!kept.words.empty() && kept.request == key) {
+        size_t total = kept.words.size();
+        if (total <= capacity && words != nullptr) {
+            std::memcpy(words, kept.words.data(), total * 4);
+            kept = Kept{};
+        }
+        return total;
+    }
+    std::vector<uint32_t> spill;
+    size_t needed = read_words(request, words, capacity, &spill);
+    if (!spill.empty()) {
+        kept.request = key;
+        kept.words = std::move(spill);
+    }
+    return needed;
+}
+
+namespace {
+// The result goes to `words` when it fits, else to `spill`.
+size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill) {
     std::string header = request->name;
     std::vector<std::string> flags = lines(request->flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
@@ -768,7 +824,10 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
            constants_at = items_at + reader.enum_items.size() * 4,
            places_at = constants_at + reader.constants.size() * 6, pool_at = places_at + reader.places.size() * 6;
     size_t pool_words = (reader.pool.size() + 3) / 4, total = pool_at + pool_words;
-    if (total > capacity || words == nullptr) return total;
+    if (total > capacity || words == nullptr) {
+        spill->assign(total, 0);
+        words = spill->data();
+    }
     std::memset(words, 0, total * 4);
     uint32_t *w = words;
     w[0] = 1;
@@ -804,3 +863,4 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
     std::memcpy(reinterpret_cast<char *>(w) + pool_at * 4, reader.pool.data(), reader.pool.size());
     return total;
 }
+} // namespace
