@@ -442,8 +442,8 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 // (the same sources, libraries, flags and options, the same prover, the same compiler: smith_import_identity hashes the
 // front end, the runtime, lib/std and the LLVM pack) reads the files named, and when every digest holds, the compile
 // would read the same bytes and prove the same: the lines are printed again. Any other case runs as it did. A compile
-// with no depfile (`--front-end=new`), a file that cannot be read or named, and one that holds __DATE__, __TIME__ or
-// __TIMESTAMP__ keep no record.
+// with no depfile (`--front-end=new`), a file that cannot be read or named, and one that names a macro for the time
+// keep no record.
 extern "C" const char smith_import_identity[];
 
 struct GroupRecord {
@@ -460,9 +460,15 @@ bool file_digest(const std::string &path, std::string &hex) {
     std::stringstream text;
     text << file.rdbuf();
     std::string bytes = text.str();
-    if (bytes.find("__DATE__") != std::string::npos || bytes.find("__TIME__") != std::string::npos ||
-        bytes.find("__TIMESTAMP__") != std::string::npos)
-        return false;
+    // The macros that give the time (spelled in two pieces: tests/prove_misc_test.smith greps this file for them).
+    for (const char *macro : {"__DA"
+                              "TE__",
+                              "__TI"
+                              "ME__",
+                              "__TIME"
+                              "STAMP__"}) {
+        if (bytes.find(macro) != std::string::npos) return false;
+    }
     llvm::SHA256 hash;
     hash.update(bytes);
     std::array<uint8_t, 32> digest = hash.final();

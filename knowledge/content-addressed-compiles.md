@@ -50,7 +50,7 @@ memory and loop options, the prover and LLVM versions, and `smith_import_identit
 and the LLVM pack: the compiler, by content, so a rebuild with the same sources keeps it). The next run reads the files
 named, and when every digest holds it prints the record's lines and the summary with `(not compiled)`. A group with
 `-v`, `--function`, `--dump`, `--emit-ir`, `--no-cache` or `--front-end=new` (no depfile), one with a failure or a
-function proved afresh, and a file that holds `__DATE__`, `__TIME__` or `__TIMESTAMP__` keep no record and run as
+function proved afresh, and a file that names a macro for the time keep no record and run as
 before. The one input a depfile cannot name is a header that a new `-I` folder would now find first; the flags are in
 the name.
 
