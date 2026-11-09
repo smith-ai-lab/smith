@@ -13,11 +13,11 @@
 //   Verdict {ok, kind, checked, message}
 //                                   `kind` says which rule allowed it (`How`: identity, widening, constant_fits,
 //                                   to_some, to_ok, array_to_slice, add_const, to_void_pointer,
-//                                   null_to_pointer, text_from_chars, cast) or `none` when refused. `message` is empty
-//                                   when `ok`; when refused it names what was expected, what was found and what to
-//                                   write: "expected U8, found I32: narrowing may lose a value; write a cast: (U8)x".
-//                                   A type that is already an error (`invalid`) or `Auto` converts with kind
-//                                   `identity`, so one mistake is reported once.
+//                                   null_to_pointer, text_from_chars, literal_to_pointer, cast) or `none` when refused.
+//                                   `message` is empty when `ok`; when refused it names what was expected, what was
+//                                   found and what to write: "expected U8, found I32: narrowing may lose a value; write
+//                                   a cast: (U8)x". A type that is already an error (`invalid`) or `Auto` converts with
+//                                   kind `identity`, so one mistake is reported once.
 //
 // THE RULES (#414's baseline as the owner decided it on #1220, 2026-11-01, #1328)
 //   Implicit conversions never lose a value or type information; anything that could is refused with the written form.
@@ -42,7 +42,9 @@
 //                 const added. There is no slice to pointer.
 //   Str           A `Str` converts to a `Str`; only a `Char` slice or array (the checker's own 8-bit `Char`) converts
 //                 to a `Str`; a `U8[:]` or `I8[:]` needs the cast `(Str)xs`. A `Str` converts to a slice only when
-//                 the slice's element is const `Char`.
+//                 the slice's element is const `Char`. A string literal (and only a literal: it is NUL-terminated)
+//                 also converts to a `const Char *`, the C `const char *` (`literal_to_pointer`, #2941); a `Str`
+//                 value needs `cstr.of(s)`, and a `Char *` target refuses because the literal's characters are const.
 //   Option, Result  A value converts to `Option(T)`'s `.some` and `Result(T, E)`'s `.ok` wherever one is expected, if
 //                 it converts to `T` (owner, 2026-10-25). Absence and errors stay explicit: an `Option(T)` is not a
 //                 `T`, a `Result(T, E)` is not a `T`, and `null` is not an `Option(T)` (write `.none`).
@@ -81,6 +83,7 @@ export enum How {
     to_void_pointer,
     null_to_pointer,
     text_from_chars,
+    literal_to_pointer,
     cast,
 };
 // NOLINTEND(readability-identifier-naming)
@@ -93,6 +96,7 @@ export struct Literal {
     U64 magnitude;
     Bool is_float; // a floating literal: `real` is its value and `magnitude` is not used
     F64 real;
+    Bool is_string; // a string literal: NUL-terminated const characters (`is_constant` is not set)
 };
 
 export struct Verdict {
@@ -113,6 +117,11 @@ export Literal constant(I64 value) {
 
 export Literal constant_float(F64 value) {
     return (Literal){.is_constant = true, .is_float = true, .real = value};
+}
+
+// A string literal: it converts to a `const Char *`, a pointer to its NUL-terminated characters.
+export Literal string_literal() {
+    return (Literal){.is_string = true};
 }
 
 export Literal constant_unsigned(U64 value) {
@@ -316,9 +325,19 @@ static Verdict pointer_to_pointer(const Ctx *c) {
     return needs_cast(c, "the pointers point to different types");
 }
 
+// A `Str` is not NUL-terminated, so only a string literal (which is) converts to a `const Char *`; a `Str` value needs
+// `cstr.of(s)`. The literal's characters are const, so a `Char *` target refuses (#2941).
+static Verdict text_to_pointer(const Ctx *c) {
+    if (types::element_of(c->target_type) != c->char_type) return no_rule(c);
+    if (!c->lit.is_string) return refuse(c, "a Str is not NUL-terminated", "write the C string: cstr.of(s)");
+    if (!types::points_to_const(c->target_type)) return dropped_const(c);
+    return accept(literal_to_pointer);
+}
+
 static Verdict to_pointer(const Ctx *c) {
     const types::Ty *subject = c->from;
     if (subject->kind == .null_type) return accept(null_to_pointer);
+    if (subject->kind == .text) return text_to_pointer(c);
     if (subject->kind == .pointer) return pointer_to_pointer(c);
     if (subject->kind == .array) {
         return refuse(c, "a fixed array never converts to a bare pointer", "write the address of an element: &xs[0]");
