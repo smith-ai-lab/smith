@@ -749,6 +749,24 @@ jobs:
         with:
           tests: "true"
           test-flags: ${{ matrix.os == 'macos-26' && format('--macos-only --shard 1/1 --costs {0}/.github/shard-costs.tsv', github.workspace) || '' }}
+      - name: Fetch what the test jobs download (#2825)
+        # the test parts take the build of `build-linux` and so restore no step cache; they restore the small
+        # `smith-tools-` cache saved below instead, which must hold every package they would fetch from github.com:
+        # the tree-sitter CLI (the build above fetched it) and the Neovim release (`smith build nvim`)
+        shell: bash
+        run: |
+          "$SMITH" build nvim | tail -n 1
+          du -sh ~/.cache/smith/packages ~/.cache/smith/tools | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Save the packages and tools
+        # about 60 MB: every job that restores a build rather than making it reads this, so no job reaches github.com
+        # for a package the cache holds (a 504 hour kept #2798 out of the queue for hours, #2825)
+        if: env.DRY_RUN != '1'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/smith/packages
+            ~/.cache/smith/tools
+          key: smith-tools-${{ runner.os }}-${{ github.sha }}
       - name: Save the step cache
         if: env.DRY_RUN != '1'
         uses: actions/cache/save@v4
