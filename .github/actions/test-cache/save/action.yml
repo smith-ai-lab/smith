@@ -37,7 +37,12 @@ runs:
       run: |
         set -eu
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/tests"
-        imports="${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports"
+        # the import cache of smith run by hand and of smith run inside a test (a scratch project's XDG_CACHE_HOME,
+        # tests/scratch.smith), merged: identities keep them apart, and one key is the same bytes in both
+        imports="$RUNNER_TEMP/imports"; mkdir -p "$imports"
+        for src in "${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports" "${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; do
+          [ -d "$src" ] && cp -a "$src/." "$imports/"
+        done
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
         n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f | wc -l || echo 0)

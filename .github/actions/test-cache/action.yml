@@ -81,6 +81,10 @@ runs:
           gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
             tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" && got=$((got + 1))
         done
+        # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
+        if [ "$got" -gt 0 ]; then
+          tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; mkdir -p "$tests"; cp -a "$dir/." "$tests/"
+        fi
         if [ "$got" -gt 0 ]; then
           echo "import cache: restored $(find "$dir" -type f -path '*/[hm]/*' | wc -l) entries ($(du -sh "$dir" | cut -f1)) from $got sets" | tee -a "$GITHUB_STEP_SUMMARY"
         else
