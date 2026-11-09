@@ -1,3 +1,4 @@
+// dry run of #2856 (ci-dispatch); this PR is closed unmerged
 // Tests of std::categorical through its exported API, in smith's own test library: frequencies by chi-square, the
 // pinned table and samples (the numbers are part of the API, as random's), the zero word, and that building a table
 // allocates only through the current allocator.
