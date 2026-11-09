@@ -17,6 +17,7 @@
 // .smith/include/front/compile.h is made by the compile of a module, which the previous release's build (the lag rule)
 // does not do for the sources under .smith/front/.
 int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
+void front_compile_before_file(void (*hook)(const char *source));
 
 // front::compile's header entry (`front_header_run`), declared by hand for the same reason.
 int32_t front_header_run(const char *source, const char *output, const char *triple);
@@ -222,6 +223,20 @@ static void smith_front_cimport_flags(const char *self, int count, char **args, 
     setenv("SMITH_FRONT_CIMPORT_FLAGS", flags, 1);
 }
 
+// The command line `front_compile_run` was called with, for `smith_front_flags_of_file`.
+static const char *smith_front_self;
+static int smith_front_count;
+static char **smith_front_args;
+static bool smith_front_flags_given; // $SMITH_FRONT_CIMPORT_FLAGS came from the caller: every file uses it
+
+// Before each file of a command line with several: the flags of that file's own compile command (#2888), so that it
+// reads its C headers as it does compiled alone.
+static void smith_front_flags_of_file(const char *source) {
+    if (smith_front_flags_given) return;
+    unsetenv("SMITH_FRONT_CIMPORT_FLAGS");
+    smith_front_cimport_flags(smith_front_self, smith_front_count, smith_front_args, source);
+}
+
 // `-g` (or `-g<level>`, not `-g0`) on the command line sets $SMITH_FRONT_DEBUG to 1 for front::compile, which then
 // emits debug info (#1979): the line table, the source names and the variables `smith dbg`, `dap` and `symbolize`
 // read. Without `-g` it is unset, so an object has none.
@@ -311,7 +326,14 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
         smith_front_object_name(smith_front_sources[i], single ? output : nullptr, compile_only, i);
         smith_front_objects[i] = smith_front_names[i];
     }
+    smith_front_flags_given = getenv("SMITH_FRONT_CIMPORT_FLAGS") != nullptr;
     if (sources > 0) smith_front_cimport_flags(self, count, args, smith_front_sources[0]);
+    if (sources > 1) {
+        smith_front_self = self;
+        smith_front_count = count;
+        smith_front_args = args;
+        front_compile_before_file(smith_front_flags_of_file);
+    }
     if (sources > 0) smith_front_debug_flag(count, args);
     if (sources > 0 && front_compile_run(smith_front_sources, smith_front_objects, sources, triple) != 0) return -1;
     int used = first;

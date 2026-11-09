@@ -212,6 +212,8 @@ export struct Table {
     Target target;
     Entry entries[:];
     Usize count;
+    TypeRef shapes[:]; // the structural entries, by `shape_hash` (open addressing): `intern`'s index
+    Usize shaped;
     Builtin builtins[:];
     TypeRef invalid;
     TypeRef automatic;
@@ -366,15 +368,93 @@ static Ty *add_entry(Table *t, Ty value) {
     return node;
 }
 
-// The type with the shape of `candidate`: the one made before, or a new one. A linear search: a module has tens of
-// distinct types.
-static TypeRef intern(Table *t, Ty candidate) {
-    for (Usize i = 0; i < t->count; i++) {
-        const Ty *known = t->entries[i].type;
-        if (known->kind == .record || known->kind == .enumeration) continue;
-        if (same_shape(known, &candidate)) return known;
+// A number for each kind, for `shape_hash`.
+static U64 kind_code(const Ty *a) {
+    if (a->kind == .invalid) return 1;
+    if (a->kind == .automatic) return 2;
+    if (a->kind == .void_type) return 3;
+    if (a->kind == .bool_type) return 4;
+    if (a->kind == .text) return 5;
+    if (a->kind == .null_type) return 6;
+    if (a->kind == .type_type) return 7;
+    if (a->kind == .integer) return 8;
+    if (a->kind == .floating) return 9;
+    if (a->kind == .pointer) return 10;
+    if (a->kind == .slice) return 11;
+    if (a->kind == .array) return 12;
+    if (a->kind == .function) return 13;
+    if (a->kind == .option) return 14;
+    if (a->kind == .result_type) return 15;
+    if (a->kind == .fn_value) return 16;
+    if (a->kind == .concept_type) return 17;
+    if (a->kind == .block) return 18;
+    if (a->kind == .stream) return 19;
+    if (a->kind == .tuple) return 20;
+    if (a->kind == .vector) return 21;
+    return 22;
+}
+
+static U64 mix(U64 h, U64 v) {
+    return (h ^ v) * 0x100000001B3ULL;
+}
+
+static U64 mix_text(U64 h, Str text) {
+    U64 at = mix(h, countof(text));
+    for (Usize i = 0; i < countof(text); i++) {
+        at = mix(at, (U64)(U8)text[i]);
     }
-    return add_entry(t, candidate);
+    return at;
+}
+
+// A hash of what `same_shape` compares, so that two types it calls the same hash the same (a part that is the type
+// itself, as the accessors answer for a kind with none, hashes as no part).
+static U64 shape_hash(const Ty *a) {
+    U64 h = mix(0xcbf29ce484222325ULL, kind_code(a));
+    h = mix(h, bits_of(a));
+    h = mix(h, count_of(a));
+    h = mix(h, (signed_of(a) ? 1U : 0U) | (points_to_const(a) ? 2U : 0U) | (is_variadic(a) ? 4U : 0U) |
+                   (points_to_volatile(a) ? 8U : 0U));
+    TypeRef element = element_of(a);
+    TypeRef error = error_of(a);
+    h = mix(h, element == a ? 0 : (U64)(Usize)element);
+    h = mix(h, error == a ? 0 : (U64)(Usize)error);
+    h = mix_text(h, name_of(a));
+    Slot slots[:] = slots_of(a).items;
+    for (Usize i = 0; i < countof(slots); i++) {
+        h = mix_text(mix(h, (U64)(Usize)slots[i].type), slots[i].name);
+    }
+    return h;
+}
+
+// The slot of `intern`'s index where `candidate` is, or the empty one where it goes.
+static Usize shape_slot(const Table *t, const Ty *candidate) {
+    Usize mask = countof(t->shapes) - 1;
+    Usize i = (Usize)shape_hash(candidate) & mask;
+    while (t->shapes[i] != nullptr && !same_shape(t->shapes[i], candidate))
+        i = (i + 1) & mask;
+    return i;
+}
+
+static void grow_shapes(Table *t) {
+    Usize capacity = countof(t->shapes) == 0 ? 256 : countof(t->shapes) * 2;
+    TypeRef old[:] = t->shapes;
+    t->shapes = mem::alloc_slice(TypeRef, capacity);
+    for (Usize i = 0; i < countof(old); i++) {
+        if (old[i] != nullptr) t->shapes[shape_slot(t, old[i])] = old[i];
+    }
+    mem::free(old.data);
+}
+
+// The type with the shape of `candidate`: the one made before, or a new one. Records and enumerations are nominal and
+// never in the index. A module that imports std declares thousands of types, so the search is by hash (#2888).
+static TypeRef intern(Table *t, Ty candidate) {
+    if (2 * (t->shaped + 1) > countof(t->shapes)) grow_shapes(t);
+    Usize at = shape_slot(t, &candidate);
+    if (t->shapes[at] != nullptr) return t->shapes[at];
+    Ty *made = add_entry(t, candidate);
+    t->shapes[at] = made;
+    t->shaped += 1;
+    return made;
 }
 
 static void add_builtin(Table *t, Str name, TypeRef type) {
@@ -1136,15 +1216,16 @@ export struct Symbol {
 // A name hashes to a bucket; `heads[b]` is one more than the highest index in bucket `b` (0: none), and `next[i]` one
 // more than the next lower index in the bucket of symbol `i`, so a walk meets the newest first, as the scan did.
 //
-// The index is a cache and never decides: it is used only while `data` is still where the symbols are and `count` has
-// not gone below `indexed` since it was built (`index_usable`); otherwise it is built again. A symbol is only ever
-// written at `count` or over one of the same name (a forward-declared struct), so the names below `indexed` are those
-// it was built from.
+// The index is a cache and never decides: it is used only while `data` is still where the symbols are, and it follows
+// `count` before each search (`index_follow`): the symbols past `indexed` are added, and when `count` went below it
+// (a scope ended) the newest are taken out again, by the hash kept for each. A symbol is only ever written at `count`
+// or over one of the same name (a forward-declared struct), so the names below `indexed` are those it was built from.
 export struct ScopeIndex {
     const Symbol *data;
     Usize indexed;
     U32 heads[:];
     U32 next[:];
+    U32 hashes[:];
 };
 
 // The stack of scopes: `marks[d]` is where scope `d + 1` starts in `symbols`; scope 0 (the module's) always exists.
@@ -1181,7 +1262,7 @@ static Usize scope_start(const Scopes *s) {
     return s->marks[s->depth - 1];
 }
 
-// Fewer symbols than this past the index are scanned; at this many the index is built again over all of them.
+// A scope with this many symbols gets an index; fewer are scanned.
 constexpr Usize index_gap = 256;
 
 static U32 name_hash(Str name) {
@@ -1191,17 +1272,21 @@ static U32 name_hash(Str name) {
     return h;
 }
 
-// Whether the index still describes `symbols[0:indexed)` of `s`.
-static Bool index_usable(const Scopes *s) {
-    const ScopeIndex *x = s->index;
-    return x != nullptr && x->indexed > 0 && x->data == s->symbols.data && x->indexed <= s->count;
+// Puts symbol `i` at the head of its bucket; the index has room for it.
+static void index_add(const Scopes *s, Usize i) {
+    ScopeIndex *x = s->index;
+    U32 hash = name_hash(s->symbols[i].name);
+    Usize b = hash & (countof(x->heads) - 1);
+    x->hashes[i] = hash;
+    x->next[i] = x->heads[b];
+    x->heads[b] = (U32)(i + 1);
 }
 
 // Builds the index over every symbol of `s`.
 static void index_build(const Scopes *s) {
     ScopeIndex *x = s->index;
     Usize buckets = 1024;
-    while (buckets < 2 * s->count)
+    while (buckets < 2 * countof(s->symbols))
         buckets *= 2;
     if (countof(x->heads) != buckets) {
         mem::free(x->heads.data);
@@ -1210,35 +1295,51 @@ static void index_build(const Scopes *s) {
         for (Usize b = 0; b < buckets; b++)
             x->heads[b] = 0;
     }
-    if (countof(x->next) < s->count) {
+    if (countof(x->next) < countof(s->symbols)) {
         mem::free(x->next.data);
+        mem::free(x->hashes.data);
         x->next = mem::alloc_slice(U32, countof(s->symbols));
+        x->hashes = mem::alloc_slice(U32, countof(s->symbols));
     }
-    for (Usize i = 0; i < s->count; i++) {
-        Usize b = name_hash(s->symbols[i].name) & (buckets - 1);
-        x->next[i] = x->heads[b];
-        x->heads[b] = (U32)(i + 1);
-    }
+    for (Usize i = 0; i < s->count; i++)
+        index_add(s, i);
     x->data = s->symbols.data;
     x->indexed = s->count;
+}
+
+// Brings the index to `symbols[0:count)`: the symbols added since are put in, those taken out since (a scope ended) are
+// taken out newest first, which leaves each bucket as it was before them. A moved array is indexed again.
+static void index_follow(const Scopes *s) {
+    ScopeIndex *x = s->index;
+    if (x->data != s->symbols.data || countof(x->next) < countof(s->symbols)) {
+        index_build(s);
+        return;
+    }
+    while (x->indexed > s->count) {
+        x->indexed -= 1;
+        x->heads[x->hashes[x->indexed] & (countof(x->heads) - 1)] = x->next[x->indexed];
+    }
+    while (x->indexed < s->count) {
+        index_add(s, x->indexed);
+        x->indexed += 1;
+    }
 }
 
 // One more than the highest index below `upper` whose symbol is called `name`; 0 when none is.
 static Usize find_below(const Scopes *s, Str name, Usize upper) {
     if (upper > s->count) upper = s->count;
-    if (s->count >= index_gap && s->index != nullptr && (!index_usable(s) || s->count - s->index->indexed >= index_gap))
-        index_build(s);
-    Usize floor = index_usable(s) ? s->index->indexed : 0;
-    if (floor > upper) floor = upper;
-    for (Usize i = upper; i > floor; i--) {
-        if (same_text(s->symbols[i - 1].name, name)) return i;
+    if (s->index == nullptr) {
+        for (Usize i = upper; i > 0; i--) {
+            if (same_text(s->symbols[i - 1].name, name)) return i;
+        }
+        return 0;
     }
-    if (floor == 0) return 0;
+    index_follow(s);
     const ScopeIndex *x = s->index;
     U32 at = x->heads[name_hash(name) & (countof(x->heads) - 1)];
     while (at != 0) {
         Usize i = at - 1;
-        if (i < floor && same_text(s->symbols[i].name, name)) return i + 1;
+        if (i < upper && same_text(s->symbols[i].name, name)) return i + 1;
         at = x->next[i];
     }
     return 0;

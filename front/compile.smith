@@ -1366,6 +1366,7 @@ static void report_times(Str path, Times times, U64 wall) {
     lines = as_str(format::push(lines, time_line("write the object (LLVM passes and code generation)", times.write)));
     lines = as_str(format::push(lines, time_line("other (reading the file, setting up the target and LLVM)",
                                                  wall > staged ? wall - staged : 0)));
+    lines = as_str(format::push(lines, time_line("wall (the file, every stage)", wall)));
     report(lines);
 }
 
@@ -1375,6 +1376,15 @@ static Str stage_of(Times times) {
     if (times.emit > 0) return "emit";
     if (times.check > 0) return "check";
     return "parse";
+}
+
+// What the driver runs before each file (null: nothing): it sets the flags the file's C headers are read with, from its
+// own compile command, so that a file compiled with others reads them as it does alone (#2888).
+export typedef void (*BeforeFile)(const char *source);
+static BeforeFile before_file_hook = nullptr;
+
+[[std::c_name("front_compile_before_file")]] export void set_before_file(BeforeFile hook) {
+    before_file_hook = hook;
 }
 
 // The driver's entry: `count` sources and their objects, the default roots, the triple of the compile (null: the
@@ -1402,7 +1412,8 @@ static Str stage_of(Times times) {
         Str output = as_str(format::push((const char *)outputs[i]));
         roots::Roots beside = folders;
         beside.local = folder_of(paths[i].path); // `import primes` finds primes.smith next to this file (#2041)
-        U64 started = clock::monotonic();
+        U64 started = clock::monotonic(); // the file's flags are part of its compile
+        if (before_file_hook != nullptr) before_file_hook(sources[i]);
         Report done = file_in(paths[i].path, output, target, beside, file_memory());
         U64 wall = clock::monotonic() - started;
         if (countof(done.text) > 0) report(done.text);
