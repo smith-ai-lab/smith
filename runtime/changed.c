@@ -954,7 +954,8 @@ static void smith_changed_judge(size_t test) {
         smith_changed_choose(test, dependency == (int)test ? "it changed" : "it depends on %s",
                              smith_changed_files[dependency]);
     if (!smith_changed_chosen[test] && smith_changed_read(smith_changed_files[test]) != 0 &&
-        strstr(smith_changed_text, "// smith-reads-tree") != nullptr) { // a policy test that scans the file list (#2957)
+        strstr(smith_changed_text, "// smith-reads-tree") !=
+            nullptr) { // a policy test that scans the file list (#2957)
         const char *added = smith_changed_listing_change();
         if (added != nullptr) smith_changed_choose(test, "it reads the file list, and %s was added or removed", added);
     }
