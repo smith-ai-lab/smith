@@ -590,6 +590,85 @@ static Str shared_header_keys[shared_headers_max];
 static const ast::Module *shared_header_modules[shared_headers_max];
 static Usize shared_header_count = 0;
 
+// A process that serves many requests (`smith cc --front-end=new --serve`, runtime/front_flag.c) keeps its headers
+// between them, and a header's file can change meanwhile, which the key does not see. So it also keeps the files clang
+// read for each (shim/cimport_deps.cpp) with their size and time, and at the start of each request drops the headers
+// whose files changed. One command line does not check: its headers are read once, as it starts.
+static Bool serving = false;
+
+[[std::c_name("front_compile_serve")]] export void serve() {
+    serving = true;
+}
+
+// Keep in step with SmithCimportRequest in shim/cimport.cpp.
+struct DepsRequest {
+    const char *name;
+    I32 quoted;
+    const char *folder;
+    const char *flags;
+};
+
+extern Usize smith_cimport_deps(const DepsRequest *request, char *out, Usize capacity);
+extern I32 smith_cimport_file_state(const char *path, U64 *size, I64 *mtime);
+
+// The files one header read: their paths one after the other, each ending in a NUL, and the state of each.
+struct HeaderFiles {
+    char paths[:];
+    U64 sizes[:];
+    I64 mtimes[:];
+    Bool known; // false: clang refused the list, or a file was gone; the header is then read again next request
+};
+
+static HeaderFiles shared_header_files[shared_headers_max];
+
+// The files of `request` with their states now, from the allocator in force.
+static HeaderFiles header_files(const DepsRequest *request) {
+    HeaderFiles none = {.known = false};
+    Usize capacity = 1U << 14;
+    char blob[:] = mem::alloc_slice(char, capacity);
+    Usize needed = smith_cimport_deps(request, blob.data, capacity);
+    if (needed == ~(Usize)0) return none;
+    if (needed > capacity) {
+        mem::free(blob.data);
+        blob = mem::alloc_slice(char, needed);
+        needed = smith_cimport_deps(request, blob.data, needed);
+    }
+    Usize count = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] == 0) count += 1;
+    }
+    HeaderFiles files = {.paths = blob[0:needed],
+                         .sizes = mem::alloc_slice(U64, count),
+                         .mtimes = mem::alloc_slice(I64, count),
+                         .known = true};
+    Usize start = 0;
+    Usize k = 0;
+    for (Usize i = 0; i < needed; i++) {
+        if (blob[i] != 0) continue;
+        if (smith_cimport_file_state(&blob.data[start], &files.sizes[k], &files.mtimes[k]) != 0) return none;
+        start = i + 1;
+        k += 1;
+    }
+    return files;
+}
+
+// Whether every file a header read is as it was.
+static Bool files_unchanged(const HeaderFiles *files) {
+    if (!files->known) return false;
+    Usize start = 0;
+    Usize k = 0;
+    for (Usize i = 0; i < countof(files->paths); i++) {
+        if (files->paths[i] != 0) continue;
+        U64 size = 0;
+        I64 mtime = 0;
+        if (smith_cimport_file_state(&files->paths.data[start], &size, &mtime) != 0) return false;
+        if (size != files->sizes[k] || mtime != files->mtimes[k]) return false;
+        start = i + 1;
+        k += 1;
+    }
+    return true;
+}
+
 static Str header_flags() {
     Str empty = "";
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
@@ -626,10 +705,13 @@ static const ast::Module *read_header(Str header, Bool angled) {
     cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
     ast::Module *module = nullptr;
     Str kept_key = "";
+    HeaderFiles files = {.known = false};
     if (countof(got.error) == 0) {
         module = mem::alloc(ast::Module);
         module->decls = got.decls;
         kept_key = as_str(format::push(key));
+        DepsRequest request = {.name = name.data, .quoted = angled ? 0 : 1, .folder = folder.data, .flags = terminated.data};
+        if (serving) files = header_files(&request);
     }
     mem::set_allocator(outside);
     // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it again.
@@ -637,9 +719,24 @@ static const ast::Module *read_header(Str header, Bool angled) {
     if (shared_header_count < shared_headers_max) {
         shared_header_keys[shared_header_count] = kept_key;
         shared_header_modules[shared_header_count] = module;
+        shared_header_files[shared_header_count] = files;
         shared_header_count += 1;
     }
     return module;
+}
+
+// At the start of a served request: the headers whose files changed since they were read are dropped (their memory
+// stays; a server reads few headers again).
+static void forget_changed_headers() {
+    Usize kept = 0;
+    for (Usize i = 0; i < shared_header_count; i++) {
+        if (!files_unchanged(&shared_header_files[i])) continue;
+        shared_header_keys[kept] = shared_header_keys[i];
+        shared_header_modules[kept] = shared_header_modules[i];
+        shared_header_files[kept] = shared_header_files[i];
+        kept += 1;
+    }
+    shared_header_count = kept;
 }
 
 // `--time` (#2681): what reading the imports cost, summed over a file's check, so `check` can be told from `import`.
@@ -1392,6 +1489,7 @@ static BeforeFile before_file_hook = nullptr;
 [[std::c_name("front_compile_run")]] export I32 run(const char *const *sources, const char *const *outputs, Usize count,
                                                     const char *triple) {
     U64 run_started = clock::monotonic();
+    if (serving) forget_changed_headers();
     roots::Roots folders = roots::default_roots();
     roots::Source paths[:] = {};
     for (Usize i = 0; i < count; i++) {
