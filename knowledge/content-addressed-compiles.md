@@ -28,7 +28,7 @@ compiler's build-id, the environment that moves a compile, and the content of ev
 levels, as ccache's direct mode: a manifest of the files read, then a result per variant). A hit restores the object
 by a clone. What an edit rebuilds: the whole file, and every file whose compile read it. A comment edit, a reformat
 or a rename is a new key. The store is shared by every worktree on the machine (`<cache>/smith/steps`), and CI
-saves it on a push to main and restores it everywhere else ([ci-hosted](ci-hosted.md)).
+saves it on a push to main and restores it everywhere else ([CI caches](ci/caches.md)).
 
 **The effects summaries** (`front/effects_cache.smith`, #2018). The unit is one function of the unoptimized LLVM IR.
 The key is an FNV-1a hash of the function's IR: the opcode and line of every instruction, and the callee and global
@@ -37,7 +37,7 @@ so a summary stays valid whatever happens to the rest of the build. It lives in 
 build's one pass ([effect-inference](effect-inference.md)). Because the line of every instruction is in the hash, a
 line added above a function changes that function's summary key.
 
-**The proof cache** (`~/.cache/smith/proofs`, `shim/prove.cpp`, [ci-hosted](ci-hosted.md)). The unit is one function
+**The proof cache** (`~/.cache/smith/proofs`, `shim/prove.cpp`, [CI caches](ci/caches.md)). The unit is one function
 with a contract. The key is the IR the prover checks, plus the prover and LLVM versions; not the smith binary. A
 callee with `smith_ensures` is used through its contract, any other callee is inlined, so the IR the prover checks
 already holds what the proof depends on.
@@ -72,7 +72,7 @@ compile spent on **imports** (parsing and checking other modules), on **checking
 **LLVM codegen**; (b) the same at `-O0`; (c) the link time of smith, which bounds how many objects a build can afford;
 (d) how much of a runner's edit loop is the compile of `.smith` files at all, against C++ shims, `smith.c` and the
 link. The known numbers are older and coarser: a warm build of smith on a CI Mac takes 57 s and its tests 41 s
-([ci-hosted](ci-hosted.md)), and a runner's edit-and-rebuild loop on `front/` takes 14 to 19 s (#2632). Step 1 of the
+([CI caches](ci/caches.md)), and a runner's edit-and-rebuild loop on `front/` takes 14 to 19 s (#2632). Step 1 of the
 build plan (section 6) records the numbers here when both tickets have landed.
 
 ## 2. How other systems do it
@@ -207,7 +207,7 @@ is the hash of the checks' sources (#2236), not the smith binary's build-id. So 
 `smith.c` keeps the store. Writes are a temporary file and a rename, as the step cache's are, so builds in several
 worktrees and CI jobs share one store safely. No key holds a path: a module is named from its root, and debug info
 names files relative to the project, as `-ffile-prefix-map` does for C today (#1351). CI saves the store with the
-step cache on a push to main and every other job restores it ([ci-hosted](ci-hosted.md)).
+step cache on a push to main and every other job restores it ([CI caches](ci/caches.md)).
 
 ### LLVM codegen and objects
 

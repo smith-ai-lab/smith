@@ -63,14 +63,23 @@ static Str stand_ins() {
            "const char *f, const char *g) { __builtin_trap(); }\n";
 }
 
-static compile::Report compile_body(Str folder, Str name, Str body) {
+// `body` as the module `name`, beside the modules `inner` and `outer` (written when `outer` is not empty).
+static compile::Report compile_files(Str folder, Str name, Str body, Str inner, Str outer) {
     Str src = as_str(format::push(folder, "/src"));
     c::mkdir(folder.data, 0o700);
     c::mkdir(src.data, 0o700);
+    if (countof(outer) > 0) {
+        write_text(as_str(format::push(src, "/inner.smith")), inner);
+        write_text(as_str(format::push(src, "/outer.smith")), outer);
+    }
     Str path = as_str(format::push(src, "/", name, ".smith"));
     write_text(path, body);
     roots::Roots folders = {.source = src, .library = as_str(format::push(folder, "/lib"))};
     return compile::file(path, as_str(format::push(folder, "/", name, ".o")), "", folders);
+}
+
+static compile::Report compile_body(Str folder, Str name, Str body) {
+    return compile_files(folder, name, body, "", "");
 }
 
 static Str folder_for(Str name) {
@@ -84,9 +93,9 @@ static void clean(Str folder) {
 }
 
 // `body` is a module whose `pub fn check() -> i32` returns 0 when the builtin did what it should.
-static void passes(Str name, Str body) {
+static void passes_beside(Str name, Str body, Str inner, Str outer) {
     Str folder = folder_for(name);
-    compile::Report report = compile_body(folder, name, body);
+    compile::Report report = compile_files(folder, name, body, inner, outer);
     test::check_equal(report.ok, true);
     if (report.ok) {
         Str main_c = as_str(format::push("int check(void) __asm__(\"", prefix(), name, "::check\");\n", stand_ins(),
@@ -100,6 +109,10 @@ static void passes(Str name, Str body) {
         test::check_equal(report.text, as_str(format::push("")));
     }
     clean(folder);
+}
+
+static void passes(Str name, Str body) {
+    passes_beside(name, body, "", "");
 }
 
 // `body` fails to compile with a message that has `needle`.
@@ -222,12 +235,27 @@ export void test_front_builtin_isnan_and_isfinite() {
                          "    0\n");
 }
 
-export void test_front_builtin_overflow_refuses_mixed_types() {
-    refused("mixed",
+// The operands and the result are three integers of any widths and signs; the answer is the exact sum cut to the result
+// (`200 + 100` in a `u8` overflows and leaves 44).
+export void test_front_builtin_overflow_takes_operands_and_a_result_of_different_types() {
+    passes("mixed", "pub fn check() -> i32:\n"
+                    "    mut r: u8 = 0\n"
+                    "    a: u8 = 200\n"
+                    "    b: u32 = 100\n"
+                    "    if not __builtin_add_overflow(a, b, &r):\n        return 1\n"
+                    "    if r != 44:\n        return 2\n"
+                    "    mut wide: u64 = 0\n"
+                    "    if __builtin_add_overflow(a, b, &wide):\n        return 3\n"
+                    "    if wide != 300:\n        return 4\n"
+                    "    0\n");
+}
+
+export void test_front_builtin_overflow_refuses_a_float_operand() {
+    refused("float_operand",
             "pub fn check() -> i32:\n"
             "    let mut r: i32 = 0\n"
             "    let a: i32 = 1\n"
-            "    let b: i64 = 1\n"
+            "    let b: f64 = 1.0\n"
             "    let _ = __builtin_add_overflow(a, b, &r)\n"
             "    0\n",
             "`__builtin_add_overflow` takes");
@@ -336,4 +364,24 @@ export void test_front_builtin_snprintf_conditional_string() {
                           "    let mut out: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n"
                           "    _ := __builtin_snprintf(&out[0], 16, \"%s\", if flag: \"a\" else: \"b\")\n"
                           "    0\n");
+}
+
+// Two generics of one name and one type from two modules are two functions: `outer.pick` calls `inner.pick`, both
+// `pick.i32` (#2650).
+export void test_front_builtin_generics_of_one_name_in_two_modules_are_two_functions() {
+    passes_beside("two_modules", "import outer\n\npub fn check() -> i32:\n    if outer.pick(7) != 7: return 1\n    0\n",
+                  "pub fn pick[T](x: T) -> T:\n    return x\n",
+                  "import inner\n\npub fn pick[T](x: T) -> T:\n    return inner.pick(x)\n");
+}
+
+// A variadic argument that is a bare literal is a C string, and an `if` that picks numbers or a pointer keeps the type
+// of its branches.
+export void test_front_builtin_snprintf_each_variadic_argument_is_typed_by_itself() {
+    passes("snprintf_each",
+           "pub fn check(flag: bool) -> i32:\n"
+           "    let mut out: [32]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
+           "0, 0, 0, 0, 0, 0]\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%s %d\", \"text\", if flag: 1 else: 2)\n"
+           "    _ := __builtin_snprintf(&out[0], 32, \"%d %s\", if flag: 3 else: 4, if flag: \"a\" else: \"b\")\n"
+           "    0\n");
 }
