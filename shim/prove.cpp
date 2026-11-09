@@ -435,9 +435,9 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 
 // ---- the group's record: a group whose every function was proved by a cached proof is not compiled again ----
 
-// Asking the cache for a function needs its IR, so a group that proves nothing new still paid for compiling every source
-// to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run of a group
-// ends with every function reused from the cache, the group keeps a record: the files its compiles read (as the
+// Asking the cache for a function needs its IR, so a group that proves nothing new still paid for compiling every
+// source to IR and loading it (49.9 s of the 55.7 s of a warm `smith prove` of smith itself, #2994). When a run of a
+// group ends with every function reused from the cache, the group keeps a record: the files its compiles read (as the
 // compilers' depfiles name them) with the digest of each, and the lines it printed. The next run of the same group
 // (the same sources, libraries, flags and options, the same prover, the same compiler: smith_import_identity hashes the
 // front end, the runtime, lib/std and the LLVM pack) reads the files named, and when every digest holds, the compile
@@ -447,10 +447,10 @@ void cache_store(const std::string &path, const prove::Outcome &outcome) {
 extern "C" const char smith_import_identity[];
 
 struct GroupRecord {
-    std::string path;   // empty: no record is read or kept
+    std::string path; // empty: no record is read or kept
     std::set<std::string> dependencies;
-    std::string lines;  // what the group printed before its summary line: the trusted functions
-    std::string tail;   // and after it: the coverage
+    std::string lines; // what the group printed before its summary line: the trusted functions
+    std::string tail;  // and after it: the coverage
     unsigned proved = 0, trusted = 0;
 };
 
@@ -538,7 +538,7 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
     std::printf("%u proved, 0 failed", proved);
     if (trusted > 0) std::printf(", %u trusted", trusted);
     if (proved > 0) std::printf(", %u cached", proved);
-    std::printf(" in %.2f s\n", seconds);
+    std::printf(" in %.2f s (not compiled)\n", seconds);
     std::fputs(tail.c_str(), stdout);
     return true;
 }
@@ -1187,7 +1187,7 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         if (without == 0) {
             std::printf("\n");
             record.tail += std::to_string(coverage.with_contract) + " of " + std::to_string(coverage.total) +
-                            " functions have contracts\n";
+                           " functions have contracts\n";
         } else if (arguments.options.verbose) {
             std::printf("; the %u without:\n", without);
             for (const prove::Without &function : coverage.without)
@@ -1195,8 +1195,8 @@ extern "C" int smith_prove_main(const char *program, const char *resource, int a
         } else {
             std::printf("; smith prove -v lists the %u without\n", without);
             record.tail += std::to_string(coverage.with_contract) + " of " + std::to_string(coverage.total) +
-                            " functions have contracts; smith prove -v lists the " + std::to_string(without) +
-                            " without\n";
+                           " functions have contracts; smith prove -v lists the " + std::to_string(without) +
+                           " without\n";
         }
     };
     if (proved + failed + trusted == 0) {
