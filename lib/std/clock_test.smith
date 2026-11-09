@@ -1,3 +1,4 @@
+// dry run of #2856 (ci-dispatch); this PR is closed unmerged
 // Tests of std::clock, with a fake clock set on the thread (sleeping on it moves its time and never blocks), and of
 // the system's own without one.
 module std::clock_test;
