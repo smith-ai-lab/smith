@@ -846,9 +846,16 @@ jobs:
     # which every pull request and queue entry after it restores (a cache saved on a branch is seen by that branch and
     # the ones made from it, and main's by all: so only main saves, which keeps the entries few). One for each OS: the
     # Linux shards restored `none` until this job saved a Linux entry, and built smith from nothing in each of 6 jobs
-    needs: changes
+    # It waits for `publish`, so its setup fetches the stage0 of this very commit, which is the one every job after it
+    # fetches: a compile step's key holds the digest of the smith that runs it, so a cache built with the stage0
+    # before served 23 of 319 steps (#2833; warm used stage0-b2dc5ea at 06:20Z, build-linux stage0-a42cac3 at 06:38Z).
+    # Fetching the cache's stage0 in the jobs instead would cost no wait but break the lag rule
+    # (knowledge/smith-bootstrap.md): a commit using a feature of the one before would be built by a release without it.
+    # `always()`: a failed or skipped release (a pull request, a release left pending behind a newer one) still warms,
+    # with the newest published stage0
+    needs: [changes, publish]
     # (a pull request that changes this job runs it as a dry run, Linux only: DRY_RUN=1, #2769)
-    if: needs.changes.outputs.warm == 'true'
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.warm == 'true'
     strategy:
       # one OS failing must not cancel the other: a Mac step that failed cancelled the Linux job, so main saved no
       # Linux cache from 01:48Z to 03:50Z on 2026-11-09 (#2826)
