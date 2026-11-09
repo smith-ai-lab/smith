@@ -697,8 +697,7 @@ static const char *smith_stepcache_program(const char *name) {
     // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
     // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
     // restored cache would be served (#2833): it is identified by its code, with both blanked.
-    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 &&
-        smith_self_digest(real, self)) {
+    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 && smith_self_digest(real, self)) {
         written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
     } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
