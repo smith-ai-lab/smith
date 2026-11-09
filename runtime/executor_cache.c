@@ -832,6 +832,16 @@ static bool smith_stepcache_open(SmithExec *exec) {
     return smith_cache_base(base, &fault) && smith_stepcache_start(exec, base);
 }
 
+// Whether an input is the compiler itself: its identity file in .smith/compiler/ (smith_compiler_file in
+// build_runtime.c), or the executable the command runs.
+static bool smith_stepcache_is_compiler_input(const char *path) {
+    if (strncmp(path, ".smith/compiler/", 16) == 0) return true;
+    char input[PATH_MAX];
+    char program[PATH_MAX];
+    if (path[0] != '/' || realpath(path, input) == nullptr) return false;
+    return smith_stepcache_find_program(smith_stepcache_scope.words[0], program) && strcmp(input, program) == 0;
+}
+
 // The key of a compile: its command (the root a token), the compiler, the environment and the content of the inputs the
 // manifest names. *newest is the time of the newest input. False when the compile cannot be keyed.
 static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex[smith_stepcache_hex], int64_t *newest,
@@ -863,6 +873,11 @@ static bool smith_stepcache_key(SmithExec *exec, const SmithEdge *edge, char hex
         int64_t mtime = 0;
         if (!smith_stepcache_spec(path, spec, sizeof spec, &mtime, now)) return false;
         if (mtime > *newest) *newest = mtime;
+        // The compiler is in the key above as its identity (the smith that runs the build, with its commit and build-id
+        // blanked). A step that lists it as an input, to run after it is replaced (build.c's header steps, whose
+        // `.smith/compiler/<hash>` file holds its path, size and time), would add the bytes of this job's copy of the
+        // same compiler and never hit in another job (#3002).
+        if (smith_stepcache_is_compiler_input(path)) continue;
         command.size = 0;
         command.data[0] = '\0';
         smith_steptext_addf(&command, "input %s ", spec);
