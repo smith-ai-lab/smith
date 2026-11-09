@@ -280,6 +280,38 @@ static files::BytesResult load(Str path) {
     return files::read_file(path);
 }
 
+// The `.smith` modules this process has parsed (#2888), so the files of one compile parse std once. An entry is the
+// file's path, its text (compared whole on every use, so an edited file is parsed again), and the folders that named
+// it; its tree is the parse of exactly that text.
+constexpr Usize shared_modules_max = 512;
+static Str shared_module_paths[shared_modules_max];
+static Str shared_module_names[shared_modules_max];
+static Str shared_module_sources[shared_modules_max];
+static const ast::Module *shared_module_trees[shared_modules_max];
+static Usize shared_module_count = 0;
+
+static Str roots_key(roots::Roots named_by) {
+    return as_str(format::push(named_by.source, "\n", named_by.library, "\n", named_by.local));
+}
+
+static const ast::Module *shared_module(Str path, Str named, Str source) {
+    for (Usize i = 0; i < shared_module_count; i++) {
+        if (roots::same(shared_module_paths[i], path) && roots::same(shared_module_names[i], named) &&
+            roots::same(shared_module_sources[i], source))
+            return shared_module_trees[i];
+    }
+    return nullptr;
+}
+
+static void share_module(Str path, Str named, Str source, const ast::Module *tree) {
+    if (shared_module_count == shared_modules_max) return;
+    shared_module_paths[shared_module_count] = path;
+    shared_module_names[shared_module_count] = named;
+    shared_module_sources[shared_module_count] = source;
+    shared_module_trees[shared_module_count] = tree;
+    shared_module_count += 1;
+}
+
 // The embedded sources of smith's `.smith` libraries (shim/cimport_std.cpp, filled by smith.c from `smith_libraries`):
 // the source of `std.<name>` and its size, or null when this program has no such module (#2041).
 extern const char *smith_std_source(const char *name, Usize *size);
@@ -299,6 +331,8 @@ static const ast::Module *load_embedded(Str dotted) {
     if (found == nullptr) return nullptr;
     Str path = as_str(format::push("lib/std/", name, ".smith"));
     Str source = found[0:size];
+    const ast::Module *shared = shared_module(path, "embedded", source);
+    if (shared != nullptr) return shared;
     parser::Parsed parsed =
         starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
     if (countof(parsed.errors) > 0) {
@@ -314,6 +348,7 @@ static const ast::Module *load_embedded(Str dotted) {
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = parsed.module;
     copy->name.segments = parts;
+    share_module(path, "embedded", source, copy);
     return copy;
 }
 
@@ -361,6 +396,16 @@ static const ast::Module *read_module(const char *dotted) {
         if (loaded != .ok) return nullptr;
         format::Chars chars = mem::view(loaded.ok, char);
         Str source = chars;
+        // A file found beside the compiled one is named from that folder alone: `src` may also hold it (the coverage
+        // tree links `src` to the repo), and a `module runner;` line then disagrees with `tests::runner` (#2041).
+        roots::Roots named_by = import_roots;
+        if (k >= 2) named_by = (roots::Roots){.local = folders[k]};
+        Str named = roots_key(named_by);
+        const ast::Module *shared = shared_module(path, named, source);
+        if (shared != nullptr) {
+            remember_module(relative, path, source);
+            return shared;
+        }
         parser::Parsed parsed =
             starts_with_module(source) ? parser::parse_file(path, source) : parser::parse_new(path, source);
         if (countof(parsed.errors) > 0) {
@@ -368,14 +413,11 @@ static const ast::Module *read_module(const char *dotted) {
                                                         parsed.errors[0].message)));
             return nullptr;
         }
-        // A file found beside the compiled one is named from that folder alone: `src` may also hold it (the coverage
-        // tree links `src` to the repo), and a `module runner;` line then disagrees with `tests::runner` (#2041).
-        roots::Roots named_by = import_roots;
-        if (k >= 2) named_by = (roots::Roots){.local = folders[k]};
         if (countof(name_module(&parsed.module, path, named_by)) > 0) return nullptr;
         ast::Module *copy = mem::alloc(ast::Module);
         *copy = parsed.module;
         remember_module(relative, path, source);
+        share_module(path, named, source, copy);
         return copy;
     }
     return load_embedded(relative);
@@ -386,23 +428,56 @@ static Str header_folder;
 static arena::Arena header_arena;
 static Bool header_arena_made = false;
 
-// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang and cached; null
-// when clang cannot read it.
+// The headers this process has read (#2888): one compile of many files reads each header once. An entry is keyed by
+// all that clang's result depends on: the header as written, how it is written, the importer's folder for a quoted
+// header (an angled one does not look there), and the flags. The key is text compared whole, never a hash alone.
+constexpr Usize shared_headers_max = 512;
+static Str shared_header_keys[shared_headers_max];
+static const ast::Module *shared_header_modules[shared_headers_max];
+static Usize shared_header_count = 0;
+
+static Str header_flags() {
+    Str empty = "";
+    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
+    if (given == nullptr) return empty;
+    return as_str(format::push(given));
+}
+
+static Str header_key(Str header, Bool angled, Str flags) {
+    Str how = "\"";
+    Str folder = header_folder;
+    if (angled) {
+        how = "<";
+        folder = "";
+    }
+    return as_str(format::push(header, "\n", how, "\n", folder, "\n", flags));
+}
+
+// The declarations of the C header `import <h>;` or `import "h";` names (#1762), read through clang once per process;
+// null when clang cannot read it.
 static const ast::Module *read_header(Str header, Bool angled) {
+    Str flags = header_flags();
+    Str key = header_key(header, angled, flags);
+    for (Usize i = 0; i < shared_header_count; i++) {
+        if (roots::same(shared_header_keys[i], key)) return shared_header_modules[i];
+    }
     Str name = as_str(format::push(header));
     Str folder = as_str(format::push(header_folder));
     if (!header_arena_made) {
         header_arena = arena::growing(1U << 22, nullptr);
         header_arena_made = true;
     }
-    Str empty = "";
-    const char *flags = empty.data;
-    const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
-    if (given != nullptr) flags = given;
-    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
+    Str terminated = as_str(format::push(flags));
+    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, terminated.data);
+    // A header clang cannot read is not kept: clang printed its error, and the next file that imports it prints it again.
     if (countof(got.error) > 0) return nullptr;
     ast::Module *module = mem::alloc(ast::Module);
     module->decls = got.decls;
+    if (shared_header_count < shared_headers_max) {
+        shared_header_keys[shared_header_count] = key;
+        shared_header_modules[shared_header_count] = module;
+        shared_header_count += 1;
+    }
     return module;
 }
 
@@ -423,7 +498,6 @@ static const ast::Module *load_header(Str header, Bool angled) {
     U64 spent = clock::monotonic() - mark;
     import_nanoseconds += spent;
     header_nanoseconds += spent;
-    if (c::getenv("SMITH_TIME_HEADERS") != nullptr) report(as_str(format::push("header ", header, " ", spent / 1000000, " ms\n")));
     return found;
 }
 
