@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -98,6 +98,48 @@ jobs:
             lost=$((lost + 1))
           done
           [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
+
+          # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
+          # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
+          # three passes double it (cap 8); cancelled runs count for neither. Same PUT and token fallback as queue-ops'
+          # set-build-entries. It runs from an EXIT trap, after the second pass.
+          tune() {
+            local id rs b t runs n m nb
+            id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') && [ -n "$id" ]               || { log "queue-heal: build entries unreadable (no ruleset main), kept"; return 0; }
+            rs=$(gh api "repos/$REPO/rulesets/$id") || { log "queue-heal: build entries unreadable, kept"; return 0; }
+            b=$(echo "$rs" | jq -r '[.rules[] | select(.type == "merge_queue") | .parameters.max_entries_to_build][0] // empty')
+            t=$(echo "$rs" | jq -r '.updated_at // empty')
+            [ -n "$b" ] && [ -n "$t" ] || { log "queue-heal: build entries unreadable, kept"; return 0; }
+            runs=$(gh api -X GET "repos/$REPO/actions/workflows/ci.yml/runs" -f event=merge_group -f status=completed \
+              -f per_page=100 --paginate --jq '.workflow_runs[] | "\(.created_at) \(.conclusion)"') \
+              || { log "queue-heal: build entries $b kept (merge_group runs unreadable)"; return 0; }
+            # ISO times in UTC compare as text
+            n=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "success"' | grep -c . || true)
+            m=$(echo "$runs" | awk -v t="$t" '$1 > t && $2 == "failure"' | grep -c . || true)
+            nb=$b
+            if [ "$m" -gt 0 ]; then
+              nb=$((b / 2)); [ "$nb" -ge 1 ] || nb=1
+            elif [ "$n" -ge 3 ] && [ "$b" -lt 8 ]; then
+              nb=$((b * 2)); [ "$nb" -le 8 ] || nb=8
+            fi
+            if [ "$nb" = "$b" ]; then
+              log "queue-heal: build entries $b kept ($n passed, $m failed since $t)"
+              return 0
+            fi
+            echo "$rs" | jq --argjson n "$nb" '{name, target, enforcement, bypass_actors, conditions,
+                rules: (.rules | map(if .type == "merge_queue" then .parameters.max_entries_to_build = $n else . end))}' \
+              > "${RUNNER_TEMP:-/tmp}/ruleset.json"
+            # GITHUB_TOKEN first; the owner's secret only when GitHub refuses
+            if GH_TOKEN="$BASE_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent 2>/dev/null \
+              || { [ -n "$OWNER_TOKEN" ] && GH_TOKEN="$OWNER_TOKEN" gh api -X PUT "repos/$REPO/rulesets/$id" --input "${RUNNER_TEMP:-/tmp}/ruleset.json" --silent; }; then
+              log "queue-heal: build entries $b -> $nb ($n passed, $m failed since $t)"
+            else
+              log "queue-heal: build entries $b kept, change to $nb refused ($n passed, $m failed since $t)"
+            fi
+          }
+
+          # the third pass runs when the job ends, after whichever exit the second pass takes
+          trap tune EXIT
 
           # second pass: only the front entry's group is built on main alone, so only its failure is its own
           front=$(echo "$list" | head -n 1)

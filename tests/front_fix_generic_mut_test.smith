@@ -123,3 +123,17 @@ export void test_front_fix_generic_mut_the_first_line_of_a_body_in_the_new_synta
         "0)\n"
         "    padded.width = width\n    return padded\n");
 }
+
+export void test_front_fix_generic_mut_a_result_literal_in_a_generic_body_is_a_variant() {
+    expect_fixed("enum Error:\n    bad\n\npub fn read(x: auto) -> Result(i32, Error):\n    if x == 0:\n"
+                 "        return {.error = .bad}\n    return {.ok = x}\n",
+                 "enum Error:\n    bad\n\npub fn read(x: auto) -> Result(i32, Error):\n    if x == 0:\n"
+                 "        return .error(.bad)\n    return .ok(x)\n");
+}
+
+export void test_front_fix_generic_mut_a_result_literal_in_a_type_generic_is_a_variant() {
+    expect_fixed("enum Error:\n    bad\n\npub fn read(x: i32, T: type) -> Result(T, Error):\n    if x == 0:\n"
+                 "        return {.error = .bad}\n    return {.ok = x.to(T)}\n",
+                 "enum Error:\n    bad\n\npub fn read(x: i32, T: type) -> Result(T, Error):\n    if x == 0:\n"
+                 "        return .error(.bad)\n    return .ok(x.to(T))\n");
+}
