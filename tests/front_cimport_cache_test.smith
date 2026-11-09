@@ -377,15 +377,28 @@ export void test_cimport_cache_stdio_h_hit_takes_under_a_tenth_of_the_miss() {
     c::clock_t start = c::clock();
     Header miss = cimport_cache::read(&memory, "stdio.h", false, "", flags.data);
     c::clock_t middle = c::clock();
+    // One hit can be slow on a shared runner, so time five and keep the fastest.
     Header hit = cimport_cache::read(&memory, "stdio.h", false, "", flags.data);
     c::clock_t end = c::clock();
+    I64 best_hit_us = (I64)(end - middle);
+    for (Usize round = 1; round < 5; round++) {
+        c::clock_t before = c::clock();
+        Header again = cimport_cache::read(&memory, "stdio.h", false, "", flags.data);
+        c::clock_t after = c::clock();
+        (void)again;
+        I64 took = (I64)(after - before);
+        if (took < best_hit_us) {
+            best_hit_us = took;
+        }
+    }
     test::check_equal(cimport_cache::misses(), 1);
-    test::check_equal(cimport_cache::hits(), 1);
+    test::check_equal(cimport_cache::hits(), 5);
     test::check_equal(countof(miss.error), 0);
     test::check_condition(slice::equal(dump(&miss), dump(&hit)));
     // POSIX gives clock() in millionths of a second, whatever the system's tick.
     I64 miss_us = (I64)(middle - start);
-    I64 hit_us = (I64)(end - middle);
-    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, hit ", hit_us, " us of CPU").data);
-    test::check_condition(hit_us * 10 < miss_us);
+    c::puts(format::push("cimport_cache <stdio.h>: miss ", miss_us, " us of CPU, fastest of 5 hits ", best_hit_us,
+                         " us of CPU")
+                .data);
+    test::check_condition(best_hit_us * 10 < miss_us);
 }

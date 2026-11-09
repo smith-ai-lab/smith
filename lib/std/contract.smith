@@ -222,7 +222,7 @@ fail_shift(const char *op, U64 a, U64 amount, I32 is_signed, U32 bits, const cha
 
 // One slice of `modifies`: its range is the count times the element's size, none for an empty one.
 inline void modifies_slice(auto xs) {
-    modifies_range(countof(xs) ? &xs[0] : nullptr, countof(xs) * sizeof(xs[0]));
+    modifies_range(countof(xs) != 0 ? &xs[0] : nullptr, countof(xs) * sizeof(xs[0]));
 }
 
 export inline void modifies(auto... rest) {

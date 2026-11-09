@@ -71,6 +71,26 @@ export void test_front_fix_mut_a_pointer_to_a_constant_makes_it_mut_too() {
     expect("fn f():\n    x := 1\n    p := &x\n    p.* = 2\n", "fn f():\n    mut x := 1\n    p := &x\n    p.* = 2\n", 1);
 }
 
+// A name bound by a variant pattern is as writable as the variant's payload: `.item(p)` of a `*i32` payload handed
+// where
+// `*mut i32` is wanted makes the payload `*mut i32` (#2647).
+export void test_front_fix_mut_a_pattern_bound_pointer_makes_its_payload_mut() {
+    expect("fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *i32\n    none\n\nfn f(n: Node):\n    if .item(p) "
+           ":= n:\n        g(p)\n",
+           "fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *mut i32\n    none\n\nfn f(n: Node):\n    if "
+           ".item(p) := n:\n        g(p)\n",
+           1);
+}
+
+// The same through a `match` arm.
+export void test_front_fix_mut_a_match_arm_bound_pointer_makes_its_payload_mut() {
+    expect("fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *i32\n    none\n\nfn f(n: Node):\n    match n:\n  "
+           "      .item(p): g(p)\n        .none: return\n",
+           "fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *mut i32\n    none\n\nfn f(n: Node):\n    match "
+           "n:\n        .item(p): g(p)\n        .none: return\n",
+           1);
+}
+
 export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
     expect("fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n",
            "fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n", 0);
@@ -170,4 +190,41 @@ export void test_front_fix_mut_an_inner_pointer_of_a_local_becomes_mut() {
     expect("fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *i32 = g(p)\n",
            "fn g(p: *mut *mut i32) -> *mut *mut i32:\n    p\n\nfn f(p: *mut *mut i32):\n    q: *mut *mut i32 = g(p)\n",
            1);
+}
+
+// A `Result` tested and left with `return made` (or `{.error = made.error}` under a loop) and then read twice as
+// `made.ok`: one `ok` after the guard.
+export void test_front_fix_mut_a_result_returned_whole_is_read_as_ok() {
+    expect(
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+        "    if made == .error:\n        return made\n    a: usize = made.ok\n    b: usize = made.ok\n    .ok(a + b)\n",
+        "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+        "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+        "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+        2);
+}
+
+export void test_front_fix_mut_a_result_guard_in_a_loop_binds_ok() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        made: Result(usize, usize) = f(i)\n        if made == .error:\n            return made\n"
+           "        total += made.ok\n        total += made.ok\n    .ok(total)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    mut total: usize = 0\n    for i in range(0, n):\n"
+           "        ok := try f(i)\n        total += ok\n        total += ok\n    .ok(total)\n",
+           2);
+}
+
+// The guard `if .error(error) := made: return .error(error)` (written by the first pass where the `try` was held back
+// by old forms) followed by `made.ok` is `ok := try`, the same site as `if made == .error:`.
+export void test_front_fix_mut_a_result_guard_in_pattern_form_is_a_try() {
+    expect("fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    made: Result(usize, usize) = f(n)\n"
+           "    if .error(error) := made:\n        return .error(error)\n    a: usize = made.ok\n"
+           "    b: usize = made.ok\n    .ok(a + b)\n",
+           "fn f(n: usize) -> Result(usize, usize):\n    .ok(n)\n\n"
+           "fn g(n: usize) -> Result(usize, usize):\n    ok := try f(n)\n"
+           "    a: usize = ok\n    b: usize = ok\n    .ok(a + b)\n",
+           2);
 }

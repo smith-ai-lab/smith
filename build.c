@@ -779,73 +779,23 @@ static const char *const *build_links(SmithBuild *b, const SmithStep *program, c
 // compiled with smith.c's flags, so an edit of one recompiles one file. gzip, xz and untar stay in package.c, which the
 // build runtime embeds and includes as one file.
 static const char *const build_runtime_sources[] = {
-    "runtime/account.c",
-    "runtime/cache.c",
-    "runtime/changed.c",
-    "runtime/coverage.c",
-    "runtime/docs.c",
-    "runtime/executor.c",
-    "runtime/executor_cache.c",
-    "runtime/executor_manifest.c",
-    "runtime/executor_plan.c",
-    "runtime/executor_run.c",
-    "runtime/executor_state.c",
-    "runtime/executor_tools.c",
-    "runtime/explain.c",
-    "runtime/front_flag.c",
-    "runtime/lang.c",
-    "runtime/lang_body.c",
-    "runtime/lang_command.c",
-    "runtime/lang_constexpr.c",
-    "runtime/lang_decl.c",
-    "runtime/lang_declare.c",
-    "runtime/lang_enum.c",
-    "runtime/lang_fields.c",
-    "runtime/lang_generic.c",
-    "runtime/lang_head.c",
-    "runtime/lang_import.c",
-    "runtime/lang_lambda.c",
-    "runtime/lang_lex.c",
-    "runtime/lang_names.c",
-    "runtime/lang_nested.c",
-    "runtime/lang_out.c",
-    "runtime/lang_private.c",
-    "runtime/lang_rfor.c",
-    "runtime/lang_slice.c",
-    "runtime/lang_sparse.c",
-    "runtime/lang_stream.c",
-    "runtime/lang_target.c",
-    "runtime/lang_trivia.c",
-    "runtime/lang_try.c",
-    "runtime/lang_tuple.c",
-    "runtime/lang_type.c",
-    "runtime/lang_unused.c",
-    "runtime/lint_cache.c",
-    "runtime/make.c",
-    "runtime/make_cc.c",
-    "runtime/make_class.c",
-    "runtime/make_emit.c",
-    "runtime/make_expand.c",
-    "runtime/make_graph.c",
-    "runtime/make_print.c",
-    "runtime/make_read.c",
-    "runtime/make_sub.c",
-    "runtime/make_translate.c",
-    "runtime/mcp.c",
-    "runtime/mcp_dap.c",
-    "runtime/mcp_serve.c",
-    "runtime/mcp_show.c",
-    "runtime/mcp_text.c",
-    "runtime/mcp_tools.c",
-    "runtime/package_unit.c",
-    "runtime/quiet.c",
-    "runtime/record.c",
-    "runtime/slots.c",
-    "runtime/symbolize.c",
-    "runtime/test_cache.c",
-    "runtime/verbs.c",
-    "runtime/world.c",
-    nullptr,
+    "runtime/account.c",       "runtime/cache.c",          "runtime/changed.c",        "runtime/coverage.c",
+    "runtime/docs.c",          "runtime/executor.c",       "runtime/executor_cache.c", "runtime/executor_manifest.c",
+    "runtime/executor_plan.c", "runtime/executor_run.c",   "runtime/executor_state.c", "runtime/executor_tools.c",
+    "runtime/explain.c",       "runtime/front_flag.c",     "runtime/lang.c",           "runtime/lang_body.c",
+    "runtime/lang_command.c",  "runtime/lang_constexpr.c", "runtime/lang_decl.c",      "runtime/lang_declare.c",
+    "runtime/lang_enum.c",     "runtime/lang_fields.c",    "runtime/lang_generic.c",   "runtime/lang_head.c",
+    "runtime/lang_import.c",   "runtime/lang_lambda.c",    "runtime/lang_lex.c",       "runtime/lang_names.c",
+    "runtime/lang_nested.c",   "runtime/lang_out.c",       "runtime/lang_private.c",   "runtime/lang_rfor.c",
+    "runtime/lang_slice.c",    "runtime/lang_sparse.c",    "runtime/lang_stream.c",    "runtime/lang_target.c",
+    "runtime/lang_trivia.c",   "runtime/lang_try.c",       "runtime/lang_tuple.c",     "runtime/lang_type.c",
+    "runtime/lang_unused.c",   "runtime/lint_cache.c",     "runtime/make.c",           "runtime/make_cc.c",
+    "runtime/make_class.c",    "runtime/make_emit.c",      "runtime/make_expand.c",    "runtime/make_graph.c",
+    "runtime/make_print.c",    "runtime/make_read.c",      "runtime/make_sub.c",       "runtime/make_translate.c",
+    "runtime/mcp.c",           "runtime/mcp_dap.c",        "runtime/mcp_serve.c",      "runtime/mcp_show.c",
+    "runtime/mcp_text.c",      "runtime/mcp_tools.c",      "runtime/package_unit.c",   "runtime/quiet.c",
+    "runtime/record.c",        "runtime/self_digest.c",    "runtime/slots.c",          "runtime/symbolize.c",
+    "runtime/test_cache.c",    "runtime/verbs.c",          "runtime/world.c",          nullptr,
 };
 // The protocol code smith mcp stands on (knowledge/protocol-generation.md): the generated dap.c and mcp.c, the JSON
 // library and the protocol runtime, each an object of its own now that smith.c includes none of them.
@@ -3598,6 +3548,10 @@ static int build_frontend_coverage(SmithRun *run) {
         return status != 0 ? status : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
     }
     if (run->args[3][0] != '\0') setenv("SMITH_COVERAGE_JOBS", run->args[3], 1); // -Djobs=<n> (#2420)
+    // -Dfix_only=1 (#2832): only the fix phase runs, filling .smith/frontend-coverage/fixed (the fixed files, keyed by
+    // what each depends on) for the shards to reuse; no table is made.
+    const bool fix_only = run->args[6][0] != '\0';
+    if (fix_only) setenv("SMITH_COVERAGE_FIX_ONLY", "1", 1);
     // The build's own compile flags for each file (`-I<llvm>/include` for front/), which `smith cc --front-end=new`
     // reads a header with from the compile_commands.json of the folder it runs in (#2313).
     if (access("compile_commands.json", R_OK) == 0) {
@@ -3617,7 +3571,7 @@ static int build_frontend_coverage(SmithRun *run) {
                                  : smith_list(b, tool, "run", smith, build_absolute(b, "."), tree, nullptr),
         .log = results,
         .stdout_only = true});
-    if (status != 0) return status;
+    if (status != 0 || fix_only) return status;
     return files[0] != '\0' && shard[0] == '\0'
                ? build_exec(smith_list(b, tool, "chain", results, build_absolute(b, "."), files, nullptr))
                : build_exec(smith_list(b, tool, "summarize", results, smith, nullptr));
@@ -3652,6 +3606,7 @@ static void build_developer_tasks(SmithBuild *b, const char *binary) {
                                "frontend-coverage: shard <k>/<n> of the files and what they import (#2697)"),
             smith_option_value(b, "merge", "",
                                "frontend-coverage: join the shards' results.tsv, comma separated (#2697)"),
+            smith_option_value(b, "fix_only", "", "frontend-coverage: only fill the cache of fixed files (#2832)"),
             nullptr),
         .description = "measuring how much of the tree the new front end handles",
     };
