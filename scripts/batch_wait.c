@@ -181,7 +181,7 @@ static int build_entries(const char *url) {
 static long clock_now(int pass) {
     const char *fake = getenv("BATCH_WAIT_NOW");
     if (fake == nullptr || fake[0] == '\0') return (long)time(nullptr);
-    return atol(fake) + (long)pass * setting("BATCH_WAIT_TICK", 1);
+    return strtol(fake, nullptr, 10) + (long)pass * setting("BATCH_WAIT_TICK", 1);
 }
 
 // The latest merge_group run of `branch`: its creation time (epoch) and whether its full build started (a job other
@@ -196,16 +196,21 @@ static int group_run(const char *repo, const char *branch, long *created, int *b
                      "%s api -X GET 'repos/%s/actions/runs' -f event=merge_group -f head_branch='%s' "
                      "--jq '.workflow_runs[0]|select(.!=null)|\"\\(.id)\\t\\(.created_at|fromdateiso8601)\"'",
                      tool, repo, branch);
+    if (n < 0 || n >= (int)sizeof command || !first_line(command, text)) return 0;
+    // "<id>\t<epoch>"
+    char *end = nullptr;
+    long number = strtol(text, &end, 10);
+    if (end == text || *end != '\t' || number <= 0) return 0;
     char id[64];
-    if (n < 0 || n >= (int)sizeof command || !first_line(command, text) || sscanf(text, "%63s %ld", id, created) != 2 ||
-        strspn(id, "0123456789") != strlen(id))
-        return 0;
+    snprintf(id, sizeof id, "%ld", number);
+    *created = strtol(end + 1, &end, 10);
+    if (*end != '\0' || *created <= 0) return 0;
     n = snprintf(command, sizeof command,
                  "%s api 'repos/%s/actions/runs/%s/jobs?filter=latest&per_page=100' --jq '[.jobs[]|"
                  "select(.name!=\"changes\" and (.status==\"in_progress\" or .status==\"completed\"))]|length'",
                  tool, repo, id);
     if (n < 0 || n >= (int)sizeof command || !first_line(command, text)) return 0;
-    *building = atoi(text) > 0;
+    *building = strtol(text, nullptr, 10) > 0;
     return 1;
 }
 
