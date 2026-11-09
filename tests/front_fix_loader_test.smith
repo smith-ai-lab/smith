@@ -300,6 +300,39 @@ export void test_front_fix_loader_a_mended_import_keeps_its_read_only_pointer() 
     }
 }
 
+// Mending writes a `Sym *s` and a `const Sym *s` alike as `s: *Sym`; the module read back must still know which of
+// them its function writes through, or a call that passes a read-only pointer asks for nothing (#2648).
+export void test_front_fix_loader_a_mended_import_keeps_its_writable_pointer() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    Str module_path = "/tmp/front_fix_loader_writer.smith";
+    Str user_path = "/tmp/front_fix_loader_writer_user.smith";
+    test::check_equal(fix::store(module_path, "module front_fix_loader_writer;\nexport struct Sym { Bool exported; };\n"
+                                              "[[gnu::always_inline]] static Int twice(Int n) {\n    return n * 2;\n}\n"
+                                              "export void mark(Sym *s) {\n    s->exported = true;\n}\n"),
+                      true);
+    test::check_equal(fix::store(user_path, "module front_fix_loader_writer_user;\nimport front_fix_loader_writer;\n"
+                                            "static void f(front_fix_loader_writer::Sym *s) {\n"
+                                            "    front_fix_loader_writer::mark(s);\n}\n"),
+                      true);
+    const char *paths[1] = {user_path.data};
+    (void)fix::fix_run(paths, 1);
+    files::BytesResult back = files::read_file(user_path);
+    switch (back) {
+    case .error:
+        check_text("cannot read back", "the file");
+        return;
+    case .ok:
+        files::Bytes bytes = back.ok;
+        char chars[:] = mem::view(bytes, char);
+        Str got = chars;
+        check_text(got, "import front_fix_loader_writer\nfn f(s: *mut front_fix_loader_writer.Sym):\n"
+                        "    s.mark()\n");
+    }
+}
+
 // A fix the checker finds in an instance of another module's generic belongs to that module (#2669): fixing the
 // importer keeps it, and the fixer of the module applies it (the spans are offsets in the module's own text).
 export void test_front_fix_loader_a_fix_in_an_imported_generic_reaches_its_module() {

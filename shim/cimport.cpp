@@ -24,8 +24,9 @@
 //                 the magnitude)
 //   words[21..22] constants: first word, count  (6 words each: name, type, kind, negative, low, high; kind 0 integer
 //                 (the magnitude), 1 floating (the magnitude's IEEE double), 2 string (low = byte offset in the pool,
-//                 high = byte count). The enumerators of an anonymous enum, the object-like macros whose value clang
-//                 folds to a constant, and the header's `static const` variables with a constant initializer.)
+//                 high = byte count), 3 an extern variable (no value). The enumerators of an anonymous enum, the
+//                 object-like macros whose value clang folds to a constant, the header's `static const` variables with
+//                 a constant initializer, and its extern variables (`stdout`).)
 //   words[23..24] places: first word, count     (6 words each: kind, ordinal, file, line, column, doc; where a
 //                 declaration is and the comment above it (#1941). The file, line and column are clang's presumed
 //                 location (the header as written, after `#line`); file and doc are string offsets, doc is 0 when
@@ -567,6 +568,17 @@ void Reader::walk(const clang::TranslationUnitDecl *unit, const std::vector<Macr
             if (v->getType().isConstQualified() && v->getInit() != nullptr && !v->getType()->isPointerType() &&
                 constant(v->getName().str(), v->getType(), v->getInit(), why))
                 place(5, static_cast<uint32_t>(constants.size() - 1), v);
+            else if (v->hasExternalStorage() && v->getInit() == nullptr &&
+                     v->getTLSKind() == clang::VarDecl::TLS_None && !seen.count(v->getName().str())) {
+                // An extern variable (`stdout`): its type and no value, kind 3.
+                seen[v->getName().str()] = true;
+                uint32_t type = convert(v->getType(), false);
+                if (type != bad) {
+                    constants.push_back({text(v->getName().str()), type, 3, 0, 0, 0});
+                    place(5, static_cast<uint32_t>(constants.size() - 1), v);
+                }
+                failure.clear();
+            }
         }
     }
     macros_of(unit, macros, errors);
