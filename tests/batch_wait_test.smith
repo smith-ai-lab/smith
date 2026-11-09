@@ -16,7 +16,9 @@ constexpr const char *setup =
     "$c -x c batch_wait.c -o batch_wait; "
     "printf '%s\\n' 'n=$(cat \"$Q.n\" 2>/dev/null || echo 1); line=$(sed -n \"${n}p\" \"$Q\"); "
     "[ -z \"$line\" ] && line=$(tail -n 1 \"$Q\"); echo $((n + 1)) > \"$Q.n\"; [ \"$line\" = FAIL ] && exit 1; "
-    "for r in $line; do [ \"$r\" = - ] || printf \"0\\t%s\\n\" \"$r\"; done; exit 0' > fake_ls";
+    "for r in $line; do [ \"$r\" = - ] || printf \"0\\t%s\\n\" \"$r\"; done; exit 0' > fake_ls; "
+    "printf '%s\\n' 'case \"$*\" in *jobs*) cat \"$G.jobs\" 2>/dev/null; exit 0;; *runs*) cat \"$G.run\" 2>/dev/null; "
+    "exit 0;; esac; exit 1' > fake_gh";
 
 // Runs batch_wait as entry 1 (own branch pr-1-M, group head A) with the queue states `states` (one line per poll,
 // `-` for no branch, FAIL for a failed read), polling every 0 s and capped at `cap` polls.
@@ -25,7 +27,8 @@ static scratch::Run wait_window(const scratch::Project *p, const char *states, c
     __builtin_snprintf(
         command, sizeof command,
         "printf '%%b' '%s' > q && rm -f q.n && "
-        "Q=$PWD/q BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 "
+        "Q=$PWD/q G=$PWD/g BATCH_WAIT_GH=\"sh $PWD/fake_gh\" BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" "
+        "BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 "
         "BATCH_WAIT_CAP=%s BATCH_WAIT_WINDOW=%s ./batch_wait refs/heads/gh-readonly-queue/main/pr-1-M A url",
         states, cap, window);
     return scratch::sh(p, command);
@@ -147,4 +150,34 @@ export void test_batch_wait_waits_the_window_for_a_later_group_of_a_burst() {
     scratch::Run alone = wait_window(&p, own, "60", "3");
     scratch::expect_status("batch_wait: alone after the window", 0, &alone);
     scratch::expect_text("batch_wait: as alone", "batch=alone\n", alone.out);
+}
+
+export void test_batch_wait_builds_at_once_when_a_later_group_has_a_failed_job() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    queue(&p);
+    char states[512];
+    __builtin_snprintf(states, sizeof states, "%s%s", own, two);
+    // the later group's run is known and still has no failed job: it keeps waiting, to the cap (#2903)
+    scratch::Run made = scratch::sh(&p, "echo 4242 > g.run; : > g.jobs");
+    scratch::expect_status("batch_wait: the fake run is made", 0, &made);
+    scratch::Run running = wait(&p, states, "2");
+    scratch::expect_text("batch_wait: a later group with no failed job is waited on", "batch=capped\n", running.out);
+    // a failed job in the later group's run: it stops waiting and builds at once, and names the group and the job
+    made = scratch::sh(&p, "echo 'test-linux (3, 6)' > g.jobs");
+    scratch::expect_status("batch_wait: the failed job is made", 0, &made);
+    scratch::Run failed = wait(&p, states, "60");
+    scratch::expect_status("batch_wait: a failed later group, it builds", 0, &failed);
+    scratch::expect_text("batch_wait: as waited", "batch=waited\n", failed.out);
+    scratch::expect_contains(
+        "batch_wait: it names the group and the job", failed.err,
+        "later group refs/heads/gh-readonly-queue/main/pr-2-A failed (job test-linux (3, 6)), building now");
+    // a run that cannot be read is no failure
+    made = scratch::sh(&p, "rm g.run");
+    scratch::Run unread = wait(&p, states, "2");
+    scratch::expect_text("batch_wait: an unreadable run is no failure", "batch=capped\n", unread.out);
 }
