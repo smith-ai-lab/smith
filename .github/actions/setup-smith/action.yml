@@ -118,10 +118,11 @@ runs:
         SMITH_CACHE_MAX: 1G
       run: |
         start=$(date +%s)
-        smith build -DPROFILE=${{ inputs.profile }}
+        # the output is kept to count the steps the step cache served (#2833): "N steps, M cached"
+        smith build -DPROFILE=${{ inputs.profile }} 2>&1 | tee "$RUNNER_TEMP/build.out"
         smith=$(ls "$PWD"/build/*/smith | head -n 1)
         echo "SMITH=$smith" >>"$GITHUB_ENV"
-        echo "build: $(( $(date +%s) - start )) s ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "build: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/build.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/build.out" || true) cached ($smith)" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Build the tests
       if: inputs.artifact == '' && inputs.tests == 'true'
@@ -156,7 +157,7 @@ runs:
           cat "$RUNNER_TEMP/build-failed.txt"
           exit 1
         fi
-        echo "tests built: $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "tests built: $(( $(date +%s) - start )) s, $(grep -cE '^\[[0-9]+/[0-9]+\] ' "$RUNNER_TEMP/list.out" || true) steps, $(grep -c ' (cached)$' "$RUNNER_TEMP/list.out" || true) cached" | tee -a "$GITHUB_STEP_SUMMARY"
 
     - name: Download the build of this run
       if: inputs.artifact != ''
