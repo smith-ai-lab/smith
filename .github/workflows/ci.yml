@@ -699,6 +699,9 @@ jobs:
           # (#2856): lint runs here in place of `check-lint`. The queue keeps the two jobs side by side (lead, 2026-11-08, #2833)
           stage fmt fmt --dry-run --Werror; report fmt
           stage docs docs; report docs
+          # prove and lint each run the project's build first, and two builds in one tree race (a relink removed
+          # `smith-cc` under the other, run 42667056557): build once here, so both only read the tree
+          stage build build; report build
           stage prove prove &
           pids=$!
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
