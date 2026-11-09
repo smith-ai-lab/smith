@@ -22,6 +22,7 @@
 module front::fix_zero;
 
 import front::ast;
+import front::fix_optional;
 import front::lex;
 import front::parse as core;
 import front::types;
@@ -1371,6 +1372,17 @@ static core::ParseError zeroed_global_fix(Str source, const ast::Expr *call) {
     return found;
 }
 
+// `out` and the fixes of the pointer parameters that are handed an option (`fix_optional`, #2648).
+static core::Errors with_optionals(core::Errors out, Str source, const ast::Module *module, const types::Checked *c) {
+    core::Errors optionals = fix_optional::edits(source, module, c);
+    for (Usize i = 0; i < countof(optionals); i++)
+        out = add(out, optionals[i]);
+    core::Errors assigned = fix_optional::reassigned(source, module);
+    for (Usize i = 0; i < countof(assigned); i++)
+        out = add(out, assigned[i]);
+    return out;
+}
+
 static Bool option_starts_with(Str text, Str prefix) {
     if (countof(text) < countof(prefix)) return false;
     return same(text[0:countof(prefix)], prefix);
@@ -1536,6 +1548,7 @@ export core::Errors edits(Str source, const ast::Module *module, types::Checked 
         push_children(&w, s);
     }
     out = zeroed_literals(out, source);
+    out = with_optionals(out, source, module, c);
     // the import waits when it starts where the function's own rewrite does: the next pass finds the call and adds it
     for (Usize k = 0; k < countof(source) && !zeroed_written; k += 1)
         if (source[k] == 'm' && text_at(source, k, "mem.zeroed(") && (k == 0 || !word_char(source[k - 1])))
