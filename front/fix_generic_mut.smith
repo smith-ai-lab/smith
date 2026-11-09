@@ -13,6 +13,10 @@
 //
 //   fix_generic_mut::edits(source, module)   one fix for each local of a generic function's body that is assigned,
 //                                            and for each pointer parameter that is written through
+//
+// A local handed to a `*mut` parameter or field of this module in such a body is mended the same way (#2992): a
+// pointer local `memory: *char = ..` passed whole is `*mut char`, and a value local whose address `&writer` is passed
+// is `mut writer`.
 module front::fix_generic_mut;
 
 import front::ast;
@@ -266,22 +270,6 @@ static Bool has_type_param(Str source, ast::Param params[:]) {
     return false;
 }
 
-static core::Errors scan(Str source, Usize start, Usize end, core::Errors out) {
-    for (Usize at = start; at < end; at++) {
-        if (!starts_word(source[at]) || (at > 0 && word_char(source[at - 1]))) continue;
-        if (!at_statement_start(source, at, start)) continue;
-        Usize name_len = 0;
-        Bool plain = false;
-        if (!declaration(source, at, end, &name_len, &plain)) continue;
-        Str name = source[at:at + name_len];
-        if (is_keyword(name)) continue;
-        if (!assigned_later(source, at + name_len, end, name, plain, start)) continue;
-        out = mem::realloc(out, countof(out) + 1);
-        out[countof(out) - 1] = fix_at(at);
-    }
-    return out;
-}
-
 // Whether the word at `at` (length `len`) is a whole word and not a member (`x.buffer`).
 static Bool is_whole_word(Str source, Usize at, Usize len, Usize floor) {
     if (at > floor && (word_char(source[at - 1]) || source[at - 1] == '.')) return false;
@@ -390,6 +378,63 @@ static core::Errors assigned_params(Str source, ast::Param params[:], Usize body
             continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = fix_at(params[i].span.start);
+    }
+    return out;
+}
+
+// Whether the body (from `start` to `end`) hands the address of the local `name` (`&name`) whole to a `*mut` parameter
+// or field of this module (`put(&writer, ..)`), which a value local needs `mut` for (#2992).
+static Bool address_handed(const ast::Module *module, Str source, Usize start, Usize end, Str name) {
+    for (Usize at = start; at + 1 + countof(name) <= end; at++) {
+        if (source[at] != '&' || (at > start && source[at - 1] == '&')) continue;
+        Usize first = at + 1;
+        if (!is_whole_word(source, first, countof(name), start)) continue;
+        if (!same(source[first:first + countof(name)], name)) continue;
+        Usize back = at;
+        while (back > start && (source[back - 1] == ' ' || source[back - 1] == '\t' || source[back - 1] == '\n'))
+            back -= 1;
+        Usize next = skip_space(source, first + countof(name), end);
+        Bool opens = back > start && (source[back - 1] == '(' || source[back - 1] == ',');
+        Bool closes = next < end && (source[next] == ',' || source[next] == ')');
+        if (opens && closes && wanted_mut(module, source, at, start)) return true;
+    }
+    return false;
+}
+
+// The `*` of a local declared `name: *T = v` (not `*mut T`), where the declaration's name ends at `after`; else
+// `countof(source)`.
+static Usize local_pointer_star(Str source, Usize after, Usize end) {
+    Usize p = skip_space(source, after, end);
+    if (p >= end || source[p] != ':') return countof(source);
+    p = skip_space(source, p + 1, end);
+    if (p >= end || source[p] != '*') return countof(source);
+    Usize q = skip_space(source, p + 1, end);
+    if (q + 3 <= end && same(source[q:q + 3], "mut") && (q + 3 >= end || !word_char(source[q + 3])))
+        return countof(source);
+    return p;
+}
+
+static core::Errors scan(const ast::Module *module, Str source, Usize start, Usize end, core::Errors out) {
+    for (Usize at = start; at < end; at++) {
+        if (!starts_word(source[at]) || (at > 0 && word_char(source[at - 1]))) continue;
+        if (!at_statement_start(source, at, start)) continue;
+        Usize name_len = 0;
+        Bool plain = false;
+        if (!declaration(source, at, end, &name_len, &plain)) continue;
+        Str name = source[at:at + name_len];
+        if (is_keyword(name)) continue;
+        if (assigned_later(source, at + name_len, end, name, plain, start) ||
+            address_handed(module, source, at + name_len, end, name)) {
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = fix_at(at);
+            continue;
+        }
+        // A pointer local handed whole to a `*mut` parameter is `*mut T` (`memory: *char = ..`, `write(memory, ..)`).
+        Usize star = local_pointer_star(source, at + name_len, end);
+        if (star < countof(source) && pointer_written(module, source, at + name_len, end, name)) {
+            out = mem::realloc(out, countof(out) + 1);
+            out[countof(out) - 1] = mut_pointer_fix(star);
+        }
     }
     return out;
 }
@@ -599,7 +644,7 @@ export core::Errors edits(Str source, const ast::Module *module) {
         if (function_body != nullptr && is_generic(d)) {
             Usize end = d->span.end < countof(source) ? d->span.end : countof(source);
             Usize body = function_body->span.start;
-            if (body < end) out = scan(source, body, end, out);
+            if (body < end) out = scan(module, source, body, end, out);
             if (body < end && has_result_type(source, function_result)) out = result_literals(source, body, end, out);
             if (body < end) out = assigned_params(source, params, body, end, out);
             if (body < end) out = pointer_params(module, source, params, body, end, out);

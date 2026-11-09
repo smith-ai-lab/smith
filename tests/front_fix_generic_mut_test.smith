@@ -137,3 +137,27 @@ export void test_front_fix_generic_mut_a_result_literal_in_a_type_generic_is_a_v
                  "enum Error:\n    bad\n\npub fn read(x: i32, T: type) -> Result(T, Error):\n    if x == 0:\n"
                  "        return .error(.bad)\n    return .ok(x.to(T))\n");
 }
+
+// A local handed to a `*mut` parameter in a generic body that no call of the module instantiates (#2992): the checker
+// never types the call, so the fix is made from the text.
+export void test_front_fix_generic_mut_a_pointer_local_handed_to_a_mut_parameter_is_mut() {
+    expect_fixed("module m;\nstatic Usize fill(char *out, Usize n) {\n    out[0] = 'a';\n    return n;\n}\n\n"
+                 "export Usize push(auto... args) {\n    char *memory = (char *)0;\n"
+                 "    return fill(memory, countof(args));\n}\n",
+                 "fn fill(out: *mut char, n: usize) -> usize:\n    out[0] = 'a'\n    return n\n\n"
+                 "pub fn push(args...) -> usize:\n    memory: *mut char = 0.cast(*mut char)\n"
+                 "    return fill(memory, countof(args))\n");
+}
+
+export void test_front_fix_generic_mut_a_value_local_whose_address_goes_to_a_mut_parameter_is_mut() {
+    expect_fixed("module m;\ntypedef struct {\n    char *out;\n    Usize capacity;\n    Usize n;\n} Counter;\n\n"
+                 "static void bump(Counter *counter, Usize by) {\n    counter->n += by;\n}\n\n"
+                 "export Usize count(char *buffer, Usize capacity, auto... args) {\n"
+                 "    Counter counter = {buffer, capacity, 0};\n"
+                 "    bump(&counter, countof(args));\n    return counter.n;\n}\n",
+                 "struct Counter:\n    out: *char\n    capacity: usize\n    n: usize\n\n"
+                 "fn bump(counter: *mut Counter, by: usize):\n    counter.n += by\n\n"
+                 "pub fn count(buffer: *char, capacity: usize, args...) -> usize:\n"
+                 "    mut counter := Counter(buffer, capacity, 0)\n"
+                 "    bump(&counter, countof(args))\n    return counter.n\n");
+}
