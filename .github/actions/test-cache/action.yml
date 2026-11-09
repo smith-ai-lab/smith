@@ -67,14 +67,19 @@ runs:
           for kind in tests imports; do
             want=want_$kind
             [ "${!want}" = true ] || continue
-            urls=$(printf '%s\n' "$assets" | while read -r job name url; do
+            urls=$(served=""; printf '%s\n' "$assets" | while read -r job name url; do
                 [ "$name" = "smith-$kind-$OS.tar.gz" ] || continue
                 ok=true
                 if [ "$kind" = imports ] && [ -n "$FROM" ]; then
+                  # one set a pattern (#2978): a set holds what its job restored plus what it stored, so the sets that a
+                  # pattern like `linux-*` names hold the same entries over and over (six sets of 613 MB, 5.3 minutes);
+                  # the first (any one) is enough. A pattern's later sets are left out.
                   ok=false; set -f # the patterns are words, not files of the working folder
-                  for pattern in $FROM; do [[ $job == $pattern ]] && ok=true; done # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                  for pattern in $FROM; do
+                    if [[ $job == $pattern && " $served " != *" $pattern "* ]]; then ok=true; served="$served $pattern"; break; fi # not `case`: bash 3.2 (macOS) cannot read its `)` inside $( )
+                  done
                 fi
-                [ "$ok" = true ] && echo "$url"
+                [ "$ok" = true ] && { [ "$kind" = imports ] && echo "$job $url" || echo "$url"; }
               done || true)
             [ -n "$urls" ] || continue
             printf '%s\n' "$urls" >"$t/$kind-urls"
@@ -121,10 +126,25 @@ runs:
         # stored, so the sets overlap; the same entry is the same bytes)
         urls=$(cat "$RUNNER_TEMP/imports-urls"); from=$(cat "$RUNNER_TEMP/imports-from")
         got=0
-        for url in $urls; do
-          gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
-            tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" && got=$((got + 1))
-        done
+        # one line a set (#2978): its entries, size and seconds, or where it failed and the first line of the error; a
+        # failed set never fails the job. `df` of the cache's filesystem before the first set and after the last.
+        echo "import cache: df before: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
+        while read -r set_name url; do
+          [ -n "$url" ] || continue
+          start=$SECONDS; err="$RUNNER_TEMP/imports.err"
+          if ! gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>"$err"; then
+            echo "import cache: set $set_name: FAILED at download: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"; continue
+          fi
+          mb=$(( $(wc -c <"$RUNNER_TEMP/imports.tar.gz") / 1048576 ))
+          if tar -xzf "$RUNNER_TEMP/imports.tar.gz" -C "$dir" 2>"$err"; then
+            got=$((got + 1))
+            n=$(tar -tzf "$RUNNER_TEMP/imports.tar.gz" 2>/dev/null | grep -c '/[hm]/[^/][^/]*$' || true)
+            echo "import cache: set $set_name: $n entries, $mb MB, $((SECONDS - start)) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "import cache: set $set_name: FAILED at extract: $(head -n 1 "$err")" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+        done <<<"$urls"
+        echo "import cache: df after: $(df -h "$dir" | tail -1)" | tee -a "$GITHUB_STEP_SUMMARY"
         # and where smith run inside a test looks (a scratch project's XDG_CACHE_HOME, tests/scratch.smith)
         if [ "$got" -gt 0 ]; then
           tests="${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; mkdir -p "$tests"; cp -a "$dir/." "$tests/"

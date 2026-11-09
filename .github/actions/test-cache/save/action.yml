@@ -43,6 +43,21 @@ runs:
         for src in "${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports" "${SMITH_TEST_CACHE:-$HOME/.cache/smith-tests}/xdg/smith/imports"; do
           [ -d "$src" ] && cp -a "$src/." "$imports/"
         done
+        # only the identities this job's smiths used stay (#2978): a smith reads its own identity's folder and no other,
+        # so another's entries (the old builds' that the sets carried from job to job) can never hit. Each smith process
+        # appends its identity to "$SMITH_IMPORT_CACHE_LOG.identity"; a log with none (a release from before #2978
+        # writes none) drops nothing.
+        ids="${SMITH_IMPORT_CACHE_LOG:-}.identity"
+        if [ -s "$ids" ]; then
+          kept=0; dropped=0
+          for folder in "$imports"/*/; do
+            [ -d "$folder" ] || continue
+            if grep -qx "$(basename "$folder")" "$ids"; then kept=$((kept + 1)); else rm -rf "$folder"; dropped=$((dropped + 1)); fi
+          done
+          echo "import cache: kept $kept identities ($(sort -u "$ids" | tr '\n' ' ')), dropped $dropped" | tee -a "$GITHUB_STEP_SUMMARY"
+        else
+          echo "import cache: no identity in the log, no folder dropped ($(ls "$imports" | wc -l) identities)" | tee -a "$GITHUB_STEP_SUMMARY"
+        fi
         # entries unused for 14 days go (smith prunes at 31), so the store does not grow for ever
         [ -d "$dir" ] && find "$dir" -type f -mtime +14 -delete
         n=$( [ -d "$dir" ] && [ "$TESTS" = true ] && find "$dir" -type f | wc -l || echo 0)
