@@ -438,7 +438,7 @@ static bool smith_stepcache_under(const char *path, const char *folder) {
     return strncmp(path, folder, length) == 0 && (path[length] == '/' || path[length] == '\0');
 }
 
-// Whether a file belongs to the system, not to the project: it is hashed by path, size and time, and the graph does
+// Whether a file belongs to the system, not to the project: it is hashed by path, size and time (path and size under smith's clang), and the graph does
 // not track it. A relative path is the project's. An absolute one is the system's when it is in a system folder the
 // command names (-isystem, -isysroot, --sysroot, SDKROOT), in smith's embedded runtime, or under /usr, /lib, the SDKs
 // of macOS; a folder the command names with -I, -iquote, -idirafter, -F or -include is the project's even then.
@@ -467,7 +467,11 @@ static bool smith_stepcache_spec(const char *path, char *out, size_t capacity, i
     if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) return false;
     *mtime = smith_stepcache_mtime_of(&info);
     if (smith_stepcache_is_system(path)) {
-        int written = snprintf(out, capacity, "s:%lld:%lld", (long long)info.st_size, (long long)*mtime);
+        // smith's own copy of clang's files: its folder is named for the pack's identity, so the path and size say what
+        // the file is, and its time says only when this job unpacked it (a new one in every job, so no job would hit)
+        bool unpacked = strstr(path, "/smith/clang/") != nullptr;
+        int written = unpacked ? snprintf(out, capacity, "p:%lld", (long long)info.st_size)
+                               : snprintf(out, capacity, "s:%lld:%lld", (long long)info.st_size, (long long)*mtime);
         return written > 0 && (size_t)written < capacity;
     }
     char hex[smith_stepcache_hex];
