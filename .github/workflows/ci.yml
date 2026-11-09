@@ -944,14 +944,7 @@ jobs:
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
           fi
-          # the fixed files of the count (#2832), from the queue run of this commit: the next runs start from them
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
-          if [ -n "$id" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$out/f.zip"
-            mkdir -p "$out/f/fixed"; unzip -q "$out/f.zip" -d "$out/f/fixed"
-            tar -C "$out/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
-            files+=("$out/count-fixed.tar.gz")
-          fi
+          # the fixed files and rows of the count (#2832) are the release `count-fixed-<sha7>` of the queue run (`count-fixed-save`)
           ls -l "${files[@]}" | awk '{print $5, $9}'
           if [ "$DRY_RUN" = 1 ]; then
             { echo "### Dry run: would create release \`step-cache-${GITHUB_SHA:0:7}\` with these assets, then keep the 3 newest"; echo '```'; ls -l "${files[@]}" | awk '{print $5, $9}'; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1145,8 +1138,8 @@ jobs:
     # the fixing of the count, done once (#2832). Each of the eight shards used to fix every tracked file (a file reads
     # modules that must already be in the new syntax), so the whole tree was fixed eight times and the fix phase was
     # most of a shard's 15 to 26 minutes. This job fixes the tree once, starting from the fixed files main last saved
-    # (`count-fixed.tar.gz`, an asset of the newest `step-cache-*` release that has one, written by `warm` below from
-    # the artifact of this job), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
+    # (`count-fixed.tar.gz`, an asset of the newest `count-fixed-*` release, written by `count-fixed-save` below from
+    # the artifact of this job and the rows of the parts), and hands the folder to the shards as an artifact. A fixed file is cached under a key of
     # what it depends on (the file, every module it imports, the C headers and the objects the fixer is built from,
     # #2309, #2632), so an entry never changes a result: a stale or missing entry is only fixed again.
     needs: [changes, build-linux-release]
@@ -1155,6 +1148,10 @@ jobs:
     # 50, not 30: a cold fix (a key change, or a change to front/) took 25 to 30 minutes on 2026-11-09 and a 30-minute
     # limit failed whole queue groups (#2786's run, #2874's group); back to 30 once #2832 makes the count cheap
     timeout-minutes: 50
+    outputs:
+      # the shards sized from the rows left to measure (#2832): 1 to 8 parts, one eighth of the tree each when cold
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
     permissions:
       contents: read
       actions: read
@@ -1170,6 +1167,31 @@ jobs:
       - uses: ./.github/actions/setup-smith
         with:
           artifact: build-linux-release
+      - name: Check the objects the count's key leaves out
+        # an object left out must hold only another verb's code (#2832, #2854): this fails when something else calls it
+        shell: bash
+        run: |
+          # the objects `unrelated_object` in scripts/frontend_coverage/main.smith leaves out of the key hold only another
+          # verb's code: nothing outside them and the two dispatchers (smith.o, rt_runtime_verbs.o) calls a symbol they define,
+          # and the list here is the list there
+          source="$PWD/scripts/frontend_coverage/main.smith"
+          cd "$(dirname "$SMITH")"
+          exact="rt_runtime_docs.o rt_smith_protocol_dap.o rt_smith_protocol_mcp.o lldb_dap_shim.o lldb_server_shim.o"
+          listed=$(sed -n '/static Bool unrelated_object/,/^}/p' "$source" | grep -o '"[a-z_]*\.o"' | tr -d '"' | sort | tr '\n' ' ')
+          want=$(echo $exact | tr ' ' '\n' | sort | tr '\n' ' ')
+          [ "$listed" = "$want" ] || { echo "::error::the excluded objects here ($want) differ from unrelated_object ($listed)"; exit 1; }
+          excluded=$(for o in $exact rt_runtime_mcp*.o front_lsp_*.o; do [ -f "$o" ] && echo "$o"; done | tr '\n' ' ')
+          defined=$(mktemp)
+          nm -g --defined-only $excluded | awk 'NF == 3 && $2 ~ /^[TDRBSVW]$/ {print $3}' | sort -u >"$defined"
+          status=0
+          for o in *.o; do
+            case " $excluded " in *" $o "*) continue ;; esac
+            case "$o" in smith.o | rt_runtime_verbs.o) continue ;; esac
+            hits=$(nm -u "$o" 2>/dev/null | awk 'NF == 2 {print $2}' | sort -u | comm -12 - "$defined" | head -n 5 | tr '\n' ' ')
+            if [ -n "$hits" ]; then echo "::error::$o calls $hits(defined in an object left out of the count's key)"; status=1; fi
+          done
+          [ "$status" = 0 ] && echo "$(echo $excluded | wc -w) objects left out of the key, no caller outside the verbs' own code"
+          exit $status
       - name: Restore main's fixed files
         # a failure only leaves the fix cold
         continue-on-error: true
@@ -1189,9 +1211,22 @@ jobs:
           {
             echo "### Count: fixed files"
             echo '```'
-            grep -E 'frontend_coverage: (fix phase|fixer cache)' "$RUNNER_TEMP/fix.txt"
+            grep -E 'frontend_coverage: (fix phase|fixer cache|rows to measure)' "$RUNNER_TEMP/fix.txt"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+      - name: Size the shards
+        id: plan
+        shell: bash
+        run: |
+          # a part measures at most an eighth of the tree: a cold count is 8 parts as before, a warm one is 1 or 2
+          read -r missing total < <(sed -n 's/^frontend_coverage: rows to measure: \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$RUNNER_TEMP/fix.txt" | tail -n 1)
+          n=8
+          if [ -n "${total:-}" ] && [ "$total" -gt 0 ]; then n=$(( (8 * missing + total - 1) / total )); fi
+          [ "$n" -lt 1 ] && n=1
+          [ "$n" -gt 8 ] && n=8
+          echo "count=$n" >>"$GITHUB_OUTPUT"
+          echo "shards=$(seq -s, 1 "$n" | sed 's/^/[/;s/$/]/')" >>"$GITHUB_OUTPUT"
+          echo "count parts: $n (rows to measure ${missing:-?} of ${total:-?})" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
@@ -1201,7 +1236,7 @@ jobs:
           retention-days: 3
 
   frontend-coverage-shard:
-    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/8` fixes and compiles the tracked files
+    # one eighth of the count (#2697): `smith build frontend-coverage -Dshard=<k>/<n>` (n from the rows left, #2832) fixes and compiles the tracked files
     # whose path hashes to k - 1 modulo 8, and the modules they import, so each file's row is the row of the whole
     # count. The job `frontend-coverage` below joins the eight tables and gates the merge. The count was one job of 27
     # minutes in the queue (run 42329457015) against about 12 for build, lint and the test shards.
@@ -1212,7 +1247,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ${{ fromJSON(needs.frontend-coverage-fix.outputs.shards) }}
     permissions:
       contents: read
       actions: read
@@ -1241,10 +1276,24 @@ jobs:
         run: |
           set +e
           mkdir -p "$RUNNER_TEMP/coverage"
-          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/8 -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
+          touch "$RUNNER_TEMP/before-count"
+          "$SMITH" build frontend-coverage -Dshard=${{ matrix.shard }}/${{ needs.frontend-coverage-fix.outputs.count }} -Dsmith="$SMITH" >"$RUNNER_TEMP/coverage/output.txt" 2>&1
           echo "status: $?" >>"$RUNNER_TEMP/coverage/output.txt"
           cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
+          # the rows this shard measured (#2832): the save job adds them to the cache main starts from
+          mkdir -p "$RUNNER_TEMP/rows"
+          find .smith/frontend-coverage/fixed -name '*.row' -newer "$RUNNER_TEMP/before-count" -exec cp {} "$RUNNER_TEMP/rows/" \; 2>/dev/null
+          grep -E 'frontend_coverage: row cache' "$RUNNER_TEMP/coverage/output.txt" >>"$GITHUB_STEP_SUMMARY"
           exit 0
+      - name: Save the shard's rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-rows-${{ github.sha }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/rows
+          if-no-files-found: ignore
+          compression-level: 1
+          retention-days: 3
       - name: Save the shard
         if: always()
         uses: actions/upload-artifact@v4
@@ -1267,7 +1316,7 @@ jobs:
     # main's last one, unless the PR's body has a line `Count drop: <why>`. A group the queue cancels cancels it too; the
     # next group counts again. `timeout-minutes` counts queue time too (knowledge/ci-hosted.md); the count took 9 to 19 minutes on 4 cores on 2026-11-06,
     # so 30 keeps a slow count from failing its group now that it gates (10 groups hit the old 20 that morning).
-    needs: [changes, build-linux, frontend-coverage-shard]
+    needs: [changes, build-linux, frontend-coverage-fix, frontend-coverage-shard]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.build-linux.result == 'success' && needs.changes.outputs.scope == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1303,16 +1352,17 @@ jobs:
           mkdir -p "$RUNNER_TEMP/coverage"
           out="$RUNNER_TEMP/coverage/output.txt"
           tables=
-          for k in 1 2 3 4 5 6 7 8; do
+          parts=${{ needs.frontend-coverage-fix.outputs.count || 8 }}
+          for k in $(seq 1 "$parts"); do
             d="$RUNNER_TEMP/shards/frontend-coverage-shard-$GITHUB_SHA-$k"
             if [ -f "$d/results.tsv" ] && grep -qx 'status: 0' "$d/output.txt" 2>/dev/null; then
               tables="${tables:+$tables,}$d/results.tsv"
             else
-              echo "frontend-coverage: shard $k of 8 did not finish, so the count is not measured" >>"$out"
+              echo "frontend-coverage: shard $k of $parts did not finish, so the count is not measured" >>"$out"
               tail -n 20 "$d/output.txt" 2>/dev/null >>"$out"
             fi
           done
-          if [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = 7 ]; then
+          if [ -n "$tables" ] && [ "$(printf %s "$tables" | tr ',' '\n' | wc -l)" = $((parts - 1)) ]; then
             "$SMITH" build frontend-coverage -Dmerge="$tables" -Dsmith="$SMITH" >>"$out" 2>&1
             echo "status: $?" >>"$out"
             cp .smith/frontend-coverage/results.tsv "$RUNNER_TEMP/coverage/results.tsv" 2>/dev/null
@@ -1420,7 +1470,7 @@ jobs:
     # from like a `step-cache-*` one. Only a passing run saves, and a cache entry is keyed by what it depends on, so one
     # for a group that never merges costs nothing. It does not gate the merge: it needs `ci` and nothing needs it. The 3
     # newest `count-fixed-*` stay.
-    needs: [ci, frontend-coverage-fix]
+    needs: [ci, frontend-coverage-fix, frontend-coverage-shard]
     if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.ci.result == 'success' && needs.frontend-coverage-fix.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1435,6 +1485,14 @@ jobs:
         with:
           name: count-fixed-${{ github.sha }}
           path: ${{ runner.temp }}/f/fixed
+      - name: Fetch the rows the parts measured
+        # the rows of the count (#2832) go in the same tarball: a part saved the ones it measured
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: count-rows-${{ github.sha }}-*
+          path: ${{ runner.temp }}/rows
+          merge-multiple: true
       - name: Release the fixed files
         # a failure only leaves the next run cold
         continue-on-error: true
@@ -1442,6 +1500,10 @@ jobs:
         run: |
           set -eu
           out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          if [ -d "$RUNNER_TEMP/rows" ]; then cp "$RUNNER_TEMP"/rows/*.row "$RUNNER_TEMP/f/fixed/" 2>/dev/null || true; fi
+          # rows are keyed by the smith, so each change of it leaves a tree of dead ones: drop those not written in 3 days
+          find "$RUNNER_TEMP/f/fixed" -name '*.row' -mtime +3 -delete
+          echo "rows saved: $(ls "$RUNNER_TEMP/f/fixed" | grep -c '\.row$' || true)" | tee -a "$GITHUB_STEP_SUMMARY"
           tar -C "$RUNNER_TEMP/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
           tag="count-fixed-${GITHUB_SHA:0:7}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
