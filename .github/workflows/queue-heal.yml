@@ -4,7 +4,7 @@
 # PR whose last merge-queue event is `added_to_merge_queue`, older than 15 minutes, with no entry in that list, unless
 # it carries the label `dequeued` (queue-ops' `dequeue` sets it, enqueue and jump clear it). A second pass (#2902) judges
 # the front entry: when the newest `merge_group` run of ci for its branch has failed, its group is main plus that PR
-# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
+# alone, so the PR fails by itself and is dequeued. A third pass (#2922) grows and shrinks the queue's build entries by the health of its runs. A fourth pass (#2948) dequeues a queued PR that conflicts with main. It runs on `workflow_run` of ci (the cron rarely fires), by cron and by hand.
 name: queue-heal
 run-name: "queue-heal"
 
@@ -116,6 +116,43 @@ jobs:
             lost=$((lost + 1))
           done
           [ "$lost" = 0 ] && log "queue-heal: none lost ($q entries)"
+
+          # fourth pass (#2948): a queued PR that conflicts with main is dequeued at once, so the `removed_from_merge_queue`
+          # event wakes its runner (#2926 sat 90 minutes in the queue while it conflicted, and no event told anyone).
+          # `mergeable` is null while GitHub computes it: that PR is skipped this pass, never dequeued. It runs before the
+          # second pass and takes the PRs it dequeued out of `list`, so the front entry is judged without them.
+          conflicts() {
+            local pr info mergeable state id n=0 left=""
+            for pr in $list; do
+              info=$(gh api "repos/$REPO/pulls/$pr" --jq '"\(.mergeable) \(.mergeable_state) \(.node_id)"') \
+                || { log "queue-heal: #$pr mergeable unreadable, skipped"; left="$left$pr"$'\n'; continue; }
+              set -- $info
+              mergeable=$1; state=$2; id=$3
+              if [ "$mergeable" = null ] || { [ "$mergeable" != false ] && [ "$state" != dirty ]; }; then
+                left="$left$pr"$'\n'
+                continue
+              fi
+              n=$((n + 1))
+              if dry; then
+                log "dry-run: would dequeue #$pr (conflicts with main)"
+                log "dry-run: would label #$pr dequeued"
+                continue
+              fi
+              if gh api graphql -f query='
+                  mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$id" --silent; then
+                gh api -X POST "repos/$REPO/issues/$pr/labels" -f "labels[]=dequeued" --silent || true
+                log "queue-heal: dequeued #$pr (conflicts with main)"
+              else
+                log "queue-heal: #$pr conflicts with main, dequeue failed"
+                left="$left$pr"$'\n'
+              fi
+            done
+            [ "$n" = 0 ] && log "queue-heal: none conflicting ($q entries)"
+            # a dry run dequeues nothing, so its list stays whole
+            dry || list=$(printf '%s' "$left")
+            return 0
+          }
+          conflicts
 
           # third pass (#2922): grows and shrinks the queue's build entries (1, 2, 4, 8) by the health of the merge_group
           # runs of ci since the ruleset's last change (its `updated_at`, which a change of B sets again). A failure halves B,
