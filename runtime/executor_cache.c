@@ -25,6 +25,7 @@
 #include "main.h"
 #include "package.h"
 #include "platform_linux.h"
+#include "test_cache.h"
 
 constexpr size_t smith_stepcache_hex = 65;
 constexpr size_t smith_stepcache_text_max = (size_t)1 << 20;    // a manifest, the lines of a variant
@@ -690,8 +691,16 @@ static const char *smith_stepcache_program(const char *name) {
     if (!smith_stepcache_find_program(name, real) || stat(real, &info) != 0) return nullptr;
     char *value = cache->id_values[cache->id_count];
     char id[33]; // 16 bytes in hex
+    char self[smith_sha256_hex_size];
+    char running[PATH_MAX];
     int written = 0;
-    if (smith_platform_file_id(real, id)) {
+    // The smith that runs this build is also the compiler of its own smith-cc steps. Its build-id and the commit it
+    // carries change with every commit, and a stage0 is a new smith for each commit of main, so no object of the
+    // restored cache would be served (#2833): it is identified by its code, with both blanked.
+    if (realpath("/proc/self/exe", running) != nullptr && strcmp(running, real) == 0 &&
+        smith_self_digest(real, self)) {
+        written = snprintf(value, sizeof cache->id_values[0], "self:%s", self);
+    } else if (smith_platform_file_id(real, id)) {
         written = snprintf(value, sizeof cache->id_values[0], "id:%s", id);
     } else {
         written = snprintf(value, sizeof cache->id_values[0], "file:%s:%lld:%lld", real, (long long)info.st_size,
