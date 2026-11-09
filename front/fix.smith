@@ -20,7 +20,7 @@
 module front::fix;
 
 import front::ast;
-import front::cimport;
+import front::header_table;
 import front::fix_zero;
 import front::parse as core;
 import front::fix_blocks;
@@ -168,9 +168,8 @@ export void set_loader(types::ModuleLoader load) {
     loader = load;
 }
 
-static arena::Arena header_arena;
-static Bool header_arena_made = false;
 static Str header_folder = ".";
+static Bool within_run = false; // `fix_run`: every file of one command line is one generation of the header table
 
 // The path of the file being fixed, to find its entry in a compile_commands.json (#2648).
 static Str database_file = "";
@@ -266,14 +265,9 @@ static Str database_flags() {
 }
 
 // The declarations of a C header, for the fix that names a binding (#1678): read as front::compile reads one, with
-// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it.
+// the flags of SMITH_FRONT_CIMPORT_FLAGS; null when clang cannot read it. Read through clang once per process for the
+// same folder and flags (`front::header_table`, #2913): every pass and every file of one `lint --fix` shares it.
 static const ast::Module *load_header(Str header, Bool angled) {
-    Str name = as_str(format::push(header));
-    Str folder = as_str(format::push(header_folder));
-    if (!header_arena_made) {
-        header_arena = arena::growing(1U << 20, nullptr);
-        header_arena_made = true;
-    }
     Str empty = "";
     const char *flags = empty.data;
     const char *given = c::getenv("SMITH_FRONT_CIMPORT_FLAGS");
@@ -283,12 +277,7 @@ static const ast::Module *load_header(Str header, Bool angled) {
     Str given_text = as_str(format::push(flags));
     Str joined = as_str(format::push(given_text, countof(given_text) > 0 ? "\n" : "", "-Iinclude\n-I.smith/include\n",
                                      database_flags()));
-    flags = joined.data;
-    cimport::Header got = cimport::read(&header_arena, name.data, !angled, folder.data, flags);
-    if (countof(got.error) > 0) return nullptr;
-    ast::Module *module = mem::alloc(ast::Module);
-    module->decls = got.decls;
-    return module;
+    return header_table::read(header, angled, header_folder, joined);
 }
 
 // The libc headers a name used as `c.name` may come from, most specific first (#2627): the file never imports the
@@ -523,6 +512,9 @@ static core::Errors typed_fixes(Str source, const types::Checked *checked) {
     return append(out, fix_chain::edits(source));
 }
 
+static void keep_foreign(Str prefix, core::Edits edits);
+static Str with_foreign_fixes(Str file, Str source, Str renamed);
+
 // The errors of the checker that carry a fix, as parse errors, so `apply_fixes` takes both kinds (#1516).
 static core::Errors checker_fixes(Str source, const ast::Module *module) {
     core::Errors out = {};
@@ -534,6 +526,8 @@ static core::Errors checker_fixes(Str source, const ast::Module *module) {
     types_decl::set_source("");
     for (Usize i = 0; i < checked.error_count; i++) {
         types::Error e = checked.errors[i];
+        // A fix found in an instance of another module's generic belongs to that module (#2669).
+        if (countof(e.module_fix) > 0 && countof(e.fix_module) > 0) keep_foreign(e.fix_module, e.module_fix);
         if (countof(e.fix) == 0) continue;
         out = mem::realloc(out, countof(out) + 1);
         out[countof(out) - 1] = (core::ParseError){.span = e.span, .message = e.message, .fix = e.fix};
@@ -584,6 +578,28 @@ static Str loaded_paths[loaded_max];
 static const ast::Module *loaded_modules[loaded_max];
 static Usize loaded_count = 0;
 
+constexpr Usize foreign_max = 256;
+struct ForeignFix {
+    Str tail; // the module's file under its root: `std/math_trig.smith`
+    U64 base; // the hash of the text the span is an offset in
+    Usize start;
+    Usize end;
+    Str text;
+};
+static ForeignFix foreign_fixes[foreign_max];
+static Usize foreign_count = 0;
+static Bool foreign_loaded = false;
+
+// The text `read_import` gave the checker for a file, before the foreign fixes (`base`) and with them (`current`).
+constexpr Usize import_texts_max = 128;
+struct ImportText {
+    Str path;
+    Str base;
+    Str current;
+};
+static ImportText import_texts[import_texts_max];
+static Usize import_text_count = 0;
+
 // Writes `text` over the file `path`. False when it cannot.
 export Bool store(Str path, Str text) {
     U8 bytes[:] = {};
@@ -592,6 +608,7 @@ export Bool store(Str path, Str text) {
         bytes[i] = (U8)text[i];
     files::CountResult written = files::write_file(path, bytes, files::Replace);
     loaded_count = 0; // an import read before may be this file (#2586)
+    import_text_count = 0;
     return written != .error;
 }
 
@@ -715,7 +732,22 @@ static Bool is_keyword_use(lex::Tokens tokens, Usize i) {
         if (after_question(tokens, i - 1)) return false;
         return next != lex::dot && next != lex::arrow && next != lex::right_bracket;
     }
-    return tokens[i - 1].kind == lex::arrow && i > 1 && tokens[i - 2].kind == lex::right_paren;
+    if (tokens[i - 1].kind != lex::arrow || i < 2 || tokens[i - 2].kind != lex::right_paren) return false;
+    // `f(x)->type = v` and `f(x)->type + 1` read a field: the result type of a function head ends in `{`, `:`, `;`, `,`
+    // or `)`.
+    if (i + 1 >= countof(tokens)) return true;
+    lex::TokenKind next = tokens[i + 1].kind;
+    return next == lex::left_brace || next == lex::colon || next == lex::semicolon || next == lex::comma ||
+           next == lex::right_paren;
+}
+
+// Whether the `{` at `tokens[j]` opens the body of a `struct` or a `union`: `struct {`, `struct Name {`.
+static Bool opens_record(lex::Tokens tokens, Usize j) {
+    if (j == 0) return false;
+    lex::TokenKind last = tokens[j - 1].kind;
+    if (last == lex::kw_struct || last == lex::kw_union) return true;
+    return j >= 2 && (last == lex::name || last == lex::type_name) &&
+           (tokens[j - 2].kind == lex::kw_struct || tokens[j - 2].kind == lex::kw_union);
 }
 
 static Str rename_type_names(Str source) {
@@ -737,10 +769,25 @@ static Str rename_type_names(Str source) {
     if (!any) return source;
     Str out = "";
     Usize at = 0;
+    // The braces a name is in, innermost last: whether each is a `struct` or `union` body. A field `type;` there is
+    // `ty` like every use after `.` or `->`, so a declaration and the uses of another file agree even when this text
+    // has a `ty` of its own (#2648).
+    constexpr Usize limit = 64;
+    Bool in_record[limit];
+    Usize depth = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
+        if (tokens[i].kind == lex::right_brace && depth > 0) depth -= 1;
+        if (tokens[i].kind == lex::left_brace) {
+            if (depth < limit) in_record[depth] = opens_record(tokens, i);
+            depth += 1;
+        }
         if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), type_word)) continue;
         if (is_keyword_use(tokens, i)) continue;
         Bool member = i > 0 && (tokens[i - 1].kind == lex::dot || tokens[i - 1].kind == lex::arrow);
+        if (!member && depth > 0 && depth <= limit && in_record[depth - 1] && i + 1 < countof(tokens)) {
+            lex::TokenKind next = tokens[i + 1].kind;
+            member = next == lex::semicolon || next == lex::left_bracket || next == lex::colon;
+        }
         out = as_str(format::push(out, source[at:tokens[i].span.start], member || !own_ty ? "ty" : "ty_"));
         at = tokens[i].span.end;
     }
@@ -924,6 +971,7 @@ static Str keyword_clash(Str source) {
 // applies none (at most 16 passes). `applied` counts the fixes of all the passes.
 export Fixed fix_text(Str file, Str source) {
     Str renamed = rename_in_names(rename_type_names(rename_target_systems(fix_build::mend(file, source))));
+    renamed = with_foreign_fixes(file, source, renamed);
     Fixed total = {.text = renamed, .clash = keyword_clash(source)};
     if (!mem::equal(renamed, source)) total.applied = 1;
     header_folder = ".";
@@ -936,11 +984,9 @@ export Fixed fix_text(Str file, Str source) {
         header_folder = i == 1 ? file[0:1] : file[0:i - 1];
         break;
     }
+    // A header kept from an earlier `fix_text` is checked against its files first; one `fix_run` is one generation.
+    if (!within_run) header_table::next_generation();
     mend_passes(file, &total, true);
-    if (header_arena_made) { // what the headers declared is not needed once the passes are done
-        arena::release(&header_arena);
-        header_arena_made = false;
-    }
     // The comments are written even when a form the fixer cannot mend is left, so no `//` hides the other causes.
     if (total.applied > 0) total.text = hash_comments(total.text);
     // The blocks last (#2014): the passes above read their own output with braces, so only now do `:` and the
@@ -958,10 +1004,6 @@ export Fixed fix_text(Str file, Str source) {
         total.text = fix_blocks::convert(hash_comments(more.text));
         total.applied += more.applied;
         total.skipped = more.skipped;
-    }
-    if (header_arena_made) {
-        arena::release(&header_arena);
-        header_arena_made = false;
     }
     return total;
 }
@@ -1101,6 +1143,228 @@ static Str mended_import(Str path, Str source) {
 // What `read_import` could not read, one line each, for `fix_run` to report (#2648).
 static Str import_problems = "";
 
+// ---------------------------------------------------------------------------------------------------------------
+// Fixes found in an instance of another module's generic (#2648, #2669). A generic body is checked only per instance,
+// so the checker finds a fix inside it (`lerp`'s `1 - t`) only while it checks an importer, and keeps it with the
+// owning module (`Error.fix_module`, `Error.module_fix`); its spans are offsets in the text `read_import` gave the
+// checker for that module. They are kept here, by the module's file and the hash of that text, and applied to the text
+// each time the module is read (as an import, or fixed as a file). With SMITH_FIX_IMPORT_CACHE set to a folder they are
+// also appended to `<folder>/foreign.tsv`, one edit a line, so the fixer of another file reads them: the fixer of the
+// module itself runs in another process in the coverage run.
+
+static U64 text_hash(Str text) {
+    U64 hash = 14695981039346656037ULL;
+    for (Usize i = 0; i < countof(text); i++)
+        hash = (hash ^ (U64)(U8)text[i]) * 1099511628211ULL;
+    return hash;
+}
+
+// `std::math_trig::` as the file it names, `std/math_trig.smith`.
+static Str prefix_tail(Str prefix) {
+    Str out = "";
+    Usize i = 0;
+    while (i < countof(prefix)) {
+        if (prefix[i] == ':') {
+            i += 2;
+            if (i < countof(prefix)) out = as_str(format::push(out, "/"));
+            continue;
+        }
+        out = as_str(format::push(out, prefix[i:i + 1]));
+        i += 1;
+    }
+    return as_str(format::push(out, ".smith"));
+}
+
+// Whether `path` is the file `tail` names, under any root.
+static Bool path_ends_with(Str path, Str tail) {
+    if (countof(path) < countof(tail)) return false;
+    if (!mem::equal(path[countof(path) - countof(tail):countof(path)], tail)) return false;
+    return countof(path) == countof(tail) || path[countof(path) - countof(tail) - 1] == '/';
+}
+
+static Str foreign_file() {
+    const char *folder = c::getenv("SMITH_FIX_IMPORT_CACHE");
+    if (folder == nullptr) return "";
+    return as_str(format::push(folder, "/foreign.tsv"));
+}
+
+static Str escaped_text(Str text) {
+    Str out = "";
+    for (Usize i = 0; i < countof(text); i++) {
+        Str piece = text[i:i + 1];
+        if (text[i] == '\\') piece = "\\\\";
+        if (text[i] == '\n') piece = "\\n";
+        if (text[i] == '\t') piece = "\\t";
+        out = as_str(format::push(out, piece));
+    }
+    return out;
+}
+
+static Str unescaped_text(Str text) {
+    Str out = "";
+    Usize i = 0;
+    while (i < countof(text)) {
+        if (text[i] == '\\' && i + 1 < countof(text)) {
+            Str piece = text[i + 1:i + 2];
+            if (text[i + 1] == 'n') piece = "\n";
+            if (text[i + 1] == 't') piece = "\t";
+            out = as_str(format::push(out, piece));
+            i += 2;
+            continue;
+        }
+        out = as_str(format::push(out, text[i:i + 1]));
+        i += 1;
+    }
+    return out;
+}
+
+static Bool foreign_has(Str tail, U64 base, Usize start, Usize end, Str text) {
+    for (Usize i = 0; i < foreign_count; i++) {
+        const ForeignFix *f = &foreign_fixes[i];
+        if (f->base == base && f->start == start && f->end == end && mem::equal(f->tail, tail) &&
+            mem::equal(f->text, text))
+            return true;
+    }
+    return false;
+}
+
+static void foreign_add(Str tail, U64 base, Usize start, Usize end, Str text) {
+    if (foreign_count == foreign_max || foreign_has(tail, base, start, end, text)) return;
+    foreign_fixes[foreign_count] = (ForeignFix){.tail = tail, .base = base, .start = start, .end = end, .text = text};
+    foreign_count += 1;
+}
+
+// The next tab-separated field of `line` from `at`; `at` moves past its tab.
+static Str foreign_field(Str line, Usize *at) {
+    Usize from = *at;
+    while (*at < countof(line) && line[*at] != '\t')
+        *at += 1;
+    Str field = line[from:*at];
+    if (*at < countof(line)) *at += 1;
+    return field;
+}
+
+static Usize foreign_number(Str digits) {
+    Usize value = 0;
+    for (Usize i = 0; i < countof(digits); i++)
+        if (digits[i] >= '0' && digits[i] <= '9') value = value * 10 + (Usize)(digits[i] - '0');
+    return value;
+}
+
+static U64 foreign_hex(Str digits) {
+    U64 value = 0;
+    for (Usize i = 0; i < countof(digits); i++) {
+        char ch = digits[i];
+        U64 d = ch >= 'a' ? (U64)(ch - 'a' + 10) : (U64)(ch - '0');
+        value = value * 16 + d;
+    }
+    return value;
+}
+
+// Reads the fixes other fixers appended to the file, once per run.
+static void foreign_load() {
+    if (foreign_loaded) return;
+    foreign_loaded = true;
+    Str file = foreign_file();
+    if (countof(file) == 0 || !files::exists(file)) return;
+    files::BytesResult loaded = files::read_file(file);
+    if (loaded == .error) return;
+    format::Chars chars = mem::view(loaded.ok, char);
+    Str all = chars;
+    Usize at = 0;
+    while (at < countof(all)) {
+        Usize stop = at;
+        while (stop < countof(all) && all[stop] != '\n')
+            stop += 1;
+        Str line = all[at:stop];
+        at = stop + 1;
+        Usize k = 0;
+        Str tail = foreign_field(line, &k);
+        Str base = foreign_field(line, &k);
+        Str start = foreign_field(line, &k);
+        Str end = foreign_field(line, &k);
+        Str text = unescaped_text(foreign_field(line, &k));
+        if (countof(tail) > 0 && countof(base) == 16)
+            foreign_add(tail, foreign_hex(base), foreign_number(start), foreign_number(end), text);
+    }
+}
+
+// `base` with the foreign fixes of the file `path` applied: each round applies those whose text hash is the current
+// text's, so fixes found against an already fixed text follow the ones before.
+static Str foreign_applied(Str path, Str base) {
+    foreign_load();
+    Str text = base;
+    core::Errors none = {};
+    for (Usize round = 0; round < 8; round++) {
+        U64 hash = text_hash(text);
+        core::Errors errors = {};
+        for (Usize i = 0; i < foreign_count; i++) {
+            const ForeignFix *f = &foreign_fixes[i];
+            if (f->base != hash || !path_ends_with(path, f->tail) || f->end > countof(text)) continue;
+            core::Edits fix = {};
+            fix = mem::realloc(fix, 1);
+            fix[0] = (core::Edit){.span = {.start = (U32)f->start, .end = (U32)f->end}, .text = f->text};
+            core::ParseError made = {};
+            made.span = fix[0].span;
+            made.message = "a fix found in an instance of this module's generic";
+            made.fix = fix;
+            errors = mem::realloc(errors, countof(errors) + 1);
+            errors[countof(errors) - 1] = made;
+        }
+        if (countof(errors) == 0) break;
+        Fixed done = apply_fixes(text, errors, none);
+        if (done.applied == 0) break;
+        text = done.text;
+    }
+    return text;
+}
+
+static void keep_foreign(Str prefix, core::Edits edits) {
+    foreign_load();
+    Str tail = prefix_tail(prefix);
+    for (Usize i = 0; i < import_text_count; i++) {
+        if (!path_ends_with(import_texts[i].path, tail)) continue;
+        U64 base = text_hash(import_texts[i].current);
+        Bool added = false;
+        for (Usize k = 0; k < countof(edits); k++) {
+            if (edits[k].span.end > countof(import_texts[i].current)) continue;
+            if (foreign_has(tail, base, edits[k].span.start, edits[k].span.end, edits[k].text)) continue;
+            foreign_add(tail, base, edits[k].span.start, edits[k].span.end, edits[k].text);
+            added = true;
+            Str file = foreign_file();
+            if (countof(file) == 0) continue;
+            Str line = as_str(format::push(tail, "\t", format::hex(base, 16), "\t", (Usize)edits[k].span.start, "\t",
+                                           (Usize)edits[k].span.end, "\t", escaped_text(edits[k].text), "\n"));
+            U8 bytes[:] = mem::alloc_slice(U8, countof(line));
+            for (Usize b = 0; b < countof(bytes); b++)
+                bytes[b] = (U8)line[b];
+            (void)files::write_file(file, bytes, files::Append);
+        }
+        // the module is read again with the fixes, by the checker's next pass
+        if (added) {
+            for (Usize l = 0; l < loaded_count; l++)
+                if (mem::equal(loaded_paths[l], import_texts[i].path)) loaded_paths[l] = "";
+        }
+        return;
+    }
+}
+
+// The text the fixer of the file `file` starts from when the checker found fixes for it in an instance of its generics
+// while it fixed an importer (#2669): the text an importer's checker read (renamed, mended), with them applied.
+// `renamed` when there are none, or when the text with them does not read.
+static Str with_foreign_fixes(Str file, Str source, Str renamed) {
+    foreign_load();
+    Bool any = false;
+    for (Usize i = 0; i < foreign_count; i++)
+        if (path_ends_with(file, foreign_fixes[i].tail)) any = true;
+    if (!any) return renamed;
+    Str base = read_c_types(rename_in_names(rename_type_names(rename_target_systems(source))));
+    if (countof(parse_for_fix(file, base).errors) > 0) base = mended_import(file, base);
+    Str text = foreign_applied(file, base);
+    if (mem::equal(text, base) || countof(parse_for_fix(file, text).errors) > 0) return renamed;
+    return text;
+}
+
 // The module of the file at `path`, read and mended as an import (#2561), or null when it does not read.
 static const ast::Module *read_import(Str path) {
     files::BytesResult loaded = files::read_file(path);
@@ -1109,17 +1373,30 @@ static const ast::Module *read_import(Str path) {
     // The file's own renames come first (`type` is `ty`, `in` is `in_`, `target::macos` is `.macos`), so an import
     // reads as the fixed module does (#2561).
     Str source = read_c_types(rename_in_names(rename_type_names(rename_target_systems(chars))));
-    parser::Parsed parsed = parse_for_fix(path, source);
-    Bool mended = false;
-    ast::Module original = parsed.module;
-    if (countof(parsed.errors) > 0) {
-        mended = true;
+    Str base = source;
+    Usize known = import_text_count;
+    for (Usize i = 0; i < import_text_count; i++) {
+        if (mem::equal(import_texts[i].path, path)) known = i;
+    }
+    parser::Parsed parsed = {};
+    ast::Module original = {};
+    if (known < import_text_count) {
+        base = import_texts[known].base; // read before, with a foreign fix found since (#2669)
+        parsed = parse_for_fix(path, base);
+        // the module as the file spells it: the pointers that were writable there stay so (#2648)
+        if (!mem::equal(base, source)) original = parse_for_fix(path, source).module;
+    } else {
+        parsed = parse_for_fix(path, source);
+        original = parsed.module;
+    }
+    if (known == import_text_count && countof(parsed.errors) > 0) {
         // A library module that still has a spelling smith's parser refuses (`[[gnu::always_inline]]`, `__asm__`)
         // does not read as it is, so the import was null and the checker, knowing nothing of `std.text`, made none
         // of its `mut` fix-its (#2561). Only the parse errors' fixes are applied here, never the checker's: the
         // checker is running (a nested one would take its hooks away), and the module stays in today's syntax,
         // where `F32 *value` is writable.
-        parsed = parse_for_fix(path, mended_import(path, source));
+        base = mended_import(path, source);
+        parsed = parse_for_fix(path, base);
         if (countof(parsed.errors) > 0) {
             // The importers are fixed without this module's types, whatever they hold: the run says so and fails.
             import_problems =
@@ -1127,6 +1404,24 @@ static const ast::Module *read_import(Str path) {
                                     parsed.errors[0].message, " (at byte ", (I64)parsed.errors[0].span.start, ")\n"));
             return nullptr;
         }
+    }
+    // A module mended (now, or when it was read before) is written in smith's own syntax: its text is not the file's.
+    Bool mended = !mem::equal(base, source);
+    // The fixes the checker found in an instance of this module's generics while it checked an importer (#2669).
+    Str text = foreign_applied(path, base);
+    if (!mem::equal(text, base)) {
+        parser::Parsed edited = parse_for_fix(path, text);
+        if (countof(edited.errors) == 0) {
+            parsed = edited;
+        } else {
+            text = base;
+        }
+    }
+    if (known < import_text_count) {
+        import_texts[known].current = text;
+    } else if (import_text_count < import_texts_max) {
+        import_texts[import_text_count] = (ImportText){.path = path, .base = base, .current = text};
+        import_text_count += 1;
     }
     ast::Module *copy = mem::alloc(ast::Module);
     *copy = parsed.module;
@@ -1208,8 +1503,16 @@ static Bool fix_to_text(Str path, Fixed *fixed) {
     loader = load_from_folders;
     loaded_count = 0; // the modules of an earlier run are read again: a test may have changed the files
     import_problems = "";
+    import_text_count = 0;
+    foreign_count = 0;
+    foreign_loaded = false;
+    header_table::next_generation();
+    within_run = true;
+    defer within_run = false;
     defer loader = outside;
     defer loaded_count = 0;
+    defer import_text_count = 0;
+    defer foreign_count = 0;
     fix_variants::Words texts = mem::alloc_slice(fix_variants::Word, count);
     I64 applied[:] = mem::alloc_slice(I64, count);
     for (Usize i = 0; i < count; i++) {

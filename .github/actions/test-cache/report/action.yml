@@ -1,0 +1,22 @@
+name: test-cache-report
+description: >
+  Prints this job's import-cache hits (#2891): the sum of the lines every smith process appended to
+  SMITH_IMPORT_CACHE_LOG (`headers <hits> <misses> modules <hits> <misses>`), which `./.github/actions/test-cache`
+  sets. `./.github/actions/test-cache/save` runs it; a job that publishes nothing (a count shard) runs it alone. It
+  never fails the job.
+
+runs:
+  using: composite
+  steps:
+    - name: Report the import-cache hits
+      if: always()
+      continue-on-error: true
+      shell: bash
+      run: |
+        log="${SMITH_IMPORT_CACHE_LOG:-}"
+        if [ -z "$log" ] || [ ! -s "$log" ]; then
+          echo "import cache: no smith process read an import" | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+        fi
+        awk '$1 == "headers" && $4 == "modules" { p++; hh += $2; hm += $3; mh += $5; mm += $6 }
+          END { printf "import cache: %d processes, headers %d hits %d misses, modules %d hits %d misses\n", p, hh, hm, mh, mm }' \
+          "$log" | tee -a "$GITHUB_STEP_SUMMARY"

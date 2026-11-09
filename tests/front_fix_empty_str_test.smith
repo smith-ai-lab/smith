@@ -1,0 +1,22 @@
+// Tests of the fix-it for `{}` where a `str` is wanted (#2648): C's `Str none = {};` is the empty string `""`.
+module front_fix_empty_str_test;
+
+import front::fix;
+import std::arena;
+import std::mem;
+import std::test;
+
+static void check_text(Str got, Str want) {
+    test::check_equal(got, want);
+}
+
+export void test_front_fix_empty_str_an_empty_list_is_the_empty_string() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "module m;\nstatic Str f(Str s) {\n    Str none = {};\n"
+                                                "    Str out = {};\n    out = s;\n    return none;\n}\n");
+    check_text(fixed.text, "fn f(s: str) -> str:\n    none: str = \"\"\n    mut out: str = \"\"\n    out = s\n"
+                           "    return none\n");
+}

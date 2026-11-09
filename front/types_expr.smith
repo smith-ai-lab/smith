@@ -1475,6 +1475,27 @@ static Str unary_text(ast::UnaryOp op) {
     return "--";
 }
 
+// An operand whose text can take `== 0` or `!= 0` after it as it stands.
+static Bool is_simple_operand(const ast::Expr *e) {
+    return e->kind == .name || e->kind == .member || e->kind == .index || e->kind == .call;
+}
+
+// `!n` where `n` is a number (#2647): the operand tested against zero, `n == 0`. No fix for an operand that is not a
+// plain name, member, index or call (`!(a & b)` keeps its parentheses).
+static syntax::Edits not_number_fix(const ast::Expr *e, types::TypeRef t) {
+    syntax::Edits none = {};
+    if (!is_number(t) || !(e->kind == .unary)) return none;
+    const ast::Expr *operand = e->kind.unary.operand;
+    if (!is_simple_operand(operand) || operand->span.start <= e->span.start || operand->span.end != e->span.end)
+        return none;
+    syntax::Edits fix = mem::realloc(none, 2);
+    Str zero = " == 0";
+    Str nothing = "";
+    fix[0] = (syntax::Edit){.span = {.start = e->span.start, .end = operand->span.start}, .text = nothing};
+    fix[1] = (syntax::Edit){.span = {.start = operand->span.end, .end = operand->span.end}, .text = zero};
+    return fix;
+}
+
 // A unary operator that wants a number, an integer or a Bool; reports what to write when `t` is none of them.
 static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::UnaryOp op, types::TypeRef t) {
     Str text = unary_text(op);
@@ -1483,7 +1504,13 @@ static types::TypeRef unary_value(types::Checked *c, const ast::Expr *e, ast::Un
         if (t->kind == .bool_type) {
             return t;
         }
-        types::failf(c, e->span, "`!` needs a Bool, found `", found, "`; write a comparison such as `x == 0`");
+        syntax::Edits fix = not_number_fix(e, t);
+        Str message = msg(format::push("`!` needs a Bool, found `", found, "`; write a comparison such as `x == 0`"));
+        if (countof(fix) > 0) {
+            types::fail_fix(c, e->span, message, fix);
+        } else {
+            types::fail(c, e->span, message);
+        }
     } else if (op == .bit_not) {
         if (is_integer(t)) {
             return t;
@@ -2128,6 +2155,42 @@ static Bool array_sum(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, c
     return true;
 }
 
+// `n && p` or `n || p` where an operand is a number (#2647): each such operand is tested against zero, `n != 0`
+// (in parentheses when it is itself an operation, `(a & b) != 0`). One error with both fixes.
+static Bool number_operands(types::Checked *c, const ast::Expr *e, ast::BinaryOp op, const ast::Expr *left,
+                            const ast::Expr *right) {
+    if (!is_logical(op)) return false;
+    types::TypeRef sides[2] = {typ(c, left), typ(c, right)};
+    const ast::Expr *operands[2] = {left, right};
+    Bool wrong = false;
+    for (Usize i = 0; i < 2; i++) {
+        if (sides[i]->kind != .bool_type) wrong = true;
+    }
+    if (!wrong) return false;
+    syntax::Edits fix = {};
+    for (Usize i = 0; i < 2; i++) {
+        if (sides[i]->kind == .bool_type) continue;
+        if (!is_number(sides[i])) return false;
+        const ast::Expr *operand = operands[i];
+        Bool wrap = !is_simple_operand(operand);
+        Str zero = wrap ? ") != 0" : " != 0";
+        fix = mem::realloc(fix, countof(fix) + (wrap ? 2 : 1));
+        if (wrap) {
+            Str open = "(";
+            fix[countof(fix) - 2] =
+                (syntax::Edit){.span = {.start = operand->span.start, .end = operand->span.start}, .text = open};
+        }
+        fix[countof(fix) - 1] =
+            (syntax::Edit){.span = {.start = operand->span.end, .end = operand->span.end}, .text = zero};
+    }
+    types::TypeRef bad = sides[0]->kind == .bool_type ? sides[1] : sides[0];
+    types::fail_fix(c, e->span,
+                    msg(format::push("`", binary_text(op), "` needs Bool operands, found `", types::show(bad),
+                                     "`; write a comparison such as `x != 0`")),
+                    fix);
+    return true;
+}
+
 static types::TypeRef binary_type(types::Checked *c, ast::Span span, ast::BinaryOp op, types::TypeRef l,
                                   types::TypeRef r) {
     if (is_logical(op)) {
@@ -2382,7 +2445,7 @@ static void binary_after(types::Checked *c, Frame f) {
         finish(c, e, c->table.bool_type, f.expected);
         return;
     }
-    if (array_sum(c, e, op, left, right)) {
+    if (array_sum(c, e, op, left, right) || number_operands(c, e, op, left, right)) {
         poison(c, e);
         return;
     }

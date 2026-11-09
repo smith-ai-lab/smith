@@ -85,3 +85,22 @@ export void test_test_cache_a_failing_test_runs_every_time() {
                              "3 cached:");
     scratch::expect_contains("failing: ... and it still fails", second.out, "4 passed, 1 failed");
 }
+
+// Where the import cache counts its hits (SMITH_IMPORT_CACHE_LOG, #2891, set in every CI job) is not part of a test's
+// key, so it keeps the tests cached; another SMITH_* variable is, so it runs them again.
+export void test_test_cache_the_import_cache_log_is_not_part_of_the_key() {
+    scratch::Project p = cached_project();
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run first = scratch::sh(&p, run_cached);
+    scratch::expect_status("log: the first run passes", 0, &first);
+    scratch::Run logged = scratch::sh(&p, "env SMITH_IMPORT_CACHE_LOG=$PWD/one.log SMITH_RESULT_CACHE=on "
+                                          "SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_contains("log: a log path keeps them cached", logged.out, "3 cached:");
+    scratch::Run other =
+        scratch::sh(&p, "env SMITH_IMPORT_CACHE=0 SMITH_RESULT_CACHE=on SMITH_OUTPUT=full smith test 2>&1");
+    scratch::expect_lacks("log: another variable runs them again", other.out, " cached:");
+}
