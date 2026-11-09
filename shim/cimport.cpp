@@ -56,12 +56,15 @@
 // Memory: the caller's buffer. When it is too small the call returns the words needed and the caller calls again.
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "clang/AST/APValue.h"
@@ -734,7 +737,25 @@ std::string request_key(const SmithCimportRequest *request) {
     return key;
 }
 
-size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill);
+size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill,
+                  std::vector<std::string> *files);
+void files_read(const clang::SourceManager &sm, std::vector<std::string> *files);
+bool cache_load(const SmithCimportRequest *request, std::vector<uint32_t> *words);
+void cache_store(const SmithCimportRequest *request, const uint32_t *words, size_t count,
+                 const std::vector<std::string> &files, int64_t started);
+int64_t now_ns();
+
+// The result for the caller: copied when it fits, else kept for the second call.
+size_t deliver(const std::string &key, std::vector<uint32_t> *result, uint32_t *words, size_t capacity) {
+    size_t total = result->size();
+    if (total <= capacity && words != nullptr) {
+        std::memcpy(words, result->data(), total * 4);
+    } else {
+        kept.request = key;
+        kept.words = std::move(*result);
+    }
+    return total;
+}
 } // namespace
 
 // Reads the header. Returns the words the result needs; when `capacity` is smaller nothing is written and the caller
@@ -750,8 +771,13 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
         }
         return total;
     }
+    std::vector<uint32_t> cached;
+    if (cache_load(request, &cached)) return deliver(key, &cached, words, capacity);
     std::vector<uint32_t> spill;
-    size_t needed = read_words(request, words, capacity, &spill);
+    std::vector<std::string> files;
+    int64_t started = now_ns();
+    size_t needed = read_words(request, words, capacity, &spill, &files);
+    cache_store(request, spill.empty() ? words : spill.data(), needed, files, started);
     if (!spill.empty()) {
         kept.request = key;
         kept.words = std::move(spill);
@@ -761,7 +787,8 @@ extern "C" size_t smith_cimport_read(const SmithCimportRequest *request, uint32_
 
 namespace {
 // The result goes to `words` when it fits, else to `spill`.
-size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill) {
+size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t capacity, std::vector<uint32_t> *spill,
+                  std::vector<std::string> *files) {
     std::string header = request->name;
     std::vector<std::string> flags = lines(request->flags);
     std::string code = std::string("#include ") + (request->quoted != 0 ? "\"" : "<") + header +
@@ -807,6 +834,7 @@ size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t ca
         for (const std::string &d : dirs)
             error += " " + d;
     }
+    if (unit != nullptr && error.empty()) files_read(unit->getSourceManager(), files);
     Reader reader(unit != nullptr ? &unit->getASTContext() : nullptr);
     uint32_t error_at = 0;
     if (unit != nullptr && error.empty())
@@ -863,4 +891,269 @@ size_t read_words(const SmithCimportRequest *request, uint32_t *words, size_t ca
     std::memcpy(reinterpret_cast<char *>(w) + pool_at * 4, reader.pool.data(), reader.pool.size());
     return total;
 }
+} // namespace
+
+// The disk cache of a header's words (#2891, knowledge/front-end.md "From disk"): runtime/import_cache.c keeps the
+// entries, this part makes their key and their payload. The words of a header depend on the header as written, the
+// importer's folder, the flags and every file clang read, so the key holds the first three and the entry lists the
+// files, each with its size, time and a hash of its content: a hit hashes a file again only when its size or time
+// differs (another machine, a touched file) and is a miss when any content differs or a file is gone. Two folders are
+// written as tokens in the key, in the list and in the places of the words, so an entry made in another checkout or
+// on another machine is the same entry: the working folder (the project) and the resource folder after
+// `-resource-dir` (it sits in the cache under $HOME). A path under neither is kept as it is (/usr/include). A header
+// clang could not read is never stored. The functions are weak: a program that links this shim without smith's
+// runtime has no cache.
+extern "C" {
+[[gnu::weak]] const char *smith_import_cache_folder(void);
+[[gnu::weak]] void smith_import_cache_key(const void *material, size_t size, char key[33]);
+[[gnu::weak]] size_t smith_import_cache_load(const char *kind, const char *key, uint8_t *out, size_t capacity);
+[[gnu::weak]] void smith_import_cache_store(const char *kind, const char *key, const uint8_t *data, size_t size);
+[[gnu::weak]] void smith_import_cache_count(const char *kind, bool hit);
+int smith_cimport_file_state(const char *path, uint64_t *size, int64_t *mtime_ns);
+int smith_cimport_file_hash(const char *path, uint64_t *out);
+}
+
+namespace {
+
+constexpr char project_token[] = "\x01P";
+constexpr char resource_token[] = "\x01R";
+
+struct Folders {
+    std::string project;  // the working folder
+    std::string resource; // after -resource-dir, as given and resolved
+    std::string resource_real;
+};
+
+std::string real_path(const std::string &path) {
+    char resolved[PATH_MAX];
+    if (path.empty() || ::realpath(path.c_str(), resolved) == nullptr) return path;
+    return resolved;
+}
+
+Folders folders_of_request(const SmithCimportRequest *request) {
+    Folders f;
+    char here[PATH_MAX];
+    if (::getcwd(here, sizeof here) != nullptr) f.project = here;
+    std::vector<std::string> flags = lines(request->flags);
+    for (size_t i = 0; i + 1 < flags.size(); i++)
+        if (flags[i] == "-resource-dir") f.resource = flags[i + 1];
+    f.resource_real = real_path(f.resource);
+    return f;
+}
+
+// `path` with a folder of `f` at its start written as its token.
+std::string tokened(const Folders &f, const std::string &path) {
+    auto under = [&](const std::string &folder) {
+        return folder.size() > 1 && path.compare(0, folder.size(), folder) == 0 &&
+               (path.size() == folder.size() || path[folder.size()] == '/');
+    };
+    if (under(f.resource)) return resource_token + path.substr(f.resource.size());
+    if (under(f.resource_real)) return resource_token + path.substr(f.resource_real.size());
+    if (under(f.project)) return project_token + path.substr(f.project.size());
+    return path;
+}
+
+std::string untokened(const Folders &f, const std::string &path) {
+    if (path.compare(0, 2, resource_token) == 0) return f.resource + path.substr(2);
+    if (path.compare(0, 2, project_token) == 0) return f.project + path.substr(2);
+    return path;
+}
+
+bool cache_on() {
+    return smith_import_cache_folder != nullptr && smith_import_cache_folder()[0] != '\0';
+}
+
+// The key of a request: its parts with the two folders as tokens. Empty when a folder of the request or a flag holds
+// a token's first byte (it could not be told from one).
+std::string cache_key(const SmithCimportRequest *request, const Folders &f) {
+    auto plain = [](const char *text) { return text == nullptr || std::strchr(text, '\x01') == nullptr; };
+    if (!plain(request->name) || !plain(request->folder) || !plain(request->flags)) return "";
+    std::string material = "smith-cimport-words 1\n";
+    material += request->name;
+    material += request->quoted != 0 ? "\n\"\n" : "\n<\n";
+    std::string folder = request->quoted != 0 && request->folder != nullptr ? request->folder : "";
+    material += tokened(f, folder) + "\n";
+    for (const std::string &flag : lines(request->flags))
+        material += tokened(f, flag) + "\n";
+    char key[33];
+    smith_import_cache_key(material.data(), material.size(), key);
+    return key;
+}
+
+// Every real file clang read for the header, as an absolute path (the source given as text is not one).
+void files_read(const clang::SourceManager &sm, std::vector<std::string> *files) {
+    std::set<std::string> seen;
+    for (auto it = sm.fileinfo_begin(); it != sm.fileinfo_end(); ++it) {
+        std::string path = real_path(it->first.getName().str());
+        if (path.empty() || path[0] != '/') continue;
+        seen.insert(path);
+    }
+    files->assign(seen.begin(), seen.end());
+}
+
+void put32(std::string *out, uint32_t v) {
+    out->append(reinterpret_cast<const char *>(&v), 4);
+}
+
+void put64(std::string *out, uint64_t v) {
+    out->append(reinterpret_cast<const char *>(&v), 8);
+}
+
+void put_text(std::string *out, const std::string &text) {
+    put32(out, static_cast<uint32_t>(text.size()));
+    *out += text;
+}
+
+struct Taker {
+    const std::string &data;
+    size_t at = 0;
+    bool bad = false;
+    bool take(void *out, size_t n) {
+        if (bad || data.size() - at < n) return !(bad = true);
+        std::memcpy(out, data.data() + at, n);
+        at += n;
+        return true;
+    }
+    uint32_t u32() {
+        uint32_t v = 0;
+        take(&v, 4);
+        return v;
+    }
+    uint64_t u64() {
+        uint64_t v = 0;
+        take(&v, 8);
+        return v;
+    }
+    std::string text() {
+        uint32_t n = u32();
+        if (bad || data.size() - at < n) {
+            bad = true;
+            return "";
+        }
+        std::string s = data.substr(at, n);
+        at += n;
+        return s;
+    }
+};
+
+// The words with the file of each place row changed by `change`: the new names go at the end of the pool and the rows
+// point there (the old text stays, unused), so no other offset moves.
+template <typename Change> std::vector<uint32_t> with_place_files(const uint32_t *w, size_t count, Change change) {
+    std::vector<uint32_t> out(w, w + count);
+    if (count < 25 || w[1] != count) return out;
+    const char *pool = reinterpret_cast<const char *>(w) + w[2];
+    std::string tail;
+    std::map<std::string, uint32_t> added;
+    uint32_t pool_size = w[3];
+    for (uint32_t i = 0; i < w[24]; i++) {
+        size_t row = w[23] + 6 * static_cast<size_t>(i);
+        if (row + 6 > count) return std::vector<uint32_t>(w, w + count);
+        std::string file = pool + w[row + 2];
+        std::string changed = change(file);
+        if (changed == file) continue;
+        auto found = added.find(changed);
+        if (found == added.end()) {
+            found = added.emplace(changed, pool_size + static_cast<uint32_t>(tail.size())).first;
+            tail += changed;
+            tail += '\0';
+        }
+        out[row + 2] = found->second;
+    }
+    if (tail.empty()) return out;
+    std::string whole(pool, w[3]);
+    whole += tail;
+    out.resize(w[2] / 4);
+    out.resize(w[2] / 4 + (whole.size() + 3) / 4, 0);
+    std::memcpy(reinterpret_cast<char *>(out.data()) + w[2], whole.data(), whole.size());
+    out[1] = static_cast<uint32_t>(out.size());
+    out[3] = static_cast<uint32_t>(whole.size());
+    return out;
+}
+
+} // namespace
+
+namespace {
+
+// The entry of a request: the files read (each its tokened path, size, time and content hash), then the words with
+// their place files tokened.
+bool cache_load(const SmithCimportRequest *request, std::vector<uint32_t> *words) {
+    if (!cache_on()) return false;
+    Folders f = folders_of_request(request);
+    std::string key = cache_key(request, f);
+    if (key.empty()) return false;
+    size_t size = smith_import_cache_load("h", key.c_str(), nullptr, 0);
+    std::string data(size == SIZE_MAX ? 0 : size, '\0');
+    if (size == SIZE_MAX ||
+        smith_import_cache_load("h", key.c_str(), reinterpret_cast<uint8_t *>(data.data()), size) != size) {
+        smith_import_cache_count("h", false);
+        return false;
+    }
+    Taker r{data};
+    uint32_t count = r.u32();
+    std::vector<std::string> files;
+    bool moved = false;
+    for (uint32_t i = 0; i < count && !r.bad; i++) {
+        std::string path = untokened(f, r.text());
+        uint64_t size_was = r.u64(), time_was = r.u64(), low = r.u64(), high = r.u64();
+        uint64_t size_now = 0;
+        int64_t time_now = 0;
+        if (r.bad || smith_cimport_file_state(path.c_str(), &size_now, &time_now) != 0) r.bad = true;
+        if (r.bad || (size_now == size_was && static_cast<uint64_t>(time_now) == time_was)) {
+            files.push_back(path);
+            continue;
+        }
+        uint64_t hash[2] = {};
+        if (smith_cimport_file_hash(path.c_str(), hash) != 0 || hash[0] != low || hash[1] != high) r.bad = true;
+        moved = true;
+        files.push_back(path);
+    }
+    uint32_t total = r.u32();
+    std::vector<uint32_t> stored(r.bad ? 0 : total);
+    if (!r.bad) r.take(stored.data(), static_cast<size_t>(total) * 4);
+    if (r.bad || r.at != data.size() || total < 25) {
+        smith_import_cache_count("h", false);
+        return false;
+    }
+    *words = with_place_files(stored.data(), stored.size(), [&](const std::string &p) { return untokened(f, p); });
+    smith_import_cache_count("h", true);
+    if (moved)
+        cache_store(request, words->data(), words->size(), files, INT64_MAX); // the new times: the next hit stats
+    return true;
+}
+
+int64_t now_ns() {
+    struct timespec t = {};
+    clock_gettime(CLOCK_REALTIME, &t);
+    return static_cast<int64_t>(t.tv_sec) * 1000000000LL + t.tv_nsec;
+}
+
+// Stores the words of a read that began at `started`: not when a file it read changed since then (its time is not
+// before it), since the words may not be what the file holds now.
+void cache_store(const SmithCimportRequest *request, const uint32_t *words, size_t count,
+                 const std::vector<std::string> &files, int64_t started) {
+    if (!cache_on() || count < 25 || words[16] != 0 || files.empty()) return;
+    Folders f = folders_of_request(request);
+    std::string key = cache_key(request, f);
+    if (key.empty()) return;
+    std::string data;
+    put32(&data, static_cast<uint32_t>(files.size()));
+    for (const std::string &path : files) {
+        uint64_t size = 0;
+        int64_t time = 0;
+        uint64_t hash[2] = {};
+        if (smith_cimport_file_state(path.c_str(), &size, &time) != 0 || time >= started ||
+            smith_cimport_file_hash(path.c_str(), hash) != 0)
+            return;
+        put_text(&data, tokened(f, path));
+        put64(&data, size);
+        put64(&data, static_cast<uint64_t>(time));
+        put64(&data, hash[0]);
+        put64(&data, hash[1]);
+    }
+    std::vector<uint32_t> out = with_place_files(words, count, [&](const std::string &p) { return tokened(f, p); });
+    put32(&data, static_cast<uint32_t>(out.size()));
+    data.append(reinterpret_cast<const char *>(out.data()), out.size() * 4);
+    smith_import_cache_store("h", key.c_str(), reinterpret_cast<const uint8_t *>(data.data()), data.size());
+}
+
 } // namespace
