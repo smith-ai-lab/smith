@@ -164,7 +164,10 @@ static Usize reserve_for(Usize size) {
 export Bool begin(Usize size) {
     if (region_count == 2) return false;
     if (region_count == 0) spilled = false;
-    if (!smith_import_region_open(&regions[region_count], reserve_for(size))) return false;
+    if (!smith_import_region_open(&regions[region_count], reserve_for(size))) {
+        smith_import_cache_why("no region could be reserved (a cap on the address space?)");
+        return false;
+    }
     current = &regions[region_count];
     region_count += 1;
     before_begin = mem::set_allocator(&region_allocator);
