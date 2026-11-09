@@ -584,6 +584,7 @@ static bool smith_stepcache_refused(const char *word) {
 // stores each input's hash and so accepts a file of the same text and another time; a header that names a file of the
 // folder (an absolute path) is stored for that root only, as any output that holds the root (#1415).
 static bool smith_stepcache_touches_header(const char *word) {
+    if (strcmp(word, "--smith-header") == 0) return false; // smith's own header pass, not a precompiled header (#2937)
     return smith_ends_with(word, "-header") || smith_ends_with(word, ".pch") || smith_ends_with(word, ".gch") ||
            smith_stepcache_has_prefix(word, "-include-pch");
 }
@@ -1013,6 +1014,24 @@ static bool smith_stepcache_put(const char *source, const char *destination, boo
     return ok;
 }
 
+// Whether two files hold the same bytes.
+static bool smith_stepcache_same_bytes(const char *left, const char *right) {
+    FILE *a = fopen(left, "rb");
+    FILE *b = fopen(right, "rb");
+    bool same = a != nullptr && b != nullptr;
+    for (size_t chunk = 0; same && chunk < ((size_t)1 << 20); chunk++) { // 4 GB at the most
+        char x[4096];
+        char y[4096];
+        size_t n = fread(x, 1, sizeof x, a);
+        size_t m = fread(y, 1, sizeof y, b);
+        same = n == m && memcmp(x, y, n) == 0 && !ferror(a) && !ferror(b);
+        if (n < sizeof x) break;
+    }
+    if (a != nullptr) fclose(a);
+    if (b != nullptr) fclose(b);
+    return same;
+}
+
 // Restores the outputs and the depfile of a result. False when anything is missing or does not fit.
 static bool smith_stepcache_apply(SmithExec *exec, const SmithEdge *edge, const char *folder) {
     char path[PATH_MAX];
@@ -1033,6 +1052,8 @@ static bool smith_stepcache_apply(SmithExec *exec, const SmithEdge *edge, const 
         snprintf(name, sizeof name, "o%u", k);
         if (snprintf(path, sizeof path, "%s/%s", folder, name) >= (int)sizeof path) return false;
         const char *destination = exec->graph.nodes[smith_plan_output(exec, edge, k)].path;
+        // A restat step writes its output only when the bytes change, so what depends on it is left alone (a header).
+        if (edge->restat && k == 0 && smith_stepcache_same_bytes(path, destination)) continue;
         if (!smith_stepcache_put(path, destination, k > 0)) return false;
     }
     if (snprintf(path, sizeof path, "%s/d", folder) >= (int)sizeof path) return false;

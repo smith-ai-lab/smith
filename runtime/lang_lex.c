@@ -499,6 +499,79 @@ static SmithLookup smith_raw_lookup(void *context, const char *name, uint32_t le
     return (SmithLookup){};
 }
 
+// ---- The depfile of a header pass (`-MD -MF`, #2937)
+//
+// A header is a function of the module's tokens, the headers or sources of the modules it imports, and, when it
+// imports more than one C header, of what the compiler asked about them read. Each file the pass opens is listed here;
+// the depfile written at the end names them, and the step cache keys the step by their contents. A file that cannot
+// be listed (a name make cannot spell, too many files, a compiler that failed) leaves no depfile, and the step runs.
+// A module looked for on an include path and not found there is not a file, so it is not listed: the module's source,
+// which is, is read in its place, as it is in every build that has no header there.
+constexpr size_t smith_raw_deps_max = 256;
+
+static struct {
+    char pool[(size_t)1 << 16];
+    size_t used;
+    const char *at[smith_raw_deps_max];
+    size_t count;
+    bool unknown;
+} smith_raw_deps;
+
+void smith_header_depend_unknown(void) {
+    smith_raw_deps.unknown = true;
+}
+
+void smith_header_depend(const char *path) {
+    for (size_t i = 0; i < smith_raw_deps.count; i++) {
+        if (strcmp(smith_raw_deps.at[i], path) == 0) return;
+    }
+    size_t length = strlen(path) + 1;
+    if (strpbrk(path, " \t\n\\#$:%") != nullptr || smith_raw_deps.count >= smith_raw_deps_max ||
+        smith_raw_deps.used + length > sizeof smith_raw_deps.pool) {
+        smith_raw_deps.unknown = true;
+        return;
+    }
+    memcpy(smith_raw_deps.pool + smith_raw_deps.used, path, length);
+    smith_raw_deps.at[smith_raw_deps.count++] = smith_raw_deps.pool + smith_raw_deps.used;
+    smith_raw_deps.used += length;
+}
+
+bool smith_header_depend_file(const char *depfile, const char *skip) {
+    static char text[(size_t)1 << 16];
+    FILE *file = fopen(depfile, "rb");
+    if (file == nullptr) return false;
+    size_t got = fread(text, 1, sizeof text - 1, file);
+    bool whole = feof(file) && !ferror(file);
+    fclose(file);
+    text[got] = 0;
+    if (!whole) return false;
+    const char *colon = strchr(text, ':'); // the target, then the files
+    if (colon == nullptr) return false;
+    char word[PATH_MAX];
+    size_t used = 0;
+    for (const char *at = colon + 1; at <= text + got; at++) { // up to the NUL that ends the text
+        bool escaped = *at == '\\' && (at[1] == ' ' || at[1] == '#' || at[1] == '\\');
+        bool joined = *at == '\\' && (at[1] == '\n' || (at[1] == '\r' && at[2] == '\n'));
+        if (escaped) {
+            if (used + 1 < sizeof word) word[used++] = *++at;
+            continue;
+        }
+        if (joined) {
+            at += at[1] == '\r' ? 2 : 1;
+            continue;
+        }
+        if (*at == ' ' || *at == '\t' || *at == '\n' || *at == '\r' || *at == 0) {
+            word[used] = 0;
+            if (used > 0 && (skip == nullptr || strcmp(word, skip) != 0)) smith_header_depend(word);
+            used = 0;
+            continue;
+        }
+        if (used + 1 >= sizeof word) return false;
+        word[used++] = *at;
+    }
+    return true;
+}
+
 static bool smith_raw_read_source(const char *path, size_t *length) {
     FILE *file = fopen(path, "rb");
     if (file == nullptr) return false;
@@ -506,6 +579,7 @@ static bool smith_raw_read_source(const char *path, size_t *length) {
     fclose(file);
     smith_lang_source[got] = 0;
     *length = got;
+    smith_header_depend(path);
     return true;
 }
 
@@ -894,6 +968,7 @@ static size_t smith_raw_read_file(const char *path, char *into, size_t capacity)
     size_t got = fread(into, 1, capacity - 1, file);
     fclose(file);
     into[got] = 0;
+    smith_header_depend(path);
     return got;
 }
 
@@ -1109,6 +1184,9 @@ static void smith_lang_reset(void) {
     smith_header_source = nullptr;
     smith_raw_out_file = nullptr;
     smith_raw_err_file = nullptr;
+    smith_raw_deps.used = 0;
+    smith_raw_deps.count = 0;
+    smith_raw_deps.unknown = false;
 }
 
 // Reads the source of a run into smith_lang_source. False when the file cannot be read or the text is too long.
@@ -1194,16 +1272,34 @@ static int smith_lang_run_raw(const SmithRawRun *run) {
     return 0;
 }
 
+// Writes `header: file file ...` for the files the pass read, unless one could not be named. Returns the exit status.
+static int smith_raw_write_depfile(const char *depfile, const char *header) {
+    if (smith_raw_deps.unknown || strpbrk(header, " \t\n\\#$:%") != nullptr) return 0;
+    FILE *file = fopen(depfile, "wb");
+    if (file == nullptr) return 0; // no depfile: the step is not cached, and has run
+    fprintf(file, "%s:", header);
+    for (size_t i = 0; i < smith_raw_deps.count; i++)
+        fprintf(file, " %s", smith_raw_deps.at[i]);
+    fputc('\n', file);
+    if (fclose(file) != 0) (void)unlink(depfile);
+    return 0;
+}
+
 // smith cc --smith-header file.smith [-o header.h] and smith cc --smith-lower file.smith
 int smith_lang_main(int count, char **args, bool header) {
     const char *usage = header ? "usage: smith cc --smith-header file.smith [-o header.h] [compile flags]"
                                : "usage: smith cc --smith-lower file.smith";
     const char *file = nullptr;
     const char *output = nullptr;
+    const char *depfile = nullptr;
     smith_lang_reset();
     for (int i = 0; i < count; i++) { // bounded by the arguments
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) {
             output = args[++i];
+        } else if (header && strcmp(args[i], "-MD") == 0) { // the files read are written, as a compile writes its own
+            continue;
+        } else if (header && strcmp(args[i], "-MF") == 0 && i + 1 < count) {
+            depfile = args[++i];
         } else if (header && args[i][0] == '-') { // a compile flag: -I dir, -Dname, -std=...
             static const char *const separate[] = {"-I", "-isystem", "-iquote", "-include", "-isysroot", "-D", "-U"};
             bool pair = false;
@@ -1224,6 +1320,12 @@ int smith_lang_main(int count, char **args, bool header) {
         char fallback[PATH_MAX];
         snprintf(fallback, sizeof fallback, "%s.h", file);
         return smith_lang_run_raw(&(SmithRawRun){.path = file, .header = true, .header_path = fallback, .ask = true});
+    }
+    if (header && depfile != nullptr) {
+        int status =
+            smith_lang_run_raw(&(SmithRawRun){.path = file, .header = true, .header_path = output, .ask = true});
+        (void)unlink(depfile);
+        return status == 0 ? smith_raw_write_depfile(depfile, output) : status;
     }
     return smith_lang_run_raw(&(SmithRawRun){.path = file,
                                              .header = header,
