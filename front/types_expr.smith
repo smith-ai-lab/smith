@@ -4902,11 +4902,11 @@ static Str word(const ast::Stmt *s) {
 
 // A name the pattern binds, typed as the optional's element; a name that is not a value gets the invalid type, which
 // keeps the uses of it silent.
-static void bind_name(types::Checked *c, Str name, types::TypeRef type) {
+static void bind_name(types::Checked *c, Str name, types::TypeRef type, const ast::TypeExpr *written) {
     if (countof(name) == 0) {
         return;
     }
-    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true};
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true, .written = written};
     if (!types::declare(&c->scopes, symbol)) {
         types::failf(c, (ast::Span){}, "`", name, "` is already declared in this scope; choose another name");
     }
@@ -4924,7 +4924,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
     if (t == invalid(c)) {
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind == .result_type) {
@@ -4936,7 +4936,7 @@ static void bind_stage(types::Checked *c, Frame f) {
             types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
                          "`; write one of those");
         }
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind != .option) {
@@ -4949,7 +4949,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     } else if (same_text(name, "some")) {
         element = types::element_of(t);
     }
-    bind_name(c, binding, element);
+    bind_name(c, binding, element, nullptr);
 }
 
 // The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
@@ -5008,6 +5008,17 @@ export types::TypeRef pattern_payload(types::Checked *c, ast::Span span, types::
     Usize at = case_of(c, span, t, pat, true);
     if (at >= countof(types::slots_of(t).items)) return invalid(c);
     return types::slots_of(t).items[at].type;
+}
+
+// The payload of the enumerator `pat` names in the payload enumeration `t`, as the enumeration wrote it: null when
+// the enumeration is another module's or the pattern names none.
+export const ast::TypeExpr *payload_written(types::TypeRef t, ast::Pattern pat) {
+    Str name = pat.constant != nullptr ? case_name(pat.constant) : pat.name;
+    types::Members slots = types::slots_of(t);
+    for (Usize i = 0; i < countof(slots.items); i++) {
+        if (same_text(slots.items[i].name, name)) return slots.items[i].written;
+    }
+    return nullptr;
 }
 
 // A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
@@ -5118,6 +5129,7 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
     Bool known = t != invalid(c) && matchable(t);
     for (Usize k = 0; k < countof(pats); k++) {
         types::TypeRef element = invalid(c);
+        const ast::TypeExpr *written = nullptr;
         if (pats[k].wildcard) {
             continue;
         }
@@ -5138,9 +5150,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
                 element = types::error_of(t);
             } else if (t->kind == .enumeration && at < countof(types::slots_of(t).items) && types::is_payload_enum(t)) {
                 element = types::slots_of(t).items[at].type;
+                written = types::slots_of(t).items[at].written;
             }
         }
-        bind_name(c, pats[k].binding, element);
+        bind_name(c, pats[k].binding, element, written);
     }
 }
 

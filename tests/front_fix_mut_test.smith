@@ -96,6 +96,26 @@ export void test_front_fix_mut_a_c_test_of_a_number_comes_out_without_errors() {
     test::check_equal(errors_in(got), (Usize)0);
 }
 
+// A name bound by a variant pattern is as writable as the variant's payload: `.item(p)` of a `*i32` payload handed
+// where
+// `*mut i32` is wanted makes the payload `*mut i32` (#2647).
+export void test_front_fix_mut_a_pattern_bound_pointer_makes_its_payload_mut() {
+    expect("fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *i32\n    none\n\nfn f(n: Node):\n    if .item(p) "
+           ":= n:\n        g(p)\n",
+           "fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *mut i32\n    none\n\nfn f(n: Node):\n    if "
+           ".item(p) := n:\n        g(p)\n",
+           1);
+}
+
+// The same through a `match` arm.
+export void test_front_fix_mut_a_match_arm_bound_pointer_makes_its_payload_mut() {
+    expect("fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *i32\n    none\n\nfn f(n: Node):\n    match n:\n  "
+           "      .item(p): g(p)\n        .none: return\n",
+           "fn g(p: *mut i32):\n    p.* = 1\n\nenum Node:\n    item: *mut i32\n    none\n\nfn f(n: Node):\n    match "
+           "n:\n        .item(p): g(p)\n        .none: return\n",
+           1);
+}
+
 export void test_front_fix_mut_code_that_needs_nothing_is_left_alone() {
     expect("fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n",
            "fn f(p: *mut i32):\n    mut n := 0\n    n = 2\n    p.* = n\n", 0);

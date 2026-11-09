@@ -3113,6 +3113,9 @@ static void fill_enumeration(Checked *r, Str name, ast::Enumerator members[:]) {
             r->new_syntax = false;
         }
         items[i] = (Slot){.name = item->name, .type = carried, .value = next};
+        // The payload as written, for a fix that edits it (`*T` to `*mut T`, #2647): only where the source being
+        // mended is the module's own, so the span reaches the right text.
+        if (has_payload && countof(r->prefix) == 0) items[i].written = item->payload;
         next += 1;
     }
     Ty *made = own(&r->table, symbol->type);
