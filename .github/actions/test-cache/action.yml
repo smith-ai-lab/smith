@@ -44,12 +44,14 @@ runs:
         # the newest commit that published a store of this OS, and every store of it: one per job that ran tests (a
         # part's store holds what it restored plus what it added, so a set with a part missing is still a whole store).
         # The tag is `test-cache-<sha7>-<job>`; `test-cache-<sha7>` (one release, both OSes, before #2870) reads too.
-        # REST, plain HTTPS download (retried: release downloads return 504 now and then, #2792)
-        urls=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=60" --jq "
-          [.[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
-            |{sha: .tag_name[11:18], at: .created_at, urls: [.assets[]|select(.name==\"smith-tests-$OS.tar.gz\")|.url]}
-            |select(.urls|length > 0)] as \$r
-          | (\$r|sort_by(.at)|last|.sha) as \$s | \$r[]|select(.sha == \$s)|.urls[]" 2>/dev/null || true)
+        # REST, plain HTTPS download (retried: release downloads return 504 now and then, #2792). The releases are read a
+        # page at a time (the repository has hundreds; the newest commit's stores were past a first page of 60, #2891) and
+        # ordered by when they were published: `created_at` is the date of the tagged commit
+        urls=$(for page in 1 2 3 4 5; do
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page" --jq ".[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
+              |.published_at as \$at|.tag_name[11:18] as \$sha|.assets[]|select(.name==\"smith-tests-$OS.tar.gz\")
+              |\"\(\$at) \(\$sha) \(.url)\"" 2>/dev/null || true
+          done | sort | awk '{ at[NR] = $2; url[NR] = $3 } END { for (i = 1; i <= NR; i++) if (at[i] == at[NR]) print url[i] }')
         got=0
         for url in $urls; do
           gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/tests.tar.gz" 2>/dev/null &&
@@ -71,11 +73,11 @@ runs:
         dir="${XDG_CACHE_HOME:-$HOME/.cache}/smith/imports"; mkdir -p "$dir"
         # the newest commit that published an import cache of this OS, and every job's of it (each holds what it
         # restored plus what its own processes stored, so the sets overlap; the same entry is the same bytes)
-        urls=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=60" --jq "
-          [.[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
-            |{sha: .tag_name[11:18], at: .created_at, urls: [.assets[]|select(.name==\"smith-imports-$OS.tar.gz\")|.url]}
-            |select(.urls|length > 0)] as \$r
-          | (\$r|sort_by(.at)|last|.sha) as \$s | \$r[]|select(.sha == \$s)|.urls[]" 2>/dev/null || true)
+        urls=$(for page in 1 2 3 4 5; do
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page" --jq ".[]|select(.tag_name|test(\"^test-cache-[0-9a-f]{7}\"))
+              |.published_at as \$at|.tag_name[11:18] as \$sha|.assets[]|select(.name==\"smith-imports-$OS.tar.gz\")
+              |\"\(\$at) \(\$sha) \(.url)\"" 2>/dev/null || true
+          done | sort | awk '{ at[NR] = $2; url[NR] = $3 } END { for (i = 1; i <= NR; i++) if (at[i] == at[NR]) print url[i] }')
         got=0
         for url in $urls; do
           gh api -H 'Accept: application/octet-stream' "$url" >"$RUNNER_TEMP/imports.tar.gz" 2>/dev/null &&
