@@ -941,7 +941,7 @@ jobs:
         # `step-cache-<sha7>` (never `stage0-*`, never "latest") with all its assets in the one `gh release create` call:
         # smith-steps-linux.tar.gz.NN (the step folder, gzip, cut in parts under the 2 GiB an asset may hold; join
         # them in order), smith-steps-linux.sha (the commit it was built from) and, when the queue run of this commit
-        # made one, frontend-coverage.tar.gz (the count's per-file table). The 3 newest releases stay. A failure here
+        # made one, frontend-coverage.tar.gz (the count's per-file table) and count-fixed.tar.zst (its fixed files, #2942). The 3 newest releases stay. A failure here
         # must not fail main's push
         if: runner.os == 'Linux'
         continue-on-error: true
@@ -960,6 +960,14 @@ jobs:
             echo "$GITHUB_SHA" >"$out/c/sha"
             tar -C "$out/c" -c . | gzip -1 >"$out/frontend-coverage.tar.gz"
             files+=("$out/frontend-coverage.tar.gz")
+          fi
+          # the fixed tree the count checked (#2942), at its tree paths, for a session to read the lines its errors name
+          tid=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=count-fixed-tree-$GITHUB_SHA&per_page=5" --jq '[.artifacts[]|select(.expired|not)][0].id // empty')
+          if [ -n "$tid" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$tid/zip" >"$out/t.zip"
+            mkdir "$out/t"; unzip -q "$out/t.zip" -d "$out/t"
+            mv "$out/t/count-fixed.tar.zst" "$out/count-fixed.tar.zst"
+            files+=("$out/count-fixed.tar.zst")
           fi
           # the fixed files and rows of the count (#2832) are the release `count-fixed-<sha7>` of the queue run (`count-fixed-save`)
           ls -l "${files[@]}" | awk '{print $5, $9}'
@@ -1280,6 +1288,23 @@ jobs:
           path: ${{ runner.temp }}/build.tar.zst
           compression-level: 0
           retention-days: 1
+      - name: Pack the fixed tree for sessions (#2942)
+        # the files as the count checks them, at their tree paths: its errors give lines of this form. `warm` attaches
+        # the tarball to the commit's release, where a cloud session can download it
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/fixed-tree"
+          tar -C .smith/frontend-coverage/tree --exclude=compile_commands.json -c --zstd -f "$RUNNER_TEMP/fixed-tree/count-fixed.tar.zst" .
+      - name: Save the fixed tree
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: count-fixed-tree-${{ github.sha }}
+          path: ${{ runner.temp }}/fixed-tree
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Save the fixed files
         uses: actions/upload-artifact@v4
         with:
