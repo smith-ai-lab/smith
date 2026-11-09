@@ -503,8 +503,12 @@ bool group_replay(const GroupRecord &record, const Arguments &arguments, Clock::
     std::ifstream file(record.path);
     std::string line;
     if (!std::getline(file, line) || line != "smith-prove-group 1") return false;
-    unsigned proved = 0, trusted = 0;
-    if (!std::getline(file, line) || std::sscanf(line.c_str(), "counts %u %u", &proved, &trusted) != 2) return false;
+    if (!std::getline(file, line) || line.rfind("counts ", 0) != 0) return false;
+    char *rest = nullptr;
+    unsigned proved = static_cast<unsigned>(std::strtoul(line.c_str() + 7, &rest, 10));
+    if (*rest != ' ') return false;
+    unsigned trusted = static_cast<unsigned>(std::strtoul(rest + 1, &rest, 10));
+    if (*rest != '\0') return false;
     std::string text, tail;
     bool replaying = false, in_tail = false;
     std::set<std::string> named;
