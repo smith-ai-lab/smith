@@ -4839,11 +4839,11 @@ static Str word(const ast::Stmt *s) {
 
 // A name the pattern binds, typed as the optional's element; a name that is not a value gets the invalid type, which
 // keeps the uses of it silent.
-static void bind_name(types::Checked *c, Str name, types::TypeRef type) {
+static void bind_name(types::Checked *c, Str name, types::TypeRef type, const ast::TypeExpr *written) {
     if (countof(name) == 0) {
         return;
     }
-    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true};
+    types::Symbol symbol = {.name = name, .kind = .variable, .type = type, .is_new = true, .written = written};
     if (!types::declare(&c->scopes, symbol)) {
         types::failf(c, (ast::Span){}, "`", name, "` is already declared in this scope; choose another name");
     }
@@ -4861,7 +4861,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     Str binding = s->kind.if_let.pattern.binding;
     types::TypeRef element = invalid(c);
     if (t == invalid(c)) {
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind == .result_type) {
@@ -4873,7 +4873,7 @@ static void bind_stage(types::Checked *c, Frame f) {
             types::failf(c, s->span, "a `Result` is either `.ok(x)` or `.error(e)`, not `.", name,
                          "`; write one of those");
         }
-        bind_name(c, binding, element);
+        bind_name(c, binding, element, nullptr);
         return;
     }
     if (t->kind != .option) {
@@ -4886,7 +4886,7 @@ static void bind_stage(types::Checked *c, Frame f) {
     } else if (same_text(name, "some")) {
         element = types::element_of(t);
     }
-    bind_name(c, binding, element);
+    bind_name(c, binding, element, nullptr);
 }
 
 // The place of a pattern among the cases of `t`: an enumerator's index, 0 for `.some`, 1 for `.none`; `count` when
@@ -4945,6 +4945,17 @@ export types::TypeRef pattern_payload(types::Checked *c, ast::Span span, types::
     Usize at = case_of(c, span, t, pat, true);
     if (at >= countof(types::slots_of(t).items)) return invalid(c);
     return types::slots_of(t).items[at].type;
+}
+
+// The payload of the enumerator `pat` names in the payload enumeration `t`, as the enumeration wrote it: null when
+// the enumeration is another module's or the pattern names none.
+export const ast::TypeExpr *payload_written(types::TypeRef t, ast::Pattern pat) {
+    Str name = pat.constant != nullptr ? case_name(pat.constant) : pat.name;
+    types::Members slots = types::slots_of(t);
+    for (Usize i = 0; i < countof(slots.items); i++) {
+        if (same_text(slots.items[i].name, name)) return slots.items[i].written;
+    }
+    return nullptr;
 }
 
 // A `match` over a number, a `char` or a `bool` takes constants as its patterns (#2336).
@@ -5055,6 +5066,7 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
     Bool known = t != invalid(c) && matchable(t);
     for (Usize k = 0; k < countof(pats); k++) {
         types::TypeRef element = invalid(c);
+        const ast::TypeExpr *written = nullptr;
         if (pats[k].wildcard) {
             continue;
         }
@@ -5075,9 +5087,10 @@ export void match_arm(types::Checked *c, const ast::Stmt *s, Usize arm) {
                 element = types::error_of(t);
             } else if (t->kind == .enumeration && at < countof(types::slots_of(t).items) && types::is_payload_enum(t)) {
                 element = types::slots_of(t).items[at].type;
+                written = types::slots_of(t).items[at].written;
             }
         }
-        bind_name(c, pats[k].binding, element);
+        bind_name(c, pats[k].binding, element, written);
     }
 }
 
@@ -5812,6 +5825,30 @@ static Bool bind_auto_parameters(types::Checked *c, ast::Param params[:], ast::E
     return true;
 }
 
+// The fixed (not compile-time, `auto` or pack) arguments of a call of a template, conformed to their slots of the
+// instance's signature, so a read-only pointer for a `*mut` slot gets its fix-it as in any call. False, with the error,
+// when one does not conform.
+static Bool conform_fixed_arguments(types::Checked *c, ast::Param params[:], ast::ExprRef args[:],
+                                    types::TypeRef signature) {
+    types::Members slots = types::slots_of(signature);
+    if (countof(args) != countof(params)) return true;
+    for (Usize i = 0; i < countof(params) && i < countof(slots.items); i++) {
+        if (params[i].is_pack || params[i].is_gather)
+            break; // the slots after a pack no longer line up with the parameters
+        if (types::is_compile_time(&params[i]) || types::is_auto_param(&params[i])) continue;
+        const ast::Expr *arg = argument_value(args[i]);
+        types::TypeRef found = typ(c, arg);
+        types::TypeRef wanted = slots.items[i].type;
+        if (found == invalid(c) || wanted == invalid(c) || found == wanted) continue;
+        if (literal_like(arg) && adaptable(found, wanted)) {
+            if (!retype(c, arg, wanted)) return false;
+            continue;
+        }
+        if (!conform(c, arg, found, wanted)) return false;
+    }
+    return true;
+}
+
 // Stage 4 of a call of a function with bracketed generics (`fn f[T, n: usize](...)`, #1698): each generic is bound from
 // the type of the arguments whose parameter names it, then the call is to the instance for them. A literal argument
 // binds last, and only a generic no other argument binds.
@@ -5868,6 +5905,10 @@ static void infer_resolved(types::Checked *c, Frame f, const types::Symbol *temp
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 
@@ -5900,6 +5941,10 @@ static void auto_resolved(types::Checked *c, Frame f) {
     }
     types::set_type(c, callee, c->instances[at].signature);
     types::use_instance(c, e, at);
+    if (!conform_fixed_arguments(c, params, args, c->instances[at].signature)) {
+        poison(c, e);
+        return;
+    }
     call_after(c, f);
 }
 
