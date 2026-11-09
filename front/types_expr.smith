@@ -2264,11 +2264,15 @@ static Bool widen_operand(types::Checked *c, const ast::Expr *e, ast::BinaryOp o
     types::TypeRef l = typ(c, left);
     types::TypeRef r = typ(c, right);
     types::TypeRef wide = c_common(l, r);
+    // C adds a `bool` to an integer as an `int` (`n + (p != nullptr)`): the fix writes `.to(T)` on the bool.
+    Bool bool_left = l->kind == .bool_type && is_integer(r);
+    Bool bool_right = r->kind == .bool_type && is_integer(l);
+    if (bool_left || bool_right) wide = bool_left ? r : l;
     if (is_shift(op) || is_logical(op) || wide == nullptr || l == r || literal_like(left) || literal_like(right) ||
         types_convert::operand_type(&c->table, l, r) != nullptr) {
         return false;
     }
-    const ast::Expr *narrow = wide == l ? right : left;
+    const ast::Expr *narrow = bool_left ? left : (bool_right ? right : (wide == l ? right : left));
     types::fail_fix(c, e->span,
                     msg(format::push("the operands of `", binary_text(op), "` have different types, `", types::show(l),
                                      "` and `", types::show(r), "`; make both `", types::show(wide),
