@@ -1372,8 +1372,34 @@ static core::ParseError zeroed_global_fix(Str source, const ast::Expr *call) {
     return found;
 }
 
-// `out` and the fixes of the pointer parameters that are handed an option (`fix_optional`, #2648).
+// The fixes of a `{}` where a `str` is wanted (`none: str = {}`, C's `Str none = {};`): the empty string `""`. The
+// checker refuses the list (`not a `Str``) and carries no fix.
+static core::Errors empty_strings(core::Errors out, Str source, const types::Checked *c) {
+    Str head = "a `{...}` list makes a struct";
+    Str tail = "not a `Str`; write a value of type `Str`";
+    for (Usize i = 0; i < c->error_count; i++) {
+        types::Error e = c->errors[i];
+        Str m = e.message;
+        if (!text_at(m, 0, head) || countof(m) < countof(tail) || !same(m[countof(m) - countof(tail):countof(m)], tail))
+            continue;
+        if (e.span.end != e.span.start + 2 || !text_at(source, e.span.start, "{}")) continue;
+        core::Edits fix = {};
+        fix = mem::realloc(fix, 1);
+        Str quotes = "\"\"";
+        fix[0] = (core::Edit){.span = e.span, .text = quotes};
+        core::ParseError found = {};
+        found.span = e.span;
+        found.message = "the empty `str` is `\"\"`";
+        found.fix = fix;
+        out = add(out, found);
+    }
+    return out;
+}
+
+// `out`, the fixes of a `{}` where a `str` is wanted and of the pointer parameters that are handed an option
+// (`fix_optional`, #2648).
 static core::Errors with_optionals(core::Errors out, Str source, const ast::Module *module, const types::Checked *c) {
+    out = empty_strings(out, source, c);
     core::Errors optionals = fix_optional::edits(source, module, c);
     for (Usize i = 0; i < countof(optionals); i++)
         out = add(out, optionals[i]);
