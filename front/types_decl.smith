@@ -2027,7 +2027,10 @@ static void enter_statement(types::Checked *r, const ast::Stmt *s) {
     state.prev_decl = state.last_decl;
     state.last_decl = nullptr;
     // The line a binding for an `if` used as a value goes before: the start of the statement that holds it (#2647).
-    if (countof(fixed_source) > 0 && starts_line(s->span.start)) {
+    // The body of an instance of a generic function is another module's text: its spans are not in `fixed_source`.
+    if (r->current != types::max_instances) {
+        state.statement_start = 0;
+    } else if (countof(fixed_source) > 0 && starts_line(s->span.start)) {
         Bool plain = s->kind == .expression || s->kind == .declaration || s->kind == .return_stmt;
         state.statement_start = plain ? s->span.start : 0;
     }
