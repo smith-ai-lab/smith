@@ -16,22 +16,43 @@ constexpr const char *setup =
     "$c -x c batch_wait.c -o batch_wait; "
     "printf '%s\\n' 'n=$(cat \"$Q.n\" 2>/dev/null || echo 1); line=$(sed -n \"${n}p\" \"$Q\"); "
     "[ -z \"$line\" ] && line=$(tail -n 1 \"$Q\"); echo $((n + 1)) > \"$Q.n\"; [ \"$line\" = FAIL ] && exit 1; "
-    "for r in $line; do [ \"$r\" = - ] || printf \"0\\t%s\\n\" \"$r\"; done; exit 0' > fake_ls; "
-    "printf '%s\\n' 'case \"$*\" in *rulesets/*) cat \"$G.entries\" 2>/dev/null; exit 0;; *rulesets*) echo 7; exit 0;; "
-    "*jobs*) cat \"$G.jobs\" 2>/dev/null; exit 0;; *runs*) cat \"$G.run\" 2>/dev/null; "
-    "exit 0;; esac; exit 1' > fake_gh";
+    "for r in $line; do case $r in -) ;; *@*) printf \"%s\\t%s\\n\" \"${r#*@}\" \"${r%@*}\";; *) printf \"0\\t%s\\n\" "
+    "\"$r\";; esac; done; exit 0' > fake_ls; "
+    "cat > fake_gh <<'EOF'\n"
+    "a=\"$*\"\n"
+    "case \"$a\" in\n"
+    "*rulesets/*) cat \"$G.entries\" 2>/dev/null; exit 0;;\n"
+    "*rulesets*) echo 7; exit 0;;\n"
+    "*created_at*) for f in \"$G\".at.*; do [ -f \"$f\" ] || continue; b=${f##*.at.}; "
+    "case \"$a\" in *\"$b\"*) cat \"$f\"; exit 0;; esac; done; exit 1;;\n"
+    "*changes*) i=$(echo \"$a\" | sed 's|.*actions/runs/\\([0-9]*\\)/jobs.*|\\1|'); "
+    "cat \"$G.b.$i\" 2>/dev/null; exit 0;;\n"
+    "*jobs*) cat \"$G.jobs\" 2>/dev/null; exit 0;;\n"
+    "*runs*) cat \"$G.run\" 2>/dev/null; exit 0;;\n"
+    "esac\n"
+    "exit 1\n"
+    "EOF\n";
+
+static scratch::Run wait_as(const scratch::Project *p, const char *states, const char *cap, const char *window,
+                            const char *branch, const char *head);
 
 // Runs batch_wait as entry 1 (own branch pr-1-M, group head A) with the queue states `states` (one line per poll,
 // `-` for no branch, FAIL for a failed read), polling every 0 s and capped at `cap` polls.
 static scratch::Run wait_window(const scratch::Project *p, const char *states, const char *cap, const char *window) {
+    return wait_as(p, states, cap, window, "pr-1-M", "A");
+}
+
+// the same as the entry whose group branch is `gh-readonly-queue/main/<branch>` and whose group head is `head`
+static scratch::Run wait_as(const scratch::Project *p, const char *states, const char *cap, const char *window,
+                            const char *branch, const char *head) {
     char command[1024];
     __builtin_snprintf(
         command, sizeof command,
         "printf '%%b' '%s' > q && rm -f q.n && "
         "Q=$PWD/q G=$PWD/g BATCH_WAIT_GH=\"sh $PWD/fake_gh\" BATCH_WAIT_LS_REMOTE=\"sh $PWD/fake_ls\" "
-        "BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 "
-        "BATCH_WAIT_CAP=%s BATCH_WAIT_WINDOW=%s ./batch_wait refs/heads/gh-readonly-queue/main/pr-1-M A url",
-        states, cap, window);
+        "BATCH_WAIT_POLL=0 BATCH_WAIT_MISS_SLEEP=0 BATCH_WAIT_NOW=1000000 BATCH_WAIT_TICK=1 "
+        "BATCH_WAIT_CAP=%s BATCH_WAIT_WINDOW=%s ./batch_wait refs/heads/gh-readonly-queue/main/%s %s url",
+        states, cap, window, branch, head);
     return scratch::sh(p, command);
 }
 
@@ -212,4 +233,50 @@ export void test_batch_wait_skips_the_window_when_the_queue_builds_one_entry() {
     scratch::Run unread = wait_window(&p, own, "60", "3");
     scratch::expect_contains("batch_wait: an unreadable ruleset waits the window", unread.err,
                              "last for now; waiting 3 s for later groups");
+}
+
+export void test_batch_wait_has_one_deadline_per_batch_that_never_restarts() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    queue(&p);
+    // entry 3 (branch pr-3-B, head C) on groups pr-1-M (head A) and pr-2-A (head B); the clock starts at 1000000 and
+    // advances 1 s per pass; the window is 30 s
+    const char *chain = "refs/heads/gh-readonly-queue/main/pr-1-M@A refs/heads/gh-readonly-queue/main/pr-2-A@B "
+                        "refs/heads/gh-readonly-queue/main/pr-3-B@C";
+    scratch::Run made = scratch::sh(&p, "printf '11\\t999990\\n' > g.at.pr-1-M; printf '12\\t999995\\n' > g.at.pr-2-A; "
+                                        "echo 0 > g.b.11; echo 0 > g.b.12");
+    scratch::expect_status("batch_wait: the fake runs are made", 0, &made);
+    // the deadline is the first run's creation plus the window: 999990 + 30, so 20 s after this run started
+    scratch::Run first = wait_as(&p, chain, "60", "30", "pr-3-B", "C");
+    scratch::expect_status("batch_wait: last in the batch, it builds at the deadline", 0, &first);
+    scratch::expect_text("batch_wait: as alone", "batch=alone\n", first.out);
+    scratch::expect_contains("batch_wait: the deadline is the batch's first run plus the window", first.err,
+                             "batch: deadline 13:47:00Z (batch from refs/heads/gh-readonly-queue/main/pr-1-M)");
+    scratch::expect_contains("batch_wait: it waited for it", first.err, "last for now; waiting 20 s for later groups");
+    scratch::expect_contains("batch_wait: and built at it", first.err, "batch: deadline reached, building");
+    // a group ahead whose full build started is not in the batch: the batch starts after it, at pr-2-A (999995)
+    made = scratch::sh(&p, "echo 2 > g.b.11");
+    scratch::Run later = wait_as(&p, chain, "60", "30", "pr-3-B", "C");
+    scratch::expect_contains("batch_wait: the batch starts after a group that is building", later.err,
+                             "batch: deadline 13:47:05Z (batch from refs/heads/gh-readonly-queue/main/pr-2-A)");
+    // a deadline already past builds at once, with no wait
+    made = scratch::sh(&p, "printf '11\\t999000\\n' > g.at.pr-1-M; echo 0 > g.b.11");
+    scratch::Run past = wait_as(&p, chain, "60", "30", "pr-3-B", "C");
+    scratch::expect_status("batch_wait: a past deadline, it builds at once", 0, &past);
+    scratch::expect_text("batch_wait: as alone", "batch=alone\n", past.out);
+    // a later group that appears and leaves does not restart the deadline: built at 999990 + 30 as before
+    const char *busy = "refs/heads/gh-readonly-queue/main/pr-1-M@A refs/heads/gh-readonly-queue/main/pr-2-A@B "
+                       "refs/heads/gh-readonly-queue/main/pr-3-B@C";
+    char states[1024];
+    made = scratch::sh(&p, "printf '11\\t999990\\n' > g.at.pr-1-M");
+    __builtin_snprintf(states, sizeof states, "%s\n%s refs/heads/gh-readonly-queue/main/pr-4-C@D\n%s", busy, busy,
+                       busy);
+    scratch::Run kept = wait_as(&p, states, "60", "30", "pr-3-B", "C");
+    scratch::expect_status("batch_wait: a group that came and went, it still builds", 0, &kept);
+    scratch::expect_text("batch_wait: as waited", "batch=waited\n", kept.out);
+    scratch::expect_contains("batch_wait: at the same deadline", kept.err, "batch: deadline 13:47:00Z");
 }
