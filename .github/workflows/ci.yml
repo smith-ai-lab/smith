@@ -48,15 +48,20 @@ jobs:
     # knowledge/ and the skills run `smith docs` and their tests, everything else runs the full check
     runs-on: ubuntu-latest
     # 3 minutes of work plus the 10-minute cap of a queue run's wait for the groups ahead (`yield-to-queue`, #2833)
-    timeout-minutes: 15
+    # and the 60-minute cap of `batch-wait` (#2851, a queue entry)
+    timeout-minutes: 75
+    # `batch-wait` cancels the run of a group that left the queue; `yield-to-queue` force-cancels a PR check's own run
     permissions:
       contents: read
-      actions: write # yield-to-queue: force-cancel its own run
+      actions: write
       pull-requests: read
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       # whether `macos` runs: always, except on a pull request whose diff touches nothing only the Mac sees (#2822)
       mac_run: ${{ steps.scope.outputs.mac_run }}
+      # a queue entry: alone, waited or capped (`batch-wait`), and the PRs its tree holds that main does not
+      batch: ${{ steps.batch.outputs.batch }}
+      prs: ${{ steps.prs.outputs.prs }}
       matrix: ${{ steps.linux.outputs.matrix }}
       linux: ${{ steps.linux.outputs.linux }}
       # where the macOS jobs run (knowledge/ci-hosted.md): hosted macos-26, the owner's Mac only as overflow when the
@@ -90,6 +95,13 @@ jobs:
           echo "base=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")" >>"$GITHUB_OUTPUT"
           jq -r '.body // ""' "$RUNNER_TEMP/pr.json" >"$RUNNER_TEMP/body"
           echo "PR #$PR, base $(jq -r .base.sha "$RUNNER_TEMP/pr.json" | cut -c1-7), head ${GITHUB_SHA:0:7}" >>"$GITHUB_STEP_SUMMARY"
+      - name: Wait while a later queue entry is built on this one
+        # batching (#2851, knowledge/ci-hosted.md): with HEADGREEN a later group's passing run merges every entry ahead
+        # of it, so an entry with a later group built on it waits here, on this one runner, and every heavy job (they
+        # all need `changes`) waits with it; it is cancelled when its group merges. Once it is the last entry built, it
+        # goes on and the run is the full check of its own tree, as today. Nothing here makes `ci` pass by itself.
+        id: batch
+        uses: ./.github/actions/batch-wait
       - name: Pick the macOS runner
         id: mac
         uses: ./.github/actions/pick-mac
@@ -151,6 +163,16 @@ jobs:
           echo "scope=$scope" >>"$GITHUB_OUTPUT"
           echo "mac_run=$mac_run" >>"$GITHUB_OUTPUT"
           echo "scope: $scope (macos: $mac_run)" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: The pull requests this queue entry tests
+        id: prs
+        if: github.event_name == 'merge_group'
+        # every entry ahead of this one and this one: the squash commits on top of main, each subject ending in (#N)
+        run: |
+          git fetch -q origin main
+          prs=$(git log --format=%s "$(git merge-base HEAD origin/main)..HEAD" | grep -oE '[(]#[0-9]+[)]$' | tr -d '()' | tac | paste -sd ' ' -)
+          echo "prs=$prs" >>"$GITHUB_OUTPUT"
+          echo "tests: $prs" >>"$GITHUB_STEP_SUMMARY"
 
       - name: Does the change touch the warm job
         id: warm
@@ -729,8 +751,11 @@ jobs:
           CHECK_FMT_PROVE: ${{ needs.check-fmt-prove.result }}
           CHECK_LINT: ${{ needs.check-lint.result }}
           FRONTEND_COVERAGE: ${{ needs.frontend-coverage.result }}
+          BATCH: ${{ needs.changes.outputs.batch }}
+          PRS: ${{ needs.changes.outputs.prs }}
         run: |
           echo "scope: $SCOPE; jobs: $RESULTS" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$EVENT" = merge_group ]; then echo "batch: $BATCH; tests: $PRS" | tee -a "$GITHUB_STEP_SUMMARY"; fi
           case " $RESULTS " in
           *" failure "* | *" cancelled "*)
             echo "::error::a CI job failed or was cancelled"
@@ -1070,7 +1095,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .smith/frontend-coverage/fixed
-          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^step-cache-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '[.[]|select(.tag_name|test("^(step-cache|count-fixed)-"))|select([.assets[].name]|index("count-fixed.tar.gz"))]|sort_by(.created_at)|last|.tag_name // empty')
           if [ -z "$tag" ]; then echo "fixed files: none saved yet"; exit 0; fi
           d=$(mktemp -d)
           gh release download "$tag" -D "$d" -p count-fixed.tar.gz
@@ -1305,6 +1330,49 @@ jobs:
           if [ -n "$why" ]; then echo "::warning::the count fell from $before to $now files; the PR says: ${why#Count drop: }"; exit 0; fi
           echo "::error::the count fell from $before to $now files pass. Fix the files it lost (the Count step lists them), or add a line 'Count drop: <why>' to the PR body and ask the lead"
           exit 1
+
+  count-fixed-save:
+    # the queue run saves the fixed files of its own head commit (#2832). Main's `warm` publishes them with the step cache
+    # about 11 minutes after a merge, so the very next queue run always started cold (the fix job: 19 minutes instead of
+    # a few). A group's head commit is the tree main becomes if the group merges, so a run that passed (`ci` is green and
+    # the fix job ran) puts its `count-fixed` artifact in a prerelease `count-fixed-<sha7>`, which the fix job restores
+    # from like a `step-cache-*` one. Only a passing run saves, and a cache entry is keyed by what it depends on, so one
+    # for a group that never merges costs nothing. It does not gate the merge: it needs `ci` and nothing needs it. The 3
+    # newest `count-fixed-*` stay.
+    needs: [ci, frontend-coverage-fix]
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.ci.result == 'success' && needs.frontend-coverage-fix.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: count-fixed-${{ github.sha }}
+          path: ${{ runner.temp }}/f/fixed
+      - name: Release the fixed files
+        # a failure only leaves the next run cold
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/assets"; mkdir -p "$out"
+          tar -C "$RUNNER_TEMP/f" -c fixed | gzip -1 >"$out/count-fixed.tar.gz"
+          tag="count-fixed-${GITHUB_SHA:0:7}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "$out/count-fixed.tar.gz" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "count fixed $tag" --notes "The fixed files of the count at $GITHUB_SHA (#2832). Not a release of smith."
+          fi
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[]|select(.tagName|test("^count-fixed-"))]|sort_by(.createdAt)|reverse|.[3:]|.[].tagName' |
+            while read -r old; do
+              gh release delete "$old" --cleanup-tag --yes || echo "::warning::could not delete release $old"
+            done
+          echo "published $tag" | tee -a "$GITHUB_STEP_SUMMARY"
 
   publish:
     # publishes the draft the two release jobs added to: a published release is immutable, so it waits for both, and

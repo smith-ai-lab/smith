@@ -22,7 +22,7 @@ on:
         required: false
         type: string
       value:
-        description: "set-build-entries: max_entries_to_build, 1 to 5"
+        description: "set-build-entries: max_entries_to_build, 1 to 10"
         required: false
         type: string
 
@@ -131,7 +131,7 @@ jobs:
                 if [ -z "$run_id" ]; then echo "no-run"; return 1; fi
                 gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" --silent && echo "rerun $run_id" ;;
               set-build-entries)
-                case "$VALUE" in [1-5]) ;; *) echo "value must be 1 to 5"; return 2 ;; esac
+                case "$VALUE" in [1-9]|10) ;; *) echo "value must be 1 to 10"; return 2 ;; esac
                 local id rules
                 id=$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "main") | .id') || return 1
                 [ -n "$id" ] || { echo "no ruleset main"; return 1; }
