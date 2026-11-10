@@ -661,7 +661,8 @@ static void smith_front_std_gather(int count, char **args, size_t sources, bool 
 }
 
 // Beside each object a compile wrote (`-c`), `<object>.std`: the std modules its source needs, as import lines, so the
-// link of the objects (`smith build`) links them too. None, and an old list removed, when it needs none.
+// link of the objects (`smith build`) links them too. Empty when it needs none: `smith build` declares the list as an
+// output of the compile, so the step cache restores it with the object.
 static void smith_front_std_lists(size_t sources) {
     static char text[smith_front_std_max * 64];
     size_t used = 0;
@@ -674,10 +675,7 @@ static void smith_front_std_lists(size_t sources) {
     for (size_t i = 0; i < sources; i++) { // bounded by the sources
         int written = snprintf(path, sizeof path, "%s.std", smith_front_objects[i]);
         if (written <= 0 || (size_t)written >= sizeof path) continue;
-        if (used == 0)
-            unlink(path);
-        else if (!smith_front_write_file(path, text, used))
-            smith_die(smith_exit_missing, "cannot write", path);
+        if (!smith_front_write_file(path, text, used)) smith_die(smith_exit_missing, "cannot write", path);
     }
 }
 

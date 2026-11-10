@@ -307,7 +307,9 @@ export void test_front_join_driver_a_function_cast_to_a_pointer_is_passed_to_a_v
     test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U __enzyme_autodiff'"))).status, 0);
     test::check_equal(sh(as_str(format::push("nm ", folder, "/main.o | grep -q ' U enzyme_dup'"))).status, 0);
     test::check_equal(
-        sh(as_str(format::push("objdump -d ", folder, "/main.o | grep -A30 'grad>:' | grep -q 'lea.*square>'"))).status,
+        // `square` is in its own section (`.text.square`, #2853): its address is a relocation on the `lea`.
+        sh(as_str(format::push("objdump -dr ", folder, "/main.o | grep -A30 'grad>:' | grep -A1 'lea' | grep -q 'square'")))
+            .status,
         0);
     remove_all(folder);
 }

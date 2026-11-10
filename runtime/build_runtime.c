@@ -2394,10 +2394,11 @@ void smith_object(SmithBuild *b, SmithObject *object) {
         .order_only_inputs = headers ? smith_one(smith_lang_stamp) : smith_list(b, nullptr),
         // The new front end writes no effect summary (`smith cc --front-end=new` leaves `.fx` alone), so a declared one
         // is older than its source after the first build: the next build restores the object, rewrites its outputs
-        // and relinks (#2744). Only the old front end declares it.
+        // and relinks (#2744). Only the old front end declares it. The new one writes `<object>.std`, the std modules
+        // the link needs (#2853): declared, so the step cache restores it with the object.
         .outputs = smith_cat(b, smith_one(copy.output),
                              front_end[0] == nullptr ? smith_effects_outputs(b, copy.compiler, copy.source, copy.output)
-                                                     : smith_list(b, nullptr),
+                                                     : smith_one(smith_text("%s.std", copy.output)),
                              nullptr),
         .description = smith_text("compile %s", copy.source),
         .depfile = depfile,

@@ -6,6 +6,7 @@
 module front_mem_alloc_test;
 
 import front::roots;
+import std::console;
 import std::format;
 import std::process;
 import std::test;
@@ -86,7 +87,8 @@ static void passes(Str name, Str body) {
                                      "int main(void) { return check(); }\n"));
     write_text(as_str(format::push(folder, "/main.c")), main_c);
     I32 linked = smith_cc(folder, name, body, "main.c -o prog");
-    if (linked != 0) test::check_equal(text_of(as_str(format::push(folder, "/errors"))), as_str(format::push("")));
+    if (linked != 0) (void)console::print_error(text_of(as_str(format::push(folder, "/errors"))));
+    test::check_equal(linked, 0);
     if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
     clean(folder);
 }

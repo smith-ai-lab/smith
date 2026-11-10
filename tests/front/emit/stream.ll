@@ -5,7 +5,7 @@ source_filename = "t.smith"
 @text.1 = private unnamed_addr constant [4 x i8] c"i32\00", align 1
 @at = private unnamed_addr constant [12 x i8] c" at t.smith\00", align 1
 
-define internal ptr @countdown(i32 %0) {
+define hidden ptr @countdown(i32 %0) {
 entry:
   %args = alloca { i32 }, align 8
   br label %body
