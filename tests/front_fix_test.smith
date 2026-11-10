@@ -267,9 +267,10 @@ export void test_an_if_zero_or_one_keeps_the_live_branch() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    fix::Fixed fixed = fix::fix_text("t.smith", "#if 0\nint never();\n#include <never.h>\n#ifdef X\nint x;\n#endif\n#endif\n"
-                                                "int one() {\n#if 1\n    return 1;\n#else\n    return 2;\n#endif\n}\n"
-                                                "#if 0\nint a = 1;\n#else\nint a = 2;\n#endif\n");
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "#if 0\nint never();\n#include <never.h>\n#ifdef X\nint x;\n#endif\n#endif\n"
+                                 "int one() {\n#if 1\n    return 1;\n#else\n    return 2;\n#endif\n}\n"
+                                 "#if 0\nint a = 1;\n#else\nint a = 2;\n#endif\n");
     check_text(fixed.text, "fn one() -> i32:\n    return 1\nmut a: i32 = 2\n");
     parser::Parsed again = parser::parse_new("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
@@ -642,8 +643,9 @@ export void test_doc_comments_become_double_hash_lines() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    fix::Fixed fixed = fix::fix_text("t.smith", "/// The point.\nstruct P {\n    ///x\n    I32 x;\n    /** a\n     * b */\n"
-                                                "    I32 y;\n};\n/** One. */\nI32 one() {\n    return 1; ////\n}\n");
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "/// The point.\nstruct P {\n    ///x\n    I32 x;\n    /** a\n     * b */\n"
+                                 "    I32 y;\n};\n/** One. */\nI32 one() {\n    return 1; ////\n}\n");
     check_text(fixed.text, "## The point.\nstruct P:\n    ## x\n    x: i32\n    ## a\n    ## b\n    y: i32\n"
                            "## One.\nfn one() -> i32:\n    return 1 # //\n");
     parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
@@ -938,10 +940,12 @@ export void test_an_array_of_tuples_is_a_list_of_tuples() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text(
-        "t.smith", "typedef struct { I32, struct { F32, F32 } } Nested;\nI32 f(Nested n) {\n"
-                   "    struct { I32, F32 } xs[2] = {{1, 1.5f}, {2, 2.5f}};\n    return xs[1][0] + (I32)countof(n[1]);\n}\n");
-    check_text(fixed.text, "Nested := (i32, (f32, f32))\nfn f(n: Nested) -> i32:\n"
-                           "    xs: [2](i32, f32) = [(1, 1.5f), (2, 2.5f)]\n    return xs[1].0 + (countof(n.1)).to(i32)\n");
+        "t.smith",
+        "typedef struct { I32, struct { F32, F32 } } Nested;\nI32 f(Nested n) {\n"
+        "    struct { I32, F32 } xs[2] = {{1, 1.5f}, {2, 2.5f}};\n    return xs[1][0] + (I32)countof(n[1]);\n}\n");
+    check_text(fixed.text,
+               "Nested := (i32, (f32, f32))\nfn f(n: Nested) -> i32:\n"
+               "    xs: [2](i32, f32) = [(1, 1.5f), (2, 2.5f)]\n    return xs[1].0 + (countof(n.1)).to(i32)\n");
     parser::Parsed again = parser::parse_new("t.smith", fixed.text);
     check_count(countof(again.errors), 0);
 }
