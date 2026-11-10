@@ -692,6 +692,17 @@ static int smith_front_std_link(int used) {
     return used;
 }
 
+// Whether smith_front_arguments[first .. used) holds nothing but options: clang has no input to compile.
+static bool smith_front_only_options(int first, int used) {
+    for (int i = first; i < used; i++) { // bounded by used
+        if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
+            i++; // the value of -o is the output, not an input
+        else if (smith_front_is_input(smith_front_arguments[i]))
+            return false;
+    }
+    return true;
+}
+
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
@@ -755,13 +766,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
         smith_front_arguments[used++] = args[i];
     }
     if (links) used = smith_front_std_link(used);
-    bool only_options = true;            // nothing but options left: clang has no input to compile
-    for (int i = first; i < used; i++) { // bounded by used
-        if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
-            i++; // the value of -o is the output, not an input
-        else if (smith_front_is_input(smith_front_arguments[i]))
-            only_options = false;
-    }
+    bool only_options = smith_front_only_options(first, used);
     if (compile_only && only_options && sources == 1 && depfile != nullptr)
         smith_front_depfile(depfile, output, args[source_at]);
     return compile_only && only_options ? 0 : used;
