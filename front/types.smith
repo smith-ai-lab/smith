@@ -4401,6 +4401,12 @@ static Str joined(ast::Path path, Str separator) {
     return text;
 }
 
+// The module a module symbol names as its import writes it (`std.array` for `import std.array as a`), for a message.
+export Str imported_path(const Symbol *s) {
+    if (s->decl == nullptr || s->decl->kind != .import_module) return s->name;
+    return joined(s->decl->kind.import_module.path, ".");
+}
+
 // The prefix of every name of the module a module symbol stands for: `std::math::`. The declarations of a module
 // are in the table once, under this prefix, however many names it is imported by.
 static Str prefix_of_import(const ast::Decl *imported) {

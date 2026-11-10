@@ -671,18 +671,27 @@ static Bool is_discard(Str name) {
     return countof(name) == 1 && name[0] == '_';
 }
 
+// A local, a parameter or a loop name may not be the name of a module the file imports (the last part of its path, or
+// its `as` name): `array: Ty = w.ty` beside `import std.array` hides the module (owner, 2026-11-10, #3026: "yeah it
+// should be a shadowing error please"). Reports it and returns whether `name` is one; the name is still declared, so
+// its uses read the local and the one error is the only one. `_` never is.
+static Bool hides_module(types::Checked *r, ast::Span span, Str name) {
+    if (is_discard(name)) return false;
+    const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
+    if (earlier == nullptr || earlier->kind != .module_name) return false;
+    types::failf(r, span, "`", name, "` hides the module `", types::imported_path(earlier),
+                 "` that this file imports; shadowing is an error: choose another name");
+    return true;
+}
+
 // Shadowing is an error in smith's own syntax (spec "Modules and declarations"): a name that hides a variable of an
 // enclosing scope. Returns whether `name` shadows one. `_` never does. A binding in today's syntax may shadow.
 static Bool shadows(types::Checked *r, const ast::Decl *d, Str name) {
     if (!is_new_variable(d) || is_discard(name)) {
         return false;
     }
+    if (hides_module(r, d->span, name)) return false; // reported; declared all the same
     const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
-    if (earlier != nullptr && earlier->kind == .module_name) {
-        types::failf(r, d->span, "`", name, "` hides the module `", name,
-                     "`; shadowing is an error: assign with `=`, or choose another name");
-        return true;
-    }
     if (earlier == nullptr || earlier->kind != .variable) {
         return false;
     }
@@ -894,6 +903,7 @@ static void destructure_statement(types::Checked *r, const ast::Stmt *s) {
         if (is_discard(name)) {
             continue;
         }
+        (void)hides_module(r, names[i].span, name);
         const types::Symbol *earlier = types::lookup_own(&r->scopes, name);
         if (earlier != nullptr && earlier->kind == .variable) {
             types::failf(r, names[i].span, "`", name, "` hides a variable of the same name; shadowing is an error: ",
@@ -1803,6 +1813,7 @@ static void refutable_binding(types::Checked *r, ast::Span span, types::TypeRef 
         types::failf(r, else_branch->span, "the `else` of a binding must leave: end it with `return`, ",
                      "`break`, `continue` or a call that never returns");
     }
+    if (countof(pattern.binding) > 0) (void)hides_module(r, pattern.span, pattern.binding);
     const types::Symbol *earlier = types::lookup_own(&r->scopes, pattern.binding);
     if (countof(pattern.binding) > 0 && earlier != nullptr && earlier->kind == .variable) {
         types::failf(r, pattern.span, "`", pattern.binding,
@@ -1879,6 +1890,7 @@ static void for_in_statement(types::Checked *r, const ast::Stmt *s) {
             types::failf(r, names[i].span, "`", names[i].text, "` hides a variable of the same name; shadowing is an ",
                          "error, choose another name");
         } else if (!is_discard(names[i].text)) {
+            (void)hides_module(r, names[i].span, names[i].text);
             types::Symbol symbol = {
                 .name = names[i].text, .kind = .variable, .type = bound, .is_const = true, .is_new = true};
             (void)types::declare(&r->scopes, symbol);
@@ -2277,6 +2289,7 @@ static void lambda_body(types::Checked *r, Pending p) {
     for (Usize i = 0; i < countof(params) && i < countof(types::slots_of(shape).items); i++) {
         types::Symbol symbol = {
             .name = params[i].name, .kind = .variable, .type = types::slots_of(shape).items[i].type};
+        (void)hides_module(r, params[i].span, params[i].name);
         if (!is_discard(params[i].name) && !types::declare(&r->scopes, symbol)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name,
                          "` is already declared in this lambda; choose another name");
@@ -2386,6 +2399,7 @@ static void check_function(types::Checked *r, const ast::Decl *target, types::Ty
                                    .may_mut = params[i].is_new && countof(attributes) == 0 && !params[i].is_const &&
                                               !params[i].is_constexpr && !params[i].is_rest,
                                    .written = params[i].type};
+        if (params[i].is_new) (void)hides_module(r, params[i].span, params[i].name);
         if (!is_discard(params[i].name) && !types::declare(&r->scopes, parameter)) {
             types::failf(r, params[i].span, "the parameter `", params[i].name, "` is already declared in `", name,
                          "`; choose another name");

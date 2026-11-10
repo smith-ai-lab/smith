@@ -1108,7 +1108,7 @@ struct CallGraph {
     CallNode functions[:];
     Usize slots[:]; // a table of function indexes plus one, keyed by the function's address (0 is empty)
     Usize first[:];
-    Usize to[:];
+    Usize callees[:]; // the function each edge reaches (`to` is the built-in conversion `x.to(T)`, #2526)
     Bool tail[:];
     CallNode sites[:]; // the call instruction of each call
     Bool addressed[:]; // whether the function's address is used other than to call it: a call through a function
@@ -1179,7 +1179,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
                 Usize callee = rec_callee_of(g, x);
                 if (callee != ~(Usize)0) {
                     if (fill) {
-                        g->to[next] = callee;
+                        g->callees[next] = callee;
                         g->tail[next] = musttail;
                         g->sites[next].value = x;
                     }
@@ -1197,7 +1197,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
                     if (!g->addressed[target] || c::LLVMGlobalGetValueType(g->functions[target].value) != wanted)
                         continue;
                     if (fill) {
-                        g->to[next] = target;
+                        g->callees[next] = target;
                         g->tail[next] = musttail;
                         g->sites[next].value = x;
                     }
@@ -1210,7 +1210,7 @@ static void rec_walk_calls(CallGraph *g, Bool fill) {
     if (!fill) {
         Usize functions = countof(g->functions) + 1;
         g->first = mem::alloc_slice(Usize, functions);
-        g->to = mem::alloc_slice(Usize, next);
+        g->callees = mem::alloc_slice(Usize, next);
         g->tail = mem::alloc_slice(Bool, next);
         g->sites = mem::alloc_slice(CallNode, next);
     }
@@ -1242,7 +1242,7 @@ static void rec_components(const CallGraph *g, Usize component[:]) {
         while (depth > 0) {
             Usize u = frame_node[depth - 1];
             if (frame_edge[depth - 1] < g->first[u + 1]) {
-                Usize v = g->to[frame_edge[depth - 1]++];
+                Usize v = g->callees[frame_edge[depth - 1]++];
                 if (order[v] == 0) {
                     order[v] = low[v] = ++visits;
                     pending[kept++] = v;
@@ -1294,7 +1294,7 @@ static Str rec_way_round(const CallGraph *g, Usize caller, Usize callee) {
     while (head < last && !seen[caller]) {
         Usize u = queue[head++];
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            Usize v = g->to[k];
+            Usize v = g->callees[k];
             if (seen[v]) {
                 continue;
             }
@@ -1364,7 +1364,7 @@ static state::Status rec_check_exits(const CallGraph *g, const Usize component[:
             exits[id] = true;
         }
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            if (component[g->to[k]] == id) {
+            if (component[g->callees[k]] == id) {
                 looped[id] = true;
             }
         }
@@ -1375,11 +1375,11 @@ static state::Status rec_check_exits(const CallGraph *g, const Usize component[:
             continue;
         }
         for (Usize k = g->first[u]; k < g->first[u + 1]; k++) {
-            if (component[g->to[k]] != component[u]) {
+            if (component[g->callees[k]] != component[u]) {
                 continue;
             }
             ast::Span nowhere = {};
-            Str way = rec_way_round(g, u, g->to[k]);
+            Str way = rec_way_round(g, u, g->callees[k]);
             result = state::failf(nowhere, "this recursion never ends: no path returns without the call: ", way);
             break;
         }
@@ -1426,7 +1426,7 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
     c::LLVMValueRef lowered = nullptr; // a call through a function value has an edge for each target: lowered once
     for (Usize u = 0; u < n && result == .ok; u++) {
         for (Usize k = g.first[u]; k < g.first[u + 1]; k++) {
-            if (g.tail[k] || component[g.to[k]] != component[u] || g.sites[k].value == lowered) {
+            if (g.tail[k] || component[g.callees[k]] != component[u] || g.sites[k].value == lowered) {
                 continue;
             }
             lowered = g.sites[k].value;
@@ -1437,7 +1437,7 @@ export state::Status check_recursion(c::LLVMModuleRef module) {
     mem::free(g.functions.data);
     mem::free(g.slots.data);
     mem::free(g.first.data);
-    mem::free(g.to.data);
+    mem::free(g.callees.data);
     mem::free(g.tail.data);
     mem::free(g.sites.data);
     mem::free(g.addressed.data);
