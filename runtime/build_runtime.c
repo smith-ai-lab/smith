@@ -247,7 +247,7 @@ static void *smith_alloc_from(size_t size, const char *caller) {
     return result;
 }
 
-#define smith_alloc(size) smith_alloc_from((size), __func__)
+#define SMITH_ALLOC(size) smith_alloc_from((size), __func__)
 
 // The top five allocating functions by bytes, on stderr (#3034).
 static void smith_arena_print_top(void) {
@@ -272,7 +272,7 @@ static const char *smith_copy_string_from(const char *text, const char *caller) 
     return copy;
 }
 
-#define smith_copy_string(text) smith_copy_string_from((text), __func__)
+#define SMITH_COPY_STRING(text) smith_copy_string_from((text), __func__)
 
 static size_t smith_count(const char *const *list) {
     if (list == nullptr) return 0;
@@ -289,19 +289,19 @@ static const char **smith_new_list_from(size_t count, const char *caller) {
     return list;
 }
 
-#define smith_new_list(count) smith_new_list_from((count), __func__)
+#define SMITH_NEW_LIST(count) smith_new_list_from((count), __func__)
 
 // A nullptr list reads as empty, so an optional field left unset needs no care.
 static const char *const *smith_copy_list(const char *const *list) {
     size_t count = smith_count(list);
-    const char **copy = smith_new_list(count);
+    const char **copy = SMITH_NEW_LIST(count);
     for (size_t i = 0; i < count; i++)
-        copy[i] = smith_copy_string(list[i]);
+        copy[i] = SMITH_COPY_STRING(list[i]);
     return copy;
 }
 
 static const char *const *smith_one(const char *text) {
-    const char **list = smith_new_list(1);
+    const char **list = SMITH_NEW_LIST(1);
     list[0] = text;
     return list;
 }
@@ -311,7 +311,7 @@ static const char *const *smith_one(const char *text) {
     va_copy(again, args);
     int length = vsnprintf(nullptr, 0, format, args);
     SMITH_ASSERT(length >= 0);
-    char *text = smith_alloc((size_t)length + 1);
+    char *text = SMITH_ALLOC((size_t)length + 1);
     int written = vsnprintf(text, (size_t)length + 1, format, again);
     va_end(again);
     SMITH_ASSERT(written == length);
@@ -410,7 +410,7 @@ static const char *const *smith_compiler_inputs(const SmithStep *step, const cha
             (invoked == nullptr || strcmp(inputs[i], invoked) != 0))
             continue;
         size_t count = smith_count(inputs);
-        const char **list = (const char **)smith_alloc((count + 1) * sizeof(const char *));
+        const char **list = (const char **)SMITH_ALLOC((count + 1) * sizeof(const char *));
         for (size_t k = 0; k <= count; k++)
             list[k] = inputs[k];
         list[i] = smith_compiler_file(compiler);
@@ -427,10 +427,10 @@ static SmithStep smith_copy_step(const SmithStep *step) {
     copy.implicit_inputs = smith_compiler_inputs(step, smith_copy_list(step->implicit_inputs));
     copy.order_only_inputs = smith_copy_list(step->order_only_inputs);
     copy.outputs = smith_copy_list(step->outputs);
-    if (step->depfile != nullptr) copy.depfile = smith_copy_string(step->depfile);
-    if (step->stamp != nullptr) copy.stamp = smith_copy_string(step->stamp);
-    if (step->description != nullptr) copy.description = smith_copy_string(step->description);
-    if (step->pool != nullptr) copy.pool = smith_copy_string(step->pool);
+    if (step->depfile != nullptr) copy.depfile = SMITH_COPY_STRING(step->depfile);
+    if (step->stamp != nullptr) copy.stamp = SMITH_COPY_STRING(step->stamp);
+    if (step->description != nullptr) copy.description = SMITH_COPY_STRING(step->description);
+    if (step->pool != nullptr) copy.pool = SMITH_COPY_STRING(step->pool);
     return copy;
 }
 
@@ -583,7 +583,7 @@ void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
     smith_context = nullptr;
     smith_check_path_name("a task", name);
     if (smith_refuse_verb_name("task", name)) {
-        step->outputs = smith_one(smith_copy_string(name)); // so the rest of the build file runs and finds more
+        step->outputs = smith_one(SMITH_COPY_STRING(name)); // so the rest of the build file runs and finds more
         return;
     }
     smith_context = smith_text("task %s", name);
@@ -606,7 +606,7 @@ void smith_task(SmithBuild *b, const char *name, SmithStep *step) {
         return;
     }
     entry = smith_add_entry(SmithEntryKind_Task);
-    entry->name = smith_copy_string(name);
+    entry->name = SMITH_COPY_STRING(name);
     entry->step = copy;
     copy.outputs = smith_one(entry->name);
     *step = copy;
@@ -633,7 +633,7 @@ void smith_alias(SmithBuild *b, const char *name, const char *const *targets) {
         return;
     }
     entry = smith_add_entry(SmithEntryKind_Alias);
-    entry->name = smith_copy_string(name);
+    entry->name = SMITH_COPY_STRING(name);
     entry->targets = smith_copy_list(targets);
     smith_context = nullptr;
 }
@@ -645,7 +645,7 @@ void smith_default(SmithBuild *b, const char *const *targets) {
     smith_default_called = true;
     for (size_t i = 0; targets[i] != nullptr; i++) {
         if (smith_default_count >= smith_defaults_max) smith_too_many("defaults", smith_defaults_max);
-        smith_default_names[smith_default_count++] = smith_copy_string(targets[i]);
+        smith_default_names[smith_default_count++] = SMITH_COPY_STRING(targets[i]);
     }
 }
 
@@ -659,7 +659,7 @@ void smith_pool(SmithBuild *b, const char *name, int depth) {
         if (strcmp(smith_pools[i].name, name) == 0) smith_fail("pool '%s' is declared twice", name);
     }
     if (smith_pool_count >= smith_pools_max) smith_too_many("pools", smith_pools_max);
-    smith_pools[smith_pool_count++] = (SmithPool){.name = smith_copy_string(name), .depth = depth};
+    smith_pools[smith_pool_count++] = (SmithPool){.name = SMITH_COPY_STRING(name), .depth = depth};
 }
 
 // Options.
@@ -689,8 +689,8 @@ static SmithDeclared *smith_declare(const char *name, const char *description, b
     *fresh = true;
     SmithDeclared *declared = &smith_declared[smith_declared_count++];
     *declared = (SmithDeclared){
-        .name = smith_copy_string(name),
-        .description = description != nullptr ? smith_copy_string(description) : "",
+        .name = SMITH_COPY_STRING(name),
+        .description = description != nullptr ? SMITH_COPY_STRING(description) : "",
         .flag = flag,
     };
     return declared;
@@ -728,11 +728,11 @@ const char *const *smith_args(SmithBuild *b) {
     size_t count = 0;
     for (const char *c = text; *c != '\0'; c++)
         count += *c == ';' ? 1 : 0;
-    const char **list = smith_new_list(count);
+    const char **list = SMITH_NEW_LIST(count);
     for (size_t i = 0; i < count; i++) {
         text++; // the ";"
         size_t length = strcspn(text, ";");
-        char *argument = smith_alloc(length + 1);
+        char *argument = SMITH_ALLOC(length + 1);
         size_t used = 0;
         for (size_t k = 0; k < length; k++) {
             if (text[k] == '%' && k + 2 < length) {
@@ -843,7 +843,7 @@ static void smith_glob_push(const char *path, size_t part, size_t depth) {
 }
 
 static const char *smith_glob_join(const char *path, const char *name) {
-    if (*path == '\0') return smith_copy_string(name);
+    if (*path == '\0') return SMITH_COPY_STRING(name);
     bool slash = path[strlen(path) - 1] == '/';
     return smith_text("%s%s%s", path, slash ? "" : "/", name);
 }
@@ -866,7 +866,7 @@ static void smith_glob_split(const char *pattern) {
 }
 
 static const char *smith_glob_part_text(size_t part) {
-    char *copy = smith_alloc(smith_glob_parts[part].length + 1);
+    char *copy = SMITH_ALLOC(smith_glob_parts[part].length + 1);
     memcpy(copy, smith_glob_parts[part].text, smith_glob_parts[part].length);
     copy[smith_glob_parts[part].length] = '\0';
     return copy;
@@ -937,7 +937,7 @@ const char *const *smith_glob(SmithBuild *b, const char *const *patterns) {
     }
     size_t matches = smith_glob_name_count;
     if (matches > 1) qsort((void *)smith_glob_names, matches, sizeof *smith_glob_names, smith_compare_strings);
-    const char **list = smith_new_list(matches);
+    const char **list = SMITH_NEW_LIST(matches);
     size_t used = 0;
     for (size_t i = 0; i < matches; i++) {
         if (used > 0 && strcmp(list[used - 1], smith_glob_names[i]) == 0) continue;
@@ -1015,7 +1015,7 @@ static const char *smith_capture_with(const char *const *argv, const char *fallb
     if (has_fallback && !(WIFEXITED(status) && WEXITSTATUS(status) == 0)) return fallback;
     smith_require_success(argv[0], status);
     if (length > 0 && smith_capture_buffer[length - 1] == '\n') length -= 1;
-    char *text = smith_alloc(length + 1);
+    char *text = SMITH_ALLOC(length + 1);
     memcpy(text, smith_capture_buffer, length);
     text[length] = '\0';
     return text;
@@ -1109,7 +1109,7 @@ static const char *smith_find_executable(const char *name, bool resolve) {
     char real[PATH_MAX];
     if (strchr(name, '/') != nullptr) {
         if (realpath(name, real) == nullptr) return nullptr;
-        return smith_copy_string(resolve ? real : name);
+        return SMITH_COPY_STRING(resolve ? real : name);
     }
     const char *path = getenv("PATH");
     if (path == nullptr) return nullptr;
@@ -1119,7 +1119,7 @@ static const char *smith_find_executable(const char *name, bool resolve) {
         int written = snprintf(found, sizeof found, "%.*s/%s", (int)length, length > 0 ? start : ".", name);
         if (written > 0 && (size_t)written < sizeof found && access(found, X_OK) == 0 &&
             realpath(found, real) != nullptr)
-            return smith_copy_string(resolve ? real : found);
+            return SMITH_COPY_STRING(resolve ? real : found);
         if (end == nullptr) break;
         start = end + 1;
     }
@@ -1234,11 +1234,11 @@ const char *const *smith_cat(SmithBuild *b, const char *const *first, ...) {
     for (size_t i = 0; i < lists_count; i++)
         total += smith_count(lists[i]);
     if (total > smith_list_max) smith_too_many("entries in a list", smith_list_max);
-    const char **joined = smith_new_list(total);
+    const char **joined = SMITH_NEW_LIST(total);
     size_t used = 0;
     for (size_t i = 0; i < lists_count; i++) {
         for (size_t j = 0; lists[i][j] != nullptr; j++)
-            joined[used++] = smith_copy_string(lists[i][j]);
+            joined[used++] = SMITH_COPY_STRING(lists[i][j]);
     }
     SMITH_ASSERT(used == total);
     return joined;
@@ -1254,11 +1254,11 @@ const char *const *smith_map(SmithBuild *b, const char *const *items, const char
     size_t count = smith_count(items);
     size_t before = (size_t)(hole - format);
     const char *after = hole + 2;
-    const char **mapped = smith_new_list(count);
+    const char **mapped = SMITH_NEW_LIST(count);
     for (size_t i = 0; i < count; i++) {
         size_t item_length = strlen(items[i]);
         size_t after_length = strlen(after);
-        char *text = smith_alloc(before + item_length + after_length + 1);
+        char *text = SMITH_ALLOC(before + item_length + after_length + 1);
         memcpy(text, format, before);
         memcpy(text + before, items[i], item_length);
         memcpy(text + before + item_length, after, after_length + 1);
@@ -1276,7 +1276,7 @@ const char *smith_join(SmithBuild *b, const char *const *items, const char *sepa
     size_t total = 0;
     for (size_t i = 0; i < count; i++)
         total += strlen(items[i]) + (i > 0 ? separator_length : 0);
-    char *text = smith_alloc(total + 1);
+    char *text = SMITH_ALLOC(total + 1);
     size_t used = 0;
     for (size_t i = 0; i < count; i++) {
         if (i > 0) memcpy(text + used, separator, separator_length);
@@ -1301,11 +1301,11 @@ const char *const *smith_list(SmithBuild *b, const char *first, ...) {
         count++;
     }
     va_end(args);
-    const char **list = smith_new_list(count);
+    const char **list = SMITH_NEW_LIST(count);
     va_start(args, first);
     const char *item = first;
     for (size_t i = 0; i < count; i++) {
-        list[i] = smith_copy_string(item);
+        list[i] = SMITH_COPY_STRING(item);
         item = va_arg(args, const char *);
     }
     va_end(args);
@@ -1343,7 +1343,7 @@ const char *smith_library(SmithBuild *b, const char *name) {
 
 static smith_build_PackageResult smith_package_failed(SmithPackageKind kind, const char *message) {
     return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_error,
-                                       .error = {.kind = kind, .message = smith_copy_string(message)}};
+                                       .error = {.kind = kind, .message = SMITH_COPY_STRING(message)}};
 }
 
 smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *package) {
@@ -1361,7 +1361,7 @@ smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *packa
     // A package already in the cache is only looked up; a fetch prints a line first, since a download can be slow.
     if (smith_package_ensure(package->url, package->hash, true, folder, hash, &error)) {
         return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_ok,
-                                           .ok = smith_copy_string(folder)};
+                                           .ok = SMITH_COPY_STRING(folder)};
     }
     if (offline) return smith_package_failed(SmithPackageKind_Offline, error.text);
     fprintf(stderr, "smith: fetching %s\n", package->url);
@@ -1371,7 +1371,7 @@ smith_build_PackageResult smith_package(SmithBuild *b, const SmithPackage *packa
         return smith_package_failed(error.wrong_hash ? SmithPackageKind_Hash : SmithPackageKind_Fetch, error.text);
     }
     return (smith_build_PackageResult){.tag = smith_enum_result_const_char_ptr__SmithPackageError_tag_ok,
-                                       .ok = smith_copy_string(folder)};
+                                       .ok = SMITH_COPY_STRING(folder)};
 }
 
 const char *const *smith_when(SmithBuild *b, bool condition, const char *const *items) {
@@ -1449,7 +1449,7 @@ static const char *smith_modules_name(const char *path) {
     if (strncmp(path, skip, strlen(skip)) == 0) path += strlen(skip);
     size_t length = strlen(path);
     if (length > 2 && strcmp(path + length - 2, ".h") == 0) length -= 2;
-    char *name = smith_alloc(length + 2);
+    char *name = SMITH_ALLOC(length + 2);
     size_t used = 0;
     if (length > 0 && path[0] >= '0' && path[0] <= '9') name[used++] = '_';
     for (size_t i = 0; i < length; i++)
@@ -1496,8 +1496,8 @@ static const char *smith_modules_map(SmithBuild *b, const char *folder, const ch
     const char *const *headers = smith_glob(b, smith_list(b, smith_text("%s/**/*.h", folder), nullptr));
     size_t count = smith_count(headers);
     if (count == 0) smith_fail("smith_modules: the folder '%s' holds no .h file", folder);
-    const char **lines = smith_new_list(count + 2);
-    const char **plain = smith_new_list(count);
+    const char **lines = SMITH_NEW_LIST(count + 2);
+    const char **plain = SMITH_NEW_LIST(count);
     size_t used = 0;
     size_t plain_count = 0;
     for (size_t i = 0; i < count; i++) {
@@ -1756,7 +1756,7 @@ void smith_modules(SmithBuild *b, const SmithModules *modules) {
     char cache[PATH_MAX];
     SmithPackageFault error;
     if (!smith_modules_cache_folder(cache, &error)) smith_fail("smith_modules: %s", error.text);
-    const char **flags = smith_new_list(count + 5 + smith_modules_ignored_count);
+    const char **flags = SMITH_NEW_LIST(count + 5 + smith_modules_ignored_count);
     flags[0] = "-fmodules";
     flags[1] = smith_text("-fmodules-cache-path=%s", cache); // one cache for every project and worktree
     // The pruning rule is the same as the package cache's, and written in every command: clang removes a module unused
@@ -1931,12 +1931,12 @@ static const char *smith_lang_module_of(const char *path) {
     }
     if (at >= length || text[at] != ';') return nullptr;
     name[used] = '\0';
-    return smith_copy_string(name);
+    return SMITH_COPY_STRING(name);
 }
 
 // "a::b" as "a/b".
 static const char *smith_lang_slashed(const char *name) {
-    char *copy = smith_alloc(strlen(name) + 1);
+    char *copy = SMITH_ALLOC(strlen(name) + 1);
     size_t used = 0;
     for (size_t i = 0; name[i] != '\0'; i++) { // bounded by the name
         if (name[i] == ':' && name[i + 1] == ':') {
@@ -2007,7 +2007,7 @@ static const char *const *smith_lang_words(const char *text) {
     size_t count = 0;
     for (const char *c = text; *c != '\0'; c++)
         count += *c != ' ' && (c == text || c[-1] == ' ');
-    const char **words = smith_new_list(count);
+    const char **words = SMITH_NEW_LIST(count);
     size_t used = 0;
     for (const char *c = text; *c != '\0' && used < count;) { // bounded by the words
         while (*c == ' ')
@@ -2056,7 +2056,7 @@ static size_t smith_lang_walk(const SmithLangNode *nodes, size_t count, int star
 // The check step: fails, naming the cycle, when the imports in the headers have one.
 static int smith_lang_check(SmithRun *run) {
     size_t count = smith_count(run->inputs);
-    SmithLangNode *nodes = smith_alloc((count + 1) * sizeof *nodes);
+    SmithLangNode *nodes = SMITH_ALLOC((count + 1) * sizeof *nodes);
     for (size_t i = 0; i < count; i++) {
         const char *const *lines = smith_lines_required(run->b, run->inputs[i]);
         const char *name = smith_lang_header_line(lines, "// smith-module: ");
@@ -2067,9 +2067,9 @@ static int smith_lang_check(SmithRun *run) {
         }
         nodes[i] = (SmithLangNode){.name = name, .imports = smith_lang_words(imports)};
     }
-    int *state = smith_alloc((count + 1) * sizeof *state);
-    int *path = smith_alloc((count + 1) * sizeof *path);
-    size_t *edge = smith_alloc((count + 1) * sizeof *edge);
+    int *state = SMITH_ALLOC((count + 1) * sizeof *state);
+    int *path = SMITH_ALLOC((count + 1) * sizeof *path);
+    size_t *edge = SMITH_ALLOC((count + 1) * sizeof *edge);
     for (size_t i = 0; i < count; i++) {
         size_t from = 0;
         if (state[i] != 0) continue;
@@ -2090,7 +2090,7 @@ static void smith_lang_declare_header_steps(SmithBuild *b);
 static void smith_lang_finish(SmithBuild *b) {
     smith_lang_declare_header_steps(b);
     if (!smith_lang_sources_used) return;
-    const char **headers = smith_new_list(smith_lang_module_count);
+    const char **headers = SMITH_NEW_LIST(smith_lang_module_count);
     for (size_t i = 0; i < smith_lang_module_count; i++)
         headers[i] = smith_lang_module_headers[i];
     headers[smith_lang_module_count] = nullptr;
@@ -2132,7 +2132,7 @@ static const char *const *smith_header_pass_flags(SmithBuild *b, const SmithObje
     size_t count = 0;
     for (size_t i = 0; object->flags != nullptr && object->flags[i] != nullptr; i++)
         count += 1;
-    const char **kept = (const char **)smith_alloc((count + 1) * sizeof *kept);
+    const char **kept = (const char **)SMITH_ALLOC((count + 1) * sizeof *kept);
     size_t used = 0;
     for (size_t i = 0; i < count; i++) { // bounded by the flags
         const char *flag = object->flags[i];
@@ -2222,7 +2222,7 @@ static const char *smith_effects_summary(const char *compiler, const char *sourc
     if (smith_effects_self == nullptr || !smith_compiler_is_this_smith(compiler)) return nullptr;
     if (!smith_ends_with(source, ".c") && !smith_ends_with(source, ".smith")) return nullptr;
     char path[PATH_MAX];
-    return smith_effects_path(object, path, sizeof path) ? smith_copy_string(path) : nullptr;
+    return smith_effects_path(object, path, sizeof path) ? SMITH_COPY_STRING(path) : nullptr;
 }
 
 static const char *const *smith_effects_outputs(SmithBuild *b, const char *compiler, const char *source,
@@ -2236,7 +2236,7 @@ static const char *const *smith_effects_outputs(SmithBuild *b, const char *compi
 static const char *const *smith_lang_imports_of(SmithBuild *b, const char *source) {
     char *text = nullptr;
     size_t length = smith_read_file(source, &text);
-    const char **names = smith_new_list(64);
+    const char **names = SMITH_NEW_LIST(64);
     size_t count = 0;
     size_t at = 0;
     for (size_t guard = 0; guard < length && count < 63; guard++) { // each pass reads one line
@@ -2262,7 +2262,7 @@ static const char *const *smith_lang_imports_of(SmithBuild *b, const char *sourc
                 cursor++; // `as alias;`
             if (good && cursor < end && text[cursor] == ';') {
                 name[used] = '\0';
-                names[count++] = smith_copy_string(name);
+                names[count++] = SMITH_COPY_STRING(name);
             }
         }
         if (end >= length) break;
@@ -2303,8 +2303,8 @@ static void smith_lang_header_step(SmithBuild *b, const SmithObject *object, con
 // Whether the header step `to` can be reached from `from` along the import edges adj[i * n + j] (step i imports step
 // j).
 static bool smith_lang_reaches(const bool *adj, size_t n, size_t from, size_t to) {
-    bool *seen = smith_alloc(n);
-    size_t *stack = smith_alloc(n * sizeof *stack);
+    bool *seen = SMITH_ALLOC(n);
+    size_t *stack = SMITH_ALLOC(n * sizeof *stack);
     size_t top = 0;
     stack[top++] = from;
     seen[from] = true;
@@ -2322,7 +2322,7 @@ static bool smith_lang_reaches(const bool *adj, size_t n, size_t from, size_t to
 
 // The import edges among the header steps: adj[i * n + j] when the module of step i imports the module of step j.
 static bool *smith_lang_import_edges(SmithBuild *b, size_t n) {
-    bool *adj = smith_alloc(n * n);
+    bool *adj = SMITH_ALLOC(n * n);
     for (size_t i = 0; i < n; i++) {
         const char *const *imports = smith_lang_imports_of(b, smith_lang_header_sources[i]);
         for (size_t k = 0; imports[k] != nullptr; k++) { // bounded by the imports
@@ -2387,7 +2387,7 @@ static const char *const *smith_proved_flags(SmithBuild *b, const SmithObject *o
     const char *flag = smith_text("-DSMITH_PROVED=%016" PRIx64, smith_hash_bytes(text, size));
     const char *const *lines = smith_split_lines(text, size);
     size_t count = smith_count(lines);
-    const char **named = smith_new_list(count + 1);
+    const char **named = SMITH_NEW_LIST(count + 1);
     size_t used = 0;
     named[used++] = path;
     for (size_t i = 0; i < count; i++) {
@@ -2405,9 +2405,9 @@ void smith_object(SmithBuild *b, SmithObject *object) {
     smith_require_text("smith_object", "source", object->source);
     smith_require_text("smith_object", "output", object->output);
     SmithObject copy = *object;
-    copy.compiler = smith_copy_string(object->compiler);
-    copy.source = smith_copy_string(object->source);
-    copy.output = smith_copy_string(object->output);
+    copy.compiler = SMITH_COPY_STRING(object->compiler);
+    copy.source = SMITH_COPY_STRING(object->source);
+    copy.output = SMITH_COPY_STRING(object->output);
     copy.flags = smith_copy_list(object->flags);
     copy.implicit_inputs = smith_copy_list(object->implicit_inputs);
     const char *depfile = smith_replace_extension(b, copy.output, ".d");
@@ -2476,7 +2476,7 @@ static bool smith_is_library_file(const char *word) {
 
 static const char *const *smith_library_files(const char *const *libraries) {
     size_t count = smith_count(libraries);
-    const char **files = smith_new_list(count);
+    const char **files = SMITH_NEW_LIST(count);
     size_t used = 0;
     for (size_t i = 0; i < count; i++) {
         if (smith_is_library_file(libraries[i])) files[used++] = libraries[i];
@@ -2513,7 +2513,7 @@ static const SmithObject *smith_needed_object(SmithBuild *b, const SmithObject *
     }
     const char *slash = strrchr(by->output, '/');
     int folder = slash != nullptr ? (int)(slash - by->output + 1) : 0;
-    SmithObject *object = smith_alloc(sizeof *object);
+    SmithObject *object = SMITH_ALLOC(sizeof *object);
     *object = (SmithObject){.compiler = by->compiler,
                             .source = source,
                             .output = smith_text("%.*s%s.o", folder, by->output, name),
@@ -2570,7 +2570,7 @@ static void smith_handlers_asan_options(SmithBuild *b, const SmithProgram *progr
         "'__attribute__((weak, used)) const char *__asan_default_options(void) { return \"verify_interceptors=0\"; }' "
         "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
-        .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
+        .command = smith_list(b, "sh", "-c", script, SMITH_COPY_STRING(program->linker), object, nullptr),
         .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
         .outputs = smith_one(object),
         .description = smith_text("compile %s", object),
@@ -2584,7 +2584,7 @@ static const char *const *smith_handlers_deployment(SmithBuild *b, const SmithPr
     constexpr char prefix[] = "-mmacosx-version-min=";
     for (size_t i = 0; program->flags != nullptr && program->flags[i] != nullptr; i++) // bounded by the flags
         if (strncmp(program->flags[i], prefix, sizeof prefix - 1) == 0)
-            return smith_one(smith_copy_string(program->flags[i]));
+            return smith_one(SMITH_COPY_STRING(program->flags[i]));
     return smith_list(b, nullptr);
 }
 
@@ -2598,7 +2598,7 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
     if (!made) {
         if (smith_handlers_made_count >= smith_handlers_folders_max)
             smith_too_many("program folders", smith_handlers_folders_max);
-        smith_handlers_made[smith_handlers_made_count++] = smith_copy_string(folder);
+        smith_handlers_made[smith_handlers_made_count++] = SMITH_COPY_STRING(folder);
         const char *source = smith_library(b, "handlers");
         const char *const flags[] = {"-std=gnu23",
                                      "-O2",
@@ -2611,7 +2611,7 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
                                      nullptr};
         const char *const tail[] = {source, "-o", dylib, nullptr};
         SmithStep step = {
-            .command = smith_cat(b, smith_one(smith_copy_string(program->linker)),
+            .command = smith_cat(b, smith_one(SMITH_COPY_STRING(program->linker)),
                                  smith_handlers_deployment(b, program), smith_copy_list(flags), tail, nullptr),
             .inputs = smith_one(source),
             .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
@@ -2654,7 +2654,7 @@ static void smith_handlers_object(SmithBuild *b, const SmithProgram *program, co
     const char *const flags[] = {"-std=gnu23", "-O2", "-fPIC", "-I", ".smith/include", "-c", nullptr};
     const char *const tail[] = {source, "-o", object, nullptr};
     SmithStep step = {
-        .command = smith_cat(b, smith_one(smith_copy_string(program->linker)), smith_copy_list(flags), tail, nullptr),
+        .command = smith_cat(b, smith_one(SMITH_COPY_STRING(program->linker)), smith_copy_list(flags), tail, nullptr),
         .inputs = smith_one(source),
         .implicit_inputs = smith_cat(b, smith_one(smith_compiler_file(program->linker)),
                                      smith_one(".smith/include/smith/handlers.h"), nullptr),
@@ -2669,7 +2669,7 @@ static void smith_asan_abort_options(SmithBuild *b, const SmithProgram *program,
                          "'const char *__asan_default_options(void) { return \"abort_on_error=1:detect_leaks=0\"; }' "
                          "| \"$0\" -x c - -c -o \"$1\"";
     SmithStep step = {
-        .command = smith_list(b, "sh", "-c", script, smith_copy_string(program->linker), object, nullptr),
+        .command = smith_list(b, "sh", "-c", script, SMITH_COPY_STRING(program->linker), object, nullptr),
         .implicit_inputs = smith_one(smith_compiler_file(program->linker)),
         .outputs = smith_one(object),
         .description = smith_text("compile %s", object),
@@ -2689,7 +2689,7 @@ static const char *const *smith_handlers_link(SmithBuild *b, const SmithProgram 
     if (at == smith_handlers_made_count) {
         if (smith_handlers_made_count >= smith_handlers_folders_max)
             smith_too_many("program folders", smith_handlers_folders_max);
-        smith_handlers_made[smith_handlers_made_count++] = smith_copy_string(folder);
+        smith_handlers_made[smith_handlers_made_count++] = SMITH_COPY_STRING(folder);
         smith_handlers_object(b, program, handlers);
     }
     if (sanitized && !smith_handlers_made_asan[at]) {
@@ -2735,7 +2735,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     if (program->objects == nullptr || program->objects[0] == nullptr)
         smith_fail("smith_program: .objects is empty; give it objects passed to smith_object");
     size_t given = smith_count((const char *const *)program->objects);
-    const SmithObject **rows = (const SmithObject **)smith_new_list(given + smith_app_libraries_max);
+    const SmithObject **rows = (const SmithObject **)SMITH_NEW_LIST(given + smith_app_libraries_max);
     for (size_t i = 0; i < given; i++) {
         const SmithObjectRow *row = smith_find_row(program->objects[i], program->objects[i]->output);
         if (row == nullptr) smith_fail("smith_program: .objects[%zu] was never passed to smith_object", i);
@@ -2743,15 +2743,15 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     }
     size_t count = smith_program_needs(b, rows, given);
     rows[count] = nullptr;
-    const char **outputs = smith_new_list(count);
-    const char **sources = smith_new_list(count);
+    const char **outputs = SMITH_NEW_LIST(count);
+    const char **sources = SMITH_NEW_LIST(count);
     for (size_t i = 0; i < count; i++) {
         outputs[i] = rows[i]->output;
         sources[i] = rows[i]->source;
     }
     SmithProgram copy = *program;
-    copy.linker = smith_copy_string(program->linker);
-    copy.output = smith_copy_string(program->output);
+    copy.linker = SMITH_COPY_STRING(program->linker);
+    copy.output = SMITH_COPY_STRING(program->output);
     copy.flags = smith_copy_list(program->flags);
     copy.libraries = smith_copy_list(program->libraries);
     copy.objects = (const SmithObject *const *)rows;
@@ -2766,7 +2766,7 @@ void smith_program(SmithBuild *b, SmithProgram *program) {
     // The effect summaries of the objects (an output of each compile that writes one): the link checks them (skill
     // smith-lang-effects), so a summary that changed reruns it even when its object did not (an attribute moved). A
     // compile that declares none (the new front end writes none, #2853) gives the link none to wait for.
-    const char **summaries = smith_new_list(count);
+    const char **summaries = SMITH_NEW_LIST(count);
     size_t summarized = 0;
     for (size_t i = 0; i < count; i++) {
         const char *summary = smith_effects_summary(rows[i]->compiler, rows[i]->source, outputs[i]);
@@ -2859,10 +2859,10 @@ void smith_compile_command(SmithBuild *b, const char *compiler, const char *sour
     if (smith_compile_commands_called) smith_fail("smith_compile_command is called after smith_compile_commands");
     if (smith_source_recorded(source)) return;
     if (smith_command_row_count >= smith_objects_max) smith_too_many("compile commands", smith_objects_max);
-    const char *copy = smith_copy_string(source);
+    const char *copy = SMITH_COPY_STRING(source);
     const char *const tail[] = {"-c", copy, nullptr};
     const char *const *arguments =
-        smith_cat(b, smith_one(smith_copy_string(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
+        smith_cat(b, smith_one(SMITH_COPY_STRING(compiler)), smith_modules_for(b, copy), smith_lang_flags(b, copy),
                   smith_copy_list(flags), smith_library_flags(b, copy), smith_module_flags(b, copy), tail, nullptr);
     smith_command_rows[smith_command_row_count++] = (SmithCommandRow){copy, arguments, nullptr};
 }
@@ -2931,7 +2931,7 @@ void smith_compile_commands(SmithBuild *b, const char *path) {
     long size = ftell(counter);
     fclose(counter);
     SMITH_ASSERT(size > 0);
-    char *text = smith_alloc((size_t)size + 1);
+    char *text = SMITH_ALLOC((size_t)size + 1);
     FILE *out = fmemopen(text, (size_t)size + 1, "w");
     if (out == nullptr) smith_fail("cannot render %s", path);
     smith_put_compile_commands(out, b, false);
@@ -3275,7 +3275,7 @@ typedef struct {
 // a::b and test_x give a_b_test_x, as the lowering names an export.
 static const char *smith_tests_symbol(const char *module, const char *test) {
     if (module == nullptr) return test;
-    char *flat = smith_alloc(strlen(module) + 2);
+    char *flat = SMITH_ALLOC(strlen(module) + 2);
     size_t used = 0;
     if (strncmp(module, "std::", 5) == 0) { // the standard library's C names start smith_ (#366)
         memcpy(flat, "smith_", 6);
@@ -3599,11 +3599,11 @@ static void smith_shard_costs(const SmithTestShard *shard, const SmithTestFound 
 // (assign_shards in lib/std/test.smith). owner[i] is the part (0 based) of chosen test i.
 static void smith_shard_assign(const SmithTestShard *shard, const SmithTestFound *found, const size_t *chosen,
                                size_t chosen_count, size_t *owner) {
-    size_t *leader = smith_alloc((chosen_count + 1) * sizeof *leader);
-    double *weight = smith_alloc((chosen_count + 1) * sizeof *weight);
-    double *cost = smith_alloc((chosen_count + 1) * sizeof *cost);
-    double *load = smith_alloc((shard->count + 1) * sizeof *load);
-    bool *done = smith_alloc((chosen_count + 1) * sizeof *done);
+    size_t *leader = SMITH_ALLOC((chosen_count + 1) * sizeof *leader);
+    double *weight = SMITH_ALLOC((chosen_count + 1) * sizeof *weight);
+    double *cost = SMITH_ALLOC((chosen_count + 1) * sizeof *cost);
+    double *load = SMITH_ALLOC((shard->count + 1) * sizeof *load);
+    bool *done = SMITH_ALLOC((chosen_count + 1) * sizeof *done);
     smith_shard_costs(shard, found, chosen, chosen_count, cost);
     for (size_t i = 0; i < chosen_count; i++) { // bounded by the tests
         const char *name = found[chosen[i]].name;
@@ -3643,8 +3643,8 @@ static void smith_shard_keep(const SmithTestShard *shard, const SmithTestFound *
     bool exact = false;
     for (size_t i = 0; shard->filter[0] != '\0' && i < count; i++) // bounded by the tests
         exact = exact || strcmp(found[i].name, shard->filter) == 0;
-    size_t *chosen = smith_alloc((count + 1) * sizeof *chosen);
-    size_t *owner = smith_alloc((count + 1) * sizeof *owner);
+    size_t *chosen = SMITH_ALLOC((count + 1) * sizeof *chosen);
+    size_t *owner = SMITH_ALLOC((count + 1) * sizeof *owner);
     size_t chosen_count = 0;
     for (size_t i = 0; i < count; i++) {
         keep[i] = false;
@@ -3669,17 +3669,17 @@ static int smith_tests_scan(SmithRun *run) {
     size_t count = 0;
     SMITH_ASSERT(run->outputs[0] != nullptr && run->outputs[1] != nullptr);
     if (!smith_tests_find(run, found, &count)) return 1;
-    SmithTestShard *shard = smith_alloc(sizeof *shard);
+    SmithTestShard *shard = SMITH_ALLOC(sizeof *shard);
     smith_shard_parse(shard, found, count, run->args);
-    bool *keep = smith_alloc(count + 1);
+    bool *keep = SMITH_ALLOC(count + 1);
     smith_shard_keep(shard, found, count, keep);
     size_t kept = 0;
     for (size_t i = 0; shard->count > 0 && i < count; i++) // the part's tests, in order
         if (keep[i]) found[kept++] = found[i];
     if (shard->count > 0) count = kept;
-    const char **prototypes = smith_new_list(count);
-    const char **rows = smith_new_list(count);
-    const char **thunks = smith_new_list(count);
+    const char **prototypes = SMITH_NEW_LIST(count);
+    const char **rows = SMITH_NEW_LIST(count);
+    const char **thunks = SMITH_NEW_LIST(count);
     size_t thunk_count = 0;
     for (size_t i = 0; i < count; i++) {
         const char *argument = found[i].kind == SmithTestKind_Property  ? "SmithKey key"
@@ -3748,11 +3748,11 @@ static void smith_tests_check(const SmithTests *tests) {
 static SmithObject *smith_tests_object(SmithBuild *b, const SmithTests *tests, const char *source,
                                        const char *const *flags, const char *const *implicit_inputs) {
     const char *visible = source + strspn(source, "./"); // .smith/lib/test.c would give a hidden object
-    char *flat = smith_alloc(strlen(visible) + 1);
+    char *flat = SMITH_ALLOC(strlen(visible) + 1);
     for (size_t i = 0; visible[i] != '\0'; i++)
         flat[i] = visible[i] == '/' ? '_' : visible[i];
     flat[strlen(visible)] = '\0';
-    SmithObject *object = smith_alloc(sizeof *object);
+    SmithObject *object = SMITH_ALLOC(sizeof *object);
     *object = (SmithObject){
         .compiler = tests->compiler,
         .source = source,
@@ -3822,7 +3822,7 @@ static size_t smith_tests_libraries(SmithBuild *b, const SmithTests *copy, const
 // .args (it sees nothing else of the build); empty without a --shard.
 static const char *const *smith_tests_shard_args(SmithBuild *b) {
     const char *const *given = smith_args(b);
-    const char **kept = smith_new_list(smith_count(given));
+    const char **kept = SMITH_NEW_LIST(smith_count(given));
     size_t used = 0;
     bool sharded = false;
     for (size_t i = 0; given[i] != nullptr; i++) { // bounded by smith_args
@@ -3848,12 +3848,12 @@ static const char *const *smith_tests_shard_sources(SmithBuild *b, const char *c
     SmithRun probe = {.b = b, .inputs = sources};
     size_t count = 0;
     if (!smith_tests_find(&probe, smith_tests_found, &count)) return sources; // the scan step reports it
-    SmithTestShard *shard = smith_alloc(sizeof *shard);
+    SmithTestShard *shard = SMITH_ALLOC(sizeof *shard);
     smith_shard_parse(shard, smith_tests_found, count, args);
     if (shard->count == 0) return sources;
-    bool *keep = smith_alloc(count + 1);
+    bool *keep = SMITH_ALLOC(count + 1);
     smith_shard_keep(shard, smith_tests_found, count, keep);
-    const char **kept = smith_new_list(smith_count(sources));
+    const char **kept = SMITH_NEW_LIST(smith_count(sources));
     size_t used = 0;
     for (size_t i = 0; sources[i] != nullptr; i++) { // bounded by the sources
         bool has_tests = false;
@@ -3892,8 +3892,8 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     copy.flags = smith_record_flags(b, smith_copy_list(tests->flags), false);
     copy.link_flags = smith_record_flags(b, smith_copy_list(tests->link_flags), true);
     copy.inputs = smith_copy_list(tests->inputs);
-    copy.compiler = smith_copy_string(tests->compiler != nullptr ? tests->compiler : "smith-cc");
-    copy.output = smith_copy_string(tests->output != nullptr ? tests->output : "build/tests");
+    copy.compiler = SMITH_COPY_STRING(tests->compiler != nullptr ? tests->compiler : "smith-cc");
+    copy.output = SMITH_COPY_STRING(tests->output != nullptr ? tests->output : "build/tests");
     const char *name = tests->name != nullptr ? tests->name : "test";
     const char *slash = strrchr(copy.output, '/');
     const char *folder = slash != nullptr ? smith_text("%.*s", (int)(slash - copy.output + 1), copy.output) : "";
@@ -3912,7 +3912,7 @@ void smith_tests(SmithBuild *b, SmithTests *tests) {
     // imports.
     const char *const *imported = smith_tests_imported(b, every_source);
     const char **objects =
-        smith_new_list(count + 7 + smith_app_libraries_max + smith_count((const char *const *)tests->objects));
+        SMITH_NEW_LIST(count + 7 + smith_app_libraries_max + smith_count((const char *const *)tests->objects));
     size_t used = 0;
     for (size_t i = 0; i < count; i++)
         objects[used++] = (const char *)smith_tests_object(b, &copy, copy.sources[i], test_flags,
@@ -4082,7 +4082,7 @@ static void smith_app_add(const char *path, bool compile) {
         return;
     }
     if (smith_app_found.file_count >= smith_app_files_max) smith_too_many("files in the program", smith_app_files_max);
-    smith_app_found.files[smith_app_found.file_count++] = (SmithAppFile){smith_copy_string(path), compile};
+    smith_app_found.files[smith_app_found.file_count++] = (SmithAppFile){SMITH_COPY_STRING(path), compile};
 }
 
 static bool smith_app_plain_name(const char *name, size_t length) {
@@ -4102,7 +4102,7 @@ static void smith_app_library(const char *name, size_t length) {
         (length == 8 && memcmp(name, "handlers", 8) == 0)) {
         return;
     }
-    char *copy = smith_alloc(length + 1);
+    char *copy = SMITH_ALLOC(length + 1);
     memcpy(copy, name, length);
     copy[length] = '\0';
     bool known = smith_app_is_file(smith_text(".smith/lib/%s.c", copy)) ||
@@ -4146,7 +4146,7 @@ static void smith_app_include_dir(const char *dir) {
     }
     if (smith_app_state.include_dir_count >= smith_app_include_dirs_max)
         smith_too_many("include folders", smith_app_include_dirs_max);
-    smith_app_state.include_dirs[smith_app_state.include_dir_count++] = smith_copy_string(dir);
+    smith_app_state.include_dirs[smith_app_state.include_dir_count++] = SMITH_COPY_STRING(dir);
 }
 
 static void smith_app_include_dirs(const char *const *flags) {
@@ -4376,7 +4376,7 @@ static const char *const *smith_tests_imported(SmithBuild *b, const char *const 
     smith_app_found.queue = (SmithLibraryQueue){};
     for (size_t i = 0; sources[i] != nullptr; i++)
         smith_app_scan(sources[i], true);
-    const char **names = smith_new_list(smith_app_found.queue.count);
+    const char **names = SMITH_NEW_LIST(smith_app_found.queue.count);
     for (size_t i = 0; i < smith_app_found.queue.count; i++)
         names[i] = smith_app_found.queue.names[i];
     names[smith_app_found.queue.count] = nullptr;
@@ -4396,7 +4396,7 @@ static const char *const *smith_library_needs(SmithBuild *b, const char *name) {
         if (smith_app_found.queue.scanned >= smith_app_found.queue.count) break;
         smith_library_scan_next(b);
     }
-    const char **needs = smith_new_list(smith_app_found.queue.count);
+    const char **needs = SMITH_NEW_LIST(smith_app_found.queue.count);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_found.queue.count; i++) {
         if (strcmp(smith_app_found.queue.names[i], name) != 0) needs[used++] = smith_app_found.queue.names[i];
@@ -4410,7 +4410,7 @@ static const char *const *smith_library_needs(SmithBuild *b, const char *name) {
 static const char *smith_app_entry(const char *given) {
     if (given != nullptr) {
         if (!smith_app_is_file(given)) smith_fail("smith_app: the entry point %s is not a file", given);
-        return smith_copy_string(given);
+        return SMITH_COPY_STRING(given);
     }
     bool lang = smith_app_is_file("main.smith");
     bool plain = smith_app_is_file("main.c");
@@ -4471,7 +4471,7 @@ static bool smith_autodiff_dropped(const char *flag) {
 // `flags` as an autodiff program takes them: ASan but no other sanitizer, no ThinLTO, full LTO, and for a compile no
 // optimization passes.
 static const char *const *smith_autodiff_flags(SmithBuild *b, const char *const *flags, bool compile) {
-    const char **kept = smith_new_list(smith_count(flags));
+    const char **kept = SMITH_NEW_LIST(smith_count(flags));
     size_t used = 0;
     for (size_t i = 0; flags[i] != nullptr; i++) {
         const char *flag = smith_autodiff_sanitizer(flags[i]);
@@ -4571,7 +4571,7 @@ const char *const *smith_sources(SmithBuild *b, const char *folder) {
     SMITH_ASSERT(b != nullptr);
     smith_context = nullptr;
     if (folder == nullptr) smith_fail("smith_sources needs a folder; \"\" is the whole project");
-    const char **found = smith_new_list(smith_app_state.source_count);
+    const char **found = SMITH_NEW_LIST(smith_app_state.source_count);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_state.source_count; i++) {
         if (smith_app_covers(folder, smith_app_state.sources[i])) found[used++] = smith_app_state.sources[i];
@@ -4583,7 +4583,7 @@ const char *const *smith_sources(SmithBuild *b, const char *folder) {
 const char *const *smith_objects(SmithBuild *b, const char *profile, const char *folder) {
     (void)smith_app_profile(profile);
     const char *const *found = smith_sources(b, folder);
-    const char **objects = smith_new_list(smith_count(found));
+    const char **objects = SMITH_NEW_LIST(smith_count(found));
     for (size_t i = 0; found[i] != nullptr; i++)
         objects[i] = smith_replace_extension(b, smith_text("build/%s/%s", profile, found[i]), ".o");
     return objects;
@@ -4593,9 +4593,9 @@ static SmithFolder *smith_copy_folders(const SmithFolder *rows) {
     size_t count = 0;
     while (rows != nullptr && rows[count].path != nullptr && count < smith_list_max)
         count += 1;
-    SmithFolder *copy = smith_alloc((count + 1) * sizeof *copy);
+    SmithFolder *copy = SMITH_ALLOC((count + 1) * sizeof *copy);
     for (size_t i = 0; i < count; i++) {
-        copy[i] = (SmithFolder){smith_copy_string(rows[i].path), smith_copy_list(rows[i].flags),
+        copy[i] = (SmithFolder){SMITH_COPY_STRING(rows[i].path), smith_copy_list(rows[i].flags),
                                 smith_copy_list(rows[i].inputs)};
     }
     copy[count] = (SmithFolder){};
@@ -4698,7 +4698,7 @@ static SmithObject *smith_app_object(SmithBuild *b, const char *profile, const c
                        source, output);
         return (SmithObject *)row->address;
     }
-    SmithObject *object = smith_alloc(sizeof *object);
+    SmithObject *object = SMITH_ALLOC(sizeof *object);
     *object = (SmithObject){
         .compiler = "smith-cc",
         .source = source,
@@ -4739,7 +4739,7 @@ static void smith_app_alias_add(SmithBuild *b, const char *name, const char *con
 // debug profile's objects but the entry's are kept in the app.
 static SmithStep smith_app_program(SmithBuild *b, SmithApp *app, const char *profile) {
     size_t total = smith_app_found.file_count + smith_app_found.queue.count;
-    const SmithObject **linked = (const SmithObject **)smith_new_list(total);
+    const SmithObject **linked = (const SmithObject **)SMITH_NEW_LIST(total);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_found.file_count; i++) {
         const char *path = smith_app_found.files[i].path;
@@ -4752,7 +4752,7 @@ static SmithStep smith_app_program(SmithBuild *b, SmithApp *app, const char *pro
         linked[used++] = smith_app_object(b, profile, source, smith_app_flags(b, profile, source, app->flags));
     }
     if (strcmp(profile, "debug") == 0) {
-        const SmithObject **kept = (const SmithObject **)smith_new_list(used);
+        const SmithObject **kept = (const SmithObject **)SMITH_NEW_LIST(used);
         size_t count = 0;
         for (size_t i = 0; i < used; i++) {
             if (strcmp(linked[i]->source, app->entry) != 0) kept[count++] = linked[i];
@@ -4777,7 +4777,7 @@ void smith_app(SmithBuild *b, SmithApp *app) {
     SmithApp copy = *app;
     copy.entry = smith_app_entry(app->entry);
     const char *slash = strrchr(b->root, '/');
-    copy.name = smith_copy_string(app->name != nullptr ? app->name : slash != nullptr ? slash + 1 : b->root);
+    copy.name = SMITH_COPY_STRING(app->name != nullptr ? app->name : slash != nullptr ? slash + 1 : b->root);
     for (size_t i = 0; i < smith_program_count; i++) {
         if (strcmp(smith_programs[i], smith_text("build/debug/%s", copy.name)) == 0)
             smith_fail("smith_app: two programs are named %s; give one a .name", copy.name);
@@ -4817,7 +4817,7 @@ static bool smith_app_listed(const char *const *list, const char *path) {
 // The .c files directly in the folder that are not tests: helpers (fixtures, samplers) the tests link.
 static const char *const *smith_app_helpers(SmithBuild *b, const char *folder, const char *const *tests) {
     const char *const *all = smith_glob(b, smith_list(b, smith_text("%s/*.c", folder), nullptr));
-    const char **helpers = smith_new_list(smith_count(all));
+    const char **helpers = SMITH_NEW_LIST(smith_count(all));
     size_t used = 0;
     for (size_t i = 0; all[i] != nullptr; i++) {
         if (!smith_app_listed(tests, all[i])) helpers[used++] = all[i];
@@ -4831,7 +4831,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
     smith_context = nullptr;
     if (!smith_app_state.made) smith_fail("smith_app_tests: call smith_app first");
     SmithAppTests copy = *tests;
-    copy.folder = smith_copy_string(tests->folder != nullptr ? tests->folder : "tests");
+    copy.folder = SMITH_COPY_STRING(tests->folder != nullptr ? tests->folder : "tests");
     copy.inputs = smith_copy_list(tests->inputs);
     copy.link_flags = smith_copy_list(tests->link_flags);
     // A test module is any *_test.smith or *_test.c below the project's root, beside the module it tests or in the
@@ -4854,7 +4854,7 @@ void smith_app_tests(SmithBuild *b, SmithAppTests *tests) {
     smith_app_autodiff = smith_app_found_autodiff();
     const char *const *flags = smith_app_flags(b, "debug", smith_text("%s/", copy.folder), smith_app_state.flags);
     size_t room = smith_app_found.file_count + smith_app_found.queue.count;
-    const SmithObject **objects = (const SmithObject **)smith_new_list(room);
+    const SmithObject **objects = (const SmithObject **)SMITH_NEW_LIST(room);
     size_t used = 0;
     for (size_t i = 0; i < smith_app_found.file_count; i++) {
         const SmithAppFile *file = &smith_app_found.files[i];
@@ -4933,7 +4933,7 @@ static size_t smith_read_file(const char *path, char **text) {
     }
     size_t size = (size_t)info.st_size;
     smith_arena_last_file = path;
-    *text = smith_alloc(size + 1);
+    *text = SMITH_ALLOC(size + 1);
     size_t got = fread(*text, 1, size, file);
     fclose(file);
     if (got != size) smith_fail("cannot read %s; if a step makes it, read it inside smith_defer", path);
@@ -4947,7 +4947,7 @@ static const char *const *smith_split_lines(char *text, size_t size) {
     for (size_t i = 0; i < size; i++) // a final newline adds no empty entry
         count += text[i] == '\n' || (i + 1 == size && text[i] != '\n');
     if (count > smith_list_max) smith_too_many("lines in a file", smith_list_max);
-    const char **list = smith_new_list(count);
+    const char **list = SMITH_NEW_LIST(count);
     char *start = text;
     for (size_t i = 0; i < count; i++) {
         char *end = memchr(start, '\n', (size_t)(text + size - start));
@@ -4999,7 +4999,7 @@ static int smith_run_capture(const char *const *argv, const char *const **lines,
     close(pipe_fds[0]);
     int status = smith_wait(argv[0], pid);
     if (lines != nullptr) {
-        char *text = smith_alloc(length + 1);
+        char *text = SMITH_ALLOC(length + 1);
         memcpy(text, smith_capture_buffer, length);
         text[length] = '\0';
         *lines = smith_split_lines(text, length);
@@ -5032,7 +5032,7 @@ static char *const *smith_merge_environment(const char *const *environment) {
     size_t current = 0;
     for (; environ[current] != nullptr; current++)
         SMITH_ASSERT(current < smith_list_max);
-    const char **merged = smith_new_list(current + extra);
+    const char **merged = SMITH_NEW_LIST(current + extra);
     size_t used = 0;
     for (size_t i = 0; i < current; i++) {
         bool replaced = false;
@@ -5189,7 +5189,7 @@ void smith_run_depend(SmithRun *run, const char *path) {
         smith_fail("smith_run_depend: this step has no .depfile, so it cannot record '%s'", path);
     if (strchr(path, '\n') != nullptr) smith_fail("smith_run_depend: the path '%s' holds a newline", path);
     if (smith_depend_count >= smith_entries_max) smith_too_many("paths in smith_run_depend", smith_entries_max);
-    smith_depends[smith_depend_count++] = smith_copy_string(path);
+    smith_depends[smith_depend_count++] = SMITH_COPY_STRING(path);
 }
 
 static void smith_put_depfile_word(FILE *out, const char *word) {
@@ -5541,7 +5541,7 @@ static void smith_parse_options(int count, char **args) {
         const char *equals = strchr(name, '=');
         if (*name == '\0' || equals == name) smith_fail("-D needs a name");
         size_t length = equals != nullptr ? (size_t)(equals - name) : strlen(name);
-        char *copy = smith_alloc(length + 1);
+        char *copy = SMITH_ALLOC(length + 1);
         memcpy(copy, name, length);
         copy[length] = '\0';
         smith_given[smith_given_count++] =
@@ -5555,9 +5555,9 @@ static SmithBuild smith_make_build(void) {
     if (uname(&names) != 0 || getcwd(folder, sizeof folder) == nullptr) smith_fail("cannot read the system or folder");
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     return (SmithBuild){
-        .os = smith_copy_string(names.sysname),
-        .arch = smith_copy_string(names.machine),
-        .root = smith_copy_string(folder),
+        .os = SMITH_COPY_STRING(names.sysname),
+        .arch = SMITH_COPY_STRING(names.machine),
+        .root = SMITH_COPY_STRING(folder),
         .cpus = cpus > 0 ? (int)cpus : 1,
     };
 }
@@ -5574,7 +5574,7 @@ static const char *const *smith_run_collect(int argc, char **argv, const char *f
         if (i + 1 >= argc) smith_fail("--run: %s needs a word", argv[i]);
         count += strcmp(argv[i], flag) == 0;
     }
-    const char **list = smith_new_list(count);
+    const char **list = SMITH_NEW_LIST(count);
     size_t used = 0;
     for (int i = 3; i + 1 < argc; i += 2) {
         if (strcmp(argv[i], flag) == 0) list[used++] = argv[i + 1];
