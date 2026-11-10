@@ -418,9 +418,15 @@ static ast::Expr *variant_value(parse::Parser *p) {
     return make(parse::span_from(p, start), {.variant = {.name = parse::text(p, name), .payload = payload}});
 }
 
-// A type where a value is expected: `f(I32)`, `Option(I32)`.
+// A type where a value is expected: `f(I32)`, `Option(I32)`. A type compared with `==` or `!=` is the C type itself, so
+// `typeof(x) == char *` is `*mut char` and `== const char *` is `*char`, as in a cast (#3027: it was `*char`, and
+// std.format's `write` of a `*mut char` piece had no rule).
 static ast::Expr *type_value(parse::Parser *p) {
+    lex::TokenKind before = p->position > 0 ? p->tokens[p->position - 1].kind : lex::end_of_file;
+    Bool was_cast = p->in_cast;
+    if (before == lex::equal_equal || before == lex::bang_equal) p->in_cast = true;
     ast::TypeExpr *type = parse::type(p);
+    p->in_cast = was_cast;
     if (type == nullptr) return nullptr;
     return make(type->span, {.type_value = {.type = type}});
 }
