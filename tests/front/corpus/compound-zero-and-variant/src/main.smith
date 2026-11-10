@@ -1,0 +1,28 @@
+# `{}` is the zero of its type, a `Result` too, and `{.circle = c}` of a payload enumeration is the variant
+# `.circle(c)`: the C-like forms the fixer keeps until the switch-over (#3036).
+import c <stdio.h>
+
+pub struct Circle:
+    pub radius: i32
+
+pub enum Shape:
+    circle: Circle
+    empty
+
+fn unit() -> Shape:
+    return {.circle = Circle(radius = 3)}
+
+fn radius(s: Shape) -> i32:
+    match s:
+        .circle(circle): return circle.radius
+        .empty: return 0
+
+fn main() -> i32:
+    mut done: Result(i32, i32) = {}
+    if .ok(ok) := done:
+        _ := stdio.printf("ok %d\n", ok)
+    done = .error(2)
+    if .error(code) := done:
+        _ := stdio.printf("error %d\n", code)
+    _ := stdio.printf("radius %d\n", radius(unit()))
+    return 0

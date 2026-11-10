@@ -1246,6 +1246,13 @@ export state::Status query(state::Emitter *e, const ast::Expr *x, state::Hint _)
     } else {
         try static_type(e, operand, &subject);
     }
+    if (op == .count_of && operand != nullptr && (subject.kind == .slice || subject.kind == .block)) {
+        // A slice the checker kept no type for (a field of a binding, `ok.output` after `.ok(ok) := done else:`):
+        // its count is read at run time all the same (#3036).
+        state::push_then_none(e, (state::ThenNone){.run = count_finish, .span = x->span});
+        state::push_eval(e, operand, state::no_hint());
+        return state::success();
+    }
     state::Ty word = u64_type(e);
     U64 number = 0;
     if (op == .count_of) {
@@ -1540,6 +1547,15 @@ static state::Status compound_step(state::Emitter *e, const state::ThenGeneral *
     return state::success();
 }
 
+// `{.circle = c}` of a payload enumeration: the variant `.circle(c)` (#3036).
+static state::Status compound_variant(state::Emitter *e, state::Ty ty, ast::Initializer item, ast::Span span) {
+    ast::Designator designators[:] = item.designators;
+    if (countof(designators) != 1) return state::not_emitted("a variant written without its name", span);
+    ast::Designator first = designators[0];
+    if (first != .field) return state::not_emitted("this designator", span);
+    return matching::variant_of(e, ty, first.field.name, item.value, span);
+}
+
 // `(Point){.x = 1, .y = 2}` and `{1, 2, 3}` for an array: a zeroed temporary, each initializer stored into its part,
 // the whole loaded.
 export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
@@ -1559,11 +1575,14 @@ export state::Status compound(state::Emitter *e, const ast::Expr *x, state::Hint
     } else {
         return state::fail("a compound literal needs a type", x->span);
     }
-    if (ty.kind == .slice && countof(x->kind.compound.items) == 0) {
-        // `{}` where a slice is wanted is the empty slice: a null pointer and no elements.
+    ast::Initializer items[:] = x->kind.compound.items;
+    if (countof(items) == 0 && ty.kind != .record && ty.kind != .array && ty.llvm != nullptr) {
+        // `{}` is the zero of its type, as the old front end has it: the empty slice (a null pointer and no elements),
+        // and a `Result`, an option or a tuple of zeros (#3036). A record or an array is built below.
         state::push_value(e, (state::Value){.llvm = c::LLVMConstNull(ty.llvm), .ty = ty});
         return state::success();
     }
+    if (ty.kind == .variant_enum && countof(items) == 1) return compound_variant(e, ty, items[0], x->span);
     if (ty.kind != .record && ty.kind != .array) return state::not_emitted("compound literal of this type", x->span);
     c::LLVMValueRef slot = state::new_alloca(e, ty, "compound");
     c::LLVMBuildStore(e->builder, c::LLVMConstNull(ty.llvm), slot);

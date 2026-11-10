@@ -191,14 +191,17 @@ static Bool holds_affine(types::TypeRef t) {
 }
 
 // `place[index]`: the index is a constant or the counter of a plain loop over `place`, else it is bad.
-static Place indexed(Pass *p, Place place, const ast::Expr *index) {
+static Place indexed(Pass *p, Place place, const ast::Expr *base, const ast::Expr *index) {
     if (index->kind == .integer) {
         place.text = text_of(format::push(place.text, "[", index->kind.integer.value, "]"));
         return place;
     }
     if (index->kind == .name && countof(index->kind.name.path.segments) == 1) {
         Str counter = index->kind.name.path.segments[0].text;
-        if (affine_loops::plain_counter(&p->loops, counter, place.text)) {
+        types::TypeRef base_type = types::type_of(p->r, base);
+        U64 count = 0;
+        if (base_type != nullptr) count = types::count_of(base_type);
+        if (affine_loops::plain_counter(&p->loops, counter, place.text, count)) {
             place.text = text_of(format::push(place.text, "[", counter, "]"));
             return place;
         }
@@ -234,7 +237,7 @@ static Place place_of(Pass *p, const ast::Expr *e) {
         if (step->kind == .member) {
             place.text = text_of(format::push(place.text, ".", step->kind.member.name));
         } else if (step->kind == .index) {
-            place = indexed(p, place, step->kind.index.index);
+            place = indexed(p, place, step->kind.index.base, step->kind.index.index);
         }
     }
     return place;
@@ -578,22 +581,36 @@ static void begin(Pass *p, Item item) {
     if (expr != nullptr) begin_expression(p, expr);
 }
 
-// Whether `e` is `range(countof(xs))`: the counter of a loop over it is one element of `xs` per turn. Gives the place
-// of `xs`, else an empty text.
-static Str counted_array(Pass *p, const ast::Expr *e) {
-    if (e == nullptr || e->kind != .call || countof(e->kind.call.args) != 1) {
-        return "";
-    }
+// What a plain loop counts over: the place of an array (`range(countof(xs))`), or a constant bound (`range(3)`).
+struct Counted {
+    Str array;
+    U64 bound;
+};
+
+// Whether `e` is `range(countof(xs))` or `range(0, countof(xs))`: the counter of a loop over it is one element of `xs`
+// per turn; or `range(3)`, `range(0, 3)`: one element of any array of 3. Neither when the range is another.
+static Counted counted(Pass *p, const ast::Expr *e) {
+    Counted none = {.array = "", .bound = 0};
+    if (e == nullptr || e->kind != .call) return none;
+    Usize args = countof(e->kind.call.args);
+    if (args != 1 && args != 2) return none;
     const ast::Expr *callee = e->kind.call.callee;
-    const ast::Expr *count = e->kind.call.args[0];
     if (callee->kind != .name || countof(callee->kind.name.path.segments) != 1 ||
         !same(callee->kind.name.path.segments[0].text, "range")) {
-        return "";
+        return none;
+    }
+    if (args == 2) {
+        const ast::Expr *start = e->kind.call.args[0];
+        if (start->kind != .integer || start->kind.integer.value != 0) return none;
+    }
+    const ast::Expr *count = e->kind.call.args[args - 1];
+    if (count->kind == .integer && count->kind.integer.value > 0) {
+        return (Counted){.array = "", .bound = count->kind.integer.value};
     }
     if (count->kind != .query || count->kind.query.op != .count_of || count->kind.query.operand == nullptr) {
-        return "";
+        return none;
     }
-    return path_of(p, count->kind.query.operand);
+    return (Counted){.array = path_of(p, count->kind.query.operand), .bound = 0};
 }
 
 // Reads a loop: what is read once before the loop turns, then the loop (`enter_loop` .. `leave_loop`) with its
@@ -632,14 +649,14 @@ static void loop_parts(Pass *p, const ast::Stmt *s) {
 // The loop starts: a plain loop over an array counts one element per turn.
 static void begin_loop(Pass *p, const ast::Stmt *s) {
     Str counter = "";
-    Str array = "";
+    Counted over = {.array = "", .bound = 0};
     if (s->kind == .for_in && !s->kind.for_in.is_tuple && countof(s->kind.for_in.names) == 1) {
-        array = counted_array(p, s->kind.for_in.iterable);
-        if (countof(array) > 0) {
+        over = counted(p, s->kind.for_in.iterable);
+        if (countof(over.array) > 0 || over.bound > 0) {
             counter = s->kind.for_in.names[0].text;
         }
     }
-    affine_loops::enter(&p->loops, counter, array);
+    affine_loops::enter(&p->loops, counter, over.array, over.bound);
 }
 
 // The loop ends: the places its counter picked are other elements from here on.
