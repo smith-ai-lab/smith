@@ -9,10 +9,10 @@
 //   in a loop   A use inside a loop of a value declared outside it would be a use per turn: an error at the use, unless
 //               the loop assigns the value (`key = next[0]`), which makes it fresh each turn. Reading the loop once is
 //               enough: its body is straight-line code to front::affine.
-//   plain loop  `for i in range(countof(keys))` (or `range(0, countof(keys))`): the counter `i` is one element of `keys`
-//               per turn. `keys[i]` is the element's own place, used at most once per turn, and is not a use of a value
-//               from outside. A constant bound (`range(3)`, `range(0, 3)`) is a plain loop over every array of that
-//               length, as the old rule's `i < 3` for a `Key keys[3]` is.
+//   plain loop  `for i in range(countof(keys))` (or `range(0, countof(keys))`): the counter `i` is one element of
+//               `keys` per turn. `keys[i]` is the element's own place, used at most once per turn, and is not a use of
+//               a value from outside. A constant bound (`range(3)`, `range(0, 3)`) is a plain loop over every array
+//               of that length, as the old rule's `i < 3` for a `Key keys[3]` is.
 //   element     `keys[0]` is a place of its own, for an array or a slice; `keys[j]` and `keys[i + 1]` are not (an error
 //               at the use). The loop's names are immutable in smith's syntax, so the old rule that the body must not
 //               change the counter has nothing left to check.
