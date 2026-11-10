@@ -64,3 +64,19 @@ export void test_fmt_gives_the_four_space_file_without_clang_format() {
     scratch::expect_text(run.err, console_four, run.out);
     scratch::expect_status("smith fmt", 0, &run);
 }
+
+// The console program links with a plain `smith cc --front-end=new` (no ASan: std.mem's poisoning functions are
+// dropped by the link's --gc-sections) and in the release profile.
+export void test_console_program_links_with_cc_and_in_release() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, console_four,
+                                      "smith cc --front-end=new main.smith -o main && ./main && "
+                                      "smith build release --front-end=new >/dev/null && ./build/release/hi");
+    scratch::expect_text(run.err, "hello world\nhello world\n", run.out);
+    scratch::expect_status("smith cc and smith build release", 0, &run);
+}

@@ -1159,10 +1159,16 @@ static state::Status declare_function(state::Emitter *e, const ast::Decl *d) {
     add_function_attributes(e, d, function);
     Bool external = d->exported || d->is_pub || countof(state::c_name_of(d)) > 0 || state::same_text(name, "main");
     if (takes_args) external = false;
-    if (external)
+    // A private function of a module is external but hidden (#2853): a generic instance of the module that another
+    // object emits (`console.print` in the program's object) calls it from there. Its symbol is the module's
+    // (`std::console::emit_long`), so no other object has it; `static`, and the wrapper of a `main` with arguments,
+    // stay internal.
+    Bool hidden = !external && !takes_args && !d->is_static;
+    if (external || hidden)
         c::LLVMSetLinkage(function, c::LLVMExternalLinkage);
     else
         c::LLVMSetLinkage(function, c::LLVMInternalLinkage);
+    if (hidden) c::LLVMSetVisibility(function, c::LLVMHiddenVisibility);
     add_function(e, (state::FunctionInfo){.name = name,
                                           .symbol = symbol,
                                           .llvm = function,

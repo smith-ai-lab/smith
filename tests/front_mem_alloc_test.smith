@@ -179,7 +179,7 @@ export void test_front_mem_alloc_the_first_argument_is_a_type() {
 export void test_front_mem_alloc_arena_push_slice_takes_the_shape() {
     passes("arena", "import std.arena\n\n"
                     "pub fn check() -> i32:\n"
-                    "    mut a := arena.Arena()\n"
+                    "    mut a := arena.growing(4096, nullptr)\n"
                     "    row := arena.push_slice(&a, u32, 3)\n"
                     "    if countof(row) != 3 or row[2] != 0:\n        return 1\n"
                     "    grid := arena.push_slice(&a, f32, [2, 4])\n"

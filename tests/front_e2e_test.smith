@@ -297,6 +297,38 @@ export void test_front_e2e_a_call_to_a_function_without_a_result_links_and_runs(
     remove_all(folder);
 }
 
+// A generic function's instance is emitted in the object of the module that uses it, and calls a private function of
+// its own module (#2853: `console.print`, instantiated in the program, calls console's `emit_long`): the private
+// function is external and hidden in its module's object, so the link finds it.
+export void test_front_e2e_an_instance_calls_a_private_function_of_its_module() {
+    Str folder = folder_for("private_call");
+    c::mkdir(as_str(format::push(folder, "/lib")).data, 0o700);
+    c::mkdir(as_str(format::push(folder, "/src")).data, 0o700);
+    Str library = as_str(format::push(folder, "/lib/sizes.smith"));
+    write_text(library, "fn inc(n: i32) -> i32:\n    n + 1\n\npub fn sized(T: type) -> i32:\n    inc(sizeof(T).to(i32))\n");
+    Str app = as_str(format::push(folder, "/src/app.smith"));
+    write_text(app, "import sizes\n\npub fn check() -> i32:\n    if sizes.sized(i32) != 5:\n        return 1\n    0\n");
+    roots::Roots folders = {.source = as_str(format::push(folder, "/src")),
+                            .library = as_str(format::push(folder, "/lib"))};
+    compile::Report imported = compile::file(library, as_str(format::push(folder, "/sizes.o")), "", folders);
+    test::check_equal(imported.ok, true);
+    compile::Report report = compile::file(app, as_str(format::push(folder, "/app.o")), "", folders);
+    Str none = "";
+    if (!report.ok) test::check_equal(report.text, none);
+    test::check_equal(report.ok, true);
+    if (report.ok && imported.ok) {
+        test::check_equal(sh_status(as_str(format::push("nm ", folder, "/sizes.o | grep -q ' T sizes::inc$'"))), 0);
+        write_text(as_str(format::push(folder, "/main.c")),
+                   as_str(format::push("int check(void) __asm__(\"", prefix(), "app::check\");\n",
+                                       "int main(void) { return check(); }\n")));
+        I32 linked = sh_status(as_str(format::push(smith_path(), " cc ", folder, "/main.c ", folder, "/app.o ", folder,
+                                                   "/sizes.o -o ", folder, "/prog")));
+        test::check_equal(linked, 0);
+        if (linked == 0) test::check_equal(sh_status(as_str(format::push(folder, "/prog"))), 0);
+    }
+    remove_all(folder);
+}
+
 // A qualified type (#1935): `app` takes a `v.Vec` of the module `vecs` as a parameter and passes it to `v.dot`; the
 // record is declared in the importer's object under the module's path, and a C program passes a struct by value.
 export void test_front_e2e_a_qualified_type_names_the_record_of_an_imported_module() {

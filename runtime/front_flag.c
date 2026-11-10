@@ -591,14 +591,16 @@ static void smith_front_std_object(const char *self, const SmithLibrary *library
     if (triple != nullptr) argv[used++] = target;
     argv[used] = nullptr;
     smith_front_std_notice();
-    bool made = smith_front_run_in(smith_front_std_folder, argv, nullptr) && rename(partial, object) == 0;
+    char log[PATH_MAX]; // the compile's warnings (the `++` the fixer leaves in today's std), not the user's
+    smith_front_std_path(log, "%s", "compile.log");
+    bool made = smith_front_run_in(smith_front_std_folder, argv, log) && rename(partial, object) == 0;
     char list[PATH_MAX];
     written = snprintf(list, sizeof list, "%s.std", partial);
     SMITH_ASSERT(written > 0 && (size_t)written < sizeof list);
     unlink(list); // the child's list of what its object needs: the link reads the closure itself
     if (!made) {
         unlink(partial);
-        smith_die(smith_exit_usage, "cannot compile smith's std library for the link", source);
+        smith_die(smith_exit_usage, "cannot compile smith's std library for the link; its errors are in", log);
     }
 }
 
@@ -685,6 +687,9 @@ static int smith_front_std_link(int used) {
         smith_front_arguments[used++] = smith_front_std_objects[i];
 #ifndef __APPLE__
     if (smith_front_std_object_count > 0) smith_front_arguments[used++] = "-lm";
+    smith_front_arguments[used++] = "-Wl,--gc-sections"; // each function is a section of its own (front::emit_object)
+#else
+    smith_front_arguments[used++] = "-Wl,-dead_strip";
 #endif
     return used;
 }
@@ -697,6 +702,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     for (int i = 0; i < first; i++) // bounded by 8
         smith_front_arguments[i] = argv[i];
     bool compile_only = false;
+    bool stops_early = false; // `-S` or `-E`: clang links nothing, so no std is added
     const char *output = nullptr;
     const char *triple = nullptr;
     size_t sources = 0;
@@ -705,6 +711,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     for (int i = 0; i < count; i++) { // bounded by count
         if (strcmp(args[i], "-MF") == 0 && i + 1 < count) depfile = args[i + 1];
         if (strcmp(args[i], "-c") == 0) compile_only = true;
+        if (strcmp(args[i], "-S") == 0 || strcmp(args[i], "-E") == 0) stops_early = true;
         if (strcmp(args[i], "-o") == 0 && i + 1 < count) output = args[i + 1];
         if (strncmp(args[i], "--target=", 9) == 0) triple = args[i] + 9;
         if (smith_front_is_source(args[i]) && i > 0 && strcmp(args[i - 1], "-o") != 0) {
@@ -727,8 +734,9 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     smith_front_args = args;
     front_compile_before_file(sources > 1 ? smith_front_flags_of_file : nullptr);
     smith_front_debug_flag(count, args);
-    smith_front_std_gather(count, args, sources, !compile_only);
-    (void)smith_front_std_prepare(self, !compile_only, triple, getenv("SMITH_FRONT_DEBUG") != nullptr, count, args);
+    bool links = !compile_only && !stops_early;
+    smith_front_std_gather(count, args, sources, links);
+    (void)smith_front_std_prepare(self, links, triple, getenv("SMITH_FRONT_DEBUG") != nullptr, count, args);
     int compiled = sources > 0 ? front_compile_run(smith_front_sources, smith_front_objects, sources, triple) : 0;
     smith_import_cache_report();
     if (compiled != 0) return -1;
@@ -748,7 +756,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
         }
         smith_front_arguments[used++] = args[i];
     }
-    if (!compile_only) used = smith_front_std_link(used);
+    if (links) used = smith_front_std_link(used);
     bool only_options = true;            // nothing but options left: clang has no input to compile
     for (int i = first; i < used; i++) { // bounded by used
         if (strcmp(smith_front_arguments[i], "-o") == 0 && i + 1 < used)
