@@ -60,3 +60,15 @@ export void test_front_fix_shadow_a_cast_of_a_parameter_named_like_a_module() {
     Str want = "\nimport std.text\nfn bytes_of(text_: *char) -> *u8:\n    return text_.cast(*u8)\n";
     test::check_equal(fixed.text, want);
 }
+
+// The `in` -> `in_` rename (#2390) leaves the path of a header: `<netinet/in.h>` is a file, not a C name `in`.
+export void test_front_fix_shadow_a_header_named_in_keeps_its_path() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed =
+        fix::fix_text("t.smith", "module m;\n\nimport <netinet/in.h>;\n\nI32 f(I32 in) {\n    return in;\n}\n");
+    Str want = "\nimport c <netinet/in.h>\n\nfn f(in_: i32) -> i32:\n    return in_\n";
+    test::check_equal(fixed.text, want);
+}

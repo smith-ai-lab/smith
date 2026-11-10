@@ -929,6 +929,15 @@ static Bool is_for_in(lex::Tokens tokens, Usize i) {
     return false;
 }
 
+// Whether token `i` is on a line that starts with `import`: `import <netinet/in.h>;` names a file, not a C name `in`
+// (#3027: it became `netinet/in_.h`).
+static Bool on_import_line(lex::Tokens tokens, Usize i) {
+    Usize first = i;
+    while (first > 0 && !tokens[first - 1].line_break) // a line break follows the token before the line's first
+        first -= 1;
+    return tokens[first].kind == lex::kw_import;
+}
+
 static Str rename_in_names(Str source) {
     lex::Lexed lexed = lex::tokenize(source);
     if (lexed == .error) return source;
@@ -938,7 +947,7 @@ static Str rename_in_names(Str source) {
     Usize at = 0;
     for (Usize i = 0; i < countof(tokens); i++) {
         if (tokens[i].kind != lex::name || !mem::equal(lex::text(source, tokens[i]), in_word)) continue;
-        if (is_for_in(tokens, i)) continue;
+        if (is_for_in(tokens, i) || on_import_line(tokens, i)) continue;
         out = as_str(format::push(out, source[at:tokens[i].span.start], "in_"));
         at = tokens[i].span.end;
     }
