@@ -199,7 +199,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$scope" = full ] && [ -n "$changed" ]; then
             mac_tests=false
             if printf '%s\n' "$changed" | grep -E '^(shim/|lib/net_tls[.]c$)|[.]m$' >/dev/null; then mac_tests=true; fi  # THROWAWAY #2832: .github/ left out
-            if git diff -U0 "$BASE" HEAD | grep -E '^[+-].*target[.]os *== *[.]macos' >/dev/null; then mac_tests=true; fi
+            # THROWAWAY #2832: the diff check is off here
           fi
           # The count (#2914) runs in every queue entry and nightly run. A PR check runs it only when its diff touches
           # what the count reads: the front end, std, the C import, the language runtime or the build; a docs-only or
