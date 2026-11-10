@@ -454,3 +454,7 @@ int smith_slots_main(int count, char **args) {
         ;
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
+
+#if defined(__APPLE__)
+#error "throwaway #2832: a macOS-only build break"
+#endif
