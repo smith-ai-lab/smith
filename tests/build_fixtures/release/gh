@@ -24,6 +24,9 @@ case "$1 $2" in
     for p in $pat; do cp "$GH_DIR/$tag/$p" "$dir/"; done
     ;;
 "release edit") echo "$3 $4" >>"$GH_DIR/../published" ;;
-"api") ;;
+"api "*)
+    # the stale drafts `release prune-old` asks for (#2832): the ids in $GH_DIR/../drafts, one a line
+    case "$*" in *fromdateiso8601*) [ -f "$GH_DIR/../drafts" ] && cat "$GH_DIR/../drafts" ;; esac
+    ;;
 "release delete") rm -rf "$GH_DIR/$3" ;;
 esac
