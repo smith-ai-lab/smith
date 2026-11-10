@@ -31,7 +31,7 @@ static const char *const sum = "import c <stdio.h>\n\nfn main():\n    x := 5\n  
 static const char *const console_two = "import std.console\n\nfn main():\n  console.print(\"hello world\\n\")\n";
 static const char *const console_four = "import std.console\n\nfn main():\n    console.print(\"hello world\\n\")\n";
 
-export void test_printf_program_prints_its_sum() {
+static void check_printf_program_prints_its_sum() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -43,7 +43,7 @@ export void test_printf_program_prints_its_sum() {
     scratch::expect_status("smith run --front-end=new", 0, &run);
 }
 
-export void test_console_program_indented_two_spaces_prints_hello_world() {
+static void check_console_program_indented_two_spaces_prints_hello_world() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -56,7 +56,7 @@ export void test_console_program_indented_two_spaces_prints_hello_world() {
 }
 
 // A .clang-format that clang-format refuses: had the file gone to clang-format, `smith fmt` would fail.
-export void test_fmt_gives_the_four_space_file_without_clang_format() {
+static void check_fmt_gives_the_four_space_file_without_clang_format() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -72,7 +72,7 @@ export void test_fmt_gives_the_four_space_file_without_clang_format() {
 
 // The console program links with a plain `smith cc --front-end=new` (no ASan: std.mem's poisoning functions are
 // dropped by the link's --gc-sections) and in the release profile.
-export void test_console_program_links_with_cc_and_in_release() {
+static void check_console_program_links_with_cc_and_in_release() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -87,7 +87,7 @@ export void test_console_program_links_with_cc_and_in_release() {
 }
 
 // A `main` with a result is the program's exit status; one with none exits 0 (the cases above).
-export void test_main_with_a_result_is_the_exit_status() {
+static void check_main_with_a_result_is_the_exit_status() {
     scratch::Project p = scratch::make("p", nullptr);
     defer scratch::clean(&p);
     arena::Arena memory = test::memory(1U << 22);
@@ -97,4 +97,46 @@ export void test_main_with_a_result_is_the_exit_status() {
     scratch::Run run = in_new_project(&p, "fn main() -> i32:\n    3\n", program_output);
     scratch::expect_text(run.err, "", run.out);
     scratch::expect_status("smith run --front-end=new", 3, &run);
+}
+
+// The same cases on macOS (#3020): a test with the word `macos` in its name runs only in CI's macOS job, and the others
+// only on Linux, so each case is a check that both call.
+export void test_printf_program_prints_its_sum() {
+    check_printf_program_prints_its_sum();
+}
+
+export void test_macos_printf_program_prints_its_sum() {
+    check_printf_program_prints_its_sum();
+}
+
+export void test_console_program_indented_two_spaces_prints_hello_world() {
+    check_console_program_indented_two_spaces_prints_hello_world();
+}
+
+export void test_macos_console_program_indented_two_spaces_prints_hello_world() {
+    check_console_program_indented_two_spaces_prints_hello_world();
+}
+
+export void test_fmt_gives_the_four_space_file_without_clang_format() {
+    check_fmt_gives_the_four_space_file_without_clang_format();
+}
+
+export void test_macos_fmt_gives_the_four_space_file_without_clang_format() {
+    check_fmt_gives_the_four_space_file_without_clang_format();
+}
+
+export void test_console_program_links_with_cc_and_in_release() {
+    check_console_program_links_with_cc_and_in_release();
+}
+
+export void test_macos_console_program_links_with_cc_and_in_release() {
+    check_console_program_links_with_cc_and_in_release();
+}
+
+export void test_main_with_a_result_is_the_exit_status() {
+    check_main_with_a_result_is_the_exit_status();
+}
+
+export void test_macos_main_with_a_result_is_the_exit_status() {
+    check_main_with_a_result_is_the_exit_status();
 }
