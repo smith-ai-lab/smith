@@ -142,3 +142,20 @@ export void test_main_with_a_result_is_the_exit_status() {
 export void test_macos_main_with_a_result_is_the_exit_status() {
     check_main_with_a_result_is_the_exit_status();
 }
+
+// The debug link keeps the weak `__asan_default_options` of `smith_asan_options.o` (#3020): nothing references it
+// statically (ASan finds it with dlsym), so `-dead_strip` removes it unless it is marked used, and ASan's check
+// `verify_interceptors` is on again and aborts the program at start. The program is not run here: the symbol is read.
+export void test_macos_debug_program_keeps_asan_default_options() {
+    scratch::Project p = scratch::make("p", nullptr);
+    defer scratch::clean(&p);
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    scratch::Run run = in_new_project(&p, sum,
+                                      "smith build --front-end=new >/dev/null 2>&1; "
+                                      "if [ \"$(nm build/debug/hi | grep -c asan_default_options)\" -ge 1 ]; "
+                                      "then echo kept; else echo stripped; fi");
+    scratch::expect_text(run.err, "kept\n", run.out);
+}
