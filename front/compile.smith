@@ -1441,6 +1441,91 @@ static Report write_bitcode(c::LLVMModuleRef ir, Str path, Str output, Str warne
     return (Report){.ok = true, .text = warned, .times = timed};
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The count's run (#2984): what hides behind a first error, and a crash that names where it was
+
+// SMITH_FRONT_KEEP_GOING (set by `smith build frontend-coverage`): set and not empty, not 0.
+static Bool keep_going_requested() {
+    const char *given = c::getenv("SMITH_FRONT_KEEP_GOING");
+    return given != nullptr && given[0] != 0 && given[0] != '0';
+}
+
+static Bool span_inside(ast::Span outer, ast::Span at) {
+    return outer.end > outer.start && at.start >= outer.start && at.end <= outer.end;
+}
+
+// The function declaration whose body holds `at`, or null.
+static const ast::Decl *body_holding(const ast::Module *m, ast::Span at) {
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        const ast::Decl *d = m->decls[i];
+        if (d->kind != .function || d->kind.function.body == nullptr) continue;
+        if (span_inside(d->kind.function.body->span, at)) return d;
+    }
+    return nullptr;
+}
+
+// The part of the module the emit stage still gets after check errors, in the count's run: every declaration, but a
+// function whose body holds an error is a prototype (its signature checked, so a call to it is emitted as before).
+// Nothing that is emitted depends on a declaration that failed. Null, and the file stops at `check` as an ordinary
+// compile does, when an error is anywhere else: in a signature, a record, a global, an import or a generic's instance.
+static const ast::Module *checked_part(const types::Checked *checked, const ast::Module *m) {
+    for (Usize i = 0; i < checked->error_count; i++) {
+        if (countof(checked->errors[i].module) > 0 || checked->errors[i].in_instance) return nullptr;
+        if (body_holding(m, checked->errors[i].span) == nullptr) return nullptr;
+    }
+    ast::DeclRef kept[:] = mem::alloc_slice(ast::DeclRef, countof(m->decls));
+    for (Usize i = 0; i < countof(m->decls); i++) {
+        ast::Decl *d = m->decls[i];
+        kept[i] = d;
+        if (d->kind != .function || d->kind.function.body == nullptr) continue;
+        Bool failed_here = false;
+        for (Usize k = 0; k < checked->error_count; k++)
+            failed_here = failed_here || span_inside(d->kind.function.body->span, checked->errors[k].span);
+        if (!failed_here) continue;
+        ast::Decl *prototype = mem::alloc(ast::Decl);
+        *prototype = *d;
+        prototype->kind.function.body = nullptr;
+        kept[i] = prototype;
+    }
+    ast::Module *part = mem::alloc(ast::Module);
+    *part = *m;
+    part->decls = kept;
+    return part;
+}
+
+// The emit stage's errors on `part`, as lines; no object is written, whatever it finds.
+static Str emit_part(const types::Checked *checked, const ast::Module *part, emit::Options options) {
+    c::LLVMContextRef context = c::LLVMContextCreate();
+    defer c::LLVMContextDispose(context);
+    emit::Emitted emitted = emit::module_all(context, part, options);
+    Str lines = "";
+    for (Usize i = 0; i < countof(emitted.errors); i++)
+        lines = as_str(format::push(lines, emit_error_lines(checked, emitted.errors[i])));
+    if (emitted.module != nullptr) c::LLVMDisposeModule(emitted.module);
+    return lines;
+}
+
+// The file being compiled and its stage, for the driver's crash handler (runtime/front_flag.c): kept in a fixed
+// buffer and a literal, which the handler reads without allocating.
+static char crash_file[4096];
+static const char *crash_stage = "parse";
+
+static void note_crash_file(Str path) {
+    Usize n = countof(path) < sizeof crash_file - 1 ? countof(path) : sizeof crash_file - 1;
+    for (Usize i = 0; i < n; i++)
+        crash_file[i] = path[i];
+    crash_file[n] = 0;
+    crash_stage = "parse";
+}
+
+[[std::c_name("front_compile_crash_file")]] export const char *crash_file_name() {
+    return crash_file;
+}
+
+[[std::c_name("front_compile_crash_stage")]] export const char *crash_stage_name() {
+    return crash_stage;
+}
+
 // The emitter's options for one file: objects are made at optimization 0, a debug build, and `smith cc -g` sets
 // SMITH_FRONT_DEBUG (runtime/front_flag.c), which gives the object debug info (#1979).
 static emit::Options emit_options(Str wanted, Str source, types::Checked *checked) {
@@ -1490,6 +1575,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     format::Chars chars = mem::view(loaded.ok, char);
     Str source = chars;
 
+    note_crash_file(path);
     U64 mark = clock::monotonic();
     Bool today = starts_with_module(source);
     parser::Parsed parsed = today ? parser::parse_file(path, source) : parser::parse_new(path, source);
@@ -1516,6 +1602,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     root_path = path;
     root_source = source;
     root_tree = &parsed.module;
+    crash_stage = "check";
     types::Checked checked =
         types_decl::check_module_headers(&parsed.module, target_of(wanted), load_module, load_header);
     lint_inputs_done();
@@ -1523,13 +1610,22 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
     times.imports = import_nanoseconds < checking ? import_nanoseconds : checking;
     times.check = checking - times.imports;
     times.headers = header_nanoseconds < times.imports ? header_nanoseconds : times.imports;
-    if (checked.error_count > 0)
-        return failed(as_str(format::push(warned, checked_lines(path, source, &checked))), times);
+    if (checked.error_count > 0) {
+        Str check_lines = as_str(format::push(warned, checked_lines(path, source, &checked)));
+        const ast::Module *part = nullptr;
+        if (keep_going_requested()) part = checked_part(&checked, checked_module(&checked, &parsed.module));
+        if (part == nullptr) return failed(check_lines, times);
+        mem::set_allocator(outside);
+        crash_stage = "check"; // the stage that stopped the file, though its clean part goes on to emit
+        return failed(as_str(format::push(check_lines, emit_part(&checked, part, emit_options(wanted, source, &checked)))),
+                      times);
+    }
 
     mem::set_allocator(outside);
     emit::Options options = emit_options(wanted, source, &checked);
     c::LLVMContextRef context = c::LLVMContextCreate();
     defer c::LLVMContextDispose(context);
+    crash_stage = "emit";
     mark = clock::monotonic();
     emit::Emitted emitted = emit::module_all(context, checked_module(&checked, &parsed.module), options);
     times.emit = clock::monotonic() - mark;
@@ -1544,6 +1640,7 @@ static Report file_in(Str path, Str output, Str triple, roots::Roots folders, me
 
     if (ends_with_bc(output)) return write_bitcode(ir, path, output, warned, times);
     emit_object::ObjectOptions object_options = {.target = options.target, .optimization = 0};
+    crash_stage = "write";
     mark = clock::monotonic();
     emit_object::WriteResult written = emit_object::write(ir, object_options, output);
     times.write = clock::monotonic() - mark;

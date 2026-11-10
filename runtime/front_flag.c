@@ -22,6 +22,12 @@
 int32_t front_compile_run(const char *const *sources, const char *const *outputs, size_t count, const char *triple);
 void front_compile_before_file(void (*hook)(const char *source));
 
+// Where front::compile and front::emit are, for the crash handler below (#2984), declared by hand for the same reason.
+const char *front_compile_crash_file(void);
+const char *front_compile_crash_stage(void);
+const char *front_emit_crash_declaration(void);
+const char *front_emit_crash_kind(void);
+
 // front::compile's header entry (`front_header_run`), declared by hand for the same reason.
 int32_t front_header_run(const char *source, const char *output, const char *triple);
 
@@ -715,6 +721,71 @@ static bool smith_front_only_options(int first, int used) {
 // Compiles the `.smith` files among `args` (argv[first ..]) with the front end and rewrites the arguments for clang in
 // smith_front_arguments (argv[0 .. first) first): returns their number, or -1 when a file did not compile (its
 // diagnostics are printed) and 0 when nothing is left for clang to do.
+static void smith_front_crash_put(const char *text) {
+    size_t n = strlen(text);
+    while (n > 0) { // bounded: each write takes at least one byte or ends the loop
+        ssize_t wrote = write(2, text, n);
+        if (wrote <= 0) return;
+        text += wrote;
+        n -= (size_t)wrote;
+    }
+}
+
+static const char *smith_front_signal_name(int signal_number) {
+    if (signal_number == SIGSEGV) return "SIGSEGV";
+    if (signal_number == SIGBUS) return "SIGBUS";
+    if (signal_number == SIGILL) return "SIGILL";
+    if (signal_number == SIGFPE) return "SIGFPE";
+    if (signal_number == SIGABRT) return "SIGABRT";
+    return "a signal";
+}
+
+// A crash of the front end in the count's run names itself (#2984): the file, the signal, the stage and, in the emit
+// stage, the declaration and the kind of expression it was on, as an `error:` line and the stage line the count reads,
+// then the signal goes on as before. The declaration is between backticks (the count's causes group by stage and
+// kind); a stack overflow is reported too, since the handler runs on a stack of its own.
+static void smith_front_on_crash(int signal_number) {
+    const char *file = front_compile_crash_file();
+    const char *stage = front_compile_crash_stage();
+    smith_front_crash_put(file);
+    smith_front_crash_put(": error: the compiler crashed (");
+    smith_front_crash_put(smith_front_signal_name(signal_number));
+    smith_front_crash_put(") in the ");
+    smith_front_crash_put(stage);
+    smith_front_crash_put(" stage");
+    if (strcmp(stage, "emit") == 0 && front_emit_crash_declaration()[0] != 0) {
+        smith_front_crash_put(", in the body of `");
+        smith_front_crash_put(front_emit_crash_declaration());
+        smith_front_crash_put("`");
+        if (front_emit_crash_kind()[0] != 0) {
+            smith_front_crash_put(", at an expression of kind ");
+            smith_front_crash_put(front_emit_crash_kind());
+        }
+    }
+    smith_front_crash_put("\n");
+    smith_front_crash_put(file);
+    smith_front_crash_put(": stage: ");
+    smith_front_crash_put(stage);
+    smith_front_crash_put("\n");
+    signal(signal_number, SIG_DFL);
+    raise(signal_number);
+}
+
+// The handler is installed only when SMITH_FRONT_STAGE asks for the stages (`smith build frontend-coverage`).
+static void smith_front_crash_handlers(void) {
+    if (getenv("SMITH_FRONT_STAGE") == nullptr) return;
+    static char alternate[1 << 16];
+    stack_t own = {.ss_sp = alternate, .ss_size = sizeof alternate};
+    if (sigaltstack(&own, nullptr) != 0) return;
+    struct sigaction action = {};
+    action.sa_handler = smith_front_on_crash;
+    action.sa_flags = SA_ONSTACK | SA_RESETHAND;
+    sigemptyset(&action.sa_mask);
+    const int caught[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT};
+    for (size_t i = 0; i < sizeof caught / sizeof caught[0]; i++)
+        sigaction(caught[i], &action, nullptr);
+}
+
 int smith_front_rewrite(char **argv, int first, int count, char **args, const char *self) {
     SMITH_ASSERT((size_t)count < smith_front_args_max && first >= 1 && first <= 8);
     for (int i = 0; i < first; i++) // bounded by 8
@@ -755,6 +826,7 @@ int smith_front_rewrite(char **argv, int first, int count, char **args, const ch
     bool links = !compile_only && !stops_early;
     smith_front_std_gather(count, args, sources, links);
     (void)smith_front_std_prepare(self, links, triple, getenv("SMITH_FRONT_DEBUG") != nullptr, count, args);
+    if (sources > 0) smith_front_crash_handlers();
     int compiled = sources > 0 ? front_compile_run(smith_front_sources, smith_front_objects, sources, triple) : 0;
     smith_import_cache_report();
     if (compiled != 0) return -1;
