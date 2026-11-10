@@ -129,9 +129,9 @@ static state::TyResult made(state::Emitter *e, const Str *names, const state::Ty
     for (Usize i = 0; i < countof(fields); i++)
         infos[i] = (state::FieldInfo){.name = names[i], .ty = fields[i]};
     state::Ty ty = {.kind = .record, .llvm = named, .name = key};
-    emit_memory::add_record(e, (state::RecordType){
-                                   .name = key, .ty = ty, .fields = infos[0:countof(fields)], .overlay = is_union,
-                                   .owned_name = true});
+    emit_memory::add_record(
+        e, (state::RecordType){
+               .name = key, .ty = ty, .fields = infos[0:countof(fields)], .overlay = is_union, .owned_name = true});
     return ty;
 }
 
@@ -197,8 +197,7 @@ export state::TyResult type_record(state::Emitter *e, const ast::TypeExpr *t) {
             f->next += 1;
             continue;
         }
-        state::TyResult built = made(e, &f->names[0], f->fields[0:count], f->node->kind.record.is_union,
-                                     f->node->span);
+        state::TyResult built = made(e, &f->names[0], f->fields[0:count], f->node->kind.record.is_union, f->node->span);
         depth -= 1;
         if (built == .error) {
             result = built;
@@ -266,8 +265,7 @@ export state::TyResult from_checked(state::Emitter *e, types::TypeRef t, ast::Sp
             f->next += 1;
             continue;
         }
-        state::TyResult built =
-            made(e, &f->names[0], f->fields[0:count], types::is_union_record(f->node), span);
+        state::TyResult built = made(e, &f->names[0], f->fields[0:count], types::is_union_record(f->node), span);
         depth -= 1;
         if (built == .error) {
             result = built;

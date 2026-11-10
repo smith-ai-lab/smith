@@ -6670,6 +6670,13 @@ static void binary_stage(types::Checked *c, Work *w, Frame f) {
     }
 }
 
+// `_Generic(x, T: a, default: b)` is C's, not smith's (owner): an error that names what to write instead (#2984).
+static void refuse_generic_select(types::Checked *c, const ast::Expr *e) {
+    types::failf(c, e->span, "`_Generic` is not part of smith: test the type with a compile-time `if`, or write a ",
+                 "generic function");
+    poison(c, e);
+}
+
 static void before(types::Checked *c, Work *w, Frame f) {
     const ast::Expr *e = f.node;
     if (e->kind == .type_value) {
@@ -6735,9 +6742,7 @@ static void before(types::Checked *c, Work *w, Frame f) {
     } else if (e->kind == .named_arg) {
         named_argument_alone(c, e);
     } else if (e->kind == .generic_select) {
-        types::failf(c, e->span, "`_Generic` is not part of smith: test the type with a compile-time `if`, or write a ",
-                     "generic function");
-        poison(c, e);
+        refuse_generic_select(c, e);
     } else {
         compound_expr(c, w, f);
     }

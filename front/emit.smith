@@ -599,6 +599,25 @@ static const ast::Expr *named_variant(state::Emitter *e, const ast::Expr *x) {
     return variant;
 }
 
+// A call: a vector built by its type, a payload enumeration built by its name, or a call of a function.
+static state::Status dispatch_call(state::Emitter *e, const ast::Expr *x, state::Hint hint) {
+    if (x->kind != .call) return state::fail("not a call", x->span);
+    if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
+    const ast::Expr *variant = named_variant(e, x);
+    if (variant != nullptr) {
+        state::TyResult made = state::type_of_node(e, x); // the enumeration, which the new node has no record of
+        if (made == .error) return {.error = made.error};
+        return dispatch_variant(e, variant, state::hint_of(made.ok));
+    }
+    return call::call(e, x, hint);
+}
+
+// The expression the checker read in the place of another, emitted in its place.
+static state::Status dispatch_twin(state::Emitter *e, const ast::Expr *twin, state::Hint hint) {
+    state::push_eval(e, twin, hint);
+    return state::success();
+}
+
 // Where the walk is, for the driver's crash handler (runtime/front_flag.c, #2984): the declaration whose body is being
 // emitted and the kind of the last expression dispatched, in a fixed buffer and a literal, read without allocating.
 static char walk_declaration[256];
@@ -637,16 +656,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .assign) return arith::assign_op(e, x, hint);
     if (x->kind == .boolean) return control::boolean(e, x, hint);
     if (x->kind == .conditional) return control::conditional(e, x, hint);
-    if (x->kind == .call) {
-        if (x->kind.call.callee->kind == .call && checked_vector(e, x)) return vectors::construct(e, x);
-        const ast::Expr *variant = named_variant(e, x);
-        if (variant != nullptr) {
-            state::TyResult made = state::type_of_node(e, x); // the enumeration, which the new node has no record of
-            if (made == .error) return {.error = made.error};
-            return dispatch_variant(e, variant, state::hint_of(made.ok));
-        }
-        return call::call(e, x, hint);
-    }
+    if (x->kind == .call) return dispatch_call(e, x, hint);
     if (x->kind == .array_lit) {
         if (hint.present && hint.ty.kind == .vector) return vectors::list(e, x, hint);
         return emit_memory::array_literal(e, x, hint);
@@ -676,10 +686,7 @@ static state::Status dispatch_expr(state::Emitter *e, const ast::Expr *x, state:
     if (x->kind == .type_value && e->options.checked != nullptr) {
         const ast::Expr *made = types::method_of(e->options.checked, x); // `Point(a, b)`: a construction (#1813)
         if (made != nullptr && made->kind == .call) return call::call(e, made, hint);
-        if (made != nullptr) { // `High`, `c.EOF`: the name the checker read it as (#2984)
-            state::push_eval(e, made, hint);
-            return state::success();
-        }
+        if (made != nullptr) return dispatch_twin(e, made, hint); // `High`, `c.EOF`: the name the checker read (#2984)
     }
     // The kind is named outside backticks, so the count's table keeps the kinds apart (#2984).
     return state::failf(x->span, "not emitted yet: this kind of expression (", state::expr_kind_name(x), ")");
@@ -1789,6 +1796,17 @@ static void ensure_enum(state::Emitter *e, types::TypeRef t) {
 
 // The checker's type `t` as a `Ty`, with `span` for an error. A chain of pointers and arrays is walked with a loop,
 // then built from inside. `Void` (a function's result, what a pointer points at) is an LLVM `void`.
+// `Result(T, E)` as the checker typed it: the two payloads, each with its enumeration declared first.
+static state::TyResult result_from_checked(state::Emitter *e, types::TypeRef base) {
+    ensure_enum(e, types::element_of(base));
+    ensure_enum(e, types::error_of(base));
+    state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
+    if (ok == .error) return {.error = ok.error};
+    state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
+    if (bad == .error) return {.error = bad.error};
+    return optional::build_result(e, ok.ok, bad.ok);
+}
+
 static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, ast::Span span) {
     types::TypeRef chain[16];
     Usize depth = 0;
@@ -1830,15 +1848,7 @@ static state::TyResult type_from_checked(state::Emitter *e, types::TypeRef t, as
             ensure_enum(e, types::element_of(base));
             return optional::from_checked(e, base);
         }
-        if (base->kind == .result_type) {
-            ensure_enum(e, types::element_of(base));
-            ensure_enum(e, types::error_of(base));
-            state::TyResult ok = optional::payload_of_checked(e, types::element_of(base));
-            if (ok == .error) return {.error = ok.error};
-            state::TyResult bad = optional::payload_of_checked(e, types::error_of(base));
-            if (bad == .error) return {.error = bad.error};
-            return optional::build_result(e, ok.ok, bad.ok);
-        }
+        if (base->kind == .result_type) return result_from_checked(e, base);
         if (base->kind == .tuple) return tupled::from_checked(e, base);
         if (base->kind == .fn_value) return lambdas::from_checked(e, base);
         if (base->kind == .function) return lambdas::pointer_from_checked(e, base); // a C function pointer
@@ -2301,7 +2311,6 @@ static void recover(state::Emitter *e) {
     e->instance_scope = "";
     e->instance = nullptr;
 }
-
 
 static void note_declaration(Str name) {
     Usize n = countof(name) < sizeof walk_declaration - 1 ? countof(name) : sizeof walk_declaration - 1;

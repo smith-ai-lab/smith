@@ -322,8 +322,8 @@ export struct RecordType {
     Str name;
     Ty ty;
     FieldInfo fields[:];
-    Bool overlay; // a C union: every field is at offset 0 of the one array that sizes it (a field is read in place)
-    Bool shell;   // named so a record above it can point to it; its fields come when its own declaration is reached
+    Bool overlay;    // a C union: every field is at offset 0 of the one array that sizes it (a field is read in place)
+    Bool shell;      // named so a record above it can point to it; its fields come when its own declaration is reached
     Bool owned_name; // an anonymous struct's key (front/emit_record.smith): `release` frees the name with the fields
 };
 
@@ -496,7 +496,7 @@ export struct Emitter {
     Str import_scope;   // while an imported function's signature is typed: its module's path and `::` (`geom::vec::`)
     const ast::TypeExpr *scoped_leaf; // the name `leaf_type` handed back to `type_of` in an import scope: a second
                                       // visit is an unknown type, not a loop (the 19 crashes of #2984)
-    const types::Instance *instance; // while a generic's instance is emitted: its bindings (`T` of `sizeof(T)`)
+    const types::Instance *instance;  // while a generic's instance is emitted: its bindings (`T` of `sizeof(T)`)
     TypeHook type_hook;
     NodeTypeHook node_type_hook;
     CheckedTypeHook checked_type_hook; // a checker type as a `Ty`: the parameters of a C function (#1762)
