@@ -482,13 +482,30 @@ static types::Names qualified_names(const ast::Expr *x) {
     return names;
 }
 
+// A bare name in the body of a generic's instance from another module: a global of that module, found under its prefix
+// (`std::test::op_equal`) when no local of the body has the name.
+static Bool instance_global(state::Emitter *e, Str name, const ast::Decl **found, Str *key) {
+    state::Local local = {};
+    if (state::find_local(e, name, &local)) return false;
+    Str full = state::msg(format::push(e->instance_scope, name));
+    const types::Symbol *target = types::lookup(&e->options.checked->scopes, full);
+    if (target == nullptr || target->kind != .variable || target->decl == nullptr || target->decl->from_c ||
+        target->decl->kind != .variable)
+        return false;
+    *found = target->decl;
+    *key = full;
+    return true;
+}
+
 // `autodiff::out`: a global of an imported module (not a header's: `c_constant` took those). The declaration it names
 // and its key, `std::autodiff::out`, as the checker keeps it (#1975).
 static Bool imported_global(state::Emitter *e, const ast::Expr *x, const ast::Decl **found, Str *key) {
     if (e->options.checked == nullptr) return false;
+    if (x->kind == .name && countof(x->kind.name.path.segments) == 1 && countof(e->instance_scope) > 0)
+        return instance_global(e, x->kind.name.path.segments[0].text, found, key);
     types::Names names = qualified_names(x);
-    if (names.count < 2) return false;
     const types::Scopes *scopes = &e->options.checked->scopes;
+    if (names.count < 2) return false;
     Str prefix = "";
     for (Usize i = 0; i + 1 < names.count; i++) {
         const types::Symbol *module = types::lookup(scopes, state::msg(format::push(prefix, names.items[i])));
@@ -515,6 +532,11 @@ static state::Status imported_global_read(state::Emitter *e, const ast::Expr *x,
     if (wanted == nullptr) return state::fail("the global has no type", x->span);
     state::TyResult made = state::type_of_checked(e, wanted, x->span);
     if (made == .error) return {.error = made.error};
+    if (d->kind == .variable && d->kind.variable.is_constexpr && d->kind.variable.init != nullptr &&
+        d->kind.variable.init->kind == .integer) { // `pub const op_equal: Op = 0`
+        state::push_eval(e, d->kind.variable.init, state::hint_of(made.ok));
+        return state::success();
+    }
     Str own = state::c_name_of(d);
     char *label = state::cstr(countof(own) > 0 ? own : key);
     c::LLVMValueRef global = c::LLVMGetNamedGlobal(e->module, label);
@@ -850,9 +872,31 @@ static void start_block_if_ended(state::Emitter *e) {
     c::LLVMPositionBuilderAtEnd(e->builder, dead);
 }
 
+// Whether the checker answered the condition of the `if` `s` in the body being emitted (`is_slice(typeof(a))`, #1902),
+// and which branch it kept; the other branch was never checked, so it is not emitted (#2981).
+static Bool decided_if(state::Emitter *e, const ast::Stmt *s, const ast::Stmt **live) {
+    if (s->kind == .if_stmt && e->options.checked != nullptr) {
+        Usize index = types::max_instances;
+        for (Usize i = 0; e->instance != nullptr && i < e->options.checked->instance_count; i++) {
+            if (&e->options.checked->instances[i] == e->instance) index = i;
+        }
+        Bool keeps_then = false;
+        if (types::decided_in(e->options.checked, s->kind.if_stmt.condition, index, &keeps_then)) {
+            *live = keeps_then ? s->kind.if_stmt.then_branch : s->kind.if_stmt.else_branch;
+            return true;
+        }
+    }
+    return false;
+}
+
 static state::Status dispatch_statement(state::Emitter *e, const ast::Stmt *s) {
     start_block_if_ended(e);
     try debug::stmt_location(e, s);
+    const ast::Stmt *live = nullptr;
+    if (decided_if(e, s, &live)) {
+        if (live != nullptr) state::push_statement(e, live);
+        return state::success();
+    }
     if (s->kind == .expression) return expression_statement(e, s);
     if (s->kind == .declaration) return declaration_statement(e, s);
     if (s->kind == .block) return block_statement(e, s);

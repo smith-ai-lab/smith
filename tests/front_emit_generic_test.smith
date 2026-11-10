@@ -93,3 +93,15 @@ export void test_front_emit_generic_an_instance_calls_another() {
                  "    twice(i32, 21) * 2\n";
     test::check_equal(run(source, "front::test::run"), (I32)42);
 }
+
+export void test_front_emit_generic_a_decided_compile_time_if_emits_only_its_live_branch() {
+    Str source = "fn kind(a: auto) -> i32:\n"
+                 "    if is_integer(typeof(a)):\n"
+                 "        return 1\n"
+                 "    else:\n"
+                 "        return a.nothing\n"
+                 "\n"
+                 "pub fn run() -> i32:\n"
+                 "    kind(5) + kind(7)\n";
+    test::check_equal(run(source, "front::test::run"), (I32)2);
+}
