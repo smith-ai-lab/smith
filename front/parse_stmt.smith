@@ -438,10 +438,12 @@ static Bool group_then_declarator(const parse::Parser *p, Usize offset) {
 }
 
 // What can follow a capitalized name that is a value (`Block_Other` as the last of an `if` value) and never a declared
-// name: the end of the line, a closing bracket, a comma or a dot.
+// name: the end of the line, a closing bracket, a comma, a dot, or the `else` of a one-line `if c: T else: U`
+// (#3027).
 static Bool ends_value(lex::TokenKind next) {
     return next == lex::newline || next == lex::dedent || next == lex::end_of_file || next == lex::right_paren ||
-           next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot;
+           next == lex::right_brace || next == lex::right_bracket || next == lex::comma || next == lex::dot ||
+           next == lex::kw_else;
 }
 
 // A comparison after a capitalized name that is a value (`T == i8 or T == i16`): never a declared name.

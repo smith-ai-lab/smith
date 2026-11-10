@@ -260,6 +260,31 @@ export void test_an_if_around_declarations_becomes_when() {
     check_count(countof(again.errors), 0);
 }
 
+// `#if 0` and `#if 1` hold for every target (#3027): the dead branch goes with the directive lines, nested directives
+// and all, and the live branch stays as it is, in a function body too.
+export void test_an_if_zero_or_one_keeps_the_live_branch() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#if 0\nint never();\n#include <never.h>\n#ifdef X\nint x;\n#endif\n#endif\n"
+                                                "int one() {\n#if 1\n    return 1;\n#else\n    return 2;\n#endif\n}\n"
+                                                "#if 0\nint a = 1;\n#else\nint a = 2;\n#endif\n");
+    check_text(fixed.text, "fn one() -> i32:\n    return 1\nmut a: i32 = 2\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
+}
+
+// A branch of `#if 0` whose braces do not balance cuts a declaration in two: it is left as it is.
+export void test_an_if_zero_that_cuts_a_declaration_is_left() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#if 0\nint f() {\n#else\nint g() {\n#endif\n    return 1;\n}\n");
+    check_text(fixed.text, "#if 0\nint f() {\n#else\nint g() {\n#endif\n    return 1;\n}\n");
+}
+
 // A top-level `if constexpr` is `@when` on each declaration of its branches (#2142).
 export void test_a_top_level_if_constexpr_becomes_when() {
     arena::Arena memory = test::memory(1U << 22);
@@ -485,10 +510,22 @@ export void test_other_directives_stay_errors_without_a_fix() {
     arena::ArenaAllocator allocator = arena::allocator(&memory);
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
-    parser::Parsed parsed = parser::parse_file(file_name, "#if 1\n#define F(x) x\n#include \"h.h\"\n");
+    parser::Parsed parsed = parser::parse_file(file_name, "#if 1\n#define F(x) x\n#pragma once\n");
     check_count(countof(parsed.errors), 1);
     syntax::Edits none = parsed.errors[0].fix;
     check_count(countof(none), 0);
+}
+
+// `#include "h"` is `import c "h"` (#3027), which the parser reads; the `as` rule is the angled include's.
+export void test_a_quoted_include_becomes_a_quoted_c_import() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "#include \"defs.h\"\n#include \"my-defs.h\"\nconst X = 1\n");
+    check_text(fixed.text, "import c \"defs.h\"\nimport c \"my-defs.h\" as my_defs\nconst X = 1\n");
+    parser::Parsed again = parser::parse_new("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
 }
 
 // `(P){}` is `P()`, with the fields C zeroes given their zero values (#2329): an empty compound literal of a named type
@@ -595,7 +632,22 @@ export void test_comments_are_written_when_another_form_stays() {
     mem::Allocator *outside = mem::set_allocator(&allocator.base);
     defer mem::set_allocator(outside);
     fix::Fixed fixed = fix::fix_text("t.smith", "int f() {\n    return 1; // one\n}\nStr a[3];\n/* two\n   lines */\n");
-    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\nstr a[3];\n# two\n#   lines \n");
+    check_text(fixed.text, "fn f() -> i32:\n    return 1 # one\nstr a[3];\n# two\n   # lines\n");
+}
+
+// `///` and `/** */` are doc comments, `##` (#3027): a `/**` was written `#*`, which the lexer reads as an old
+// directive. A continued line keeps its indentation and loses its ` *` frame; `////` stays a plain comment.
+export void test_doc_comments_become_double_hash_lines() {
+    arena::Arena memory = test::memory(1U << 22);
+    arena::ArenaAllocator allocator = arena::allocator(&memory);
+    mem::Allocator *outside = mem::set_allocator(&allocator.base);
+    defer mem::set_allocator(outside);
+    fix::Fixed fixed = fix::fix_text("t.smith", "/// The point.\nstruct P {\n    ///x\n    I32 x;\n    /** a\n     * b */\n"
+                                                "    I32 y;\n};\n/** One. */\nI32 one() {\n    return 1; ////\n}\n");
+    check_text(fixed.text, "## The point.\nstruct P:\n    ## x\n    x: i32\n    ## a\n    ## b\n    y: i32\n"
+                           "## One.\nfn one() -> i32:\n    return 1 # //\n");
+    parser::Parsed again = fix::parse_for_fix("t.smith", fixed.text);
+    check_count(countof(again.errors), 0);
 }
 
 // A function type written with the names of its parameters (`Fn(void (Key key))`) is `fn(Key)`: the names are dropped,

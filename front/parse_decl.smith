@@ -1555,8 +1555,10 @@ static Bool list_is_init(const parse::Parser *p, U32 equal_end, U32 semicolon) {
            same_text(trimmed(source_between(p, list->close.end, semicolon)), "");
 }
 
+// An applied type is one too (#3027): `maybe(Usize) x = {.some = v};` is `x := maybe(usize)(some = v)`, as
+// `Pair(i32)(1, 2)` builds a value of a type function's type.
 static Bool named_list_init(const parse::Parser *p, const ast::TypeExpr *type, U32 equal_end, U32 semicolon) {
-    return type->kind == .named && list_is_init(p, equal_end, semicolon);
+    return (type->kind == .named || type->kind == .applied) && list_is_init(p, equal_end, semicolon);
 }
 
 // The warning of a positional list `{1, 2}` that writes it as the array `[1, 2]` loses its fix when the declaration
